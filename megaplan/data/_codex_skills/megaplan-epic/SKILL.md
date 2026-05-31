@@ -7,7 +7,7 @@ description: Run an epic — a chain of sprint-sized megaplans driven sequential
 
 An **epic** is work too big for a single megaplan, decomposed into an ordered chain of sprint-sized megaplans driven sequentially by `megaplan chain`. Each milestone in the chain is a full megaplan run (its own brief, plan, critique, execute, review); the chain handles ordering, state persistence, branch/PR lifecycle, and failure semantics.
 
-If your work fits in one megaplan, you don't need this skill — read **megaplan-setup** and run a single sprint. Reach for the epic flow when the answer to "size each megaplan to ~2 weeks of work" is "this doesn't fit."
+If your work fits in one megaplan, you don't need this skill — read **megaplan-prep** and run a single sprint. Reach for the epic flow when the answer to "size each megaplan to ~2 weeks of work" is "this doesn't fit."
 
 ## When to reach for an epic
 
@@ -84,7 +84,7 @@ driver:
 |---|---|---|
 | `label` | yes | Short identifier (e.g. `m1`, `m2-storage`). Used in branch names and state files. |
 | `idea` | yes | Path to the brief markdown file. Same as `megaplan init <idea>`. |
-| `profile` | no | `solo` / `directed` / `partnered` / `premium` / `apex`. See megaplan-setup. |
+| `profile` | no | `solo` / `directed` / `partnered` / `premium` / `apex`. See megaplan-prep. |
 | `robustness` | no | `bare` / `light` / `full` / `thorough` / `extreme`. Falls back to `driver.robustness`. |
 | `depth` | no | `low` / `medium` / `high` / `xhigh` / `max`. |
 | `vendor` | no | `claude` / `codex`. |
@@ -104,11 +104,11 @@ Two knobs control what the chain does when a milestone fails (`on_failure`) or h
 
 Default is `stop_chain` for both — failures should halt unless you've deliberately said otherwise.
 
-## Per-milestone rubric — same dials as megaplan-setup
+## Per-milestone rubric — same dials as megaplan-prep
 
-Each milestone is a full megaplan. The three dials (`profile` / `robustness` / `depth`) apply per-milestone — see **megaplan-setup** for how to pick them. **Milestones in the same chain can be different tiers.** A typical epic has one or two high-stakes milestones at `premium` or `apex` and several mechanical milestones at `partnered` or `directed`.
+Each milestone is a full megaplan. The three dials (`profile` / `robustness` / `depth`) apply per-milestone — see **megaplan-prep** for how to pick them. **Milestones in the same chain can be different tiers.** A typical epic has one or two high-stakes milestones at `premium` or `apex` and several mechanical milestones at `partnered` or `directed`.
 
-The shorthand from megaplan-setup works for chain-spec notes: a milestone block annotated `# partnered//high +prep` in your chain.yaml comments tells the reader the intent at a glance.
+The shorthand from megaplan-prep works for chain-spec notes: a milestone block annotated `# partnered//high +prep` in your chain.yaml comments tells the reader the intent at a glance.
 
 ## Running the chain
 
@@ -158,7 +158,7 @@ Scope: build a new artifact store that downstream sprints will consume. ~5 weeks
 /workspace/ideas/m4-docs.md           # docs + migration guide
 ```
 
-Each idea file is a full brief (see the "What goes in the brief" section of megaplan-setup) — outcome, scope, locked decisions, open questions, constraints, done criteria, touchpoints, anti-scope. Briefs are locked at init; later edits are not re-read.
+Each idea file is a full brief (see the "What goes in the brief" section of megaplan-prep) — outcome, scope, locked decisions, open questions, constraints, done criteria, touchpoints, anti-scope. Briefs are locked at init; later edits are not re-read.
 
 **2. Write `chain.yaml`** (see the spec example above). Pick a tier per milestone:
 

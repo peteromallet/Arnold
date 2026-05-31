@@ -33,7 +33,7 @@
 #     `--phase-model plan=claude:high` when the brief is long or the
 #     codebase is unfamiliar.
 #
-# See docs/megaplan-setup.md for the full rubric.
+# See docs/megaplan-prep.md for the full rubric.
 [profiles.partnered]
 # Adaptive critique on by default: this profile carries a premium model, so
 # the critique-evaluator can force a premium evaluator to direct the cheap

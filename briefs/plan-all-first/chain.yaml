@@ -20,6 +20,7 @@ milestones:
     profile: partnered
     robustness: full
     depth: medium
+    vendor: codex   # premium phases via Codex (codex CLI), not Claude-via-Shannon (Shannon patch broken in this env)
 
   - label: m2-contracts-review-reground
     idea: /Users/peteromalley/Documents/megaplan/briefs/plan-all-first/m2-contracts-review-reground.md
@@ -27,5 +28,6 @@ milestones:
     profile: partnered
     robustness: full
     depth: high
+    vendor: codex   # premium phases via Codex, not Claude-via-Shannon
     with_prep: true
     depends_on: [m1-plumbing-durability]

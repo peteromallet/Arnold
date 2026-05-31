@@ -10,7 +10,7 @@ Megaplan today tells you *what state it's in*. It does not tell you *what it's d
 1. **Stale-timestamp inference.** `state.json` and per-step receipts use ISO timestamps. A caller (human or agent) reads `last_step.timestamp` and assumes recency without a wall-clock anchor, leading to wrong claims about progress.
 2. **Opaque blocked state.** `state: blocked` is terminal. The state machine refuses `force-proceed`, `replan`, `critique`, etc. with `invalid_transition` errors — but the caller has to discover by trial which override is valid. There is no forward-looking "here are the moves the state machine will accept right now" surface.
 3. **No streaming visibility into LLM calls.** A long critique phase emits per-check artifacts as they complete (good), but nothing between them. The caller can't distinguish "model is still producing tokens" from "TCP wedged" from "rate-limited and retrying."
-4. **Rubric/binary drift goes undetected.** The `megaplan-setup` skill describes canonical profiles (`thoughtful`, `basic`, `led`, `premium`, `super-premium`). A local binary that predates the canonical naming, or that's running off a refactor branch with renamed profiles, will silently fail with `Unknown profile 'thoughtful'`. There's no preflight check that catches this.
+4. **Rubric/binary drift goes undetected.** The `megaplan-prep` skill describes canonical profiles (`thoughtful`, `basic`, `led`, `premium`, `super-premium`). A local binary that predates the canonical naming, or that's running off a refactor branch with renamed profiles, will silently fail with `Unknown profile 'thoughtful'`. There's no preflight check that catches this.
 5. **Editable-install repo drift.** Because the binary is symlinked into an editable virtualenv, any branch switch or uncommitted change in the megaplan source tree changes behavior immediately. Today nothing surfaces this — a switched branch can quietly remove the profile a caller is about to invoke.
 6. **No event journal.** State is a current-snapshot file that gets overwritten. Per-phase artifacts land in scattered files; subprocess stdout/stderr go nowhere; LLM calls disappear into provider APIs. To reconstruct "what happened" the caller has to compose `lsof` + `ls -lat` + `cat state.json` + `pgrep` + manual time arithmetic.
 
@@ -81,8 +81,8 @@ Single call. Reads `events.ndjson` + `state.json` + filesystem + `psutil`. Retur
     "editable_install": true
   },
   "rubric_doc": {
-    "skill_path": "~/.claude/skills/megaplan-setup/SKILL.md",
-    "resolves_to": "/path/to/poms_skills/megaplan-setup/SKILL.md",
+    "skill_path": "~/.claude/skills/megaplan-prep/SKILL.md",
+    "resolves_to": "/path/to/poms_skills/megaplan-prep/SKILL.md",
     "profiles_referenced": ["basic","led","thoughtful","premium","super-premium"],
     "profiles_available_locally": ["apex","claude-kimi-deepseek","directed","partnered","premium","solo","..."],
     "drift": {
@@ -171,7 +171,7 @@ Diagnostic. Output is a list of `[OK | WARN | ERROR]` lines, each with a remedia
 - Outstanding flags + how to clear each
 
 **Repo-level** (`--repo`):
-- **Rubric/binary drift:** load the megaplan-setup skill, extract every profile name it references, diff against `megaplan profiles list`. WARN on each mismatch with the specific bridge (`"rubric says 'thoughtful', binary doesn't have it; on main HEAD it does; you're on 'sprint-a-base' which renamed it"`).
+- **Rubric/binary drift:** load the megaplan-prep skill, extract every profile name it references, diff against `megaplan profiles list`. WARN on each mismatch with the specific bridge (`"rubric says 'thoughtful', binary doesn't have it; on main HEAD it does; you're on 'sprint-a-base' which renamed it"`).
 - Editable install + dirty working tree → behavior changes will land on next phase.
 - Multiple megaplan checkouts on disk → potential confusion source.
 - Skill files out of sync with their installed copies.
@@ -230,9 +230,9 @@ Emits a tag event into the journal. Lets humans (or agents) annotate moments dur
 
 ## Skill documents
 
-Today: one skill (`megaplan-setup`) covering profile selection. After: **two skills, complementary.**
+Today: one skill (`megaplan-prep`) covering profile selection. After: **two skills, complementary.**
 
-### Skill 1 (small additions): `megaplan-setup`
+### Skill 1 (small additions): `megaplan-prep`
 
 Still about picking profile / robustness / depth *before* a run. Two changes:
 

@@ -70,7 +70,7 @@ _PREMIUM_VENDORS = frozenset({"claude", "codex"})
 # Author-side phases that ``--depth`` rewrites. Critic phases (critique,
 # gate, review) and mechanical phases (prep, finalize, execute,
 # loop_execute) are intentionally excluded — see the asymmetry principle
-# in docs/megaplan-setup.md.
+# in docs/megaplan-prep.md.
 DEPTH_AUTHOR_PHASES = frozenset({
     "plan",
     "revise",
