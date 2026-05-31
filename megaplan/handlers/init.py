@@ -156,14 +156,18 @@ def _build_state_config(
 
         assert_adaptive_critique_wired()
 
-    # Precedence mirrors adaptive_critique: explicit --critic-model CLI flag >
-    # explicit user-config setting > profile-level `critic_model` field > global
-    # default (""). When set, the adaptive evaluator still picks lenses, but the
-    # farmed-out critic is pinned to this model (no per-lens escalation).
+    # Precedence mirrors adaptive_critique for the stored value, but only an
+    # explicit operator source (CLI flag or explicit user config) is allowed to
+    # act as a pin at critique time. Profile/default values are informational
+    # and must not shadow per-lens tier routing.
+    critic_model_explicit = False
     critic_model_value = getattr(args, "critic_model", None)
+    if critic_model_value is not None:
+        critic_model_explicit = True
     if critic_model_value is None:
         if setting_is_explicit("execution", "critic_model"):
             critic_model_value = get_effective("execution", "critic_model")
+            critic_model_explicit = True
         else:
             profile_name = getattr(args, "profile", None)
             profile_critic: Any = None
@@ -233,6 +237,7 @@ def _build_state_config(
         "adaptive_critique": adaptive_critique,
         "strict_adaptive_critique": strict_adaptive_critique,
         "critic_model": critic_model,
+        "critic_model_explicit": critic_model_explicit,
         "robustness": robustness,
         "mode": mode,
         "strict_notes": strict_notes,
