@@ -1,7 +1,7 @@
 # Megaplan Decomposition — Meta Checklist & Live Plan
 
 **Status:** in progress. Worktree: `/Users/peteromalley/Documents/.megaplan-worktrees/megaplan-decomposition` on branch `megaplan-decomposition`.
-**Source briefing:** `~/Downloads/megaplan-decomposition-briefing.md` (mirrored in `briefs/megaplan-decomposition.md`).
+**Source briefing:** `~/Downloads/megaplan-decomposition-briefing.md` (mirrored in `.megaplan/briefs/megaplan-decomposition.md`).
 **Driver:** Megaplan `auto`/`chain`, profile `all-claude`, effort `claude:high` for plan/critique/gate, default elsewhere.
 
 ## Operating principles (restated every update — non-negotiable)
@@ -15,7 +15,7 @@
 
 ## Plan critique outcome (3 subagents → consolidated decisions)
 
-The briefing and `briefs/megaplan-decomposition.md` are byte-identical; there is no prior detailed design. Three critique agents reviewed from three perspectives — abstraction design, backcompat/migration risk, sprint feasibility — and converged on the following hardened plan. Issues marked S/M/L by impact.
+The briefing and `.megaplan/briefs/megaplan-decomposition.md` are byte-identical; there is no prior detailed design. Three critique agents reviewed from three perspectives — abstraction design, backcompat/migration risk, sprint feasibility — and converged on the following hardened plan. Issues marked S/M/L by impact.
 
 ### Key consolidated findings
 - **Abstraction:** the live code's `phase = handler` boundary is an *aggregate*, not a primitive. Decompose into eight primitives (`LLMCall`, `Materialize`, `Critique`, `Revise`, `Gate`, `Tool`, `Loop`, `Branch`). Replace `plan_dir` filesystem assumptions with a `Workspace` and `state.json` shared blob with a `Blackboard`. Workflow becomes a YAML graph the engine reads. Profile maps **role → vendor**, not phase-name → vendor.

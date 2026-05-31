@@ -942,14 +942,6 @@ name = "megaplan-harness"
 version = "0.23.0"
 source = { editable = "." }
 dependencies = [
-    { name = "psutil" },
-    { name = "pydantic" },
-    { name = "python-ulid" },
-    { name = "pyyaml" },
-]
-
-[package.optional-dependencies]
-agent = [
     { name = "anthropic" },
     { name = "edge-tts" },
     { name = "fal-client" },
@@ -959,35 +951,41 @@ agent = [
     { name = "httpx" },
     { name = "openai" },
     { name = "prompt-toolkit" },
+    { name = "psutil" },
+    { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
+    { name = "python-ulid" },
+    { name = "pyyaml" },
     { name = "requests" },
     { name = "rich" },
 ]
+
+[package.optional-dependencies]
 db = [
     { name = "psycopg", extra = ["binary"] },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.39.0" },
-    { name = "edge-tts", marker = "extra == 'agent'" },
-    { name = "fal-client", marker = "extra == 'agent'" },
-    { name = "faster-whisper", marker = "extra == 'agent'", specifier = ">=1.0.0" },
-    { name = "fire", marker = "extra == 'agent'" },
-    { name = "firecrawl-py", marker = "extra == 'agent'" },
-    { name = "httpx", marker = "extra == 'agent'" },
-    { name = "openai", marker = "extra == 'agent'" },
-    { name = "prompt-toolkit", marker = "extra == 'agent'" },
+    { name = "anthropic", specifier = ">=0.39.0" },
+    { name = "edge-tts" },
+    { name = "fal-client" },
+    { name = "faster-whisper", specifier = ">=1.0.0" },
+    { name = "fire" },
+    { name = "firecrawl-py" },
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "prompt-toolkit" },
     { name = "psutil", specifier = ">=5.9" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'db'", specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'agent'" },
-    { name = "python-dotenv", marker = "extra == 'agent'" },
+    { name = "pyjwt", extras = ["crypto"] },
+    { name = "python-dotenv" },
     { name = "python-ulid", specifier = ">=3.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "requests", marker = "extra == 'agent'" },
-    { name = "rich", marker = "extra == 'agent'" },
+    { name = "requests" },
+    { name = "rich" },
 ]
 provides-extras = ["db", "agent"]
 

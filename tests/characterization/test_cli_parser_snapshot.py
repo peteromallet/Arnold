@@ -342,7 +342,7 @@ class TestCliParserSnapshot:
         subcommands = set(root.get("subcommands", {}).keys())
 
         expected = {
-            "setup", "init", "list", "describe", "epic", "ticket",
+            "setup", "init", "list", "describe", "epic", "brief", "ticket",
             "feedback", "resume", "audit", "plan", "prep", "critique",
             "revise", "gate", "finalize", "execute", "review", "config",
             "step", "override", "user-action", "quality-gate",
@@ -366,6 +366,12 @@ class TestCliParserSnapshot:
         epic_subs = set(subs.get("epic", {}).get("subcommands", {}).keys())
         assert "snapshot" in epic_subs, "Missing epic snapshot"
         assert "migrate" in epic_subs, "Missing epic migrate"
+
+        # brief -> new, epic
+        brief_subs = set(subs.get("brief", {}).get("subcommands", {}).keys())
+        assert {"new", "epic"}.issubset(brief_subs), (
+            f"brief subcommands incomplete: {sorted(brief_subs)}"
+        )
 
         # ticket -> new, list, show, edit, link, ...
         ticket_subs = set(subs.get("ticket", {}).get("subcommands", {}).keys())

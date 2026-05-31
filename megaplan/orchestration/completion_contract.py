@@ -9,7 +9,7 @@ transition when the evidence contradicts the claim.
 test suite, or changes control flow. The drivers compute + persist + log a
 verdict and discard the result. Every code path is fail-open: callers wrap the
 top-level entry point (:func:`compute_verdict`) in try/except and swallow
-errors. The design (per ``briefs/hardening-epic/analysis/deeper``) composes
+errors. The design (per ``.megaplan/briefs/hardening-epic/analysis/deeper``) composes
 existing helpers rather than re-implementing evidence collection:
 
 - ``phase_coverage``   → ``PhaseResult`` + ``_latest_execution_batch_all_tasks_done``

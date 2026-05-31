@@ -1,0 +1,9 @@
+The report is written to `/Users/peteromalley/Documents/megaplan/.megaplan/briefs/hardening-epic/analysis/m5c-eval-execute-facts.md`.
+
+Key findings:
+- **1 critique round**, no rework cycles — plan → critique → 5 sequential execution sessions
+- **2 import tracebacks** (same root cause, `megaplan/__init__.py:25`) with immediate retry, resolved
+- **3 pre-existing baseline failures** in all sessions; **8 refactor-caused test failures** in the batch extraction session (T11), all resolved by T16 verification
+- **6/6 sessions on GPT-5** (2× gpt-5.5, 4× gpt-5.4) — zero cheap-model usage despite the plan mentioning deepseek/kimi for critique lenses
+- **~18.6M total tokens** across all sessions, **95% cached**
+- **3h10m wall-clock** (17:50–21:00 Berlin), within the specified window, no overnight gaps

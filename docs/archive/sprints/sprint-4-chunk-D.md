@@ -1,6 +1,6 @@
 # Sprint 4 Chunk D — `subloop` + `override` executor branches
 
-Full Sprint-4 plan at `briefs/sprint-4-elegance.md`. Chunk D follows
+Full Sprint-4 plan at `.megaplan/briefs/sprint-4-elegance.md`. Chunk D follows
 Chunks A (typed edges), B (handler ports), C (auto-pipeline runtime).
 
 ## Problem

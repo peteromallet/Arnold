@@ -1,6 +1,6 @@
 # Sprint 4 Chunk B — Real handler ports
 
-The full Sprint-4 plan is at `briefs/sprint-4-elegance.md`. Chunk B
+The full Sprint-4 plan is at `.megaplan/briefs/sprint-4-elegance.md`. Chunk B
 follows Chunk A (typed edges).
 
 ## Problem

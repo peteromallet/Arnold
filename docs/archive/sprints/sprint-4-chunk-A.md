@@ -1,6 +1,6 @@
 # Sprint 4 Chunk A — Typed verdicts + typed edges
 
-The full Sprint-4 plan is at `briefs/sprint-4-elegance.md`. This file is
+The full Sprint-4 plan is at `.megaplan/briefs/sprint-4-elegance.md`. This file is
 the Chunk-A subset.
 
 ## Problem

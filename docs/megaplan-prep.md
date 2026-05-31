@@ -51,6 +51,8 @@ When you split, structure the dependency graph explicitly. Each handoff is a wri
 
 **The brief must be locked in before init** — fully self-contained so the model can run end-to-end without coming back for clarification. The harness snapshots the brief at `init`; later edits to the idea-file are not re-read. If you find yourself wanting to "ask the model" what to do, write that decision down first.
 
+**Store durable briefs in `.megaplan/briefs/`.** Single-plan ideas live at `.megaplan/briefs/<slug>.md`. Epics live at `.megaplan/briefs/<epic-slug>/chain.yaml` with their milestone briefs in the same directory. `.megaplan/plans/` is generated run state; `.megaplan/briefs/` is the committed input material you hand to `megaplan init` or `megaplan chain start`. Use `megaplan brief new` or `megaplan brief epic` to create the canonical files.
+
 A good brief covers:
 
 1. **Outcome** — what's being delivered, in one or two sentences. The thing a reviewer would check.

@@ -4,7 +4,7 @@ This module defines the small, frozen dataclass + Protocol surface that the
 Sprint-1 standalone pipeline executor and demo build on. Sprint 2 will port
 existing handlers onto these primitives; the shapes declared here are
 **frozen at end of Sprint 1** and must not be changed without a revision
-note in ``briefs/megaplan-decomposition.md``.
+note in ``.megaplan/briefs/megaplan-decomposition.md``.
 
 Contract notes (load-bearing for executor authors and Step authors):
 
@@ -27,7 +27,7 @@ Contract notes (load-bearing for executor authors and Step authors):
     — a defensive copy that prevents cross-call aliasing if a Step returns
     a shared default dict.
 
-(d) Deviation note: the brief at ``briefs/megaplan-decomposition.md:124-128``
+(d) Deviation note: the brief at ``.megaplan/briefs/megaplan-decomposition.md:124-128``
     originally sketched ``stages: dict[str, Stage]`` and
     ``overlays: list[Overlay]``. This module widens to
     ``Mapping[str, Stage | ParallelStage]`` and ``tuple[Overlay, ...]`` so
@@ -35,7 +35,7 @@ Contract notes (load-bearing for executor authors and Step authors):
     dataclasses do not accept ``list`` defaults without a default_factory),
     and (2) a ``ParallelStage`` can be addressed by name like a ``Stage``
     without requiring callers to unwrap an intermediate type. The full
-    revision note lives in ``briefs/megaplan-decomposition.md`` under the
+    revision note lives in ``.megaplan/briefs/megaplan-decomposition.md`` under the
     ``## Revision notes`` heading (added in Sprint 1 T5).
 
 (e) Typed-gate dispatch (Sprint 4 Chunk A): ``PipelineVerdict.recommendation`` and

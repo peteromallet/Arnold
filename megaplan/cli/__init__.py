@@ -722,6 +722,84 @@ def handle_ticket(args: argparse.Namespace) -> int:
     return handler(args)
 
 
+def handle_brief(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Dispatch ``megaplan brief ...`` subcommands."""
+    from megaplan.briefs import init_from_brief, scaffold_epic, write_single_brief
+
+    action = args.brief_action
+    if action == "new":
+        if getattr(args, "stdin_body", False):
+            body = sys.stdin.read()
+        elif getattr(args, "from_file", None):
+            source = Path(args.from_file).expanduser()
+            try:
+                body = source.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise CliError("invalid_args", f"Unable to read brief source {source}: {exc}") from exc
+        else:
+            body = args.body
+        try:
+            path = write_single_brief(root, args.slug, body, force=bool(args.force))
+        except FileExistsError as exc:
+            existing = exc.args[0] if exc.args else exc.filename
+            raise CliError(
+                "brief_exists",
+                f"Brief already exists: {existing}. Pass --force to overwrite.",
+            ) from exc
+        except ValueError as exc:
+            raise CliError("invalid_args", str(exc)) from exc
+        if bool(args.init):
+            proc = init_from_brief(root, path, [])
+            if proc.returncode != 0:
+                raise CliError(
+                    "init_failed",
+                    f"megaplan init failed for {path}: {proc.stderr.strip() or proc.stdout.strip()}",
+                )
+            try:
+                init_payload = json.loads(proc.stdout)
+            except json.JSONDecodeError as exc:
+                raise CliError("init_failed", f"megaplan init returned invalid JSON: {exc}") from exc
+            return {
+                "success": True,
+                "step": "brief",
+                "action": "new",
+                "path": str(path),
+                "initialized": True,
+                "init": init_payload,
+            }
+        return {
+            "success": True,
+            "step": "brief",
+            "action": "new",
+            "path": str(path),
+        }
+    if action == "epic":
+        try:
+            chain_path, milestone_paths = scaffold_epic(
+                root,
+                args.slug,
+                args.milestone,
+                base_branch=args.base_branch,
+                force=bool(args.force),
+            )
+        except FileExistsError as exc:
+            existing = exc.args[0] if exc.args else exc.filename
+            raise CliError(
+                "brief_exists",
+                f"Epic artifact already exists: {existing}. Pass --force to overwrite.",
+            ) from exc
+        except ValueError as exc:
+            raise CliError("invalid_args", str(exc)) from exc
+        return {
+            "success": True,
+            "step": "brief",
+            "action": "epic",
+            "chain": str(chain_path),
+            "milestones": [str(path) for path in milestone_paths],
+        }
+    raise CliError("invalid_args", f"Unknown brief action: {action}")
+
+
 def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
     action = args.epic_action
     if action == "snapshot":
@@ -1034,6 +1112,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "loop-pause": handle_loop_pause,
     "debt": handle_debt,
     "user-action": handle_user_action,
+    "brief": handle_brief,
     "ticket": handle_ticket,
     "epic": handle_epic,
     "migrate-local-plans": handle_migrate_local_plans,

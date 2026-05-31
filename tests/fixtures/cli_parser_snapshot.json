@@ -693,6 +693,292 @@
           ],
           "subcommands": {}
         },
+        "brief": {
+          "mutually_exclusive_groups": [],
+          "options": [
+            {
+              "action": "_HelpAction",
+              "choices": null,
+              "const": null,
+              "default": "<SUPPRESS>",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--help",
+                "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "positionals": [],
+          "subcommands": {
+            "epic": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_AppendAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "milestone",
+                  "help": "Milestone label and optional title. Repeat for each milestone.",
+                  "metavar": "LABEL=TITLE",
+                  "nargs": null,
+                  "option_strings": [
+                    "--milestone"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "main",
+                  "dest": "base_branch",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--base-branch"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "force",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--force"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "slug",
+                  "help": "Epic slug",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "subcommands": {}
+            },
+            "new": {
+              "mutually_exclusive_groups": [
+                {
+                  "actions": [
+                    {
+                      "action": "_StoreAction",
+                      "choices": null,
+                      "const": null,
+                      "default": null,
+                      "dest": "body",
+                      "help": "Brief text",
+                      "metavar": "BODY",
+                      "nargs": null,
+                      "option_strings": [
+                        "--body",
+                        "-b"
+                      ],
+                      "required": false,
+                      "type": null
+                    },
+                    {
+                      "action": "_StoreAction",
+                      "choices": null,
+                      "const": null,
+                      "default": null,
+                      "dest": "from_file",
+                      "help": "Copy brief text from a UTF-8 file",
+                      "metavar": "PATH",
+                      "nargs": null,
+                      "option_strings": [
+                        "--from"
+                      ],
+                      "required": false,
+                      "type": null
+                    },
+                    {
+                      "action": "_StoreTrueAction",
+                      "choices": null,
+                      "const": true,
+                      "default": false,
+                      "dest": "stdin_body",
+                      "help": "Read brief text from stdin",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "-"
+                      ],
+                      "required": false,
+                      "type": null
+                    }
+                  ],
+                  "required": true
+                }
+              ],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "body",
+                  "help": "Brief text",
+                  "metavar": "BODY",
+                  "nargs": null,
+                  "option_strings": [
+                    "--body",
+                    "-b"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "from_file",
+                  "help": "Copy brief text from a UTF-8 file",
+                  "metavar": "PATH",
+                  "nargs": null,
+                  "option_strings": [
+                    "--from"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "stdin_body",
+                  "help": "Read brief text from stdin",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "-"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "force",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--force"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "init",
+                  "help": "After writing the brief, run `megaplan init --idea-file` against it.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--init"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "slug",
+                  "help": "Brief slug",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "subcommands": {}
+            }
+          }
+        },
         "chain": {
           "mutually_exclusive_groups": [],
           "options": [

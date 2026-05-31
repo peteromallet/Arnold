@@ -1,7 +1,7 @@
 # Sprint 2 — Port planning to the Pipeline + doc-critique demo
 
 This is Sprint 2 of the megaplan decomposition refactor. The full source
-plan is at `briefs/megaplan-decomposition.md` (v2). Sprint 1 shipped the
+plan is at `.megaplan/briefs/megaplan-decomposition.md` (v2). Sprint 1 shipped the
 primitive types + fan-out judges demo + executor (`megaplan/_pipeline/`).
 Sprint 2 ports the existing planning flow onto those primitives and
 ships the secondary demo (doc-critique 3x loop).
@@ -80,4 +80,4 @@ Blockers via fallback paths; >2 attempts → `BLOCKER-<n>.md`.
 
 If type interfaces from Sprint 1 turn out to be flawed during the port,
 extend Sprint 2 by ≤1 week and document the interface change in
-`briefs/megaplan-decomposition.md`. Beyond that, write a follow-up brief.
+`.megaplan/briefs/megaplan-decomposition.md`. Beyond that, write a follow-up brief.

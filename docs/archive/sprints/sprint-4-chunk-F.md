@@ -1,6 +1,6 @@
 # Sprint 4 Chunk F — Polish + docs + release
 
-Full Sprint-4 plan at `briefs/sprint-4-elegance.md`. Final chunk after
+Full Sprint-4 plan at `.megaplan/briefs/sprint-4-elegance.md`. Final chunk after
 A (typed edges), B (handler ports), C (auto runtime), D (subloop +
 override), E (WORKFLOW deletion).
 
@@ -20,7 +20,7 @@ override), E (WORKFLOW deletion).
 
 2. **Update `docs/pipeline-resume.md`** for the typed-edge shape.
 
-3. **Update `briefs/STATUS.md`** — Sprint 4 commit ledger, final
+3. **Update `.megaplan/briefs/STATUS.md`** — Sprint 4 commit ledger, final
    pipeline test inventory, post-Sprint-4 caveats.
 
 4. **Five new elegance-property tests**:
@@ -51,7 +51,7 @@ override), E (WORKFLOW deletion).
 - The 5 elegance-property tests pass.
 - `docs/pipeline-architecture.md` exists and reads as a cohesive
   document.
-- `briefs/STATUS.md` reflects Sprint 4 complete.
+- `.megaplan/briefs/STATUS.md` reflects Sprint 4 complete.
 - A commit tagged `v0.21.0` exists on `decomp/main`.
 
 ## Operating principles

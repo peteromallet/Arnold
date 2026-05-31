@@ -1,6 +1,6 @@
 # Sprint 4 Chunk E — Delete `WORKFLOW`
 
-Full Sprint-4 plan at `briefs/sprint-4-elegance.md`. Chunk E is the
+Full Sprint-4 plan at `.megaplan/briefs/sprint-4-elegance.md`. Chunk E is the
 inversion. Comes after A (typed edges), B (handler ports), C (auto
 runtime), D (subloop + override).
 

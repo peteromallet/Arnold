@@ -1,7 +1,7 @@
 # Sprint 1 — Primitive shape + fan-out judges demo
 
 This is Sprint 1 of the megaplan decomposition refactor. The full source
-plan is at `briefs/megaplan-decomposition.md` (v2, hardened by three
+plan is at `.megaplan/briefs/megaplan-decomposition.md` (v2, hardened by three
 parallel critiques). Read it for context, prior art, leaks, and acceptance
 tests; this file is the Sprint-1-scoped subset.
 
@@ -48,7 +48,7 @@ tests; this file is the Sprint-1-scoped subset.
 - Type interfaces (Step, Stage, Pipeline, Edge, StepContext, StepResult)
   must be frozen at end of Sprint 1. Sprint 2 builds on them without
   changing them. If Sprint 2 reveals an interface flaw, file a revision
-  note in `briefs/megaplan-decomposition.md`.
+  note in `.megaplan/briefs/megaplan-decomposition.md`.
 - All new code under `megaplan/_pipeline/`; do not touch any existing
   module except adding the new package.
 - Tests under `tests/` named `test_pipeline_*.py`. Must pass under the

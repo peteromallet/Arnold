@@ -243,7 +243,7 @@ The following paths are excluded from stale-identifier grep verification. Refere
 | Archive docs | `docs/archive/**` | Historical sprint documents preserved for context |
 | Plan metadata | `.megaplan/**` | Plan version history, receipts, internal state |
 | Plan version docs | `plan_v[0-9]*.md` | Iterative plan drafts that reference old names in their change descriptions |
-| Brief docs | `briefs/**` | Engineering briefs that describe the pre-M4 state |
+| Brief docs | `.megaplan/briefs/**` | Engineering briefs that describe the pre-M4 state |
 | CHANGELOG | `CHANGELOG.md` | Historical change log entries |
 | Vendored agent material | `megaplan/hermes/**` (if applicable) | Vendored third-party agent code |
 

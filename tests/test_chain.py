@@ -14,6 +14,7 @@ import yaml
 from megaplan.auto import DriverOutcome
 from megaplan import chain as chain_module
 from megaplan.chain import (
+    ChainSpec,
     ChainState,
     MilestoneSpec,
     build_chain_parser,
@@ -167,6 +168,51 @@ def test_load_spec_parses_milestones_and_seed(tmp_path: Path) -> None:
     assert spec.on_failure == "stop_chain"
     assert spec.on_escalate == "skip_milestone"
     assert spec.merge_policy == "auto"
+
+
+def test_state_path_for_canonical_brief_chain_uses_root_runtime_dir(tmp_path: Path) -> None:
+    spec_dir = tmp_path / ".megaplan" / "briefs" / "artifact-store"
+    spec_dir.mkdir(parents=True)
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+
+    state_path = _state_path_for(spec_path)
+
+    assert state_path.parent == tmp_path / ".megaplan" / "plans" / ".chains"
+    assert ".megaplan/briefs/artifact-store/.megaplan" not in state_path.as_posix()
+
+
+def test_chain_review_path_for_canonical_brief_chain_uses_root_runtime_dir(tmp_path: Path) -> None:
+    spec_dir = tmp_path / ".megaplan" / "briefs" / "artifact-store"
+    spec_dir.mkdir(parents=True)
+    spec_path = spec_dir / "chain.yaml"
+
+    review_path = chain_module._chain_review_path(spec_path)
+
+    assert review_path.parent == tmp_path / ".megaplan" / "plans" / ".chains"
+
+
+def test_validate_paths_resolves_relative_ideas_from_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    idea = tmp_path / ".megaplan" / "briefs" / "artifact-store" / "m1.md"
+    idea.parent.mkdir(parents=True)
+    idea.write_text("milestone one", encoding="utf-8")
+    spec = ChainSpec.from_dict(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "idea": ".megaplan/briefs/artifact-store/m1.md",
+                }
+            ]
+        }
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    chain_module.validate_paths(spec, tmp_path)
 
 
 def test_load_spec_defaults_base_branch_to_main(tmp_path: Path) -> None:
