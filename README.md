@@ -4,7 +4,7 @@ Arnold is a tool for building intelligence systems out of many coordinated model
 
 ---
 
-## Megaplan - a pipeline for advanced planning and execution
+## Megaplan - a pipeline for cost-efficient advanced planning and execution
 
 It breaks building software into structured, independently-checked phases — making intelligent-but-unreliable LLMs systematically robust, and letting each phase run on the cheapest model that can do it well.
 
