@@ -1,6 +1,6 @@
 # How You Can Move >90% of Your Coding to DeepSeek - While Improving Robustness and Execution Quality, at ~2.5% of the Cost (Megaplan via Arnold)
 
-Right now, most of your coding runs on models subsidised by Big AI. One bubble pop, pricing change, or automated ban could make your workflow suddenly unaffordable or unavailable. The goal is obvious: move as much work as possible onto stable, reliable, open-source models. But how?
+Right now, most of your coding is probably subsidised by Big AI. One bubble pop, pricing change, or automated ban could make your workflow suddenly unaffordable or unavailable. The goal should be obvious: move as much work as possible onto stable, reliable, open-source models. But how?
 
 Over the past few months I've been building a harness that does exactly that: it moves >90% of my token usage onto DeepSeek while *improving* robustness and execution quality. Below are the lessons, the tool itself, and a real project run end-to-end with it.
 
