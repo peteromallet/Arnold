@@ -88,6 +88,7 @@ def scatter_worker_unit(
         resolved=unit.resolved,
         prompt_override=unit.prompt,
         read_only=unit.read_only,
+        output_path=unit.output_path,
     )
     return (
         index,
