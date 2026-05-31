@@ -145,14 +145,6 @@ The default `partnered` profile pairs a premium model (Claude or Codex) with che
 Before initializing a plan, read docs/megaplan-prep.md and use it to choose the profile, robustness level, and thinking tier for my task. Once set up, ask me what I need megaplan for.
 ```
 
-Then read `docs/megaplan-prep.md`, use it to choose the profile, robustness level, and thinking tier for your task, and point megaplan at an idea:
-
-```
-python -m megaplan init --project-dir . "<your task>"
-```
-
-You could, of course, just point your existing tools at a DeepSeek API key. The harness is the difference between that and *this*: it never hands the cheap model a decision it can't make safely, and it enforces the research, the critique, and the tests that a raw model skips when it feels like it.
-
 If you try it, I'd be glad to hear anything you run into - feedback, rough edges, bug reports, all of it:
 
 **https://github.com/peteromallet/arnold**
