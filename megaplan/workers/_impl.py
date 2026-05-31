@@ -1605,7 +1605,16 @@ def _recover_codex_payload(
         file_payload = template_payload
         template_payload = None
     output_is_template_file = output_path == fallback_path
-    if prefer_output_file and file_payload is not None and (step != "critique" or output_is_template_file):
+    output_is_single_critique_check = (
+        step == "critique"
+        and output_path.name.startswith("critique_check_")
+        and output_path.suffix == ".json"
+    )
+    if (
+        prefer_output_file
+        and file_payload is not None
+        and (step != "critique" or output_is_template_file or output_is_single_critique_check)
+    ):
         normalized_file_payload = _normalize_worker_payload(step, file_payload)
         try:
             validate_payload(step, normalized_file_payload)
@@ -1920,6 +1929,7 @@ def run_codex_step(
     effort: str | None = None,
     model: str | None = None,
     read_only: bool = False,
+    output_path: Path | None = None,
 ) -> WorkerResult:
     if read_only and step not in {"prep-triage", "prep-distill", "critique", "review"}:
         raise CliError(
@@ -1964,9 +1974,13 @@ def run_codex_step(
             state["sessions"].pop(session_key, None)
             session = {}
             fresh = True
-    out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
-    out_handle.close()
-    output_path = Path(out_handle.name)
+    if output_path is None:
+        out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+        out_handle.close()
+        output_path = Path(out_handle.name)
+    else:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
     prompt = prompt_override if prompt_override is not None else create_codex_prompt(
         step,
         state,
@@ -2655,6 +2669,7 @@ def run_step_with_worker(
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
     read_only: bool = False,
+    output_path: Path | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
@@ -2768,6 +2783,7 @@ def run_step_with_worker(
                             effort=effort,
                             model=resolved_model,
                             read_only=read_only,
+                            output_path=output_path,
                         )
                         break
                     except CliError as error:

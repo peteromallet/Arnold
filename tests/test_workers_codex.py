@@ -1870,6 +1870,79 @@ def test_run_codex_step_read_only_supports_critique(tmp_path: Path) -> None:
     assert "-C" not in command
     assert "--full-auto" not in command
 
+
+def test_run_codex_step_prefers_single_check_critique_output(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    single_check_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did it address the issue?",
+                "findings": [
+                    {
+                        "detail": "Checked the focused issue-hints lens and found no remaining problem.",
+                        "flagged": False,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    aggregate_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did it address the issue?",
+                "findings": [
+                    {
+                        "detail": "Checked the focused issue-hints lens and found no remaining problem.",
+                        "flagged": False,
+                    }
+                ],
+            },
+            {
+                "id": "correctness",
+                "question": "Is it correct?",
+                "findings": [
+                    {
+                        "detail": "Checked correctness and found a separate concern.",
+                        "flagged": True,
+                    }
+                ],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    (plan_dir / "critique_output.json").write_text(json.dumps(aggregate_payload), encoding="utf-8")
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_idx = command.index("-o") + 1
+        output_path = Path(command[output_idx])
+        assert output_path.name == "critique_check_issue_hints.json"
+        output_path.write_text(json.dumps(single_check_payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "critique",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=False,
+            prompt_override="single check prompt",
+            output_path=plan_dir / "critique_check_issue_hints.json",
+            read_only=True,
+        )
+
+    assert [check["id"] for check in result.payload["checks"]] == ["issue_hints"]
+
 def test_run_step_with_worker_threads_read_only_to_codex(tmp_path: Path) -> None:
     from megaplan.types import AgentMode
     from megaplan.workers import run_step_with_worker
