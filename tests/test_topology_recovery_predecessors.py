@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._core import topology
 from megaplan._core.topology import (
     RunTopologyConfig,
     _RECOVERY_POLICIES,
@@ -47,6 +46,42 @@ def test_predecessors_reproduces_legacy_tables(
 @pytest.mark.parametrize("policy", sorted(_RECOVERY_POLICIES))
 def test_unknown_stage_returns_none(policy: str) -> None:
     assert predecessors("does-not-exist", policy=policy) is None
+
+
+@pytest.mark.parametrize("policy", sorted(_RECOVERY_POLICIES))
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "prep",
+        "plan",
+        "critique",
+        "gate",
+        "revise",
+        "finalize",
+        "execute",
+        "review",
+        "feedback",
+    ],
+)
+def test_recovery_predecessor_projection_tolerates_all_runtime_variants(
+    policy: str, stage: str
+) -> None:
+    for robustness in ("bare", "light", "full", "thorough", "extreme"):
+        for with_prep in (False, True):
+            for with_feedback in (False, True):
+                _ = build_topology(
+                    RunTopologyConfig(
+                        robustness=robustness,
+                        with_prep=with_prep,
+                        with_feedback=with_feedback,
+                    )
+                )
+                assert predecessors(stage, policy=policy) == _LEGACY_RECOVERY_AND_RESUME[stage]
+
+
+@pytest.mark.parametrize("policy", sorted(_RECOVERY_POLICIES))
+def test_unknown_phase_projection_is_non_fatal(policy: str) -> None:
+    assert predecessors("unknown-phase-from-resume-cursor", policy=policy) is None
 
 
 def test_unknown_policy_raises() -> None:

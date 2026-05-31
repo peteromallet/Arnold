@@ -38,6 +38,27 @@ from megaplan.flags import (
     update_flags_after_critique,
     update_flags_after_revise,
 )
+from megaplan.control_interface import (
+    ArtifactRequest,
+    ControlBinding,
+    ControlInterfaceTarget,
+    ControlProjection,
+    ControlTargetRef,
+    ControlTransition,
+    ControlTransitionConflict,
+    ControlTransitionRequest,
+    ControlTransitionResult,
+    RunStateView,
+    apply_transition,
+    read_valid_targets,
+    synthesize_artifacts,
+)
+from megaplan.run_outcome import (
+    RunOutcome,
+    RunResultMetadata,
+    run_metadata_from_batch_outcome,
+    run_outcome_from_batch_outcome,
+)
 from megaplan.handlers import handle_override
 from megaplan.cli import handle_setup, handle_setup_global, handle_config
 from megaplan._core import infer_next_steps, resume_plan, workflow_includes_step, workflow_next
@@ -48,6 +69,9 @@ __version__ = "0.23.0"
 __all__ = [
     # Types
     "PlanState", "PlanConfig", "PlanMeta", "FlagRecord", "StepResponse",
+    "ArtifactRequest", "ControlBinding", "ControlInterfaceTarget", "ControlProjection", "ControlTargetRef",
+    "ControlTransition", "ControlTransitionConflict", "ControlTransitionRequest", "ControlTransitionResult",
+    "RunOutcome", "RunResultMetadata", "RunStateView",
     # State constants
     "STATE_INITIALIZED", "STATE_PLANNED", "STATE_CRITIQUED",
     "STATE_GATED", "STATE_FINALIZED", "STATE_EXECUTED", "STATE_REVIEWED", "STATE_DONE", "STATE_ABORTED",
@@ -66,6 +90,8 @@ __all__ = [
     "compute_plan_delta_percent", "compute_recurring_critiques", "flag_weight",
     "infer_next_steps", "resume_plan", "workflow_includes_step", "workflow_next", "normalize_flag_record",
     "update_flags_after_critique", "update_flags_after_revise",
+    "apply_transition", "read_valid_targets", "synthesize_artifacts",
+    "run_metadata_from_batch_outcome", "run_outcome_from_batch_outcome",
     "unresolved_significant_flags",
     "config_dir", "load_config", "save_config", "plans_root",
     "main", "cli_entry",
