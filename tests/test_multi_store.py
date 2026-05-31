@@ -21,7 +21,7 @@ from megaplan.store import (
 from megaplan.store.file import FileStore
 from megaplan.tickets.identity import repo_codebase_identity
 from megaplan.schemas import MigrationRun
-from tests.contract.store_contract import run_store_contract, run_store_error_class_parity_contract
+from tests.contract._store_contract import run_store_contract, run_store_error_class_parity_contract
 
 
 def _init_git_repo(repo_root: Path) -> None:
