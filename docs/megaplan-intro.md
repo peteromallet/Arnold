@@ -138,7 +138,7 @@ cd arnold
 python -m pip install -e .
 python -m megaplan setup
 
-The default `partnered` profile pairs a premium model (Claude or Codex) with cheap DeepSeek. Ask me for whichever I have - an Anthropic/Claude or OpenAI/Codex login - plus a DeepSeek API key (or Fireworks key), and wire them up.
+The default `partnered` profile pairs a premium model (Claude or Codex) with cheap DeepSeek. Ask me for whichever I have — an Anthropic/Claude or OpenAI/Codex login — plus a DeepSeek API key (or Fireworks key), and wire them up.
 
 Before initializing a plan, read docs/megaplan-prep.md and use it to choose the profile, robustness level, and thinking tier for my task. Once set up, ask me what I need megaplan for.
 ```
