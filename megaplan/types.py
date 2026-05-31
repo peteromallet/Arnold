@@ -113,6 +113,10 @@ class PlanConfig(TypedDict, total=False):
     # run the suite. warn/enforce are not yet implemented (behave like shadow +
     # a logged WARNING). See megaplan/orchestration/completion_contract.py.
     completion_contract_mode: NotRequired[str]
+    # Shell command the harness uses to run the test suite (e.g. "pytest").
+    test_command: NotRequired[str]
+    # Timeout in seconds for the baseline-capture / verification test run.
+    test_baseline_timeout: NotRequired[int]
 
 
 class PlanMeta(TypedDict, total=False):
@@ -808,6 +812,10 @@ DEFAULTS = {
     # fail-closed behaviour is a documented TODO). See
     # megaplan/orchestration/completion_contract.py.
     "execution.completion_contract_mode": "shadow",
+    # Test command the harness invokes for baseline capture / verification.
+    "execution.test_command": None,
+    # Timeout in seconds for the baseline-capture / verification test run.
+    "execution.test_baseline_timeout": 900,
     # Opt-in per-worker filesystem-state isolation. A list of env var names;
     # for EACH worker spawn megaplan mints a fresh unique temp dir per listed
     # var (under the OS temp dir) and exports VAR=<that tmpdir> into the
@@ -854,6 +862,11 @@ _SETTABLE_NUMERIC = {
     "execution.max_robust_critique_iterations",
     "execution.max_critique_no_progress",
     "orchestration.max_critique_concurrency",
+    "execution.test_baseline_timeout",
+}
+
+_SETTABLE_STRING = {
+    "execution.test_command",
 }
 
 

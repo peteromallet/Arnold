@@ -4,6 +4,7 @@ import json
 import subprocess
 from argparse import Namespace
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -1078,53 +1079,102 @@ def test_one_batch_handler_splits_wide_independent_wave_at_ceiling(
 
 def test_capture_test_baseline_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
-    monkeypatch.setattr(megaplan.handlers.shutil, "which", lambda name: "/usr/bin/pytest")
-    monkeypatch.setattr(
-        megaplan.handlers.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args=args[0],
-            returncode=1,
-            stdout=(
-                "tests/test_a.py::test_one FAILED\n"
-                "tests/test_b.py::test_two FAILED\n"
-                "2 failed, 5 passed\n"
-            ),
-            stderr="",
-        ),
+
+    from megaplan.orchestration.suite_runner import SuiteRunResult as SRR
+
+    fake_result = SRR(
+        run_id="test1",
+        phase="baseline",
+        command="pytest --tb=no -q --no-header -rA",
+        duration=1.0,
+        collected=7,
+        collected_ids=[
+            "tests/test_a.py::test_one",
+            "tests/test_b.py::test_two",
+        ],
+        failures=[
+            "tests/test_a.py::test_one",
+            "tests/test_b.py::test_two",
+        ],
+        passes=[],
+        status="failed",
+        exit_code=1,
+        raw_log_path=tmp_path / "raw_test1.log",
+        code_hash="sha256:abc",
+        collections_parse_ok=True,
     )
 
-    result = megaplan.handlers._capture_test_baseline(tmp_path, {})
+    with mock.patch(
+        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+    ):
+        result = megaplan.handlers._capture_test_baseline(tmp_path, {})
 
     assert result["baseline_test_failures"] == [
         "tests/test_a.py::test_one",
         "tests/test_b.py::test_two",
     ]
-    assert result["baseline_test_command"] == "pytest --tb=no -q --no-header"
+    assert result["baseline_test_command"] == "pytest --tb=no -q --no-header -rA"
     assert "baseline_test_note" not in result
 
 
 def test_capture_test_baseline_no_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
-    monkeypatch.setattr(megaplan.handlers.shutil, "which", lambda name: None)
 
-    result = megaplan.handlers._capture_test_baseline(tmp_path, {})
+    from megaplan.orchestration.suite_runner import SuiteRunResult as SRR
+
+    # run_suite defaults to pytest when no test_command is configured and
+    # pytest is on PATH.  If pytest is not found, spawn fails → runner_error.
+    fake_result = SRR(
+        run_id="test2",
+        phase="baseline",
+        command="pytest --tb=no -q --no-header -rA",
+        duration=0.1,
+        collected=0,
+        collected_ids=[],
+        failures=[],
+        passes=[],
+        status="runner_error",
+        exit_code=None,
+        raw_log_path=tmp_path / "raw_test2.log",
+        code_hash="sha256:abc",
+        collections_parse_ok=False,
+    )
+
+    with mock.patch(
+        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+    ):
+        result = megaplan.handlers._capture_test_baseline(tmp_path, {})
 
     assert result["baseline_test_failures"] is None
     assert result["baseline_test_command"] is None
-    assert "No supported test runner" in result["baseline_test_note"]
+    assert "runner error" in result["baseline_test_note"].lower()
 
 
 def test_capture_test_baseline_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
-    monkeypatch.setattr(megaplan.handlers.shutil, "which", lambda name: "/usr/bin/pytest")
 
-    def _raise_timeout(*args: object, **kwargs: object) -> object:
-        raise subprocess.TimeoutExpired(cmd="pytest --tb=no -q --no-header", timeout=120)
+    from megaplan.orchestration.suite_runner import SuiteRunResult as SRR
 
-    monkeypatch.setattr(megaplan.handlers.subprocess, "run", _raise_timeout)
+    fake_result = SRR(
+        run_id="test3",
+        phase="baseline",
+        command="pytest --tb=no -q --no-header -rA",
+        duration=900.0,
+        collected=0,
+        collected_ids=[],
+        failures=[],
+        passes=[],
+        status="timeout",
+        exit_code=None,
+        raw_log_path=tmp_path / "raw_test3.log",
+        code_hash="sha256:abc",
+        collections_parse_ok=False,
+    )
 
-    result = megaplan.handlers._capture_test_baseline(tmp_path, {})
+    with mock.patch(
+        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+    ):
+        result = megaplan.handlers._capture_test_baseline(tmp_path, {})
 
     assert result["baseline_test_failures"] is None
     assert "timed out" in result["baseline_test_note"].lower()

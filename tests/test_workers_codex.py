@@ -15,6 +15,19 @@ from megaplan.workers import CommandResult, _build_mock_payload, run_codex_prep_
 from tests._workers_helpers import _mock_state, _write_codex_rollout
 
 
+def test_terminal_tool_result_truncation_exact_cap() -> None:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "megaplan" / "agent"))
+    from tools.terminal_tool import _truncate_tool_result
+
+    assert _truncate_tool_result("a" * 49999) == "a" * 49999
+    truncated = _truncate_tool_result("a" * 50001)
+    assert len(truncated) == 50000
+    assert "[truncated " in truncated
+    assert " of 50001 chars]" in truncated
+
+
 def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers import CommandResult, run_codex_step
@@ -51,6 +64,45 @@ def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
     assert "model_reasoning_effort=low" in invoked_cmd
     idx = invoked_cmd.index("model_reasoning_effort=low")
     assert invoked_cmd[idx - 1] == "-c"
+
+def test_run_codex_step_sets_tool_output_truncation_limit(tmp_path: Path) -> None:
+    """T4: codex tool-result output truncation at 50000 (token limit, defense-in-depth)."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    captured: dict[str, list[str]] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_idx = command.index("-o") + 1
+        output_path = Path(command[output_idx])
+        output_path.write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=10,
+        )
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        run_codex_step(
+            "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
+        )
+    invoked_cmd = captured["command"]
+    assert "tool_output_token_limit=50000" in invoked_cmd
+    idx = invoked_cmd.index("tool_output_token_limit=50000")
+    assert invoked_cmd[idx - 1] == "-c"
+
 
 def test_run_codex_step_rejects_invalid_effort(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout

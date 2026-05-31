@@ -1978,6 +1978,11 @@ def run_codex_step(
         if effort is not None:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
         command.extend(_codex_exec_mode_flags(step))
+        # Cap tool-result output per message at 50k chars (defense-in-depth;
+        # codex interprets this as tokens — 50k tokens ≈ 200k chars, generous
+        # but bounded).  The hardcoded 10 KiB default is too small for test
+        # output; 50k tokens is per-message only, no cross-message elision.
+        command.extend(["-c", "tool_output_token_limit=50000"])
         if json_trace:
             command.append("--json")
         command.extend([
@@ -2051,6 +2056,11 @@ def run_codex_step(
         if not persistent:
             command.append("--ephemeral")
         command.extend(_codex_exec_mode_flags(step))
+        # Cap tool-result output per message at 50k chars (defense-in-depth;
+        # codex interprets this as tokens — 50k tokens ≈ 200k chars, generous
+        # but bounded).  The hardcoded 10 KiB default is too small for test
+        # output; 50k tokens is per-message only, no cross-message elision.
+        command.extend(["-c", "tool_output_token_limit=50000"])
         if json_trace:
             command.append("--json")
         command.extend(["--output-schema", str(schema_file), "-"])
