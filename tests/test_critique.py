@@ -2028,9 +2028,9 @@ def test_operator_pin_overrides_all_per_lens_complexity_routing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When ``execution.critic_model`` is pinned, the operator pin overrides
-    every selected lens: no ``_resolved_agent_mode`` is attached to checks,
-    and the critic dispatches to the pinned model instead of using complexity-
-    based tier routing — even when ``tier_models.critique`` is available."""
+    every selected lens: each check is dispatched with the pinned resolved
+    mode instead of complexity-based tier routing, even when
+    ``tier_models.critique`` is available."""
     import json
 
     import megaplan.handlers as handlers_mod
@@ -2129,12 +2129,14 @@ def test_operator_pin_overrides_all_per_lens_complexity_routing(
 
     megaplan.handle_critique(plan_fixture.root, args)
 
-    # (a) No _resolved_agent_mode on any check — the pin suppresses tier routing.
+    # (a) Every check carries the pinned resolved AgentMode. Parallel fan-out
+    # requires this metadata even when complexity-based routing is suppressed.
     for c in captured_checks:
-        assert "_resolved_agent_mode" not in c, (
-            f"operator pin must suppress per-check _resolved_agent_mode; "
-            f"check '{c['id']}' has it"
+        assert "_resolved_agent_mode" in c, (
+            f"operator pin must attach pinned _resolved_agent_mode; "
+            f"check '{c['id']}' is missing it"
         )
+        assert c["_resolved_agent_mode"].model == "deepseek:deepseek-v4-pro"
 
     # (b) The checks still flow through (correctness + scope = 2 lenses).
     assert len(captured_checks) == 2, (
@@ -2465,9 +2467,9 @@ def test_operator_pin_forces_same_resolved_model_across_all_lenses_with_non_herm
 ) -> None:
     """After the Hermes-only gate removal, an operator pin must still force
     the same resolved model across ALL selected lenses regardless of the
-    critique agent type (non-Hermes included).  No per-check
-    ``_resolved_agent_mode`` is attached, and the pinned model is dispatched
-    through the parallel (or sequential) branch.
+    critique agent type (non-Hermes included).  The pinned
+    ``_resolved_agent_mode`` is attached to each check, and the pinned model is
+    dispatched through the parallel (or sequential) branch.
 
     This is the integration complement to the T16 pin test: it proves the
     pin works end-to-end when the critique agent is Claude/Codex rather than
@@ -2583,13 +2585,14 @@ def test_operator_pin_forces_same_resolved_model_across_all_lenses_with_non_herm
         f"pin must not drop checks; expected 3, got {len(captured_checks)}"
     )
 
-    # (b) No _resolved_agent_mode on any check — the pin suppresses tier routing
-    # even when the critique agent is non-Hermes.
+    # (b) Every check carries the pinned resolved AgentMode. The pin suppresses
+    # tier routing, but parallel fan-out still needs resolved dispatch metadata.
     for c in captured_checks:
-        assert "_resolved_agent_mode" not in c, (
-            f"operator pin must suppress per-check _resolved_agent_mode with "
-            f"non-Hermes agent; check '{c['id']}' has it"
+        assert "_resolved_agent_mode" in c, (
+            f"operator pin must attach pinned _resolved_agent_mode with "
+            f"non-Hermes agent; check '{c['id']}' is missing it"
         )
+        assert c["_resolved_agent_mode"].model == "deepseek:deepseek-v4-pro"
 
     # (c) The pinned model is dispatched: model passed to parallel critique
     # is the resolved pin (deepseek:deepseek-v4-pro), not any tier-spec model

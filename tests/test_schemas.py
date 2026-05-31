@@ -7,6 +7,7 @@ from pathlib import Path
 
 from jsonschema import Draft7Validator
 
+from megaplan._core.io import _enforce_openai_strict_mode
 from megaplan.schemas import SCHEMAS, strict_schema
 
 
@@ -910,6 +911,24 @@ def test_strict_critique_evaluator_schema_preserves_optional_flag_verifications_
         "why",
         "complexity",
         "complexity_justification",
+    }
+
+
+def test_openai_runtime_critique_evaluator_schema_uses_supported_branching_keywords() -> None:
+    schema = _enforce_openai_strict_mode(strict_schema(SCHEMAS["critique_evaluator.json"]))
+    selection_items = schema["properties"]["selections"]["items"]
+
+    assert "oneOf" not in selection_items
+    assert "anyOf" in selection_items
+
+    other_branch = selection_items["anyOf"][2]
+    assert "const" not in other_branch["properties"]["check_id"]
+    assert other_branch["properties"]["check_id"]["enum"] == ["other"]
+    assert set(schema["required"]) == {
+        "selections",
+        "skipped",
+        "evaluator_model",
+        "flag_verifications",
     }
 
 
