@@ -308,11 +308,12 @@ def test_run_parallel_critique_retries_malformed_worker_shape(
     assert "worker '" + bad_id + "' returned 0 checks, retrying (attempt 2/3)" in capsys.readouterr().err
 
 
-def test_run_parallel_critique_retry_budget_exhaustion_reraises_for_fallback(
+def test_run_parallel_critique_retry_budget_exhaustion_marks_check_unverifiable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A persistently malformed worker raises after a bounded retry budget."""
+    """A persistently malformed worker is contained to that check."""
     plan_dir, _project_dir, state = _scaffold(tmp_path)
     enriched = _enrich_checks(checks_for_robustness("standard")[:2])
     bad_id = enriched[0]["id"]
@@ -327,19 +328,13 @@ def test_run_parallel_critique_retry_budget_exhaustion_reraises_for_fallback(
             attempts[check_id] = attempts.get(check_id, 0) + 1
             chk = next(chk for chk in enriched if chk["id"] == check_id)
             if check_id == bad_id:
-                items.append(
-                    {
-                        "checks": [
-                            _check_payload(chk, "first duplicate malformed payload", flagged=False),
-                            _check_payload(chk, "second duplicate malformed payload", flagged=False),
-                        ],
-                        "flags": [],
-                        "verified_flag_ids": [],
-                        "disputed_flag_ids": [],
-                    }
-                )
+                items.append({"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []})
             else:
-                items.append(_raw_critique_payload(_check_payload(chk, f"valid payload for {check_id}", flagged=False)))
+                items.append(
+                    _raw_critique_payload(
+                        _check_payload(chk, f"valid payload for {check_id}", flagged=False)
+                    )
+                )
         return GenericScatterResult(
             ordered_results=items,
             total_cost=0.0,
@@ -354,12 +349,102 @@ def test_run_parallel_critique_retry_budget_exhaustion_reraises_for_fallback(
         _fake_scatter,
     )
 
-    with pytest.raises(CliError, match="retry budget exhausted"):
-        run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
 
+    assert [check["id"] for check in result.payload["checks"]] == [chk["id"] for chk in enriched]
+    assert result.payload["checks"][0]["status"] == "unverifiable"
+    assert "parallel critique worker output did not contain a usable check object" in (
+        result.payload["checks"][0]["findings"][0]["detail"]
+    )
     assert attempts[bad_id] == 3
     assert attempts[enriched[1]["id"]] == 1
     assert calls == [[chk["id"] for chk in enriched], [bad_id], [bad_id]]
+    assert (
+        f"worker '{bad_id}' returned 0 checks after retry budget; marking check unverifiable"
+        in capsys.readouterr().err
+    )
+
+
+def test_run_parallel_critique_contains_zero_and_multi_check_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    enriched = _enrich_checks(checks_for_robustness("standard")[:3])
+    good_id = enriched[0]["id"]
+    zero_id = enriched[1]["id"]
+    multi_id = enriched[2]["id"]
+    attempts: dict[str, int] = {}
+    calls: list[list[str]] = []
+
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        calls.append([unit.extra["check_id"] for unit in units])
+        items: list[dict[str, object]] = []
+        for unit in units:
+            check_id = unit.extra["check_id"]
+            attempts[check_id] = attempts.get(check_id, 0) + 1
+            chk = next(chk for chk in enriched if chk["id"] == check_id)
+            if check_id == zero_id:
+                items.append({"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []})
+            elif check_id == multi_id:
+                items.append(
+                    {
+                        "checks": [
+                            _check_payload(
+                                {"id": "other", "question": "Other"},
+                                "first unrelated check payload",
+                                flagged=False,
+                            ),
+                            _check_payload(
+                                {"id": "another", "question": "Another"},
+                                "second unrelated check payload",
+                                flagged=False,
+                            ),
+                        ],
+                        "flags": [],
+                        "verified_flag_ids": [f"FLAG-{multi_id}"],
+                        "disputed_flag_ids": [],
+                    }
+                )
+            else:
+                items.append(
+                    _raw_critique_payload(
+                        _check_payload(chk, f"valid payload for {check_id}", flagged=False),
+                        verified=[f"FLAG-{good_id}"],
+                    )
+                )
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+    checks = result.payload["checks"]
+
+    assert [check["id"] for check in checks] == [good_id, zero_id, multi_id]
+    assert checks[0]["findings"][0]["detail"] == f"valid payload for {good_id}"
+    assert checks[1]["status"] == "unverifiable"
+    assert checks[1]["findings"][0]["flagged"] is False
+    assert checks[2]["findings"][0]["detail"] == "first unrelated check payload"
+    assert result.payload["verified_flag_ids"] == [f"FLAG-{good_id}", f"FLAG-{multi_id}"]
+    assert attempts[good_id] == 1
+    assert attempts[zero_id] == 3
+    assert attempts[multi_id] == 1
+    assert calls == [[good_id, zero_id, multi_id], [zero_id], [zero_id]]
+    stderr = capsys.readouterr().err
+    assert f"worker '{multi_id}' returned 2 checks; using first check" in stderr
+    assert f"worker '{multi_id}' returned check id 'other'; normalizing to requested check" in stderr
+    assert f"worker '{zero_id}' returned 0 checks after retry budget; marking check unverifiable" in stderr
 
 
 def test_run_parallel_critique_well_formed_output_does_not_retry(
@@ -707,6 +792,62 @@ def test_run_parallel_critique_empty_checks_returns_clean_result(tmp_path: Path)
     assert result.payload["checks"] == []
     assert result.payload["verified_flag_ids"] == []
     assert result.payload["disputed_flag_ids"] == []
+
+
+def test_run_parallel_critique_accepts_unverifiable_result_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A worker can soft-fail a single check as unverifiable without aborting the batch."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    enriched = _enrich_checks(checks_for_robustness("standard")[:2])
+    calls = 0
+
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        nonlocal calls
+        calls += 1
+        items: list[dict[str, object]] = []
+        for unit in units:
+            check_id = unit.extra["check_id"]
+            chk = next(chk for chk in enriched if chk["id"] == check_id)
+            if check_id == enriched[0]["id"]:
+                items.append(
+                    {
+                        "result": "unverifiable",
+                        "reason": "../sisypy is outside the project root, so the referenced adapter cannot be inspected.",
+                    }
+                )
+            else:
+                items.append(
+                    _raw_critique_payload(
+                        _check_payload(
+                            chk,
+                            f"Checked {check_id} against the local repository and found no concrete issue.",
+                            flagged=False,
+                        )
+                    )
+                )
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert calls == 1
+    check = result.payload["checks"][0]
+    assert check["status"] == "unverifiable"
+    assert check["findings"][0]["flagged"] is False
+    assert check["findings"][0]["detail"].startswith("unverifiable: ../sisypy")
     assert result.cost_usd == 0.0
     assert result.session_id is None
 

@@ -24,6 +24,11 @@ from megaplan.types import PlanState
 from ._shared import _planning_debt_block
 
 
+_CRITIQUE_UNVERIFIABLE_ESCAPE_HATCH = """
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+""".strip()
+
+
 def _settled_decisions_block(decisions: list[dict[str, Any]]) -> str:
     if not decisions:
         return ""
@@ -537,6 +542,8 @@ def _critique_prompt(
             Read this file first — it contains {len(active_checks)} checks, each with a question and guidance.
             For each check, investigate the codebase, then add your findings to the `findings` array for that check.
 
+            {_CRITIQUE_UNVERIFIABLE_ESCAPE_HATCH}
+
             Each finding needs:
             - "detail": what you specifically checked and what you found (at least a full sentence)
             - "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
@@ -598,6 +605,8 @@ def single_check_critique_prompt(
         Your output template is at: {template_path}
         Read this file first — it contains 1 check with a question and guidance.
         Investigate only this check, then add your findings to the `findings` array for that check.
+
+        {_CRITIQUE_UNVERIFIABLE_ESCAPE_HATCH}
 
         Check ID: {check["id"]}
         Question: {check["question"]}

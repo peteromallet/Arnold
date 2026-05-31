@@ -90,6 +90,216 @@ def test_handle_critique_accepts_validated_checks(plan_fixture: PlanFixture, mon
     assert (plan_fixture.plan_dir / "critique_v1.json").exists()
 
 
+def test_handle_critique_records_unverifiable_without_blocking(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from megaplan._core import read_json
+    from megaplan.orchestration.evaluation import build_gate_signals
+
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, **kwargs):
+        payload_checks = []
+        for index, check in enumerate(checks):
+            if index < 2:
+                payload_checks.append(
+                    {
+                        "id": check["id"],
+                        "question": check["question"],
+                        "findings": [
+                            {
+                                "detail": (
+                                    "unverifiable: ../sisypy is outside the project root, "
+                                    "so the referenced adapter behavior cannot be inspected."
+                                ),
+                                "flagged": True,
+                            }
+                        ],
+                    }
+                )
+            else:
+                payload_checks.append(
+                    {
+                        "id": check["id"],
+                        "question": check["question"],
+                        "findings": [
+                            {
+                                "detail": (
+                                    f"Checked {check['id']} against the local repository and "
+                                    "found no concrete issue in the available files."
+                                ),
+                                "flagged": False,
+                            }
+                        ],
+                    }
+                )
+        return WorkerResult(
+            payload={
+                "checks": payload_checks,
+                "flags": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="parallel",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id=None,
+        )
+
+    monkeypatch.setattr(megaplan.handlers.critique, "run_parallel_critique", fake_parallel)
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    response = megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    critique = read_json(plan_fixture.plan_dir / "critique_v1.json")
+    state = load_state(plan_fixture.plan_dir)
+    signals = build_gate_signals(plan_fixture.plan_dir, state, root=plan_fixture.root)
+
+    assert response["success"] is True
+    assert response["state"] == "critiqued"
+    assert len(critique["unverifiable_checks"]) == 2
+    assert all(check.get("status") == "unverifiable" for check in critique["checks"][:2])
+    registry_flags = read_json(plan_fixture.plan_dir / "faults.json")["flags"]
+    assert not any(flag["id"] in {"issue_hints", "correctness"} for flag in registry_flags)
+    assert any("critique degraded: 2 checks unverifiable because ../sisypy" in warning for warning in response["warnings"])
+    assert any("likely a missing repo" in warning for warning in signals["warnings"])
+    assert "critique degraded: 2 checks unverifiable" in capsys.readouterr().err
+
+
+def test_handle_critique_parallel_shape_failure_completes_as_unverifiable(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import read_json
+    from megaplan._core.hermes_fanout import GenericScatterResult
+
+    bad_id = "issue_hints"
+
+    def fake_scatter(*, units, **kwargs):
+        items = []
+        for unit in units:
+            check_id = unit.extra["check_id"]
+            if check_id == bad_id:
+                items.append(
+                    {"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []}
+                )
+            else:
+                items.append(
+                    {
+                        "checks": [
+                            {
+                                "id": check_id,
+                                "question": unit.extra["question"],
+                                "findings": [
+                                    {
+                                        "detail": (
+                                            f"Checked {check_id} against the available plan and "
+                                            "found no concrete issue in this regression scenario."
+                                        ),
+                                        "flagged": False,
+                                    }
+                                ],
+                            }
+                        ],
+                        "flags": [],
+                        "verified_flag_ids": [],
+                        "disputed_flag_ids": [],
+                    }
+                )
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        fake_scatter,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    response = megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    critique = read_json(plan_fixture.plan_dir / "critique_v1.json")
+    state = load_state(plan_fixture.plan_dir)
+    bad_check = next(check for check in critique["checks"] if check["id"] == bad_id)
+
+    assert response["success"] is True
+    assert response["state"] == "critiqued"
+    assert state["current_state"] == "critiqued"
+    assert bad_check["status"] == "unverifiable"
+    assert "parallel critique worker output did not contain a usable check object" in (
+        bad_check["findings"][0]["detail"]
+    )
+
+
+def test_unverifiable_helpers_leave_normal_payload_unchanged() -> None:
+    from copy import deepcopy
+
+    from megaplan.orchestration.critique_status import (
+        annotate_unverifiable_checks,
+        build_unverifiable_warnings,
+    )
+
+    payload = {
+        "checks": [
+            {
+                "id": "correctness",
+                "question": "Are the changes correct?",
+                "findings": [
+                    {
+                        "detail": "Checked the local files and found no concrete correctness issue.",
+                        "flagged": False,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    before = deepcopy(payload)
+
+    assert annotate_unverifiable_checks(payload) == []
+    assert build_unverifiable_warnings([]) == []
+    assert payload == before
+
+
+def test_high_complexity_unverifiable_gets_operator_warning() -> None:
+    from megaplan.orchestration.critique_status import (
+        annotate_unverifiable_checks,
+        build_unverifiable_warnings,
+    )
+
+    payload = {
+        "checks": [
+            {
+                "id": "correctness",
+                "question": "Are the proposed changes technically correct?",
+                "findings": [
+                    {
+                        "detail": (
+                            "unverifiable: runtime-only behavior requires a sibling service "
+                            "that is not available in this project root."
+                        ),
+                        "flagged": False,
+                    }
+                ],
+            }
+        ],
+    }
+
+    records = annotate_unverifiable_checks(
+        payload,
+        check_specs=[{"id": "correctness", "complexity": 4}],
+    )
+    warnings = build_unverifiable_warnings(records)
+
+    assert records[0]["attention"] == "high_complexity_unverifiable"
+    assert any("high-complexity check(s) unverifiable" in warning for warning in warnings)
+
+
 def test_parallel_critique_sets_and_clears_active_step(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -264,9 +474,9 @@ def test_critique_dispatch_carries_effort_into_agentmode(
     """Regression (specfix): the non-adaptive critique dispatch must forward the
     resolved effort to the worker. Previously it rebuilt a bare 4-tuple
     ``(agent, mode, refreshed, model)`` and dropped effort, so a `critique`
-    slot's effort never reached the codex-effort gate. The handler now hands
-    ``_run_worker`` an :class:`AgentMode` carrying ``effort`` and
-    ``resolved_model``."""
+    slot's effort never reached the codex-effort gate. The handler now carries
+    an :class:`AgentMode` with ``effort`` and ``resolved_model`` into the
+    critique dispatch path."""
     from megaplan.types import AgentMode
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -292,27 +502,24 @@ def test_critique_dispatch_carries_effort_into_agentmode(
 
     captured: dict[str, object] = {}
 
-    def fake_run_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_kwargs=None, **kwargs):
-        captured["resolved"] = resolved
-        return (
-            WorkerResult(
-                payload={"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []},
-                raw_output="{}",
-                duration_ms=1,
-                cost_usd=0.0,
-                session_id="critique",
-            ),
-            "codex",
-            "persistent",
-            False,
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, effort=None, **kwargs):
+        captured["effort"] = effort
+        captured["resolved"] = checks[0]["_resolved_agent_mode"]
+        return WorkerResult(
+            payload={"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []},
+            raw_output="parallel",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id=None,
         )
 
-    monkeypatch.setattr(megaplan.handlers, "_run_worker", fake_run_worker)
+    monkeypatch.setattr(megaplan.handlers.critique, "run_parallel_critique", fake_parallel)
 
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
     resolved = captured["resolved"]
     assert isinstance(resolved, AgentMode), "dispatch must pass an AgentMode, not a bare tuple that drops effort"
+    assert captured["effort"] == "high"
     assert resolved.effort == "high"
     assert resolved.resolved_model == "gpt-5.5"
 

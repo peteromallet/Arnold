@@ -764,6 +764,42 @@ def test_critique_evaluator_prompt_unchanged_without_contract_context(tmp_path: 
     assert "Critique Evaluator" in prompt
 
 
+def test_critique_prompts_include_unverifiable_escape_hatch(tmp_path: Path) -> None:
+    from megaplan.audits.robustness import checks_for_robustness
+    from megaplan.prompts.critique import (
+        single_check_critique_prompt,
+        write_single_check_template,
+    )
+
+    plan_dir, state = _scaffold(tmp_path)
+    check = checks_for_robustness("standard")[0]
+    template_path = write_single_check_template(plan_dir, state, check, "critique_check_issue_hints.json")
+    prompt = single_check_critique_prompt(state, plan_dir, tmp_path, check, template_path)
+
+    assert "Self-monitor for non-convergence" in prompt
+    assert "re-reading the same file 3+ times" in prompt
+    assert "NOT about duration or difficulty" in prompt
+    assert "unverifiable: " in prompt
+
+
+def test_critique_evaluator_prompt_includes_lean_scoping_guidance(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path, iteration=2)
+
+    prompt = create_claude_prompt(
+        "critique_evaluator",
+        state,
+        plan_dir,
+        root=tmp_path,
+        flag_lifecycle={"flags": []},
+        iteration_pressure=[],
+        gate_signals={"signals": {}},
+    )
+
+    assert "Select the FEWEST lenses" in prompt
+    assert "outside this project root" in prompt
+    assert "partial or `unverifiable` result" in prompt
+
+
 def test_render_prep_block_returns_empty_strings_when_missing(tmp_path: Path) -> None:
     plan_dir, _ = _scaffold(tmp_path)
     assert _render_prep_block(plan_dir) == ("", "")

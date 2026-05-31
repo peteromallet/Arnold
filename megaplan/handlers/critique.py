@@ -12,6 +12,10 @@ from megaplan.audits.robustness import validate_critique_checks
 from megaplan.forms.provocations import select_active_checks
 from megaplan.forms.directors_notes import update_directors_notes_at_aggregate
 from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_signals, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
+from megaplan.orchestration.critique_status import (
+    annotate_unverifiable_checks,
+    build_unverifiable_warnings,
+)
 from megaplan.orchestration.parallel_critique import run_parallel_critique
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
@@ -49,6 +53,17 @@ from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_ste
 from .tiebreaker import _build_tiebreaker_reprompt
 
 log = logging.getLogger("megaplan")
+_ORIGINAL_VALIDATE_CRITIQUE_CHECKS = validate_critique_checks
+
+
+def _critique_check_validator() -> Any:
+    pkg_validator = getattr(_pkg, "validate_critique_checks", validate_critique_checks)
+    if (
+        validate_critique_checks is _ORIGINAL_VALIDATE_CRITIQUE_CHECKS
+        and pkg_validator is not _ORIGINAL_VALIDATE_CRITIQUE_CHECKS
+    ):
+        return pkg_validator
+    return validate_critique_checks
 
 
 def _apply_adaptive_critique_routing(
@@ -512,7 +527,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 resolved=resolved,
                 prompt_kwargs={"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None,
             )
-        invalid_checks = validate_critique_checks(worker.payload, expected_ids=expected_ids)
+        invalid_checks = _critique_check_validator()(worker.payload, expected_ids=expected_ids)
         if invalid_checks:
             recovered_payload = _recover_valid_critique_output(plan_dir, expected_ids=expected_ids)
             if recovered_payload is None:
@@ -532,6 +547,19 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 total_tokens=worker.total_tokens,
             )
 
+        unverifiable_checks = annotate_unverifiable_checks(
+            worker.payload,
+            check_specs=active_checks,
+        )
+        unverifiable_warnings = build_unverifiable_warnings(unverifiable_checks)
+        if unverifiable_checks:
+            _append_to_meta(state, "critique_unverifiable_checks", {
+                "iteration": iteration,
+                "checks": unverifiable_checks,
+                "warnings": unverifiable_warnings,
+            })
+        for _warning in unverifiable_warnings:
+            print(f"[megaplan] WARNING: {_warning}", file=sys.stderr, flush=True)
 
         from megaplan.audits.capabilities import get_worker_capabilities
 
@@ -608,6 +636,12 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         }
         if scope_flags_list:
             response_fields["warnings"] = ["Scope creep detected in the plan. Surface this drift to the user while continuing the loop."]
+        if unverifiable_checks:
+            response_fields["unverifiable_checks"] = unverifiable_checks
+            response_fields["warnings"] = [
+                *response_fields.get("warnings", []),
+                *unverifiable_warnings,
+            ]
         return _finish_step(
             plan_dir, state, args,
             step="critique",
@@ -626,7 +660,7 @@ def _recover_valid_critique_output(plan_dir: Path, *, expected_ids: list[str]) -
     if not output_path.exists():
         return None
     payload = read_json(output_path)
-    invalid_checks = validate_critique_checks(payload, expected_ids=expected_ids)
+    invalid_checks = _critique_check_validator()(payload, expected_ids=expected_ids)
     if invalid_checks:
         return None
     validate_payload("critique", payload)

@@ -403,8 +403,16 @@ def _critique_evaluator_prompt(
 
         ## Assignment Contract
 
-        - **Fire by default**: every lens ({', '.join('`' + cid + '`' for cid in all_check_ids)})
-          fires unless you explicitly justify skipping it.
+        Select the FEWEST lenses that cover the real risk; keep the set lean
+        rather than firing broad, overlapping checks. If a check's verification
+        would likely depend on things outside this project root (external or
+        sibling repos), files the plan only creates later, or runtime-only
+        behavior, either scope the lens to what is statically checkable in this
+        repo or name that dependency in its justification so the worker and gate
+        expect a partial or `unverifiable` result.
+
+        - **Select deliberately**: a lens fires only when it covers a concrete
+          risk in this plan.
         - **Justify to skip**: every skipped lens must include a concrete, specific
           `why` — a reason grounded in the plan's content, not a generic dismissal.
         - **Every lens is assigned exactly once**: the union of `selections` and
@@ -435,8 +443,9 @@ def _critique_evaluator_prompt(
           {{flag_id, lens, outcome, rationale}} objects where outcome is
           one of "verified" / "open" / "accepted_tradeoff"
 
-        Remember: the default is to fire every lens.  Skipping requires a
-        justification.  When you skip, explain *why this specific lens is
-        unnecessary for this specific plan* — do not write generic cop-outs.
+        Remember: prefer the smallest selected set that still covers the real
+        risk.  Skipping requires a justification.  When you skip, explain *why
+        this specific lens is unnecessary for this specific plan* — do not
+        write generic cop-outs.
         """
     ).strip()
