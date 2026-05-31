@@ -1522,9 +1522,21 @@ def _write_chain_policy_into_plan_meta(
     write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_patch_chain_policy)
 
 
-def validate_paths(spec: ChainSpec, root: Path) -> None:
-    """Check that all idea files exist and the seed plan (if any) is on disk."""
-    for m in spec.milestones:
+def validate_paths(spec: ChainSpec, root: Path, state: ChainState | None = None) -> None:
+    """Check that idea files needed by this invocation exist on disk.
+
+    On resume, completed milestones and an already-adopted current plan do not
+    need their source idea files. Validating them again makes a durable chain
+    fragile when a spec uses absolute paths into a checkout that moved or was
+    cleaned after those milestones had already landed.
+    """
+    current_index = state.current_milestone_index if state is not None else -1
+    current_plan_name = state.current_plan_name if state is not None else None
+    for index, m in enumerate(spec.milestones):
+        if state is not None and index < current_index:
+            continue
+        if state is not None and index == current_index and current_plan_name:
+            continue
         idea_path = _resolve_idea_path(root, m.idea)
         if not idea_path.exists():
             raise CliError(
@@ -2455,9 +2467,9 @@ def run_chain(
     execution_pass = mode == "execute"
     effective_stop_at_finalized = planning_pass or (stop_at_finalized and not execution_pass)
     spec = load_spec(spec_path)
-    validate_paths(spec, root)
-    _preflight_agent_backends(spec, writer=writer)
     state = load_chain_state(spec_path)
+    validate_paths(spec, root, state)
+    _preflight_agent_backends(spec, writer=writer)
     # Snapshot completion_contract_mode at chain init from the same resolved
     # source as plan-level (CLI flag > get_effective) so the two never diverge.
     if state.current_milestone_index < 0 and not state.completed:
