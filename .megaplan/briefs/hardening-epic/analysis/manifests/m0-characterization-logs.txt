@@ -1,5 +1,0 @@
-/Users/peteromalley/.codex/sessions/2026/05/25/rollout-2026-05-25T15-45-24-019e5f62-15e3-7a60-a3e3-1adc9b36d49c.jsonl
-/Users/peteromalley/.codex/sessions/2026/05/25/rollout-2026-05-25T15-45-39-019e5f62-5315-72b3-ad16-4cfa1f7f30b6.jsonl
-/Users/peteromalley/.codex/sessions/2026/05/25/rollout-2026-05-25T15-54-52-019e5f6a-c15a-7aa0-8cd2-0d8679510459.jsonl
-/Users/peteromalley/.codex/sessions/2026/05/25/rollout-2026-05-25T16-08-04-019e5f76-d906-70c1-96fd-3d4e22d19bd6.jsonl
-/Users/peteromalley/.codex/sessions/2026/05/25/rollout-2026-05-25T16-18-32-019e5f80-6aaf-7e82-b9bc-c5bbad33cab3.jsonl
