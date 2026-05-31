@@ -20,6 +20,8 @@ Two ideas, and they reinforce each other.
 
 The two connect: the same decomposition that makes the process robust is what lets you price it. Once work is broken into stages and tasks, each routes to the cheapest model that can handle it — premium models reserved for two jobs: **adjudicating** which model handles each piece, and the genuinely **hard** parts.
 
+Read more about the philosophy and a worked example in [How You Can Move >90% of Your Coding to DeepSeek](docs/megaplan-intro.md).
+
 ## How it works
 
 ![How megaplan splits every phase - the frontier model decides, cheap models do the work](docs/assets/scribble-routing-fan.png)
