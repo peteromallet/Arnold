@@ -65,6 +65,44 @@ def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
     idx = invoked_cmd.index("model_reasoning_effort=low")
     assert invoked_cmd[idx - 1] == "-c"
 
+
+def test_run_codex_step_clamps_spec_layer_max_effort(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    captured: dict[str, list[str]] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_idx = command.index("-o") + 1
+        output_path = Path(command[output_idx])
+        output_path.write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=10,
+        )
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        run_codex_step(
+            "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True, effort="max",
+        )
+    invoked_cmd = captured["command"]
+    assert "model_reasoning_effort=high" in invoked_cmd
+    assert "model_reasoning_effort=max" not in invoked_cmd
+
+
 def test_run_codex_step_sets_tool_output_truncation_limit(tmp_path: Path) -> None:
     """T4: codex tool-result output truncation at 50000 (token limit, defense-in-depth)."""
     from megaplan._core import ensure_runtime_layout

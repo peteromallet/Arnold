@@ -1856,6 +1856,13 @@ def update_session_state(step: str, agent: str, session_id: str | None, *, mode:
 
 _VALID_CLAUDE_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 _VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high")
+_CODEX_EFFORT_ALIASES = {"xhigh": "high", "max": "high"}
+
+
+def _normalize_codex_effort(effort: str | None) -> str | None:
+    if effort is None:
+        return None
+    return _CODEX_EFFORT_ALIASES.get(effort, effort)
 
 
 def _codex_model_flag(model: str | None) -> list[str]:
@@ -1938,6 +1945,7 @@ def run_codex_step(
             "unsupported_step",
             f"Codex read-only runner does not support '{step}'",
         )
+    effort = _normalize_codex_effort(effort)
     if effort is not None and effort not in _VALID_CODEX_EFFORTS:
         raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
     fresh = fresh or step not in _CROSS_CALL_PERSISTENT_STEPS
