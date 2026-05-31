@@ -1268,11 +1268,11 @@ def test_context_retry_success_retries_execute_with_fresh(tmp_path: Path) -> Non
          patch.object(auto, "_run_megaplan", side_effect=fake_run):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
+    # Policy retries_first=0 means no retries; single execute call, plan
+    # proceeds to done without context retry.
     assert outcome.status == "done"
-    assert outcome.context_retries_used == 1
-    assert len(calls) == 2
-    assert "--fresh" not in calls[0]
-    assert "--fresh" in calls[1]
+    assert outcome.context_retries_used == 0
+    assert len(calls) == 1
 
 
 def test_context_retry_exhaustion_stops_after_max_retries(tmp_path: Path) -> None:
@@ -1298,12 +1298,11 @@ def test_context_retry_exhaustion_stops_after_max_retries(tmp_path: Path) -> Non
             writer=lambda _m: None,
         )
 
-    assert outcome.status == "context_retry_exhausted"
-    assert outcome.context_retries_used == 2
-    assert len(calls) == 3
-    assert "--fresh" not in calls[0]
-    assert "--fresh" in calls[1]
-    assert "--fresh" in calls[2]
+    # Immediate bail removed; context retry loop never fires (cap=0 via
+    # CATEGORY_POLICY).  Exhaustion falls through to escalate block which
+    # triggers ceiling handoff (no tier ladder) → stall.
+    assert outcome.status == "stalled"
+    assert outcome.context_retries_used == 0
 
 
 def test_context_retry_zero_disables_context_handling(tmp_path: Path) -> None:
@@ -1663,15 +1662,17 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
             writer=lambda _m: None,
         )
 
-    assert outcome.status == "worker_blocked"
+    # worker_blocked bail removed; exhaustion falls through to escalate
+    # block → ceiling handoff (no tier ladder) → stall.
+    assert outcome.status == "stalled"
     assert outcome.blocked_retries_used == 1
-    # Deviations from PhaseResult surface directly — no more prefix filtering.
-    assert any("missing both files_changed" in r for r in outcome.blocking_reasons)
+    # Ceiling handoff history expected after blocked_retries exhausted
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert state_data["current_state"] == "blocked"
-    assert state_data["latest_failure"]["kind"] == "execution_blocked"
-    assert state_data["latest_failure"]["last_artifact"] == "execution_batch_1.json"
-    assert state_data["resume_cursor"]["phase"] == "execute"
+    history_entries = state_data.get("history", [])
+    assert any(
+        isinstance(e, dict) and e.get("scope") == "ceiling_handoff"
+        for e in history_entries
+    ), f"expected ceiling_handoff history, got {history_entries}"
 
 
 def _write_blocked_task_update_batch(
@@ -2970,7 +2971,12 @@ def _write_tier_state(
     """Stamp state.json with a tier_models.execute ladder and (optionally) an
     execute history entry recording the highest tier the last execute used.
     """
-    state: dict = {"name": plan_dir.name, "current_state": "finalized"}
+    state: dict = {
+        "name": plan_dir.name,
+        "current_state": "finalized",
+        "history": [],
+        "meta": {},
+    }
     if ladder is not None:
         state["config"] = {
             "tier_models": {"execute": {str(k): v for k, v in ladder.items()}}
@@ -3060,22 +3066,32 @@ def test_consecutive_failures_escalate_up_to_next_distinct_model(
             plan,
             cwd=tmp_path,
             escalate_after_fails=2,
-            stall_threshold=3,
-            max_iterations=6,
+            stall_threshold=8,
+            max_iterations=12,
             poll_sleep=0,
             writer=lambda _m: None,
         )
 
-    # First two execute dispatches run un-escalated; on the 2nd failure the
-    # driver escalates, so the 3rd execute carries the stronger-model pin.
+    # First two execute dispatches run un-escalated (internal_error consumes
+    # retries_first=1 inline retry); on the 3rd failure the streak reaches 2
+    # and the driver escalates via phase_pin.  --fresh is appended
+    # (escalation_fired=True) but --phase-model is NOT (only on legacy path).
     escalated_cmds = [
         c for c in seen_cmds
-        if "--phase-model" in c
-        and "execute=claude:claude-opus-4-7" in c
+        if "--fresh" in c
     ]
-    assert escalated_cmds, f"expected an Opus-pinned execute, saw: {seen_cmds}"
+    assert len(escalated_cmds) >= 1, (
+        f"expected at least one escalated execute with --fresh, saw: {seen_cmds}"
+    )
+    # Per-task/phase_pin semantics: --phase-model execute=<spec> is NOT
+    # appended (only the legacy category-is-None path sets it).
+    for c in escalated_cmds:
+        assert "--phase-model" not in c, (
+            f"--phase-model should not appear on phase_pin path: {c}"
+        )
     assert outcome.tier_escalations_used >= 1
-    assert outcome.escalation_tier_pin == 4
+    # escalation_tier_pin is only set on the legacy category-is-None path,
+    # not on the phase_pin path.
     # The escalation is observable as a tier_escalated event carrying the
     # from→to model + tier and the failure count.
     lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
@@ -3176,19 +3192,20 @@ def test_escalate_forces_fresh_dispatch(tmp_path: Path) -> None:
             plan,
             cwd=tmp_path,
             escalate_after_fails=2,
-            stall_threshold=3,
-            max_iterations=6,
+            stall_threshold=8,
+            max_iterations=12,
             poll_sleep=0,
             writer=lambda _m: None,
         )
 
-    # Every escalated (phase-model-pinned) execute MUST also carry --fresh so
-    # the stronger model starts a new session instead of resuming the failed
-    # worker's old session on the old model.
-    pinned = [c for c in seen_cmds if "--phase-model" in c]
-    assert pinned, f"expected at least one escalated execute, saw {seen_cmds}"
-    for c in pinned:
-        assert "--fresh" in c, f"escalated execute missing --fresh: {c}"
+    # Every escalated execute carries --fresh (escalation_fired=True).
+    # --phase-model is NOT appended on the phase_pin path (only legacy).
+    fresh_cmds = [c for c in seen_cmds if "--fresh" in c]
+    assert fresh_cmds, f"expected at least one escalated execute with --fresh, saw {seen_cmds}"
+    for c in fresh_cmds:
+        assert "--phase-model" not in c, (
+            f"--phase-model should not appear on phase_pin path: {c}"
+        )
 
 
 # ── (d) Non-tier-routed run no-ops gracefully ─────────────────────────────
@@ -3284,3 +3301,1208 @@ def test_failure_streak_resets_on_progress(tmp_path: Path) -> None:
     # reaches the escalate threshold — no escalation occurs.
     assert not any("--phase-model" in c for c in seen_cmds), seen_cmds
     assert outcome.tier_escalations_used == 0
+
+
+# ── Legacy regression: exit_kind=None degrades to streak-based phase-pin ──
+
+
+def test_legacy_exit_kind_none_phase_model_and_fresh(
+    tmp_path: Path,
+) -> None:
+    """When result.exit_kind is None (uncategorised failure), the legacy
+    streak-based phase-pin path fires: cmd contains --phase-model
+    execute=<spec> AND --fresh."""
+    plan = "legacy-none-exit-kind"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        # Write a phase_result with exit_kind=None so classify_failure
+        # returns (None, []) — the legacy category-is-None path.
+        from tests.conftest import make_fake_phase_result
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind=None,
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "generic failure"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # The legacy path sets escalation_pin_spec and escalation_tier_pin,
+    # so --phase-model execute=<spec> AND --fresh both appear.
+    escalated_cmds = [
+        c for c in seen_cmds
+        if "--fresh" in c
+    ]
+    assert len(escalated_cmds) >= 1, (
+        f"expected at least one escalated cmd with --fresh, saw: {seen_cmds}"
+    )
+    for c in escalated_cmds:
+        assert "--phase-model" in c, (
+            f"legacy path should append --phase-model execute=<spec>: {c}"
+        )
+        # Find the --phase-model argument and verify execute=<spec>
+        try:
+            idx = c.index("--phase-model")
+            spec = c[idx + 1]
+            assert spec.startswith("execute="), (
+                f"expected execute=<spec>, got: {spec}"
+            )
+        except (ValueError, IndexError):
+            raise AssertionError(
+                f"--phase-model not found or missing value in: {c}"
+            )
+
+    # The legacy path sets escalation_tier_pin.
+    assert outcome.escalation_tier_pin is not None
+    assert outcome.tier_escalations_used >= 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T5 tests (restored): per-task escalate, context_exhausted, legacy,
+# drift no-op, ceiling handoff
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_per_task_escalate_sibling_unset(tmp_path: Path) -> None:
+    """Per-task escalate: pin only failing tasks, cmd has --fresh, no
+    --phase-model execute=<spec>."""
+    plan = "per-task-escalate"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    # Write a finalize.json so _pin_tasks_to_tier has tasks to pin.
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [
+            {"id": "T1", "status": "pending"},
+            {"id": "T2", "status": "done"},
+        ]}),
+        encoding="utf-8",
+    )
+    from tests.conftest import make_fake_phase_result, BlockedTask
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="blocked_by_quality",
+            invocation_id=f"inv-{call['n']}",
+            blocked_tasks=(BlockedTask(task_id="T1", reason="prereq missing"),),
+        )
+        return 1, "", "blocked"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Escalation should have fired via per_task path.
+    assert outcome.tier_escalations_used >= 1
+    # --fresh present but no --phase-model.
+    fresh_cmds = [c for c in seen_cmds if "--fresh" in c]
+    assert fresh_cmds, f"expected --fresh in escalated cmd, saw {seen_cmds}"
+    for c in fresh_cmds:
+        assert "--phase-model" not in c, (
+            f"--phase-model should not appear on per-task path: {c}"
+        )
+
+
+def test_first_context_exhausted_escalates(tmp_path: Path) -> None:
+    """First-occurrence context_exhausted escalates (retries_first=0)."""
+    plan = "ctx-exhaust-escalate"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="context_exhausted",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "context window exhausted"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Two context_exhausted failures should trigger escalation
+    assert outcome.tier_escalations_used >= 1
+    # Context retry never fires (retries_first=0)
+    assert outcome.context_retries_used == 0
+    # TIER_ESCALATED event should be present
+    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+    tier_events = [
+        json.loads(ln) for ln in lines if ln.strip()
+        if json.loads(ln).get("kind") == "tier_escalated"
+    ]
+    assert tier_events, "expected a tier_escalated event"
+
+
+def test_legacy_no_category_appends_both_flags(tmp_path: Path) -> None:
+    """Legacy path (category is None): --phase-model AND --fresh appended.
+
+    When classify_failure returns None (e.g., unknown exit_kind), the
+    legacy path sets escalation_pin_spec and both flags are appended.
+    """
+    plan = "legacy-both-flags"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        # Use a non-standard exit_kind that classify_failure returns None for
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="unknown_exit_kind",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "unknown failure"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Legacy path: both --phase-model AND --fresh should appear
+    pinned = [
+        c for c in seen_cmds
+        if "--phase-model" in c and "--fresh" in c
+    ]
+    assert pinned, (
+        f"expected --phase-model + --fresh on legacy path, saw: {seen_cmds}"
+    )
+
+
+def test_drift_noop_and_history(tmp_path: Path) -> None:
+    """blocked_by_quality_drift: no-op — no retry, no escalate, history written."""
+    plan = "drift-noop"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    from tests.conftest import make_fake_phase_result, Deviation
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="blocked_by_quality",
+            invocation_id=f"inv-{call['n']}",
+            deviations=(Deviation(kind="scope_drift", message="scope drift"),),
+        )
+        return 1, "", "drift"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=2,
+            max_iterations=4,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # No escalation should happen for drift
+    assert outcome.tier_escalations_used == 0
+    # Drift skip history should be recorded with category=blocked_by_quality_drift
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    history_entries = state_data.get("history", [])
+    drift_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "drift_skip"
+    ]
+    assert len(drift_entries) >= 1, f"expected drift_skip history, got {history_entries}"
+    # Verify category field
+    for e in drift_entries:
+        assert e.get("category") == "blocked_by_quality_drift", (
+            f"expected category=blocked_by_quality_drift, got {e.get('category')}"
+        )
+    # Verify no streak advancement: no --fresh flags should appear in any
+    # execute commands (--fresh is only appended on escalation).
+    execute_cmds = [c for c in seen_cmds if "execute" in c]
+    for cmd in execute_cmds:
+        assert "--fresh" not in cmd, (
+            f"drift should not advance streak, but --fresh was in: {cmd}"
+        )
+
+
+def test_ceiling_handoff_monotonic(tmp_path: Path) -> None:
+    """Ceiling handoff: no escalation beyond highest distinct tier.
+
+    When already at the ceiling tier, escalation hits ceiling_handoff
+    and does NOT pin a higher tier.
+    """
+    plan = "ceiling-monotonic"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    # Tier 4 is Opus; tier 5 is also Opus (same model).  So the ceiling
+    # is tier 4 — there's no distinct stronger model above.
+    _write_tier_state(plan_dir, max_tier=4)
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="internal_error",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "boom"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # No escalation to a higher tier (ceiling reached)
+    assert outcome.tier_escalations_used == 0
+    # Ceiling handoff history should be recorded
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    history_entries = state_data.get("history", [])
+    ceiling_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "ceiling_handoff"
+    ]
+    assert len(ceiling_entries) >= 1, f"expected ceiling_handoff, got {history_entries}"
+    # No --phase-model appended
+    assert not any("--phase-model" in c for c in seen_cmds)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T6: Timeout remediation
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_timeout_remediation_then_escalation(tmp_path: Path) -> None:
+    """Two consecutive timeouts — first appends --batch 1 + --phase-idle-timeout
+    3600 (no tier change); second triggers tier escalation via Step 5."""
+    plan = "timeout-remediation"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="timeout",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "timeout"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # After first timeout: remediation cmd should carry --batch 1 and
+    # --phase-idle-timeout 3600
+    remediation_cmds = [
+        c for c in seen_cmds
+        if "--batch" in c and "1" in c and "--phase-idle-timeout" in c
+    ]
+    assert len(remediation_cmds) >= 1, (
+        f"expected remediation cmd with --batch 1 + --phase-idle-timeout, "
+        f"saw: {seen_cmds}"
+    )
+    # The first timeout must NOT escalate (no tier change yet)
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    history_entries = state_data.get("history", [])
+    remediation_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "timeout_remediation"
+    ]
+    assert len(remediation_entries) >= 1, (
+        f"expected timeout_remediation history, got {history_entries}"
+    )
+    # Second consecutive timeout triggers escalation
+    assert outcome.tier_escalations_used >= 1, (
+        "expected tier escalation after second consecutive timeout"
+    )
+    # Verify tier_escalated event exists
+    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+    tier_events = [
+        json.loads(ln) for ln in lines if ln.strip()
+        if json.loads(ln).get("kind") == "tier_escalated"
+        and json.loads(ln).get("payload", {}).get("scope") != "lateral_deferred"
+    ]
+    assert tier_events, "expected a tier_escalated event after second timeout"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T8: External error lateral defer
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_external_error_lateral_deferred(tmp_path: Path) -> None:
+    """external_error PhaseResult emits lateral_deferred history entry, does
+    not touch tier_override, does not advance streak."""
+    plan = "ext-error-defer"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    from tests.conftest import make_fake_phase_result, ExternalError
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="external_error",
+            invocation_id=f"inv-{call['n']}",
+            external_error=ExternalError(
+                provider="openrouter",
+                error_kind="quota",
+                message="quota exceeded",
+            ),
+        )
+        return 1, "", "quota"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=2,
+            max_iterations=4,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # No escalation — external_error is not a capability problem
+    assert outcome.tier_escalations_used == 0
+    # Lateral deferred history entry should exist
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    history_entries = state_data.get("history", [])
+    deferred_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "lateral_deferred"
+    ]
+    assert len(deferred_entries) >= 1, (
+        f"expected lateral_deferred history, got {history_entries}"
+    )
+    for e in deferred_entries:
+        assert e.get("category") == "external_error"
+    # No --fresh (no streak advancement)
+    execute_cmds = [c for c in seen_cmds if "execute" in c]
+    for cmd in execute_cmds:
+        assert "--fresh" not in cmd, (
+            f"external_error should not advance streak, got --fresh in: {cmd}"
+        )
+    # No tier_override changes (no escalation fired)
+    assert outcome.escalation_tier_pin is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T9: Dual-channel escalation recording
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_dual_channel_escalation_recording(tmp_path: Path) -> None:
+    """After a simulated escalation, the latest entry in state.json['history']
+    carries category, from_tier, to_tier, retries_before_escalation,
+    failing_task_ids, and scope — AND events.ndjson carries the same fields."""
+    plan = "dual-channel"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    from tests.conftest import make_fake_phase_result, BlockedTask
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="blocked_by_quality",
+            invocation_id=f"inv-{call['n']}",
+            blocked_tasks=(BlockedTask(task_id="T1", reason="prereq missing"),),
+        )
+        return 1, "", "blocked"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.tier_escalations_used >= 1
+
+    # Check state.json history for the escalation entry
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    history_entries = state_data.get("history", [])
+    escalation_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("step") == "escalation"
+        and e.get("scope") not in ("retries_exhausted",)
+        and e.get("scope") != "drift_skip"
+    ]
+    # Find the actual tier escalation entry (not retries_exhausted/drift)
+    tier_entries = [
+        e for e in escalation_entries
+        if e.get("from_tier") is not None
+    ]
+    assert len(tier_entries) >= 1, (
+        f"expected tier escalation history entry, got {escalation_entries}"
+    )
+    entry = tier_entries[-1]
+    # Verify the six required fields
+    assert "category" in entry
+    assert "from_tier" in entry
+    assert "to_tier" in entry
+    assert "retries_before_escalation" in entry
+    assert "failing_task_ids" in entry
+    assert "scope" in entry
+    assert "from_model" in entry
+    assert "to_model" in entry
+
+    # Check events.ndjson for the escalation event
+    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+    tier_events = [
+        json.loads(ln) for ln in lines if ln.strip()
+        if json.loads(ln).get("kind") == "tier_escalated"
+        and json.loads(ln).get("payload", {}).get("scope") not in (
+            "lateral_deferred", None
+        )
+    ]
+    assert tier_events, "expected a tier_escalated event in events.ndjson"
+    payload = tier_events[0].get("payload", {})
+    assert "category" in payload
+    assert "from_tier" in payload
+    assert "to_tier" in payload
+    assert "retries_before_escalation" in payload
+    assert "failing_task_ids" in payload
+    assert "scope" in payload
+    assert "from_model" in payload
+    assert "to_model" in payload
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T10: Step 8a core integration tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_blocked_by_quality_semantic_per_task_escalate(tmp_path: Path) -> None:
+    """Drive a synthetic two-task finalize.json through the auto loop with
+    _run_phase returning blocked_by_quality whose blocked_tasks reference
+    task B. After DEFAULT_MAX_BLOCKED_RETRIES retries assert: B has
+    tier_override == new_tier; A unchanged; one history entry with
+    category=blocked_by_quality_semantic, failing_task_ids=['B'],
+    scope='per_task'; cmd contains --fresh and NOT --phase-model execute=.
+    """
+    plan = "bq-semantic-per-task"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    # Two-task finalize.json
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({
+            "tasks": [
+                {"id": "A", "complexity": 1, "status": "pending"},
+                {"id": "B", "complexity": 1, "status": "pending"},
+            ]
+        }),
+        encoding="utf-8",
+    )
+    from tests.conftest import make_fake_phase_result, BlockedTask
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="blocked_by_quality",
+            invocation_id=f"inv-{call['n']}",
+            blocked_tasks=(BlockedTask(task_id="B", reason="quality gate"),),
+        )
+        return 1, "", "blocked"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_blocked_retries=1,
+            escalate_after_fails=1,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Escalation should have fired via per_task path.
+    assert outcome.tier_escalations_used >= 1
+
+    # Verify finalize.json: B has tier_override, A does not.
+    finalize_data = json.loads(
+        (plan_dir / "finalize.json").read_text(encoding="utf-8")
+    )
+    task_a = next(t for t in finalize_data["tasks"] if t["id"] == "A")
+    task_b = next(t for t in finalize_data["tasks"] if t["id"] == "B")
+    assert task_b.get("tier_override") is not None, (
+        f"task B should have tier_override set, got {task_b}"
+    )
+    new_tier = task_b["tier_override"]
+    assert isinstance(new_tier, int) and new_tier >= 1
+    # A should be unchanged — no tier_override or still the original
+    assert task_a.get("tier_override") is None, (
+        f"task A should NOT have tier_override, got {task_a}"
+    )
+
+    # Verify history: one entry with category=blocked_by_quality_semantic,
+    # failing_task_ids=['B'], scope='per_task'.
+    state_data = json.loads(
+        (plan_dir / "state.json").read_text(encoding="utf-8")
+    )
+    history_entries = state_data.get("history", [])
+    per_task_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "per_task"
+    ]
+    assert len(per_task_entries) >= 1, (
+        f"expected per_task scope history entry, got {history_entries}"
+    )
+    entry = per_task_entries[0]
+    assert entry.get("category") == "blocked_by_quality_semantic", (
+        f"expected category=blocked_by_quality_semantic, got {entry.get('category')}"
+    )
+    assert entry.get("failing_task_ids") == ["B"], (
+        f"expected failing_task_ids=['B'], got {entry.get('failing_task_ids')}"
+    )
+
+    # Verify cmd: contains --fresh and NOT --phase-model execute=
+    fresh_cmds = [c for c in seen_cmds if "--fresh" in c]
+    assert fresh_cmds, f"expected --fresh in escalated cmd, saw {seen_cmds}"
+    for c in fresh_cmds:
+        assert "--phase-model" not in c, (
+            f"--phase-model should not appear on per-task path: {c}"
+        )
+
+
+def test_blocked_by_prereq_awaiting_human_no_escalation(
+    tmp_path: Path,
+) -> None:
+    """blocked_by_prereq: no override applied; awaiting_human outcome;
+    history entry with scope='manual_review_handoff'; no streak increment.
+    """
+    plan = "bq-prereq-awaiting"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    from tests.conftest import make_fake_phase_result, BlockedTask
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="blocked_by_prereq",
+            invocation_id=f"inv-{call['n']}",
+            blocked_tasks=(BlockedTask(task_id="T1", reason="prereq missing"),),
+        )
+        return 1, "", "blocked"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_blocked_retries=1,
+            escalate_after_fails=2,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Should exit as awaiting_human without escalation.
+    assert outcome.status == "awaiting_human", (
+        f"expected awaiting_human, got {outcome.status!r}"
+    )
+    assert outcome.tier_escalations_used == 0, (
+        "blocked_by_prereq must not trigger tier escalation"
+    )
+
+    # No tier_override applied to any task.
+    state_data = json.loads(
+        (plan_dir / "state.json").read_text(encoding="utf-8")
+    )
+    history_entries = state_data.get("history", [])
+    manual_review_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "manual_review_handoff"
+    ]
+    assert len(manual_review_entries) >= 1, (
+        f"expected manual_review_handoff history entry, got {history_entries}"
+    )
+    entry = manual_review_entries[0]
+    assert entry.get("category") == "blocked_by_prereq", (
+        f"expected category=blocked_by_prereq, got {entry.get('category')}"
+    )
+    assert "failing_task_ids" in entry
+
+    # No streak increment: no --fresh in any execute command.
+    execute_cmds = [c for c in seen_cmds if "execute" in c]
+    for cmd in execute_cmds:
+        assert "--fresh" not in cmd, (
+            f"blocked_by_prereq should not advance streak, "
+            f"but --fresh was in: {cmd}"
+        )
+
+    # No tier escalation pin set.
+    assert outcome.escalation_tier_pin is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T11: Step 8b remaining-category integration tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_context_exhausted_override_bypasses_loop(tmp_path: Path) -> None:
+    """context_exhausted → override applied on first failure, existing while
+    loop bypassed (cap=0).  Phase-pin escalates all pending tasks."""
+    plan = "ctx-exhaust-override"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    # finalize.json so phase_pin has tasks to pin
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [
+            {"id": "A", "complexity": 1, "status": "pending"},
+            {"id": "B", "complexity": 1, "status": "pending"},
+        ]}),
+        encoding="utf-8",
+    )
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="context_exhausted",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "context exhausted"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=1,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # context_exhausted has retries_first=0 → while loop bypassed →
+    # no context retries consumed
+    assert outcome.context_retries_used == 0
+
+    # Escalation should fire (phase_pin since failing_task_ids is empty)
+    assert outcome.tier_escalations_used >= 1
+
+    # Verify override applied in finalize.json (phase_pin pins all pending)
+    finalize_data = json.loads(
+        (plan_dir / "finalize.json").read_text(encoding="utf-8")
+    )
+    for task in finalize_data["tasks"]:
+        assert task.get("tier_override") is not None, (
+            f"task {task['id']} should have tier_override after phase_pin"
+        )
+        assert isinstance(task["tier_override"], int)
+
+    # --fresh present, no --phase-model (per_task/phase_pin path)
+    fresh_cmds = [c for c in seen_cmds if "--fresh" in c]
+    assert fresh_cmds, f"expected --fresh in escalated cmd, saw {seen_cmds}"
+    for c in fresh_cmds:
+        assert "--phase-model" not in c, (
+            f"--phase-model should not appear on phase_pin path: {c}"
+        )
+
+    # tier_escalated event should be present
+    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+    tier_events = [
+        json.loads(ln) for ln in lines if ln.strip()
+        if json.loads(ln).get("kind") == "tier_escalated"
+        and json.loads(ln).get("payload", {}).get("scope") not in (
+            "lateral_deferred", None
+        )
+    ]
+    assert tier_events, "expected a tier_escalated event"
+    payload = tier_events[0].get("payload", {})
+    assert payload.get("scope") == "phase_pin", (
+        f"expected scope=phase_pin, got {payload.get('scope')}"
+    )
+
+
+def test_timeout_remediation_before_override_then_escalate(
+    tmp_path: Path,
+) -> None:
+    """timeout → batch-1 + --phase-idle-timeout 3600 applied BEFORE any
+    override; second consecutive timeout escalates."""
+    plan = "timeout-remed-then-esc"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    # finalize.json for phase_pin verification
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [
+            {"id": "A", "complexity": 1, "status": "pending"},
+            {"id": "B", "complexity": 1, "status": "pending"},
+        ]}),
+        encoding="utf-8",
+    )
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="timeout",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "timeout"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=1,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # First timeout: remediation cmd with --batch 1 + --phase-idle-timeout 3600
+    batch1_cmds = [
+        c for c in seen_cmds
+        if "--batch" in c and "1" in c
+        and any(a.startswith("--phase-idle-timeout") for a in c)
+    ]
+    assert len(batch1_cmds) >= 1, (
+        f"expected remediation cmd with --batch 1 + --phase-idle-timeout, "
+        f"saw: {seen_cmds}"
+    )
+    # Verify --batch 1 value is a separate arg
+    for cmd in batch1_cmds:
+        batch_idx = cmd.index("--batch") if "--batch" in cmd else -1
+        assert batch_idx >= 0
+        assert cmd[batch_idx + 1] == "1", (
+            f"--batch should be followed by '1', got: {cmd}"
+        )
+
+    # timeout_remediation history entry BEFORE any tier override
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    history_entries = state_data.get("history", [])
+    remediation_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "timeout_remediation"
+    ]
+    assert len(remediation_entries) >= 1, (
+        f"expected timeout_remediation history, got {history_entries}"
+    )
+    for e in remediation_entries:
+        assert e.get("category") == "timeout"
+
+    # Second consecutive timeout should escalate (tier_escalations >= 1)
+    assert outcome.tier_escalations_used >= 1, (
+        "expected tier escalation after second consecutive timeout"
+    )
+
+    # tier_escalated event should exist with scope=phase_pin
+    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+    tier_events = [
+        json.loads(ln) for ln in lines if ln.strip()
+        if json.loads(ln).get("kind") == "tier_escalated"
+        and json.loads(ln).get("payload", {}).get("scope") not in (
+            "lateral_deferred", None
+        )
+    ]
+    assert tier_events, "expected a tier_escalated event after second timeout"
+
+
+def test_external_error_lateral_deferred_no_override_integration(
+    tmp_path: Path,
+) -> None:
+    """external_error → no override, lateral_deferred history entry, no
+    streak advancement (integration-level)."""
+    plan = "ext-err-lateral-int"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [
+            {"id": "A", "complexity": 1, "status": "pending"},
+        ]}),
+        encoding="utf-8",
+    )
+    from tests.conftest import make_fake_phase_result, ExternalError
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="external_error",
+            invocation_id=f"inv-{call['n']}",
+            external_error=ExternalError(
+                provider="openrouter",
+                error_kind="quota",
+                message="quota exceeded",
+            ),
+        )
+        return 1, "", "quota"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=2,
+            max_iterations=4,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # No escalation — external_error is not a capability problem
+    assert outcome.tier_escalations_used == 0
+
+    # lateral_deferred history entry must exist
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    history_entries = state_data.get("history", [])
+    deferred_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "lateral_deferred"
+    ]
+    assert len(deferred_entries) >= 1, (
+        f"expected lateral_deferred history, got {history_entries}"
+    )
+    for e in deferred_entries:
+        assert e.get("category") == "external_error"
+
+    # No override applied — tier_override must remain None on all tasks
+    finalize_data = json.loads(
+        (plan_dir / "finalize.json").read_text(encoding="utf-8")
+    )
+    for task in finalize_data["tasks"]:
+        assert task.get("tier_override") is None, (
+            f"task {task['id']} should NOT have tier_override"
+        )
+
+    # No --fresh (no streak advancement)
+    execute_cmds = [c for c in seen_cmds if "execute" in c]
+    for cmd in execute_cmds:
+        assert "--fresh" not in cmd, (
+            f"external_error should not advance streak, got --fresh in: {cmd}"
+        )
+
+    assert outcome.escalation_tier_pin is None
+
+
+def test_blocked_by_quality_drift_no_override_no_streak_integration(
+    tmp_path: Path,
+) -> None:
+    """blocked_by_quality_drift → no override, no streak, drift_skip history
+    entry (integration-level)."""
+    plan = "drift-noop-int"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [
+            {"id": "A", "complexity": 1, "status": "pending"},
+        ]}),
+        encoding="utf-8",
+    )
+    from tests.conftest import make_fake_phase_result, Deviation
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="blocked_by_quality",
+            invocation_id=f"inv-{call['n']}",
+            deviations=(Deviation(kind="scope_drift", message="scope drift"),),
+        )
+        return 1, "", "drift"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=2,
+            max_iterations=4,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # No escalation should happen for drift
+    assert outcome.tier_escalations_used == 0
+
+    # drift_skip history with category=blocked_by_quality_drift
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    history_entries = state_data.get("history", [])
+    drift_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "drift_skip"
+    ]
+    assert len(drift_entries) >= 1, f"expected drift_skip history, got {history_entries}"
+    for e in drift_entries:
+        assert e.get("category") == "blocked_by_quality_drift"
+
+    # No override applied
+    finalize_data = json.loads(
+        (plan_dir / "finalize.json").read_text(encoding="utf-8")
+    )
+    for task in finalize_data["tasks"]:
+        assert task.get("tier_override") is None, (
+            f"task {task['id']} should NOT have tier_override"
+        )
+
+    # No --fresh (no streak advancement)
+    execute_cmds = [c for c in seen_cmds if "execute" in c]
+    for cmd in execute_cmds:
+        assert "--fresh" not in cmd, (
+            f"drift should not advance streak, but --fresh was in: {cmd}"
+        )
+
+
+# ── Synthetic ladder for ceiling test: single tier, no distinct upgrade ───
+_SINGLE_TIER_LADDER: dict[int, str] = {
+    1: "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro",
+}
+
+
+def test_ladder_ceiling_blocked_by_quality_semantic_terminates(
+    tmp_path: Path,
+) -> None:
+    """Ladder ceiling: synthetic ladder of length 1; second
+    blocked_by_quality_semantic failure produces ceiling_handoff and
+    terminates."""
+    plan = "ceiling-bq-semantic"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    # Use a synthetic ladder of length 1 — no higher distinct tier exists.
+    _write_tier_state(plan_dir, ladder=_SINGLE_TIER_LADDER, max_tier=1)
+    from tests.conftest import make_fake_phase_result, BlockedTask
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="blocked_by_quality",
+            invocation_id=f"inv-{call['n']}",
+            blocked_tasks=(BlockedTask(task_id="T1", reason="quality gate"),),
+        )
+        return 1, "", "blocked"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_blocked_retries=1,
+            escalate_after_fails=1,
+            stall_threshold=8,
+            max_iterations=12,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # After retries exhausted, escalate path finds ceiling → ceiling_handoff
+    # No escalation to a higher tier (ceiling reached — only 1 tier in ladder)
+    assert outcome.tier_escalations_used == 0, (
+        "expected no tier escalation at ceiling"
+    )
+
+    # ceiling_handoff history entry must exist
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    history_entries = state_data.get("history", [])
+    ceiling_entries = [
+        e for e in history_entries
+        if isinstance(e, dict) and e.get("scope") == "ceiling_handoff"
+    ]
+    assert len(ceiling_entries) >= 1, (
+        f"expected ceiling_handoff history, got {history_entries}"
+    )
+
+    # No --phase-model appended (no legacy escalation)
+    assert not any("--phase-model" in c for c in seen_cmds), seen_cmds
+
+    # No tier escalation pin set
+    assert outcome.escalation_tier_pin is None
