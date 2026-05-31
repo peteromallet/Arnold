@@ -1,3 +1,0 @@
-**Done.** File written to `/Users/peteromalley/Documents/megaplan/.megaplan/briefs/hardening-epic/analysis/m6b-deadcode-tests-facts.md` (1,211 words, 9 sections, all evidence-backed).
-
-Key finding: This was **not** a megaplan pipeline run with critique/revise/review loops. It was a Codex (GPT-5) agent session directly merging the `hardening-epic` branch — resolving merge conflicts in critique.py and handlers, installing deps, fixing test failures, ultimately landing at **3,088 passed / 29 skipped**. The ~49.7M tokens (97% cached) came from reading/editing megaplan source code across the merge, with a ~10h overnight gap between sessions.

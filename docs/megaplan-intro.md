@@ -4,7 +4,7 @@ Right now, most of our coding runs on temporarily subsidised AI - sustained by t
 
 Over the past few months I've been building a harness that does exactly that: it moves >90% of my token usage onto DeepSeek while *improving* robustness and execution quality. Below are the lessons, the tool itself, and a real project run end-to-end with it.
 
-> For this project, **DeepSeek wrote 100% of the code on 11 of the 12 milestones** - 242 files changed - for a real DeepSeek API bill of about **$12**. A frontier model handled only the decisions that actually needed intelligence; running the whole thing on a premium model instead would have cost ~$422.
+For this project, DeepSeek wrote 100% of the code on 11 of the 12 milestones - 242 files changed - for a real DeepSeek API bill of about $12. A frontier model handled only the decisions that actually needed intelligence; running the whole thing on a premium model instead would have cost ~$422.
 
 First, the insights:
 
@@ -24,7 +24,7 @@ With appropriate context, frontier models are now extremely good at assessing ho
 
 ## Putting it together: Megaplan
 
-[Megaplan](https://github.com/peteromallet/arnold) is a free, open-source harness that combines these three insights - and it's the first pipeline built on **Arnold**, an open framework for assembling your own. Megaplan runs your work through a fixed sequence of phases - prep, plan, critique, gate, revise, finalize, execute, review - and at *every* step it separates the **judgment** from the **labour**: the frontier model makes the few expensive decisions, and cheap models do the high-volume work those decisions create.
+[Megaplan](https://github.com/peteromallet/arnold) is a free, open-source harness pipeline that combines these three insights, and the first pipeline built on **Arnold**, an open framework for assembling your own. Megaplan runs your work through a fixed sequence of phases - prep, plan, critique, gate, revise, finalize, execute, review - and at *every* step it separates the **judgment** from the **labour**: the frontier model makes the few expensive decisions, and cheap models do the high-volume work those decisions create.
 
 That split runs through the whole pipeline:
 

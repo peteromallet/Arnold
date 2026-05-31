@@ -4,10 +4,7 @@ __pycache__/
 .pytest_cache/
 .codex/
 .claude/
-.megaplan/*
-!.megaplan/briefs/
-!.megaplan/briefs/**
-.megaplan/briefs/**/.megaplan/
+.megaplan/
 chain_state.json
 .desloppify/
 .desloppify.bak-*
