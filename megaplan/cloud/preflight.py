@@ -24,8 +24,8 @@ AGENTS_DEFAULT_WARNING = (
 
 
 _COMMANDS_BY_AGENT: dict[str, tuple[str, ...]] = {
-    "claude": ("shannon", "bun", "claude", "tmux"),
-    "shannon": ("shannon", "bun", "claude", "tmux"),
+    "claude": ("bun", "claude", "tmux"),
+    "shannon": ("bun", "claude", "tmux"),
     "codex": ("codex", "tmux"),
 }
 

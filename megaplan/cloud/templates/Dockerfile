@@ -65,16 +65,16 @@ RUN curl -fsSL https://bun.sh/install | bash \
     && ln -sf /root/.bun/bin/bun /usr/local/bin/bun \
     && bun --version
 
-# Codex CLI + Claude Code + Shannon, symlinked into /usr/local/bin so non-interactive shells see them.
+# Codex CLI + Claude Code, symlinked into /usr/local/bin so non-interactive
+# shells see them. Shannon is no longer installed via npm — the megaplan-vendored
+# fork at vendor/shannon/index.ts is invoked directly via ``bun``.
 RUN . "$NVM_DIR/nvm.sh" \
-    && npm i -g @openai/codex @anthropic-ai/claude-code @dexh/shannon@0.0.2 \
+    && npm i -g @openai/codex @anthropic-ai/claude-code \
     && NVBIN=$(ls -d /root/.nvm/versions/node/*/bin | head -1) \
     && ln -sf "$NVBIN/codex"  /usr/local/bin/codex \
     && ln -sf "$NVBIN/claude" /usr/local/bin/claude \
-    && ln -sf "$NVBIN/shannon" /usr/local/bin/shannon \
     && codex --version \
-    && claude --version \
-    && command -v shannon
+    && claude --version
 
 # Megaplan from PyPI (override via build-arg MEGAPLAN_INSTALL_SPEC for git/custom sources)
 ARG MEGAPLAN_INSTALL_SPEC="megaplan-harness[agent]"

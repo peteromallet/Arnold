@@ -257,9 +257,13 @@ def test_shannon_revise_uses_versioned_prompt_and_fresh_session(
             prompt_override="revise prompt",
         )
 
-    command = run_command.call_args.args[0]
-    assert "--session-id" in command
-    assert "--resume" not in command
+    clear_command = run_command.call_args_list[0].args[0]
+    command = run_command.call_args_list[-1].args[0]
+    assert clear_command[clear_command.index("-p") + 1] == "/clear"
+    assert clear_command[clear_command.index("--resume") + 1] == "old-shannon-session"
+    assert "--resume" in command
+    assert command[command.index("--resume") + 1] == "fresh-shannon-session"
     assert "old-shannon-session" not in command
-    assert (plan_dir / "revise_v2_shannon_prompt.txt").exists()
+    # Prompt file is now written to the per-run artifact dir (T9 Step 7).
+    assert (plan_dir / ".megaplan" / "runs" / "test-plan" / "revise" / "shannon" / "revise_v2_shannon_prompt.txt").exists()
     assert result.session_id == "fresh-shannon-session"

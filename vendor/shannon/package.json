@@ -1,0 +1,60 @@
+{
+  "name": "@dexh/shannon",
+  "version": "0.0.2",
+  "description": "CLI and SDK wrapper that drives interactive Claude Code through tmux and emits stream-json.",
+  "license": "MIT",
+  "homepage": "https://github.com/humanlayer/shannon#readme",
+  "bugs": {
+    "url": "https://github.com/humanlayer/shannon/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-sdk",
+    "tmux",
+    "cli"
+  ],
+  "module": "index.ts",
+  "type": "module",
+  "bin": {
+    "shannon": "bin/shannon.mjs"
+  },
+  "exports": {
+    ".": "./src/sdk.ts",
+    "./cli": "./index.ts"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "pack:check": "bun pm pack --dry-run && (cd packages/shannon-agent-sdk && bun pm pack --dry-run)"
+  },
+  "files": [
+    "index.ts",
+    "src/sdk.ts",
+    "bin/shannon.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/humanlayer/shannon.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": false,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.140",
+    "commander": "^14.0.3",
+    "zod": "^4.4.3"
+  }
+}

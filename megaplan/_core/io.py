@@ -793,18 +793,39 @@ def setting_is_explicit(section: str, key: str, *, home: Path | None = None) -> 
     return isinstance(section_config, dict) and key in section_config
 
 
+# Absolute path to the megaplan-vendored Shannon fork. Kept in sync with
+# ``megaplan.workers.shannon.VENDORED_SHANNON_PATH`` so this module does not
+# import the workers package at module load (workers depends on _core).
+# parents[0]=_core, parents[1]=megaplan, parents[2]=repo root.
+_VENDORED_SHANNON_PATH = (
+    Path(__file__).resolve().parents[2] / "vendor" / "shannon" / "index.ts"
+).resolve()
+
+
 def is_shannon_available(*, shutil_ref: Any = None) -> bool:
-    """Return True if shannon, tmux, and claude are all on PATH."""
+    """Return True iff bun + claude + tmux are on PATH and the vendored
+    Shannon fork is present at ``vendor/shannon/index.ts``.
+
+    Replaces the legacy ``shutil.which`` probe for ``shannon``: the runtime now
+    invokes ``bun <vendored-index.ts>`` directly, so the binary is bun and the
+    fork must physically exist in-repo.
+    """
     if shutil_ref is None:
         shutil_ref = shutil
-    return all(shutil_ref.which(bin) for bin in ("shannon", "tmux", "claude"))
+    if not all(shutil_ref.which(bin) for bin in ("bun", "tmux", "claude")):
+        return False
+    return _VENDORED_SHANNON_PATH.is_file()
 
 
 def shannon_missing_deps(*, shutil_ref: Any = None) -> list[str]:
-    """Return list of missing Shannon dependencies (shannon, tmux, claude)."""
+    """Return list of missing Shannon dependencies (bun, tmux, claude, and/or
+    the vendored fork)."""
     if shutil_ref is None:
         shutil_ref = shutil
-    return [bin for bin in ("shannon", "tmux", "claude") if not shutil_ref.which(bin)]
+    missing = [bin for bin in ("bun", "tmux", "claude") if not shutil_ref.which(bin)]
+    if not _VENDORED_SHANNON_PATH.is_file():
+        missing.append("vendor/shannon/index.ts")
+    return missing
 
 
 def detect_available_agents() -> list[str]:
