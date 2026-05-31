@@ -5,12 +5,11 @@
 # `pull_request.title` / `pull_request.labels` (populated on PRs).
 #
 # Steps:
-#   1. Checkout (fetch-depth: 2 so PR diffs see the merge base if needed).
+#   1. Checkout (fetch-depth: 2 so PR diffs see the merge base if needed) with
+#      submodules: recursive so vendor/ComfyUI is available for the oracle gate.
 #   2. Install uv.
-#   3. `uv sync --extra dev` — the dev extra carries pytest, pytest-asyncio,
-#      pytest-cov, and pytest-rerunfailures. The Phase 0 importorskip guards
-#      mean ComfyUI / runpod-lifecycle / python-dotenv are NOT required at
-#      collection time.
+#   3. Install the package plus the small set of vendored-ComfyUI import
+#      dependencies required to import the pinned workflow converter.
 #   4. Fast suite with coverage. The coverage floor is enforced via
 #      [tool.coverage.report] fail_under in pyproject.toml; no --cov-fail-under
 #      override is needed here.
@@ -18,7 +17,11 @@
 #      commit message, PR title, or PR labels contain a `snapshots:` tag
 #      (or a `snapshots` label), the check is skipped so intentional snapshot
 #      refreshes do not need to fight CI.
-#   6. Upload coverage.xml as a workflow artifact.
+#   6. Oracle gate: runs Layer-3 corpus-wide convert_ui_to_api gate against the
+#      vendored ComfyUI submodule with VIBECOMFY_COMFY_SMOKE=1.  Fails loudly
+#      (not skip) when vendor/ComfyUI is missing or the converter is
+#      incompatible, so drift against the pinned oracle commit is never silent.
+#   7. Upload coverage.xml as a workflow artifact.
 #
 # Branch protection on `main` requires repo-admin action and is tracked as a
 # user_action; this workflow only exposes the `test` status check.
@@ -38,6 +41,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          submodules: 'recursive'
 
       - name: Set up uv
         run: |
@@ -48,7 +52,7 @@ jobs:
         run: |
           uv venv --seed
           .venv/bin/python -m pip install -e ".[dev,runpod-launch]"
-          .venv/bin/python -m pip install "lazy-object-proxy>=1.10"
+          .venv/bin/python -m pip install "lazy-object-proxy>=1.10" "frozendict>=2.4" "pillow>=10" "ConfigArgParse>=1.7.1"
 
       - name: Run fast suite with coverage
         # The repository contains broad aspirational and retired suites that are
@@ -85,6 +89,16 @@ jobs:
             contains(toJson(github.event.pull_request.labels), 'snapshots')
           )
         run: .venv/bin/python scripts/regenerate_snapshots.py --check
+
+      - name: Run oracle gate (Layer-3 convert_ui_to_api corpus gate)
+        # Requires the vendored ComfyUI submodule.  Fails loudly when the
+        # submodule is missing or the converter is incompatible, so drift
+        # against the pinned oracle commit is never silent.
+        env:
+          VIBECOMFY_COMFY_SMOKE: '1'
+        run: |
+          .venv/bin/pytest -q --tb=short \
+            tests/test_porting_ui_emitter.py::test_layer3_corpus_wide_convert_ui_to_api_gate
 
       - name: Upload coverage artifact
         if: always()
