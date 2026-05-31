@@ -1833,6 +1833,43 @@ def test_run_codex_step_read_only_uses_readonly_command_without_write_grants(tmp
     assert not any("sandbox_workspace_write" in part for part in command)
     assert not any("writable_roots" in part for part in command)
 
+
+def test_run_codex_step_read_only_supports_critique(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []}
+    commands: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        commands.append(command)
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "critique",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=False,
+            prompt_override="critique prompt",
+            model="gpt-5.5",
+            read_only=True,
+        )
+
+    command = commands[0]
+    assert result.payload == payload
+    assert "--output-schema" in command
+    assert str(command[command.index("--output-schema") + 1]).endswith("critique.json")
+    assert "--ephemeral" in command
+    assert "sandbox_mode='read-only'" in command
+    assert "--add-dir" not in command
+    assert "-C" not in command
+    assert "--full-auto" not in command
+
 def test_run_step_with_worker_threads_read_only_to_codex(tmp_path: Path) -> None:
     from megaplan.types import AgentMode
     from megaplan.workers import run_step_with_worker

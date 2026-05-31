@@ -1921,7 +1921,7 @@ def run_codex_step(
     model: str | None = None,
     read_only: bool = False,
 ) -> WorkerResult:
-    if read_only and step not in {"prep-triage", "prep-distill"}:
+    if read_only and step not in {"prep-triage", "prep-distill", "critique", "review"}:
         raise CliError(
             "unsupported_step",
             f"Codex read-only runner does not support '{step}'",
