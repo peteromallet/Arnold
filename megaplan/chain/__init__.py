@@ -31,9 +31,9 @@ Spec format (YAML)::
       - label: m1a
         idea: /workspace/ideas/M1a-settings-store.txt
     on_failure:
-      abort: stop_chain          # stop_chain | skip_milestone | retry_milestone
+      abort: stop_chain          # stop_chain | skip_milestone | resume_milestone | retry_milestone
     on_escalate:
-      abort: stop_chain          # stop_chain | skip_milestone | retry_milestone
+      abort: stop_chain          # stop_chain | skip_milestone | resume_milestone | retry_milestone
 
 Progress is persisted under ``.megaplan/plans/.chains/`` so a relaunched
 process can resume where the previous run left off without dirtying milestone
@@ -89,6 +89,7 @@ log = logging.getLogger("megaplan")
 VALID_FAILURE_ACTIONS = (
     "stop_chain",
     "skip_milestone",
+    "resume_milestone",
     "retry_milestone",
     "bump_profile",
     "bump_robustness",
@@ -103,10 +104,11 @@ PROFILE_BUMP_ORDER = ("premium", "apex")
 ROBUSTNESS_BUMP_ORDER = ("thorough", "extreme")
 DEPTH_BUMP_ORDER = ("high", "max")
 
-# Default per-milestone retry budget (FRESH re-inits) before the ladder bumps.
+# Default per-milestone retry budget before the ladder bumps.
 # Capped at 1 for apex profile / extreme robustness milestones to bound cost.
 DEFAULT_MILESTONE_RETRY_CAP = 2
 APEX_EXTREME_RETRY_CAP = 1
+RESUMABLE_RETRY_STATES = frozenset({"finalized", "executed", "critiqued", "gated"})
 
 
 def _bump_one_tier(current: str | None, order: tuple[str, ...]) -> tuple[str | None, bool]:
@@ -138,7 +140,7 @@ class FailurePolicy:
     or a structured ladder mapping::
 
         on_failure:
-          retry: retry_milestone     # walked first, bounded by a counter
+          retry: retry_milestone     # or resume_milestone; walked first, bounded by a counter
           escalate: bump_profile     # walked once after retries exhaust
           abort: stop_chain          # terminal action
 
@@ -975,6 +977,26 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
         return "unknown"
 
 
+def _resumable_retry_state(root: Path, plan: str | None) -> str | None:
+    """Return the plan's current_state when retry should resume it in place."""
+    if not plan:
+        return None
+    try:
+        plan_dir = resolve_plan_dir(root, plan)
+    except CliError:
+        return None
+    try:
+        raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    current_state = raw.get("current_state")
+    if isinstance(current_state, str) and current_state in RESUMABLE_RETRY_STATES:
+        return current_state
+    return None
+
+
 from .git_ops import (
     _branch_head,
     _capture_sync_state,
@@ -1399,7 +1421,7 @@ def _drive_plan_with_blocked_execute_recovery(
 
 
 def _milestone_retry_cap(milestone: "MilestoneSpec | None", spec: ChainSpec) -> int:
-    """Per-milestone FRESH-reinit cap.
+    """Per-milestone retry cap.
 
     Default ``DEFAULT_MILESTONE_RETRY_CAP`` (2); CAPPED at
     ``APEX_EXTREME_RETRY_CAP`` (1) for apex profile or extreme robustness
@@ -1436,7 +1458,7 @@ def _apply_ladder_action(
         return "stop"
     if action == "skip_milestone":
         return "skip"
-    if action == "retry_milestone":
+    if action in ("retry_milestone", "resume_milestone"):
         return "retry"
     if action == "bump_profile":
         current = state.profile_bumps.get(label) or (milestone.profile if milestone else None)
@@ -1483,12 +1505,12 @@ def _handle_outcome(
     """Decide the next action given a DriverOutcome, walking the ladder.
 
     Returns one of: "advance" (move to next milestone), "stop" (chain halts),
-    "retry" (re-run the same milestone FRESH), "skip" (advance without waiting).
+    "retry" (retry the same milestone), "skip" (advance without waiting).
 
     On a failure/escalate outcome the structured ladder is walked with a
     BOUNDED, persisted per-milestone retry counter:
 
-      retry_milestone (up to cap; 1 for apex/extreme) →
+      retry_milestone / resume_milestone (up to cap; 1 for apex/extreme) →
       bump_profile / bump_robustness (once) →
       abort (stop_chain by default).
 
@@ -1498,6 +1520,18 @@ def _handle_outcome(
     status = outcome.status
     if status == "done":
         return "advance"
+    if status == "awaiting_human":
+        # A human-only block (e.g. a task blocked on an unresolved
+        # manual_required / rejected user action). Retrying re-runs execute and
+        # re-hits the identical block — its input cannot change without human
+        # action — so this must STOP the chain immediately rather than burn the
+        # retry/bump ladder on a deterministically-unresolvable state. The plan
+        # resumes normally on the next chain run once the action is resolved.
+        writer(
+            f"[chain] plan {outcome.plan} paused awaiting human action: "
+            f"{outcome.reason}\n"
+        )
+        return "stop"
     if status in ("aborted", "escalated"):
         if status == "aborted":
             writer(f"[chain] plan {outcome.plan} ended aborted\n")
@@ -1512,7 +1546,7 @@ def _handle_outcome(
     # No state to track the counter (e.g. legacy seed path) → honor abort only.
     if state is None:
         action = policy.retry or policy.escalate or policy.abort
-        if action == "retry_milestone":
+        if action in ("retry_milestone", "resume_milestone"):
             # Without a counter a bare retry is unsafe; degrade to abort.
             action = policy.abort
         return _apply_ladder_action(
@@ -1522,13 +1556,13 @@ def _handle_outcome(
     label = milestone.label if milestone else "seed"
     stage = state.ladder_stage.get(label, "retry")
 
-    if stage == "retry" and policy.retry == "retry_milestone":
+    if stage == "retry" and policy.retry in ("retry_milestone", "resume_milestone"):
         cap = _milestone_retry_cap(milestone, spec)
         spent = state.retry_counts.get(label, 0)
         if spent < cap:
             state.retry_counts[label] = spent + 1
             writer(
-                f"[chain] {label}: retry {spent + 1}/{cap} (fresh re-init)\n"
+                f"[chain] {label}: retry {spent + 1}/{cap}\n"
             )
             return "retry"
         # Retries exhausted → climb to the bump rung.
@@ -1595,6 +1629,14 @@ def _assert_clean_base(
     sample = ", ".join(p.name for p in carried[:5])
     if no_push:
         # Local/no-network: auto-clean by stashing the carried WIP.
+        print(
+            "[chain] WARNING: require_clean_base is STASHING non-.megaplan WIP "
+            f"for milestone {milestone.label} ({sample}).\n"
+            "[chain] WARNING: this stashed work will NOT be in this milestone's "
+            "base. If this is a prior milestone's uncommitted output (e.g. under "
+            "--no-push), milestones are NOT building on each other.",
+            file=sys.stderr,
+        )
         writer(
             f"[chain] require_clean_base: {milestone.label} base has carried WIP "
             f"({sample}); auto-stashing before init\n"
@@ -1687,6 +1729,38 @@ def run_chain(
     state = load_chain_state(spec_path)
     preexisting_dirty_paths = _dirty_worktree_paths(root)
     push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
+
+    # ---- Preflight: data-loss guard for --no-push + require_clean_base ----
+    # With pushing disabled, milestones never commit, so each milestone's output
+    # stays as uncommitted WIP. With require_clean_base, that WIP is stashed away
+    # before the next milestone inits — so HEAD never advances and every
+    # milestone silently builds on the same base, prior work siloed in stashes.
+    if not push_enabled and spec.require_clean_base and len(spec.milestones) > 1:
+        print(
+            "\n"
+            "============================================================\n"
+            "[chain] PREFLIGHT WARNING: --no-push + require_clean_base: true\n"
+            "============================================================\n"
+            f"This chain has {len(spec.milestones)} milestones, pushing is "
+            "disabled, and require_clean_base is true.\n"
+            "\n"
+            "With --no-push, milestones NEVER commit — their output stays as\n"
+            "uncommitted WIP. require_clean_base will then STASH each milestone's\n"
+            "output before the next one inits. Result: HEAD never advances and\n"
+            "milestones do NOT build on each other — every milestone forks the\n"
+            "same base while prior work is siloed in git stashes. This can run\n"
+            "undetected for a long time because the stash is silent.\n"
+            "\n"
+            "To fix, pick ONE of:\n"
+            "  - DROP --no-push so milestones commit+push and each builds on the\n"
+            "    last (set a merge_policy as needed), OR\n"
+            "  - SET require_clean_base: false so uncommitted work ACCUMULATES in\n"
+            "    the worktree across milestones.\n"
+            "\n"
+            "--no-push is only safe for a single-milestone throwaway local test.\n"
+            "============================================================\n",
+            file=sys.stderr,
+        )
 
     events: list[dict[str, Any]] = []
 
@@ -1940,10 +2014,17 @@ def run_chain(
                 reason=f"milestone {milestone.label} ended {outcome.status}",
             )
         if decision == "retry":
-            log(f"retrying milestone {milestone.label}")
-            state.current_plan_name = None  # force re-init next loop
-            state.pr_number = None
-            state.pr_state = None
+            resumable_state = _resumable_retry_state(root, state.current_plan_name)
+            if resumable_state:
+                log(
+                    f"retrying milestone {milestone.label} by resuming plan "
+                    f"{state.current_plan_name} from {resumable_state}"
+                )
+            else:
+                log(f"retrying milestone {milestone.label} with a new plan")
+                state.current_plan_name = None  # force re-init next loop
+                state.pr_number = None
+                state.pr_state = None
             save_chain_state(spec_path, state)
             continue
         if decision == "advance" and use_pr and state.pr_number is not None:

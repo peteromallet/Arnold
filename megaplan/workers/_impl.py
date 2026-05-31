@@ -128,13 +128,37 @@ class CommandResult:
 # heaviest gap is WITHIN a single ``waitForAssistantReply`` — shannon polls
 # Claude's transcript .jsonl, which is written one row per COMPLETED content
 # block, so a single very long thinking/answer block still emits no event until
-# it finishes. Real transcripts show within-block gaps up to ~363s. 900s keeps
-# ~2.5x headroom over that observed worst case while still killing an infinite
-# hang well inside the ~30m+ phase wall-clock. Override via
+# it finishes. Real transcripts show within-block gaps up to ~363s.
+#
+# TIGHTENED (2026-05-29): the shannon ``liveness_probe`` now treats Claude's
+# transcript .jsonl mtime as the trusted progress signal (it advances as content
+# blocks/tool events flush, INCLUDING mid-turn — finer-grained than the NDJSON
+# events on stdout), and NO LONGER counts tmux pane churn as progress. Because a
+# healthy slow turn keeps the idle clock reset via that transcript-mtime probe,
+# the raw inter-event bound no longer needs ~2.5x headroom over the worst-case
+# within-block gap. A WEDGED Claude (stalled SSE — sockets ESTABLISHED, 0% CPU)
+# repaints its pane but writes NO transcript, so the probe correctly reads it as
+# idle; lowering the bound from 900s to 300s makes such a wedge fail fast
+# (~5 min) and retry instead of burning ~15 min per turn. 300s still sits below
+# the 363s observed within-block gap only when the transcript is genuinely
+# static for that long, which the probe distinguishes from a hang. Override via
 # SHANNON_STREAM_READ_TIMEOUT.
 # (The hermes path, which streams real SSE chunks, uses its own inter-chunk
 # bound — HERMES_STREAM_READ_TIMEOUT — and is unaffected.)
-DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 900.0
+DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
+
+# Guaranteed backstop for the liveness-probe rescue path (_impl.py run_command).
+# The probe's transcript-mtime "progress" signal can be wrong (e.g. it globs the
+# wrong Claude project dir and falls into its no-signal branch that returns True
+# forever — the exact bug that let a wedged turn keep its idle clock reset past
+# the 300s bound). This caps how long a turn that has produced ZERO real
+# stdout/stderr may be kept alive by probe rescues alone, INDEPENDENT of the
+# probe. NDJSON events from a healthy shannon turn reset the real-output clock,
+# so this only fires on a genuinely stdout-silent turn. Sits below the 2h
+# wall-clock ``timeout`` so a wedge dies in minutes even if the probe lies; the
+# slug-correct probe is the primary path and kills a wedge at ~the idle bound
+# (~5 min). Override via SHANNON_PROBE_RESCUE_CAP_SECONDS.
+DEFAULT_PROBE_RESCUE_CAP_SECONDS = 600.0
 DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS = 80_000_000
 CODEX_EXECUTOR_SESSION_HEADROOM_ENV = "MEGAPLAN_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS"
 
@@ -146,9 +170,10 @@ def _worker_stream_idle_timeout_seconds() -> float:
     above) this is a genuine inter-event idle bound: incremental NDJSON events
     reset the watchdog, so it only trips when shannon emits NO event for the
     whole window (a hung turn or a >window within-block gap). Configurable via
-    ``SHANNON_STREAM_READ_TIMEOUT``. Defaults to 15 min — generous for the
-    longest legitimate within-block gap (~363s observed) while still catching a
-    hung turn well before the coarse phase wall-clock. Clamped to a sane floor.
+    ``SHANNON_STREAM_READ_TIMEOUT``. Defaults to 5 min — the transcript-mtime
+    liveness probe keeps a healthy slow turn's idle clock reset mid-turn, so a
+    wedged turn (no transcript growth) fails fast and retries instead of burning
+    the old 15 min window. Clamped to a sane floor.
     """
     try:
         value = float(os.getenv(
@@ -159,6 +184,26 @@ def _worker_stream_idle_timeout_seconds() -> float:
         value = DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS
     # Never allow a sub-30s idle bound that could abort a healthy slow tool turn.
     return max(value, 30.0)
+
+
+def _probe_rescue_cap_seconds() -> float:
+    """Max wall-clock seconds a stdout-silent turn may be kept alive by probe
+    rescues alone (see ``DEFAULT_PROBE_RESCUE_CAP_SECONDS``).
+
+    Configurable via ``SHANNON_PROBE_RESCUE_CAP_SECONDS``. Clamped to a generous
+    floor so it can never undercut a legitimately long probe-rescued turn (or the
+    short silent workers the idle-timeout tests rely on) — its sole job is to kill
+    a pathological wedge whose probe signal is unreadable, not to second-guess a
+    working probe.
+    """
+    try:
+        value = float(os.getenv(
+            "SHANNON_PROBE_RESCUE_CAP_SECONDS",
+            DEFAULT_PROBE_RESCUE_CAP_SECONDS,
+        ))
+    except (TypeError, ValueError):
+        value = DEFAULT_PROBE_RESCUE_CAP_SECONDS
+    return max(value, 120.0)
 
 
 def _codex_executor_session_headroom_tokens() -> int:
@@ -409,6 +454,15 @@ def run_command(
             # ticking, which masks the stall. See diagnostic
             # /tmp/codex_wedge_diagnostic.md.
             first_byte_seen = [False]
+            # Backstop tracker for the liveness-probe rescue path below. Unlike
+            # ``last_output`` (which the probe resets when it believes the worker
+            # is progressing), this is reset ONLY by real stdout/stderr bytes and
+            # is NEVER touched by the probe. It bounds how long a stdout-SILENT
+            # turn may be kept alive by probe rescues alone, so a wedge whose
+            # transcript signal is unreadable for any reason (slug drift, probe
+            # bug, exception) still dies within a hard multiple of the idle bound
+            # instead of running to the 2h wall-clock ``timeout``.
+            last_real_output = [time.monotonic()]
 
             def _reader(stream: Any, parts: list[bytes], kind: str) -> None:
                 if stream is None:
@@ -427,6 +481,7 @@ def run_command(
                     if not chunk:
                         break
                     last_output[0] = time.monotonic()
+                    last_real_output[0] = time.monotonic()
                     first_byte_seen[0] = True
                     parts.append(chunk)
                     if activity_callback is not None:
@@ -546,15 +601,41 @@ def run_command(
                                 # wall-clock ``timeout`` (worker_timeout_seconds)
                                 # remains the hard upper bound.
                                 if liveness_probe is not None:
-                                    try:
-                                        alive_and_progressing = bool(liveness_probe())
-                                    except Exception:
-                                        # A probe failure must never kill a worker
-                                        # outright; fall back to the conservative
-                                        # "treat as progress" stance so a live turn
-                                        # is never collateral. A truly dead turn is
-                                        # still bounded by the wall-clock timeout.
-                                        alive_and_progressing = True
+                                    # Hard backstop: cap how long a stdout-SILENT
+                                    # turn may be rescued by the probe alone. The
+                                    # probe's "progress" signal (transcript mtime)
+                                    # can be wrong — e.g. it globs the wrong
+                                    # project dir and falls into its no-signal
+                                    # branch that returns True forever — which is
+                                    # exactly the failure that let a wedge keep its
+                                    # idle clock reset past the bound. Once REAL
+                                    # output (the only probe-independent signal) has
+                                    # been absent longer than the rescue cap, stop
+                                    # trusting the probe and kill. NDJSON events
+                                    # from a healthy turn reset last_real_output, so
+                                    # this never threatens a turn that is actually
+                                    # emitting; the (now slug-correct) probe is the
+                                    # primary path and kills a wedge at ~the idle
+                                    # bound, so this only bites when the probe
+                                    # signal is unreadable.
+                                    probe_rescue_cap = _probe_rescue_cap_seconds()
+                                    if (
+                                        time.monotonic() - last_real_output[0]
+                                        > probe_rescue_cap
+                                    ):
+                                        alive_and_progressing = False
+                                    else:
+                                        try:
+                                            alive_and_progressing = bool(liveness_probe())
+                                        except Exception:
+                                            # A probe failure must never kill a
+                                            # worker outright; fall back to the
+                                            # conservative "treat as progress"
+                                            # stance so a live turn is never
+                                            # collateral. A truly dead turn is still
+                                            # bounded by the probe_rescue_cap above
+                                            # and the wall-clock timeout.
+                                            alive_and_progressing = True
                                     if alive_and_progressing:
                                         if activity_callback is not None:
                                             try:

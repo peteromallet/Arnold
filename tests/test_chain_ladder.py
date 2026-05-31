@@ -100,9 +100,24 @@ def test_mapping_on_failure_parses_full_ladder(tmp_path: Path) -> None:
     assert spec.on_failure == "stop_chain"
 
 
+def test_resume_milestone_retry_option_parses(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+            "on_failure": {"retry": "resume_milestone", "abort": "stop_chain"},
+        },
+    )
+    spec = load_spec(spec_path)
+    assert spec.on_failure_policy.retry == "resume_milestone"
+    assert spec.on_failure_policy.abort == "stop_chain"
+
+
 def test_bump_actions_are_valid_vocabulary() -> None:
     assert "bump_profile" in chain_module.VALID_FAILURE_ACTIONS
     assert "bump_robustness" in chain_module.VALID_FAILURE_ACTIONS
+    assert "resume_milestone" in chain_module.VALID_FAILURE_ACTIONS
 
 
 def test_invalid_ladder_subkey_rejected(tmp_path: Path) -> None:
@@ -287,6 +302,71 @@ def test_ladder_does_not_infinite_loop_on_deterministic_failure(tmp_path: Path) 
         / "m1-ladder-exhaustion.json"
     )
     assert ticket.exists()
+
+
+def test_retry_milestone_resumes_resumable_current_plan(tmp_path: Path) -> None:
+    """A retry after real upstream work resumes the existing plan, not re-init."""
+    idea = _touch_idea(tmp_path, "m1.txt", "idea")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+            "on_failure": {"retry": "retry_milestone", "abort": "stop_chain"},
+        },
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+    init_calls: list[str] = []
+    drive_calls: list[str] = []
+    messages: list[str] = []
+
+    def fake_init(root, idea_path, **_kw):
+        init_calls.append(idea_path)
+        plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "plan-m1",
+                    "current_state": "finalized",
+                    "iteration": 1,
+                    "config": {"project_dir": str(root)},
+                    "meta": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return "plan-m1"
+
+    def fake_drive(root, plan, spec, *, on_phase_complete=None, writer):
+        del root, spec, on_phase_complete, writer
+        drive_calls.append(plan)
+        return _fake_outcome(plan, "failed" if len(drive_calls) == 1 else "done")
+
+    with patch("megaplan.chain._init_plan", side_effect=fake_init), patch(
+        "megaplan.chain._drive_plan", side_effect=fake_drive
+    ), patch("megaplan.chain._plan_state", return_value="finalized"), patch(
+        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ):
+        result = run_chain(spec_path, tmp_path, writer=messages.append)
+
+    assert result["status"] == "done"
+    assert init_calls == [str(idea)]
+    assert drive_calls == ["plan-m1", "plan-m1"]
+    assert any(
+        "retrying milestone m1 by resuming plan plan-m1 from finalized" in message
+        for message in messages
+    )
+    saved = load_chain_state(spec_path)
+    assert saved.retry_counts["m1"] == 1
+    assert saved.completed == [
+        {
+            "label": "m1",
+            "plan": "plan-m1",
+            "status": "done",
+            "pr_number": None,
+            "pr_state": None,
+        }
+    ]
 
 
 def test_retry_counter_survives_resume(tmp_path: Path) -> None:

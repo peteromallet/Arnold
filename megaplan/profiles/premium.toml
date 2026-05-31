@@ -25,7 +25,7 @@
 #   * `--phase-model phase=spec` — always honored. Common pattern:
 #     `--phase-model plan=claude:high` for hard plans.
 #
-# See docs/megaplan-setup.md for the full rubric.
+# See docs/megaplan-prep.md for the full rubric.
 [profiles.premium]
 # Adaptive critique on by default: premium-bearing profile, so the
 # critique-evaluator can direct the critic with a premium evaluator.

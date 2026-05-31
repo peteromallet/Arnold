@@ -1097,6 +1097,24 @@ def handle_execute_auto_loop(
         batch_agent, batch_mode, batch_refreshed, batch_model = (
             agent, mode, refreshed, model
         )
+        # Bound per-batch context: when fresh_session_per_batch is on, force a
+        # fresh worker session for every batch so the executor's conversation
+        # history cannot snowball across batches. Each batch prompt already
+        # carries the completed-task context it needs (see _execute_batch_prompt),
+        # so continuity is preserved by the prompt, not by an ever-growing session
+        # that is re-sent on every tool turn (the 2-3M cumulative-token / stalled
+        # -turn failure mode on large plans). First batch keeps the caller's
+        # refreshed value so a same-session resume from a prior phase still works.
+        if not single_batch_mode and get_effective(
+            "execution", "fresh_session_per_batch"
+        ):
+            # Refresh every batch, INCLUDING batch 1: separate `megaplan execute`
+            # reruns of the auto-loop (the driver restarts execute after each
+            # timeout/retry) otherwise resume the SAME persistent executor session
+            # and keep growing it across invocations — the cross-invocation half
+            # of the snowball. Batch 1 of a rerun is a fresh batch of pending
+            # tasks, so a fresh session is correct.
+            batch_refreshed = True
         # Tier routing per-batch observability (only populated when active).
         batch_tier_complexity: int | None = None
         batch_tier_spec: str | None = None

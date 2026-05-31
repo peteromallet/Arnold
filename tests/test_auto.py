@@ -19,6 +19,7 @@ import pytest
 
 from megaplan import auto
 from megaplan.auto import DriverOutcome, drive
+from megaplan.execute import aggregation as execute_aggregation
 from megaplan.types import CliError
 
 
@@ -1604,19 +1605,63 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     )
 
 
-def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) -> None:
-    plan = "worker-blocked-zero"
+def test_execute_scope_drift_counts_claimed_untracked_files(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / "tracked.py").write_text("print('tracked')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.py"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    new_file = tmp_path / "tests" / "characterization" / "_golden_recorders" / "case.py"
+    new_file.parent.mkdir(parents=True)
+    new_file.write_text("print('golden')\n", encoding="utf-8")
+
+    drift = execute_aggregation._compute_execute_scope_drift(
+        tmp_path,
+        {"files_changed": ["tests/characterization/_golden_recorders/case.py"]},
+    )
+
+    assert drift.files_missing == []
+    assert drift.files_added == []
+    assert drift.severity == "none"
+
+
+@pytest.mark.parametrize(
+    "exit_kind",
+    ["blocked_by_quality", "blocked_by_prereq"],
+)
+def test_empty_execute_block_proceeds_without_retry(
+    tmp_path: Path,
+    exit_kind: str,
+) -> None:
+    plan = f"empty-{exit_kind}"
     plan_dir = _make_plan_dir(tmp_path, plan)
     from tests.conftest import fake_run_with_phase_result
 
+    statuses = [_execute_status(plan), _done_status(plan)]
+
     def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
+        return statuses.pop(0)
 
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(
              auto,
              "_run_megaplan",
-             side_effect=fake_run_with_phase_result(plan_dir, exit_kind="blocked_by_quality"),
+             side_effect=fake_run_with_phase_result(plan_dir, exit_kind=exit_kind),
          ):
         outcome = drive(
             plan,
@@ -1626,8 +1671,9 @@ def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) 
             writer=lambda _m: None,
         )
 
-    assert outcome.status == "worker_blocked"
+    assert outcome.status == "done"
     assert outcome.blocked_retries_used == 0
+    assert any("treating as success" in event["msg"] for event in outcome.events)
 
 
 def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_path: Path) -> None:

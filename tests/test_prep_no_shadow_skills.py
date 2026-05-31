@@ -155,14 +155,15 @@ def test_setup_install_hooks_force_replaces_existing_hook(tmp_path: Path):
     assert hook.read_text(encoding="utf-8") == cli._canonical_pre_commit_hook()
 
 
-def test_canonical_decision_skill_carries_its_own_frontmatter():
+def test_canonical_prep_skill_carries_its_own_frontmatter():
     """If the canonical doc loses its frontmatter, bundled_global_file would
     silently install a frontmatter-less skill, and Claude would stop finding
-    it. Guard against accidentally stripping it. (The megaplan-setup skill,
-    formerly megaplan-decision; canonical file: setup_skill.md.)"""
-    canonical = _read_canonical("setup_skill.md")
+    it. Guard against accidentally stripping it. (The megaplan-prep skill,
+    formerly megaplan-setup, formerly megaplan-decision; canonical file:
+    prep_skill.md.)"""
+    canonical = _read_canonical("prep_skill.md")
     first_lines = canonical.splitlines()[:4]
-    assert first_lines[0] == "---", "canonical setup skill must start with YAML frontmatter"
-    assert any(line.startswith("name: megaplan-setup") for line in first_lines), (
-        "canonical setup skill frontmatter must declare `name: megaplan-setup`"
+    assert first_lines[0] == "---", "canonical prep skill must start with YAML frontmatter"
+    assert any(line.startswith("name: megaplan-prep") for line in first_lines), (
+        "canonical prep skill frontmatter must declare `name: megaplan-prep`"
     )

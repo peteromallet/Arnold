@@ -406,7 +406,7 @@ DEFAULT_AGENT_ROUTING: dict[str, str] = {
     "tiebreaker_challenger": "codex",
 }
 KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
-# Canonical robustness names — match docs/megaplan-setup.md.
+# Canonical robustness names — match docs/megaplan-prep.md.
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
 # Legacy → canonical alias map. Old names remain accepted on the CLI and
 # in stored state for backward compatibility; ``normalize_robustness``
@@ -782,6 +782,16 @@ DEFAULTS = {
     "execution.max_robust_critique_iterations": 6,
     "execution.max_critique_no_progress": 2,
     "execution.max_tasks_per_batch": 5,
+    # When True, the execute auto-loop starts a FRESH worker session for every
+    # batch instead of carrying one persistent session across all batches. Each
+    # batch prompt already embeds the completed-task context it needs, so a fresh
+    # session loses nothing essential — but it bounds per-batch context to a
+    # single batch (~tens of K tokens) instead of letting the persistent session
+    # history snowball across batches (observed at 2-3M cumulative input tokens
+    # on large plans, which both blew up cost on high-context models and wedged
+    # Claude turns past the stream-idle bound). Default True to make execution of
+    # large plans converge; set False to restore cross-batch session continuity.
+    "execution.fresh_session_per_batch": True,
     "orchestration.max_critique_concurrency": 6,
     "orchestration.mode": "subagent",
     "execution.adaptive_critique": False,
@@ -825,6 +835,7 @@ _SETTABLE_BOOL = {
     "execution.adaptive_critique",
     "execution.strict_adaptive_critique",
     "execution.strict_notes",
+    "execution.fresh_session_per_batch",
 }
 
 _SETTABLE_ENUM = {

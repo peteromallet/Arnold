@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -97,6 +98,7 @@ EXTERNAL_PERMANENT_ERROR_KINDS = frozenset(
 EXTERNAL_RETRYABLE_LAYERS = frozenset(
     {
         "stream_content_stall",
+        "stream_progress_stall",
         "stream_first_content_timeout",
         "stream_read_timeout",
         "transport_timeout",
@@ -107,7 +109,7 @@ EXTERNAL_RETRYABLE_LAYERS = frozenset(
 # the executor reported success-with-evidence-gaps (e.g. done tasks missing
 # files_changed/commands_run). Retrying the same execute is structurally pointless
 # — the model returned that shape — so we cap retries low and fail fast.
-DEFAULT_MAX_BLOCKED_RETRIES = 1
+DEFAULT_MAX_BLOCKED_RETRIES = 5
 # Cap on review→rework cycles before the driver bails. This mirrors the
 # `execution.max_review_rework_cycles` config the review handler enforces
 # internally (default 3); the auto-driver applies its own cap so that an
@@ -146,7 +148,7 @@ PHASE_NAMES = frozenset(
 class DriverOutcome:
     """Terminal outcome reported when the loop exits."""
 
-    status: str  # "done" | "paused" | "stalled" | "escalated" | "failed" | "aborted" | "cancelled" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required"
+    status: str  # "done" | "paused" | "stalled" | "escalated" | "failed" | "aborted" | "cancelled" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required" | "awaiting_human"
     plan: str
     final_state: str
     iterations: int
@@ -871,6 +873,53 @@ def _phase_result_signature(plan_dir: Path | None) -> tuple[int, int] | None:
     return (stat.st_mtime_ns, stat.st_size)
 
 
+def _phase_result_invocation_id(plan_dir: Path | None) -> str | None:
+    """Return the ``invocation_id`` stamped in the current phase_result.json.
+
+    This is the robust freshness signal: every phase launch mints a new
+    ``current_invocation_id`` (see ``_core.state``) and stamps it onto the
+    phase_result it writes. Two consecutive *identical* blocks (e.g. the same
+    task blocked on the same unresolved ``manual_required`` user action) have
+    byte-identical content and therefore an identical ``(mtime_ns, size)``
+    signature, but always carry distinct invocation ids. Comparing the
+    invocation id detects a freshly-written result that ``(mtime, size)`` can
+    silently miss — which previously dropped the ``blocked_by_prereq`` decision
+    on the floor and let the driver re-run the same blocked phase forever.
+    """
+    if plan_dir is None:
+        return None
+    candidate = read_phase_result(plan_dir)
+    if candidate is None:
+        return None
+    inv = getattr(candidate, "invocation_id", None)
+    return inv if isinstance(inv, str) and inv else None
+
+
+# User-action id token, e.g. ``U1`` / ``U12`` — used to surface a precise,
+# actionable resolve hint when a phase is blocked solely on human input.
+_USER_ACTION_ID_RE = re.compile(r"\bU\d+\b")
+
+
+def _extract_blocking_user_action_ids(blocked_tasks: tuple[Any, ...]) -> list[str]:
+    """Best-effort extraction of the user-action ids a block is waiting on.
+
+    Prefers the structured ``blocking_action_ids`` field on each BlockedTask;
+    falls back to scanning the free-text ``notes`` for ``U<n>`` tokens (the
+    executor records e.g. "U1 state = 'manual_required'"). De-duplicated,
+    order-preserving.
+    """
+    seen: dict[str, None] = {}
+    for bt in blocked_tasks:
+        for aid in getattr(bt, "blocking_action_ids", ()) or ():
+            if isinstance(aid, str) and aid:
+                seen.setdefault(aid, None)
+        notes = getattr(bt, "notes", "") or ""
+        if isinstance(notes, str):
+            for aid in _USER_ACTION_ID_RE.findall(notes):
+                seen.setdefault(aid, None)
+    return list(seen)
+
+
 def _record_lifecycle_failure(
     *,
     plan_dir: Path | None,
@@ -1362,6 +1411,7 @@ def drive(
 
     def _run_phase(cmd: list[str], next_step: str) -> tuple[int, str, str, object | None]:
         before_phase_result = _phase_result_signature(plan_dir)
+        before_invocation_id = _phase_result_invocation_id(plan_dir)
         run_kwargs: dict[str, Any] = {
             "cwd": cwd,
             "timeout": phase_timeout,
@@ -1384,11 +1434,31 @@ def drive(
         # Read the structured phase_result.json only when this command actually
         # produced it. A stale result from the previous phase must not mask a
         # current phase failure or the driver can loop on the same state forever.
+        #
+        # Freshness is detected primarily by the stamped ``invocation_id``: a
+        # mtime/size signature is fragile because a re-run that hits the *same*
+        # block (e.g. a task blocked on the same unresolved ``manual_required``
+        # user action) writes byte-identical content — identical size, and a
+        # mtime that can collide — so ``(mtime, size) != before`` can be False
+        # for a genuinely-new result. That dropped the blocked_by_prereq
+        # decision and re-looped the phase forever. A new invocation_id (or the
+        # changed mtime/size signature as a fallback) means the just-run command
+        # produced this file.
         result: object | None = None
+        candidate = read_phase_result(plan_dir)
         after_phase_result = _phase_result_signature(plan_dir)
-        if after_phase_result is not None and after_phase_result != before_phase_result:
-            candidate = read_phase_result(plan_dir)
-            if candidate is not None and getattr(candidate, "phase", None) == next_step:
+        after_invocation_id = (
+            getattr(candidate, "invocation_id", None) if candidate is not None else None
+        )
+        is_fresh = (
+            after_invocation_id is not None
+            and after_invocation_id != before_invocation_id
+        ) or (
+            after_phase_result is not None
+            and after_phase_result != before_phase_result
+        )
+        if candidate is not None and is_fresh:
+            if getattr(candidate, "phase", None) == next_step:
                 result = candidate
 
         if result is not None:
@@ -2310,8 +2380,14 @@ def drive(
         # execution_batch_*.json, captured stdout tails, and deviation
         # prefix-matching tables. Those surfaces still exist for user-visible
         # logging, but the driver no longer consults them for decisions.
+        execute_effective_exit_kind = (
+            getattr(result, "exit_kind", None)
+            if next_step == "execute" and result is not None
+            else None
+        )
+        execute_empty_block_treated_as_success = False
         if next_step == "execute" and result is not None and max_blocked_retries >= 0:
-            ek = getattr(result, "exit_kind", None)
+            ek = execute_effective_exit_kind
             if ek == ExitKind.success.value:
                 # Executor succeeded — continue to next phase without retry.
                 pass
@@ -2330,16 +2406,35 @@ def drive(
                         )
                         for bt in blocked_tasks
                     ]
+                    action_ids = _extract_blocking_user_action_ids(blocked_tasks)
+                    resolve_hint = ""
+                    if action_ids:
+                        ids_str = ", ".join(action_ids)
+                        first = action_ids[0]
+                        resolve_hint = (
+                            f" Resolve user action(s) {ids_str} then re-run, e.g. "
+                            f"`megaplan user-action resolve --plan {plan} "
+                            f"--action-id {first} --resolution satisfied "
+                            f"--rationale '<why>'`. Until then this block cannot "
+                            f"clear on retry (its input is human-only)."
+                        )
                     reason = (
                         "execute reported blocked tasks awaiting user action: "
                         + "; ".join(blocked_summaries)
+                        + resolve_hint
                     )
                     log(
                         "execute reported task(s) blocked awaiting user action — "
-                        "exiting as awaiting_human without consuming a retry",
+                        "exiting as awaiting_human without consuming a retry"
+                        + (
+                            f"; resolve user action(s): {', '.join(action_ids)}"
+                            if action_ids
+                            else ""
+                        ),
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
                         blocked_task_ids=[getattr(bt, "task_id", "?") for bt in blocked_tasks],
+                        blocking_user_action_ids=action_ids,
                     )
                     return _outcome(
                         "awaiting_human",
@@ -2363,7 +2458,17 @@ def drive(
                     getattr(dv, "message", str(dv))
                     for dv in getattr(result, "deviations", ())
                 ]
-                if blocked_retry_count >= max_blocked_retries:
+                if not deviations_list:
+                    execute_effective_exit_kind = ExitKind.success.value
+                    execute_empty_block_treated_as_success = True
+                    log(
+                        "execute reported blocked_by_prereq with no blocked tasks "
+                        "and no deviations — treating as success",
+                        blocked_retries_used=blocked_retry_count,
+                        max_blocked_retries=max_blocked_retries,
+                        blocking_reasons=[],
+                    )
+                elif blocked_retry_count >= max_blocked_retries:
                     log(
                         f"execute blocked by quality gates and retry cap reached "
                         f"({max_blocked_retries}) — bailing",
@@ -2402,14 +2507,15 @@ def drive(
                         last_phase=last_phase,
                         blocking_reasons=deviations_list,
                     )
-                blocked_retry_count += 1
-                log(
-                    f"execute blocked by quality gates — retrying "
-                    f"({blocked_retry_count}/{max_blocked_retries})",
-                    blocked_retries_used=blocked_retry_count,
-                    max_blocked_retries=max_blocked_retries,
-                    blocking_reasons=deviations_list,
-                )
+                else:
+                    blocked_retry_count += 1
+                    log(
+                        f"execute blocked by quality gates — retrying "
+                        f"({blocked_retry_count}/{max_blocked_retries})",
+                        blocked_retries_used=blocked_retry_count,
+                        max_blocked_retries=max_blocked_retries,
+                        blocking_reasons=deviations_list,
+                    )
             elif ek == ExitKind.blocked_by_quality.value:
                 # Quality-gate block — retry with cap, using result.deviations
                 # directly (no string prefix matching).
@@ -2417,7 +2523,17 @@ def drive(
                     getattr(dv, "message", str(dv))
                     for dv in getattr(result, "deviations", ())
                 ]
-                if blocked_retry_count >= max_blocked_retries:
+                if not deviations_list:
+                    execute_effective_exit_kind = ExitKind.success.value
+                    execute_empty_block_treated_as_success = True
+                    log(
+                        "execute reported blocked_by_quality with no deviations "
+                        "— treating as success",
+                        blocked_retries_used=blocked_retry_count,
+                        max_blocked_retries=max_blocked_retries,
+                        blocking_reasons=[],
+                    )
+                elif blocked_retry_count >= max_blocked_retries:
                     log(
                         f"execute blocked by quality gates and retry cap reached "
                         f"({max_blocked_retries}) — bailing",
@@ -2456,14 +2572,15 @@ def drive(
                         last_phase=last_phase,
                         blocking_reasons=deviations_list,
                     )
-                blocked_retry_count += 1
-                log(
-                    f"execute blocked by quality gates — retrying "
-                    f"({blocked_retry_count}/{max_blocked_retries})",
-                    blocked_retries_used=blocked_retry_count,
-                    max_blocked_retries=max_blocked_retries,
-                    blocking_reasons=deviations_list,
-                )
+                else:
+                    blocked_retry_count += 1
+                    log(
+                        f"execute blocked by quality gates — retrying "
+                        f"({blocked_retry_count}/{max_blocked_retries})",
+                        blocked_retries_used=blocked_retry_count,
+                        max_blocked_retries=max_blocked_retries,
+                        blocking_reasons=deviations_list,
+                    )
             # timeout, context_exhausted, internal_error already handled above.
 
         # ── Auto-ESCALATE-up: respond to repeated execute failures ───────
@@ -2481,8 +2598,8 @@ def drive(
                 )
             except (TypeError, ValueError):
                 progress_sig = last_execute_progress or 0
-            ek = getattr(result, "exit_kind", None) if result is not None else None
-            execute_failed = (
+            ek = execute_effective_exit_kind if result is not None else None
+            execute_failed = False if execute_empty_block_treated_as_success else (
                 code not in (0, None)
                 or ek
                 in {

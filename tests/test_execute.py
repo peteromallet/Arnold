@@ -3827,8 +3827,23 @@ def test_auto_loop_same_model_no_extra_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When consecutive batches use the same tier-selected model, refreshed
-    is NOT forced to True."""
+    is NOT forced to True.
+
+    This isolates the tier-change freshness logic, so the per-batch
+    fresh-session default (which would otherwise force every batch fresh) is
+    disabled here.
+    """
     _setup_three_batch_tier_plan(plan_fixture)
+    _real_get_effective = megaplan.execute.batch.get_effective
+
+    def _no_fresh_per_batch(section, key):
+        if section == "execution" and key == "fresh_session_per_batch":
+            return False
+        return _real_get_effective(section, key)
+
+    monkeypatch.setattr(
+        megaplan.execute.batch, "get_effective", _no_fresh_per_batch
+    )
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",

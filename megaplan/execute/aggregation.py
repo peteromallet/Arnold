@@ -13,6 +13,7 @@ from megaplan._core import configured_robustness, is_creative_mode, is_prose_mod
 from megaplan._core.io import list_batch_artifacts, read_json
 from megaplan.execute.quality import (
     _capture_git_status_snapshot,
+    _capture_git_status_snapshot_recursive,
     _collect_execute_claimed_paths,
     _normalize_execute_claimed_path,
 )
@@ -152,6 +153,40 @@ def _collect_per_batch_claimed_paths(
     return claimed
 
 
+def _expand_untracked_directory_entries(
+    project_dir: Path,
+    observed_snapshot: dict[str, str],
+) -> dict[str, str]:
+    expanded = dict(observed_snapshot)
+    for path, digest in observed_snapshot.items():
+        if not path.endswith("/") or digest != "<directory>":
+            continue
+        root = project_dir / path
+        if not root.is_dir():
+            continue
+        expanded.pop(path, None)
+        for candidate in root.rglob("*"):
+            if candidate.is_file():
+                expanded[candidate.relative_to(project_dir).as_posix()] = "<untracked>"
+    return expanded
+
+
+def _capture_execute_scope_snapshot(
+    project_dir: Path,
+) -> tuple[dict[str, str], str | None]:
+    observed_snapshot, observed_error = _capture_git_status_snapshot(project_dir)
+    if observed_error is not None:
+        return observed_snapshot, observed_error
+    if not any(path.endswith("/") for path in observed_snapshot):
+        return observed_snapshot, None
+    recursive_snapshot, recursive_error = _capture_git_status_snapshot_recursive(
+        project_dir
+    )
+    if recursive_error is None:
+        return recursive_snapshot, None
+    return _expand_untracked_directory_entries(project_dir, observed_snapshot), None
+
+
 def _compute_execute_scope_drift(
     project_dir: Path,
     aggregate_payload: dict[str, Any],
@@ -175,7 +210,7 @@ def _compute_execute_scope_drift(
                 files_claimed.add(doc_path)
                 per_call_claimed.add(doc_path)
     try:
-        observed_snapshot, observed_error = _capture_git_status_snapshot(project_dir)
+        observed_snapshot, observed_error = _capture_execute_scope_snapshot(project_dir)
     except Exception as exc:
         raise CliError(
             "scope_drift_snapshot",

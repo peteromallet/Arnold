@@ -33,7 +33,7 @@ install targets.
 | megaplan (main)    | `megaplan/data/_composed/claude_skill.md`               | `~/.claude/skills/megaplan/SKILL.md`                                            |
 |                    | `megaplan/data/_composed/codex_skill.md`                | `~/.codex/skills/megaplan/SKILL.md`                                             |
 |                    | `megaplan/data/_composed/cursor_rule.mdc`               | `~/.cursor/rules/megaplan.mdc`                                                  |
-| megaplan-setup     | `megaplan/data/setup_skill.md`                          | `~/.claude/skills/megaplan-setup/SKILL.md`, `~/.codex/skills/megaplan-setup/SKILL.md` |
+| megaplan-prep     | `megaplan/data/prep_skill.md`                          | `~/.claude/skills/megaplan-prep/SKILL.md`, `~/.codex/skills/megaplan-prep/SKILL.md` |
 | megaplan-epic      | `megaplan/data/epic_skill.md`                           | `~/.claude/skills/megaplan-epic/SKILL.md`, `~/.codex/skills/megaplan-epic/SKILL.md` |
 | megaplan-tickets   | `megaplan/data/tickets_skill.md`                        | `~/.claude/skills/megaplan-tickets/SKILL.md`, `~/.codex/skills/megaplan-tickets/SKILL.md` |
 | megaplan-observe   | `megaplan/data/observe_skill.md`                        | `~/.claude/skills/megaplan-observe/SKILL.md`, `~/.codex/skills/megaplan-observe/SKILL.md` |

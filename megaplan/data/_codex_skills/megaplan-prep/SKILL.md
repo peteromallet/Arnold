@@ -1,5 +1,5 @@
 ---
-name: megaplan-setup
+name: megaplan-prep
 description: Set up a megaplan run before invoking it — size the work, write the brief, and pick the profile (intelligence tier), robustness level, and thinking depth. For both Codex and Claude harnesses. Consult before every `megaplan init`.
 ---
 
@@ -16,6 +16,8 @@ Three dials decide how to run a sprint:
 **Always run a megaplan, even for tiny work.** The harness captures the brief, plan, execution, and outcome — that record is worth the few seconds of overhead. `bare` is the floor; there is no "skip megaplan" option.
 
 **Run megaplan inside a subagent by default**, off the main thread — keeping the orchestrating conversation thin while the harness handles its own multi-phase chatter. On-thread is the exception, reserved for when you want to watch each phase live. The subagent is the venue; megaplan is still the harness — never skip megaplan in favor of "just doing it in a subagent."
+
+**After you launch the run in a subagent, set up `/babysit` to drive it to completion.** A backgrounded subagent will quietly stall on a credential error, a trust dialog, a wedged worker, or a watchdog false-kill — and nobody is watching. `/babysit` arms a recurring reminder that, on every fire, checks status, unblocks the root cause (fixing the megaplan engine source itself when the blocker is an engine defect), re-drives the next step, and re-arms — until the run is genuinely done. Launch the megaplan, then `/babysit <interval> <which run + any guardrails>`. See the **babysit** skill.
 
 The dials are independent — work through each one ignoring the others — then weigh the three together holistically. A high tier with low robustness is usually a mismatch; so is a low tier with `max` depth. When the three pull in opposite directions, the work probably needs to be split.
 
@@ -162,8 +164,8 @@ The `--robustness` flag. Picks how many phases run and how many critique passes 
 |---|---|---|
 | `bare` | plan → finalize → execute (no prep, no critique, no gate, no review) | **The floor — use this when nothing heavier earns its cost.** Single-file fixes, mechanical changes, tasks you'd otherwise do inline. The 3-phase run captures what you did and why, even when critique would be a no-op. Always preferable to skipping the harness. |
 | `light` | plan → critique → revise → finalize → execute (no prep, no gate, no review) | Small/scoped, well-known feature, low blast radius — but you want **one** sense-check pass on the plan before committing. ~5 phases instead of 8. |
-| `full` *(default)* | prep → plan → critique → gate → revise → finalize → execute → review; 5 core critique checks (parallel up to `orchestration.max_critique_concurrency`, default 5) | Cross-cutting, unfamiliar code, ambiguous brief. **This is almost always perfect for everything.** |
-| `thorough` | Same shape as `full`, 8 critique checks + parallel critique | Security, data migration, public API contract — anything where a regression = production incident. **Extremely rare.** You should be able to name the specific stakes that warrant it. |
+| `full` *(default)* | prep → plan → critique → gate → revise → finalize → execute → review; up to 6 core critique lenses (parallel up to `orchestration.max_critique_concurrency`, default 6) | Cross-cutting, unfamiliar code, ambiguous brief. **This is almost always perfect for everything.** |
+| `thorough` | Same shape as `full`, up to 9 critique lenses + parallel critique | Security, data migration, public API contract — anything where a regression = production incident. **Extremely rare.** You should be able to name the specific stakes that warrant it. |
 | `extreme` | `thorough` + parallel review | Both deep critique *and* concurrent review matter. **Vanishingly rare.** Only when the user specifically asks for it. |
 
 Cost scales ~1.5-2× from `light` → `full`, another ~1.3× to `thorough`.

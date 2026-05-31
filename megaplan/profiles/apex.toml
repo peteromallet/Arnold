@@ -28,7 +28,7 @@
 #   * `--phase-model phase=spec` — still honored; it's the legitimate way to
 #     bump depth on a specific phase (e.g. `plan=claude:high` for hard plans).
 #
-# See docs/megaplan-setup.md for the full rubric.
+# See docs/megaplan-prep.md for the full rubric.
 [profiles.apex]
 vendor_locked         = true
 # Adaptive critique on by default: premium-bearing profile, so the
