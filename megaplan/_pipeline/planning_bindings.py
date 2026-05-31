@@ -18,7 +18,15 @@ from typing import Any
 
 from megaplan._pipeline.types import GateRecommendation, ReduceResult
 
-__all__ = ["GateRecommendation", "planning_promote", "planning_reduce"]
+EVALUAND_GATE_ARTIFACT_KEY = "evaluand"
+"""Adapter key for planning GateResult consumers that read Evaluand artifacts."""
+
+__all__ = [
+    "EVALUAND_GATE_ARTIFACT_KEY",
+    "GateRecommendation",
+    "planning_promote",
+    "planning_reduce",
+]
 
 
 _LITERALS: frozenset[str] = frozenset(

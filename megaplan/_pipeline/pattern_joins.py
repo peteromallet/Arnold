@@ -6,6 +6,7 @@ from collections import Counter
 from typing import Any, Callable, Mapping
 
 from megaplan._pipeline.pattern_types import JoinFn
+from megaplan._pipeline.flags import typed_ports_on
 from megaplan._pipeline.types import (
     GateRecommendation,
     PipelineVerdict,
@@ -19,7 +20,7 @@ def majority_vote(
     panel_output_key: str = "verdict",
     *,
     label_extractor: Callable[[StepResult], str | None] | None = None,
-    default_on_tie: str | None = None,
+    default_on_tie: str | None = "tiebreaker",
 ) -> JoinFn:
     """Return a join callable that picks the majority recommendation.
 
@@ -44,39 +45,47 @@ def majority_vote(
 
     def _join(results: list[StepResult], ctx: StepContext) -> StepResult:
         del ctx  # vote is state-agnostic
+        typed = typed_ports_on()
         recs: list[str] = []
+        counts: Counter[str] = Counter()
         for result in results:
             label = _extract(result)
             if label is not None:
                 recs.append(label)
+                counts[label] += 1
 
         chosen: str | None
+        next_label: str
         tally: tuple[float, ...] = ()
         if not recs:
-            chosen = default_on_tie
+            chosen = None
+            next_label = default_on_tie or "halt"
         else:
-            counts: Counter[str] = Counter(recs)
             top = counts.most_common()
             tally = tuple(float(c) for _, c in top)
             if len(top) > 1 and top[0][1] == top[1][1]:
-                chosen = default_on_tie
+                chosen = None
+                next_label = default_on_tie or "halt"
             else:
                 chosen = top[0][0]
+                next_label = chosen
 
         reduce_result = ReduceResult(
             value=chosen,
-            label=chosen or "",
+            label=chosen,
             scores=tally,
+            tally=dict(counts),
             provenance=(),
         )
+        recommendation = None if typed else (chosen or next_label)
         verdict = PipelineVerdict(
             score=1.0,
-            recommendation=chosen,  # type: ignore[arg-type]  # Note: M2 will re-type
-            payload={"reduce_result": reduce_result},
+            recommendation=recommendation,  # type: ignore[arg-type]
+            payload={"reduce_result": reduce_result} if typed else {},
         )
         return StepResult(
             verdict=verdict,
-            next=chosen or "halt",  # Note: M2 will re-type
+            next=next_label,  # Note: M2 will re-type
         )
 
     return _join
@@ -86,7 +95,7 @@ def weighted_vote(
     weights: Mapping[str, float],
     *,
     label_extractor: Callable[[StepResult], str | None] | None = None,
-    default_on_tie: str | None = None,
+    default_on_tie: str | None = "tiebreaker",
 ) -> JoinFn:
     """Return a join callable that picks the highest-weighted recommendation.
 
@@ -111,7 +120,9 @@ def weighted_vote(
 
     def _join(results: list[StepResult], ctx: StepContext) -> StepResult:
         del ctx  # vote is state-agnostic
+        typed = typed_ports_on()
         tally_map: dict[str, float] = {}
+        vote_counts: Counter[str] = Counter()
         any_vote = False
         for result in results:
             label = _extract(result)
@@ -127,36 +138,44 @@ def weighted_vote(
                 else 0.0
             )
             tally_map[label] = tally_map.get(label, 0.0) + weight
+            vote_counts[label] += 1
             any_vote = True
 
         chosen: str | None
+        next_label: str
         tally: tuple[float, ...] = ()
         if not any_vote or not tally_map:
-            chosen = default_on_tie
+            chosen = None
+            next_label = default_on_tie or "halt"
         else:
             ranked = sorted(tally_map.items(), key=lambda kv: kv[1], reverse=True)
             tally = tuple(v for _, v in ranked)
             if ranked[0][1] <= 0.0:
-                chosen = default_on_tie
+                chosen = None
+                next_label = default_on_tie or "halt"
             elif len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
-                chosen = default_on_tie
+                chosen = None
+                next_label = default_on_tie or "halt"
             else:
                 chosen = ranked[0][0]
+                next_label = chosen
 
         reduce_result = ReduceResult(
             value=chosen,
-            label=chosen or "",
+            label=chosen,
             scores=tally,
+            tally=dict(vote_counts),
             provenance=(),
         )
+        recommendation = None if typed else (chosen or next_label)
         verdict = PipelineVerdict(
             score=1.0,
-            recommendation=chosen,  # type: ignore[arg-type]  # Note: M2 will re-type
-            payload={"reduce_result": reduce_result},
+            recommendation=recommendation,  # type: ignore[arg-type]
+            payload={"reduce_result": reduce_result} if typed else {},
         )
         return StepResult(
             verdict=verdict,
-            next=chosen or "halt",  # Note: M2 will re-type
+            next=next_label,  # Note: M2 will re-type
         )
 
     return _join

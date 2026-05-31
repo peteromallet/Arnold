@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from megaplan._pipeline.planning_bindings import (
+    EVALUAND_GATE_ARTIFACT_KEY,
     planning_promote,
     planning_reduce,
 )
@@ -31,3 +32,7 @@ def test_planning_reduce_non_literal_returns_proceed():
     # label) collapses to the safe "proceed" default.
     agg = ReduceResult(value=42, label="winner_alpha", tally={})
     assert planning_reduce(agg) == "proceed"
+
+
+def test_planning_gate_result_evaluand_artifact_touchpoint_is_explicit():
+    assert EVALUAND_GATE_ARTIFACT_KEY == "evaluand"

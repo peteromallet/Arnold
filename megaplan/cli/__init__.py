@@ -1020,6 +1020,36 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         if not name:
             print("(no pipeline name provided)")
             return 0
+        from megaplan._pipeline.judge_manifest_discovery import (
+            find_judge_manifest,
+            validate_judge_manifest,
+        )
+
+        try:
+            judge_match = find_judge_manifest(name)
+        except Exception as exc:
+            print(
+                f"pipelines check: failed to load judge manifest for {name!r}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        if judge_match is not None:
+            diag = validate_judge_manifest(
+                judge_match.manifest,
+                path=judge_match.path,
+            )
+            if diag.ok:
+                print(name)
+                return 0
+            print(
+                f"pipelines check: judge manifest {name!r} has "
+                f"{len(diag.defects)} defect(s):",
+                file=sys.stderr,
+            )
+            for defect in diag.defects:
+                print(f"  - {defect}", file=sys.stderr)
+            return 1
+
         from megaplan._pipeline.registry import get_pipeline
         from megaplan._pipeline.validator import validate
 

@@ -9,7 +9,16 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import os
+from argparse import Namespace
 
+from megaplan._pipeline.judge_manifest import (
+    EVALUAND_RECORD_CONTENT_TYPE,
+    JudgeManifestPort,
+    dump_judge_manifest,
+    make_judge_manifest,
+)
+from megaplan._pipeline.judge_manifest_discovery import validate_judge_manifest
 from megaplan._pipeline.registry import get_pipeline
 from megaplan._pipeline.types import Edge, Pipeline, Stage
 from megaplan._pipeline.validator import Diagnostics, validate
@@ -113,11 +122,12 @@ def test_diagnostics_ok_property() -> None:
     assert Diagnostics(defects=["x"]).ok is False
 
 
-def _run_cli(*argv: str) -> subprocess.CompletedProcess:
+def _run_cli(*argv: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "megaplan", *argv],
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -130,3 +140,79 @@ def test_cli_pipelines_check_planning_exits_zero() -> None:
 def test_cli_pipelines_check_no_name_exits_zero() -> None:
     result = _run_cli("pipelines", "check")
     assert result.returncode == 0
+
+
+def test_cli_pipelines_check_judge_manifest_does_not_import_implementation(
+    tmp_path,
+) -> None:
+    user_dir = tmp_path / ".megaplan" / "pipelines"
+    user_dir.mkdir(parents=True)
+    (user_dir / "exploding_judge.py").write_text(
+        "raise RuntimeError('implementation import must not run')\n",
+        encoding="utf-8",
+    )
+    manifest = make_judge_manifest(
+        name="exploding-judge",
+        implementation="exploding_judge:Judge",
+        arnold_api_version="2026-05-31",
+        model_identity="model:gpt-5.4",
+        rubric_body={"rubric": "score deterministically"},
+        consumes=(JudgeManifestPort("candidate", "text/markdown"),),
+        produces=(JudgeManifestPort("evaluand", EVALUAND_RECORD_CONTENT_TYPE),),
+        source_hash="sha256:deadbeef",
+    )
+    dump_judge_manifest(manifest, user_dir / "exploding-judge.judge.json")
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    result = _run_cli("pipelines", "check", "exploding-judge", env=env)
+
+    assert result.returncode == 0, result.stderr
+    assert "exploding-judge" in result.stdout
+    assert "implementation import must not run" not in result.stderr
+
+
+def test_cli_pipelines_check_falls_back_to_pipeline_registry() -> None:
+    result = _run_cli("pipelines", "check", "planning")
+    assert result.returncode == 0, result.stderr
+    assert "planning" in result.stdout
+
+
+def test_m5_judge_manifest_shape_validates() -> None:
+    manifest = make_judge_manifest(
+        name="m5-wrapper-eval",
+        implementation="megaplan.eval.wrapper:Judge",
+        arnold_api_version="2026-05-31",
+        model_identity="model:gpt-5.4",
+        rubric_body={"rubric": "return an EvaluandRecord judgment"},
+        consumes=(JudgeManifestPort("candidate", "text/markdown"),),
+        produces=(JudgeManifestPort("evaluand", EVALUAND_RECORD_CONTENT_TYPE),),
+        source_hash="sha256:cafebabe",
+    )
+
+    diag = validate_judge_manifest(manifest, path="m5-wrapper-eval.judge.json")
+
+    assert diag.ok, diag.defects
+
+
+def test_cli_pipelines_check_registered_m5_manifest_does_not_import_wrapper(
+    monkeypatch,
+) -> None:
+    from megaplan.cli import _handle_pipelines
+
+    def blocked_import(name, package=None):
+        if name == "megaplan._pipeline.eval_judge_wrapper":
+            raise AssertionError("pipelines check imported the eval judge wrapper")
+        return real_import_module(name, package=package)
+
+    import importlib
+
+    real_import_module = importlib.import_module
+    monkeypatch.setattr(importlib, "import_module", blocked_import)
+
+    rc = _handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="check", pipeline_name="m5-wrapper-eval"),
+    )
+
+    assert rc == 0
