@@ -2435,6 +2435,7 @@ def test_session_plan_reproducible_from_state(
     from megaplan.workers.shannon import (
         ShannonConfig,
         _seeded_rng_for_run,
+        _shannon_run_nonce,
         _serialize_session_plan,
         plan_session,
         run_shannon_step,
@@ -2480,6 +2481,16 @@ def test_session_plan_reproducible_from_state(
     rng2 = _seeded_rng_for_run(state, "execute")
     assert rng1.getstate() == rng2.getstate(), (
         "_seeded_rng_for_run not stable for same state+step"
+    )
+
+    nonce_state = copy.deepcopy(state)
+    first_nonce = _shannon_run_nonce(nonce_state, "critique_evaluator")
+    second_nonce = _shannon_run_nonce(nonce_state, "critique_evaluator")
+    assert second_nonce == first_nonce + 1
+    retry_rng1 = _seeded_rng_for_run(nonce_state, "critique_evaluator", nonce=first_nonce)
+    retry_rng2 = _seeded_rng_for_run(nonce_state, "critique_evaluator", nonce=second_nonce)
+    assert retry_rng1.getstate() != retry_rng2.getstate(), (
+        "Shannon retry nonce must produce a distinct new-session seed"
     )
 
     # ── (c) Orchestrator level: two identical runs → identical shannon_plan ──
