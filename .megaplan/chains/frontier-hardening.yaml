@@ -49,7 +49,7 @@ milestones:
     profile: directed         # tier 2 — premium plan sequences the strict-flip migration; DeepSeek executes the wiring.
     robustness: full          # behavior-changing across ingest call sites, but objective gates (CI + tests) backstop it.
     depth: low
-    # vendor: codex
+    # LANDED — PR #35, main commit 38b01ac
 
   - label: s2-dynamic-widget-fence
     idea: .megaplan/ideas/frontier-hardening/s2-dynamic-widget-fence.md
@@ -57,7 +57,7 @@ milestones:
     profile: partnered        # tier 3 — novel: a dict/row-shaped widgets_values IR type + a widget-SHAPE refusal fence.
     robustness: full          # cross-cutting (ingest + emit + schema); coordinates with scratchpad-emitter m5's detector.
     depth: medium
-    # vendor: codex
+    # LANDED — PR #36, main commit 92dfdb8
 
   - label: s3-intent-oracle
     idea: .megaplan/ideas/frontier-hardening/s3-intent-oracle.md
@@ -66,7 +66,7 @@ milestones:
     robustness: thorough      # keystone correctness gate, no prior art; thorough buys the prep phase + deep critique.
     depth: high
     critic: cross             # second mind on the oracle design before anything depends on its verdicts
-    # DONE — frontier-s3-intent
+    # LANDED — frontier-s3-intent @ 9e91dc6, integrated in e5772b0
 
   - label: s4-capability-fence
     idea: .megaplan/ideas/frontier-hardening/s4-capability-fence.md
@@ -75,7 +75,7 @@ milestones:
     robustness: thorough      # security-critical: a regression here = a confused-deputy exec/exfil incident.
     depth: high
     critic: cross
-    # DONE — frontier-s4-capability
+    # LANDED — frontier-s4-capability @ 6d5e3e4, integrated in e5772b0
 
   - label: s5-felt-fidelity-gate
     idea: .megaplan/ideas/frontier-hardening/s5-felt-fidelity-gate.md
@@ -83,7 +83,7 @@ milestones:
     profile: directed         # tier 2 — a felt-delta metric + latency budget gate; mostly wiring atop m5's Step-0 signal.
     robustness: full          # the preview/undo UX itself belongs to the write-enabled editor (future m8), NOT here.
     depth: low
-    # vendor: codex
+    # LANDED — PR #34, main commit fb192d2
 
 on_failure:
   abort: stop_chain
