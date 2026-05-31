@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Any, Mapping
 from typing import Any
 
 from megaplan._core import configured_robustness, creative_form_id, read_json
@@ -105,7 +106,9 @@ def _critique_creative_prompt(
     root: Path | None = None,
     *,
     form: Form | None = None,
+    contract_context: Mapping[str, Any] | None = None,
 ) -> str:
+    del contract_context
     context = _critique_context(state, plan_dir, root)
     active_form = form or get_form(creative_form_id(state) or "joke")
     robustness = configured_robustness(state)

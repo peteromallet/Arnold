@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from megaplan.types import CliError
-from megaplan.workers import CommandResult, _build_mock_payload, run_codex_prep_step
+from megaplan.workers import CommandResult, _build_mock_payload, run_codex_step
 from tests._workers_helpers import _mock_state, _write_codex_rollout
 
 
@@ -1796,7 +1796,7 @@ def test_codex_execute_headroom_guard_forces_fresh_before_resume(
     assert "resume" not in commands[0]
     assert "old-execute-session" not in commands[0]
 
-def test_run_codex_prep_step_uses_readonly_command_without_write_grants(tmp_path: Path) -> None:
+def test_run_codex_step_read_only_uses_readonly_command_without_write_grants(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
 
     ensure_runtime_layout(tmp_path)
@@ -1811,13 +1811,15 @@ def test_run_codex_prep_step_uses_readonly_command_without_write_grants(tmp_path
         return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
 
     with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
-        result = run_codex_prep_step(
+        result = run_codex_step(
             "prep-triage",
             state,
             plan_dir,
             root=tmp_path,
+            persistent=False,
             prompt_override="triage prompt",
             model="gpt-5.5",
+            read_only=True,
         )
 
     command = commands[0]
@@ -1828,7 +1830,47 @@ def test_run_codex_prep_step_uses_readonly_command_without_write_grants(tmp_path
     assert "-C" not in command
     assert "--full-auto" not in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert not any("sandbox_workspace_write" in part for part in command)
     assert not any("writable_roots" in part for part in command)
+
+def test_run_step_with_worker_threads_read_only_to_codex(tmp_path: Path) -> None:
+    from megaplan.types import AgentMode
+    from megaplan.workers import run_step_with_worker
+
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {"triage_framing": "No fanout needed.", "areas": []}
+    am = AgentMode(
+        agent="codex",
+        mode="ephemeral",
+        refreshed=True,
+        model="gpt-5.5",
+        effort="medium",
+        resolved_model="gpt-5.5",
+    )
+    fake_result = type(
+        "Result",
+        (),
+        {
+            "payload": payload,
+            "raw_output": "",
+            "duration_ms": 1,
+            "cost_usd": 0.0,
+            "session_id": "sess",
+            "trace_output": None,
+        },
+    )()
+    with patch("megaplan.workers._impl.run_codex_step", return_value=fake_result) as run_codex:
+        run_step_with_worker(
+            "prep-triage",
+            state,
+            plan_dir,
+            Namespace(agent="codex", ephemeral=True, fresh=True, persist=False, confirm_self_review=False, hermes=None, phase_model=[]),
+            root=tmp_path,
+            resolved=am,
+            read_only=True,
+        )
+
+    assert run_codex.call_args.kwargs["read_only"] is True
 
 def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

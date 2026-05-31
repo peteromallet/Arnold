@@ -168,6 +168,7 @@ def test_run_step_with_worker_shannon_calls_run_shannon_step(tmp_path: Path) -> 
         )
     run_shannon.assert_called_once()
     assert run_shannon.call_args.args[0] == "plan"
+    assert run_shannon.call_args.kwargs["read_only"] is False
 
 def test_run_step_with_worker_shannon_returns_agent_shannon(tmp_path: Path) -> None:
     from megaplan.workers import run_step_with_worker
@@ -238,6 +239,37 @@ def test_run_step_with_worker_claude_calls_run_shannon_step(tmp_path: Path) -> N
     assert mode == "persistent"
     assert refreshed is True
     assert result.payload == payload
+    assert run_shannon.call_args.kwargs["read_only"] is False
+
+def test_run_step_with_worker_threads_read_only_to_shannon_backed_agents(tmp_path: Path) -> None:
+    from megaplan.workers import run_step_with_worker
+
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_worker = WorkerResult(
+        payload=payload,
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="shannon-backed-claude",
+        rendered_prompt="p",
+    )
+    with patch("megaplan.workers.shannon.run_shannon_step", return_value=fake_worker) as run_shannon:
+        run_step_with_worker(
+            "prep-triage",
+            state,
+            plan_dir,
+            Namespace(agent="claude", ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]),
+            root=tmp_path,
+            resolved=("claude", "persistent", False, None),
+            read_only=True,
+        )
+    assert run_shannon.call_args.kwargs["read_only"] is True
 
 def test_session_key_for_shannon_steps() -> None:
     """Generic {agent}_{step} fallback covers all Shannon steps."""
@@ -663,6 +695,13 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     # Output ceiling is raised above the inherited ~64k default so opus is not
     # cut off mid-run before emitting the structured envelope.
     assert run_command.call_args.kwargs["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
+    # The launched Claude CLI's per-command Bash timeout is raised above its 120s
+    # built-in default so a legitimate long-running execute command (e.g. a full
+    # pytest run) is not SIGKILLed mid-run; megaplan's 7200s execute cap + 900s
+    # stall watchdog own the stop-policy instead.
+    env_out = run_command.call_args.kwargs["env"]
+    assert env_out["BASH_DEFAULT_TIMEOUT_MS"] == "7200000"
+    assert env_out["BASH_MAX_TIMEOUT_MS"] == "7200000"
     # On non-root systems, ANTHROPIC_API_KEY is set to "" to block Bun's dotenv auto-load.
     api_key_val = run_command.call_args.kwargs["env"].get("ANTHROPIC_API_KEY")
     assert api_key_val is None or api_key_val == ""
@@ -1020,6 +1059,215 @@ def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
     assert "bypassPermissions" in command
     assert "--dangerously-skip-permissions" in command
     assert "--allow-dangerously-skip-permissions" in command
+
+def test_run_shannon_step_read_only_uses_tool_restrictions_without_bypass_flags(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {"triage_framing": "No fanout needed.", "areas": []}
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "read-only-shannon-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        result = run_shannon_step(
+            "prep-triage",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+            read_only=True,
+        )
+
+    command = run_command.call_args.args[0]
+    assert "--allowedTools" in command
+    allowed_idx = command.index("--allowedTools")
+    assert command[allowed_idx + 1 : allowed_idx + 6] == [
+        "Read",
+        "Grep",
+        "Glob",
+        "WebFetch",
+        "WebSearch",
+    ]
+    assert "--disallowedTools" in command
+    disallowed_idx = command.index("--disallowedTools")
+    assert command[disallowed_idx + 1 : disallowed_idx + 8] == [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "TodoWrite",
+        "Task",
+        "Write",
+    ]
+    assert "--permission-mode" not in command
+    assert "bypassPermissions" not in command
+    assert "--dangerously-skip-permissions" not in command
+    assert "--allow-dangerously-skip-permissions" not in command
+    assert result.payload == payload
+
+def test_run_shannon_step_read_only_root_cloud_keeps_tool_restrictions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
+    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 0)
+    monkeypatch.setattr("megaplan.workers.shannon.shutil.which", lambda name: "/bin/su" if name == "su" else None)
+    payload = {"triage_framing": "No fanout needed.", "areas": []}
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(payload),
+                "session_id": "real-shannon-session",
+                "total_cost_usd": 0.02,
+                "usage": {"input_tokens": 11, "output_tokens": 7},
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        run_shannon_step(
+            "prep-triage",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+            read_only=True,
+        )
+
+    command = run_command.call_args.args[0]
+    assert command[:6] == ["/bin/su", "-m", "-s", "/bin/bash", "nobody", "-c"]
+    shell_cmd = command[6]
+    assert "--allowedTools Read Grep Glob WebFetch WebSearch" in shell_cmd
+    assert "--disallowedTools Bash Edit MultiEdit NotebookEdit TodoWrite Task Write" in shell_cmd
+    assert "--dangerously-skip-permissions" not in shell_cmd
+    assert "--allow-dangerously-skip-permissions" not in shell_cmd
+    assert "bypassPermissions" not in shell_cmd
+
+def test_run_shannon_step_read_only_claude_agent_uses_tool_restrictions(
+    tmp_path: Path,
+) -> None:
+    """Claude agent path (session_agent='claude') with read_only=True must
+    construct the same read-only tool flag set as the Shannon agent path."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {"triage_framing": "No fanout.", "areas": []}
+    raw = json.dumps([{
+        "type": "result", "subtype": "success",
+        "result": json.dumps(payload),
+        "session_id": "claude-ro-session",
+        "total_cost_usd": 0.01,
+        "usage": {"input_tokens": 5, "output_tokens": 3},
+    }])
+    fake_result = CommandResult(
+        command=[], cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1,
+    )
+
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        result = run_shannon_step(
+            "prep-triage", state, plan_dir,
+            root=tmp_path, fresh=True, prompt_override="return json",
+            read_only=True, session_agent="claude",
+        )
+
+    command = run_command.call_args.args[0]
+    assert "--allowedTools" in command
+    allowed_idx = command.index("--allowedTools")
+    assert command[allowed_idx + 1 : allowed_idx + 6] == [
+        "Read", "Grep", "Glob", "WebFetch", "WebSearch",
+    ]
+    assert "--disallowedTools" in command
+    disallowed_idx = command.index("--disallowedTools")
+    assert command[disallowed_idx + 1 : disallowed_idx + 8] == [
+        "Bash", "Edit", "MultiEdit", "NotebookEdit", "TodoWrite", "Task", "Write",
+    ]
+    assert "--permission-mode" not in command
+    assert "bypassPermissions" not in command
+    assert "--dangerously-skip-permissions" not in command
+    assert "--allow-dangerously-skip-permissions" not in command
+    assert result.payload == payload
+
+def test_run_shannon_step_non_read_only_claude_agent_uses_bypass(
+    tmp_path: Path,
+) -> None:
+    """Claude agent path (session_agent='claude') with read_only=False (default)
+    must preserve the bypass-permissions authoring launch path unchanged."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# Plan", "questions": [],
+        "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": [],
+    }
+    raw = json.dumps([{
+        "type": "result", "subtype": "success",
+        "result": json.dumps(payload),
+        "session_id": "claude-bypass-session",
+        "total_cost_usd": 0.01,
+        "usage": {"input_tokens": 5, "output_tokens": 3},
+    }])
+    fake_result = CommandResult(
+        command=[], cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1,
+    )
+
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        result = run_shannon_step(
+            "plan", state, plan_dir,
+            root=tmp_path, fresh=True, prompt_override="return json",
+            session_agent="claude",
+        )
+
+    command = run_command.call_args.args[0]
+    assert "--permission-mode" in command
+    assert "bypassPermissions" in command
+    assert "--dangerously-skip-permissions" in command
+    assert "--allow-dangerously-skip-permissions" in command
+    assert "--allowedTools" not in command
+    assert "--disallowedTools" not in command
+    assert result.payload == payload
 
 def test_shannon_worker_patches_known_timeout_and_tool_use_defects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -1601,6 +1849,74 @@ def test_session_strategy_non_execute_also_sheds_prior_session(
     assert calls[1][calls[1].index("--resume") + 1] == "plan-keep"
 
 
+def test_session_strategy_read_only_context_op_uses_tool_restrictions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When read_only=True and a context op (compact/clear) fires, the op
+    command must carry --allowedTools/--disallowedTools, not bypass-permissions
+    flags.  The op command is derived from base_command, which is constructed
+    with the read_only contract."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")  # -> clear
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "execute", "sess-keep")
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            return CommandResult(
+                command=command, cwd=tmp_path, returncode=0,
+                stdout='{"type":"result","subtype":"success","session_id":"sess-keep"}',
+                stderr="", duration_ms=5,
+            )
+        payload = {
+            "output": "done", "files_changed": [], "commands_run": [],
+            "deviations": [], "task_updates": [], "sense_check_acknowledgments": [],
+        }
+        return CommandResult(
+            command=command, cwd=tmp_path, returncode=0,
+            stdout=json.dumps([{
+                "type": "result", "subtype": "success",
+                "result": json.dumps(payload),
+                "session_id": "sess-keep",
+                "total_cost_usd": 0.01,
+                "usage": {"input_tokens": 5, "output_tokens": 3},
+            }]),
+            stderr="", duration_ms=12,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "execute", state, plan_dir, root=tmp_path, fresh=False,
+            prompt_override="batch", read_only=True,
+        )
+
+    assert len(calls) == 2  # context op + work turn
+    # Context op command must carry read-only tool flags, not bypass flags.
+    op_cmd = calls[0]
+    assert "--allowedTools" in op_cmd
+    assert "--disallowedTools" in op_cmd
+    assert "--permission-mode" not in op_cmd
+    assert "bypassPermissions" not in op_cmd
+    assert "--dangerously-skip-permissions" not in op_cmd
+    assert "--allow-dangerously-skip-permissions" not in op_cmd
+    assert op_cmd[op_cmd.index("-p") + 1] == "/clear"
+
+    # Work turn command must also carry read-only tool flags, not bypass flags.
+    work_cmd = calls[1]
+    assert "--allowedTools" in work_cmd
+    assert "--disallowedTools" in work_cmd
+    assert "--permission-mode" not in work_cmd
+    assert "bypassPermissions" not in work_cmd
+    assert "--dangerously-skip-permissions" not in work_cmd
+    assert "--allow-dangerously-skip-permissions" not in work_cmd
+
 def test_session_roulette_disabled_restores_legacy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1908,3 +2224,20 @@ def test_session_strategy_stall_after_clear_rotation_clears_persisted_id(
             )
     assert calls[1][calls[1].index("--resume") + 1] == "rot-1"   # work turn resumed rotated id
     assert key not in state["sessions"]                          # persisted pre-clear id dropped
+
+
+def test_shannon_bash_timeout_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The launched Claude CLI's per-command Bash timeout defaults well above its
+    built-in 120s cap and is overridable via env, so megaplan's phase budget +
+    stall watchdog own the stop-policy rather than a 120s SIGKILL mid-command."""
+    from megaplan.workers.shannon import _shannon_bash_timeout_ms
+
+    monkeypatch.delenv("MEGAPLAN_SHANNON_BASH_TIMEOUT_MS", raising=False)
+    assert _shannon_bash_timeout_ms() == 7200000
+
+    monkeypatch.setenv("MEGAPLAN_SHANNON_BASH_TIMEOUT_MS", "300000")
+    assert _shannon_bash_timeout_ms() == 300000
+
+    # Garbage falls back to the safe default rather than crashing the worker.
+    monkeypatch.setenv("MEGAPLAN_SHANNON_BASH_TIMEOUT_MS", "not-a-number")
+    assert _shannon_bash_timeout_ms() == 7200000

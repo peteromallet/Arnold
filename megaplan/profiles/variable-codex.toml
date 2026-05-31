@@ -46,3 +46,10 @@ tiebreaker_challenger = "codex"
 3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 4 = "codex:medium"
 5 = "codex:high"
+
+[profiles.variable-codex.tier_models.critique]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+4 = "codex:medium"
+5 = "codex:high"

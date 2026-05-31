@@ -331,6 +331,80 @@ def test_render_final_md_pending_partially_done_and_reviewed_states() -> None:
     assert "Verdict: Confirmed." in reviewed_md
 
 
+def test_finalize_writes_contract_json_and_keeps_empty_final_md_inert(
+    plan_fixture: PlanFixture,
+) -> None:
+    state = load_state(plan_fixture.plan_dir)
+    state["config"]["mode"] = "code"
+
+    payload = {
+        "tasks": [],
+        "watch_items": [],
+        "sense_checks": [],
+        "meta_commentary": "ok",
+        "validation": {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "ok",
+            "coverage_complete": True,
+        },
+    }
+
+    _write_finalize_artifacts(plan_fixture.plan_dir, payload, state)
+
+    assert read_json(plan_fixture.plan_dir / "contract.json") == {
+        "provides": [],
+        "assumes": [],
+    }
+    final_md = (plan_fixture.plan_dir / "final.md").read_text(encoding="utf-8")
+    assert "## Provides" not in final_md
+    assert "## Assumes" not in final_md
+
+
+def test_render_final_md_renders_contract_sections_when_present() -> None:
+    from megaplan._core import render_final_md
+
+    data = {
+        "tasks": [],
+        "watch_items": [],
+        "sense_checks": [],
+        "meta_commentary": "Contracts present.",
+        "provides": [
+            {
+                "name": "Planner surface",
+                "description": "shared planner entrypoints",
+                "interfaces": [
+                    {
+                        "symbol": "Planner.run",
+                        "signature": "Planner.run(config) -> None",
+                        "path": "megaplan/planner.py",
+                    }
+                ],
+            }
+        ],
+        "assumes": [
+            {
+                "name": "Runtime contract",
+                "upstream_milestone": "m1",
+                "interfaces": [
+                    {
+                        "symbol": "Runtime.run",
+                        "signature": "Runtime.run(config) -> None",
+                        "path": "megaplan/runtime.py",
+                    }
+                ],
+            }
+        ],
+    }
+
+    rendered = render_final_md(data, phase="review")
+
+    assert "## Provides" in rendered
+    assert "## Assumes" in rendered
+    assert "`Planner.run`" in rendered
+    assert "from `m1`" in rendered
+
+
 def test_finalize_normalize_complexity_missing_defaults_to_4(plan_fixture: PlanFixture) -> None:
     """Worker response missing complexity writes 4 (Sonnet) in finalize artifacts.
 

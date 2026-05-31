@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Any, Mapping
 
 from megaplan._core import (
     debt_by_subsystem,
@@ -182,6 +183,125 @@ def _finalize_debt_block(plan_dir: Path, root: Path | None) -> str:
         {json_dump(watch_lines).strip()}
         """
     ).strip()
+
+
+def _resolve_contract_context(
+    state: Mapping[str, Any],
+    contract_context: Mapping[str, Any] | None = None,
+) -> Mapping[str, Any] | None:
+    if contract_context is not None:
+        return contract_context
+    meta = state.get("meta")
+    if not isinstance(meta, Mapping):
+        return None
+    chain_policy = meta.get("chain_policy")
+    if not isinstance(chain_policy, Mapping):
+        return None
+    resolved = chain_policy.get("contract_context")
+    return resolved if isinstance(resolved, Mapping) else None
+
+
+def _render_contracts_block(
+    contract_context: Mapping[str, Any] | None,
+    *,
+    audience: str,
+) -> str:
+    if not isinstance(contract_context, Mapping):
+        return ""
+    if contract_context.get("plan_only") is not True:
+        return ""
+
+    upstream_contracts = contract_context.get("upstream_contracts")
+    if isinstance(upstream_contracts, Mapping):
+        contracts = [
+            {"milestone_label": label, **(value if isinstance(value, Mapping) else {})}
+            for label, value in upstream_contracts.items()
+            if isinstance(label, str)
+        ]
+    elif isinstance(upstream_contracts, list):
+        contracts = [item for item in upstream_contracts if isinstance(item, Mapping)]
+    else:
+        contracts = []
+    if not contracts:
+        return ""
+
+    intro_map = {
+        "plan": (
+            "Planning-pass upstream contract context. These interfaces are planned upstream surfaces, "
+            "not executed evidence; plan against them without assuming they already exist in the repo."
+        ),
+        "prep": (
+            "Planning-pass upstream contract context. Use these planned upstream interfaces to guide prep "
+            "and cross-reference work; they are expected future surfaces, not missing-file defects."
+        ),
+        "prep-triage": (
+            "Planning-pass upstream contract context. Factor these upstream planned interfaces into the "
+            "research-area split when they materially shape what the downstream milestone must investigate."
+        ),
+        "prep-distill": (
+            "Planning-pass upstream contract context. Preserve these upstream planned interfaces in the "
+            "final prep view only when they materially affect the downstream implementation plan."
+        ),
+        "critique": (
+            "Deferred-verification planning-pass contract context. These upstream-provided interfaces are "
+            "planned dependency surfaces, not executed code. Do NOT flag missing files, missing symbols, "
+            "or unresolved references to these interfaces as defects — verification is deferred until the "
+            "upstream milestone executes. Treat these as interface contracts the plan should honor, "
+            "not as missing-code gaps."
+        ),
+        "critique_evaluator": (
+            "Deferred-verification planning-pass contract context. These upstream interfaces are planned "
+            "surfaces from dependency milestones that have not yet executed. When assigning critique lenses, "
+            "do not route existence/availability checks against these interfaces — verification is deferred. "
+            "The plan is a contract consumer, not an implementer of these surfaces."
+        ),
+        "gate": (
+            "Deferred-verification planning-pass contract context. These upstream-provided interfaces are "
+            "commitments from dependency milestones, not executed artifacts. Do not treat missing upstream "
+            "files, symbols, or artifacts as blocking defects — the gate decision is about THIS milestone's "
+            "plan quality, not upstream completion status."
+        ),
+        "generic": (
+            "Planning-pass upstream contract context. These interfaces are planned dependency surfaces, "
+            "not executed evidence."
+        ),
+    }
+    intro = intro_map.get(audience, intro_map["generic"])
+    lines = ["Planning-pass upstream contract context:", intro, ""]
+
+    for item in contracts:
+        label = str(item.get("milestone_label") or item.get("label") or "?").strip() or "?"
+        lines.append(f"- Milestone `{label}`")
+        provides = item.get("provides", [])
+        if not provides and isinstance(item.get("contract"), Mapping):
+            provides = item["contract"].get("provides", [])
+        if not isinstance(provides, list):
+            provides = []
+        emitted = False
+        for provide in provides:
+            if not isinstance(provide, Mapping):
+                continue
+            name = str(provide.get("name", "")).strip() or "Unnamed provide"
+            description = str(provide.get("description", "")).strip()
+            details = f": {description}" if description else ""
+            lines.append(f"  - `{name}`{details}")
+            interfaces = provide.get("interfaces", [])
+            if not isinstance(interfaces, list):
+                interfaces = []
+            for interface in interfaces:
+                if not isinstance(interface, Mapping):
+                    continue
+                symbol = str(interface.get("symbol", "")).strip() or "<unnamed>"
+                path = str(interface.get("path", "")).strip() or "<unknown path>"
+                signature = str(interface.get("signature", "")).strip()
+                rendered = f"    - `{symbol}` at `{path}`"
+                if signature:
+                    rendered += f" with signature `{signature}`"
+                lines.append(rendered)
+                emitted = True
+        if not emitted:
+            lines.append("  - No upstream interfaces recorded.")
+    return "\n".join(lines)
 
 
 

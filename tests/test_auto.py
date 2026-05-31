@@ -665,6 +665,117 @@ def test_stall_counter_resets_when_review_json_is_rewritten(tmp_path: Path) -> N
     )
 
 
+def test_stall_counter_resets_when_tasks_complete_despite_unchanged_state(
+    tmp_path: Path,
+) -> None:
+    """Productivity-aware stall detection.
+
+    Simulates a large execute phase: ``state`` stays pinned at ``finalized``
+    for many iterations while tasks are PRODUCTIVELY draining. The naive
+    same-state-name counter would false-kill the run, but each iteration the
+    task-completion signature (``progress.tasks_done``) advances, so the
+    stall counter must reset and the run must NOT be declared stalled — it
+    should run all the way to the iteration backstop.
+    """
+    plan = "draining-execute-plan"
+    _make_plan_dir(tmp_path, plan)
+
+    # Drive a couple of no-progress iterations between each completion so the
+    # stall counter actually climbs (and we can prove the reset fires) without
+    # ever reaching the threshold. Pattern of tasks_done per status call:
+    # 0,0,1,1,2,2,... — stall_count goes 0->1->reset->1->reset, never hits 3.
+    obs = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        # State never changes (execute keeps the plan at finalized); the
+        # task-completion signature advances every other observation.
+        done = obs["n"] // 2
+        obs["n"] += 1
+        status = _execute_status(plan_name, state="finalized")
+        status["progress"] = {
+            "tasks_done": done,
+            "tasks_skipped": 0,
+            "tasks_pending": 100 - done,
+            "tasks_blocked": 0,
+        }
+        return status
+
+    def fake_run(args, cwd=None, timeout=None):
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=3,  # would trip after 3 same-state iters if naive
+            max_iterations=10,
+            max_review_rework_cycles=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Progress every iteration => never stalled => run to the iteration cap.
+    assert outcome.status == "cap", (
+        f"expected cap (hit max_iterations) with task-progress resets, got "
+        f"{outcome.status}: {outcome.reason}"
+    )
+    progress_events = [
+        e for e in outcome.events if "task progress advanced" in e.get("msg", "")
+    ]
+    assert progress_events, (
+        "expected at least one task-progress stall-reset event; events: "
+        f"{[e.get('msg') for e in outcome.events]}"
+    )
+
+
+def test_stall_counter_still_trips_when_no_task_progress(tmp_path: Path) -> None:
+    """The real safety net must survive productivity-aware reset.
+
+    State unchanged AND no task progress (the genuinely-stuck case) must
+    still abort with status ``stalled`` once the threshold is reached — the
+    fix only suppresses FALSE stalls, never the real backstop.
+    """
+    plan = "genuinely-stuck-plan"
+    _make_plan_dir(tmp_path, plan)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        # State pinned at finalized AND task counts frozen — no progress.
+        status = _execute_status(plan_name, state="finalized")
+        status["progress"] = {
+            "tasks_done": 5,
+            "tasks_skipped": 0,
+            "tasks_pending": 10,
+            "tasks_blocked": 0,
+        }
+        return status
+
+    def fake_run(args, cwd=None, timeout=None):
+        # Phase dispatch makes no progress — task signature stays frozen.
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=3,
+            max_iterations=50,  # high so stall trips before the cap
+            max_review_rework_cycles=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "stalled", (
+        f"expected stalled (no progress) got {outcome.status}: {outcome.reason}"
+    )
+    assert outcome.final_state == "finalized"
+    assert outcome.iterations <= 6, (
+        "stall should trip near the threshold, not run to the iteration cap; "
+        f"iterations={outcome.iterations}"
+    )
+
+
 def test_rework_cap_bails_after_exceeding_max_review_rework_cycles(
     tmp_path: Path,
 ) -> None:
@@ -1069,6 +1180,7 @@ def test_auto_driver_recovers_blocked_gate_agent_preflight_via_valid_next(tmp_pa
 
 def test_run_auto_exit_codes_for_lifecycle_outcomes(tmp_path: Path, capsys) -> None:
     outcomes = {
+        "finalized": 0,
         "failed": 1,
         "blocked": 5,
         "cancelled": 0,
@@ -1079,6 +1191,63 @@ def test_run_auto_exit_codes_for_lifecycle_outcomes(tmp_path: Path, capsys) -> N
         with patch.object(auto, "drive", return_value=outcome):
             assert auto.run_auto(tmp_path, _auto_args(f"demo-{status}")) == expected_rc
         capsys.readouterr()
+
+
+def test_drive_stop_at_finalized_returns_success_before_execute_dispatch(tmp_path: Path) -> None:
+    plan = "stop-at-finalized"
+    _make_plan_dir(tmp_path, plan)
+    captured_args: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan_name, state="finalized")
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        captured_args.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stop_at_finalized=True,
+            max_iterations=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "finalized"
+    assert outcome.final_state == "finalized"
+    assert captured_args == []
+
+
+def test_drive_default_flow_continues_past_finalized_into_execute(tmp_path: Path) -> None:
+    plan = "continue-past-finalized"
+    _make_plan_dir(tmp_path, plan)
+    statuses = [_execute_status(plan, state="finalized"), _done_status(plan)]
+    captured_args: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        captured_args.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=2,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done"
+    assert captured_args == [auto._phase_command("execute") + ["--plan", plan]]
+
+
 def test_context_retry_success_retries_execute_with_fresh(tmp_path: Path) -> None:
     plan = "context-retry-success"
     _make_plan_dir(tmp_path, plan)

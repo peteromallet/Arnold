@@ -38,10 +38,12 @@ from megaplan.workers.hermes import (
 
 def test_worker_stall_timeout_default_env_override_and_floor(monkeypatch):
     monkeypatch.delenv("HERMES_WORKER_STALL_TIMEOUT", raising=False)
+    # Default raised 300→600 (2026-05-30) as a safety margin alongside the
+    # tool-in-flight clock-hold fix.
     assert (
         _worker_stall_timeout_seconds()
         == DEFAULT_WORKER_STALL_TIMEOUT_SECONDS
-        == 300.0
+        == 600.0
     )
 
     monkeypatch.setenv("HERMES_WORKER_STALL_TIMEOUT", "120")
@@ -223,3 +225,74 @@ def test_watchdog_clock_resets_on_reasoning_only_progress():
 
     assert watchdog.tripped is False
     assert agent.interrupt_calls == 0
+
+
+def test_watchdog_does_not_abort_worker_blocked_on_long_tool_call():
+    """The false-kill regime (2026-05-30): the worker emits a tool_use, then the
+    agent BLOCKS on a long tool (e.g. `pytest --cov`) emitting ZERO chunks while
+    ``_executing_tools`` is True for far longer than the timeout. The watchdog
+    must HOLD the clock and NOT abort — the worker is healthy, not wedged."""
+    tracker = _StreamTracker()
+
+    class _LongToolAgent:
+        """Streams a couple chunks (the tool_use), then runs a long tool.
+
+        ``_executing_tools`` is set True for the WHOLE tool span — exactly what
+        ``AIAgent._execute_tool_calls`` does around a multi-minute Bash — and the
+        tool emits NO stream chunks while it runs.
+        """
+
+        def __init__(self) -> None:
+            self.interrupt_calls = 0
+            self._executing_tools = False
+
+        def interrupt(self, message=None):
+            self.interrupt_calls += 1
+
+        def clear_interrupt(self):
+            pass
+
+        def run_conversation(self):
+            # A few content chunks (the model emitting the tool_use), then the
+            # tool runs silently for ~3s — 3x the 1s timeout. With the old
+            # chunk-only watchdog this would have been killed at the timeout.
+            for i in range(3):
+                time.sleep(0.05)
+                tracker(f"emit-tool-call-{i}")
+            self._executing_tools = True
+            try:
+                time.sleep(3.0)  # long tool: zero chunks, tool in flight
+            finally:
+                self._executing_tools = False
+            # Tool returned; model resumes and finishes promptly.
+            tracker("post-tool-token")
+            return {"final_response": "{}", "messages": [], "interrupted": False}
+
+    agent = _LongToolAgent()
+    watchdog = _WorkerStallWatchdog(agent, tracker, timeout=1.0)
+    result = _drive(agent, tracker, watchdog)
+
+    assert result["interrupted"] is False
+    assert watchdog.tripped is False, "watchdog false-killed a worker on a long tool call"
+    assert agent.interrupt_calls == 0
+
+
+def test_watchdog_aborts_silent_worker_with_no_tool_in_flight():
+    """Preserve the original purpose: a worker silent with NO tool in flight past
+    the timeout MUST still be aborted. ``_executing_tools`` stays False the whole
+    time, so the only thing the watchdog sees is genuine LLM-token silence."""
+    tracker = _StreamTracker()
+    agent = _FakeAgent(tracker, real_chunks=3, hang_cap=30.0)
+    # _FakeAgent has no _executing_tools attribute → _tool_in_flight() is False,
+    # so this exercises the genuine-stall path that must still abort.
+    assert getattr(agent, "_executing_tools", False) is False
+    watchdog = _WorkerStallWatchdog(agent, tracker, timeout=1.0)
+
+    start = time.monotonic()
+    with pytest.raises(CliError) as excinfo:
+        _drive(agent, tracker, watchdog)
+    elapsed = time.monotonic() - start
+
+    assert excinfo.value.code == "worker_stall"
+    assert agent.interrupt_calls >= 1
+    assert elapsed < 8.0, f"watchdog did not abort promptly (took {elapsed:.2f}s)"

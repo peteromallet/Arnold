@@ -3,19 +3,20 @@ from __future__ import annotations
 import copy
 import json
 import sys
-import time
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
 from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
+from megaplan._core.hermes_fanout import GenericScatterResult
 from megaplan.audits.robustness import checks_for_robustness
 from megaplan.workers.hermes import parse_agent_output
 from megaplan.orchestration.parallel_critique import _run_check, run_parallel_critique
 from megaplan.prompts.critique import write_single_check_template
-from megaplan.types import PlanState
-from megaplan.workers import STEP_SCHEMA_FILENAMES
+from megaplan.types import AgentMode, PlanState
+from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -95,55 +96,104 @@ def _check_payload(check: dict[str, str], detail: str, *, flagged: bool = False)
     }
 
 
-def test_run_parallel_critique_merges_in_original_order(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    plan_dir, _project_dir, state = _scaffold(tmp_path)
-    checks = checks_for_robustness("standard")
+def _resolved_mode(
+    agent: str = "hermes",
+    mode: str = "creative",
+    model: str | None = "test-model",
+) -> AgentMode:
+    return AgentMode(agent=agent, mode=mode, refreshed=False, model=model)
 
-    def fake_run_check(index: int, check: dict[str, str], **kwargs: object):
-        del kwargs
-        if index == 0:
-            time.sleep(0.05)
-        return (
-            index,
-            _check_payload(check, f"Checked {check['id']} in detail for ordered merge coverage.", flagged=False),
-            [f"FLAG-00{index + 1}"],
-            [],
-            0.25, 0, 0, 0,
+
+def _enrich_checks(checks: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
+    """Enrich each check with ``_resolved_agent_mode`` metadata per SD1."""
+    enriched: list[dict[str, Any]] = []
+    for check in checks:
+        c = dict(check)
+        c["_resolved_agent_mode"] = _resolved_mode()
+        enriched.append(c)
+    return enriched
+
+
+# ---------------------------------------------------------------------------
+# Existing fan-out tests — adapted from _run_check monkeypatching to
+# scatter_worker_units monkeypatching (T17 refactor).
+# ---------------------------------------------------------------------------
+
+
+def test_run_parallel_critique_merges_in_original_order(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Results must be returned in input order, not completion order."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks)
+
+    # Build synthetic ordered_results in the shape _parse_result returns:
+    # (check_payload, verified_ids, disputed_ids)
+    def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
+        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
+        for i, chk in enumerate(enriched):
+            items.append((
+                _check_payload(chk, f"Checked {chk['id']} in detail for ordered merge coverage.", flagged=False),
+                [f"FLAG-{i + 1:03d}"],
+                [],
+            ))
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.25 * len(enriched),
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
         )
 
-    monkeypatch.setattr("megaplan.orchestration.parallel_critique._run_check", fake_run_check)
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
 
-    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=checks)
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
 
-    assert [check["id"] for check in result.payload["checks"]] == [check["id"] for check in checks]
+    assert [check["id"] for check in result.payload["checks"]] == [chk["id"] for chk in enriched]
     assert result.payload["flags"] == []
-    assert result.payload["verified_flag_ids"] == [f"FLAG-{index:03d}" for index in range(1, len(checks) + 1)]
+    assert result.payload["verified_flag_ids"] == [f"FLAG-{i:03d}" for i in range(1, len(enriched) + 1)]
     assert result.payload["disputed_flag_ids"] == []
+    # No session mutation
+    assert result.session_id is None
 
 
 def test_run_parallel_critique_disputed_flags_override_verified(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Disputed flags must override verified flags in the merged result."""
     plan_dir, _project_dir, state = _scaffold(tmp_path)
-    checks = checks_for_robustness("standard")
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks[:2])
 
-    def fake_run_check(index: int, check: dict[str, str], **kwargs: object):
-        del kwargs
-        verified = ["FLAG-001"] if index == 0 else []
-        disputed = ["FLAG-001"] if index == 1 else []
-        return (
-            index,
-            _check_payload(check, f"Checked {check['id']} with explicit flag merge coverage.", flagged=index == 1),
-            verified,
-            disputed,
-            0.1,
-            0, 0, 0,
+    def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
+        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
+        for i, chk in enumerate(enriched):
+            verified = ["FLAG-001"] if i == 0 else []
+            disputed = ["FLAG-001"] if i == 1 else []
+            items.append((
+                _check_payload(chk, f"Checked {chk['id']} with explicit flag merge coverage.", flagged=(i == 1)),
+                verified,
+                disputed,
+            ))
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.2,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
         )
 
-    monkeypatch.setattr("megaplan.orchestration.parallel_critique._run_check", fake_run_check)
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
 
-    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=checks[:2])
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
 
     assert result.payload["disputed_flag_ids"] == ["FLAG-001"]
     assert "FLAG-001" not in result.payload["verified_flag_ids"]
@@ -225,32 +275,28 @@ def test_run_parallel_critique_reraises_subagent_failures(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Errors from scatter_worker_units propagate to the caller."""
     plan_dir, _project_dir, state = _scaffold(tmp_path)
-    checks = checks_for_robustness("standard")
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks)
 
-    def fake_run_check(index: int, check: dict[str, str], **kwargs: object):
-        del check, kwargs
-        if index == 1:
-            raise RuntimeError("boom")
-        return (
-            index,
-            _check_payload(checks[index], f"Checked {checks[index]['id']} before the parallel failure triggered.", flagged=False),
-            [],
-            [],
-            0.1,
-            0, 0, 0,
-        )
+    def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
+        raise RuntimeError("boom")
 
-    monkeypatch.setattr("megaplan.orchestration.parallel_critique._run_check", fake_run_check)
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
 
     with pytest.raises(RuntimeError, match="boom"):
-        run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=checks)
+        run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
 
 
 def test_run_parallel_critique_does_not_mutate_session_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Parallel critique must not mutate the outer plan session state."""
     plan_dir, _project_dir, state = _scaffold(tmp_path)
     state["sessions"] = {
         "hermes_critic": {
@@ -262,24 +308,246 @@ def test_run_parallel_critique_does_not_mutate_session_state(
         }
     }
     original_sessions = copy.deepcopy(state["sessions"])
-    checks = checks_for_robustness("standard")
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks)
 
-    def fake_run_check(index: int, check: dict[str, str], **kwargs: object):
-        del kwargs
-        return (
-            index,
-            _check_payload(check, f"Checked {check['id']} while preserving the outer session state.", flagged=False),
-            [],
-            [],
-            0.0,
-            0, 0, 0,
+    def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
+        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
+        for chk in enriched:
+            items.append((
+                _check_payload(chk, f"Checked {chk['id']} while preserving the outer session state.", flagged=False),
+                [],
+                [],
+            ))
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
         )
 
-    monkeypatch.setattr("megaplan.orchestration.parallel_critique._run_check", fake_run_check)
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
 
-    run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=checks)
+    run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
 
     assert state["sessions"] == original_sessions
+
+
+# ---------------------------------------------------------------------------
+# New T18 tests — per-lens resolved models, unique output paths, read-only
+# dispatch, and WorkerUnit construction.
+# ---------------------------------------------------------------------------
+
+
+def test_run_parallel_critique_builds_read_only_worker_units(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Every WorkerUnit built by run_parallel_critique must have read_only=True."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks)
+
+    captured_units: list[Any] = []
+
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        captured_units.extend(units)
+        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
+        for chk in enriched:
+            items.append((_check_payload(chk, "read-only verify", flagged=False), [], []))
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert len(captured_units) == len(enriched)
+    for unit in captured_units:
+        assert unit.read_only is True, f"WorkerUnit for {unit.step} should be read_only=True"
+
+
+def test_run_parallel_critique_uses_per_lens_resolved_agent_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Each check's _resolved_agent_mode must be passed to its WorkerUnit."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    raw_checks = checks_for_robustness("standard")[:3]
+    enriched = _enrich_checks(raw_checks)
+
+    # Give each check a distinct resolved mode
+    modes = [
+        _resolved_mode(agent="hermes", model="model-A"),
+        _resolved_mode(agent="claude", mode="prose", model="model-B"),
+        _resolved_mode(agent="codex", model="model-C"),
+    ]
+    for i, chk in enumerate(enriched):
+        chk["_resolved_agent_mode"] = modes[i]
+
+    captured_units: list[Any] = []
+
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        captured_units.extend(units)
+        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
+        for chk in enriched:
+            items.append((_check_payload(chk, "per-lens verify", flagged=False), [], []))
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert len(captured_units) == len(enriched)
+    for i, unit in enumerate(captured_units):
+        assert unit.resolved == modes[i], (
+            f"WorkerUnit[{i}] resolved={unit.resolved}, expected={modes[i]}"
+        )
+
+
+def test_run_parallel_critique_unique_output_paths_per_check(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Each check receives a distinct, deterministic output path."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks)
+
+    captured_units: list[Any] = []
+
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        captured_units.extend(units)
+        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
+        for chk in enriched:
+            items.append((_check_payload(chk, "unique paths verify", flagged=False), [], []))
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    output_paths = [unit.output_path for unit in captured_units]
+    # All paths must be unique
+    assert len(output_paths) == len(set(output_paths)), (
+        f"Expected {len(output_paths)} unique output paths, got {len(set(output_paths))}"
+    )
+    # All paths must be inside plan_dir
+    for p in output_paths:
+        assert p.parent == plan_dir or plan_dir in p.parents, (
+            f"Output path {p} is not under plan_dir {plan_dir}"
+        )
+    # Each path must include the check id for determinism
+    for i, chk in enumerate(enriched):
+        assert chk["id"] in str(output_paths[i]), (
+            f"Output path for check '{chk['id']}' must include the check id"
+        )
+
+
+def test_run_parallel_critique_missing_resolved_agent_mode_raises_invariant_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Missing _resolved_agent_mode metadata must raise CliError before dispatch."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    raw_checks = checks_for_robustness("standard")
+    # Do NOT enrich — leave checks without _resolved_agent_mode
+    bare_checks = [dict(chk) for chk in raw_checks]
+
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="No _resolved_agent_mode metadata"):
+        run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(bare_checks))
+
+
+def test_run_parallel_critique_empty_checks_returns_clean_result(tmp_path: Path) -> None:
+    """Empty checks tuple returns a zero WorkerResult without error."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=())
+
+    assert result.payload["checks"] == []
+    assert result.payload["verified_flag_ids"] == []
+    assert result.payload["disputed_flag_ids"] == []
+    assert result.cost_usd == 0.0
+    assert result.session_id is None
+
+
+def test_run_parallel_critique_worker_units_have_unique_step_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """WorkerUnit step and output_path must be unique per check — no reuse of
+    paths across different checks."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks)
+
+    captured_units: list[Any] = []
+
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        captured_units.extend(units)
+        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
+        for chk in enriched:
+            items.append((_check_payload(chk, "unique step/path verify", flagged=False), [], []))
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    # Verify no two units share an output_path
+    seen_paths: set[Path] = set()
+    for unit in captured_units:
+        assert unit.output_path not in seen_paths, (
+            f"Duplicate output_path {unit.output_path} across WorkerUnits"
+        )
+        seen_paths.add(unit.output_path)
+        # Verify each unit carries the check id in extra
+        assert "check_id" in unit.extra
 
 
 def test_parse_agent_output_template_prompt_fallback(tmp_path: Path) -> None:

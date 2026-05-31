@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import tomllib
 from importlib.resources import files
-from pathlib import Path
 
 import pytest
 
@@ -32,7 +31,7 @@ from megaplan.audits.critique_evaluator import (
 from megaplan.audits.robustness import CRITIQUE_CHECKS
 from megaplan.types import ROBUSTNESS_LEVELS
 from megaplan.workers import WorkerResult
-from tests.conftest import PlanFixture, load_state
+from tests.conftest import PlanFixture
 
 
 # ---------------------------------------------------------------------------
@@ -42,16 +41,21 @@ from tests.conftest import PlanFixture, load_state
 ALL_CHECK_IDS = [c["id"] for c in CRITIQUE_CHECKS]
 
 
-def _full_coverage_verdict(
+def _full_coverage_verdict_complexity(
     *,
-    selected: list[tuple[str, str]],
+    selected: list[tuple[str, int]],
     evaluator_model: str = "claude-opus-4-7",
 ) -> dict:
-    """Build a verdict whose selections + skips cover every lens exactly once."""
+    """Build a live verdict using the complexity-based selection contract."""
     selected_ids = {cid for cid, _ in selected}
     selections = [
-        {"check_id": cid, "critic_model": critic, "why": f"fire {cid}"}
-        for cid, critic in selected
+        {
+            "check_id": cid,
+            "complexity": complexity,
+            "complexity_justification": f"{cid} needs tier {complexity} scrutiny.",
+            "why": f"fire {cid}",
+        }
+        for cid, complexity in selected
     ]
     skipped = [
         {"check_id": cid, "why": f"skip {cid} — covered by selection set"}
@@ -160,24 +164,29 @@ def test_claude_and_codex_co_ranked_top() -> None:
 # ---------------------------------------------------------------------------
 
 def test_valid_verdict_accepted() -> None:
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude"), ("scope", "claude")]
+    verdict = _full_coverage_verdict_complexity(
+        selected=[("correctness", 4), ("scope", 2)]
     )
     # Does not raise.
     validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
 
 
 def test_unknown_check_id_rejected() -> None:
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     verdict["selections"].append(
-        {"check_id": "not_a_real_lens", "critic_model": "claude", "why": "x"}
+        {
+            "check_id": "not_a_real_lens",
+            "complexity": 3,
+            "complexity_justification": "Unknown lens should still reject.",
+            "why": "x",
+        }
     )
     with pytest.raises(ValueError, match="unknown check_id"):
         validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
 
 
 def test_non_covering_union_rejected() -> None:
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     # Drop one skip so the union no longer covers all lenses.
     verdict["skipped"].pop()
     with pytest.raises(ValueError, match="Not all lenses covered"):
@@ -185,7 +194,7 @@ def test_non_covering_union_rejected() -> None:
 
 
 def test_overlapping_union_rejected() -> None:
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     # Re-add a selected id into skipped to force overlap.
     verdict["skipped"].append({"check_id": "correctness", "why": "also skipped"})
     with pytest.raises(ValueError, match="Overlap"):
@@ -193,7 +202,7 @@ def test_overlapping_union_rejected() -> None:
 
 
 def test_unjustified_skip_rejected() -> None:
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     verdict["skipped"][0]["why"] = "   "
     with pytest.raises(ValueError, match="non-empty `why`"):
         validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
@@ -211,15 +220,20 @@ def test_empty_selections_rejected() -> None:
 
 
 def test_consistent_duplicate_selection_deduped_not_rejected() -> None:
-    """A lens listed twice with the SAME critic_model is deduped (first wins)
+    """A lens listed twice with the SAME complexity assignment is deduped (first wins)
     and reported as a warning, NOT hard-rejected — the model agreed with
     itself, so we keep the premium adaptive selection."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude"), ("scope", "claude")]
+    verdict = _full_coverage_verdict_complexity(
+        selected=[("correctness", 4), ("scope", 2)]
     )
-    # Duplicate `scope` with the identical critic_model (the observed Opus bug).
+    # Duplicate `scope` with the identical complexity assignment.
     verdict["selections"].append(
-        {"check_id": "scope", "critic_model": "claude", "why": "fire scope again"}
+        {
+            "check_id": "scope",
+            "complexity": 2,
+            "complexity_justification": "scope needs tier 2 scrutiny.",
+            "why": "fire scope again",
+        }
     )
     warnings = validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
     assert warnings, "consistent duplicate should produce a warning"
@@ -233,13 +247,18 @@ def test_consistent_duplicate_selection_deduped_not_rejected() -> None:
 
 
 def test_conflicting_duplicate_selection_hard_rejected() -> None:
-    """A lens listed twice with DIFFERENT critic_models is genuinely ambiguous
+    """A lens listed twice with DIFFERENT complexity assignments is genuinely ambiguous
     and remains a hard reject."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude"), ("scope", "claude")]
+    verdict = _full_coverage_verdict_complexity(
+        selected=[("correctness", 4), ("scope", 2)]
     )
     verdict["selections"].append(
-        {"check_id": "scope", "critic_model": "deepseek-v4-pro", "why": "cheaper"}
+        {
+            "check_id": "scope",
+            "complexity": 3,
+            "complexity_justification": "scope needs tier 3 scrutiny.",
+            "why": "harder",
+        }
     )
     with pytest.raises(ValueError, match="conflicting duplicate check_id"):
         validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
@@ -248,7 +267,7 @@ def test_conflicting_duplicate_selection_hard_rejected() -> None:
 def test_consistent_duplicate_skip_deduped_not_rejected() -> None:
     """A skipped lens listed twice is deduped (skips carry no critic, so any
     repeat is consistent) and reported, not hard-rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     # `scope` is already in skipped (only correctness selected); duplicate it.
     assert any(sk["check_id"] == "scope" for sk in verdict["skipped"])
     verdict["skipped"].append({"check_id": "scope", "why": "skip scope again"})
@@ -262,20 +281,22 @@ def test_other_custom_areas_accepted_and_survive() -> None:
     """An evaluator verdict that covers all 9 (selected/skipped) AND adds 1-2
     bespoke `other` custom areas is accepted; the "other" entries survive in
     payload["selections"] and stay OUT of the 9-lens coverage union."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude"), ("scope", "claude")]
+    verdict = _full_coverage_verdict_complexity(
+        selected=[("correctness", 4), ("scope", 2)]
     )
     verdict["selections"].append({
         "check_id": "other",
         "area": "Migration ordering",
-        "critic_model": "deepseek-v4-pro",
         "why": "probe: confirm the data backfill runs before the column drop",
+        "complexity": 3,
+        "complexity_justification": "Cross-step migration ordering needs tier 3 scrutiny.",
     })
     verdict["selections"].append({
         "check_id": "other",
         "area": "Feature flag rollback",
-        "critic_model": "claude",
         "why": "probe: verify the kill-switch disables the new path atomically",
+        "complexity": 4,
+        "complexity_justification": "Rollback semantics are high-risk and need tier 4 scrutiny.",
     })
     warnings = validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
     assert warnings == []
@@ -292,8 +313,9 @@ def test_other_area_allows_all_nine_skipped() -> None:
         "selections": [{
             "check_id": "other",
             "area": "Concurrency model",
-            "critic_model": "claude",
             "why": "probe: verify the lock ordering avoids the A/B deadlock",
+            "complexity": 4,
+            "complexity_justification": "Concurrency deadlock analysis needs tier 4 scrutiny.",
         }],
         "skipped": [{"check_id": cid, "why": f"skip {cid}"} for cid in ALL_CHECK_IDS],
         "evaluator_model": "claude-opus-4-7",
@@ -303,13 +325,14 @@ def test_other_area_allows_all_nine_skipped() -> None:
 
 def test_third_other_area_rejected_cap() -> None:
     """A 3rd `other` area exceeds MAX_OTHER_AREAS and is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     for n in range(3):
         verdict["selections"].append({
             "check_id": "other",
             "area": f"Custom area {n}",
-            "critic_model": "claude",
             "why": f"probe {n}",
+            "complexity": 3,
+            "complexity_justification": f"Custom area {n} needs tier 3 scrutiny.",
         })
     with pytest.raises(ValueError, match="at most 2 'other'"):
         validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
@@ -317,11 +340,12 @@ def test_third_other_area_rejected_cap() -> None:
 
 def test_other_area_missing_name_rejected() -> None:
     """An `other` selection without a non-empty `area` is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     verdict["selections"].append({
         "check_id": "other",
-        "critic_model": "claude",
         "why": "probe something",
+        "complexity": 3,
+        "complexity_justification": "Custom area needs tier 3 scrutiny.",
     })
     with pytest.raises(ValueError, match="needs a non-empty `area`"):
         validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
@@ -329,14 +353,18 @@ def test_other_area_missing_name_rejected() -> None:
 
 def test_other_area_duplicate_deduped() -> None:
     """Two `other` selections with the same area key are deduped + warned."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     verdict["selections"].append({
         "check_id": "other", "area": "Migration ordering",
-        "critic_model": "claude", "why": "probe a",
+        "why": "probe a",
+        "complexity": 3,
+        "complexity_justification": "Migration ordering needs tier 3 scrutiny.",
     })
     verdict["selections"].append({
         "check_id": "other", "area": "migration ordering",  # same key (case)
-        "critic_model": "claude", "why": "probe b",
+        "why": "probe b",
+        "complexity": 3,
+        "complexity_justification": "Migration ordering needs tier 3 scrutiny.",
     })
     warnings = validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
     assert any("migration ordering" in w.lower() and "deduped" in w for w in warnings)
@@ -347,8 +375,8 @@ def test_other_area_duplicate_deduped() -> None:
 
 def test_clean_verdict_returns_no_warnings() -> None:
     """A clean verdict returns an empty warning list (backward-compatible)."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude"), ("scope", "claude")]
+    verdict = _full_coverage_verdict_complexity(
+        selected=[("correctness", 4), ("scope", 2)]
     )
     assert validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7") == []
 
@@ -359,36 +387,53 @@ def test_dedupe_then_all_skipped_rejected() -> None:
     confirm coverage still enforced when a duplicated selection is deduped)."""
     # Select only `correctness`, but list it twice (consistent). After dedupe
     # the union must still cover all lenses — it does (one selection + skips).
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     verdict["selections"].append(
-        {"check_id": "correctness", "critic_model": "claude", "why": "again"}
+        {
+            "check_id": "correctness",
+            "complexity": 4,
+            "complexity_justification": "correctness needs tier 4 scrutiny.",
+            "why": "again",
+        }
     )
     warnings = validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
     assert warnings
     assert len(verdict["selections"]) == 1
 
 
-def test_rater_weaker_than_dispatchee_rejected() -> None:
-    """A weak evaluator may not dispatch a stronger critic (rank 1 = strongest)."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude")],
-        evaluator_model="hermes:deepseek:deepseek-v4-flash",
-    )
-    with pytest.raises(ValueError, match="stronger than evaluator"):
-        validate_evaluator_verdict(
-            verdict, evaluator_model="hermes:deepseek:deepseek-v4-flash"
-        )
+def test_legacy_critic_model_selection_rejected() -> None:
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
+    verdict["selections"][0] = {
+        "check_id": "correctness",
+        "critic_model": "claude",
+        "complexity": 4,
+        "complexity_justification": "correctness needs tier 4 scrutiny.",
+        "why": "legacy payload",
+    }
+    with pytest.raises(ValueError, match="must not include `critic_model`"):
+        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
 
 
-def test_rater_equal_or_stronger_than_dispatchee_accepted() -> None:
-    """A flash evaluator dispatching a flash critic is allowed (equal rank)."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "hermes:deepseek:deepseek-v4-flash")],
-        evaluator_model="hermes:deepseek:deepseek-v4-flash",
-    )
-    validate_evaluator_verdict(
-        verdict, evaluator_model="hermes:deepseek:deepseek-v4-flash"
-    )
+@pytest.mark.parametrize("bad_complexity", [None, False, True, 0, 6, "4"])
+def test_invalid_complexity_rejected(bad_complexity: object) -> None:
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
+    verdict["selections"][0]["complexity"] = bad_complexity
+    with pytest.raises(ValueError, match="integer `complexity` score in 1..5"):
+        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+
+
+def test_blank_complexity_justification_rejected() -> None:
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
+    verdict["selections"][0]["complexity_justification"] = "   "
+    with pytest.raises(ValueError, match="complexity_justification"):
+        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+
+
+@pytest.mark.parametrize("check_id", ["correctness", "prerequisite_ordering"])
+def test_floor_checks_require_complexity_four_or_higher(check_id: str) -> None:
+    verdict = _full_coverage_verdict_complexity(selected=[(check_id, 3)])
+    with pytest.raises(ValueError, match="must use complexity >= 4"):
+        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
 
 
 # ---------------------------------------------------------------------------
@@ -465,8 +510,8 @@ def test_forced_parallel_failure_sequential_fallback_honors_verdict(
 
     monkeypatch.setattr(critique_mod, "run_parallel_critique", _boom)
 
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude"), ("scope", "claude")]
+    verdict = _full_coverage_verdict_complexity(
+        selected=[("correctness", 4), ("scope", 2)]
     )
 
     captured: dict[str, object] = {}
@@ -535,8 +580,7 @@ def test_other_selection_synthesized_into_active_checks(
     persisted["config"]["adaptive_critique"] = True
     state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
-    # Critic runs on hermes; the evaluator routes to claude (its own slot), so
-    # it can validly assign premium critics (rater >= dispatchee).
+    # Critic runs on hermes; the evaluator routes to claude (its own slot).
     monkeypatch.setattr(
         megaplan.handlers,
         "resolve_agent_mode",
@@ -553,12 +597,13 @@ def test_other_selection_synthesized_into_active_checks(
 
     monkeypatch.setattr(critique_mod, "run_parallel_critique", _boom)
 
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     verdict["selections"].append({
         "check_id": "other",
         "area": "Migration ordering",
-        "critic_model": "claude",
         "why": "probe: confirm the data backfill runs before the column drop",
+        "complexity": 3,
+        "complexity_justification": "Migration ordering needs tier 3 scrutiny.",
     })
 
     captured: dict[str, object] = {}
@@ -645,12 +690,9 @@ def test_evaluator_artifacts_preserved_per_iteration(
     monkeypatch.setattr(critique_mod, "run_parallel_critique", _boom)
 
     # Distinct verdict + raw text per iteration so we can prove no overwrite.
-    # Critic must be no stronger than the evaluator (deepseek-v4-pro, rank 3);
-    # use a same-rank deepseek critic so the verdict validates.
-    _critic = "deepseek-v4-pro"
     iter_verdicts = {
-        1: _full_coverage_verdict(selected=[("correctness", _critic)]),
-        2: _full_coverage_verdict(selected=[("correctness", _critic), ("scope", _critic)]),
+        1: _full_coverage_verdict_complexity(selected=[("correctness", 4)]),
+        2: _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)]),
     }
     current = {"iteration": 1}
 
@@ -832,9 +874,8 @@ def test_prep_section_present_when_prep_artifacts_supplied(
 def test_evaluator_prompt_steers_cheapest_capable_critic(
     plan_fixture: PlanFixture,
 ) -> None:
-    """The evaluator prompt must instruct the premium adjudicator to assign the
-    cheapest capable critic per lens, escalating to premium only when a lens
-    genuinely demands it — the embodiment of the cheapest-capable philosophy."""
+    """The evaluator prompt must instruct the evaluator to score per-lens
+    complexity, justify it, and respect the hard floors for critical lenses."""
     from megaplan._core import load_plan
     from megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
 
@@ -843,15 +884,14 @@ def test_evaluator_prompt_steers_cheapest_capable_critic(
 
     prompt = _critique_evaluator_prompt(state, plan_fixture.plan_dir, root=plan_fixture.root)
 
-    # The steer headline and the cost-ordered preference for cheap critics.
-    assert "cheapest capable critic" in prompt.lower()
-    assert "deepseek-v4-pro" in prompt
-    # Escalation to premium must be conditional / justified, not the default.
+    assert "complexity" in prompt.lower()
+    assert "complexity_justification" in prompt
+    assert "correctness" in prompt
+    assert "prerequisite_ordering" in prompt
     lower = prompt.lower()
-    assert "escalate" in lower
-    assert "only" in lower
-    # The pre-existing rater >= dispatchee ceiling must survive intact.
-    assert "no weaker than" in prompt
+    assert "1-5" in lower or "1–5" in prompt
+    assert "floor" in lower
+    assert "critic_model" not in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -893,7 +933,7 @@ def test_finalize_rank_not_weaker_than_strongest_execute_tier(profile_name: str)
 
 def test_flag_verifications_valid_accepted() -> None:
     """A valid verdict with well-formed flag_verifications passes validation."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     verdict["flag_verifications"] = [
         {"flag_id": "FLAG-001", "lens": "correctness", "outcome": "verified", "rationale": "diff confirms fix"},
     ]
@@ -902,7 +942,7 @@ def test_flag_verifications_valid_accepted() -> None:
 
 def test_flag_verifications_missing_flag_id_rejected() -> None:
     """flag_verifications entry with empty flag_id is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     verdict["flag_verifications"] = [
         {"flag_id": "", "lens": "correctness", "outcome": "verified", "rationale": "x"},
     ]
@@ -912,7 +952,7 @@ def test_flag_verifications_missing_flag_id_rejected() -> None:
 
 def test_flag_verifications_missing_lens_rejected() -> None:
     """flag_verifications entry with empty lens is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     verdict["flag_verifications"] = [
         {"flag_id": "FLAG-001", "lens": "", "outcome": "verified", "rationale": "x"},
     ]
@@ -922,7 +962,7 @@ def test_flag_verifications_missing_lens_rejected() -> None:
 
 def test_flag_verifications_unknown_lens_rejected() -> None:
     """flag_verifications entry with lens not in CRITIQUE_CHECKS is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     verdict["flag_verifications"] = [
         {"flag_id": "FLAG-001", "lens": "nonexistent_lens", "outcome": "verified", "rationale": "x"},
     ]
@@ -932,7 +972,7 @@ def test_flag_verifications_unknown_lens_rejected() -> None:
 
 def test_flag_verifications_invalid_outcome_rejected() -> None:
     """flag_verifications entry with outcome not in {verified,open,accepted_tradeoff} is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     verdict["flag_verifications"] = [
         {"flag_id": "FLAG-001", "lens": "correctness", "outcome": "resolved", "rationale": "x"},
     ]
@@ -942,7 +982,7 @@ def test_flag_verifications_invalid_outcome_rejected() -> None:
 
 def test_flag_verifications_empty_rationale_rejected() -> None:
     """flag_verifications entry with empty rationale is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     verdict["flag_verifications"] = [
         {"flag_id": "FLAG-001", "lens": "correctness", "outcome": "verified", "rationale": ""},
     ]
@@ -952,7 +992,7 @@ def test_flag_verifications_empty_rationale_rejected() -> None:
 
 def test_flag_verifications_duplicate_flag_id_rejected() -> None:
     """flag_verifications with duplicate flag_id in the same payload is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     verdict["flag_verifications"] = [
         {"flag_id": "FLAG-001", "lens": "correctness", "outcome": "verified", "rationale": "x"},
         {"flag_id": "FLAG-001", "lens": "scope", "outcome": "open", "rationale": "y"},
@@ -963,7 +1003,7 @@ def test_flag_verifications_duplicate_flag_id_rejected() -> None:
 
 def test_flag_verifications_not_a_list_rejected() -> None:
     """flag_verifications that is not a list is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     verdict["flag_verifications"] = "not a list"
     with pytest.raises(ValueError, match="`flag_verifications` must be a list"):
         validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
@@ -971,7 +1011,7 @@ def test_flag_verifications_not_a_list_rejected() -> None:
 
 def test_flag_verifications_not_an_object_rejected() -> None:
     """flag_verifications entry that is not a dict is rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     verdict["flag_verifications"] = ["not a dict"]
     with pytest.raises(ValueError, match="flag_verification 1 must be an object"):
         validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
@@ -979,7 +1019,7 @@ def test_flag_verifications_not_an_object_rejected() -> None:
 
 def test_flag_verifications_coverage_still_enforced() -> None:
     """Valid flag_verifications do not weaken the coverage requirement — missing lens still rejected."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
     # Valid flag_verifications present, but a lens is missing from the coverage union.
     verdict["flag_verifications"] = [
         {"flag_id": "FLAG-001", "lens": "correctness", "outcome": "verified", "rationale": "diff supports fix"},
@@ -990,110 +1030,41 @@ def test_flag_verifications_coverage_still_enforced() -> None:
         validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
 
 
-def test_flag_verifications_rater_still_enforced() -> None:
-    """Valid flag_verifications do not weaken the rater>=dispatchee invariant."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude")],
-        evaluator_model="hermes:deepseek:deepseek-v4-flash",
-    )
+def test_flag_verifications_legacy_selection_still_rejected() -> None:
+    """flag_verifications do not soften the live selection contract migration."""
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4)])
+    verdict["selections"][0]["critic_model"] = "claude"
     verdict["flag_verifications"] = [
         {"flag_id": "FLAG-001", "lens": "correctness", "outcome": "verified", "rationale": "diff supports fix"},
     ]
-    with pytest.raises(ValueError, match="stronger than evaluator"):
-        validate_evaluator_verdict(verdict, evaluator_model="hermes:deepseek:deepseek-v4-flash")
+    with pytest.raises(ValueError, match="must not include `critic_model`"):
+        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
 
 
 def test_flag_verifications_optional_field_absent_accepted() -> None:
     """A verdict without flag_verifications still passes (field is optional)."""
-    verdict = _full_coverage_verdict(selected=[("correctness", "claude"), ("scope", "claude")])
+    verdict = _full_coverage_verdict_complexity(selected=[("correctness", 4), ("scope", 2)])
     # No flag_verifications key at all.
     assert "flag_verifications" not in verdict
     validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
 
 
 # ---------------------------------------------------------------------------
-# Vendor gate: hallucinated out-of-vendor critic model rejection
+# Deprecated vendor parameter compatibility
 # ---------------------------------------------------------------------------
 
 
-def test_out_of_vendor_premium_critic_rejected_under_codex() -> None:
-    """A Claude critic model (claude-sonnet-4-6) is rejected under --vendor codex."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude-sonnet-4-6"), ("scope", "claude")],
-        evaluator_model="gpt-5.5",
+@pytest.mark.parametrize("vendor", [None, "claude", "codex", "totally-unknown"])
+def test_vendor_parameter_is_a_deprecated_noop(vendor: str | None) -> None:
+    verdict = _full_coverage_verdict_complexity(
+        selected=[("correctness", 4), ("scope", 2)],
+        evaluator_model="hermes:deepseek:deepseek-v4-flash",
     )
-    with pytest.raises(ValueError, match="not available under --vendor codex"):
-        validate_evaluator_verdict(verdict, evaluator_model="gpt-5.5", vendor="codex")
-
-
-def test_out_of_vendor_premium_critic_rejected_under_claude() -> None:
-    """A Codex critic model (gpt-5.5) is rejected under --vendor claude."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "gpt-5.5"), ("scope", "claude")],
-        evaluator_model="claude-opus-4-7",
+    validate_evaluator_verdict(
+        verdict,
+        evaluator_model="hermes:deepseek:deepseek-v4-flash",
+        vendor=vendor,
     )
-    with pytest.raises(ValueError, match="not available under --vendor claude"):
-        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7", vendor="claude")
-
-
-def test_alias_resolving_to_same_vendor_passes() -> None:
-    """The alias 'claude' resolves to claude-opus-4-7 and passes under --vendor claude."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude"), ("scope", "claude")],
-        evaluator_model="claude-opus-4-7",
-    )
-    # Does not raise — alias "claude" → "claude-opus-4-7" is owned by "claude"
-    validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7", vendor="claude")
-
-
-def test_same_vendor_premium_passes() -> None:
-    """A same-vendor premium critic (gpt-5.5 under codex) is accepted."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "gpt-5.5"), ("scope", "gpt-5.5")],
-        evaluator_model="gpt-5.5",
-    )
-    # Does not raise
-    validate_evaluator_verdict(verdict, evaluator_model="gpt-5.5", vendor="codex")
-
-
-def test_deepseek_critic_passes_under_either_vendor() -> None:
-    """DeepSeek tiers are vendor-independent — they pass under any vendor."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "deepseek-v4-pro"), ("scope", "deepseek-v4-pro")],
-        evaluator_model="deepseek-v4-pro",
-    )
-    validate_evaluator_verdict(verdict, evaluator_model="deepseek-v4-pro", vendor="codex")
-    validate_evaluator_verdict(verdict, evaluator_model="deepseek-v4-pro", vendor="claude")
-
-
-def test_no_vendor_gate_when_vendor_none() -> None:
-    """When vendor=None, no gate is applied (backward-compatible default)."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude-sonnet-4-6"), ("scope", "claude")],
-        evaluator_model="claude-opus-4-7",
-    )
-    # No vendor gate — passes even though claude-sonnet-4-6 might be cross-vendor
-    validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7", vendor=None)
-
-
-def test_spec_alias_resolves_correctly_under_vendor_gate() -> None:
-    """A fully-qualified spec like 'claude:claude-opus-4-7' resolves to
-    claude-opus-4-7 and passes under --vendor claude."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "claude:claude-opus-4-7"), ("scope", "claude")],
-        evaluator_model="claude-opus-4-7",
-    )
-    validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7", vendor="claude")
-
-
-def test_effort_alias_resolves_correctly_under_vendor_gate() -> None:
-    """An effort alias like 'codex:high' resolves to gpt-5.5 and passes under
-    --vendor codex."""
-    verdict = _full_coverage_verdict(
-        selected=[("correctness", "codex:high"), ("scope", "codex")],
-        evaluator_model="gpt-5.5",
-    )
-    validate_evaluator_verdict(verdict, evaluator_model="gpt-5.5", vendor="codex")
 
 
 # ---------------------------------------------------------------------------
