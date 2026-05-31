@@ -5,7 +5,7 @@ from __future__ import annotations
 import difflib
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from megaplan.forms.provocations import select_active_checks
 from megaplan._core import (
@@ -396,6 +396,7 @@ def _build_critique_prompt(
     critique_review_block: str,
     revise_context: str = "",
     selection_why: dict[str, str] | None = None,
+    contracts_block: str = "",
 ) -> str:
     revise_block = ""
     if revise_context:
@@ -415,6 +416,7 @@ def _build_critique_prompt(
         f"""
         You are an independent reviewer. Critique the plan against the actual repository.
 
+        {contracts_block}
         Project directory:
         {context["project_dir"]}
 
@@ -503,7 +505,14 @@ def _critique_prompt(
     expected_ids: list[str] | None = None,
     revise_context: str = "",
     selection_why: dict[str, str] | None = None,
+    contract_context: Mapping[str, Any] | None = None,
 ) -> str:
+    from ._shared import _render_contracts_block, _resolve_contract_context
+
+    contracts_block = _render_contracts_block(
+        _resolve_contract_context(state, contract_context),
+        audience="critique",
+    )
     context = _critique_context(state, plan_dir, root)
     if active_checks is None:
         active_checks = select_active_checks(state, context["robustness"], plan_dir=plan_dir)
@@ -560,7 +569,11 @@ def _critique_prompt(
             Workflow: read the file → investigate → read file again → add findings → write file back.
         """
         ).strip()
-    return _build_critique_prompt(state, context, critique_review_block, revise_context=revise_context, selection_why=selection_why)
+    return _build_critique_prompt(
+        state, context, critique_review_block,
+        revise_context=revise_context, selection_why=selection_why,
+        contracts_block=contracts_block,
+    )
 
 
 def single_check_critique_prompt(

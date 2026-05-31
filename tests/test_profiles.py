@@ -14,6 +14,7 @@ from megaplan.profiles import (
     CANONICAL_PREP_MODELS,
     apply_profile_expansion,
     load_profiles,
+    validate_prep_stage_provider,
 )
 from megaplan.types import CliError
 from megaplan.workers import resolve_agent_mode
@@ -463,23 +464,164 @@ def test_profile_expansion_resolves_prep_models_with_canonical_fallback_trace(
     }
 
 
+def test_default_agent_routing_prep_is_hermes_flat_phase_models_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``DEFAULT_AGENT_ROUTING['prep']`` is ``hermes`` (read-only).
+
+    The flat ``phase_models['prep']`` key may still appear in resolution
+    output but real prep execution uses ``config.prep_models`` through
+    ``resolve_prep_stage_model``, not the flat agent routing.
+
+    The ``flat_agent == 'codex'`` resolver exception (variable-codex
+    triage/distill) is preserved this sprint per SD2.
+    """
+    from megaplan.types import DEFAULT_AGENT_ROUTING
+
+    # prep is a valid phase key in the routing table
+    assert "prep" in DEFAULT_AGENT_ROUTING
+
+    # Its default is now hermes, not claude — a read-only agent.
+    assert DEFAULT_AGENT_ROUTING["prep"] == "hermes"
+
+    # Prove the flat_agent=='codex' deferred exception is still present.
+    from megaplan.profiles import resolve_prep_models
+
+    # With flat_prep_spec='codex' and no explicit prep_models, the legacy
+    # variable-codex exception must still route triage/distill to codex.
+    resolved, trace = resolve_prep_models(flat_prep_spec="codex", prep_models=None)
+    assert resolved["triage"] == "codex"
+    assert resolved["distill"] == "codex"
+    # fanout still falls through to CANONICAL_PREP_MODELS (DeepSeek v4 Pro)
+    assert trace["flat_prep_input"] == "codex"
+    assert trace["canonical_fallback_used"]["fanout"] is True
+    assert trace["canonical_fallback_used"]["triage"] is False
+    assert trace["canonical_fallback_used"]["distill"] is False
+
+
 @pytest.mark.parametrize(
-    ("profile_name", "expected_flat", "expected_models", "expected_fallback"),
+    ("profile_name", "expected_flat", "expected_models", "expected_fallback", "expects_explicit_prep_models"),
     [
+        # Profiles with explicit [prep_models] tables — canonical_fallback_used=false
         (
             "all-claude",
             "claude",
+            {
+                "triage": "claude:claude-sonnet-4-6",
+                "fanout": "claude:claude-sonnet-4-6",
+                "distill": "claude:claude-sonnet-4-6",
+            },
+            {"triage": False, "fanout": False, "distill": False},
+            True,
+        ),
+        (
+            "all-codex",
+            "codex",
+            {
+                "triage": "codex:gpt-5.4",
+                "fanout": "codex:gpt-5.4",
+                "distill": "codex:gpt-5.4",
+            },
+            {"triage": False, "fanout": False, "distill": False},
+            True,
+        ),
+        # Profiles that inherit CANONICAL_PREP_MODELS (DeepSeek v4 Pro) via canonical fallback
+        (
+            "all-deepseek-flash",
+            "hermes:deepseek:deepseek-v4-flash",
             CANONICAL_PREP_MODELS,
             {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "all-deepseek-pro",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "all-deepseek-pro-direct",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "all-fireworks-deepseek",
+            "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "all-open",
+            "hermes:fireworks:accounts/fireworks/models/kimi-k2p6",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "apex",
+            "claude",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "arnold-openrouter",
+            "hermes:openrouter:deepseek/deepseek-chat",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "directed",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "partnered",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
         ),
         (
             "premium",
             "claude:low",
             CANONICAL_PREP_MODELS,
             {"triage": True, "fanout": True, "distill": True},
+            False,
         ),
         (
-            "all-codex",
+            "solo",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "variable",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "variable-claude",
+            "claude",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        # variable-codex: flat_agent='codex' exception routes triage/distill to codex,
+        # fanout falls back to CANONICAL_PREP_MODELS (per SD2, preserved this sprint).
+        (
+            "variable-codex",
             "codex",
             {
                 "triage": "codex",
@@ -487,12 +629,7 @@ def test_profile_expansion_resolves_prep_models_with_canonical_fallback_trace(
                 "distill": "codex",
             },
             {"triage": False, "fanout": True, "distill": False},
-        ),
-        (
-            "all-open",
-            "hermes:fireworks:accounts/fireworks/models/kimi-k2p6",
-            CANONICAL_PREP_MODELS,
-            {"triage": True, "fanout": True, "distill": True},
+            False,
         ),
     ],
 )
@@ -503,16 +640,30 @@ def test_builtin_profiles_smoke_stage_aware_prep_fallbacks(
     expected_flat: str,
     expected_models: dict[str, str],
     expected_fallback: dict[str, bool],
+    expects_explicit_prep_models: bool,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile=profile_name)
     apply_profile_expansion(args, None)
 
+    trace = args.prep_model_resolver_trace
+
     assert args.prep_models == expected_models
-    assert args.prep_model_resolver_trace["flat_prep_input"] == expected_flat
-    assert args.prep_model_resolver_trace["resolved_stage_models"] == expected_models
-    assert args.prep_model_resolver_trace["canonical_fallback_used"] == expected_fallback
+    assert trace["flat_prep_input"] == expected_flat
+    assert trace["resolved_stage_models"] == expected_models
+    assert trace["canonical_fallback_used"] == expected_fallback
+
+    # No unintended profiles gained explicit prep_models tables.
+    explicit = trace.get("explicit_prep_models", {})
+    if expects_explicit_prep_models:
+        assert explicit, (
+            f"{profile_name} should report explicit prep_models but got empty dict"
+        )
+    else:
+        assert explicit == {}, (
+            f"{profile_name} must not have explicit prep_models; got {explicit!r}"
+        )
 
 
 def test_profile_expansion_prefers_explicit_prep_models_subtable_over_flat_prep(
@@ -586,7 +737,7 @@ def test_profile_expansion_inherits_prep_models_and_falls_back_omitted_slots(
     apply_profile_expansion(args, project_dir)
 
     assert args.prep_models == {
-        "triage": "codex:gpt-5.4",
+        "triage": "claude:claude-sonnet-4-6",
         "fanout": "hermes:deepseek:deepseek-v4-flash",
         "distill": "hermes:deepseek:deepseek-v4-pro",
     }
@@ -607,21 +758,109 @@ def test_vendor_codex_routes_flat_claude_prep_to_codex_triage_and_distill(
     args = _worker_args(profile="all-claude", vendor="codex")
     apply_profile_expansion(args, None)
 
+    # Explicit prep_models in all-claude inherit first, then vendor rewrite
+    # swaps the prep stages onto codex before they are persisted.
     assert args.prep_models == {
-        "triage": "codex",
-        "fanout": CANONICAL_PREP_MODELS["fanout"],
-        "distill": "codex",
+        "triage": "codex:gpt-5.4",
+        "fanout": "codex:gpt-5.4",
+        "distill": "codex:gpt-5.4",
     }
     assert args.prep_model_resolver_trace["flat_prep_input"] == "codex"
+    assert args.prep_model_resolver_trace["explicit_prep_models"] == args.prep_models
     assert args.prep_model_resolver_trace["canonical_fallback_used"] == {
         "triage": False,
-        "fanout": True,
+        "fanout": False,
         "distill": False,
     }
 
 
-@pytest.mark.parametrize("spec", ["claude:low", "shannon:opus"])
-def test_profile_loader_rejects_write_capable_prep_model_metadata(
+def test_vendor_claude_routes_explicit_codex_prep_models_to_claude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_profiles(
+        project_dir / ".megaplan" / "profiles.toml",
+        """
+        [profiles.codex-prep]
+        prep = "codex"
+        plan = "codex"
+        feedback = "claude:low"
+
+        [profiles.codex-prep.prep_models]
+        triage = "codex:gpt-5.4"
+        fanout = "codex:gpt-5.4"
+        distill = "codex:gpt-5.4"
+        """,
+    )
+
+    args = _worker_args(profile="codex-prep", vendor="claude")
+    apply_profile_expansion(args, project_dir)
+
+    assert args.prep_models == {
+        "triage": "claude:claude-sonnet-4-6",
+        "fanout": "claude:claude-sonnet-4-6",
+        "distill": "claude:claude-sonnet-4-6",
+    }
+    assert args.prep_model_resolver_trace["flat_prep_input"] == "claude"
+    assert args.prep_model_resolver_trace["explicit_prep_models"] == args.prep_models
+    assert args.prep_model_resolver_trace["canonical_fallback_used"] == {
+        "triage": False,
+        "fanout": False,
+        "distill": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("stage", "spec"),
+    [
+        ("triage", "claude:low"),
+        ("fanout", "shannon:claude-opus-4-7"),
+        ("triage", "codex:gpt-5.4"),
+        ("triage", "codex"),
+        ("distill", "hermes:deepseek:deepseek-v4-pro"),
+        ("fanout", "hermes:fireworks:accounts/fireworks/models/deepseek-v4-flash"),
+    ],
+)
+def test_validate_prep_stage_provider_accepts_read_only_agents(stage: str, spec: str) -> None:
+    assert validate_prep_stage_provider(spec, stage=stage) == spec
+
+
+@pytest.mark.parametrize(
+    ("stage", "spec"),
+    [
+        ("triage", "openai:gpt-5"),
+        ("fanout", "fireworks:accounts/fireworks/models/deepseek-v3"),
+    ],
+)
+def test_validate_prep_stage_provider_rejects_non_read_only_agents(
+    stage: str, spec: str,
+) -> None:
+    with pytest.raises(CliError) as exc_info:
+        validate_prep_stage_provider(spec, stage=stage)
+    assert exc_info.value.code == "invalid_profile"
+    assert f"prep_models.{stage}" in exc_info.value.message
+    assert "unknown agent" in exc_info.value.message.lower()
+
+
+def test_validate_prep_stage_provider_rejects_with_profile_context() -> None:
+    with pytest.raises(CliError) as exc_info:
+        validate_prep_stage_provider(
+            "openai:gpt-5",
+            stage="triage",
+            path="/fake/profiles.toml",
+            profile_name="bad-profile",
+        )
+    assert exc_info.value.code == "invalid_profile"
+    assert "bad-profile" in exc_info.value.message
+    assert "/fake/profiles.toml" in exc_info.value.message
+    assert "prep_models.triage" in exc_info.value.message
+
+
+@pytest.mark.parametrize("spec", ["openai:gpt-5", "fireworks:accounts/fireworks/models/deepseek-v3"])
+def test_profile_loader_rejects_non_read_only_prep_model_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     spec: str,
@@ -644,6 +883,8 @@ def test_profile_loader_rejects_write_capable_prep_model_metadata(
         load_profiles(project_dir=project_dir)
 
     assert exc_info.value.code == "invalid_profile"
+    assert "bad-prep" in exc_info.value.message
+    assert ".megaplan/profiles.toml" in exc_info.value.message
     assert "prep_models.triage" in exc_info.value.message
 
 
@@ -664,10 +905,10 @@ def test_handle_init_persists_resolved_prep_model_trace(
     state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
 
-    assert state["config"]["prep_models"]["triage"] == "codex"
+    assert state["config"]["prep_models"]["triage"] == "codex:gpt-5.4"
     assert state["config"]["prep_model_resolver_trace"]["flat_prep_input"] == "codex"
     assert state["config"]["prep_model_resolver_trace"]["resolved_stage_models"]["fanout"] == (
-        "hermes:deepseek:deepseek-v4-flash"
+        "codex:gpt-5.4"
     )
 
 
@@ -2400,6 +2641,110 @@ def test_vendor_rewrite_propagates_to_tier_entries() -> None:
     assert tier_models["execute"][5] == "codex:high"
 
 
+def test_vendor_rewrite_propagates_to_prep_models_and_leaves_hermes_unchanged() -> None:
+    from megaplan.profiles import apply_vendor_rewrite
+
+    prep_models = {
+        "triage": "claude:claude-sonnet-4-6",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "shannon:claude-opus-4-7",
+    }
+
+    result = apply_vendor_rewrite({"plan": "claude:low"}, "codex", prep_models=prep_models)
+
+    assert result["plan"] == "codex:low"
+    assert prep_models == {
+        "triage": "codex:gpt-5.4",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "shannon:claude-opus-4-7",
+    }
+
+
+def test_vendor_rewrite_maps_codex_prep_models_back_to_claude() -> None:
+    from megaplan.profiles import apply_vendor_rewrite
+
+    prep_models = {
+        "triage": "codex:gpt-5.4",
+        "fanout": "codex:gpt-5.5",
+        "distill": "hermes:deepseek:deepseek-v4-pro",
+    }
+
+    _result = apply_vendor_rewrite({"plan": "codex:low"}, "claude", prep_models=prep_models)
+
+    assert prep_models == {
+        "triage": "claude:claude-sonnet-4-6",
+        "fanout": "claude:claude-opus-4-7",
+        "distill": "hermes:deepseek:deepseek-v4-pro",
+    }
+
+
+def test_vendor_rewrite_prep_model_conflict_names_stage() -> None:
+    from megaplan.profiles import apply_vendor_rewrite
+
+    prep_models = {
+        "triage": "claude:sonnet-4.6:high",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+    }
+
+    with pytest.raises(CliError) as exc_info:
+        apply_vendor_rewrite({"plan": "claude:low"}, "codex", prep_models=prep_models)
+
+    assert exc_info.value.code == "vendor_swap_model_conflict"
+    message = str(exc_info.value)
+    assert "prep stage 'triage'" in message
+    assert "sonnet-4.6" in message
+
+
+def test_vendor_rewrite_prep_models_full_claude_to_codex_mapping() -> None:
+    """All three Claude model tiers (haiku, sonnet, opus) map to Codex prep models."""
+    from megaplan.profiles import apply_vendor_rewrite
+
+    prep_models = {
+        "triage": "claude:claude-haiku-4-5",
+        "fanout": "claude:claude-sonnet-4-6",
+        "distill": "claude:claude-opus-4-7",
+    }
+
+    _result = apply_vendor_rewrite({"plan": "claude:low"}, "codex", prep_models=prep_models)
+
+    # haiku → gpt-5.4 (collapses to same as sonnet per design doc)
+    assert prep_models["triage"] == "codex:gpt-5.4"
+    # sonnet → gpt-5.4
+    assert prep_models["fanout"] == "codex:gpt-5.4"
+    # opus → gpt-5.5
+    assert prep_models["distill"] == "codex:gpt-5.5"
+
+
+def test_vendor_rewrite_tier_and_prep_models_share_premium_swap_logic() -> None:
+    """Tier models and prep models are both rewritten by the same _swap_premium_spec
+    logic when passed together to apply_vendor_rewrite."""
+    from megaplan.profiles import apply_vendor_rewrite
+
+    tier_models = {"execute": {4: "claude:medium", 5: "claude:high"}}
+    prep_models = {
+        "triage": "claude:claude-sonnet-4-6",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "shannon:claude-opus-4-7",
+    }
+    profile = {"plan": "claude:low"}
+
+    result = apply_vendor_rewrite(profile, "codex", tier_models=tier_models, prep_models=prep_models)
+
+    # Phase profiles use _swap_premium_spec
+    assert result["plan"] == "codex:low"
+
+    # Tier entries use _swap_premium_spec: effort-only premium tier flips vendor
+    assert tier_models["execute"][4] == "codex:medium"
+    assert tier_models["execute"][5] == "codex:high"
+
+    # Prep models use the same _swap_premium_spec: sonnet model pin → codex:gpt-5.4
+    assert prep_models["triage"] == "codex:gpt-5.4"
+    # Hermes/DeepSeek prep spec unchanged by premium swap
+    assert prep_models["fanout"] == "hermes:deepseek:deepseek-v4-pro"
+    # Shannon prep spec unchanged by premium swap
+    assert prep_models["distill"] == "shannon:claude-opus-4-7"
+
+
 def test_deepseek_provider_rewrite_propagates_to_tier_entries() -> None:
     """--deepseek-provider direct swaps canonical Fireworks DeepSeek specs in tier entries."""
     from megaplan.profiles import apply_deepseek_provider_rewrite
@@ -2614,6 +2959,468 @@ def test_validate_named_profile_invariants_tier_models_none_does_not_crash() -> 
 
     # Should not raise
     _validate_named_profile_invariants("all-codex", {"plan": "codex:low"}, tier_models=None)
+
+
+# ---------------------------------------------------------------------------
+# T7: Critique-tier profile tests — all ten execute-tier profiles must
+#     load routable tier_models.critique keys 1-5; 1-3 match execute where
+#     present; vendor/depth/deepseek-provider rewrites apply to critique
+#     tiers the same way they apply to execute tiers.
+# ---------------------------------------------------------------------------
+
+# Profiles with tier_models.execute and tier_models.critique, used by the
+# parametrized tests below.  All ten profiles define the full 1-5 ladder
+# with no 3-tier aliasing needed.
+_TIERED_CRITIQUE_PROFILES = [
+    "variable",
+    "variable-claude",
+    "variable-codex",
+    "partnered",
+    "directed",
+    "solo",
+    "premium",
+    "apex",
+    "all-claude",
+    "all-codex",
+]
+
+
+@pytest.mark.parametrize("profile_name", _TIERED_CRITIQUE_PROFILES)
+def test_all_tiered_profiles_load_critique_tiers_1_through_5(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile_name: str,
+) -> None:
+    """Every execute-tier profile exposes ``tier_models.critique`` with
+    integer keys 1-5, each resolving to a string spec."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile=profile_name)
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, (
+        f"{profile_name} must have tier_models"
+    )
+    assert "critique" in tier_models, (
+        f"{profile_name} must expose tier_models.critique"
+    )
+
+    critique_tiers = tier_models["critique"]
+    for t in (1, 2, 3, 4, 5):
+        assert t in critique_tiers, (
+            f"{profile_name}.tier_models.critique missing key {t}"
+        )
+        assert isinstance(critique_tiers[t], str), (
+            f"{profile_name}.tier_models.critique[{t}] must be str, "
+            f"got {type(critique_tiers[t]).__name__}"
+        )
+        assert critique_tiers[t].strip(), (
+            f"{profile_name}.tier_models.critique[{t}] must be non-empty"
+        )
+
+
+@pytest.mark.parametrize("profile_name", _TIERED_CRITIQUE_PROFILES)
+def test_critique_tiers_1_through_3_match_execute_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile_name: str,
+) -> None:
+    """Tiers 1-3 of ``tier_models.critique`` are byte-identical to the
+    corresponding ``tier_models.execute`` entries in every built-in profile."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile=profile_name)
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models["execute"]
+    critique_tiers = tier_models["critique"]
+
+    for t in (1, 2, 3):
+        assert critique_tiers[t] == execute_tiers[t], (
+            f"{profile_name}: critique tier {t} ({critique_tiers[t]!r}) "
+            f"!= execute tier {t} ({execute_tiers[t]!r})"
+        )
+
+
+@pytest.mark.parametrize("profile_name", _TIERED_CRITIQUE_PROFILES)
+def test_critique_tiers_4_and_5_match_execute_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile_name: str,
+) -> None:
+    """Tiers 4-5 of ``tier_models.critique`` match the corresponding
+    ``tier_models.execute`` entries.  No profile in this sprint needs
+    3-tier aliasing because every built-in profile defines the full
+    1-5 ladder."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile=profile_name)
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models["execute"]
+    critique_tiers = tier_models["critique"]
+
+    for t in (4, 5):
+        assert critique_tiers[t] == execute_tiers[t], (
+            f"{profile_name}: critique tier {t} ({critique_tiers[t]!r}) "
+            f"!= execute tier {t} ({execute_tiers[t]!r})"
+        )
+
+
+def test_vendor_rewrite_applies_to_critique_tiers_same_as_execute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--vendor codex`` rewrites premium entries in *both*
+    ``tier_models.execute`` and ``tier_models.critique`` identically.
+
+    Uses ``partnered`` (unlocked, has both premium and DeepSeek tiers)."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="partnered", vendor="codex")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+
+    # Vendor rewrite MUST produce identical premium tiers in both phases.
+    for phase in ("execute", "critique"):
+        tiers = tier_models[phase]
+        # DeepSeek tiers 1-3 unchanged.
+        assert "deepseek" in tiers[1], f"{phase} tier 1 must be DeepSeek"
+        assert "deepseek" in tiers[2], f"{phase} tier 2 must be DeepSeek"
+        assert "deepseek" in tiers[3], f"{phase} tier 3 must be DeepSeek"
+        # Premium tiers 4-5 flipped to codex.
+        assert tiers[4].startswith("codex"), (
+            f"{phase} tier 4 should be codex after vendor swap, got {tiers[4]!r}"
+        )
+        assert tiers[5].startswith("codex"), (
+            f"{phase} tier 5 should be codex after vendor swap, got {tiers[5]!r}"
+        )
+
+    # The critique and execute tier maps must be byte-identical post-rewrite.
+    assert tier_models["critique"] == tier_models["execute"], (
+        "critique and execute tier maps must be identical after "
+        "vendor rewrite"
+    )
+
+
+def test_deepseek_provider_rewrite_applies_to_critique_tiers_same_as_execute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--deepseek-provider direct`` rewrites the canonical Fireworks
+    DeepSeek V4 Pro spec in *both* ``tier_models.execute`` and
+    ``tier_models.critique`` identically."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="partnered", deepseek_provider="direct")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+
+    direct = "hermes:deepseek:deepseek-v4-pro"
+    fireworks = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+
+    for phase in ("execute", "critique"):
+        tiers = tier_models[phase]
+        # Tier 1 is flash, unaffected by the provider swap (it was never fireworks).
+        assert "flash" in tiers[1], f"{phase} tier 1 is flash, should be unchanged"
+        # Tiers 2-3 were hermes:fireworks:…deepseek-v4-pro and become direct.
+        assert tiers[2] == direct, (
+            f"{phase} tier 2 should be {direct!r} after provider swap, got {tiers[2]!r}"
+        )
+        assert tiers[3] == direct, (
+            f"{phase} tier 3 should be {direct!r} after provider swap, got {tiers[3]!r}"
+        )
+
+    # The maps must be byte-identical post-rewrite.
+    assert tier_models["critique"] == tier_models["execute"], (
+        "critique and execute tier maps must be identical after "
+        "deepseek-provider rewrite"
+    )
+
+
+def test_depth_rewrite_does_not_apply_to_critique_nor_execute_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--depth high`` rewrites *author* phase tier entries (plan, revise,
+    loop_plan, tiebreakers) but leaves ``execute`` and ``critique`` tiers
+    untouched — neither phase is in ``DEPTH_AUTHOR_PHASES``."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    # Use variable which has premium tiers with effort suffixes that
+    # *would* be rewritten were they on an author phase.
+    args_no_depth = _worker_args(profile="variable")
+    apply_profile_expansion(args_no_depth, None)
+
+    args_depth = _worker_args(profile="variable", depth="high")
+    apply_profile_expansion(args_depth, None)
+
+    # Execute tier maps must be identical with and without --depth.
+    tm_base = getattr(args_no_depth, "tier_models", None)
+    tm_depth = getattr(args_depth, "tier_models", None)
+    assert tm_base is not None
+    assert tm_depth is not None
+
+    # Both phases must be byte-identical across depth/no-depth.
+    for phase in ("execute", "critique"):
+        assert tm_base[phase] == tm_depth[phase], (
+            f"--depth must not alter {phase} tier entries; "
+            f"base={tm_base[phase]!r} depth={tm_depth[phase]!r}"
+        )
+
+
+def test_vendor_rewrite_on_unlocked_profile_maps_claude_model_pins_both_phases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--vendor codex`` on ``directed`` maps the Claude Sonnet/Opus
+    model pins to their Codex equivalents (sonnet→gpt-5.4, opus→gpt-5.5)
+    identically in both ``execute`` and ``critique`` tiers."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="directed", vendor="codex")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+
+    for phase in ("execute", "critique"):
+        tiers = tier_models[phase]
+        assert tiers[4] == "codex:gpt-5.4", (
+            f"{phase} tier 4 (sonnet) should map to codex:gpt-5.4, got {tiers[4]!r}"
+        )
+        assert tiers[5] == "codex:gpt-5.5", (
+            f"{phase} tier 5 (opus) should map to codex:gpt-5.5, got {tiers[5]!r}"
+        )
+
+    # Byte-identical.
+    assert tier_models["critique"] == tier_models["execute"]
+
+
+# ---------------------------------------------------------------------------
+# T9: Phase-model suppression scoping — CLI overrides must suppress only
+#     the matching ``tier_models.<phase>`` table.
+# ---------------------------------------------------------------------------
+
+
+def test_phase_model_execute_override_suppresses_only_execute_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit ``--phase-model execute=…`` suppresses ``tier_models.execute``
+    while leaving ``tier_models.critique`` intact."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.dual-tier]
+plan = "claude:low"
+execute = "claude:medium"
+
+[profiles.dual-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+
+[profiles.dual-tier.tier_models.critique]
+1 = "hermes:deepseek-flash"
+4 = "claude:sonnet"
+5 = "claude:opus"
+""", encoding="utf-8")
+
+    args = _worker_args(
+        profile="dual-tier",
+        phase_model=["execute=codex:high"],
+    )
+    apply_profile_expansion(args, project_dir)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, "tier_models must be set after expansion"
+
+    # ``execute`` tier table must be suppressed.
+    assert "execute" not in tier_models, (
+        f"--phase-model execute=... must suppress tier_models.execute; "
+        f"got keys {list(tier_models)}"
+    )
+
+    # ``critique`` tier table must remain intact.
+    assert "critique" in tier_models, (
+        "--phase-model execute=... must NOT suppress tier_models.critique"
+    )
+    assert tier_models["critique"] == {
+        1: "hermes:deepseek-flash",
+        4: "claude:sonnet",
+        5: "claude:opus",
+    }, f"critique tiers modified unexpectedly: {tier_models['critique']!r}"
+
+
+def test_phase_model_critique_override_suppresses_only_critique_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit ``--phase-model critique=…`` suppresses ``tier_models.critique``
+    while leaving ``tier_models.execute`` intact."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.dual-tier]
+plan = "claude:low"
+execute = "claude:medium"
+
+[profiles.dual-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+
+[profiles.dual-tier.tier_models.critique]
+1 = "hermes:deepseek-flash"
+4 = "claude:sonnet"
+5 = "claude:opus"
+""", encoding="utf-8")
+
+    args = _worker_args(
+        profile="dual-tier",
+        phase_model=["critique=claude:sonnet"],
+    )
+    apply_profile_expansion(args, project_dir)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, "tier_models must be set after expansion"
+
+    # ``critique`` tier table must be suppressed.
+    assert "critique" not in tier_models, (
+        f"--phase-model critique=... must suppress tier_models.critique; "
+        f"got keys {list(tier_models)}"
+    )
+
+    # ``execute`` tier table must remain intact.
+    assert "execute" in tier_models, (
+        "--phase-model critique=... must NOT suppress tier_models.execute"
+    )
+    assert tier_models["execute"] == {
+        1: "hermes:deepseek-flash",
+        4: "claude:medium",
+        5: "claude:high",
+    }, f"execute tiers modified unexpectedly: {tier_models['execute']!r}"
+
+
+def test_phase_model_both_overrides_suppress_both_tier_tables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When both ``--phase-model execute=…`` and ``--phase-model critique=…``
+    are explicit, both ``tier_models.execute`` and ``tier_models.critique``
+    are suppressed."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.dual-tier]
+plan = "claude:low"
+execute = "claude:medium"
+
+[profiles.dual-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+
+[profiles.dual-tier.tier_models.critique]
+1 = "hermes:deepseek-flash"
+4 = "claude:sonnet"
+5 = "claude:opus"
+""", encoding="utf-8")
+
+    args = _worker_args(
+        profile="dual-tier",
+        phase_model=["execute=codex:high", "critique=claude:sonnet"],
+    )
+    apply_profile_expansion(args, project_dir)
+
+    tier_models = getattr(args, "tier_models", None)
+    # Both phases have explicit CLI overrides → both tier tables suppressed.
+    # tier_models may be None or an empty dict depending on whether other
+    # phases' tier tables exist.
+    if tier_models:
+        assert "execute" not in tier_models, (
+            "--phase-model execute=... must suppress tier_models.execute"
+        )
+        assert "critique" not in tier_models, (
+            "--phase-model critique=... must suppress tier_models.critique"
+        )
+
+
+def test_no_cli_override_keeps_both_tier_tables_intact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without any explicit ``--phase-model`` overrides, both
+    ``tier_models.execute`` and ``tier_models.critique`` remain."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.dual-tier]
+plan = "claude:low"
+execute = "claude:medium"
+
+[profiles.dual-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+
+[profiles.dual-tier.tier_models.critique]
+1 = "hermes:deepseek-flash"
+4 = "claude:sonnet"
+5 = "claude:opus"
+""", encoding="utf-8")
+
+    args = _worker_args(
+        profile="dual-tier",
+    )
+    apply_profile_expansion(args, project_dir)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, "tier_models must be set after expansion"
+
+    assert "execute" in tier_models, (
+        "execute tier table must be present without CLI override"
+    )
+    assert "critique" in tier_models, (
+        "critique tier table must be present without CLI override"
+    )
+
+    assert tier_models["execute"] == {
+        1: "hermes:deepseek-flash",
+        4: "claude:medium",
+        5: "claude:high",
+    }
+    assert tier_models["critique"] == {
+        1: "hermes:deepseek-flash",
+        4: "claude:sonnet",
+        5: "claude:opus",
+    }
 
 
 def test_validate_named_profile_invariants_empty_tier_models_does_not_crash() -> None:

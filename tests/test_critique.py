@@ -94,6 +94,11 @@ def test_parallel_critique_sets_and_clears_active_step(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """After removing the Hermes gate (T19), the multi-check parallel
+    critique branch no longer calls set_active_step / clear_active_step.
+    This test verifies that run_parallel_critique is dispatched for any
+    agent type (not just Hermes) and that no active_step session state
+    is leaked."""
     monkeypatch.setattr(
         megaplan.handlers.critique,
         "validate_critique_checks",
@@ -102,14 +107,13 @@ def test_parallel_critique_sets_and_clears_active_step(
     monkeypatch.setattr(
         megaplan.handlers,
         "resolve_agent_mode",
-        lambda step, args: ("hermes", "persistent", False, "fireworks:accounts/fireworks/models/kimi-k2p6"),
+        lambda step, args: ("codex", "thinking", False, "openai:codex-3"),
     )
 
-    observed: dict[str, str] = {}
+    parallel_called: list[bool] = [False]
 
     def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, **kwargs):
-        persisted = load_state(plan_dir)
-        observed.update(persisted["active_step"])
+        parallel_called[0] = True
         return WorkerResult(
             payload={
                 "checks": [
@@ -137,10 +141,8 @@ def test_parallel_critique_sets_and_clears_active_step(
     state = load_state(plan_fixture.plan_dir)
 
     assert response["success"] is True
-    assert observed["phase"] == "critique"
-    assert observed["agent"] == "hermes"
-    assert observed["model"] == "fireworks:accounts/fireworks/models/kimi-k2p6"
-    assert "active_step" not in state
+    assert parallel_called[0] is True, "run_parallel_critique should be dispatched for multi-check, any agent type"
+    assert "active_step" not in state, "no Hermes session state should leak"
 
 
 def test_parallel_critique_fallback_logs_warning(
@@ -199,7 +201,8 @@ def test_critique_evaluator_model_assignment_does_not_drive_dispatch(
                         "selections": [
                             {
                                 "check_id": "correctness",
-                                "critic_model": "unknown-model",
+                                "complexity": 4,
+                                "complexity_justification": "Rank parsing fallback probe stays at the correctness floor.",
                                 "why": "exercise rank parse fallback",
                             }
                         ],
@@ -769,7 +772,12 @@ def test_handle_critique_adaptive_applies_verifications_and_skips_reraise(
     all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
     selected_cid = all_check_ids[0]
     verdict = {
-        "selections": [{"check_id": selected_cid, "critic_model": "claude-opus-4-7", "why": "check it"}],
+        "selections": [{
+            "check_id": selected_cid,
+            "complexity": 4 if selected_cid in {"correctness", "prerequisite_ordering"} else 3,
+            "complexity_justification": f"{selected_cid} needs live routing scrutiny.",
+            "why": "check it",
+        }],
         "skipped": [{"check_id": cid, "why": "skip"} for cid in all_check_ids if cid != selected_cid],
         "evaluator_model": "claude-opus-4-7",
         "flag_verifications": [
@@ -838,7 +846,12 @@ def test_handle_critique_pin_forces_critic_model_over_evaluator_assignment(
     selected_cid = all_check_ids[0]
     # Evaluator escalates this lens to a premium critic — the pin must win.
     verdict = {
-        "selections": [{"check_id": selected_cid, "critic_model": "claude-opus-4-7", "why": "x"}],
+        "selections": [{
+            "check_id": selected_cid,
+            "complexity": 4 if selected_cid in {"correctness", "prerequisite_ordering"} else 3,
+            "complexity_justification": f"{selected_cid} needs live routing scrutiny.",
+            "why": "x",
+        }],
         "skipped": [{"check_id": cid, "why": "skip"} for cid in all_check_ids if cid != selected_cid],
         "evaluator_model": "claude-opus-4-7",
     }
@@ -1197,7 +1210,12 @@ def test_reconciliation_open_flag_not_overwritten_by_critic_verified(
     all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
     selected_cid = all_check_ids[0]
     verdict = {
-        "selections": [{"check_id": selected_cid, "critic_model": "claude-opus-4-7", "why": "check it"}],
+        "selections": [{
+            "check_id": selected_cid,
+            "complexity": 4 if selected_cid in {"correctness", "prerequisite_ordering"} else 3,
+            "complexity_justification": f"{selected_cid} needs live routing scrutiny.",
+            "why": "check it",
+        }],
         "skipped": [{"check_id": cid, "why": "skip"} for cid in all_check_ids if cid != selected_cid],
         "evaluator_model": "claude-opus-4-7",
         "flag_verifications": [
@@ -1243,3 +1261,1341 @@ def test_reconciliation_open_flag_not_overwritten_by_critic_verified(
     assert flag["verified"] is False
     assert "verified_in" not in flag
     assert flag.get("verify_rationale") == "diff is a no-op rename"
+
+
+# ---------------------------------------------------------------------------
+# T14: Metadata preservation — catalog checks preserve complexity and
+#      complexity_justification, other checks preserve separate probe why and
+#      routing justification, and sequential fallback receives useful
+#      targeting notes after the metadata migration.
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_checks_preserve_complexity_and_justification(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catalog (built-in) lens selections must attach complexity and
+    complexity_justification to each active check dict, and the
+    _selection_why for that check must be the complexity_justification."""
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    # Enable adaptive critique in persisted state.
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    # Select two catalog checks so len(active_checks) > 1 and the hermes
+    # parallel path is taken.  correctness carries a known complexity and
+    # justification; scope is a second lens to satisfy >1.
+    verdict = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "Correctness lens targets edge-case validation at complexity 4.",
+                "why": "legacy why field",
+            },
+            {
+                "check_id": "scope",
+                "complexity": 3,
+                "complexity_justification": "Scope check at moderate complexity.",
+            },
+        ],
+        "skipped": [
+            {"check_id": cid, "why": "skip"}
+            for cid in all_check_ids
+            if cid not in {"correctness", "scope"}
+        ],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [],
+    }
+
+    captured_checks: list[dict] = []
+
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, effort=None, **kwargs):
+        captured_checks.extend(checks)
+        return WorkerResult(
+            payload={
+                "checks": [
+                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    for c in checks
+                ],
+                "flags": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="critique",
+        )
+
+    monkeypatch.setattr(critique_mod, "run_parallel_critique", fake_parallel)
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "hermes", "persistent", False,
+            )
+        # Should not reach here — parallel handles the critic.
+        raise AssertionError(f"unexpected run_step call for {step}")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    # The critique slot must resolve to hermes so the parallel path fires.
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("hermes", "persistent", False, "fireworks:model"),
+    )
+
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    # Find the correctness check in captured checks.
+    corr = next((c for c in captured_checks if c["id"] == "correctness"), None)
+    assert corr is not None, "correctness check must be in active checks"
+    assert corr["complexity"] == 4, (
+        f"catalog check must preserve complexity; got {corr['complexity']!r}"
+    )
+    assert corr["complexity_justification"] == (
+        "Correctness lens targets edge-case validation at complexity 4."
+    ), f"catalog check must preserve complexity_justification; got {corr['complexity_justification']!r}"
+
+
+def test_other_checks_preserve_separate_probe_why_and_routing_justification(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bespoke 'other' custom area must use `why` as the critic question/probe
+    while keeping `complexity` and `complexity_justification` on the check dict
+    as routing/targeting metadata — separate semantics."""
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    verdict = {
+        "selections": [
+            # One catalog check so the verdict union isn't empty.
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "catalog reason",
+            },
+            # One 'other' custom area.
+            {
+                "check_id": "other",
+                "area": "Security review",
+                "why": "Check for SQL injection vulnerabilities in user input handling.",
+                "complexity": 5,
+                "complexity_justification": "Security probing routes at high complexity due to criticality.",
+            },
+        ],
+        "skipped": [
+            {"check_id": cid, "why": "skip"} for cid in all_check_ids if cid not in {"correctness"}
+        ],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [],
+    }
+
+    captured_checks: list[dict] = []
+
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, effort=None, **kwargs):
+        captured_checks.extend(checks)
+        return WorkerResult(
+            payload={
+                "checks": [
+                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    for c in checks
+                ],
+                "flags": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="critique",
+        )
+
+    monkeypatch.setattr(critique_mod, "run_parallel_critique", fake_parallel)
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "hermes", "persistent", False,
+            )
+        raise AssertionError(f"unexpected run_step call for {step}")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    # The critique slot must resolve to hermes so the parallel path fires.
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("hermes", "persistent", False, "fireworks:model"),
+    )
+
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    # Find the 'other' synthetic check by its derived id.
+    other_check = next((c for c in captured_checks if c.get("id", "").startswith("other_")), None)
+    assert other_check is not None, "other custom area must produce a synthetic check"
+
+    # Probe (question) must be the evaluator's `why`.
+    assert other_check["question"] == (
+        "Check for SQL injection vulnerabilities in user input handling."
+    ), f"other probe must be why; got {other_check['question']!r}"
+
+    # Routing/targeting metadata must be preserved on the check dict.
+    assert other_check["complexity"] == 5, (
+        f"other check must preserve complexity for routing; got {other_check['complexity']!r}"
+    )
+    assert other_check["complexity_justification"] == (
+        "Security probing routes at high complexity due to criticality."
+    ), f"other check must preserve complexity_justification; got {other_check['complexity_justification']!r}"
+
+
+def test_sequential_fallback_receives_targeting_notes(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When parallel critique fails and falls back to sequential, the
+    `selection_why` passed in prompt_kwargs must include catalog check
+    complexity_justification and other check probe `why`, so the sequential
+    critic receives readable evaluator targeting notes."""
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    verdict = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "Catalog: edge-case validation.",
+            },
+            {
+                "check_id": "other",
+                "area": "Performance audit",
+                "why": "Check for O(n²) patterns in data processing loops.",
+                "complexity": 3,
+                "complexity_justification": "Performance audit is moderate complexity.",
+            },
+        ],
+        "skipped": [
+            {"check_id": cid, "why": "skip"} for cid in all_check_ids if cid not in {"correctness"}
+        ],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [],
+    }
+
+    captured_prompt_kwargs: dict = {}
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, resolved=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "claude", "persistent", False,
+            )
+        # Sequential fallback: capture the prompt_kwargs.
+        captured_prompt_kwargs.update(prompt_kwargs or {})
+        return (
+            WorkerResult(
+                payload={
+                    "checks": [
+                        {"id": cid, "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                        for cid in ["correctness", "other_performance_audit"]
+                    ],
+                    "flags": [],
+                    "verified_flag_ids": [],
+                    "disputed_flag_ids": [],
+                },
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="critique",
+            ),
+            "claude",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    # Force parallel to fail so we exercise the fallback path.
+    monkeypatch.setattr(
+        critique_mod,
+        "run_parallel_critique",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("parallel failed")),
+    )
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("hermes", "persistent", False, "fireworks:model"),
+    )
+
+    caplog.set_level("WARNING", logger="megaplan")
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    # Fallback must have fired.
+    assert any(
+        "M3A_WARN_PARALLEL_CRITIQUE_FALLBACK" in record.getMessage()
+        for record in caplog.records
+    ), "parallel critique must fall back"
+
+    sel_why = captured_prompt_kwargs.get("selection_why", {})
+    assert isinstance(sel_why, dict), "selection_why must be a dict"
+
+    # Catalog check: _selection_why[id] == complexity_justification.
+    assert sel_why.get("correctness") == "Catalog: edge-case validation.", (
+        f"catalog check _selection_why must be complexity_justification; got {sel_why.get('correctness')!r}"
+    )
+
+    # Other check: _selection_why[oid] == why (the probe/question).
+    oid_key = next((k for k in sel_why if k.startswith("other_")), None)
+    assert oid_key is not None, "other check must have a selection_why entry"
+    assert sel_why[oid_key] == "Check for O(n²) patterns in data processing loops.", (
+        f"other _selection_why must be the probe why; got {sel_why[oid_key]!r}"
+    )
+
+    # active_checks must also be in the prompt kwargs (for the sequential critic).
+    assert "active_checks" in captured_prompt_kwargs, (
+        "sequential fallback must pass active_checks to the critic"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T16: Critique routing — evaluator complexity drives per-lens tier
+#      resolution, _resolve_tier_spec is called once per distinct complexity,
+#      missing complexity is treated as an invariant failure, and operator-
+#      pinned critic_model overrides all per-lens complexity routing with one
+#      resolved model.
+# ---------------------------------------------------------------------------
+
+
+def test_evaluator_complexity_drives_per_lens_tier_resolution(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the evaluator selects lenses at different complexity tiers, each
+    active check receives a ``_resolved_agent_mode`` matching its complexity
+    via the tier_models.critique lookup."""
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    verdict = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 3,
+                "complexity_justification": "Standard correctness check at tier 3.",
+            },
+            {
+                "check_id": "scope",
+                "complexity": 5,
+                "complexity_justification": "Scope analysis needs depth at complexity 5.",
+            },
+        ],
+        "skipped": [
+            {"check_id": cid, "why": "skip"}
+            for cid in all_check_ids
+            if cid not in {"correctness", "scope"}
+        ],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [],
+    }
+
+    captured_checks: list[dict] = []
+
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, effort=None, **kwargs):
+        captured_checks.extend(checks)
+        return WorkerResult(
+            payload={
+                "checks": [
+                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    for c in checks
+                ],
+                "flags": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="critique",
+        )
+
+    monkeypatch.setattr(critique_mod, "run_parallel_critique", fake_parallel)
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "hermes", "persistent", False,
+            )
+        raise AssertionError(f"unexpected run_step call for {step}")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("hermes", "persistent", False, "fireworks:model"),
+    )
+
+    # Mock _resolve_tier_spec in its source module so the handler's local
+    # ``from megaplan.execute.batch import _resolve_tier_spec`` picks it up.
+    def fake_resolve_tier_spec(args, spec, *, phase="execute"):
+        if "deepseek" in spec:
+            return ("hermes", "persistent", "deepseek-v4-pro")
+        if "claude" in spec:
+            return ("claude", "persistent", "claude-opus-4-7")
+        return ("hermes", "persistent", spec)
+
+    monkeypatch.setattr(
+        "megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
+    )
+
+    # Provide a critique tier ladder so the routing block activates.
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        tier_models={
+            "critique": {
+                3: "deepseek:deepseek-v4-pro",
+                5: "claude:claude-opus-4-7",
+            },
+        },
+    )
+
+    megaplan.handle_critique(plan_fixture.root, args)
+
+    # Verify each check got the right _resolved_agent_mode attached (SD1).
+    corr = next((c for c in captured_checks if c["id"] == "correctness"), None)
+    assert corr is not None, "correctness must be in active checks"
+    assert "_resolved_agent_mode" in corr, (
+        "complexity-driven tier resolution must attach _resolved_agent_mode to each check"
+    )
+    assert corr["_resolved_agent_mode"].model == "deepseek-v4-pro", (
+        f"complexity 3 should resolve to deepseek-v4-pro; got {corr['_resolved_agent_mode'].model!r}"
+    )
+
+    scope = next((c for c in captured_checks if c["id"] == "scope"), None)
+    assert scope is not None, "scope must be in active checks"
+    assert "_resolved_agent_mode" in scope
+    assert scope["_resolved_agent_mode"].model == "claude-opus-4-7", (
+        f"complexity 5 should resolve to claude-opus-4-7; got {scope['_resolved_agent_mode'].model!r}"
+    )
+
+
+def test_resolve_tier_spec_called_once_per_distinct_complexity(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When multiple active checks share the same complexity, ``_resolve_tier_spec``
+    is called exactly once for that complexity (cache hit on subsequent checks)."""
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    # Select three lenses: two at complexity 3, one at complexity 5.
+    verdict = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 3,
+                "complexity_justification": "Standard check.",
+            },
+            {
+                "check_id": "scope",
+                "complexity": 3,
+                "complexity_justification": "Also at standard complexity.",
+            },
+            {
+                "check_id": "prerequisite_ordering",
+                "complexity": 5,
+                "complexity_justification": "Prerequisite analysis needs depth.",
+            },
+        ],
+        "skipped": [
+            {"check_id": cid, "why": "skip"}
+            for cid in all_check_ids
+            if cid not in {"correctness", "scope", "prerequisite_ordering"}
+        ],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [],
+    }
+
+    resolve_calls: list[tuple] = []
+
+    def fake_resolve_tier_spec(args, spec, *, phase="execute"):
+        resolve_calls.append((spec, phase))
+        if "deepseek" in spec:
+            return ("hermes", "persistent", "deepseek-v4-pro")
+        if "claude" in spec:
+            return ("claude", "persistent", "claude-opus-4-7")
+        return ("hermes", "persistent", spec)
+
+    monkeypatch.setattr(
+        "megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
+    )
+
+    captured_checks: list[dict] = []
+
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, effort=None, **kwargs):
+        captured_checks.extend(checks)
+        return WorkerResult(
+            payload={
+                "checks": [
+                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    for c in checks
+                ],
+                "flags": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="critique",
+        )
+
+    monkeypatch.setattr(critique_mod, "run_parallel_critique", fake_parallel)
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "hermes", "persistent", False,
+            )
+        raise AssertionError(f"unexpected run_step call for {step}")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("hermes", "persistent", False, "fireworks:model"),
+    )
+
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        tier_models={
+            "critique": {
+                3: "deepseek:deepseek-v4-pro",
+                5: "claude:claude-opus-4-7",
+            },
+        },
+    )
+
+    megaplan.handle_critique(plan_fixture.root, args)
+
+    # Complexity 3 appears twice in selections; _resolve_tier_spec must be
+    # called exactly once for spec "deepseek:deepseek-v4-pro" (cached).
+    c3_calls = [c for c in resolve_calls if c[0] == "deepseek:deepseek-v4-pro"]
+    assert len(c3_calls) == 1, (
+        f"_resolve_tier_spec should be called exactly once for complexity 3 "
+        f"(two checks share it, cache hit expected); got {len(c3_calls)} calls"
+    )
+
+    # Complexity 5 appears once; must be called exactly once.
+    c5_calls = [c for c in resolve_calls if c[0] == "claude:claude-opus-4-7"]
+    assert len(c5_calls) == 1, (
+        f"_resolve_tier_spec should be called exactly once for complexity 5; "
+        f"got {len(c5_calls)} calls"
+    )
+
+    # Total calls: 2 distinct complexities = 2 calls (not 3).
+    assert len(resolve_calls) == 2, (
+        f"expected 2 distinct _resolve_tier_spec calls (one per complexity); "
+        f"got {len(resolve_calls)}"
+    )
+
+    # All three checks must have _resolved_agent_mode attached.
+    assert len(captured_checks) == 3, f"expected 3 active checks; got {len(captured_checks)}"
+    for c in captured_checks:
+        assert "_resolved_agent_mode" in c, (
+            f"check '{c['id']}' missing _resolved_agent_mode"
+        )
+
+
+def test_missing_complexity_is_invariant_failure(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a selected check has missing, non-int, or out-of-range complexity,
+    the handler raises ``CliError`` ('critique_complexity_invariant') rather
+    than defaulting to a tier."""
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+
+    # Test a few invalid complexity values.
+    # Note: True is excluded because bool is a subclass of int and
+    # True == 1 passes the range check.  False == 0 fails < 1.
+    invalid_complexities = [
+        (None, "missing"),
+        (False, "bool False → 0 out of range"),
+        ("high", "string"),
+        (0, "out of range low"),
+        (6, "out of range high"),
+    ]
+
+    for cx_val, cx_label in invalid_complexities:
+        verdict = {
+            "selections": [
+                {
+                    "check_id": "correctness",
+                    "complexity": cx_val,
+                    "complexity_justification": "Some justification.",
+                },
+            ],
+            "skipped": [
+                {"check_id": cid, "why": "skip"}
+                for cid in all_check_ids
+                if cid != "correctness"
+            ],
+            "evaluator_model": "claude-opus-4-7",
+            "flag_verifications": [],
+        }
+
+        captured_checks: list[dict] = []
+
+        def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, effort=None, **kwargs):
+            captured_checks.extend(checks)
+            return WorkerResult(
+                payload={
+                    "checks": [
+                        {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                        for c in checks
+                    ],
+                    "flags": [],
+                    "verified_flag_ids": [],
+                    "disputed_flag_ids": [],
+                },
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="critique",
+            )
+
+        monkeypatch.setattr(critique_mod, "run_parallel_critique", fake_parallel)
+
+        def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+            if step == "critique_evaluator":
+                return (
+                    WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                    "hermes", "persistent", False,
+                )
+            raise AssertionError(f"unexpected run_step call for {step}")
+
+        monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+        monkeypatch.setattr(
+            handlers_mod,
+            "resolve_agent_mode",
+            lambda step, args: ("hermes", "persistent", False, "fireworks:model"),
+        )
+
+        args = plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            tier_models={
+                "critique": {
+                    3: "deepseek:deepseek-v4-pro",
+                    4: "claude:claude-sonnet-4-7",
+                },
+            },
+        )
+
+        from megaplan.types import CliError
+
+        with pytest.raises(CliError, match="missing or invalid complexity"):
+            megaplan.handle_critique(plan_fixture.root, args)
+
+        # No checks should have reached the parallel dispatch.
+        assert len(captured_checks) == 0, (
+            f"no checks should reach dispatch with {cx_label} complexity"
+        )
+
+
+def test_operator_pin_overrides_all_per_lens_complexity_routing(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When ``execution.critic_model`` is pinned, the operator pin overrides
+    every selected lens: no ``_resolved_agent_mode`` is attached to checks,
+    and the critic dispatches to the pinned model instead of using complexity-
+    based tier routing — even when ``tier_models.critique`` is available."""
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    # Set the operator pin — this must override complexity routing.
+    persisted["config"]["critic_model"] = "deepseek-v4-pro"
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    verdict = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 5,
+                "complexity_justification": "High-complexity correctness probe.",
+            },
+            {
+                "check_id": "scope",
+                "complexity": 3,
+                "complexity_justification": "Standard scope analysis.",
+            },
+        ],
+        "skipped": [
+            {"check_id": cid, "why": "skip"}
+            for cid in all_check_ids
+            if cid not in {"correctness", "scope"}
+        ],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [],
+    }
+
+    captured_checks: list[dict] = []
+    captured_model: list[str] = []
+
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, effort=None, **kwargs):
+        captured_checks.extend(checks)
+        captured_model.append(model)
+        return WorkerResult(
+            payload={
+                "checks": [
+                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    for c in checks
+                ],
+                "flags": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="critique",
+        )
+
+    monkeypatch.setattr(critique_mod, "run_parallel_critique", fake_parallel)
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "hermes", "persistent", False,
+            )
+        raise AssertionError(f"unexpected run_step call for {step}")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("hermes", "persistent", False, "fireworks:model"),
+    )
+
+    # Provide tier_models.critique — the pin must suppress tier routing.
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        tier_models={
+            "critique": {
+                3: "deepseek:deepseek-v4-pro",
+                5: "claude:claude-opus-4-7",
+            },
+        },
+    )
+
+    megaplan.handle_critique(plan_fixture.root, args)
+
+    # (a) No _resolved_agent_mode on any check — the pin suppresses tier routing.
+    for c in captured_checks:
+        assert "_resolved_agent_mode" not in c, (
+            f"operator pin must suppress per-check _resolved_agent_mode; "
+            f"check '{c['id']}' has it"
+        )
+
+    # (b) The checks still flow through (correctness + scope = 2 lenses).
+    assert len(captured_checks) == 2, (
+        f"pin must not drop checks; expected 2, got {len(captured_checks)}"
+    )
+
+    # (c) The pinned model is dispatched: model passed to parallel critique
+    # is the resolved pin, not any tier-spec model.
+    # parse_agent_spec("hermes:deepseek:deepseek-v4-pro").model == "deepseek:deepseek-v4-pro"
+    assert len(captured_model) == 1, "parallel critique must be called once"
+    assert captured_model[0] == "deepseek:deepseek-v4-pro", (
+        f"operator pin must dispatch critic to deepseek:deepseek-v4-pro; "
+        f"got {captured_model[0]!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T20: Integration tests — non-Hermes multi-check fan-out, fan-out failure
+#      fallback, and operator pin after Hermes-only gate removal.
+# ---------------------------------------------------------------------------
+
+
+def test_non_hermes_adaptive_multi_check_can_fan_out(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After the Hermes-only gate removal (T19), non-Hermes agents (Claude,
+    Codex) must enter the multi-check parallel branch in the adaptive path,
+    receiving per-check ``_resolved_agent_mode`` from ``tier_models.critique``.
+
+    This is an integration test: the full pipeline from evaluator verdict
+    through complexity-based tier resolution to parallel dispatch is exercised
+    with a non-Hermes critique agent.
+    """
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    verdict = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "Correctness needs tier-4 scrutiny.",
+            },
+            {
+                "check_id": "scope",
+                "complexity": 3,
+                "complexity_justification": "Scope check at standard tier 3.",
+            },
+        ],
+        "skipped": [
+            {"check_id": cid, "why": "skip"}
+            for cid in all_check_ids
+            if cid not in {"correctness", "scope"}
+        ],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [],
+    }
+
+    captured_checks: list[dict] = []
+    parallel_called: list[bool] = [False]
+
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, effort=None, **kwargs):
+        parallel_called[0] = True
+        captured_checks.extend(checks)
+        return WorkerResult(
+            payload={
+                "checks": [
+                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    for c in checks
+                ],
+                "flags": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="critique",
+        )
+
+    monkeypatch.setattr(critique_mod, "run_parallel_critique", fake_parallel)
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "claude", "persistent", False,
+            )
+        raise AssertionError(f"unexpected run_step call for {step}")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    # Critique slot resolves to Claude (non-Hermes) — the removed gate must
+    # still let this enter the parallel branch.
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("claude", "persistent", False, "claude-sonnet-4-7"),
+    )
+
+    def fake_resolve_tier_spec(args, spec, *, phase="execute"):
+        if "deepseek" in spec:
+            return ("hermes", "persistent", "deepseek-v4-pro")
+        if "claude" in spec:
+            return ("claude", "persistent", "claude-sonnet-4-7")
+        return ("hermes", "persistent", spec)
+
+    monkeypatch.setattr(
+        "megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
+    )
+
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        tier_models={
+            "critique": {
+                3: "deepseek:deepseek-v4-pro",
+                4: "claude:claude-sonnet-4-7",
+            },
+        },
+    )
+
+    megaplan.handle_critique(plan_fixture.root, args)
+
+    # (a) Parallel branch was entered.
+    assert parallel_called[0] is True, (
+        "non-Hermes adaptive multi-check must enter parallel branch after gate removal"
+    )
+
+    # (b) Both checks reached the parallel dispatcher.
+    assert len(captured_checks) == 2, (
+        f"expected 2 checks in parallel dispatch; got {len(captured_checks)}"
+    )
+
+    # (c) Each check carries _resolved_agent_mode from complexity-based routing.
+    corr = next((c for c in captured_checks if c["id"] == "correctness"), None)
+    assert corr is not None, "correctness must be in captured checks"
+    assert "_resolved_agent_mode" in corr, (
+        "non-Hermes adaptive path must attach _resolved_agent_mode to catalog checks"
+    )
+    assert corr["_resolved_agent_mode"].model == "claude-sonnet-4-7", (
+        f"complexity 4 → claude-sonnet-4-7; got {corr['_resolved_agent_mode'].model!r}"
+    )
+
+    scope = next((c for c in captured_checks if c["id"] == "scope"), None)
+    assert scope is not None, "scope must be in captured checks"
+    assert "_resolved_agent_mode" in scope
+    assert scope["_resolved_agent_mode"].model == "deepseek-v4-pro", (
+        f"complexity 3 → deepseek-v4-pro; got {scope['_resolved_agent_mode'].model!r}"
+    )
+
+
+def test_non_hermes_adaptive_fan_out_failure_falls_back_sequentially(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When the parallel fan-out fails for a non-Hermes agent (Claude/Codex),
+    the handler must fall back to the sequential critic path and pass
+    ``selection_why`` targeting notes — the removed Hermes gate must NOT
+    suppress fallback for non-Hermes agents.
+    """
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    verdict = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "Edge-case validation needed.",
+            },
+            {
+                "check_id": "scope",
+                "complexity": 3,
+                "complexity_justification": "Standard scope analysis.",
+            },
+        ],
+        "skipped": [
+            {"check_id": cid, "why": "skip"}
+            for cid in all_check_ids
+            if cid not in {"correctness", "scope"}
+        ],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [],
+    }
+
+    captured_prompt_kwargs: dict = {}
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, resolved=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "codex", "persistent", False,
+            )
+        # Sequential fallback: capture the prompt_kwargs.
+        captured_prompt_kwargs.update(prompt_kwargs or {})
+        return (
+            WorkerResult(
+                payload={
+                    "checks": [
+                        {"id": cid, "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                        for cid in ["correctness", "scope"]
+                    ],
+                    "flags": [],
+                    "verified_flag_ids": [],
+                    "disputed_flag_ids": [],
+                },
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="critique",
+            ),
+            "codex",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+
+    # Force parallel to fail — this must trigger the sequential fallback even
+    # when the agent is non-Hermes (Codex in this case).
+    monkeypatch.setattr(
+        critique_mod,
+        "run_parallel_critique",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("parallel fan-out failed")),
+    )
+
+    # Critique slot resolves to Codex (non-Hermes).
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("codex", "persistent", False, "openai:codex-3"),
+    )
+
+    def fake_resolve_tier_spec(args, spec, *, phase="execute"):
+        if "deepseek" in spec:
+            return ("hermes", "persistent", "deepseek-v4-pro")
+        if "claude" in spec:
+            return ("claude", "persistent", "claude-sonnet-4-7")
+        return ("hermes", "persistent", spec)
+
+    monkeypatch.setattr(
+        "megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
+    )
+
+    caplog.set_level("WARNING", logger="megaplan")
+
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        tier_models={
+            "critique": {
+                3: "deepseek:deepseek-v4-pro",
+                4: "claude:claude-sonnet-4-7",
+            },
+        },
+    )
+
+    megaplan.handle_critique(plan_fixture.root, args)
+
+    # (a) Fallback warning must be logged.
+    assert any(
+        "M3A_WARN_PARALLEL_CRITIQUE_FALLBACK" in record.getMessage()
+        for record in caplog.records
+    ), "parallel critique fallback must fire for non-Hermes agents"
+
+    # (b) Sequential critic received selection_why targeting notes.
+    sel_why = captured_prompt_kwargs.get("selection_why", {})
+    assert isinstance(sel_why, dict), "selection_why must be a dict"
+    assert sel_why.get("correctness") == "Edge-case validation needed.", (
+        f"catalog check _selection_why must be complexity_justification; "
+        f"got {sel_why.get('correctness')!r}"
+    )
+    assert sel_why.get("scope") == "Standard scope analysis.", (
+        f"_selection_why for scope must be complexity_justification; "
+        f"got {sel_why.get('scope')!r}"
+    )
+
+    # (c) active_checks must be passed to the sequential critic.
+    assert "active_checks" in captured_prompt_kwargs, (
+        "sequential fallback must pass active_checks to the critic"
+    )
+    assert len(captured_prompt_kwargs["active_checks"]) == 2, (
+        "sequential fallback must pass both selected checks"
+    )
+
+
+def test_operator_pin_forces_same_resolved_model_across_all_lenses_with_non_hermes(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After the Hermes-only gate removal, an operator pin must still force
+    the same resolved model across ALL selected lenses regardless of the
+    critique agent type (non-Hermes included).  No per-check
+    ``_resolved_agent_mode`` is attached, and the pinned model is dispatched
+    through the parallel (or sequential) branch.
+
+    This is the integration complement to the T16 pin test: it proves the
+    pin works end-to-end when the critique agent is Claude/Codex rather than
+    Hermes.
+    """
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+    monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    # Operator pin to deepseek-v4-pro — must override all complexity routing.
+    persisted["config"]["critic_model"] = "deepseek-v4-pro"
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    verdict = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 5,
+                "complexity_justification": "High-complexity probe.",
+            },
+            {
+                "check_id": "scope",
+                "complexity": 3,
+                "complexity_justification": "Standard analysis.",
+            },
+            {
+                "check_id": "prerequisite_ordering",
+                "complexity": 4,
+                "complexity_justification": "Mid-tier ordering check.",
+            },
+        ],
+        "skipped": [
+            {"check_id": cid, "why": "skip"}
+            for cid in all_check_ids
+            if cid not in {"correctness", "scope", "prerequisite_ordering"}
+        ],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [],
+    }
+
+    captured_checks: list[dict] = []
+    captured_model: list[str] = []
+
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, effort=None, **kwargs):
+        captured_checks.extend(checks)
+        captured_model.append(model)
+        return WorkerResult(
+            payload={
+                "checks": [
+                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    for c in checks
+                ],
+                "flags": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="critique",
+        )
+
+    monkeypatch.setattr(critique_mod, "run_parallel_critique", fake_parallel)
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "claude", "persistent", False,
+            )
+        raise AssertionError(f"unexpected run_step call for {step}")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    # Critique slot resolves to Claude (non-Hermes) — the pin must still win.
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("claude", "persistent", False, "claude-opus-4-7"),
+    )
+
+    # Provide tier_models.critique — the pin must suppress tier routing.
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        tier_models={
+            "critique": {
+                3: "deepseek:deepseek-v4-pro",
+                4: "claude:claude-sonnet-4-7",
+                5: "claude:claude-opus-4-7",
+            },
+        },
+    )
+
+    megaplan.handle_critique(plan_fixture.root, args)
+
+    # (a) All three checks reach the parallel dispatcher.
+    assert len(captured_checks) == 3, (
+        f"pin must not drop checks; expected 3, got {len(captured_checks)}"
+    )
+
+    # (b) No _resolved_agent_mode on any check — the pin suppresses tier routing
+    # even when the critique agent is non-Hermes.
+    for c in captured_checks:
+        assert "_resolved_agent_mode" not in c, (
+            f"operator pin must suppress per-check _resolved_agent_mode with "
+            f"non-Hermes agent; check '{c['id']}' has it"
+        )
+
+    # (c) The pinned model is dispatched: model passed to parallel critique
+    # is the resolved pin (deepseek:deepseek-v4-pro), not any tier-spec model
+    # and not the critique slot's model (claude-opus-4-7).
+    assert len(captured_model) == 1, "parallel critique must be called exactly once"
+    assert captured_model[0] == "deepseek:deepseek-v4-pro", (
+        f"operator pin must dispatch to deepseek:deepseek-v4-pro regardless "
+        f"of agent type; got {captured_model[0]!r}"
+    )

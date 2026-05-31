@@ -46,3 +46,10 @@ tiebreaker_challenger = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-
 3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 4 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 5 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+
+[profiles.solo.tier_models.critique]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+4 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+5 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"

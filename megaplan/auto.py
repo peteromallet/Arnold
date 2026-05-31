@@ -46,6 +46,7 @@ from megaplan.store import PlanRepository
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
     CliError,
+    DriverOutcomeStatus,
     STATE_ABORTED,
     STATE_AWAITING_HUMAN,
     STATE_AWAITING_HUMAN_VERIFY,
@@ -149,7 +150,7 @@ PHASE_NAMES = frozenset(
 class DriverOutcome:
     """Terminal outcome reported when the loop exits."""
 
-    status: str  # "done" | "paused" | "stalled" | "escalated" | "failed" | "aborted" | "cancelled" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required" | "awaiting_human"
+    status: DriverOutcomeStatus
     plan: str
     final_state: str
     iterations: int
@@ -1436,6 +1437,7 @@ def drive(
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
     phase_idle_timeout: float = DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
     status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
+    stop_at_finalized: bool = False,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     progress_env: dict[str, str] | None = None,
     writer=sys.stdout.write,
@@ -1452,6 +1454,15 @@ def drive(
     events: list[dict[str, Any]] = []
     last_state: str | None = None
     stall_count = 0
+    # Productivity-aware stall detection. `state` legitimately stays unchanged
+    # (e.g. `finalized`/`execute`) for many iterations while a large execute
+    # phase is PRODUCTIVELY draining tasks, so a same-state-name counter alone
+    # false-kills a healthy, progressing run. We track the task-completion
+    # signature (tasks_done + tasks_skipped) — the same forward-progress signal
+    # already computed for escalate-up routing, reusing status["progress"] with
+    # no extra IO — and reset stall_count whenever it advances. A genuinely
+    # stuck run (state unchanged AND no task progress) still trips the threshold.
+    last_progress_sig: int | None = None
     last_phase: str | None = None
     context_retry_count = 0
     external_retry_count = 0
@@ -1597,7 +1608,7 @@ def drive(
         return code, out, err, result
 
     def _outcome(
-        status: str,
+        status: DriverOutcomeStatus,
         *,
         final_state: str,
         iterations: int,
@@ -1838,6 +1849,15 @@ def drive(
             )
 
         active_step = status.get("active_step")
+        if stop_at_finalized and state == STATE_FINALIZED and next_step == "execute":
+            log("state finalized and stop_at_finalized=True — stopping before execute dispatch")
+            return _outcome(
+                "finalized",
+                final_state=state,
+                iterations=iteration,
+                reason="plan reached finalized and stop_at_finalized=True",
+                last_phase=last_phase,
+            )
         orphan_actions = {
             "resume_or_recover",
             "rerun_same_step",
@@ -1945,8 +1965,39 @@ def drive(
                     last_phase=last_phase,
                 )
 
-        # Stall detection: same state for stall_threshold+ iterations.
-        if state == last_state:
+        # Stall detection: same state for stall_threshold+ iterations with no
+        # measurable progress. "Stalled" means "no PROGRESS", not "same state
+        # name" — a large execute phase keeps `state` pinned at finalized/
+        # execute for many iterations while it productively drains tasks, so
+        # gate the counter on the task-completion signature, not the name.
+        progress_now = status.get("progress") or {}
+        try:
+            progress_sig_now = int(progress_now.get("tasks_done", 0) or 0) + int(
+                progress_now.get("tasks_skipped", 0) or 0
+            )
+        except (TypeError, ValueError):
+            progress_sig_now = last_progress_sig
+        made_task_progress = (
+            progress_sig_now is not None
+            and last_progress_sig is not None
+            and progress_sig_now > last_progress_sig
+        )
+        if state == last_state and made_task_progress:
+            # Tasks completed since the last iteration: the run is making real
+            # forward progress even though `state` is unchanged. Reset the stall
+            # counter so a healthy, draining execute phase is never killed. The
+            # genuine backstops (stall_threshold on a truly stuck run,
+            # max_iterations, cost cap) are untouched.
+            if stall_count:
+                log(
+                    f"task progress advanced "
+                    f"({last_progress_sig}->{progress_sig_now}) at "
+                    f"state={state} — resetting stall counter",
+                    stall_count=stall_count,
+                    progress_sig=progress_sig_now,
+                )
+            stall_count = 0
+        elif state == last_state:
             stall_count += 1
             if stall_count >= stall_threshold:
                 # Distinguish an all-blocked outcome from a generic stall.
@@ -2023,6 +2074,13 @@ def drive(
                         context={"from_state": last_state, "to_state": state},
                     )
             last_state = state
+
+        # Remember this iteration's task-completion signature so the next
+        # iteration can tell whether real progress occurred. Updated on every
+        # path (stalled, progressing, or state-changed) so the comparison is
+        # always against the immediately preceding observation.
+        if progress_sig_now is not None:
+            last_progress_sig = progress_sig_now
 
         # Escalation: no phase to run but overrides are available.
         if not next_step:
@@ -3073,6 +3131,31 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         "phase_idle_timeout",
         DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
     )
+
+    # ── Single-driver guard ──────────────────────────────────────────────
+    # Acquire a per-plan, driver-lifetime advisory lock so two `megaplan auto`
+    # processes can't drive the same plan at once. Two drivers contend over
+    # plan state and pin the run at a fixed file count for hours — a
+    # zero-progress plateau that masquerades as a stall (observed live). A
+    # stale lock from a crashed driver is reclaimed automatically (the kernel
+    # drops the flock on process exit). When the plan can't be resolved yet we
+    # skip the lock and let `drive` surface the not-found error.
+    from contextlib import nullcontext
+    from megaplan._core import driver_lock
+
+    plan_dir = _resolve_plan_dir(args.plan, root)
+    lock_ctx = driver_lock(plan_dir) if plan_dir is not None else nullcontext()
+    with lock_ctx:
+        return _run_auto_locked(root, args, progress_env, raw_phase_idle_timeout)
+
+
+def _run_auto_locked(
+    root: Path,
+    args: argparse.Namespace,
+    progress_env: dict[str, str] | None,
+    raw_phase_idle_timeout: float,
+) -> int:
+    """Run the driver once the per-plan single-driver lock is held."""
     outcome = drive(
         args.plan,
         cwd=root,
@@ -3104,10 +3187,10 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
     if args.outcome_file:
         _atomic_write_text(Path(args.outcome_file), outcome_json)
     sys.stdout.write(outcome_json + "\n")
-    # Exit codes: 0 done/aborted/cancelled/paused, 1 failed/unknown,
+    # Exit codes: 0 done/finalized/aborted/cancelled/paused, 1 failed/unknown,
     # 2 stalled, 3 escalated, 4 iteration cap, 5 blocked, 6 cost cap exceeded,
     # 7 context retry exhausted, 8 worker_blocked.
-    if outcome.status == "done":
+    if outcome.status in {"done", "finalized"}:
         return 0
     if outcome.status in {"aborted", "cancelled", "paused"}:
         return 0  # user-requested/non-running stops are not phase failures

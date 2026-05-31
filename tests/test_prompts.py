@@ -486,6 +486,40 @@ def _write_prep_brief(plan_dir: Path) -> None:
     )
 
 
+def _contract_context_payload() -> dict[str, object]:
+    return {
+        "plan_only": True,
+        "dependency_labels": ["m1"],
+        "upstream_contracts": [
+            {
+                "milestone_label": "m1",
+                "provides": [
+                    {
+                        "name": "Planner surface",
+                        "description": "shared planner entrypoints",
+                        "interfaces": [
+                            {
+                                "symbol": "Planner.run",
+                                "signature": "Planner.run(config) -> None",
+                                "path": "megaplan/planner.py",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _empty_contract_context_payload(*, milestone_label: str) -> dict[str, object]:
+    return {
+        "plan_only": True,
+        "milestone_label": milestone_label,
+        "dependency_labels": [],
+        "upstream_contracts": [],
+    }
+
+
 def test_plan_prompt_absorbs_clarification_when_missing(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     prompt = create_claude_prompt("plan", state, plan_dir)
@@ -536,6 +570,198 @@ def test_prep_prompt_does_not_duplicate_idea_when_notes_present(tmp_path: Path) 
     state["meta"]["notes"] = [{"timestamp": "2026-05-18T00:00:00Z", "note": "n1"}]
     prompt = _prep_prompt(state, plan_dir, root=tmp_path)
     assert prompt.count(state["idea"]) == 1
+
+
+def test_plan_prompt_renders_contract_context_from_explicit_kwarg(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+
+    prompt = create_codex_prompt(
+        "plan",
+        state,
+        plan_dir,
+        contract_context=_contract_context_payload(),
+    )
+
+    assert "Planning-pass upstream contract context:" in prompt
+    assert "`Planner.run` at `megaplan/planner.py`" in prompt
+    assert "planned upstream surfaces" in prompt
+
+
+def test_plan_prompt_uses_metadata_contract_context(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["meta"]["chain_policy"] = {"contract_context": _contract_context_payload()}
+
+    prompt = create_claude_prompt("plan", state, plan_dir)
+
+    assert "Planning-pass upstream contract context:" in prompt
+    assert "Milestone `m1`" in prompt
+
+
+def test_plan_prompt_omits_contract_context_when_not_plan_only(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    contract_context = _contract_context_payload()
+    contract_context["plan_only"] = False
+
+    prompt = create_claude_prompt("plan", state, plan_dir, contract_context=contract_context)
+
+    assert "Planning-pass upstream contract context:" not in prompt
+
+
+def test_prep_family_prompts_render_contract_context(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    contract_context = _contract_context_payload()
+
+    prep_prompt = create_claude_prompt(
+        "prep",
+        state,
+        plan_dir,
+        root=tmp_path,
+        contract_context=contract_context,
+    )
+    triage_prompt = create_claude_prompt(
+        "prep-triage",
+        state,
+        plan_dir,
+        root=tmp_path,
+        contract_context=contract_context,
+    )
+    distill_prompt = create_claude_prompt(
+        "prep-distill",
+        state,
+        plan_dir,
+        root=tmp_path,
+        contract_context=contract_context,
+        triage={"triage_framing": "Need targeted investigation", "areas": []},
+        findings=[],
+    )
+
+    assert "Planning-pass upstream contract context:" in prep_prompt
+    assert "planned upstream interfaces to guide prep" in prep_prompt
+    assert "Planning-pass upstream contract context:" in triage_prompt
+    assert "research-area split" in triage_prompt
+    assert "Planning-pass upstream contract context:" in distill_prompt
+    assert "final prep view" in distill_prompt
+
+
+def test_metadata_contract_context_renders_only_for_declared_dependencies(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["meta"]["chain_policy"] = {"contract_context": _contract_context_payload()}
+
+    dependency_plan_prompt = create_claude_prompt("plan", state, plan_dir)
+    dependency_prep_prompt = create_claude_prompt("prep", state, plan_dir, root=tmp_path)
+
+    assert "Planning-pass upstream contract context:" in dependency_plan_prompt
+    assert "Planning-pass upstream contract context:" in dependency_prep_prompt
+    assert "Milestone `m1`" in dependency_plan_prompt
+
+    state["meta"]["chain_policy"] = {
+        "contract_context": _empty_contract_context_payload(milestone_label="m3")
+    }
+    sibling_only_plan_prompt = create_claude_prompt("plan", state, plan_dir)
+    sibling_only_prep_prompt = create_claude_prompt("prep", state, plan_dir, root=tmp_path)
+
+    assert "Planning-pass upstream contract context:" not in sibling_only_plan_prompt
+    assert "Planning-pass upstream contract context:" not in sibling_only_prep_prompt
+
+
+def test_contract_context_routing_preserves_root_for_critique_and_gate(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path, iteration=2)
+    _write_debt_registry(
+        tmp_path,
+        [
+            _debt_entry(
+                concern="timeout recovery: retry backoff remains brittle",
+                occurrence_count=4,
+                plan_ids=["plan-a", "plan-b", "plan-c"],
+            )
+        ],
+    )
+
+    critique_prompt = create_claude_prompt(
+        "critique",
+        state,
+        plan_dir,
+        root=tmp_path,
+        contract_context=_contract_context_payload(),
+    )
+    gate_prompt = create_codex_prompt(
+        "gate",
+        state,
+        plan_dir,
+        root=tmp_path,
+        contract_context=_contract_context_payload(),
+    )
+
+    assert "Known accepted debt grouped by subsystem" in critique_prompt
+    assert "timeout recovery: retry backoff remains brittle" in critique_prompt
+    assert "Escalated debt subsystems" in gate_prompt
+    # Deferred-verification contract language
+    assert "Deferred-verification planning-pass contract context" in critique_prompt
+    assert "Do NOT flag missing files" in critique_prompt
+    assert "Deferred-verification planning-pass contract context" in gate_prompt
+    assert "Do not treat missing upstream files" in gate_prompt
+
+
+def test_critique_and_gate_prompts_unchanged_without_contract_context(tmp_path: Path) -> None:
+    """Default critique/gate prompts should not contain deferred-verification language."""
+    plan_dir, state = _scaffold(tmp_path, iteration=2)
+    _write_debt_registry(
+        tmp_path,
+        [
+            _debt_entry(
+                concern="timeout recovery: retry backoff remains brittle",
+                occurrence_count=4,
+                plan_ids=["plan-a", "plan-b", "plan-c"],
+            )
+        ],
+    )
+
+    critique_prompt = create_claude_prompt("critique", state, plan_dir, root=tmp_path)
+    gate_prompt = create_codex_prompt("gate", state, plan_dir, root=tmp_path)
+
+    # Default prompts should NOT contain deferred-verification language
+    assert "Deferred-verification" not in critique_prompt
+    assert "Deferred-verification" not in gate_prompt
+    # But should still have their standard content
+    assert "You are an independent reviewer" in critique_prompt
+    assert "gatekeeper" in gate_prompt
+
+
+def test_critique_evaluator_prompt_renders_deferred_verification(tmp_path: Path) -> None:
+    """Critique evaluator renders deferred-verification block when plan_only."""
+    plan_dir, state = _scaffold(tmp_path, iteration=2)
+
+    prompt = create_claude_prompt(
+        "critique_evaluator",
+        state,
+        plan_dir,
+        root=tmp_path,
+        contract_context=_contract_context_payload(),
+        flag_lifecycle={"flags": []},
+        iteration_pressure=[],
+        gate_signals={"signals": {}},
+    )
+
+    assert "Deferred-verification planning-pass contract context" in prompt
+    assert "do not route existence/availability checks" in prompt
+
+
+def test_critique_evaluator_prompt_unchanged_without_contract_context(tmp_path: Path) -> None:
+    """Default critique evaluator prompt should not contain deferred-verification language."""
+    plan_dir, state = _scaffold(tmp_path, iteration=2)
+
+    prompt = create_claude_prompt(
+        "critique_evaluator",
+        state,
+        plan_dir,
+        root=tmp_path,
+        flag_lifecycle={"flags": []},
+        iteration_pressure=[],
+        gate_signals={"signals": {}},
+    )
+
+    assert "Deferred-verification" not in prompt
+    assert "Critique Evaluator" in prompt
 
 
 def test_render_prep_block_returns_empty_strings_when_missing(tmp_path: Path) -> None:

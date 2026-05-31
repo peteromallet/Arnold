@@ -247,7 +247,21 @@ def _emit_llm_error(
 # Conservative by construction: it requires the FULL timeout of ZERO real
 # progress (any new chunk — content OR reasoning — resets the clock), so a
 # healthy long Opus/DeepSeek turn that keeps streaming is never killed.
-DEFAULT_WORKER_STALL_TIMEOUT_SECONDS = 300.0
+#
+# Tool-call awareness (2026-05-30 false-kill fix): an execute worker legitimately
+# fires long terminal/Bash tool calls (e.g. `pytest --cov` over the engine,
+# 4–6 min) during which the LLM emits ZERO stream chunks of any kind — it is
+# BLOCKED awaiting the tool_result, not wedged. Counting that silence toward the
+# stall timeout false-kills a HEALTHY worker mid-task (observed live: a worker
+# passed a batch, fired a coverage Bash, sat at 279s, was killed at 300s; the
+# retry re-ran the same long command and was re-killed → non-convergence). The
+# watchdog therefore distinguishes two states via the agent's own
+# ``_executing_tools`` flag (set True by ``AIAgent._execute_tool_calls`` for the
+# WHOLE duration of a tool batch, including a single long Bash): while a tool is
+# in flight, silence is EXPECTED and the clock is held; chunk-silence only counts
+# toward the timeout when the worker is genuinely awaiting LLM tokens (no tool
+# running). A truly dead worker — no tool in flight, no tokens — is STILL aborted.
+DEFAULT_WORKER_STALL_TIMEOUT_SECONDS = 600.0
 _WORKER_STALL_TIMEOUT_FLOOR_SECONDS = 60.0
 
 
@@ -332,10 +346,19 @@ class _WorkerStallWatchdog:
 
     Polls the shared ``_StreamTracker`` every second. The clock resets whenever
     EITHER ``tokens_emitted`` or ``reasoning_emitted`` advances (i.e. any new
-    chunk arrived). If neither advances for the full ``timeout`` AND the agent
-    has not already been interrupted, it calls ``agent.interrupt()`` — the same
-    clean abort the gateway uses, which aborts the in-flight request client and
-    raises ``InterruptedError`` inside the agent loop — and records the trip.
+    chunk arrived) OR a tool call is in flight on the agent. If none of those
+    hold for the full ``timeout`` AND the agent has not already been interrupted,
+    it calls ``agent.interrupt()`` — the same clean abort the gateway uses, which
+    aborts the in-flight request client and raises ``InterruptedError`` inside
+    the agent loop — and records the trip.
+
+    Tool-in-flight is read from ``agent._executing_tools`` (set True by
+    ``AIAgent._execute_tool_calls`` for the full duration of a tool batch,
+    including a single long Bash/terminal call). A worker BLOCKED awaiting a
+    tool_result emits zero stream chunks — that is expected, not a wedge — so we
+    must NOT count that silence. Only genuine LLM-token silence (no tool running,
+    no new chunk) advances toward the timeout. A truly dead worker (no tool in
+    flight, no tokens) is still aborted.
 
     ``tripped`` is read back by ``_run_attempt`` after ``run_conversation``
     returns/raises so the stall is re-raised as a retryable ``worker_stall``
@@ -363,6 +386,16 @@ class _WorkerStallWatchdog:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
 
+    def _tool_in_flight(self) -> bool:
+        """True while the agent is executing a tool batch (incl. a long Bash).
+
+        Reads the agent's own ``_executing_tools`` flag, which ``AIAgent``
+        wraps around the WHOLE tool-execution span. Defaults to False if the
+        agent doesn't expose it (e.g. a non-AIAgent fake), so the watchdog
+        degrades to the original chunk-only behaviour.
+        """
+        return bool(getattr(self._agent, "_executing_tools", False))
+
     def _run(self) -> None:
         last_progress_at = time.monotonic()
         last_tokens = self._tracker.tokens_emitted
@@ -375,6 +408,15 @@ class _WorkerStallWatchdog:
                 # Any new chunk (content OR reasoning) is real progress.
                 last_tokens = tokens
                 last_reasoning = reasoning
+                last_progress_at = now
+                continue
+            if self._tool_in_flight():
+                # A tool is running (e.g. a multi-minute `pytest --cov`). The
+                # LLM is BLOCKED awaiting its tool_result and legitimately emits
+                # zero chunks — this is NOT a wedge. Hold the clock so the long
+                # tool call cannot trip the stall timeout. The instant the tool
+                # returns and we go back to awaiting LLM tokens, the clock
+                # resumes from here, so a genuine post-tool wedge is still caught.
                 last_progress_at = now
                 continue
             if now - last_progress_at >= self._timeout:

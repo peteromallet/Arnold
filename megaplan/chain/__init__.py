@@ -52,8 +52,9 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 try:
     import yaml
@@ -81,7 +82,7 @@ from megaplan.profiles import (
     _resolve_default_vendor,
     load_profile_metadata,
 )
-from megaplan.types import CliError, STATE_AWAITING_PR_MERGE, STATE_EXECUTED
+from megaplan.types import CliError, STATE_AWAITING_PR_MERGE, STATE_EXECUTED, STATE_FINALIZED
 
 log = logging.getLogger("megaplan")
 
@@ -618,6 +619,7 @@ class ChainState:
     # ``profile_bumps`` / ``robustness_bumps`` / ``depth_bumps`` persist the
     # escalated tier overrides applied for the next re-init.
     retry_counts: dict[str, int] = field(default_factory=dict)
+    reground_decisions: dict[str, Any] = field(default_factory=dict)
     ladder_stage: dict[str, str] = field(default_factory=dict)
     profile_bumps: dict[str, str] = field(default_factory=dict)
     robustness_bumps: dict[str, str] = field(default_factory=dict)
@@ -645,6 +647,7 @@ class ChainState:
             "extra_repo_sync": list(self.extra_repo_sync),
             "completion_contract_mode": self.completion_contract_mode,
             "retry_counts": dict(self.retry_counts),
+            "reground_decisions": dict(self.reground_decisions),
             "ladder_stage": dict(self.ladder_stage),
             "profile_bumps": dict(self.profile_bumps),
             "robustness_bumps": dict(self.robustness_bumps),
@@ -707,6 +710,11 @@ class ChainState:
                 if isinstance(key, str) and isinstance(val, str)
             }
 
+        def _str_any_map(value: Any) -> dict[str, Any]:
+            if not isinstance(value, dict):
+                return {}
+            return {key: val for key, val in value.items() if isinstance(key, str)}
+
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
@@ -725,6 +733,7 @@ class ChainState:
             extra_repo_sync=extra_repo_sync,
             completion_contract_mode=completion_contract_mode,
             retry_counts=_str_int_map(raw.get("retry_counts")),
+            reground_decisions=_str_any_map(raw.get("reground_decisions")),
             ladder_stage=_str_str_map(raw.get("ladder_stage")),
             profile_bumps=_str_str_map(raw.get("profile_bumps")),
             robustness_bumps=_str_str_map(raw.get("robustness_bumps")),
@@ -776,6 +785,544 @@ def save_chain_state(spec_path: Path, state: ChainState) -> None:
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
     tmp.replace(state_path)
+
+
+def _completed_records_by_label(state: ChainState) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    for entry in state.completed:
+        if not isinstance(entry, dict):
+            continue
+        label = entry.get("label")
+        if isinstance(label, str) and label:
+            records[label] = entry
+    return records
+
+
+def _upsert_completed_record(state: ChainState, record: dict[str, Any]) -> None:
+    label = record.get("label")
+    if not isinstance(label, str) or not label:
+        state.completed.append(record)
+        return
+    for index in range(len(state.completed) - 1, -1, -1):
+        entry = state.completed[index]
+        if isinstance(entry, dict) and entry.get("label") == label:
+            state.completed[index] = record
+            return
+    state.completed.append(record)
+
+
+def _completed_record_for_label(state: ChainState, label: str) -> dict[str, Any] | None:
+    return _completed_records_by_label(state).get(label)
+
+
+def _load_contract_for_completed_record(root: Path, record: dict[str, Any]) -> dict[str, Any] | None:
+    """Load the plan contract for a completed record.
+
+    Prefers the current ``contract.json`` in the plan directory. When that
+    file is missing, falls back to reading it from the git commit stored in
+    ``artifact_commit_sha`` via ``read_plan_artifact_from_commit``.  The
+    loaded payload is normalized through ``normalize_contract_payload``.
+
+    Returns ``None`` when the record has no usable plan name or the contract
+    cannot be found through either path.
+    """
+    from megaplan.chain.git_ops import read_plan_artifact_from_commit
+    from megaplan.orchestration.plan_contracts import normalize_contract_payload
+
+    plan_name = record.get("plan")
+    if not isinstance(plan_name, str) or not plan_name.strip():
+        return None
+
+    plan_dir = root / ".megaplan" / "plans" / plan_name
+    contract_path = plan_dir / "contract.json"
+
+    # Prefer the current artifact on disk.
+    if contract_path.exists():
+        try:
+            payload = json.loads(contract_path.read_text(encoding="utf-8"))
+            return normalize_contract_payload(payload)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Fall back to the commit artifact.
+    commit_sha = record.get("artifact_commit_sha")
+    if isinstance(commit_sha, str) and commit_sha.strip():
+        rel_path = f".megaplan/plans/{plan_name}/contract.json"
+        try:
+            content = read_plan_artifact_from_commit(root, commit_sha.strip(), rel_path)
+            if content is not None:
+                payload = json.loads(content)
+                return normalize_contract_payload(payload)
+        except (json.JSONDecodeError, CliError):
+            pass
+
+    return None
+
+
+def _contract_context_for_plan_only_milestone(
+    root: Path,
+    milestone: MilestoneSpec,
+    state: ChainState,
+) -> dict[str, Any]:
+    from megaplan.orchestration.plan_contracts import provided_paths_by_milestone
+
+    records = _completed_records_by_label(state)
+    upstream_contracts: list[dict[str, Any]] = []
+    dependency_labels: list[str] = []
+    for label in milestone.depends_on:
+        record = records.get(label)
+        if not isinstance(record, dict) or record.get("status") not in {"finalized", "done"}:
+            continue
+        contract = _load_contract_for_completed_record(root, record)
+        if contract is None:
+            continue
+        dependency_labels.append(label)
+        upstream_contracts.append(
+            {
+                "milestone_label": label,
+                "provides": list(contract.get("provides", [])),
+                "assumes": list(contract.get("assumes", [])),
+            }
+        )
+    return {
+        "plan_only": True,
+        "milestone_label": milestone.label,
+        "dependency_labels": dependency_labels,
+        "upstream_contracts": upstream_contracts,
+        "provided_paths": provided_paths_by_milestone(upstream_contracts),
+    }
+
+
+def _chain_review_path(spec_path: Path) -> Path:
+    return spec_path.resolve().parent / ".megaplan" / "plans" / ".chains" / f"{spec_path.stem}.review.md"
+
+
+def _markdown_cell(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
+
+
+def _write_chain_review(
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    *,
+    partial_reason: str | None = None,
+) -> Path:
+    from megaplan.orchestration.plan_contracts import diff_assumes_against_provides
+
+    records = _completed_records_by_label(state)
+    loaded_contracts: dict[str, dict[str, Any]] = {}
+    for label, record in records.items():
+        if not isinstance(record, dict) or record.get("status") not in {"finalized", "done"}:
+            continue
+        contract = _load_contract_for_completed_record(root, record)
+        if contract is not None:
+            loaded_contracts[label] = contract
+
+    rows: list[dict[str, str]] = []
+    for milestone in spec.milestones:
+        downstream_contract = loaded_contracts.get(milestone.label)
+        if downstream_contract is None or not downstream_contract.get("assumes"):
+            continue
+        upstream_contracts = [
+            {
+                "milestone_label": label,
+                "provides": list(loaded_contracts[label].get("provides", [])),
+                "assumes": list(loaded_contracts[label].get("assumes", [])),
+            }
+            for label in milestone.depends_on
+            if label in loaded_contracts
+        ]
+        rows.extend(
+            diff_assumes_against_provides(
+                downstream_contract,
+                upstream_contracts,
+                downstream_label=milestone.label,
+            )
+        )
+
+    status_counts = {status: 0 for status in ("OK", "MISSING_UPSTREAM", "MISMATCH")}
+    for row in rows:
+        status = row.get("status")
+        if status in status_counts:
+            status_counts[status] += 1
+
+    lines = [
+        f"# Chain Review: {spec_path.stem}",
+        "",
+        f"- Status: {'partial' if partial_reason else 'complete'}",
+        f"- Partial reason: {partial_reason or ''}",
+        f"- Completed records considered: {len(records)}",
+        f"- Contracts loaded: {len(loaded_contracts)}",
+        f"- OK: {status_counts['OK']}",
+        f"- MISSING_UPSTREAM: {status_counts['MISSING_UPSTREAM']}",
+        f"- MISMATCH: {status_counts['MISMATCH']}",
+        "",
+        "| Downstream | Upstream | Symbol | Expected Path | Actual Path | Expected Signature | Actual Signature | Status | Note |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    if rows:
+        for row in rows:
+            lines.append(
+                "| "
+                + " | ".join(
+                    _markdown_cell(row.get(key, ""))
+                    for key in (
+                        "downstream_label",
+                        "upstream_label",
+                        "symbol",
+                        "expected_path",
+                        "actual_path",
+                        "expected_signature",
+                        "actual_signature",
+                        "status",
+                        "note",
+                    )
+                )
+                + " |"
+            )
+    else:
+        lines.append("|  |  |  |  |  |  |  | OK | No Provides-to-Assumes rows. |")
+
+    path = _chain_review_path(spec_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return path
+
+
+def _read_plan_state_payload(root: Path, plan_name: str) -> dict[str, Any] | None:
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        plan_dir = root / ".megaplan" / "plans" / plan_name
+    state_path = plan_dir / "state.json"
+    try:
+        raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _plan_current_state_from_payload(root: Path, plan_name: str) -> str | None:
+    raw = _read_plan_state_payload(root, plan_name)
+    current = raw.get("current_state") if isinstance(raw, dict) else None
+    return current if isinstance(current, str) else None
+
+
+def _apply_reground_replan(
+    root: Path,
+    plan_name: str,
+    decision: dict[str, Any],
+) -> None:
+    from megaplan.handlers.override import apply_override_replan
+
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        plan_dir = root / ".megaplan" / "plans" / plan_name
+    raw_state = _read_plan_state_payload(root, plan_name)
+    if not isinstance(raw_state, dict):
+        raise CliError(
+            "missing_reground_plan_state",
+            f"cannot apply reground replan: plan {plan_name!r} has no readable state.json",
+        )
+    summary = _reground_diff_summary(decision)
+    apply_override_replan(
+        root,
+        plan_dir,
+        raw_state,
+        reason=f"Contract drift detected before execute. {summary}",
+        note=summary,
+    )
+
+
+def _reground_skip_decision(milestone: MilestoneSpec, reason: str) -> dict[str, Any]:
+    return {
+        "status": "skipped",
+        "milestone_label": milestone.label,
+        "reason": reason,
+        "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _record_execute_reground_decision(
+    root: Path,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    plan_name: str,
+    downstream_record: dict[str, Any] | None,
+) -> dict[str, Any]:
+    from megaplan.orchestration.plan_contracts import (
+        MATERIAL_CONTRACT_STATUSES,
+        contract_diff_fingerprint,
+        diff_assumes_against_provides,
+    )
+
+    if not milestone.depends_on:
+        decision = _reground_skip_decision(milestone, "no_dependencies")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+    if not isinstance(downstream_record, dict) or downstream_record.get("status") != "finalized":
+        decision = _reground_skip_decision(milestone, "downstream_not_finalized")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+
+    plan_state = _read_plan_state_payload(root, plan_name)
+    meta = (plan_state or {}).get("meta")
+    chain_policy = meta.get("chain_policy") if isinstance(meta, dict) else None
+    contract_context = chain_policy.get("contract_context") if isinstance(chain_policy, dict) else None
+    if not isinstance(contract_context, dict) or contract_context.get("plan_only") is not True:
+        decision = _reground_skip_decision(milestone, "not_plan_only")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+
+    downstream_contract = _load_contract_for_completed_record(root, downstream_record)
+    if downstream_contract is None:
+        decision = _reground_skip_decision(milestone, "downstream_contract_unavailable")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+    if not downstream_contract.get("assumes"):
+        decision = _reground_skip_decision(milestone, "downstream_assumes_empty")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+
+    records = _completed_records_by_label(state)
+    upstream_contracts: list[dict[str, Any]] = []
+    unavailable: list[str] = []
+    for label in milestone.depends_on:
+        record = records.get(label)
+        contract = _load_contract_for_completed_record(root, record) if isinstance(record, dict) else None
+        if contract is None:
+            unavailable.append(label)
+            continue
+        upstream_contracts.append(
+            {
+                "milestone_label": label,
+                "provides": list(contract.get("provides", [])),
+                "assumes": list(contract.get("assumes", [])),
+            }
+        )
+    if unavailable:
+        decision = _reground_skip_decision(
+            milestone,
+            "upstream_contract_unavailable:" + ",".join(sorted(unavailable)),
+        )
+        state.reground_decisions[milestone.label] = decision
+        return decision
+    if not any(contract.get("provides") for contract in upstream_contracts):
+        decision = _reground_skip_decision(milestone, "upstream_provides_empty")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+
+    diff_rows = diff_assumes_against_provides(
+        downstream_contract,
+        upstream_contracts,
+        downstream_label=milestone.label,
+    )
+    material_rows = [
+        row for row in diff_rows if row.get("status") in MATERIAL_CONTRACT_STATUSES
+    ]
+    decision = {
+        "status": "drift" if material_rows else "pass",
+        "milestone_label": milestone.label,
+        "dependency_labels": list(milestone.depends_on),
+        "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "diff_row_count": len(diff_rows),
+        "material_diff_count": len(material_rows),
+        "material_fingerprint": contract_diff_fingerprint(material_rows),
+        "material_diffs": material_rows,
+    }
+    state.reground_decisions[milestone.label] = decision
+    return decision
+
+
+def _reground_diff_summary(decision: dict[str, Any]) -> str:
+    rows = decision.get("material_diffs")
+    if not isinstance(rows, list) or not rows:
+        return "No material contract drift rows."
+    parts: list[str] = []
+    for row in rows[:5]:
+        if not isinstance(row, dict):
+            continue
+        upstream = row.get("upstream_label") or "<unknown>"
+        symbol = row.get("symbol") or "<unknown>"
+        status = row.get("status") or "MISMATCH"
+        note = row.get("note") or ""
+        parts.append(f"{status} {upstream}:{symbol}" + (f" ({note})" if note else ""))
+    suffix = ""
+    if len(rows) > len(parts):
+        suffix = f"; +{len(rows) - len(parts)} more"
+    return "; ".join(parts) + suffix
+
+
+def _load_finalized_record_state(
+    root: Path,
+    label: str,
+    record: dict[str, Any],
+) -> tuple[str, Path, dict[str, Any]]:
+    plan_name = record.get("plan")
+    if not isinstance(plan_name, str) or not plan_name.strip():
+        raise CliError(
+            "missing_finalized_plan",
+            f"execute mode cannot resume milestone {label!r}: finalized record has no plan name",
+        )
+    fallback_plan_dir = root / ".megaplan" / "plans" / plan_name
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError as exc:
+        if fallback_plan_dir.exists() and fallback_plan_dir.is_dir():
+            plan_dir = fallback_plan_dir
+        else:
+            raise CliError(
+                "missing_finalized_plan_dir",
+                f"execute mode cannot resume milestone {label!r}: plan {plan_name!r} is missing",
+            ) from exc
+    state_path = plan_dir / "state.json"
+    if not state_path.exists():
+        raise CliError(
+            "missing_finalized_state",
+            f"execute mode cannot resume milestone {label!r}: {state_path} is missing",
+        )
+    try:
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            "invalid_finalized_state",
+            f"execute mode cannot resume milestone {label!r}: {state_path} is invalid JSON",
+        ) from exc
+    if not isinstance(raw_state, dict) or raw_state.get("current_state") != STATE_FINALIZED:
+        raise CliError(
+            "non_resumable_finalized_state",
+            f"execute mode cannot resume milestone {label!r}: plan {plan_name!r} is not finalized",
+        )
+    return plan_name, state_path, raw_state
+
+
+def _reset_execute_plan_state_for_fresh_approval(
+    state_path: Path,
+    raw_state: dict[str, Any],
+) -> None:
+    meta = raw_state.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        raw_state["meta"] = meta
+    meta.pop("user_approved_gate", None)
+
+    config = raw_state.get("config")
+    if not isinstance(config, dict):
+        config = {}
+        raw_state["config"] = config
+    config["auto_approve"] = False
+
+    state_path.write_text(json.dumps(raw_state, indent=2) + "\n", encoding="utf-8")
+
+
+def _completed_record_for_status(
+    state: ChainState,
+    milestone: MilestoneSpec,
+) -> dict[str, Any] | None:
+    return _completed_record_for_label(state, milestone.label)
+
+
+def _completed_record_branch(record: dict[str, Any] | None) -> str | None:
+    if not isinstance(record, dict):
+        return None
+    branch = record.get("plan_branch")
+    return branch if isinstance(branch, str) and branch else None
+
+
+def _prepare_execute_mode_state(root: Path, spec: ChainSpec, state: ChainState) -> bool:
+    records = _completed_records_by_label(state)
+    if spec.seed_plan:
+        seed_record = records.get("seed")
+        if seed_record is None:
+            raise CliError(
+                "missing_finalized_record",
+                "execute mode cannot start seed plan: no finalized or done record found",
+            )
+        seed_status = seed_record.get("status")
+        if seed_status == "finalized":
+            plan_name, state_path, raw_state = _load_finalized_record_state(
+                root,
+                "seed",
+                seed_record,
+            )
+            _reset_execute_plan_state_for_fresh_approval(state_path, raw_state)
+            state.current_milestone_index = -1
+            state.current_plan_name = plan_name
+            state.last_state = STATE_FINALIZED
+            state.pr_number = None
+            state.pr_state = None
+            return False
+        if seed_status != "done":
+            raise CliError(
+                "missing_finalized_record",
+                f"execute mode cannot start seed plan: record status is {seed_status!r}, expected finalized or done",
+            )
+    for idx, milestone in enumerate(spec.milestones):
+        record = records.get(milestone.label)
+        if record is None:
+            raise CliError(
+                "missing_finalized_record",
+                f"execute mode cannot start milestone {milestone.label!r}: no finalized or done record found",
+            )
+        status = record.get("status")
+        if status == "done":
+            continue
+        if status != "finalized":
+            raise CliError(
+                "missing_finalized_record",
+                f"execute mode cannot start milestone {milestone.label!r}: record status is {status!r}, expected finalized or done",
+            )
+        if (
+            state.last_state == STATE_AWAITING_PR_MERGE
+            and state.current_milestone_index == idx
+        ):
+            plan_name, _state_path, _raw_state = _load_finalized_record_state(
+                root,
+                milestone.label,
+                record,
+            )
+            state.current_milestone_index = idx
+            state.current_plan_name = plan_name
+            return False
+        plan_name, state_path, raw_state = _load_finalized_record_state(
+            root,
+            milestone.label,
+            record,
+        )
+        _reset_execute_plan_state_for_fresh_approval(state_path, raw_state)
+        state.current_milestone_index = idx
+        state.current_plan_name = plan_name
+        state.last_state = STATE_FINALIZED
+        state.pr_number = None
+        state.pr_state = None
+        return False
+    state.current_milestone_index = len(spec.milestones)
+    state.current_plan_name = None
+    state.pr_number = None
+    state.pr_state = None
+    return True
+
+
+def _plan_artifact_paths_for_milestone(
+    root: Path,
+    plan_name: str,
+    milestone: MilestoneSpec,
+) -> list[Path]:
+    plan_dir = root / ".megaplan" / "plans" / plan_name
+    artifacts = [
+        plan_dir / "final.md",
+        plan_dir / "finalize.json",
+        plan_dir / "state.json",
+        plan_dir / "contract.json",
+    ]
+    idea_path = Path(milestone.idea)
+    if idea_path.exists():
+        artifacts.append(idea_path)
+    return artifacts
 
 
 # ---------------------------------------------------------------------------
@@ -871,6 +1418,9 @@ def _write_chain_policy_into_plan_meta(
     spec: ChainSpec,
     spec_path: Path,
     milestone_label: str,
+    *,
+    plan_only: bool = False,
+    contract_context: dict[str, Any] | None = None,
 ) -> None:
     """Record effective chain policy in the plan's ``state.json`` metadata.
 
@@ -921,7 +1471,13 @@ def _write_chain_policy_into_plan_meta(
         "review_policy": effective["review_policy"],
         "source": effective["source"],
         "milestone_label": milestone_label,
+        "plan_only": plan_only,
     }
+    if contract_context is not None:
+        chain_policy["dependency_labels"] = list(contract_context.get("dependency_labels", []))
+        chain_policy["upstream_contracts"] = list(contract_context.get("upstream_contracts", []))
+        chain_policy["provided_paths"] = dict(contract_context.get("provided_paths", {}))
+        chain_policy["contract_context"] = contract_context
 
     def _patch_chain_policy(current: dict[str, Any]) -> bool:
         meta = current.setdefault("meta", {})
@@ -1012,6 +1568,7 @@ from .git_ops import (
     _claimed_root_paths,
     _classify_sync_state,
     _command_env,
+    commit_plan_artifacts_to_base,
     _commit_and_push_phase,
     _dirty_nested_repos_from_claimed_paths,
     _dirty_worktree_paths,
@@ -1151,6 +1708,7 @@ def _drive_plan(
     plan: str,
     spec: ChainSpec,
     *,
+    stop_at_finalized: bool = False,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     writer,
 ) -> DriverOutcome:
@@ -1164,6 +1722,7 @@ def _drive_plan(
         poll_sleep=spec.poll_sleep,
         phase_timeout=spec.phase_timeout,
         status_timeout=spec.status_timeout,
+        stop_at_finalized=stop_at_finalized,
         on_phase_complete=on_phase_complete,
         writer=writer,
     )
@@ -1465,6 +2024,7 @@ def _drive_plan_with_blocked_execute_recovery(
     plan: str,
     spec: ChainSpec,
     *,
+    stop_at_finalized: bool = False,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     writer,
 ) -> DriverOutcome:
@@ -1472,6 +2032,7 @@ def _drive_plan_with_blocked_execute_recovery(
         root,
         plan,
         spec,
+        stop_at_finalized=stop_at_finalized,
         on_phase_complete=on_phase_complete,
         writer=writer,
     )
@@ -1481,6 +2042,7 @@ def _drive_plan_with_blocked_execute_recovery(
         root,
         plan,
         spec,
+        stop_at_finalized=stop_at_finalized,
         on_phase_complete=on_phase_complete,
         writer=writer,
     )
@@ -1584,7 +2146,7 @@ def _handle_outcome(
     and CANNOT loop forever on a deterministic failure.
     """
     status = outcome.status
-    if status == "done":
+    if status in {"done", "finalized"}:
         return "advance"
     if status == "awaiting_human":
         # A human-only block (e.g. a task blocked on an unresolved
@@ -1788,8 +2350,15 @@ def run_chain(
     no_git_refresh: bool = False,
     no_push: bool = False,
     one: bool = False,
+    stop_at_finalized: bool = False,
+    mode: Literal["start", "plan", "execute"] = "start",
 ) -> dict[str, Any]:
     """Drive the full chain. Returns a structured JSON-serializable result."""
+    if mode not in {"start", "plan", "execute"}:
+        raise CliError("invalid_args", f"chain mode must be start, plan, or execute; got {mode!r}")
+    planning_pass = mode == "plan"
+    execution_pass = mode == "execute"
+    effective_stop_at_finalized = planning_pass or (stop_at_finalized and not execution_pass)
     spec = load_spec(spec_path)
     validate_paths(spec, root)
     state = load_chain_state(spec_path)
@@ -1843,6 +2412,13 @@ def run_chain(
         events.append({"msg": msg, **fields})
         writer(f"[chain] {msg}\n")
 
+    if execution_pass:
+        all_done = _prepare_execute_mode_state(root, spec, state)
+        save_chain_state(spec_path, state)
+        if all_done:
+            log("all milestones already executed")
+            return _result("done", state, events, spec=spec)
+
     # ---- Seed phase ----
     if spec.seed_plan and state.current_milestone_index < 0:
         seed_state = _plan_state(root, spec.seed_plan, timeout=spec.status_timeout)
@@ -1854,12 +2430,21 @@ def run_chain(
                 root,
                 spec.seed_plan,
                 spec,
+                stop_at_finalized=effective_stop_at_finalized,
                 writer=writer,
             )
             state.last_state = outcome.status
             save_chain_state(spec_path, state)
             decision = _handle_outcome(outcome, spec=spec, writer=writer)
             if decision == "stop":
+                if planning_pass:
+                    _write_chain_review(
+                        root,
+                        spec_path,
+                        spec,
+                        state,
+                        partial_reason=f"seed plan {outcome.status}",
+                    )
                 return _result("stopped", state, events, spec=spec, reason=f"seed plan {outcome.status}")
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
@@ -1867,15 +2452,29 @@ def run_chain(
                     root,
                     spec.seed_plan,
                     spec,
+                    stop_at_finalized=effective_stop_at_finalized,
                     writer=writer,
                 )
                 state.last_state = outcome.status
                 save_chain_state(spec_path, state)
                 if outcome.status != "done":
+                    if planning_pass:
+                        _write_chain_review(
+                            root,
+                            spec_path,
+                            spec,
+                            state,
+                            partial_reason="seed retry failed",
+                        )
                     return _result("stopped", state, events, spec=spec, reason="seed retry failed")
             # skip / advance both proceed to milestones
-        state.completed.append(
-            {"label": "seed", "plan": spec.seed_plan, "status": state.last_state or seed_state}
+        _upsert_completed_record(
+            state,
+            {
+                "label": "seed",
+                "plan": spec.seed_plan,
+                "status": state.last_state or seed_state,
+            },
         )
         state.current_milestone_index = 0
         state.current_plan_name = None
@@ -1887,7 +2486,7 @@ def run_chain(
 
     # ---- Milestones ----
     idx = max(state.current_milestone_index, 0)
-    if idx >= len(spec.milestones):
+    if idx >= len(spec.milestones) and not planning_pass:
         try:
             state = _reconcile_terminal_pr_state(
                 root,
@@ -1901,10 +2500,16 @@ def run_chain(
         milestone = spec.milestones[idx]
         log(f"milestone {milestone.label} starting")
         use_pr = push_enabled and bool(milestone.branch)
+        effective_use_pr = use_pr and not planning_pass
+        if planning_pass and (state.pr_number is not None or state.pr_state is not None):
+            state.pr_number = None
+            state.pr_state = None
+            save_chain_state(spec_path, state)
 
         if state.last_state == STATE_AWAITING_PR_MERGE and state.current_milestone_index == idx:
-            if not use_pr or state.pr_number is None:
+            if not effective_use_pr or state.pr_number is None:
                 log(f"review merge wait for {milestone.label} has no PR context; advancing")
+                state.pr_number = None
                 state.pr_state = None
             else:
                 pr_state = _pr_state(root, state.pr_number, writer=writer)
@@ -1920,14 +2525,17 @@ def run_chain(
                         reason=f"milestone {milestone.label} PR #{state.pr_number} is {pr_state}",
                     )
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
-            state.completed.append(
+            existing_record = _completed_record_for_status(state, milestone) or {}
+            _upsert_completed_record(
+                state,
                 {
                     "label": milestone.label,
                     "plan": state.current_plan_name,
                     "status": "done",
+                    "plan_branch": _completed_record_branch(existing_record),
                     "pr_number": state.pr_number,
                     "pr_state": "merged" if state.pr_number is not None else None,
-                }
+                },
             )
             idx += 1
             state.current_milestone_index = idx
@@ -1938,16 +2546,36 @@ def run_chain(
             save_chain_state(spec_path, state)
             continue
 
+        if (
+            execution_pass
+            and state.current_milestone_index == idx
+            and not state.current_plan_name
+        ):
+            existing_record = _completed_record_for_status(state, milestone)
+            if existing_record and existing_record.get("status") == "finalized":
+                plan_name, state_path, raw_state = _load_finalized_record_state(
+                    root,
+                    milestone.label,
+                    existing_record,
+                )
+                _reset_execute_plan_state_for_fresh_approval(state_path, raw_state)
+                state.current_plan_name = plan_name
+                state.last_state = STATE_FINALIZED
+                save_chain_state(spec_path, state)
+
         # Resume mid-milestone if we already have a plan name recorded.
         if (
             state.current_plan_name
             and state.current_milestone_index == idx
-            and _plan_state(root, state.current_plan_name, timeout=spec.status_timeout)
-            not in ("missing",)
+            and (
+                execution_pass
+                or _plan_state(root, state.current_plan_name, timeout=spec.status_timeout)
+                not in ("missing",)
+            )
         ):
             plan_name = state.current_plan_name
             log(f"resuming existing plan {plan_name} for {milestone.label}")
-            if use_pr and state.pr_number is None:
+            if effective_use_pr and state.pr_number is None:
                 _checkout_milestone_branch(
                     root,
                     milestone.branch or "",
@@ -1979,7 +2607,7 @@ def run_chain(
                     no_push=not push_enabled,
                     writer=writer,
                 )
-            if use_pr:
+            if effective_use_pr:
                 _checkout_milestone_branch(
                     root,
                     milestone.branch or "",
@@ -2020,15 +2648,26 @@ def run_chain(
                 phase_model=milestone.phase_model,
                 writer=writer,
             )
+            contract_context = (
+                _contract_context_for_plan_only_milestone(root, milestone, state)
+                if planning_pass
+                else None
+            )
             # Record effective chain policy in the newly initialized plan's
             # state.json metadata so downstream consumers can introspect it.
             _write_chain_policy_into_plan_meta(
-                root, plan_name, spec, spec_path, milestone.label
+                root,
+                plan_name,
+                spec,
+                spec_path,
+                milestone.label,
+                plan_only=planning_pass,
+                contract_context=contract_context,
             )
             state.current_milestone_index = idx
             state.current_plan_name = plan_name
             save_chain_state(spec_path, state)
-            if use_pr:
+            if effective_use_pr:
                 _commit_and_push_phase(
                     root,
                     milestone.branch or "",
@@ -2050,7 +2689,7 @@ def run_chain(
                 save_chain_state(spec_path, state)
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
-            if use_pr and milestone.branch:
+            if effective_use_pr and milestone.branch:
                 _commit_and_push_phase(
                     root,
                     milestone.branch,
@@ -2063,11 +2702,67 @@ def run_chain(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
 
+        if execution_pass:
+            previous_reground_decision = state.reground_decisions.get(milestone.label)
+            current_plan_state = _plan_current_state_from_payload(root, plan_name)
+            if current_plan_state != STATE_FINALIZED:
+                reground_decision = _reground_skip_decision(milestone, "plan_not_finalized")
+                if not (
+                    isinstance(previous_reground_decision, dict)
+                    and previous_reground_decision.get("status") == "replanned"
+                ):
+                    state.reground_decisions[milestone.label] = reground_decision
+                    save_chain_state(spec_path, state)
+            else:
+                reground_decision = _record_execute_reground_decision(
+                    root,
+                    state,
+                    milestone,
+                    plan_name,
+                    _completed_record_for_status(state, milestone),
+                )
+                if reground_decision.get("status") == "drift":
+                    fingerprint = reground_decision.get("material_fingerprint")
+                    if (
+                        isinstance(previous_reground_decision, dict)
+                        and previous_reground_decision.get("material_fingerprint") == fingerprint
+                        and previous_reground_decision.get("status") in {"drift", "replanned"}
+                    ):
+                        save_chain_state(spec_path, state)
+                        summary = _reground_diff_summary(reground_decision)
+                        log(f"reground {milestone.label}: repeated drift; stopping")
+                        return _result(
+                            "stopped",
+                            state,
+                            events,
+                            spec=spec,
+                            reason=f"repeated contract drift for {milestone.label}: {summary}",
+                        )
+                    _apply_reground_replan(root, plan_name, reground_decision)
+                    replanned_decision = dict(reground_decision)
+                    replanned_decision["status"] = "replanned"
+                    replanned_decision["replan_reason"] = _reground_diff_summary(reground_decision)
+                    replanned_decision["replanned_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                    state.reground_decisions[milestone.label] = replanned_decision
+                    save_chain_state(spec_path, state)
+                    log(f"reground {milestone.label}: drift; replanning same milestone")
+                    continue
+                save_chain_state(spec_path, state)
+            log(
+                f"reground {milestone.label}: {reground_decision['status']}"
+                + (
+                    f" ({reground_decision['reason']})"
+                    if reground_decision.get("reason")
+                    else ""
+                )
+            )
+
         outcome = _drive_plan_with_blocked_execute_recovery(
             root,
             plan_name,
             spec,
-            on_phase_complete=phase_callback if use_pr else None,
+            stop_at_finalized=effective_stop_at_finalized,
+            on_phase_complete=phase_callback if effective_use_pr else None,
             writer=writer,
         )
         state.last_state = outcome.status
@@ -2081,6 +2776,14 @@ def run_chain(
                 root, spec_path, milestone, outcome, state, writer=writer
             )
             save_chain_state(spec_path, state)
+            if planning_pass:
+                _write_chain_review(
+                    root,
+                    spec_path,
+                    spec,
+                    state,
+                    partial_reason=f"milestone {milestone.label} ended {outcome.status}",
+                )
             return _result(
                 "stopped",
                 state,
@@ -2098,11 +2801,11 @@ def run_chain(
             else:
                 log(f"retrying milestone {milestone.label} with a new plan")
                 state.current_plan_name = None  # force re-init next loop
-                state.pr_number = None
-                state.pr_state = None
+            state.pr_number = None
+            state.pr_state = None
             save_chain_state(spec_path, state)
             continue
-        if decision == "advance" and use_pr and state.pr_number is not None:
+        if decision == "advance" and effective_use_pr and state.pr_number is not None:
             _commit_and_push_phase(
                 root,
                 milestone.branch or "",
@@ -2193,15 +2896,36 @@ def run_chain(
             continue
 
         # advance or skip
-        state.completed.append(
-            {
+        completed_record = _completed_record_for_status(state, milestone) or {}
+        if planning_pass and outcome.status == "finalized":
+            artifact_result = commit_plan_artifacts_to_base(
+                root,
+                spec.base_branch,
+                plan_name,
+                _plan_artifact_paths_for_milestone(root, plan_name, milestone),
+                push_enabled,
+            )
+            completed_record = {
+                "label": milestone.label,
+                "plan": plan_name,
+                "status": "finalized",
+                "plan_branch": spec.base_branch,
+                "artifact_commit_sha": artifact_result.commit_sha,
+                "artifact_pushed": artifact_result.pushed,
+                "artifact_audit_notes": list(artifact_result.audit_notes),
+                "pr_number": None,
+                "pr_state": None,
+            }
+        else:
+            completed_record = {
                 "label": milestone.label,
                 "plan": plan_name,
                 "status": outcome.status,
+                "plan_branch": _completed_record_branch(completed_record),
                 "pr_number": state.pr_number,
                 "pr_state": state.pr_state,
             }
-        )
+        _upsert_completed_record(state, completed_record)
         idx += 1
         state.current_milestone_index = idx
         state.current_plan_name = None
@@ -2210,6 +2934,14 @@ def run_chain(
         save_chain_state(spec_path, state)
         if one:
             log(f"paused after milestone {milestone.label}")
+            if planning_pass:
+                _write_chain_review(
+                    root,
+                    spec_path,
+                    spec,
+                    state,
+                    partial_reason=f"completed one milestone: {milestone.label}",
+                )
             return _result(
                 "paused",
                 state,
@@ -2219,6 +2951,8 @@ def run_chain(
             )
 
     log("all milestones complete")
+    if planning_pass:
+        _write_chain_review(root, spec_path, spec, state)
     return _result("done", state, events, spec=spec)
 
 
@@ -2237,11 +2971,7 @@ def _result(
 
 
 def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
-    completed_labels = {
-        entry.get("label")
-        for entry in state.completed
-        if isinstance(entry, dict) and isinstance(entry.get("label"), str)
-    }
+    completed_records = _completed_records_by_label(state)
     current_milestone: dict[str, Any] | None = None
     if 0 <= state.current_milestone_index < len(spec.milestones):
         milestone = spec.milestones[state.current_milestone_index]
@@ -2256,13 +2986,27 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
     completed: list[dict[str, Any]] = []
     remaining: list[dict[str, Any]] = []
     for index, milestone in enumerate(spec.milestones):
-        if milestone.label in completed_labels:
+        record = completed_records.get(milestone.label)
+        plan_status = record.get("status") if isinstance(record, dict) else None
+        planned = plan_status in {"finalized", "done"}
+        executed = plan_status == "done"
+        if executed:
             status = "completed"
+        elif planned:
+            status = "planned"
         elif index == state.current_milestone_index and state.current_plan_name:
             status = "in_progress"
         else:
             status = "pending"
-        entry = {"label": milestone.label, "index": index, "status": status}
+        entry = {
+            "label": milestone.label,
+            "index": index,
+            "status": status,
+            "planned": planned,
+            "executed": executed,
+            "plan_status": plan_status,
+            "plan_branch": _completed_record_branch(record),
+        }
         per_milestone.append(entry)
         if status == "completed":
             completed.append({"label": milestone.label, "index": index})
@@ -2305,11 +3049,16 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
         current_label = f"{current['label']} (index {current['index']})"
     completed = summary.get("completed") or []
     remaining = summary.get("remaining") or []
+    per_milestone = summary.get("per_milestone") or []
     completed_labels = ", ".join(item["label"] for item in completed) if completed else "none"
     remaining_labels = ", ".join(item["label"] for item in remaining) if remaining else "none"
+    planned_count = sum(1 for item in per_milestone if item.get("planned"))
+    executed_count = sum(1 for item in per_milestone if item.get("executed"))
     writer(f"Current milestone: {current_label}\n")
     writer(f"Completed: {completed_labels}\n")
     writer(f"Remaining: {remaining_labels}\n")
+    writer(f"Planned: {planned_count}/{len(per_milestone)}\n")
+    writer(f"Executed: {executed_count}/{len(per_milestone)}\n")
     if summary.get("seed_plan"):
         writer(f"Seed plan: {summary['seed_plan']}\n")
     writer(f"Base branch: {summary.get('base_branch') or 'main'}\n")
@@ -2342,8 +3091,15 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
         review_policy = policy.get("review_policy") or {}
         writer(f"  Review (clean_milestone_pr): {review_policy.get('clean_milestone_pr', 'auto')}\n")
     writer("Per-milestone:\n")
-    for item in summary.get("per_milestone") or []:
-        writer(f"  - [{item['status']}] {item['label']} (index {item['index']})\n")
+    for item in per_milestone:
+        branch_suffix = ""
+        if item.get("plan_branch"):
+            branch_suffix = f", artifact branch {item['plan_branch']}"
+        writer(
+            f"  - [{item['status']}] {item['label']} "
+            f"(index {item['index']}, planned={int(bool(item.get('planned')))}, "
+            f"executed={int(bool(item.get('executed')))}{branch_suffix})\n"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2396,31 +3152,11 @@ def build_chain_parser(subparsers: Any) -> None:
     )
 
     start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
-    start_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
-    start_parser.add_argument(
-        "--project-dir",
-        required=False,
-        help="Run the chain against this project directory instead of discovering from CWD.",
-    )
-    _add_chain_worktree_args(start_parser)
-    start_parser.add_argument(
-        "--no-git-refresh",
-        action="store_true",
-        help=(
-            "Skip the automatic base-branch checkout and pull that runs "
-            "before each milestone."
-        ),
-    )
-    start_parser.add_argument(
-        "--no-push",
-        action="store_true",
-        help="Disable branch/PR/push lifecycle for no-network runs.",
-    )
-    start_parser.add_argument(
-        "--one",
-        action="store_true",
-        help="Drive at most one pending milestone, persist progress, then stop cleanly.",
-    )
+    _add_chain_run_args(start_parser)
+    plan_parser = chain_sub.add_parser("plan", help="Drive the planning pass until plans finalize")
+    _add_chain_run_args(plan_parser)
+    execute_parser = chain_sub.add_parser("execute", help="Drive finalized milestone plans through execute")
+    _add_chain_run_args(execute_parser)
 
     status_parser = chain_sub.add_parser(
         "status", help="Show persisted chain progress without driving"
@@ -2458,6 +3194,34 @@ def build_chain_parser(subparsers: Any) -> None:
         choices=VALID_CLEAN_MILESTONE_PR_POLICIES,
         default=None,
         help="Set review clean_milestone_pr policy at runtime (e.g. auto, manual)",
+    )
+
+
+def _add_chain_run_args(parser: Any) -> None:
+    parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Run the chain against this project directory instead of discovering from CWD.",
+    )
+    _add_chain_worktree_args(parser)
+    parser.add_argument(
+        "--no-git-refresh",
+        action="store_true",
+        help=(
+            "Skip the automatic base-branch checkout and pull that runs "
+            "before each milestone."
+        ),
+    )
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help="Disable branch/PR/push lifecycle for no-network runs.",
+    )
+    parser.add_argument(
+        "--one",
+        action="store_true",
+        help="Drive at most one pending milestone, persist progress, then stop cleanly.",
     )
 
 
@@ -2570,7 +3334,7 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0
 
-    if action not in (None, "start"):
+    if action not in (None, "start", "plan", "execute"):
         return _emit_error(CliError("invalid_args", f"Unknown chain action: {action}"))
 
     no_git_refresh = bool(getattr(args, "no_git_refresh", False))
@@ -2583,11 +3347,12 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
             no_git_refresh=no_git_refresh,
             no_push=no_push,
             one=one,
+            mode=action or "start",
         )
     except CliError as exc:
         return _emit_error(exc)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
-    if result["status"] in {"done", "paused"}:
+    if result["status"] in {"done", "paused", "finalized"}:
         return 0
     return 1
 

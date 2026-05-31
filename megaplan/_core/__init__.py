@@ -102,6 +102,8 @@ from .state import (
     append_history,
     apply_session_update,
     clear_active_step,
+    driver_lock,
+    driver_lock_path,
     latest_plan_meta_path,
     latest_plan_path,
     latest_plan_record,
@@ -148,6 +150,13 @@ from .hermes_fanout import (
     scatter_gather,
     scatter_gather_checks,
     with_429_openrouter_fallback,
+)
+
+# -- worker_fanout.py: generic worker-step fan-out ---------------------------
+from .worker_fanout import (
+    WorkerUnit,
+    scatter_worker_unit,
+    scatter_worker_units,
 )
 
 # -- workflow.py: state machine, transitions ---------------------------------
@@ -262,6 +271,8 @@ __all__ = [
     "latest_plan_record",
     "load_plan",
     "load_plan_from_dir",
+    "driver_lock",
+    "driver_lock_path",
     "load_plan_locked",
     "make_history_entry",
     "plan_lock",
@@ -317,4 +328,8 @@ __all__ = [
     "scatter_gather",
     "scatter_gather_checks",
     "with_429_openrouter_fallback",
+    # worker_fanout
+    "WorkerUnit",
+    "scatter_worker_unit",
+    "scatter_worker_units",
 ]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import multiprocessing as mp
 import queue
@@ -16,14 +17,22 @@ from typing import Any
 from megaplan._core import atomic_write_json, atomic_write_text
 from megaplan._core.hermes_fanout import (
     GenericScatterResult,
-    scatter_gather,
+    scatter_gather_processes,
     with_429_openrouter_fallback,
 )
-from megaplan.profiles import CANONICAL_PREP_MODELS
+from megaplan.profiles import CANONICAL_PREP_MODELS, validate_prep_stage_provider
 from megaplan.prompts import _prep_distill_prompt, _prep_research_prompt, _prep_triage_prompt
 from megaplan.schemas import SCHEMAS, strict_schema
-from megaplan.types import AgentMode, CliError, PlanState, normalize_robustness, parse_agent_spec
-from megaplan.workers import WorkerResult, run_codex_prep_step
+from megaplan.types import (
+    AgentMode,
+    AgentSpec,
+    CliError,
+    PlanState,
+    format_agent_spec,
+    normalize_robustness,
+    parse_agent_spec,
+)
+from megaplan.workers import WorkerResult, run_step_with_worker, update_session_state
 
 _PREP_RESEARCH_FINDING_SCHEMA = strict_schema(SCHEMAS["research.json"]["properties"]["findings"]["items"])
 _PREP_RESEARCH_STATUSES = {"complete", "partial", "timed_out", "error", "not_needed"}
@@ -79,6 +88,7 @@ def minimal_prep_metrics() -> dict[str, Any]:
     return {
         "area_count": 0,
         "fanout_count": 0,
+        "forced_count": 0,
         "completed_count": 0,
         "partial_count": 0,
         "timed_out_count": 0,
@@ -101,6 +111,7 @@ def minimal_prep_metrics() -> dict[str, Any]:
             "existing_files": [],
             "missing_files": [],
             "shared_files": [],
+            "to_be_built_files": [],
         },
         "stage_metrics": {
             "triage": _stage_metrics(),
@@ -206,28 +217,8 @@ def _research_unit_payload(
     }
 
 
-def _reject_write_capable_prep_provider(spec: str, *, stage: str) -> AgentMode:
+def _prep_stage_agent_mode(spec: str) -> AgentMode:
     parsed = parse_agent_spec(spec)
-    if parsed.agent in {"claude", "shannon"}:
-        raise CliError(
-            "invalid_prep_model",
-            f"Explicit {parsed.agent!r} prep model for {stage} is not allowed until a read-only runner exists.",
-        )
-    if parsed.agent == "codex" and stage == "fanout":
-        raise CliError(
-            "invalid_prep_model",
-            "Codex prep fanout is not allowed; research fanout must use the read-only Hermes runner.",
-        )
-    if parsed.agent not in {"codex", "hermes"} and stage in {"triage", "distill"}:
-        raise CliError(
-            "invalid_prep_model",
-            f"Prep {stage} currently supports only read-only Codex or Hermes runners.",
-        )
-    if parsed.agent != "hermes" and stage == "fanout":
-        raise CliError(
-            "invalid_prep_model",
-            "Prep fanout currently supports only the process-isolated read-only Hermes runner.",
-        )
     return AgentMode(
         agent=parsed.agent,
         mode="ephemeral",
@@ -238,17 +229,90 @@ def _reject_write_capable_prep_provider(spec: str, *, stage: str) -> AgentMode:
     )
 
 
+def _prep_stage_agent_spec(resolved: AgentMode) -> str:
+    return format_agent_spec(
+        AgentSpec(
+            resolved.agent,
+            model=resolved.model,
+            effort=resolved.effort,
+        )
+    )
+
+
+def scatter_over_worker_step(
+    index: int,
+    unit: dict[str, Any],
+    *,
+    isolation: str = "thread",
+) -> tuple[int, dict[str, Any], float, int, int, int]:
+    if isolation not in {"thread", "process"}:
+        raise ValueError(f"unsupported isolation: {isolation}")
+    area = dict(unit["area"])
+    state = dict(unit["state"])
+    plan_dir = Path(unit["plan_dir"])
+    root = Path(unit["root"])
+    resolved = _prep_stage_agent_mode(str(unit["resolved_model_spec"]))
+    output_path = plan_dir / ".hermes_state" / f"prep_research_{index}.json"
+    prompt = _prep_research_prompt(
+        state,
+        plan_dir,
+        area=area,
+        output_path=output_path,
+        root=root,
+    )
+    worker, _agent, _mode, _refreshed = run_step_with_worker(
+        "prep-research",
+        state,
+        plan_dir,
+        _prep_worker_args(),
+        root=root,
+        resolved=resolved,
+        prompt_override=prompt,
+        read_only=True,
+    )
+    if not isinstance(worker.payload, dict):
+        raise CliError("worker_parse_error", "Prep research unit returned invalid payload")
+    finding = _normalize_research_finding(area, worker.payload)
+    return (
+        index,
+        _research_unit_payload(finding, elapsed_time_ms=worker.duration_ms),
+        worker.cost_usd,
+        worker.prompt_tokens,
+        worker.completion_tokens,
+        worker.total_tokens,
+    )
+
+
+def scatter_over_worker_step_process(index: int, unit: dict[str, Any]) -> tuple[int, dict[str, Any], float, int, int, int]:
+    return scatter_over_worker_step(index, unit, isolation="process")
+
+
 def resolve_prep_stage_model(state: PlanState, stage: str) -> AgentMode:
     raw_models = state.get("config", {}).get("prep_models", {})
     if isinstance(raw_models, dict) and stage in raw_models:
         raw_spec = raw_models[stage]
-        if not isinstance(raw_spec, str) or not raw_spec.strip():
-            raise CliError("invalid_prep_model", f"prep_models.{stage} must be a non-empty string")
-        return _reject_write_capable_prep_provider(raw_spec, stage=stage)
+    else:
+        try:
+            raw_spec = CANONICAL_PREP_MODELS[stage]
+        except KeyError as exc:
+            raise CliError("invalid_prep_model", f"Unknown prep stage: {stage}") from exc
+
     try:
-        return _reject_write_capable_prep_provider(CANONICAL_PREP_MODELS[stage], stage=stage)
-    except KeyError as exc:
-        raise CliError("invalid_prep_model", f"Unknown prep stage: {stage}") from exc
+        spec = validate_prep_stage_provider(raw_spec, stage=stage)
+    except CliError as exc:
+        if exc.code != "invalid_profile":
+            raise
+        raise CliError("invalid_prep_model", exc.message) from exc
+
+    parsed = parse_agent_spec(spec)
+    return AgentMode(
+        agent=parsed.agent,
+        mode="ephemeral",
+        refreshed=True,
+        model=parsed.model,
+        effort=parsed.effort,
+        resolved_model=parsed.model,
+    )
 
 
 def _compatible_prep_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -288,13 +352,163 @@ def _artifact_text(plan_dir: Path, filename: str, text: str) -> str:
     return _hash_file(plan_dir / filename)
 
 
-def _cap_research_areas(state: PlanState, areas: list[Any]) -> tuple[list[dict[str, Any]], int]:
+def _forced_upstream_areas(state: PlanState) -> list[dict[str, Any]]:
+    """Derive one forced prep research area per upstream dependency label.
+
+    Reads ``state.meta.chain_policy.contract_context`` and creates an area
+    for each ``dependency_label`` with a brief covering the upstream planned
+    interfaces so downstream prep research accounts for the contract surface.
+    """
+    meta = state.get("meta")
+    if not isinstance(meta, dict):
+        return []
+    chain_policy = meta.get("chain_policy")
+    if not isinstance(chain_policy, dict):
+        return []
+    contract_context = chain_policy.get("contract_context")
+    if not isinstance(contract_context, dict):
+        return []
+    if contract_context.get("plan_only") is not True:
+        return []
+    dep_labels = contract_context.get("dependency_labels")
+    if not isinstance(dep_labels, list) or not dep_labels:
+        return []
+    upstream_contracts = contract_context.get("upstream_contracts")
+    if not isinstance(upstream_contracts, list):
+        upstream_contracts = []
+
+    # Build a label→paths index from upstream contracts
+    label_paths: dict[str, set[str]] = {}
+    for item in upstream_contracts:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("milestone_label") or item.get("label") or "").strip()
+        if not label:
+            continue
+        provides = item.get("provides", [])
+        if not isinstance(provides, list):
+            provides = []
+        paths = label_paths.setdefault(label, set())
+        for provide in provides:
+            if not isinstance(provide, dict):
+                continue
+            for interface in provide.get("interfaces", []) or []:
+                if isinstance(interface, dict):
+                    path = str(interface.get("path", "")).strip()
+                    if path:
+                        paths.add(path)
+
+    forced: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for label in dep_labels:
+        if not isinstance(label, str):
+            continue
+        label = label.strip()
+        if not label or label in seen_ids:
+            continue
+        seen_ids.add(label)
+        paths = sorted(label_paths.get(label, []))
+        suggested_files = paths[:10]  # keep the area focused
+        forced.append({
+            "id": f"upstream-{label}",
+            "area": f"Upstream contract: {label}",
+            "brief": (
+                f"Research planned upstream interfaces provided by milestone `{label}` "
+                f"so prep can account for contract-surface shape, path expectations, "
+                f"and signature constraints during downstream planning."
+            ),
+            "suggested_files": suggested_files,
+        })
+    return forced
+
+
+def _deduplicate_areas(
+    forced: list[dict[str, Any]],
+    triage_areas: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Insert forced areas before triage areas, keeping the first seen ID.
+
+    Returns a list where forced areas appear first (preserving insertion order)
+    and triage areas that share an ``id`` with a forced area are dropped.
+    """
+    seen: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for area in forced:
+        aid = str(area.get("id") or area.get("area") or "").strip()
+        if aid and aid not in seen:
+            seen.add(aid)
+            merged.append(area)
+    for area in triage_areas:
+        aid = str(area.get("id") or area.get("area") or "").strip()
+        if aid and aid not in seen:
+            seen.add(aid)
+            merged.append(area)
+    return merged
+
+
+def _prep_worker_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        agent=None,
+        hermes=None,
+        phase_model=[],
+        ephemeral=True,
+        fresh=False,
+        persist=False,
+    )
+
+
+def _run_prep_worker_step(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    root: Path,
+    resolved: AgentMode,
+    prompt: str,
+) -> WorkerResult:
+    worker, agent, mode, refreshed = run_step_with_worker(
+        step,
+        state,
+        plan_dir,
+        _prep_worker_args(),
+        root=root,
+        resolved=resolved,
+        prompt_override=prompt,
+        read_only=True,
+    )
+    session_update = update_session_state(
+        step,
+        agent,
+        worker.session_id,
+        mode=mode,
+        refreshed=refreshed,
+        model=resolved.resolved_model,
+        existing_sessions=state.get("sessions"),
+    )
+    if session_update is not None and isinstance(state.get("sessions"), dict):
+        key, entry = session_update
+        state["sessions"][key] = entry
+    return worker
+
+
+def _cap_research_areas(
+    state: PlanState,
+    areas: list[Any],
+    *,
+    forced_count: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
     cap = prep_area_cap(state)
     normalized: list[dict[str, Any]] = []
     for index, area in enumerate(areas):
         if not isinstance(area, dict):
             raise CliError("parse_error", f"prep triage area at index {index} must be an object")
         normalized.append(dict(area))
+
+    # Always retain forced areas even when forced_count > cap.
+    if forced_count >= cap:
+        # All slots go to forced areas; triage areas are culled.
+        return normalized[:forced_count], cap
+
     return normalized[:cap], cap
 
 
@@ -302,6 +516,7 @@ def _prep_metrics(
     *,
     original_area_count: int,
     capped_area_count: int,
+    forced_count: int = 0,
     findings: list[dict[str, Any]],
     fanout: GenericScatterResult,
     triage_worker: WorkerResult,
@@ -334,6 +549,7 @@ def _prep_metrics(
     return {
         "area_count": original_area_count,
         "fanout_count": capped_area_count,
+        "forced_count": forced_count,
         "completed_count": sum(1 for item in findings if item.get("status") == "complete"),
         "partial_count": sum(1 for item in findings if item.get("status") == "partial"),
         "timed_out_count": sum(1 for item in findings if item.get("status") == "timed_out"),
@@ -368,6 +584,7 @@ def _prep_metrics(
             "existing_files": [],
             "missing_files": [],
             "shared_files": [],
+            "to_be_built_files": [],
         },
         "stage_metrics": {
             "triage": triage_stage,
@@ -446,7 +663,69 @@ def _gap_notes(
     missing_files = cross_reference.get("missing_files", [])
     if missing_files:
         notes.append("Referenced files missing during bounded cross-reference: " + ", ".join(missing_files))
+    to_be_built = cross_reference.get("to_be_built_files", [])
+    if to_be_built:
+        labels = sorted(set(
+            str(item["upstream_milestone"])
+            for item in to_be_built
+            if isinstance(item, dict) and item.get("upstream_milestone")
+        ))
+        paths = sorted(set(
+            str(item["path"])
+            for item in to_be_built
+            if isinstance(item, dict) and item.get("path")
+        ))
+        notes.append(
+            "Files expected from upstream milestone(s) "
+            + ", ".join(labels)
+            + " (not yet built locally): "
+            + ", ".join(paths)
+        )
     return notes
+
+
+def _collect_upstream_provided_paths(state: PlanState) -> dict[str, str]:
+    """Return a mapping of provided path → upstream milestone label.
+
+    Reads ``state.meta.chain_policy.contract_context.upstream_contracts``
+    and extracts interface paths keyed by their upstream milestone so
+    ``_cross_reference_prep_output`` can classify them as to-be-built files.
+    """
+    meta = state.get("meta")
+    if not isinstance(meta, dict):
+        return {}
+    chain_policy = meta.get("chain_policy")
+    if not isinstance(chain_policy, dict):
+        return {}
+    contract_context = chain_policy.get("contract_context")
+    if not isinstance(contract_context, dict):
+        return {}
+    if contract_context.get("plan_only") is not True:
+        return {}
+    upstream_contracts = contract_context.get("upstream_contracts")
+    if not isinstance(upstream_contracts, list):
+        return {}
+
+    path_map: dict[str, str] = {}
+    for item in upstream_contracts:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("milestone_label") or item.get("label") or "").strip()
+        if not label:
+            continue
+        provides = item.get("provides")
+        if not isinstance(provides, list):
+            provides = []
+        for provide in provides:
+            if not isinstance(provide, dict):
+                continue
+            for interface in provide.get("interfaces", []) or []:
+                if not isinstance(interface, dict):
+                    continue
+                path = str(interface.get("path", "")).strip()
+                if path and path not in path_map:
+                    path_map[path] = label
+    return path_map
 
 
 def _cross_reference_prep_output(
@@ -454,6 +733,7 @@ def _cross_reference_prep_output(
     root: Path,
     findings: list[dict[str, Any]],
     prep_payload: dict[str, Any],
+    upstream_provided_paths: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     finding_files = {
         str(path).strip()
@@ -467,11 +747,24 @@ def _cross_reference_prep_output(
         if isinstance(item, dict) and str(item.get("file_path") or "").strip()
     }
     checked_files = sorted(finding_files | prep_files)
+
+    # Classify upstream-provided paths as to-be-built before filesystem checks.
+    provided = upstream_provided_paths or {}
+    to_be_built_files: list[dict[str, Any]] = []
+    for path in checked_files:
+        label = provided.get(path)
+        if label:
+            to_be_built_files.append({"path": path, "upstream_milestone": label})
+
+    # Only report a file as missing when it is NOT an upstream-provided path
+    # (those are expected to not exist locally yet).
+    upstream_path_set = set(provided.keys())
     existing_files = sorted(
         path for path in checked_files if (root / path).exists()
     )
     missing_files = sorted(
-        path for path in checked_files if not (root / path).exists()
+        path for path in checked_files
+        if not (root / path).exists() and path not in upstream_path_set
     )
     return {
         "performed": bool(checked_files),
@@ -479,6 +772,7 @@ def _cross_reference_prep_output(
         "existing_files": existing_files,
         "missing_files": missing_files,
         "shared_files": sorted(finding_files & prep_files),
+        "to_be_built_files": to_be_built_files,
     }
 
 
@@ -490,9 +784,15 @@ def _assemble_prep_outputs(
     findings: list[dict[str, Any]],
     metrics: dict[str, Any],
     prep_payload: dict[str, Any],
+    upstream_provided_paths: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], str]:
     overlaps = _research_overlap_groups(findings)
-    cross_reference = _cross_reference_prep_output(root=root, findings=findings, prep_payload=prep_payload)
+    cross_reference = _cross_reference_prep_output(
+        root=root,
+        findings=findings,
+        prep_payload=prep_payload,
+        upstream_provided_paths=upstream_provided_paths,
+    )
     contradiction_notes = _contradiction_notes(findings, overlaps)
     gap_notes = _gap_notes(findings, prep_payload, cross_reference)
     metrics["overlap_groups"] = overlaps
@@ -584,6 +884,14 @@ def _prep_dossier_text(
     else:
         lines.append("- (none)")
     cross_reference = metrics.get("cross_reference", {})
+    to_be_built = cross_reference.get("to_be_built_files", [])
+    to_be_built_lines: list[str] = []
+    if to_be_built:
+        for item in to_be_built:
+            if isinstance(item, dict):
+                to_be_built_lines.append(
+                    f"- {item.get('path', '?')} (from {item.get('upstream_milestone', '?')})"
+                )
     lines.extend(
         [
             "",
@@ -592,6 +900,13 @@ def _prep_dossier_text(
             f"- Performed: {'yes' if cross_reference.get('performed') else 'no'}",
             f"- Shared files: {', '.join(cross_reference.get('shared_files', [])) or '(none)'}",
             f"- Missing files: {', '.join(cross_reference.get('missing_files', [])) or '(none)'}",
+        ]
+    )
+    if to_be_built_lines:
+        lines.append(f"- Expected from upstream (not yet built):")
+        lines.extend(to_be_built_lines)
+    lines.extend(
+        [
             "",
             "## Metrics",
             "",
@@ -610,27 +925,13 @@ def _prep_dossier_text(
 def run_prep_triage(state: PlanState, plan_dir: Path, *, root: Path) -> WorkerResult:
     model = resolve_prep_stage_model(state, "triage")
     prompt = _prep_triage_prompt(state, plan_dir, root=root)
-    if model.agent == "hermes":
-        from megaplan.workers.hermes import run_hermes_step
-
-        return run_hermes_step(
-            "prep-triage",
-            state,
-            plan_dir,
-            root=root,
-            fresh=True,
-            model=model.model,
-            effort=model.effort,
-            prompt_override=prompt,
-        )
-    return run_codex_prep_step(
+    return _run_prep_worker_step(
         "prep-triage",
         state,
         plan_dir,
         root=root,
-        prompt_override=prompt,
-        effort=model.effort,
-        model=model.model,
+        resolved=model,
+        prompt=prompt,
     )
 
 
@@ -864,41 +1165,30 @@ def run_research_fanout(
     max_concurrent: int | None = None,
 ) -> GenericScatterResult:
     model = resolve_prep_stage_model(state, "fanout")
-    resolved_model = model.model or model.resolved_model or "deepseek:deepseek-v4-flash"
+    resolved_model_spec = _prep_stage_agent_spec(model)
+    units = [
+        {
+            "area": area,
+            "state": state,
+            "plan_dir": str(plan_dir),
+            "root": str(root),
+            "resolved_model_spec": resolved_model_spec,
+        }
+        for area in areas
+    ]
 
-    def _unpack_unit_result(
-        result: Any,
-    ) -> tuple[int, dict[str, Any], float, int, int, int]:
-        index, payload, cost_usd, pt, ct, tt = result
-        if not isinstance(payload, dict) or not isinstance(payload.get("finding"), dict):
-            raise CliError("worker_parse_error", "Prep research unit returned invalid payload")
-        return index, payload, cost_usd, pt, ct, tt
-
-    def _submit(executor: Any) -> list[Any]:
-        futures = []
-        for index, area in enumerate(areas):
-            future = executor.submit(
-                run_hermes_research_unit_process,
-                index=index,
-                area=area,
-                state=state,
-                plan_dir=plan_dir,
-                root=root,
-                model=resolved_model,
-                timeout_seconds=timeout_seconds,
-            )
-            future._megaplan_unit_index = index
-            futures.append(future)
-        return futures
-
-    raw = scatter_gather(
-        num_units=len(areas),
-        submit_unit_fn=_submit,
+    raw = scatter_gather_processes(
+        units=units,
+        run_unit_fn=scatter_over_worker_step_process,
         max_concurrent=max_concurrent,
-        unpack_unit_result=_unpack_unit_result,
+        timeout_seconds=timeout_seconds,
         on_unit_error=lambda index, exc: (
             _research_unit_payload(
-                research_sentinel(areas[index], "error", str(exc) or exc.__class__.__name__),
+                research_sentinel(
+                    areas[index],
+                    "timed_out" if isinstance(exc, TimeoutError) else "error",
+                    "research timeout" if isinstance(exc, TimeoutError) else str(exc) or exc.__class__.__name__,
+                ),
                 elapsed_time_ms=0,
             ),
             0.0,
@@ -944,29 +1234,14 @@ def distill_prep(
         findings=findings,
         root=root,
     )
-    if model.agent == "hermes":
-        from megaplan.workers.hermes import run_hermes_step
-
-        result = run_hermes_step(
-            "prep-distill",
-            state,
-            plan_dir,
-            root=root,
-            fresh=True,
-            model=model.model,
-            effort=model.effort,
-            prompt_override=prompt,
-        )
-    else:
-        result = run_codex_prep_step(
-            "prep-distill",
-            state,
-            plan_dir,
-            root=root,
-            prompt_override=prompt,
-            effort=model.effort,
-            model=model.model,
-        )
+    result = _run_prep_worker_step(
+        "prep-distill",
+        state,
+        plan_dir,
+        root=root,
+        resolved=model,
+        prompt=prompt,
+    )
     result.payload = _compatible_prep_payload(result.payload)
     return result
 
@@ -997,7 +1272,12 @@ def run_prep_orchestration(
     areas = triage.get("areas", [])
     if not isinstance(areas, list):
         raise CliError("parse_error", "prep triage output field 'areas' must be a list")
-    capped_areas, _area_cap = _cap_research_areas(state, areas)
+    forced_areas = _forced_upstream_areas(state)
+    upstream_provided_paths = _collect_upstream_provided_paths(state)
+    merged_areas = _deduplicate_areas(forced_areas, areas)
+    capped_areas, _area_cap = _cap_research_areas(
+        state, merged_areas, forced_count=len(forced_areas),
+    )
 
     if not capped_areas:
         payload = write_skip_prep_artifacts(plan_dir)
@@ -1039,6 +1319,7 @@ def run_prep_orchestration(
     metrics = _prep_metrics(
         original_area_count=len(areas),
         capped_area_count=len(capped_areas),
+        forced_count=len(forced_areas),
         findings=findings,
         fanout=fanout,
         triage_worker=triage_worker,
@@ -1051,6 +1332,7 @@ def run_prep_orchestration(
         findings=findings,
         metrics=metrics,
         prep_payload=compatible_payload,
+        upstream_provided_paths=upstream_provided_paths,
     )
     _artifact_json(plan_dir, "research.json", {"findings": findings})
     metrics_hash = _artifact_json(plan_dir, "prep_metrics.json", metrics)

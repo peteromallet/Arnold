@@ -85,6 +85,11 @@ every fire is self-contained.
   the **freshness of `state.json` (heartbeat) vs `events.ndjson`**.
 - Is a worker process actually alive? (`pgrep -f "chain start"`, a `shannon`/
   `megaplan <phase>` child, etc.)
+- **Verify cumulative INTEGRATION, not just liveness — is HEAD advancing per
+  milestone?** Check that milestone N's base actually contains N-1's *committed*
+  work (`git log --oneline` on the worktree). A "0 commits" milestone or a clean
+  worktree mid-epic is a RED FLAG that work is being stashed/lost (the classic
+  `--no-push` + `require_clean_base` trap), not a benign `--no-push` artifact.
 
 ### 2. Distinguish a REAL stall from a false one
 - **False stall (do nothing):** `state.json` heartbeat is fresh (seconds) and

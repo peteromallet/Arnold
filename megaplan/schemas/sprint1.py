@@ -42,6 +42,7 @@ PlanArtifactRole = Literal[
     "gate_signals",
     "finalize",
     "finalize_snapshot",
+    "contract",
     "execution_batch",
     "execution",
     "execution_audit",

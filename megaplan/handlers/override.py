@@ -350,8 +350,13 @@ def _override_force_proceed(
     return response
 
 
-def _override_replan(
-    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+def apply_override_replan(
+    root: Path,
+    plan_dir: Path,
+    state: PlanState,
+    *,
+    reason: str,
+    note: str | None = None,
 ) -> StepResponse:
     allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
     if state["current_state"] not in allowed:
@@ -360,7 +365,7 @@ def _override_replan(
             f"replan requires state {', '.join(sorted(allowed))}, got '{state['current_state']}'",
             valid_next=infer_next_steps(state),
         )
-    reason = args.reason or args.note or "Re-entering planning loop"
+    reason = reason or note or "Re-entering planning loop"
     plan_file = latest_plan_path(plan_dir, state)
     state["current_state"] = STATE_PLANNED
     state["last_gate"] = {}
@@ -369,8 +374,8 @@ def _override_replan(
         "overrides",
         {"action": "replan", "timestamp": now_utc(), "reason": reason},
     )
-    if args.note:
-        _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": args.note})
+    if note:
+        _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": note})
     save_state_merge_meta(plan_dir, state)
     try:
         from megaplan.observability.events import emit, EventKind
@@ -394,6 +399,18 @@ def _override_replan(
     }
     _attach_next_step_runtime(response)
     return response
+
+
+def _override_replan(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    return apply_override_replan(
+        root,
+        plan_dir,
+        state,
+        reason=args.reason or args.note or "Re-entering planning loop",
+        note=args.note,
+    )
 
 
 _BLOCKED_RECOVERY_STATES: dict[str, str] = {

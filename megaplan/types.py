@@ -49,6 +49,25 @@ PlanCurrentState = Literal[
     "tiebreaker_pending",
     "tiebreaker_ready",
 ]
+DriverOutcomeStatus = Literal[
+    "done",
+    "finalized",
+    "paused",
+    "stalled",
+    "escalated",
+    "failed",
+    "aborted",
+    "cancelled",
+    "cap",
+    "blocked",
+    "cost_cap_exceeded",
+    "context_retry_exhausted",
+    "worker_blocked",
+    "human_required",
+    "awaiting_human",
+    "tiebreaker_pending",
+    "tiebreaker_ready",
+]
 CANONICAL_PLAN_STATES: frozenset[str] = frozenset(
     {
         STATE_INITIALIZED,
@@ -395,7 +414,7 @@ MOCK_ENV_VAR = "MEGAPLAN_MOCK_WORKERS"
 
 DEFAULT_AGENT_ROUTING: dict[str, str] = {
     "plan": "claude",
-    "prep": "claude",
+    "prep": "hermes",
     "critique": "codex",
     "critique_evaluator": "claude",
     "revise": "claude",

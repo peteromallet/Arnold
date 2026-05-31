@@ -154,6 +154,24 @@ _SHANNON_READINESS_PROMPTS = (
     "Hey, ready check before I pass over the brief. Say good to go when ready.",
 )
 
+_SHANNON_READ_ONLY_ALLOWED_TOOLS = (
+    "Read",
+    "Grep",
+    "Glob",
+    "WebFetch",
+    "WebSearch",
+)
+
+_SHANNON_READ_ONLY_DISALLOWED_TOOLS = (
+    "Bash",
+    "Edit",
+    "MultiEdit",
+    "NotebookEdit",
+    "TodoWrite",
+    "Task",
+    "Write",
+)
+
 
 def _env_truthy(name: str) -> bool | None:
     raw = os.getenv(name)
@@ -229,6 +247,37 @@ def _shannon_max_output_tokens() -> int:
         return max(1, int(raw))
     except ValueError:
         return 128000
+
+
+def _shannon_bash_timeout_ms() -> int:
+    """Per-command Bash-tool timeout for the Claude CLI that Shannon launches.
+
+    Claude Code's built-in Bash tool kills any single *foreground* command at
+    ``BASH_DEFAULT_TIMEOUT_MS`` (default 120000ms = 120s) with a SIGKILL and the
+    message ``Command timed out after 120s``. That default is per-command, not
+    per-turn, so it is invisible on light batches but lethal on a legitimate
+    long-running command inside an ``execute`` turn — e.g. ``python -m pytest
+    tests/`` on a full suite, a build, or an integration run. A forensic
+    analysis of a failed run found exactly this: the final worker attempt was
+    SIGKILLed (exit 137) mid-``pytest`` at 120s while earlier batches that never
+    ran a single >2min command completed fine in 5-10 minutes.
+
+    megaplan — not the spawned Claude Code's per-command default — owns the
+    stop-policy here: the worker has a 7200s execute cap (``run_command``
+    ``timeout``) and a 900s idle-output stall watchdog (``idle_timeout``). So
+    raise the launched CLI's Bash ceiling well above that 120s default and let
+    megaplan's phase budget + stall watchdog decide when to stop waiting,
+    matching how we already override ``SHANNON_TURN_TIMEOUT_MS`` and
+    ``CLAUDE_CODE_MAX_OUTPUT_TOKENS``. Overridable via
+    ``MEGAPLAN_SHANNON_BASH_TIMEOUT_MS``.
+    """
+    raw = os.getenv("MEGAPLAN_SHANNON_BASH_TIMEOUT_MS", "").strip()
+    if not raw:
+        return 7200000
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 7200000
 
 
 def _shannon_handshake_probability() -> float:
@@ -1862,6 +1911,7 @@ def run_shannon_step(
     effort: str | None = None,
     session_agent: str = "shannon",
     model: str | None = None,
+    read_only: bool = False,
 ) -> WorkerResult:
     """Run a megaplan phase via Shannon (Claude in an interactive tmux session).
 
@@ -1983,12 +2033,22 @@ def run_shannon_step(
         base_command.append("--bare")
     if effort is not None:
         base_command.extend(["--effort", effort])
-    base_command.extend([
-        "--permission-mode",
-        "bypassPermissions",
-        "--dangerously-skip-permissions",
-        "--allow-dangerously-skip-permissions",
-    ])
+    if read_only:
+        base_command.extend(
+            [
+                "--allowedTools",
+                *_SHANNON_READ_ONLY_ALLOWED_TOOLS,
+                "--disallowedTools",
+                *_SHANNON_READ_ONLY_DISALLOWED_TOOLS,
+            ]
+        )
+    else:
+        base_command.extend([
+            "--permission-mode",
+            "bypassPermissions",
+            "--dangerously-skip-permissions",
+            "--allow-dangerously-skip-permissions",
+        ])
 
     # Prompt delivery. Default: the launcher prompt rides in argv (``-p``) and
     # points Claude at the on-disk prompt file. Paste-first-turn (non-root only,
@@ -2105,6 +2165,14 @@ def run_shannon_step(
     # off at the inherited ~64k default mid-run, before emitting the structured
     # result envelope. megaplan, not the model default, owns this budget.
     env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", str(_shannon_max_output_tokens()))
+    # Raise the Claude CLI's per-command Bash-tool timeout. Its built-in 120s
+    # default (BASH_DEFAULT_TIMEOUT_MS) SIGKILLs legitimate long-running execute
+    # commands (full test suites, builds) mid-run; megaplan's 7200s execute cap +
+    # 900s stall watchdog already own the stop-policy. Set both the default and
+    # the max so the model cannot be capped below this even if it requests more.
+    bash_timeout_ms = str(_shannon_bash_timeout_ms())
+    env.setdefault("BASH_DEFAULT_TIMEOUT_MS", bash_timeout_ms)
+    env.setdefault("BASH_MAX_TIMEOUT_MS", bash_timeout_ms)
     shannon_prefix, env = _prepare_nonroot_shannon_runtime(work_dir, env)
 
     def _launch_command(shannon_command: list[str]) -> list[str]:
@@ -2136,16 +2204,25 @@ def run_shannon_step(
             readiness_command.extend(["--effort", effort])
         if drop_root_requested:
             readiness_command.append("--bare")
-        readiness_command.extend(
-            [
-                "--permission-mode",
-                "bypassPermissions",
-                "--dangerously-skip-permissions",
-                "--allow-dangerously-skip-permissions",
-                "--session-id",
-                session_id,
-            ]
-        )
+        if read_only:
+            readiness_command.extend(
+                [
+                    "--allowedTools",
+                    *_SHANNON_READ_ONLY_ALLOWED_TOOLS,
+                    "--disallowedTools",
+                    *_SHANNON_READ_ONLY_DISALLOWED_TOOLS,
+                ]
+            )
+        else:
+            readiness_command.extend(
+                [
+                    "--permission-mode",
+                    "bypassPermissions",
+                    "--dangerously-skip-permissions",
+                    "--allow-dangerously-skip-permissions",
+                ]
+            )
+        readiness_command.extend(["--session-id", session_id])
         # Both the readiness-probe and the main run_command below share the
         # same tmux_session (deterministic session_name from above). They are
         # serialized by run_command's finally block (probe returns →
@@ -2339,4 +2416,3 @@ def run_shannon_step(
         completion_tokens=_extract_claude_usage(envelope)[1],
         total_tokens=sum(_extract_claude_usage(envelope)),
     )
-
