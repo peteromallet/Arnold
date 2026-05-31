@@ -14,9 +14,9 @@ Premium models earn their keep on complex planning and intricate execution. But 
 
 Even the most intelligent models are inconsistent: sometimes, they'll run a thorough research process; other times they won't. Sometimes they'll run the tests; sometimes they won't. 
 
-## 2. Routing every task by hand is a huge mental task
+## 2. Routing every task by hand is a huge mental tax
 
-Say you buy that most work can go to cheaper models, you still have to decide *which* model does *what*, task by task. Is this one simple enough for a cheap model, or does it need a frontier one? Get that wrong in one direction and you're back to paying frontier prices to hammer in nails; get it wrong in the other and a weaker model quietly botches something that needed the horsepower. Routing every task by hand is a huge mental task.
+Say you buy that most work can go to cheaper models, you still have to decide which model does what, task by task. Is this one simple enough for a cheap model, or does it need a frontier one? Get that wrong in one direction and you're back to paying frontier prices to hammer in nails; get it wrong in the other and a weaker model quietly botches something that needed the horsepower. Routing every task by hand is a huge mental tax.
 
 ## 3. Frontier models are great at judging difficulty
 
