@@ -67,6 +67,7 @@ INFRA_ALLOWED_FILES = {
     "megaplan/_pipeline/executor.py",  # forensic backup path
     "megaplan/_pipeline/resume.py",  # resume cursor probe
     "megaplan/_pipeline/run_cli.py",  # CLI resume probe
+    "megaplan/_pipeline/types.py",  # in-process phase dispatch reads live state
     "megaplan/_pipeline/stages/inprocess_step.py",  # in-process driver
     "megaplan/chain/__init__.py",  # chain runner state probes
     # write paths / fixture/manifest references / non-reader callers

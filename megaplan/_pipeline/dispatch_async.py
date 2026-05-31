@@ -31,13 +31,15 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 from megaplan._pipeline.dispatch import (
     Dispatcher,
     DispatchRequest,
     DispatchResult,
 )
+from megaplan.resident.agent_loop import AgentRequest, AgentRunner
+from megaplan.resident.tool_registry import ToolRegistry
 
 
 @dataclass
@@ -49,14 +51,12 @@ class AsyncDispatcher:
     the binding test-friendly without dragging in the live OpenAI client.
     """
 
-    runner: Any  # AgentRunner-shaped: ``async def run(request, tools) -> AgentResponse``
-    tools: Any   # ToolRegistry-shaped
+    runner: AgentRunner
+    tools: ToolRegistry
     conversation_id: str = "dispatch-async"
     system_prompt: str = ""
 
     def run(self, request: DispatchRequest) -> DispatchResult:
-        from megaplan.resident.agent_loop import AgentRequest
-
         sink = request.liveness_sink
         if sink is not None:
             sink({"alive": True, "phase": "dispatch_async.start"})

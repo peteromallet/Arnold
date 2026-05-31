@@ -10,6 +10,8 @@ handler still emits and reports those commands.
 
 from __future__ import annotations
 
+import os
+
 from megaplan._pipeline.patterns import (
     critique_revise_gate_loop,
     phase_zero_gate,
@@ -21,8 +23,24 @@ from megaplan._pipeline.types import (
 )
 
 
+def _discovered_planning_enabled() -> bool:
+    """Whether the planning compiler should route through the discovered package."""
+
+    return os.environ.get("MEGAPLAN_M6_DISCOVERED_PLANNING", "1") == "1"
+
+
 def compile_planning_pipeline() -> Pipeline:
-    """Return the canonical, runnable planning :class:`Pipeline`.
+    """Return the canonical, runnable planning :class:`Pipeline`."""
+
+    if _discovered_planning_enabled():
+        from megaplan.pipelines.planning import build_pipeline
+
+        return build_pipeline()
+    return _compile_legacy_planning_pipeline()
+
+
+def _compile_legacy_planning_pipeline() -> Pipeline:
+    """Return the legacy planning compiler body.
 
     Sprint 5 Chunk A: this is the only canonical compile target. Stage
     keys are phase names (``prep / plan / critique / gate / revise /

@@ -15,6 +15,7 @@ Covers the single-process fallback contract:
 from __future__ import annotations
 
 import os
+import json
 
 import pytest
 
@@ -101,3 +102,24 @@ def test_seed_matches_state_total_at_install_time():
     state = {"meta": {"total_cost_usd": legacy_total}}
     auth = ba.install(state_total=state["meta"]["total_cost_usd"])
     assert auth.current_total() == legacy_total
+
+
+def test_reserve_tenant_quota_writes_sub_budget_without_installing(tmp_path):
+    ledger = ba.reserve_tenant_quota(
+        "pipeline_abc",
+        1.25,
+        base_dir=tmp_path,
+        metadata={"pipeline": "custom"},
+    )
+    assert ledger["sub_budget_usd"] == pytest.approx(1.25)
+    assert ba.current_authority() is None
+    data = json.loads((tmp_path / "pipeline_abc.budget.json").read_text())
+    assert data["sub_budget_usd"] == pytest.approx(1.25)
+    assert data["reservation_metadata"]["pipeline"] == "custom"
+
+
+def test_reserve_tenant_quota_is_idempotent_and_does_not_widen(tmp_path):
+    first = ba.reserve_tenant_quota("pipeline_abc", 0.75, base_dir=tmp_path)
+    second = ba.reserve_tenant_quota("pipeline_abc", 2.0, base_dir=tmp_path)
+    assert first["sub_budget_usd"] == pytest.approx(0.75)
+    assert second["sub_budget_usd"] == pytest.approx(0.75)

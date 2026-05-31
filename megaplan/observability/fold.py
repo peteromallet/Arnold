@@ -25,6 +25,9 @@ def read_events(plan_dir: Path) -> List[dict]:
     file order (the journal guarantees monotonic seq via fcntl.flock so file
     order == seq order).
     """
+    from megaplan.observability.events_projection import ensure_events_projection
+
+    ensure_events_projection(Path(plan_dir))
     ndjson_path = Path(plan_dir) / _NDJSON_FILE
     if not ndjson_path.exists():
         return []

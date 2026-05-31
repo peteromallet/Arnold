@@ -12,11 +12,10 @@ Schema (per-tenant ledger file ``<base>/<tenant>.budget.json``):
     {
       "total_usd": float,                       # running total
       "seen": {"<lease_id>:<fencing_token>": float},  # idempotency
-      "sub_budget_usd": float | null            # M4 schema-only reservation
+      "sub_budget_usd": float | null            # per-tenant reservation cap
     }
 
-The ``sub_budget_usd`` field is reserved for a per-tenant cap at M5; this
-milestone writes ``null`` and never reads it.
+The ``sub_budget_usd`` field stores an idempotent per-tenant reservation cap.
 
 Single-process fallback
 -----------------------
@@ -56,6 +55,36 @@ def _budget_path(base_dir: Path, tenant: str) -> Path:
 
 def _ledger_key(lease_id: str, fencing_token: int) -> str:
     return f"{lease_id}:{int(fencing_token)}"
+
+
+def _read_ledger_file(
+    path: Path,
+    *,
+    fallback_total: float = 0.0,
+    fallback_sub_budget: Optional[float] = None,
+) -> dict:
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        data = {
+            "total_usd": float(fallback_total),
+            "seen": {},
+            "sub_budget_usd": fallback_sub_budget,
+        }
+    if not isinstance(data.get("seen"), dict):
+        data["seen"] = {}
+    data.setdefault("total_usd", float(fallback_total))
+    data.setdefault("sub_budget_usd", fallback_sub_budget)
+    return data
+
+
+def _write_ledger_file(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+    os.replace(tmp, path)
 
 
 # ---------------------------------------------------------------------------
@@ -140,18 +169,15 @@ class BudgetAuthority:
 
     def _read_ledger(self) -> dict:
         path = _budget_path(self.base_dir, self.tenant)
-        try:
-            with path.open("r", encoding="utf-8") as fh:
-                return json.load(fh)
-        except (FileNotFoundError, json.JSONDecodeError, ValueError):
-            return {"total_usd": float(self._total), "seen": {}, "sub_budget_usd": self._sub_budget}
+        return _read_ledger_file(
+            path,
+            fallback_total=float(self._total),
+            fallback_sub_budget=self._sub_budget,
+        )
 
     def _write_ledger(self, data: dict) -> None:
         path = _budget_path(self.base_dir, self.tenant)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-        os.replace(tmp, path)
+        _write_ledger_file(path, data)
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +215,62 @@ def install(
     with _installed_lock:
         _installed = auth
     return auth
+
+
+def reserve_tenant_quota(
+    tenant: str,
+    sub_budget_usd: float,
+    *,
+    base_dir: Optional[Path] = None,
+    flock: bool = True,
+    metadata: Optional[dict] = None,
+) -> dict:
+    """Reserve a per-tenant sub-budget in the shared budget ledger.
+
+    Reservations are idempotent. If a ledger already carries a lower cap, the
+    lower cap is preserved; this API never silently widens an existing tenant
+    reservation.
+    """
+
+    if not tenant:
+        raise ValueError("tenant is required")
+    requested = float(sub_budget_usd)
+    if requested <= 0:
+        raise ValueError("sub_budget_usd must be positive")
+
+    base = (base_dir or default_authority_dir()).resolve()
+    path = _budget_path(base, tenant)
+
+    def _reserve() -> dict:
+        data = _read_ledger_file(path)
+        existing = data.get("sub_budget_usd")
+        if existing is None:
+            data["sub_budget_usd"] = requested
+        else:
+            data["sub_budget_usd"] = min(float(existing), requested)
+        if metadata:
+            meta = data.setdefault("reservation_metadata", {})
+            if isinstance(meta, dict):
+                meta.update(metadata)
+        _write_ledger_file(path, data)
+        return dict(data)
+
+    if not flock:
+        return _reserve()
+
+    import fcntl
+
+    base.mkdir(parents=True, exist_ok=True)
+    lock_path = base / f"{tenant}.budget.lock"
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return _reserve()
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def current_authority() -> Optional[BudgetAuthority]:

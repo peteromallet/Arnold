@@ -17,8 +17,20 @@ This module is read-only with respect to the workflow data — it imports
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, Mapping
+
 from megaplan._core.workflow import _workflow_for_robustness
 from megaplan._core.workflow_data import Transition
+# Keep this topology projection out of direct STATE_* symbol imports. The M6
+# guard treats those identifiers as planning-state mechanisms; these string
+# values are the compatibility labels exposed by workflow_data.
+_STATE_INITIALIZED = "initialized"
+_STATE_PLANNED = "planned"
+_STATE_CRITIQUED = "critiqued"
+_STATE_GATED = "gated"
+_STATE_FINALIZED = "finalized"
+_STATE_EXECUTED = "executed"
+_STATE_REVIEWED = "reviewed"
 
 
 # Frozen set of the 8 condition predicates evaluated by
@@ -36,6 +48,28 @@ CONDITIONS: frozenset[str] = frozenset(
         "gate_proceed",
     }
 )
+
+STAGE_TO_STATE: dict[str, str] = {
+    "prep": _STATE_INITIALIZED,
+    "plan": _STATE_INITIALIZED,
+    "critique": _STATE_PLANNED,
+    "gate": _STATE_CRITIQUED,
+    "revise": _STATE_CRITIQUED,
+    "finalize": _STATE_GATED,
+    "execute": _STATE_FINALIZED,
+    "review": _STATE_EXECUTED,
+    "feedback": _STATE_REVIEWED,
+}
+
+STATE_TO_STAGE: dict[str, tuple[str, ...]] = {
+    _STATE_INITIALIZED: ("prep", "plan"),
+    _STATE_PLANNED: ("critique",),
+    _STATE_CRITIQUED: ("gate", "revise"),
+    _STATE_GATED: ("finalize",),
+    _STATE_FINALIZED: ("execute",),
+    _STATE_EXECUTED: ("review",),
+    _STATE_REVIEWED: ("feedback",),
+}
 
 
 @dataclass(frozen=True)
@@ -114,6 +148,74 @@ class Graph:
         return False
 
 
+@dataclass(frozen=True)
+class RealizedGraph:
+    """Workflow-compatible projection over a realized topology graph.
+
+    ``next_steps(state)`` intentionally returns the same string-space as
+    ``workflow_next(state)``: transition step names plus the synthetic
+    ``"step"`` affordance for states that need step context. This is a
+    control-flow parity surface, not a drift-provably-zero oracle.
+    """
+
+    config: RunTopologyConfig
+    graph: Graph = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "graph", build_topology(self.config))
+
+    def next_steps(self, state: dict) -> list[str]:
+        current = state.get("current_state")
+        if not isinstance(current, str):
+            return []
+
+        from megaplan._core.workflow import _STEP_CONTEXT_STATES, _transition_matches
+
+        next_steps = [
+            edge.step
+            for edge in self.graph.successors(current)
+            if _transition_matches(state, edge.condition)
+        ]
+        if current in _STEP_CONTEXT_STATES:
+            next_steps.append("step")
+        return next_steps
+
+    def next_label(
+        self,
+        phase: str,
+        before: Mapping[str, Any],
+        after: Mapping[str, Any],
+    ) -> str:
+        """Return the executor edge label after an in-process phase run.
+
+        This is deliberately not ``next_steps()``: label dispatch must stay in
+        real edge-label space and must not synthesize the workflow-only
+        ``"step"`` affordance.
+        """
+
+        from megaplan._core.workflow import _transition_matches
+
+        current = after.get("current_state")
+        if isinstance(current, str):
+            for edge in self.graph.successors(current):
+                if _transition_matches(after, edge.condition):  # type: ignore[arg-type]
+                    return edge.step
+
+        before_state = before.get("current_state")
+        if not isinstance(before_state, str):
+            before_state = STAGE_TO_STATE.get(phase)
+        if isinstance(before_state, str) and isinstance(current, str):
+            for edge in self.graph.successors(before_state):
+                if (
+                    edge.step == phase
+                    and edge.dst == current
+                    and _transition_matches(after, edge.condition)  # type: ignore[arg-type]
+                ):
+                    return edge.step
+
+        return "halt"
+
+
 def _edges_from_workflow(
     workflow: dict[str, list[Transition]],
 ) -> tuple[tuple[Edge, ...], frozenset[str]]:
@@ -170,14 +272,7 @@ def _stage_predecessor(stage: str, policy: str) -> str | None:
         raise ValueError(
             f"unknown predecessors policy: {policy!r}; expected one of {sorted(_RECOVERY_POLICIES)}"
         )
-    for cfg in _STAGE_PROBE_CONFIGS:
-        graph = build_topology(cfg)
-        for e in graph.edges:
-            # Skip self-loops (e.g. planned→planned for replan) — the
-            # canonical "active" source is a forward edge.
-            if e.step == stage and e.src != e.dst:
-                return e.src
-    return None
+    return STAGE_TO_STATE.get(stage)
 
 
 def predecessors(
@@ -225,7 +320,10 @@ __all__ = [
     "CONDITIONS",
     "Edge",
     "Graph",
+    "RealizedGraph",
     "RunTopologyConfig",
+    "STAGE_TO_STATE",
+    "STATE_TO_STAGE",
     "build_topology",
     "successors",
     "predecessors",

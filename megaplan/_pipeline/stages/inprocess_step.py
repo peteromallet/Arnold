@@ -69,6 +69,11 @@ class InProcessHandlerStep:
             "reason": "",
             "strict_notes": None,
             "source": "user",
+            "phase_model": [],
+            "profile": None,
+            "retry_blocked_tasks": False,
+            "work_dir": None,
+            "progress_emitter": _progress_emitter_from_ctx(ctx),
         }
         ns_kwargs.update(self.arg_overrides)
         args = Namespace(**ns_kwargs)
@@ -77,7 +82,7 @@ class InProcessHandlerStep:
 
         after = _read_state(ctx.plan_dir)
         next_state = after.get("current_state", before.get("current_state", ""))
-        next_label = _label_for(self.name, response, next_state)
+        next_label = _next_label_from_topology(self.name, before, after)
 
         verdict: PipelineVerdict | None = None
         if self.name == "gate":
@@ -117,6 +122,17 @@ def _resolve_project_dir(ctx: StepContext) -> Path:
     return Path(ctx.plan_dir).parents[2]
 
 
+def _progress_emitter_from_ctx(ctx: StepContext) -> Any:
+    env = None
+    if isinstance(ctx.inputs, Mapping):
+        maybe_env = ctx.inputs.get("_progress_env")
+        if isinstance(maybe_env, dict):
+            env = maybe_env
+    from megaplan.orchestration.progress import ProgressEmitter
+
+    return ProgressEmitter.from_env(env)
+
+
 def _read_state(plan_dir: Path) -> dict[str, Any]:
     import json
 
@@ -140,32 +156,33 @@ def _read_state(plan_dir: Path) -> dict[str, Any]:
     return data
 
 
-def _label_for(phase: str, response: Mapping[str, Any], next_state: str) -> str:
-    """Return the executor's bare `next` label for a phase result.
+def _next_label_from_topology(
+    phase: str,
+    before: Mapping[str, Any],
+    after: Mapping[str, Any],
+) -> str:
+    """Return the executor label projected from the realized topology.
 
-    Sprint 4 Chunk A: the gate phase no longer returns a packed
-    `gate_<rec>:<step>` label. Instead, the Step returns a PipelineVerdict
-    whose `recommendation` field drives `kind="gate"` edge dispatch.
-    The `next` string returned here is just the bare next step name
-    for debug readability — the executor matches on the PipelineVerdict.
+    Normal stages dispatch on the next step available from the post-handler
+    state. Terminal stages have no post-state successor, so we fall back to
+    the transition just completed by *phase*.
     """
-    if phase == "gate":
-        return _gate_next_step(response, next_state)
-    if phase == "revise":
-        return "critique"
-    if phase == "review":
-        return "review"
-    if phase == "execute":
-        return "review"  # executed → review edge per WORKFLOW
-    if phase == "finalize":
-        return "execute"  # finalized → execute edge
-    if phase == "critique":
-        return "gate_unset:gate"
-    if phase == "plan":
-        return "critique"
-    if phase == "prep":
-        return "plan"
-    return phase
+    from megaplan._core.modes import is_creative_mode
+    from megaplan._core.topology import RealizedGraph, RunTopologyConfig
+    from megaplan._core.workflow import (
+        _with_feedback_from_state,
+        _with_prep_from_state,
+        _workflow_robustness_from_state,
+    )
+
+    return RealizedGraph(
+        RunTopologyConfig(
+            robustness=_workflow_robustness_from_state(after),  # type: ignore[arg-type]
+            creative=is_creative_mode(after),  # type: ignore[arg-type]
+            with_prep=_with_prep_from_state(after),  # type: ignore[arg-type]
+            with_feedback=_with_feedback_from_state(after),  # type: ignore[arg-type]
+        )
+    ).next_label(phase, before, after)
 
 
 def _gate_recommendation(response: Mapping[str, Any], next_state: str):
@@ -189,17 +206,6 @@ def _gate_recommendation(response: Mapping[str, Any], next_state: str):
         "tiebreaker_pending": "tiebreaker",
         "aborted": "escalate",
     }.get(next_state, "proceed")
-
-
-def _gate_next_step(response: Mapping[str, Any], next_state: str) -> str:
-    """Bare next-step name corresponding to the gate's recommendation."""
-    rec = _gate_recommendation(response, next_state)
-    return {
-        "proceed": "gate",
-        "iterate": "revise",
-        "tiebreaker": "tiebreaker",
-        "escalate": "override force-proceed",
-    }.get(rec, "gate")
 
 
 def _collect_outputs(

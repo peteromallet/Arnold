@@ -86,6 +86,7 @@ def test_no_control_flow_consumer_of_model_identity_or_sensors() -> None:
                     "calibration/ledger.py",
                     "_pipeline/judge_manifest.py",
                     "_pipeline/judge_manifest_discovery.py",
+                    "calibration/experiments.py",
                     "observability/evaluand.py",
                     "handlers/finalize.py",
                 }:

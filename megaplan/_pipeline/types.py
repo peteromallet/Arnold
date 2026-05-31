@@ -329,6 +329,204 @@ class Pipeline:
             pipeline_version=pipeline_version,
         )
 
+    def run_phase(
+        self,
+        phase: str,
+        *,
+        plan: str,
+        cwd: Path | None = None,
+        plan_dir: Path | None = None,
+        argv: list[str] | tuple[str, ...] | None = None,
+        progress_env: dict[str, str] | None = None,
+    ) -> tuple[int, str, str]:
+        """Run one planning phase in-process and return a CLI-like tuple.
+
+        The auto-driver used to shell out for each phase and then inspect the
+        phase_result.json written by the handler. This keeps that contract but
+        dispatches the selected stage directly, so only one phase runs.
+        """
+
+        import argparse
+        import contextlib
+        import dataclasses
+        import io
+
+        from megaplan._core import find_plan_dir
+        from megaplan._core.io import json_dump
+        from megaplan.types import CliError
+
+        root = Path(cwd or Path.cwd())
+        resolved_plan_dir = Path(plan_dir) if plan_dir is not None else find_plan_dir(root, plan)
+        if resolved_plan_dir is None:
+            return 1, "", f"Plan {plan!r} does not exist"
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        try:
+            if phase == "feedback" and phase not in self.stages:
+                from megaplan.cli.feedback import handle_feedback
+
+                args = _phase_namespace(
+                    phase,
+                    plan=plan,
+                    argv=argv,
+                    progress_env=progress_env,
+                )
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    response = handle_feedback(root, args)
+                return 0, stdout.getvalue() or json_dump(response), stderr.getvalue()
+
+            if phase not in self.stages:
+                return 1, "", f"phase {phase!r} is not in pipeline; available: {sorted(self.stages)}"
+
+            node = self.stages[phase]
+            if not isinstance(node, Stage):
+                return 1, "", f"phase {phase!r} is not a single-stage phase"
+
+            state = _read_phase_state(resolved_plan_dir)
+            overrides = _phase_arg_overrides(phase, argv=argv)
+            step = node.step
+            if overrides and hasattr(step, "arg_overrides"):
+                current = getattr(step, "arg_overrides", {}) or {}
+                step = dataclasses.replace(step, arg_overrides={**dict(current), **overrides})
+            ctx = StepContext(
+                plan_dir=resolved_plan_dir,
+                state=state,
+                profile={
+                    "root": root,
+                    "project_dir": (state.get("config") or {}).get("project_dir", str(root)),
+                },
+                mode=(state.get("config") or {}).get("mode", "code"),
+                inputs={"_pipeline": "planning", "_progress_env": progress_env or {}},
+            )
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = step.run(ctx)
+            payload = {
+                "success": True,
+                "step": phase,
+                "next": result.next,
+                "outputs": {key: str(value) for key, value in result.outputs.items()},
+            }
+            return 0, stdout.getvalue() or json_dump(payload), stderr.getvalue()
+        except CliError as error:
+            payload: dict[str, Any] = {
+                "success": False,
+                "error": error.code,
+                "message": error.message,
+            }
+            if error.extra:
+                payload["details"] = dict(error.extra)
+            return error.exit_code, stdout.getvalue(), stderr.getvalue() + json_dump(payload)
+        except Exception as error:  # noqa: BLE001 - preserve CLI-like failure surface.
+            return 1, stdout.getvalue(), stderr.getvalue() + f"{type(error).__name__}: {error}"
+
+
+def _read_phase_state(plan_dir: Path) -> dict[str, Any]:
+    path = Path(plan_dir) / "state.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _phase_arg_overrides(
+    phase: str,
+    *,
+    argv: list[str] | tuple[str, ...] | None,
+) -> dict[str, Any]:
+    args = list(argv or [phase])
+    if args and args[0] == phase:
+        args = args[1:]
+    if phase == "feedback" and args and args[0] == "workflow":
+        args = args[1:]
+    overrides: dict[str, Any] = {}
+    phase_models: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--fresh":
+            overrides["fresh"] = True
+        elif token == "--persist":
+            overrides["persist"] = True
+        elif token == "--ephemeral":
+            overrides["ephemeral"] = True
+        elif token == "--confirm-destructive":
+            overrides["confirm_destructive"] = True
+        elif token == "--user-approved":
+            overrides["user_approved"] = True
+        elif token == "--retry-blocked-tasks":
+            overrides["retry_blocked_tasks"] = True
+        elif token == "--confirm-self-review":
+            overrides["confirm_self_review"] = True
+        elif token in {"--batch", "--profile", "--agent", "--work-dir"} and index + 1 < len(args):
+            key = token[2:].replace("-", "_")
+            value: Any = args[index + 1]
+            if key == "batch":
+                try:
+                    value = int(value)
+                except ValueError:
+                    pass
+            overrides[key] = value
+            index += 1
+        elif token == "--phase-model" and index + 1 < len(args):
+            phase_models.append(args[index + 1])
+            index += 1
+        elif token == "--plan" and index + 1 < len(args):
+            index += 1
+        index += 1
+    if phase_models:
+        overrides["phase_model"] = phase_models
+        overrides["_live_phase_model_steps"] = {
+            item.split("=", 1)[0] for item in phase_models if "=" in item
+        }
+    return overrides
+
+
+def _phase_namespace(
+    phase: str,
+    *,
+    plan: str,
+    argv: list[str] | tuple[str, ...] | None,
+    progress_env: dict[str, str] | None,
+) -> Any:
+    import argparse
+
+    from megaplan.orchestration.progress import ProgressEmitter
+
+    overrides = _phase_arg_overrides(phase, argv=argv)
+    operation = "edit"
+    raw = list(argv or [phase])
+    if phase == "feedback" and len(raw) > 1:
+        operation = raw[1]
+    defaults: dict[str, Any] = {
+        "plan": plan,
+        "operation": operation,
+        "force": False,
+        "actor": None,
+        "all": False,
+        "emit_json": False,
+        "agent": None,
+        "hermes": None,
+        "phase_model": [],
+        "profile": None,
+        "fresh": False,
+        "persist": False,
+        "ephemeral": False,
+        "work_dir": None,
+        "confirm_destructive": False,
+        "user_approved": False,
+        "retry_blocked_tasks": False,
+        "batch": None,
+        "confirm_self_review": False,
+        "progress_emitter": ProgressEmitter.from_env(progress_env),
+    }
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
 
 # ── Typed Port primitives (M2 / T1) ─────────────────────────────────────
 

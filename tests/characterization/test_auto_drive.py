@@ -720,7 +720,7 @@ _BRANCHES: list[dict[str, Any]] = [
 # Golden recipes — drive() seams for each branch we want to snapshot
 # ---------------------------------------------------------------------------
 #
-# Each recipe entry describes how to mock ``_status`` and ``_run_megaplan``
+# Each recipe entry describes how to mock ``_status`` and ``_run_planning_phase``
 # so that ``drive()`` traverses exactly the branch identified by the
 # corresponding ``_BRANCHES`` entry.
 #
@@ -732,10 +732,10 @@ _BRANCHES: list[dict[str, Any]] = [
 #     ``name`` of the ``_BRANCHES`` entry this recipe targets.
 # mode : str
 #     ``"immediate_terminal"`` — ``_status`` returns a terminal state on the
-#     first call; ``_run_megaplan`` is never invoked.
+#     first call; ``_run_planning_phase`` is never invoked.
 #     ``"execute_then_terminal"`` — ``_status`` first returns a non-terminal
 #     state with ``next_step="execute"``, then a terminal state; one
-#     ``_run_megaplan`` call writes a successful ``phase_result.json``.
+#     ``_run_planning_phase`` call writes a successful ``phase_result.json``.
 # status_sequence : list[dict[str, Any]]
 #     Return values for successive ``_status()`` calls.
 # run_exit_kind : str | None
@@ -1001,7 +1001,7 @@ _GOLDEN_RECIPES: list[dict[str, Any]] = [
     # (always > DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS=1800s in the past) →
     # _active_step_last_activity_stale returns True → recommended_action
     # set to "terminate_idle_step" → orphan-clear fires (event captured) →
-    # first _run_megaplan returns "idle timed out" in stderr with no
+    # first _run_planning_phase returns "idle timed out" in stderr with no
     # phase_result.json → synthesis ExitKind.timeout → _record_failure
     # (phase_timeout).  Second call writes success; third status "done".
     # _IDLE_SECONDS_RE normalises the non-deterministic idle_seconds value.
@@ -1213,7 +1213,7 @@ _GOLDEN_RECIPES: list[dict[str, Any]] = [
     # ── escalate_fail ──────────────────────────────────────────────────
     #
     # on_escalate=fail — no subprocess call → _outcome("escalated").
-    # immediate_terminal because _run_megaplan is never invoked.
+    # immediate_terminal because _run_planning_phase is never invoked.
     {
         "name": "escalate_fail",
         "branch_ref": "escalated",
@@ -1587,7 +1587,7 @@ _GOLDEN_RECIPES: list[dict[str, Any]] = [
     # ── cost_cap_exceeded ───────────────────────────────────────────────
     #
     # state.json history entries sum to > max_cost_usd=0.01 → cap fires
-    # before dispatch (L1497-1525).  immediate_terminal: _run_megaplan
+    # before dispatch (L1497-1525).  immediate_terminal: _run_planning_phase
     # never called.
     {
         "name": "cost_cap_exceeded",
@@ -1923,7 +1923,7 @@ _GOLDEN_RECIPES: list[dict[str, Any]] = [
     # _status() raises RuntimeError (per gate issue_hints-6).
     # Hits the except (RuntimeError, json.JSONDecodeError) block at L1475.
     # _record_failure(kind="status_lookup_failed") → _outcome("failed").
-    # immediate_terminal because _run_megaplan is never invoked.
+    # immediate_terminal because _run_planning_phase is never invoked.
     {
         "name": "status_lookup_failed",
         "branch_ref": "status_lookup_failed",
@@ -1961,7 +1961,7 @@ _GOLDEN_RECIPES: list[dict[str, Any]] = [
     # Hits L2275-2306 guard: code==0, on_phase_complete is set,
     # next_step="execute" → callback invoked → raises Exception →
     # _record_failure(kind="phase_callback_failed") → _outcome("failed").
-    # stateful_run: one _run_megaplan call writes success, then callback
+    # stateful_run: one _run_planning_phase call writes success, then callback
     # failure terminates the loop.
     {
         "name": "phase_callback_failed",
@@ -2132,7 +2132,7 @@ def test_auto_drive_branch(
 
         monkeypatch.setattr(auto, "_status", _fake_status)
 
-    # ── Mock _run_megaplan ─────────────────────────────────────────────
+    # ── Mock _run_planning_phase ─────────────────────────────────────────────
     mode = recipe["mode"]
     if mode == "execute_then_terminal":
         runner = fake_run_with_phase_result(
@@ -2196,16 +2196,42 @@ def test_auto_drive_branch(
 
         runner = _stateful_runner
     else:
-        # immediate_terminal: _run_megaplan should never be called.
+        # immediate_terminal: _run_planning_phase should never be called.
         def _no_run(*args, **kwargs):
             pytest.fail(
-                f"_run_megaplan unexpectedly called in "
+                f"_run_planning_phase unexpectedly called in "
                 f"'{recipe['name']}' (mode={mode})"
             )
 
         runner = _no_run
 
-    monkeypatch.setattr(auto, "_run_megaplan", runner)
+    monkeypatch.setattr(auto, "_run_planning_phase", runner)
+
+    def _override_force_proceed_runner(*, root, plan, reason, user_approved=False):
+        return runner(
+            [
+                "override",
+                "force-proceed",
+                "--plan",
+                plan,
+                "--reason",
+                reason,
+            ],
+            cwd=root,
+        )
+
+    def _override_abort_runner(*, root, plan, reason):
+        return runner(
+            ["override", "abort", "--plan", plan, "--reason", reason],
+            cwd=root,
+        )
+
+    monkeypatch.setattr(
+        auto,
+        "_override_force_proceed_in_process",
+        _override_force_proceed_runner,
+    )
+    monkeypatch.setattr(auto, "_override_abort_in_process", _override_abort_runner)
 
     # ── Drive ──────────────────────────────────────────────────────────
     drive_kwargs = recipe.get("drive_kwargs", {})

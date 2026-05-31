@@ -57,7 +57,12 @@ class PlanRepository:
         store: Store | None = None,
         home: str | Path | None = None,
     ) -> PlanRepository:
-        return cls(plan_dir, store=store, home=home)
+        repo = cls(plan_dir, store=store, home=home)
+        if store is not None and repo.is_bound:
+            from megaplan.observability.events_projection import ensure_events_projection
+
+            ensure_events_projection(repo.plan_dir, store=store, plan_id=repo.plan_name)
+        return repo
 
     @staticmethod
     def _looks_like_plan_dir(path: Path) -> bool:

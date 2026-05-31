@@ -1050,13 +1050,37 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
                 print(f"  - {defect}", file=sys.stderr)
             return 1
 
-        from megaplan._pipeline.registry import get_pipeline
+        from megaplan._pipeline.registry import (
+            canonical_pipeline_name,
+            get_pipeline,
+            scan_python_pipelines,
+        )
         from megaplan._pipeline.validator import validate
 
+        canonical_name = canonical_pipeline_name(name)
+        original_manifest_discovery = os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")
+        os.environ["MEGAPLAN_M6_MANIFEST_DISCOVERY"] = "1"
         try:
-            pipeline = get_pipeline(name)
+            dispositions = scan_python_pipelines()
+        finally:
+            if original_manifest_discovery is None:
+                os.environ.pop("MEGAPLAN_M6_MANIFEST_DISCOVERY", None)
+            else:
+                os.environ["MEGAPLAN_M6_MANIFEST_DISCOVERY"] = original_manifest_discovery
+        for disposition in dispositions:
+            if disposition.cli_name == canonical_name and disposition.status == "rejected":
+                print(
+                    f"pipelines check: {canonical_name!r} rejected: {disposition.reason}",
+                    file=sys.stderr,
+                )
+                return 1
+        try:
+            pipeline = get_pipeline(canonical_name)
         except Exception as exc:  # discovery / build failure
             print(f"pipelines check: failed to load {name!r}: {exc}", file=sys.stderr)
+            return 1
+        if pipeline is None:
+            print(f"pipelines check: {canonical_name!r} is not executable", file=sys.stderr)
             return 1
         diag = validate(pipeline)
         if diag.ok:
@@ -1128,7 +1152,14 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             f'_PIPELINE_DIR: Path = Path(__file__).parent / "{cli_name}"\n'
             f"\n"
             f'\n'
+            f'name: str = "{cli_name}"\n'
             f'description: str = "TODO: add a description"\n'
+            f"default_profile: str | None = None\n"
+            f"supported_modes: tuple[str, ...] = ()\n"
+            f'driver: tuple[str, str] = ("graph", "dispatch+emit")\n'
+            f'entrypoint: str = "build_pipeline"\n'
+            f'arnold_api_version: str = "1.0"\n'
+            f"capabilities: tuple[str, ...] = ()\n"
             f"\n"
             f"\n"
             f"def build_pipeline() -> Pipeline:\n"
@@ -1146,7 +1177,14 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             f"\n"
             f"__all__ = [\n"
             f'    "build_pipeline",\n'
+            f'    "name",\n'
             f'    "description",\n'
+            f'    "default_profile",\n'
+            f'    "supported_modes",\n'
+            f'    "driver",\n'
+            f'    "entrypoint",\n'
+            f'    "arnold_api_version",\n'
+            f'    "capabilities",\n'
             f"]\n"
         )
         skill_dir.mkdir(parents=True, exist_ok=True)

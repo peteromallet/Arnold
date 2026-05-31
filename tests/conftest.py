@@ -23,6 +23,19 @@ from megaplan.orchestration.phase_result import (
 )
 from megaplan.workers import WorkerResult
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _prepend_pythonpath(path: Path) -> None:
+    existing = os.environ.get("PYTHONPATH")
+    parts = [str(path)]
+    if existing:
+        parts.extend(part for part in existing.split(os.pathsep) if part and part != str(path))
+    os.environ["PYTHONPATH"] = os.pathsep.join(parts)
+
+
+_prepend_pythonpath(REPO_ROOT)
+
 
 @pytest.fixture(autouse=True)
 def isolate_worker_unit_tests_from_global_mock_env(
@@ -399,7 +412,7 @@ def fake_run_with_phase_result(
     stderr: str = "",
     **kwargs: object,
 ):
-    """Return a callable matching ``_run_megaplan(cmd, ...) → (int, str, str)``.
+    """Return a callable matching ``_run_planning_phase(cmd, ...) → (int, str, str)``.
 
     The callable also writes a synthetic ``phase_result.json`` alongside so
     that ``_run_phase`` can pick it up.  Returns ``(code, stdout, stderr)``

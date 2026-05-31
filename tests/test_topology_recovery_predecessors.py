@@ -10,7 +10,10 @@ from __future__ import annotations
 import pytest
 
 from megaplan._core.topology import (
+    RealizedGraph,
     RunTopologyConfig,
+    STAGE_TO_STATE,
+    STATE_TO_STAGE,
     _RECOVERY_POLICIES,
     build_topology,
     predecessors,
@@ -105,6 +108,33 @@ def test_graph_query_mode_still_works() -> None:
     assert isinstance(result, tuple)
     # `predecessors(graph, state)` matches the method on Graph.
     assert result == graph.predecessors("planned")
+
+
+def test_explicit_stage_state_maps_preserve_feedback_reviewed() -> None:
+    assert STAGE_TO_STATE["feedback"] == "reviewed"
+    assert STATE_TO_STAGE["reviewed"] == ("feedback",)
+    assert STATE_TO_STAGE["initialized"] == ("prep", "plan")
+    assert STATE_TO_STAGE["critiqued"] == ("gate", "revise")
+
+
+def test_realized_graph_next_label_uses_real_edge_space() -> None:
+    graph = RealizedGraph(RunTopologyConfig(robustness="full", with_feedback=True))
+    assert graph.next_label(
+        "plan",
+        {"current_state": "prepped", "config": {"robustness": "full"}},
+        {"current_state": "planned", "config": {"robustness": "full"}},
+    ) == "critique"
+    assert graph.next_label(
+        "review",
+        {"current_state": "executed", "config": {"robustness": "full", "with_feedback": True}},
+        {"current_state": "reviewed", "config": {"robustness": "full", "with_feedback": True}},
+    ) == "feedback"
+
+
+def test_realized_graph_next_steps_preserves_synthetic_step() -> None:
+    graph = RealizedGraph(RunTopologyConfig(robustness="full"))
+    for state in ("planned", "critiqued", "gated", "finalized"):
+        assert "step" in graph.next_steps({"current_state": state, "config": {"robustness": "full"}})
 
 
 @pytest.mark.parametrize("policy", sorted(_RECOVERY_POLICIES))
