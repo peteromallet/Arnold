@@ -6,6 +6,8 @@ Arnold is a tool for building intelligence systems out of many coordinated model
 
 ## Megaplan - a pipeline for cost-efficient advanced planning and execution
 
+![Megaplan pipeline overview](docs/assets/megaplan-pipeline-hero.png)
+
 It breaks building software into structured, independently-checked phases — making intelligent-but-unreliable LLMs systematically robust, and letting each phase run on the cheapest model that can do it well.
 
 ## Megaplan's philosophy
@@ -19,8 +21,6 @@ Two ideas, and they reinforce each other.
 The two connect: the same decomposition that makes the process robust is what lets you price it. Once work is broken into stages and tasks, each routes to the cheapest model that can handle it — premium models reserved for two jobs: **adjudicating** which model handles each piece, and the genuinely **hard** parts.
 
 ## How it works
-
-![How megaplan splits every phase - the frontier model decides, cheap models do the work](docs/assets/scribble-routing-fan.png)
 
 ```
 prep → plan → critique → gate → [revise → critique → gate]* → finalize → execute → review
