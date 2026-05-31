@@ -74,6 +74,12 @@ def test_render_entrypoint_replaces_placeholders_and_reigh_hardcodes(mode: str) 
 
     assert '# sandbox_mode = "danger-full-access" stays on because the container is the sandbox.' in rendered
     assert 'sandbox_mode = "danger-full-access"' in rendered
+    assert 'preferred_auth_method = "chatgpt"' in rendered
+    assert 'forced_login_method = "chatgpt"' in rendered
+    assert 'CODEX_AUTH_METHOD="chatgpt"' in rendered
+    assert 'install -m 600 /workspace/.creds/codex-auth.json /root/.codex/auth.json' in rendered
+    assert 'install -m 600 /workspace/.creds/hermes-auth.json /root/.hermes/auth.json' in rendered
+    assert '[[ "$CODEX_AUTH_METHOD" == "apikey" ]] && [[ -n "${OPENAI_API_KEY:-}" ]]' in rendered
     # The Claude auth block prefers the refresh-token shim (programmatic),
     # falls back to ANTHROPIC_API_KEY (legacy), warns when neither is set.
     assert 'if [[ -n "${CLAUDE_CODE_REFRESH_TOKEN:-}" ]]; then' in rendered
@@ -114,6 +120,16 @@ def test_render_entrypoint_replaces_placeholders_and_reigh_hardcodes(mode: str) 
         assert 'tmux new-session -d -s agent -c /workspace/custom-app "bash -l"' in rendered
         assert "megaplan auto --plan" not in rendered
         assert "mp-chain " not in rendered
+
+
+def test_render_entrypoint_apikey_codex_auth_opt_out_omits_chatgpt_forcing() -> None:
+    spec = replace(_spec("idle"), megaplan=replace(_spec("idle").megaplan, codex_auth="apikey"))
+
+    rendered = render_entrypoint(spec)
+
+    assert 'CODEX_AUTH_METHOD="apikey"' in rendered
+    assert 'preferred_auth_method = "chatgpt"' not in rendered
+    assert 'forced_login_method = "chatgpt"' not in rendered
 
 
 def test_render_entrypoint_wires_megaplan_repo_refresh_install() -> None:

@@ -4,15 +4,24 @@
 #   Supported providers: railway, local, ssh. `fly` is reserved for a future release.
 provider: railway
 
+# Shared-instance model:
+#   The cloud image is a stable base. Operational logic ships through the
+#   on-volume arnold/megaplan source clone and is refreshed by `cloud chain`
+#   before the chain driver starts. Rebuild/redeploy is only needed when the
+#   thin bootstrap image itself changes.
+#
 # repo:
 #   url      Git repository cloned into the persistent workspace volume.
 #   branch   Branch checked out on first boot.
 #   workspace
-#            Absolute path inside the container where the repo lives.
+#            Absolute path inside the container where the repo lives. Leave
+#            omitted for `cloud chain` to derive an isolated shared-runner path
+#            like /workspace/<chain-name>/<repo>; set explicitly only when a
+#            specific fixed workspace is required.
 repo:
   url: https://github.com/example/app.git
   branch: main
-  workspace: /workspace/app
+  # workspace: /workspace/app
 
 # extra_repos:
 #   Optional sibling repos cloned into the volume alongside the primary
@@ -30,9 +39,9 @@ repo:
 
 # chain_session:
 #   tmux session name used by `megaplan cloud chain` to host the chain
-#   runner. Override per cloud.yaml when running multiple chains on the
-#   same long-lived worker (e.g. chain_session: slot-first), so each
-#   chain has an isolated tmux session and log file.
+#   runner. Leave omitted for `cloud chain` to derive a unique session from
+#   the local chain spec identity, with a matching per-chain log file. Override
+#   only when you need a stable, human-chosen slot.
 # chain_session: megaplan-chain
 
 # agents:
@@ -81,14 +90,27 @@ chain:
 
 # megaplan:
 #   ref           Branch/tag/SHA used for git installs.
+#   codex_auth    Auth mode for the codex CLI. Defaults to `chatgpt`, which
+#                 writes preferred_auth_method/forced_login_method=chatgpt so
+#                 codex uses ChatGPT subscription OAuth even when OPENAI_API_KEY
+#                 is present. During `cloud deploy` and `cloud chain`, megaplan
+#                 best-effort seeds local ~/.codex/auth.json and ~/.hermes/auth.json
+#                 into /workspace/.creds/* on the persistent volume and /root
+#                 for the running container. On restart, entrypoint copies the
+#                 volume seed back into /root. Set `apikey` only when you
+#                 explicitly want API-key billing and want to skip the OAuth seed.
 #   repo          Optional git URL of the megaplan source repo. When set, the
-#                 container installs current megaplan from this repo at `ref`
-#                 on every boot and before each `megaplan cloud chain` run.
+#                 chain launcher clone/pulls this repo into src_path and
+#                 installs it before each driver run, without an image rebuild.
+#   src_path      On-volume megaplan source clone used by `cloud chain` refresh.
+#                 Defaults to /workspace/arnold.
 #   install_spec  Advanced pip-spec override, installed verbatim. Git specs get
 #                 `@ref` appended.
 megaplan:
   ref: main
+  codex_auth: chatgpt
   # repo: https://github.com/peteromallet/arnold.git
+  # src_path: /workspace/arnold
   # install_spec: megaplan-harness[agent] @ git+https://github.com/peteromallet/arnold.git
 
 # resources:

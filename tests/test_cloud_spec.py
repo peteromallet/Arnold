@@ -86,6 +86,7 @@ def test_load_spec_parses_megaplan_source_fields(tmp_path: Path) -> None:
         "ref": "feature/cloud-refresh",
         "repo": "https://github.com/peteromallet/arnold.git",
         "install_spec": "megaplan-harness[agent] @ git+https://github.com/peteromallet/arnold.git",
+        "src_path": "/workspace/custom/arnold",
     }
 
     spec = load_spec(_write_spec(tmp_path, payload))
@@ -94,6 +95,7 @@ def test_load_spec_parses_megaplan_source_fields(tmp_path: Path) -> None:
         ref="feature/cloud-refresh",
         repo="https://github.com/peteromallet/arnold.git",
         install_spec="megaplan-harness[agent] @ git+https://github.com/peteromallet/arnold.git",
+        src_path="/workspace/custom/arnold",
     )
 
 
@@ -103,7 +105,31 @@ def test_load_spec_defaults_megaplan_source_fields_when_absent(tmp_path: Path) -
 
     spec = load_spec(_write_spec(tmp_path, payload))
 
-    assert spec.megaplan == MegaplanSpec(ref="main", repo=None, install_spec=None)
+    assert spec.megaplan == MegaplanSpec(
+        ref="main",
+        repo=None,
+        install_spec=None,
+        src_path="/workspace/arnold",
+        codex_auth="chatgpt",
+    )
+
+
+@pytest.mark.parametrize("auth", ["chatgpt", "apikey"])
+def test_load_spec_accepts_codex_auth_modes(tmp_path: Path, auth: str) -> None:
+    payload = _base_spec()
+    payload["megaplan"]["codex_auth"] = auth  # type: ignore[index]
+
+    spec = load_spec(_write_spec(tmp_path, payload))
+
+    assert spec.megaplan.codex_auth == auth
+
+
+def test_load_spec_rejects_unknown_codex_auth_mode(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["megaplan"]["codex_auth"] = "metered"  # type: ignore[index]
+
+    with pytest.raises(CliError, match="megaplan.codex_auth"):
+        load_spec(_write_spec(tmp_path, payload))
 
 
 @pytest.mark.parametrize(
@@ -113,6 +139,7 @@ def test_load_spec_defaults_megaplan_source_fields_when_absent(tmp_path: Path) -
         ("repo", ""),
         ("install_spec", ["megaplan"]),
         ("install_spec", ""),
+        ("src_path", "relative/arnold"),
     ],
 )
 def test_load_spec_rejects_invalid_megaplan_source_fields(

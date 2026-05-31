@@ -22,6 +22,7 @@ VALID_PROVIDERS = ("railway", "local", "ssh")
 FUTURE_PROVIDERS = ("fly",)
 KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
 VALID_CODEX_REASONING = ("minimal", "low", "medium", "high")
+VALID_CODEX_AUTH = ("chatgpt", "apikey")
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class RepoSpec:
     url: str
     branch: str = "main"
     workspace: str = "/workspace/app"
+    workspace_explicit: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,8 @@ class MegaplanSpec:
     ref: str = "main"
     repo: str | None = None
     install_spec: str | None = None
+    src_path: str = "/workspace/arnold"
+    codex_auth: str = "chatgpt"
 
 
 @dataclass(frozen=True)
@@ -111,6 +115,7 @@ class CloudSpec:
     toolchains: list[ToolchainSpec] | None = None
     extra_repos: tuple[RepoSpec, ...] = ()
     chain_session: str = "megaplan-chain"
+    chain_session_explicit: bool = False
 
 
 def apply_repo_overrides(
@@ -133,6 +138,7 @@ def apply_repo_overrides(
             url=repo_url or spec.repo.url,
             branch=repo_branch or spec.repo.branch,
             workspace=workspace,
+            workspace_explicit=True if repo_workspace is not None else spec.repo.workspace_explicit,
         ),
     )
 
@@ -233,6 +239,7 @@ def _repo_from_mapping(raw: Any, label: str) -> RepoSpec:
         url=_string(mapping.get("url"), f"{label}.url"),
         branch=_string(mapping.get("branch"), f"{label}.branch", default="main"),
         workspace=_absolute_posix(mapping.get("workspace"), f"{label}.workspace"),
+        workspace_explicit="workspace" in mapping,
     )
 
 
@@ -298,6 +305,7 @@ def load_spec(path: Path) -> CloudSpec:
         url=_string(repo_raw.get("url"), "repo.url"),
         branch=_string(repo_raw.get("branch"), "repo.branch", default="main"),
         workspace=_absolute_posix(repo_raw.get("workspace", "/workspace/app"), "repo.workspace"),
+        workspace_explicit="workspace" in repo_raw,
     )
     extra_repos = _extra_repos(raw.get("extra_repos"), repo)
 
@@ -319,6 +327,11 @@ def load_spec(path: Path) -> CloudSpec:
     agents = _agents(raw.get("agents"))
 
     megaplan_raw = _mapping(raw.get("megaplan"), "megaplan")
+    codex_auth = _string(megaplan_raw.get("codex_auth"), "megaplan.codex_auth", default="chatgpt")
+    if codex_auth not in VALID_CODEX_AUTH:
+        raise _invalid(
+            f"megaplan.codex_auth must be one of {', '.join(VALID_CODEX_AUTH)}; got {codex_auth!r}"
+        )
     megaplan = MegaplanSpec(
         ref=_string(megaplan_raw.get("ref"), "megaplan.ref", default="main"),
         repo=_optional_string(megaplan_raw.get("repo"), "megaplan.repo"),
@@ -326,6 +339,11 @@ def load_spec(path: Path) -> CloudSpec:
             megaplan_raw.get("install_spec"),
             "megaplan.install_spec",
         ),
+        src_path=_absolute_posix(
+            megaplan_raw.get("src_path", "/workspace/arnold"),
+            "megaplan.src_path",
+        ),
+        codex_auth=codex_auth,
     )
 
     resources_raw = _mapping(raw.get("resources"), "resources")
@@ -388,6 +406,9 @@ def load_spec(path: Path) -> CloudSpec:
             ),
         )
 
+    chain_session_explicit = "chain_session" in raw or (
+        chain_spec is not None and chain_spec.chain_session is not None
+    )
     chain_session = _string(
         raw.get("chain_session"),
         "chain_session",
@@ -411,4 +432,5 @@ def load_spec(path: Path) -> CloudSpec:
         toolchains=_toolchains(raw.get("toolchains")),
         extra_repos=extra_repos,
         chain_session=chain_session,
+        chain_session_explicit=chain_session_explicit,
     )

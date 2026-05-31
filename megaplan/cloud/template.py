@@ -22,6 +22,8 @@ PLACEHOLDERS = (
     "MEGAPLAN_REF",
     "MEGAPLAN_REPO",
     "MEGAPLAN_INSTALL_SPEC_OVERRIDE",
+    "CODEX_AUTH_METHOD",
+    "CODEX_AUTH_CONFIG_BLOCK",
     "ROBUSTNESS",
     "MODE",
     "IDEA_FILE",
@@ -268,6 +270,17 @@ fi
 # ─────────────────────────────────────────────────────────────────────"""
 
 
+def _codex_auth_config_block(spec: CloudSpec) -> str:
+    if spec.megaplan.codex_auth == "apikey":
+        return ""
+    return '\n'.join(
+        [
+            'preferred_auth_method = "chatgpt"',
+            'forced_login_method = "chatgpt"',
+        ]
+    )
+
+
 def render_entrypoint(spec: CloudSpec) -> str:
     values = {
         "REPO_URL": spec.repo.url,
@@ -279,6 +292,8 @@ def render_entrypoint(spec: CloudSpec) -> str:
         "MEGAPLAN_REF": spec.megaplan.ref,
         "MEGAPLAN_REPO": spec.megaplan.repo or "",
         "MEGAPLAN_INSTALL_SPEC_OVERRIDE": spec.megaplan.install_spec or "",
+        "CODEX_AUTH_METHOD": spec.megaplan.codex_auth,
+        "CODEX_AUTH_CONFIG_BLOCK": _codex_auth_config_block(spec),
         "ROBUSTNESS": spec.auto.robustness if spec.auto is not None else "standard",
         "MODE": spec.mode,
         "IDEA_FILE": spec.auto.idea_file if spec.auto is not None else "/workspace/idea.txt",
