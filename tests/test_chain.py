@@ -215,6 +215,48 @@ def test_validate_paths_resolves_relative_ideas_from_project_root(
     chain_module.validate_paths(spec, tmp_path)
 
 
+def test_validate_paths_skips_completed_and_adopted_current_on_resume(tmp_path: Path) -> None:
+    future_idea = _touch_idea(tmp_path, "m3.txt", "future milestone")
+    spec = ChainSpec.from_dict(
+        {
+            "milestones": [
+                {"label": "m1", "idea": str(tmp_path / "missing-completed.md")},
+                {"label": "m2", "idea": str(tmp_path / "missing-adopted-current.md")},
+                {"label": "m3", "idea": str(future_idea)},
+            ]
+        }
+    )
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name="m2-adopted-plan",
+        completed=[{"label": "m1", "plan": "m1-plan", "status": "done"}],
+    )
+
+    chain_module.validate_paths(spec, tmp_path, state)
+
+
+def test_validate_paths_still_requires_future_ideas_on_resume(tmp_path: Path) -> None:
+    spec = ChainSpec.from_dict(
+        {
+            "milestones": [
+                {"label": "m1", "idea": str(tmp_path / "missing-completed.md")},
+                {"label": "m2", "idea": str(tmp_path / "missing-adopted-current.md")},
+                {"label": "m3", "idea": str(tmp_path / "missing-future.md")},
+            ]
+        }
+    )
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name="m2-adopted-plan",
+        completed=[{"label": "m1", "plan": "m1-plan", "status": "done"}],
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        chain_module.validate_paths(spec, tmp_path, state)
+
+    assert "m3" in excinfo.value.message
+
+
 def test_load_spec_defaults_base_branch_to_main(tmp_path: Path) -> None:
     idea = _touch_idea(tmp_path, "m1.txt")
     spec_path = _write_spec(tmp_path, {"milestones": [{"label": "m1", "idea": str(idea)}]})
