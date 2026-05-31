@@ -1,4 +1,4 @@
-# How You Can Move >90% of Your Coding to DeepSeek - While *Improving* Robustness and Execution Quality, at ~2.5% of the Cost (Arnold)
+# How You Can Move >90% of Your Coding to DeepSeek - While Improving Robustness and Execution Quality, at ~2.5% of the Cost (Megaplan via Arnold)
 
 Right now, most of our coding runs on temporarily subsidised AI - sustained by the goodwill of a handful of temperamental monopolies. You should want to move as much of your work as possible onto stable, reliable, open-source models. But how?
 
