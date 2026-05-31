@@ -1499,7 +1499,13 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
     )
 
 
-def _apply_file_fallback(step: str, payload: dict[str, Any], plan_dir: Path) -> dict[str, Any]:
+def _apply_file_fallback(
+    step: str,
+    payload: dict[str, Any],
+    plan_dir: Path,
+    *,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
     """On-disk template fallback for steps that write their answer to a file.
 
     Claude sometimes emits a chatty summary instead of literal JSON in its final
@@ -1515,7 +1521,7 @@ def _apply_file_fallback(step: str, payload: dict[str, Any], plan_dir: Path) -> 
     if step not in file_fallback:
         return payload
     fallback_name, sentinel_key = file_fallback[step]
-    fallback_path = plan_dir / fallback_name
+    fallback_path = Path(output_path) if output_path is not None else plan_dir / fallback_name
     if not fallback_path.exists():
         return payload
     try:
@@ -1853,6 +1859,7 @@ def run_shannon_step(
     session_agent: str = "shannon",
     model: str | None = None,
     read_only: bool = False,
+    output_path: Path | None = None,
 ) -> WorkerResult:
     """Run a megaplan phase via Shannon (Claude in an interactive tmux session).
 
@@ -1938,6 +1945,9 @@ def run_shannon_step(
             step, state, plan_dir, root=root, **(prompt_kwargs or {})
         )
     )
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
     plan_mode = state["config"].get("mode", "code")
     schema_name = (
         get_execution_schema_key(plan_mode, form=creative_form_id(state))
@@ -2201,7 +2211,7 @@ def run_shannon_step(
     # surrounding execute loop deliberately does not retry execute.
     def _parse_and_validate(raw_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
         env_, pay_ = _parse_shannon_output(raw_text)
-        pay_ = _apply_file_fallback(step, pay_, plan_dir)
+        pay_ = _apply_file_fallback(step, pay_, plan_dir, output_path=output_path)
         pay_ = _normalize_worker_payload(step, pay_)
         validate_payload(step, pay_)
         return env_, pay_

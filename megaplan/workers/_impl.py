@@ -1895,6 +1895,7 @@ def run_claude_step(
     prompt_kwargs: dict[str, Any] | None = None,
     effort: str | None = None,
     model: str | None = None,
+    output_path: Path | None = None,
 ) -> WorkerResult:
     """Compatibility wrapper: the public ``claude`` route runs via Shannon."""
     if effort is not None and effort not in _VALID_CLAUDE_EFFORTS:
@@ -1912,6 +1913,7 @@ def run_claude_step(
         effort=effort,
         session_agent="claude",
         model=model,
+        output_path=output_path,
     )
 
 
@@ -2725,6 +2727,7 @@ def run_step_with_worker(
                     effort=effort,
                     model=resolved_model,
                     read_only=read_only,
+                    output_path=output_path,
                 )
                 if agent == "claude":
                     shannon_kwargs["session_agent"] = "claude"

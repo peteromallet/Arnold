@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan.types import CliError
+from megaplan.types import AgentMode, CliError
 from megaplan.workers import WorkerResult, session_key_for
 from tests._workers_helpers import _mock_state
 
@@ -113,13 +113,17 @@ def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) ->
         with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, prompt_override="custom prompt")
     command = run_command.call_args.args[0]
-    assert command[0:2] == ["shannon", "-p"]
-    assert "Read the full megaplan phase prompt from this file" in command[2]
+    assert command[0] == "bun"
+    assert str(command[1]).endswith("vendor/shannon/index.ts")
+    assert "-p" in command
+    prompt_arg = command[command.index("-p") + 1]
+    assert "Read the full megaplan phase prompt from this file" in prompt_arg
     assert run_command.call_args.kwargs["stdin_text"] is None
-    prompt_file = plan_dir / "plan_v1_shannon_prompt.txt"
+    prompt_file = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon" / "plan_v1_shannon_prompt.txt"
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "custom prompt" in prompt_text
-    assert "SHANNON STRUCTURED OUTPUT CONTRACT" in prompt_text
+    assert "Output format:" in prompt_text
+    assert "Your final answer must be exactly one valid JSON object" in prompt_text
 
 def test_run_claude_step_raises_on_invalid_payload(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
@@ -217,3 +221,65 @@ def test_run_step_with_worker_falls_back_from_claude_auth_error_to_codex(tmp_pat
         "resolved": "codex",
         "reason": "claude runtime unhealthy: auth_error",
     }
+
+
+def test_run_step_with_worker_forwards_output_path_to_claude_shannon(tmp_path: Path) -> None:
+    from megaplan.workers import run_step_with_worker
+
+    plan_dir, state = _mock_state(tmp_path)
+    args = Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[])
+    output_path = plan_dir / "critique_check_issue_hints.json"
+    worker = WorkerResult(
+        payload={"checks": [{"id": "issue-hints", "findings": []}]},
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="claude-session",
+    )
+
+    with patch("megaplan.workers.shannon.run_shannon_step", return_value=worker) as mocked_shannon:
+        result, agent, _mode, _refreshed = run_step_with_worker(
+            "critique",
+            state,
+            plan_dir,
+            args,
+            root=tmp_path,
+            resolved=AgentMode(
+                agent="claude",
+                mode="persistent",
+                refreshed=False,
+                model=None,
+                resolved_model="claude-sonnet-4",
+            ),
+            output_path=output_path,
+            read_only=True,
+        )
+
+    assert result == worker
+    assert agent == "claude"
+    assert mocked_shannon.call_args.kwargs["output_path"] == output_path
+    assert mocked_shannon.call_args.kwargs["read_only"] is True
+
+
+def test_shannon_file_fallback_prefers_supplied_output_path(tmp_path: Path) -> None:
+    from megaplan.workers.shannon import _apply_file_fallback
+
+    plan_dir = tmp_path
+    aggregate = {
+        "checks": [
+            {"id": "aggregate-a", "findings": [{"severity": "high", "description": "wrong"}]},
+            {"id": "aggregate-b", "findings": []},
+        ]
+    }
+    per_check = {
+        "checks": [
+            {"id": "issue-hints", "findings": [{"severity": "medium", "description": "right"}]}
+        ]
+    }
+    (plan_dir / "critique_output.json").write_text(json.dumps(aggregate), encoding="utf-8")
+    output_path = plan_dir / "critique_check_issue_hints.json"
+    output_path.write_text(json.dumps(per_check), encoding="utf-8")
+
+    result = _apply_file_fallback("critique", {"checks": []}, plan_dir, output_path=output_path)
+
+    assert result == per_check
