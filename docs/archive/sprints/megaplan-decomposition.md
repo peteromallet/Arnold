@@ -224,7 +224,7 @@ is right by building the second flow. Inverted:
 3. Validate: prototype runs to completion, writes artifacts under
    `.megaplan/demos/judges/<run>/`, fixture-test asserts artifact shape.
 4. Freeze the type interfaces. Any change to Step/Stage/Pipeline/Edge after
-   this requires explicit note in `briefs/megaplan-decomposition.md`.
+   this requires explicit note in `.megaplan/briefs/megaplan-decomposition.md`.
 
 ### Sprint 2 (weeks 3–4): port planning to the Pipeline
 

@@ -2,7 +2,7 @@
 
 You are one of 10 independent investigators examining the megaplan codebase at the
 current working directory (`--project-dir`). A large ~2–3 month refactor is being
-*considered* — its design is in `briefs/pipeline-unification-planning-as-pack.md`.
+*considered* — its design is in `.megaplan/briefs/pipeline-unification-planning-as-pack.md`.
 **READ THAT BRIEF FIRST** (it's ~675 lines; read it fully). In one line: it collapses
 megaplan's *dual* control flow — the legacy `COMMAND_HANDLERS` dispatch + `auto.py`
 subprocess-shelling path, versus the `run_pipeline`/`run_pipeline_with_policy` executor

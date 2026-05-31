@@ -1,0 +1,9 @@
+File written and confirmed: **1,106 words, 181 lines** at `/Users/peteromalley/Documents/megaplan/.megaplan/briefs/hardening-epic/analysis/m5d-pipeline-godfiles-facts.md`. Under the 1,200-word cap.
+
+Key findings per the RAW SUMMARY:
+
+- **Zero rework cycles.** The plan was created, critiqued by 9 lenses across 13 subagents (5× deepseek-v4-flash, 4× deepseek-v4-pro), gated/reviewed across an overnight boundary, then executed in 2 straight GPT-5.4 turns. No iterate-back loops.
+- **Zero real retries.** All 10 "retry" hits are from the WRITE ACCESS CONTRACT boilerplate injected into every subagent prompt.
+- **Zero runtime errors.** All 796 raw "Error/Exception" hits are Python source code being read/displayed, not execution failures.
+- **Model split:** 78 GPT-5.5 turns (planning/review), 2 GPT-5.4 turns (execution). Zero Claude/Opus/Kimi sessions — those only appeared in the critic model roster text.
+- **Duration:** ~25.5 hours total (overnight review gap from May 27 evening to May 28 evening), actual execution took ~26 minutes. 3.85M tokens at 95.9% cache hit rate.

@@ -375,6 +375,52 @@ def build_parser() -> argparse.ArgumentParser:
     epic_export_parser.add_argument("--allow-missing-blobs", action="store_true")
     epic_export_parser.add_argument("--project-dir", default=None)
 
+    # --- brief subcommand group ---
+    brief_parser = subparsers.add_parser(
+        "brief", help="Create canonical .megaplan/briefs source artifacts"
+    )
+    brief_parser.add_argument("--project-dir", default=None)
+    brief_sub = brief_parser.add_subparsers(dest="brief_action", required=True)
+
+    brief_new_parser = brief_sub.add_parser(
+        "new", help="Create .megaplan/briefs/<slug>.md"
+    )
+    brief_new_parser.add_argument("slug", help="Brief slug")
+    brief_new_body_group = brief_new_parser.add_mutually_exclusive_group(required=True)
+    brief_new_body_group.add_argument(
+        "-b", "--body", default=None, metavar="BODY", help="Brief text"
+    )
+    brief_new_body_group.add_argument(
+        "--from",
+        dest="from_file",
+        default=None,
+        metavar="PATH",
+        help="Copy brief text from a UTF-8 file",
+    )
+    brief_new_body_group.add_argument(
+        "-", dest="stdin_body", action="store_true", help="Read brief text from stdin"
+    )
+    brief_new_parser.add_argument("--force", action="store_true")
+    brief_new_parser.add_argument(
+        "--init",
+        action="store_true",
+        help="After writing the brief, run `megaplan init --idea-file` against it.",
+    )
+
+    brief_epic_parser = brief_sub.add_parser(
+        "epic", help="Create .megaplan/briefs/<epic>/chain.yaml plus milestone stubs"
+    )
+    brief_epic_parser.add_argument("slug", help="Epic slug")
+    brief_epic_parser.add_argument(
+        "--milestone",
+        action="append",
+        required=True,
+        metavar="LABEL=TITLE",
+        help="Milestone label and optional title. Repeat for each milestone.",
+    )
+    brief_epic_parser.add_argument("--base-branch", default="main")
+    brief_epic_parser.add_argument("--force", action="store_true")
+
     # --- ticket subcommand group ---
     ticket_parser = subparsers.add_parser(
         "ticket", help="Manage repo-scoped issue/problem tickets"

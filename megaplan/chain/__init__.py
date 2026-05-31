@@ -15,7 +15,7 @@ Spec format (YAML)::
       plan: milestone-m0-from-docs-state-20260415-0217
     milestones:
       - label: m1
-        idea: /workspace/ideas/M1-foundation-store.txt
+        idea: .megaplan/briefs/foundation-store/M1-foundation-store.txt
         branch: megaplan/m1-foundation-store   # optional, currently informational
         profile: thoughtful                     # optional init rubric knobs
         robustness: standard
@@ -29,7 +29,7 @@ Spec format (YAML)::
           to inflight tasks; skip CLI plumbing.
         deepseek_provider: fireworks
       - label: m1a
-        idea: /workspace/ideas/M1a-settings-store.txt
+        idea: .megaplan/briefs/foundation-store/M1a-settings-store.txt
     on_failure:
       abort: stop_chain          # stop_chain | skip_milestone | resume_milestone | retry_milestone
     on_escalate:
@@ -742,10 +742,20 @@ class ChainState:
         )
 
 
+def _chain_runtime_dir_for(spec_path: Path) -> Path:
+    spec_resolved = spec_path.resolve()
+    parts = spec_resolved.parts
+    for index, part in enumerate(parts):
+        if part == ".megaplan" and index + 1 < len(parts) and parts[index + 1] == "briefs":
+            repo_root = Path(*parts[:index])
+            return repo_root / ".megaplan" / "plans" / ".chains"
+    return spec_resolved.parent / ".megaplan" / "plans" / ".chains"
+
+
 def _state_path_for(spec_path: Path) -> Path:
     spec_resolved = spec_path.resolve()
     digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
-    return spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json"
+    return _chain_runtime_dir_for(spec_path) / f"{spec_resolved.stem}-{digest}.json"
 
 
 def _legacy_state_path_for(spec_path: Path) -> Path:
@@ -894,7 +904,7 @@ def _contract_context_for_plan_only_milestone(
 
 
 def _chain_review_path(spec_path: Path) -> Path:
-    return spec_path.resolve().parent / ".megaplan" / "plans" / ".chains" / f"{spec_path.stem}.review.md"
+    return _chain_runtime_dir_for(spec_path) / f"{spec_path.stem}.review.md"
 
 
 def _markdown_cell(value: Any) -> str:
@@ -1319,7 +1329,7 @@ def _plan_artifact_paths_for_milestone(
         plan_dir / "state.json",
         plan_dir / "contract.json",
     ]
-    idea_path = Path(milestone.idea)
+    idea_path = _resolve_idea_path(root, milestone.idea)
     if idea_path.exists():
         # The idea brief is an immutable artifact. If it lives outside the
         # project repo (e.g. an absolute path to a brief authored elsewhere),
@@ -1339,6 +1349,13 @@ def _plan_artifact_paths_for_milestone(
                 idea_copy.write_bytes(new_content)
             artifacts.append(idea_copy)
     return artifacts
+
+
+def _resolve_idea_path(root: Path, idea: str) -> Path:
+    idea_path = Path(idea).expanduser()
+    if idea_path.is_absolute():
+        return idea_path
+    return root / idea_path
 
 
 # ---------------------------------------------------------------------------
@@ -1508,7 +1525,7 @@ def _write_chain_policy_into_plan_meta(
 def validate_paths(spec: ChainSpec, root: Path) -> None:
     """Check that all idea files exist and the seed plan (if any) is on disk."""
     for m in spec.milestones:
-        idea_path = Path(m.idea)
+        idea_path = _resolve_idea_path(root, m.idea)
         if not idea_path.exists():
             raise CliError(
                 "missing_idea_file",

@@ -1,7 +1,7 @@
 # Epic vetting philosophy
 
 How to pressure-test a large design/epic *before* building it — distilled from vetting the
-planning-unification epic (worked example: `briefs/pipeline-unification-planning-as-pack.md`; tracked
+planning-unification epic (worked example: `.megaplan/briefs/pipeline-unification-planning-as-pack.md`; tracked
 as ticket `01KSAWQFZBJMXE6JHXN01PJ5SR`). The aim is a plan that's robust because its premises and its
 load-bearing facts have both been attacked, not because it's long.
 

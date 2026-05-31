@@ -1,6 +1,6 @@
 # Sprint 4 Chunk C — `auto.py` walks the Pipeline
 
-Full Sprint-4 plan at `briefs/sprint-4-elegance.md`. Chunk C follows
+Full Sprint-4 plan at `.megaplan/briefs/sprint-4-elegance.md`. Chunk C follows
 Chunks A (typed edges) and B (real handler ports).
 
 ## Problem

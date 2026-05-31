@@ -53,6 +53,8 @@ When you split, structure the dependency graph explicitly. Each handoff is a wri
 
 **Tightening the brief beats picking a higher tier** — and is usually cheaper. Invest here before anywhere else.
 
+**Store durable briefs in `.megaplan/briefs/`.** Single-plan ideas live at `.megaplan/briefs/<slug>.md`. Epics live at `.megaplan/briefs/<epic-slug>/chain.yaml` with their milestone briefs in the same directory. `.megaplan/plans/` is generated run state; `.megaplan/briefs/` is the committed input material you hand to `megaplan init` or `megaplan chain start`. Use `megaplan brief new` or `megaplan brief epic` to create the canonical files.
+
 **The brief must be locked in before init** — fully self-contained so the model can run end-to-end without coming back for clarification. The harness snapshots the brief at `init`; later edits to the idea-file are not re-read. If you find yourself wanting to "ask the model" what to do, write that decision down first.
 
 A good brief covers:
@@ -238,7 +240,7 @@ fanout  = "hermes:deepseek:deepseek-v4-flash" # cheap, parallel, high-volume
 distill = "hermes:deepseek:deepseek-v4-pro"   # connects across areas, read-only
 ```
 
-Rationale: triage is the highest-leverage step (a bad route starves everything downstream), so it uses DeepSeek Pro by default; fan-out is the cost lever (flash × up to 10 ≪ pro × 10); distill must reconcile across areas. Explicit `claude:` and `shannon:` prep model entries are rejected until real read-only runners exist. Under `--vendor codex`, a resolved Codex flat prep route switches triage/distill to the Codex read-only runner; fan-out stays on the cheap Hermes/DeepSeek workers. Design + status: `briefs/prep-fanout-research-dossier.md`.
+Rationale: triage is the highest-leverage step (a bad route starves everything downstream), so it uses DeepSeek Pro by default; fan-out is the cost lever (flash × up to 10 ≪ pro × 10); distill must reconcile across areas. Explicit `claude:` and `shannon:` prep model entries are rejected until real read-only runners exist. Under `--vendor codex`, a resolved Codex flat prep route switches triage/distill to the Codex read-only runner; fan-out stays on the cheap Hermes/DeepSeek workers. Design + status: `.megaplan/briefs/prep-fanout-research-dossier.md`.
 
 **Prep clarification ("prep may ask").** When prep runs and discovers genuine ambiguities it cannot responsibly resolve alone, it surfaces them as **blocking questions** that pause the run at `awaiting_human_verify` before the plan phase begins. This is **on by default** — prep is allowed to ask. Blocking questions are candidate concerns, not verdicts: a human may judge a flagged blocker a non-issue and resume immediately.
 

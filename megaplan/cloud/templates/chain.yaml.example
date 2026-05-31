@@ -1,6 +1,7 @@
-# Example chain spec consumed by `megaplan chain --spec /workspace/chain.yaml`.
-# Copy to /workspace/chain.yaml on the container (or mount it via volume) and
-# edit as needed. Progress is persisted under .megaplan/plans/.chains/.
+# Example chain spec consumed by `megaplan chain --spec`.
+# For committed source artifacts, keep this at
+# .megaplan/briefs/<epic-slug>/chain.yaml beside the milestone briefs.
+# Progress is persisted under .megaplan/plans/.chains/.
 
 seed:
   # Plan that was kicked off manually before the chain took over. If its state
@@ -10,7 +11,7 @@ seed:
 
 milestones:
   - label: m1
-    idea: /workspace/ideas/M1-foundation-store.txt
+    idea: .megaplan/briefs/foundation-store/M1-foundation-store.txt
     branch: megaplan/m1-foundation-store
     # Optional per-milestone init rubric knobs. Omit any of these to keep
     # existing profile/default behavior.
@@ -23,13 +24,13 @@ milestones:
     with_feedback: true
     deepseek_provider: fireworks # fireworks | direct
   - label: m1a
-    idea: /workspace/ideas/M1a-settings-store.txt
+    idea: .megaplan/briefs/foundation-store/M1a-settings-store.txt
     branch: megaplan/m1a-settings-store
   - label: m1b
-    idea: /workspace/ideas/M1b-selection-store.txt
+    idea: .megaplan/briefs/foundation-store/M1b-selection-store.txt
     branch: megaplan/m1b-selection-store
   - label: m1c
-    idea: /workspace/ideas/M1c-timeline-store.txt
+    idea: .megaplan/briefs/foundation-store/M1c-timeline-store.txt
     branch: megaplan/m1c-timeline-store
   # M2 (overlay stack) is CONDITIONAL on M1a's gate — do NOT auto-queue.
 

@@ -44,8 +44,8 @@ megaplan cloud deploy
 5. Start work remotely:
 
 ```bash
-megaplan cloud bootstrap ideas/tiny-plan.txt
-megaplan cloud chain chain.yaml --idea-dir ideas
+megaplan cloud bootstrap .megaplan/briefs/tiny-plan.md
+megaplan cloud chain .megaplan/briefs/my-epic/chain.yaml
 ```
 
 6. Inspect and connect:
@@ -346,7 +346,7 @@ This redaction applies to:
 
 - **Cloud chain smoke**: [docs/ops/cloud-chain-smoke.md](ops/cloud-chain-smoke.md) — end-to-end smoke tests for cloud chain operations.
 - **Recovery runbooks**: [docs/ops/recovery-runbooks.md](ops/recovery-runbooks.md) — operational procedures for recovering cloud deployments.
-- **Cloud prerequisite resolution**: Active milestone briefs live under [briefs/cloud-prerequisite-resolution/](../briefs/cloud-prerequisite-resolution/) — these are the source of truth for structured prerequisite/quality resolution metadata, auto recovery, chain policy/status, cloud supervision, and slot-first watchdog hardening.
+- **Cloud prerequisite resolution**: Active milestone briefs live under [.megaplan/briefs/cloud-prerequisite-resolution/](../.megaplan/briefs/cloud-prerequisite-resolution/) — these are the source of truth for structured prerequisite/quality resolution metadata, auto recovery, chain policy/status, cloud supervision, and slot-first watchdog hardening.
 - **Slot-first watchdog**: The watchdog operates from the assigned slot/workspace first, verifies provider and session consistency, lists available human-verification actions, and only restarts or wakes chains when the status payload shows the chain is recoverable. Continuous branch and PR synchronization is required after stops and recoveries so status reflects what code reviewers and operators see.
 
 ## Migration From `reigh-megaplan-dev`

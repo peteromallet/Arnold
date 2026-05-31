@@ -17,7 +17,7 @@ No file moves happen in this milestone. `_pipeline/steps/` and `_pipeline/stages
 4. Include the canonical state-string handoff list for M2 from `megaplan/types.py`: `initialized`, `prepped`, `planned`, `critiqued`, `gated`, `finalized`, `executed`, `reviewed`, `done`, `aborted`, `failed`, `blocked`, `paused`, `cancelled`, `awaiting_pr_merge`, `awaiting_human_verify`, `tiebreaker_pending`, `tiebreaker_ready`.
 5. **Define grep exclusion zones** for stale-identifier verification (Step 10.3):
    - `docs/archive/**` — historical docs preserved as-is
-   - `briefs/**` — locked engineering briefs
+   - `.megaplan/briefs/**` — locked engineering briefs
    - `CHANGELOG.md` — historical changelog
    - `megaplan/agent/tests/**` — vendored agent test material
    - `**/__pycache__/**` — bytecode caches
@@ -189,7 +189,7 @@ Note: The brief originally identified only `dispatch_execute_auto_loop`, but `ha
    - Step 7 (active_step→active_phase): `tests/test_auto.py`, observability tests, status/output tests, receipts tests, schema/model tests (sprint1)
    - Step 8 (Verdict→PipelineVerdict): `tests/_pipeline/test_*`, `tests/test_pipeline_*.py`, `tests/test_init_plan.py`, `tests/test_finalize.py`
 2. Run characterization baselines: `tests/characterization/test_cli_parser_snapshot.py` and `tests/characterization/test_pipeline_golden.py`. Update snapshots/goldens only where rename-only output changes are intended. The golden fixtures (`tests/fixtures/golden/*.json`) currently don't encode class names as strings, so snapshot regeneration should be minimal; the CLI parser snapshot may need regeneration if it captures handler names.
-3. Run cross-format grep checks over `.py`, `.json`, `.md`, `.yaml`, `.yml` for stale identifiers, excluding the zones defined in the vocabulary map (Step 1.5): `dispatch_execute_auto_loop`, `dispatch_execute_one_batch`, `HumanGateStep`, `STATE_AWAITING_HUMAN` (constant only, not string value), `ActiveStep` (TypedDict only), `active_step` objects writing `"step"` (the TypedDict field, not history entries), and pipeline-dataclass `Verdict` references (class construction/annotation, not domain prose in non-pipeline files, and not the bakeoff `JudgeVerdict` TypedDict or audits `EvaluatorVerdict` TypedDict). Exclusion zones from vocabulary map apply: `docs/archive/**`, `briefs/**`, `CHANGELOG.md`, `**/__pycache__/**`, `docs/yaml-pipelines-migration.md`, `docs/foundation-audit/**`, generated/vendored agent material under `megaplan/agent/**` except active source.
+3. Run cross-format grep checks over `.py`, `.json`, `.md`, `.yaml`, `.yml` for stale identifiers, excluding the zones defined in the vocabulary map (Step 1.5): `dispatch_execute_auto_loop`, `dispatch_execute_one_batch`, `HumanGateStep`, `STATE_AWAITING_HUMAN` (constant only, not string value), `ActiveStep` (TypedDict only), `active_step` objects writing `"step"` (the TypedDict field, not history entries), and pipeline-dataclass `Verdict` references (class construction/annotation, not domain prose in non-pipeline files, and not the bakeoff `JudgeVerdict` TypedDict or audits `EvaluatorVerdict` TypedDict). Exclusion zones from vocabulary map apply: `docs/archive/**`, `.megaplan/briefs/**`, `CHANGELOG.md`, `**/__pycache__/**`, `docs/yaml-pipelines-migration.md`, `docs/foundation-audit/**`, generated/vendored agent material under `megaplan/agent/**` except active source.
 4. Run the broader relevant suite if focused tests pass.
 
 ## Execution Order

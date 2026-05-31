@@ -193,7 +193,7 @@ megaplan/` shows only re-export sites + the parity tests.
   for: primitive surface, mode dispatch, profile binding,
   three-axis composition, runtime layering.
 - Update `docs/pipeline-resume.md` to reflect the typed-edge shape.
-- Update `briefs/STATUS.md` — Sprint 4 entries.
+- Update `.megaplan/briefs/STATUS.md` — Sprint 4 entries.
 - Final full-suite run. Tag commit on `decomp/main` as `v0.21.0`.
 - Cut a PR from `decomp/main` → `main` for review.
 
@@ -250,4 +250,4 @@ one for Week 2 (Chunks C+D+E+F).
     inversion
 - Full `pytest tests/` stays green (excluding the known main flake).
 - Live `megaplan` (system shebang) still resolves to main checkout.
-- `briefs/STATUS.md` reflects Sprint 4 complete with commit ledger.
+- `.megaplan/briefs/STATUS.md` reflects Sprint 4 complete with commit ledger.

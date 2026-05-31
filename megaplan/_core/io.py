@@ -893,6 +893,7 @@ def _enforce_openai_strict_mode(node: Any) -> Any:
 def ensure_runtime_layout(root: Path) -> None:
     megaplan_rt = root / ".megaplan"
     (megaplan_rt / "plans").mkdir(parents=True, exist_ok=True)
+    (megaplan_rt / "briefs").mkdir(parents=True, exist_ok=True)
     schemas_dir = megaplan_rt / "schemas"
     schemas_dir.mkdir(parents=True, exist_ok=True)
     for filename, schema in SCHEMAS.items():
