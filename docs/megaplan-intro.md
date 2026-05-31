@@ -109,6 +109,8 @@ So the like-for-like saving is **~4×** - this run at real API prices costs abou
 
 And ~4× is the *conservative* read. That ~$94 of premium is inflated on purpose: as noted above, I pinned the entire store-integrity milestone (M2) to a frontier model end-to-end because its run-state has no safe recovery path. On a more typical project - without that maximally cautious all-premium stage - the premium slice shrinks dramatically, the all-in API cost falls toward the ~$12 DeepSeek bill, and the gap opens well past 4×.
 
+The trade-off is speed. There's an old saying that you can pick two of good, fast, and cheap. For engineering work, I think the right trade-off is often **good and cheap**: a slower process that is structured, checked, and cheap enough to run deeply, rather than a fast one-shot model call that skips the hardening steps.
+
 **On provenance.** The DeepSeek figures are from the real invoice - token counts and the 94% cache-hit rate are measured, not estimated. The GPT-5.5 figures are priced at the same ~94% cache rate DeepSeek saw (we don't have GPT's actual cache behavior here); if GPT caches less, the premium numbers - and the gap - only grow.
 
 **Token consumption differences.** Some people have suggested that DeepSeek may use more tokens than premium models to complete the same task. I haven't accounted for that here yet; I'm going to run a direct experiment on it soon. But the gap is large enough that even if DeepSeek is materially less token-efficient, it can still be dramatically cheaper for the parts of the work it can handle reliably.
