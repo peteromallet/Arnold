@@ -28,6 +28,10 @@ Epic briefs live in a directory:
 Commit these files. `.megaplan/briefs/` is durable input material;
 `.megaplan/plans/` is generated run state.
 
+New briefs are markdown artifacts with YAML frontmatter. `megaplan init` strips
+that frontmatter before snapshotting the idea text, so the metadata is useful
+for listing/searching without contaminating the plan prompt.
+
 ## CLI
 
 Create a single-plan brief:
@@ -55,6 +59,19 @@ megaplan brief epic artifact-store \
 
 That writes `.megaplan/briefs/artifact-store/chain.yaml` and milestone brief
 stubs in the same directory.
+
+Read and search briefs:
+
+```bash
+megaplan brief list
+megaplan brief show cleanup-runtime
+megaplan brief search runtime cleanup --all
+```
+
+These commands use the same local artifact substrate as tickets: common
+`.megaplan/<kind>/` path handling, slug normalization, optional frontmatter
+parsing, keyword filtering, and snippets. The lifecycle remains different:
+tickets have status/link/auto-addressing; briefs are inputs to runs.
 
 ## Lifecycle
 

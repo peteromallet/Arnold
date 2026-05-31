@@ -6,13 +6,13 @@ Every ticket is a single ``.md`` file with YAML frontmatter stored in
 
 from __future__ import annotations
 
-import os
-import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
 import yaml
+
+from megaplan.artifacts import artifact_dir, slugify as artifact_slugify
 
 
 # ---------------------------------------------------------------------------
@@ -22,18 +22,12 @@ import yaml
 
 def tickets_dir(repo_root: str | Path) -> Path:
     """Return the ``.megaplan/tickets/`` directory inside *repo_root*."""
-    root = Path(repo_root)
-    td = root / ".megaplan" / "tickets"
-    td.mkdir(parents=True, exist_ok=True)
-    return td
+    return artifact_dir(repo_root, "tickets")
 
 
 def slugify(title: str) -> str:
     """Turn *title* into a URL-safe slug (lowercase, hyphen-separated)."""
-    slug = title.lower().strip()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[-\s]+", "-", slug)
-    return slug.strip("-")[:80]
+    return artifact_slugify(title, max_length=80)
 
 
 # ---------------------------------------------------------------------------
