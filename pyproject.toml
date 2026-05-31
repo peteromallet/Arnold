@@ -23,13 +23,17 @@ dependencies = [
     "pydantic>=2.0",
     "python-ulid>=3.0",
     "psutil>=5.9",
-]
-
-[project.optional-dependencies]
-db = [
-    "psycopg[binary]>=3.1",
-]
-agent = [
+    # --- Hermes/agent backend (core) ---------------------------------------
+    # The hermes/agent runtime backs prep research, critique, fanout, and the
+    # agentic phases. It is NOT optional: the canonical prep models route to
+    # `hermes:deepseek:...` for every run, so a chain that does prep WILL import
+    # this backend. Historically these lived in the `[agent]` optional extra
+    # plus a `[tool.uv] default-extras = ["agent"]` hint, but some uv versions
+    # silently ignore `default-extras`, producing a fresh install that imports
+    # fine until prep iteration N fails with a confusing `agent_deps_missing`.
+    # Moving them into core makes `pip install -e .` / `uv pip install -e .`
+    # ALWAYS ship a working backend. (The `[agent]` extra below is kept as a
+    # back-compat alias for callers that still reference it.)
     "openai",
     "anthropic>=0.39.0",
     "python-dotenv",
@@ -44,14 +48,23 @@ agent = [
     "faster-whisper>=1.0.0",
     "PyJWT[crypto]",
 ]
+
+[project.optional-dependencies]
+db = [
+    "psycopg[binary]>=3.1",
+]
+# Back-compat alias: the agent backend's packages are now core dependencies
+# (see [project].dependencies). This extra is retained so existing install
+# commands / docs that say `pip install '.[agent]'` keep working as a no-op.
+agent = []
 [project.scripts]
 megaplan = "megaplan.cli:cli_entry"
 
 [tool.uv]
-# The hermes/agent backend (critique, agentic phases) requires the `agent` extra.
-# Make it a default extra so `uv sync` / venv rebuilds keep the harness functional
-# rather than silently dropping it and crashing phases with `agent_deps_missing`.
-default-extras = ["agent"]
+# The hermes/agent backend's packages are now core [project].dependencies, so a
+# plain `uv pip install -e .` / `uv sync` always ships a working backend. We no
+# longer rely on `default-extras` (some uv versions silently ignore it, which is
+# what produced the confusing mid-prep `agent_deps_missing` failures).
 
 [tool.hatch.build]
 exclude = [
