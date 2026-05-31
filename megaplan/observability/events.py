@@ -39,6 +39,7 @@ class EventKind:
     PHASE_START: str = "phase_start"
     PHASE_END: str = "phase_end"
     PHASE_RETRY: str = "phase_retry"
+    TIER_DROP: str = "tier_drop"
     STATE_TRANSITION: str = "state_transition"
     LOCK_ACQUIRED: str = "lock_acquired"
     LOCK_RELEASED: str = "lock_released"
@@ -84,6 +85,7 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.PHASE_START,
         EventKind.PHASE_END,
         EventKind.PHASE_RETRY,
+        EventKind.TIER_DROP,
         EventKind.STATE_TRANSITION,
         EventKind.LOCK_ACQUIRED,
         EventKind.LOCK_RELEASED,

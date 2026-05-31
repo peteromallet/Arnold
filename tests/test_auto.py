@@ -4506,3 +4506,168 @@ def test_ladder_ceiling_blocked_by_quality_semantic_terminates(
 
     # No tier escalation pin set
     assert outcome.escalation_tier_pin is None
+
+
+def _execute_stall_phase_result(plan_dir: Path):
+    from megaplan.orchestration.phase_result import ExternalError
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(
+        plan_dir,
+        phase="execute",
+        exit_kind="external_error",
+        external_error=ExternalError(
+            provider="claude",
+            error_kind="worker_stall",
+            message="Worker produced no output for 1800s (stalled stream).",
+            error_layer="worker_stream_stall",
+            stall_timeout_s=1800.0,
+        ),
+    )
+
+
+def test_auto_escalate_drops_tier_on_repeated_worker_stalls_before_halt(
+    tmp_path: Path,
+) -> None:
+    plan = "execute-tier-drop"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    run_calls: list[list[str]] = []
+
+    def fake_run(
+        args,
+        cwd=None,
+        timeout=None,
+        idle_timeout=None,
+        progress_env=None,
+        liveness_plan_dir=None,
+    ):
+        run_calls.append(list(args))
+        _execute_stall_phase_result(plan_dir)
+        return 1, "", "Worker produced no output (stalled stream)."
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto, "_run_megaplan", side_effect=fake_run
+    ):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=5,
+            tier_drop_after_stalls=2,
+            max_tier_drops=2,
+            max_iterations=20,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "stalled"
+    assert "manual intervention required" in outcome.reason
+    assert outcome.tier_drops_used == 2
+    assert outcome.max_tier_drops == 2
+
+    tier_drop_levels = [
+        int(call[call.index("--tier-drop") + 1])
+        for call in run_calls
+        if "--tier-drop" in call
+    ]
+    assert 1 in tier_drop_levels
+    assert 2 in tier_drop_levels
+    assert max(tier_drop_levels) == 2
+    assert "--tier-drop" not in run_calls[0]
+
+    from megaplan.observability.events import read_events
+
+    kinds = [event.get("kind") for event in read_events(plan_dir)]
+    assert "tier_drop" in kinds
+
+
+def test_auto_escalate_disabled_never_drops_tier(tmp_path: Path) -> None:
+    plan = "execute-tier-drop-disabled"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    run_calls: list[list[str]] = []
+
+    def fake_run(
+        args,
+        cwd=None,
+        timeout=None,
+        idle_timeout=None,
+        progress_env=None,
+        liveness_plan_dir=None,
+    ):
+        run_calls.append(list(args))
+        _execute_stall_phase_result(plan_dir)
+        return 1, "", "Worker produced no output (stalled stream)."
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto, "_run_megaplan", side_effect=fake_run
+    ):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=3,
+            tier_drop_after_stalls=0,
+            max_iterations=20,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "stalled"
+    assert outcome.tier_drops_used == 0
+    assert all("--tier-drop" not in call for call in run_calls)
+
+
+def test_auto_escalate_streak_resets_on_execute_progress(tmp_path: Path) -> None:
+    plan = "execute-tier-drop-reset"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    statuses = [
+        _execute_status(plan),
+        _execute_status(plan),
+        _execute_status(plan),
+        _done_status(plan),
+    ]
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0)
+
+    run_calls: list[list[str]] = []
+
+    def fake_run(
+        args,
+        cwd=None,
+        timeout=None,
+        idle_timeout=None,
+        progress_env=None,
+        liveness_plan_dir=None,
+    ):
+        from tests.conftest import make_fake_phase_result
+
+        run_calls.append(list(args))
+        if len(run_calls) == 2:
+            make_fake_phase_result(plan_dir, phase="execute", exit_kind="success")
+            return 0, "{}", ""
+        _execute_stall_phase_result(plan_dir)
+        return 1, "", "stalled stream"
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto, "_run_megaplan", side_effect=fake_run
+    ):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=10,
+            tier_drop_after_stalls=2,
+            max_tier_drops=2,
+            max_iterations=20,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.tier_drops_used == 0
+    assert all("--tier-drop" not in call for call in run_calls)

@@ -711,6 +711,21 @@ def build_parser() -> argparse.ArgumentParser:
                     "task. The auto-driver passes this on every fresh invocation."
                 ),
             )
+            step_parser.add_argument(
+                "--tier-drop",
+                type=int,
+                default=0,
+                help=(
+                    "Drop the per-batch tier-routed model by this many tiers for "
+                    "this dispatch (only meaningful when a profile defines "
+                    "tier_models.execute). The effective complexity used to look "
+                    "up the tier map is max(floor, batch_complexity - tier_drop), "
+                    "clamped at the premium floor (tier 3). The auto-driver raises "
+                    "this automatically after repeated worker stalls so an "
+                    "Opus-tier task that keeps stalling falls back to Sonnet "
+                    "before the run halts for manual review (default 0)."
+                ),
+            )
         if name == "review":
             step_parser.add_argument("--confirm-self-review", action="store_true")
 

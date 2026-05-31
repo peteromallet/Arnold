@@ -100,6 +100,33 @@ def _resolve_tier_spec(
     return agent, _mode, model
 
 
+# Lowest complexity tier the auto-driver's tier-drop fallback will route to.
+# Premium tier maps put cheaper / less-capable models below tier 3 (e.g. the
+# DeepSeek tiers in profiles/premium.toml), so dropping below this floor risks
+# routing a genuinely-hard task to a model that cannot do it.  A floor of 3
+# keeps the worst-case drop at "premium-thinking" (e.g. Opus → Sonnet), which
+# is exactly the move that unblocks a repeatedly-stalling premium worker.
+DEFAULT_TIER_DROP_FLOOR = 3
+
+
+def _resolve_effective_tier_complexity(
+    batch_complexity: int,
+    tier_drop: int,
+    *,
+    floor: int = DEFAULT_TIER_DROP_FLOOR,
+) -> int:
+    """Apply an auto-driver tier-drop to a batch's resolved complexity.
+
+    ``tier_drop`` is the number of tiers the driver has decided to drop for
+    this dispatch after observing repeated worker stalls.  The result is
+    clamped at ``floor`` so the fallback never routes below the lowest
+    premium tier.  ``tier_drop <= 0`` is a no-op (normal routing).
+    """
+    if tier_drop <= 0:
+        return batch_complexity
+    return max(floor, batch_complexity - tier_drop)
+
+
 # Private marker set: dispatcher return paths stamp one of these four values.
 # Handlers later read _phase_outcome to derive the correct ExitKind for
 # phase_result.json emission.
@@ -528,8 +555,15 @@ def handle_execute_one_batch(
     tier_resolved_model: str | None = None
     if tier_map:
         batch_complexity = compute_batch_complexity(finalize_data, batch_task_ids)
-        tier_complexity = batch_complexity
-        tier_spec = tier_map.get(batch_complexity)
+        # Auto-driver tier-drop fallback: after repeated worker stalls the
+        # driver passes --tier-drop N to route this batch one (or N) tiers
+        # lower, clamped at the premium floor. tier_drop=0 is normal routing.
+        tier_drop = int(getattr(args, "tier_drop", 0) or 0)
+        effective_complexity = _resolve_effective_tier_complexity(
+            batch_complexity, tier_drop
+        )
+        tier_complexity = effective_complexity
+        tier_spec = tier_map.get(effective_complexity)
         if tier_spec:
             tier_spec_raw = tier_spec
             tier_agent, tier_mode, tier_model = _resolve_tier_spec(
@@ -1124,8 +1158,13 @@ def handle_execute_auto_loop(
             batch_complexity = compute_batch_complexity(
                 finalize_data, batch_task_ids
             )
-            batch_tier_complexity = batch_complexity
-            tier_spec = tier_map.get(batch_complexity)
+            # Auto-driver tier-drop fallback (see handle_execute_one_batch).
+            tier_drop = int(getattr(args, "tier_drop", 0) or 0)
+            effective_complexity = _resolve_effective_tier_complexity(
+                batch_complexity, tier_drop
+            )
+            batch_tier_complexity = effective_complexity
+            tier_spec = tier_map.get(effective_complexity)
             if tier_spec:
                 batch_tier_spec = tier_spec
                 tier_agent, tier_mode, tier_model = _resolve_tier_spec(

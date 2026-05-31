@@ -489,9 +489,9 @@
               "action": "_StoreAction",
               "choices": null,
               "const": null,
-              "default": 1,
+              "default": 5,
               "dest": "max_blocked_retries",
-              "help": "How many times to retry execute after the worker reports result=blocked (e.g. done tasks missing files_changed) before bailing with worker_blocked (default 1).",
+              "help": "How many times to retry execute after the worker reports result=blocked (e.g. done tasks missing files_changed) before bailing with worker_blocked (default 5).",
               "metavar": null,
               "nargs": null,
               "option_strings": [
@@ -526,6 +526,36 @@
               "nargs": null,
               "option_strings": [
                 "--escalate-after-fails"
+              ],
+              "required": false,
+              "type": "_non_negative_int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 2,
+              "dest": "tier_drop_after_stalls",
+              "help": "Consecutive execute worker stalls (worker_stream_stall) to tolerate before dropping one execution tier and retrying (default 2; 0 disables). Only affects tier-routed runs with tier_models.execute.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--tier-drop-after-stalls"
+              ],
+              "required": false,
+              "type": "_non_negative_int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 2,
+              "dest": "max_tier_drops",
+              "help": "Maximum number of execution tiers the worker-stall fallback will drop before deferring to the manual_review halt (default 2). Execute also clamps at the premium floor.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--max-tier-drops"
               ],
               "required": false,
               "type": "_non_negative_int"
@@ -820,6 +850,164 @@
           ],
           "positionals": [],
           "subcommands": {
+            "execute": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": "Path to the chain spec YAML",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": "Run the chain against this project directory instead of discovering from CWD.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "in_worktree",
+                  "help": "Create a new git worktree at ~/Documents/.megaplan-worktrees/<name>/ on a new branch and run the whole chain inside it. Name must match ^[a-z0-9][a-z0-9._-]{0,63}$. Substitutes for --project-dir.",
+                  "metavar": "NAME",
+                  "nargs": null,
+                  "option_strings": [
+                    "--in-worktree"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "worktree_from",
+                  "help": "Base ref for the new worktree (default: current HEAD of the repo where `megaplan chain` was invoked). Only valid with --in-worktree.",
+                  "metavar": "GITREF",
+                  "nargs": null,
+                  "option_strings": [
+                    "--worktree-from"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "clean_worktree",
+                  "help": "With --in-worktree: fork from a clean base ref and leave any uncommitted state behind in the source repo (no carry).",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--clean-worktree"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "carry_dirty",
+                  "help": "With --in-worktree: explicitly opt into carrying uncommitted state from the source repo into the new worktree. Mutually exclusive with --clean-worktree.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--carry-dirty"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "no_git_refresh",
+                  "help": "Skip the automatic base-branch checkout and pull that runs before each milestone.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--no-git-refresh"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "no_push",
+                  "help": "Disable branch/PR/push lifecycle for no-network runs.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--no-push"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "one",
+                  "help": "Drive at most one pending milestone, persist progress, then stop cleanly.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--one"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
             "override": {
               "mutually_exclusive_groups": [],
               "options": [
@@ -919,6 +1107,164 @@
                   "nargs": null,
                   "option_strings": [
                     "--set-review-clean-milestone-pr"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "plan": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": "Path to the chain spec YAML",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": "Run the chain against this project directory instead of discovering from CWD.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "in_worktree",
+                  "help": "Create a new git worktree at ~/Documents/.megaplan-worktrees/<name>/ on a new branch and run the whole chain inside it. Name must match ^[a-z0-9][a-z0-9._-]{0,63}$. Substitutes for --project-dir.",
+                  "metavar": "NAME",
+                  "nargs": null,
+                  "option_strings": [
+                    "--in-worktree"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "worktree_from",
+                  "help": "Base ref for the new worktree (default: current HEAD of the repo where `megaplan chain` was invoked). Only valid with --in-worktree.",
+                  "metavar": "GITREF",
+                  "nargs": null,
+                  "option_strings": [
+                    "--worktree-from"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "clean_worktree",
+                  "help": "With --in-worktree: fork from a clean base ref and leave any uncommitted state behind in the source repo (no carry).",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--clean-worktree"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "carry_dirty",
+                  "help": "With --in-worktree: explicitly opt into carrying uncommitted state from the source repo into the new worktree. Mutually exclusive with --clean-worktree.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--carry-dirty"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "no_git_refresh",
+                  "help": "Skip the automatic base-branch checkout and pull that runs before each milestone.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--no-git-refresh"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "no_push",
+                  "help": "Disable branch/PR/push lifecycle for no-network runs.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--no-push"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "one",
+                  "help": "Drive at most one pending milestone, persist progress, then stop cleanly.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--one"
                   ],
                   "required": false,
                   "type": null
@@ -2661,6 +3007,21 @@
               ],
               "required": false,
               "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 0,
+              "dest": "tier_drop",
+              "help": "Drop the per-batch tier-routed model by this many tiers for this dispatch (only meaningful when a profile defines tier_models.execute). The effective complexity used to look up the tier map is max(floor, batch_complexity - tier_drop), clamped at the premium floor (tier 3). The auto-driver raises this automatically after repeated worker stalls so an Opus-tier task that keeps stalling falls back to Sonnet before the run halts for manual review (default 0).",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--tier-drop"
+              ],
+              "required": false,
+              "type": "int"
             }
           ],
           "positionals": [],
