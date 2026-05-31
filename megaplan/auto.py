@@ -142,6 +142,11 @@ DEFAULT_MAX_ADD_NOTE_ATTEMPTS = 2
 # separately by stall detection and is not, on its own, evidence the model is
 # too weak.
 DEFAULT_ESCALATE_AFTER_FAILS = 2
+# Auto-ESCALATE-down: repeated execute worker stream stalls are latency/liveness
+# failures, not proof that the model is too weak. Drop execute routing one tier
+# before the generic state-stall halt gets the final word.
+DEFAULT_TIER_DROP_AFTER_STALLS = 2
+DEFAULT_MAX_TIER_DROPS = 2
 DEFAULT_PHASE_HEARTBEAT_SECONDS = 60.0
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
@@ -172,6 +177,8 @@ class DriverOutcome:
     blocking_reasons: list[str] = field(default_factory=list)
     tier_escalations_used: int = 0
     escalation_tier_pin: int | None = None
+    tier_drops_used: int = 0
+    max_tier_drops: int | None = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -194,6 +201,8 @@ class DriverOutcome:
                 "blocking_reasons": self.blocking_reasons,
                 "tier_escalations_used": self.tier_escalations_used,
                 "escalation_tier_pin": self.escalation_tier_pin,
+                "tier_drops_used": self.tier_drops_used,
+                "max_tier_drops": self.max_tier_drops,
             },
             indent=2,
         )
@@ -259,6 +268,14 @@ def _is_retryable_external_error(phase: str, external_error: object | None) -> b
     ):
         return True
     return False
+
+
+def _is_execute_worker_stream_stall(result: object | None) -> bool:
+    if result is None or getattr(result, "exit_kind", None) != ExitKind.external_error.value:
+        return False
+    external_error = getattr(result, "external_error", None)
+    error_layer = str(getattr(external_error, "error_layer", "") or "").lower()
+    return error_layer == "worker_stream_stall"
 
 
 def _run_megaplan(
@@ -1616,6 +1633,8 @@ def drive(
     max_blocked_retries: int = DEFAULT_MAX_BLOCKED_RETRIES,
     max_add_note_attempts: int = DEFAULT_MAX_ADD_NOTE_ATTEMPTS,
     escalate_after_fails: int = DEFAULT_ESCALATE_AFTER_FAILS,
+    tier_drop_after_stalls: int = DEFAULT_TIER_DROP_AFTER_STALLS,
+    max_tier_drops: int = DEFAULT_MAX_TIER_DROPS,
     on_escalate: str = "force-proceed",
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
@@ -1656,6 +1675,11 @@ def drive(
     # Reset on any successful add-note OR when the next_step changes — only a
     # repeating add-note→fail loop should trip the escalation.
     add_note_failures = 0
+    # Consecutive execute worker_stream_stall outcomes. A tier drop sticks for
+    # the run once applied; the streak only controls when the next drop fires.
+    execute_stall_streak = 0
+    tier_drop_level = 0
+    tier_drops_used = 0
 
     # ── Auto-ESCALATE-up state ─────────────────────────────────────────
     # Consecutive execute failures (timeout / internal_error / quality-block)
@@ -1837,6 +1861,8 @@ def drive(
             blocking_reasons=list(blocking_reasons or []),
             tier_escalations_used=tier_escalations_used,
             escalation_tier_pin=escalation_tier_pin,
+            tier_drops_used=tier_drops_used,
+            max_tier_drops=max_tier_drops,
         )
 
     iteration = 0
@@ -2494,6 +2520,16 @@ def drive(
                         "--phase-model",
                         f"execute={escalation_pin_spec}",
                     ]
+                if tier_drop_level > 0:
+                    cmd = [*cmd, "--tier-drop", str(tier_drop_level)]
+                    log(
+                        f"auto-escalate: dispatching execute with --tier-drop "
+                        f"{tier_drop_level} after {execute_stall_streak} "
+                        "consecutive worker stalls",
+                        phase=next_step,
+                        tier_drop_level=tier_drop_level,
+                        execute_stall_streak=execute_stall_streak,
+                    )
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
         if plan_dir is not None:
             try:
@@ -2751,6 +2787,55 @@ def drive(
                 suggested_action="Inspect command output and resume from the failed phase.",
                 metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
             )
+
+        if next_step == "execute":
+            if _is_execute_worker_stream_stall(result):
+                execute_stall_streak += 1
+                if (
+                    tier_drop_after_stalls > 0
+                    and execute_stall_streak >= tier_drop_after_stalls
+                    and tier_drop_level < max_tier_drops
+                ):
+                    tier_drop_level += 1
+                    tier_drops_used += 1
+                    log(
+                        f"auto-escalate: {execute_stall_streak} consecutive "
+                        "execute worker stalls — dropping execute routing to "
+                        f"tier-drop level {tier_drop_level}/{max_tier_drops}",
+                        execute_stall_streak=execute_stall_streak,
+                        tier_drop_level=tier_drop_level,
+                        max_tier_drops=max_tier_drops,
+                        tier_drops_used=tier_drops_used,
+                    )
+                    if plan_dir is not None:
+                        try:
+                            emit_event(
+                                EventKind.TIER_DROP,
+                                plan_dir=plan_dir,
+                                phase=next_step,
+                                payload={
+                                    "phase": next_step,
+                                    "reason": "worker_stream_stall",
+                                    "consecutive_stalls": execute_stall_streak,
+                                    "tier_drop_level": tier_drop_level,
+                                    "max_tier_drops": max_tier_drops,
+                                    "tier_drops_used": tier_drops_used,
+                                },
+                            )
+                        except Exception:
+                            _warn_best_effort_emit_failure(
+                                "M3A_WARN_EMIT_AUTO_TIER_DROP",
+                                action="auto-tier-drop",
+                                plan_dir=plan_dir,
+                                phase=next_step,
+                                event_kind="tier_drop",
+                                context={
+                                    "consecutive_stalls": execute_stall_streak,
+                                    "tier_drop_level": tier_drop_level,
+                                },
+                            )
+            else:
+                execute_stall_streak = 0
 
         if (
             code in (0, None)
@@ -3609,6 +3694,28 @@ def build_auto_parser(subparsers: Any) -> None:
         ),
     )
     auto_parser.add_argument(
+        "--tier-drop-after-stalls",
+        type=_non_negative_int,
+        default=DEFAULT_TIER_DROP_AFTER_STALLS,
+        help=(
+            f"Consecutive execute worker stalls (worker_stream_stall) to "
+            f"tolerate before dropping one execution tier and retrying (default "
+            f"{DEFAULT_TIER_DROP_AFTER_STALLS}; 0 disables). Only affects "
+            "tier-routed runs with tier_models.execute."
+        ),
+    )
+    auto_parser.add_argument(
+        "--max-tier-drops",
+        type=_non_negative_int,
+        default=DEFAULT_MAX_TIER_DROPS,
+        help=(
+            f"Maximum number of execution tiers the worker-stall fallback will "
+            f"drop before deferring to the manual_review halt (default "
+            f"{DEFAULT_MAX_TIER_DROPS}). Execute also clamps at the premium "
+            "floor."
+        ),
+    )
+    auto_parser.add_argument(
         "--on-escalate",
         choices=ESCALATE_ACTIONS,
         default="force-proceed",
@@ -3737,6 +3844,12 @@ def _run_auto_locked(
             "escalate_after_fails",
             DEFAULT_ESCALATE_AFTER_FAILS,
         ),
+        tier_drop_after_stalls=getattr(
+            args,
+            "tier_drop_after_stalls",
+            DEFAULT_TIER_DROP_AFTER_STALLS,
+        ),
+        max_tier_drops=getattr(args, "max_tier_drops", DEFAULT_MAX_TIER_DROPS),
         on_escalate=args.on_escalate,
         poll_sleep=args.poll_sleep,
         phase_timeout=args.phase_timeout,
