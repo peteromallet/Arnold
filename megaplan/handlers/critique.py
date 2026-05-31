@@ -434,6 +434,12 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             effort=_critique_effort,
             resolved_model=_critique_resolved_model,
         )
+        if len(active_checks) > 1:
+            for _check in active_checks:
+                if adaptive_path and not critic_model_override:
+                    _check.setdefault("_resolved_agent_mode", resolved)
+                else:
+                    _check["_resolved_agent_mode"] = resolved
         # Compute revise_context for adaptive path iterations >= 2
         _revise_ctx = ""
         if adaptive_path and iteration >= 2:

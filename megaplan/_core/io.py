@@ -860,6 +860,14 @@ def _enforce_openai_strict_mode(node: Any) -> Any:
     # promote them to required so the submission is strict-mode-safe.
     if isinstance(node, dict):
         node = {key: _enforce_openai_strict_mode(value) for key, value in node.items()}
+        if "oneOf" in node and "anyOf" not in node:
+            # Codex/OpenAI structured output accepts nested anyOf, but rejects
+            # oneOf in output schemas. Megaplan's stored-artifact schemas can
+            # still use oneOf for validation; runtime schemas get the looser
+            # dialect before being handed to `codex exec --output-schema`.
+            node["anyOf"] = node.pop("oneOf")
+        if "const" in node and "enum" not in node:
+            node["enum"] = [node.pop("const")]
         if node.get("type") == "object" and isinstance(node.get("properties"), dict):
             properties: dict[str, Any] = node["properties"]
             required = set(node.get("required", []))
