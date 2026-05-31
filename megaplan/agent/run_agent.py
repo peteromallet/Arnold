@@ -77,6 +77,48 @@ from hermes_constants import OPENROUTER_BASE_URL
 
 DEFAULT_API_TIMEOUT_SECONDS = 300.0
 DEFAULT_DEEPSEEK_API_TIMEOUT_SECONDS = 1200.0
+DEFAULT_MAX_SAME_FILE_READS = 5
+DEFAULT_HARD_MAX_SAME_FILE_READS = 10
+DEFAULT_STREAMING_TIMEOUT_HARD_CEILING_SECONDS = 3600.0
+
+
+def _env_int_at_least(name: str, default: int, minimum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(value, minimum)
+
+
+def _max_same_file_reads() -> int:
+    return _env_int_at_least(
+        "HERMES_MAX_SAME_FILE_READS", DEFAULT_MAX_SAME_FILE_READS, 1
+    )
+
+
+def _hard_max_same_file_reads(soft_limit: int | None = None) -> int:
+    soft = _max_same_file_reads() if soft_limit is None else soft_limit
+    hard = _env_int_at_least(
+        "HERMES_HARD_MAX_SAME_FILE_READS",
+        DEFAULT_HARD_MAX_SAME_FILE_READS,
+        soft + 1,
+    )
+    return max(hard, soft + 1)
+
+
+def _streaming_timeout_hard_ceiling_seconds() -> float:
+    try:
+        value = float(
+            os.getenv(
+                "HERMES_STREAMING_TIMEOUT_HARD_CEILING_SECONDS",
+                DEFAULT_STREAMING_TIMEOUT_HARD_CEILING_SECONDS,
+            )
+        )
+    except (TypeError, ValueError):
+        value = DEFAULT_STREAMING_TIMEOUT_HARD_CEILING_SECONDS
+    return max(value, 1.0)
+
+
 # Per-read (inter-chunk) socket inactivity bound for streaming SSE responses.
 # A synchronous `for chunk in stream:` read with no httpx read-timeout blocks
 # inside the C-level socket recv() and CANNOT be interrupted by another thread
@@ -1008,12 +1050,20 @@ class AIAgent:
         # they bloat the prompt past the streaming deadline.
         self._tool_dedup_cache: dict[tuple[str, str], str] = {}
 
+        # Per-agent read counts keyed by canonical file path. This deliberately
+        # persists across run_conversation() calls so cross-turn read loops are
+        # stopped before they keep injecting the same file into the prompt.
+        self._file_read_counts: dict[str, int] = {}
+
         # Consecutive streaming-deadline timeouts. Increments on each
         # TimeoutError("Streaming API call exceeded ..."); resets to 0 after
         # any successful streaming call. _api_timeout_seconds() multiplies
         # the base deadline by 1.5× per streak level (capped at 4×) so a
         # slow generation on a large prompt has a real shot on the retry.
         self._streaming_timeout_streak: int = 0
+        self._last_streaming_timeout_tokens: int | None = None
+        self._streaming_timeout_wall_start_monotonic: float | None = None
+        self._last_streaming_request_started_at: float | None = None
         
         # Store OpenRouter provider preferences
         self.providers_allowed = providers_allowed
@@ -3603,7 +3653,52 @@ class AIAgent:
         if streak > 0:
             scale = min(1.5 ** streak, 4.0)
             timeout = timeout * scale
+        wall_start = getattr(self, "_streaming_timeout_wall_start_monotonic", None)
+        if wall_start is not None:
+            remaining = _streaming_timeout_hard_ceiling_seconds() - (
+                time.monotonic() - wall_start
+            )
+            timeout = min(timeout, remaining)
         return max(timeout, 0.1)
+
+    def _record_streaming_timeout_or_abort(
+        self,
+        *,
+        approx_tokens: int,
+        message_count: int,
+        elapsed_seconds: float,
+    ) -> str | None:
+        request_started = getattr(self, "_last_streaming_request_started_at", None)
+        if getattr(self, "_streaming_timeout_wall_start_monotonic", None) is None:
+            self._streaming_timeout_wall_start_monotonic = (
+                request_started if request_started is not None else time.monotonic()
+            )
+
+        previous_tokens = getattr(self, "_last_streaming_timeout_tokens", None)
+        if (
+            isinstance(previous_tokens, int)
+            and previous_tokens > 0
+            and approx_tokens > previous_tokens * 1.2
+        ):
+            return (
+                "Streaming deadline hit again while the prompt grew from "
+                f"~{previous_tokens:,} to ~{approx_tokens:,} tokens "
+                f"({message_count} messages). Treating this as a probable "
+                "tool-call loop; aborting without escalating the deadline."
+            )
+
+        ceiling = _streaming_timeout_hard_ceiling_seconds()
+        wall_elapsed = time.monotonic() - self._streaming_timeout_wall_start_monotonic
+        if wall_elapsed >= ceiling:
+            return (
+                "Streaming deadline retry ceiling reached "
+                f"({wall_elapsed:.0f}s >= {ceiling:.0f}s, last request "
+                f"elapsed {elapsed_seconds:.0f}s). Aborting without another retry."
+            )
+
+        self._last_streaming_timeout_tokens = approx_tokens
+        self._streaming_timeout_streak = getattr(self, "_streaming_timeout_streak", 0) + 1
+        return None
 
     def _abort_request_client(self, request_client_holder: dict, *, reason: str) -> None:
         try:
@@ -3922,6 +4017,7 @@ class AIAgent:
                 if request_client is not None:
                     self._close_request_openai_client(request_client, reason="request_complete")
 
+        self._last_streaming_request_started_at = time.monotonic()
         t = threading.Thread(target=_call, daemon=True)
         t.start()
         timeout_seconds = self._api_timeout_seconds()
@@ -4471,6 +4567,9 @@ class AIAgent:
         # Successful streaming call — reset the deadline-extension streak so
         # the next request starts from the configured base timeout.
         self._streaming_timeout_streak = 0
+        self._last_streaming_timeout_tokens = None
+        self._streaming_timeout_wall_start_monotonic = None
+        self._last_streaming_request_started_at = None
         return result["response"]
 
     # ── Provider fallback ──────────────────────────────────────────────────
@@ -5357,8 +5456,14 @@ class AIAgent:
         instead. Also clears the cache when a mutating tool runs, so later
         reads see fresh content.
         """
+        if function_name == "read_file" and function_result.startswith(
+            "[megaplan file-read circuit breaker]"
+        ):
+            return function_result
+
         if function_name in _DEDUP_INVALIDATING_TOOLS:
             self._tool_dedup_cache.clear()
+            self._invalidate_file_read_counts(function_name, function_args)
             return function_result
 
         if function_name not in _DEDUPABLE_TOOLS:
@@ -5388,6 +5493,64 @@ class AIAgent:
             f"of re-issuing this call. If external state may have changed, "
             f"vary the arguments (e.g. offset/limit) to force a re-read."
         )
+
+    def _canonical_read_file_path(self, function_args: dict) -> str | None:
+        raw_path = function_args.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return None
+        try:
+            path = Path(raw_path).expanduser()
+            if not path.is_absolute():
+                path = Path(_resolve_checkpoint_cwd()).expanduser() / path
+            return str(path.resolve(strict=False))
+        except Exception:
+            return str(Path(raw_path).expanduser())
+
+    def _invalidate_file_read_counts(self, function_name: str, function_args: dict) -> None:
+        counts = getattr(self, "_file_read_counts", None)
+        if not isinstance(counts, dict) or not counts:
+            return
+        if function_name in {"write_file", "patch"}:
+            path_key = self._canonical_read_file_path(function_args)
+            if path_key:
+                counts.pop(path_key, None)
+            return
+        if function_name == "terminal":
+            counts.clear()
+
+    def _maybe_short_circuit_file_read(self, function_name: str, function_args: dict) -> str | None:
+        if function_name != "read_file":
+            return None
+        path_key = self._canonical_read_file_path(function_args)
+        if not path_key:
+            return None
+
+        counts = getattr(self, "_file_read_counts", None)
+        if not isinstance(counts, dict):
+            counts = {}
+            self._file_read_counts = counts
+
+        next_count = int(counts.get(path_key, 0)) + 1
+        counts[path_key] = next_count
+
+        soft_limit = _max_same_file_reads()
+        hard_limit = _hard_max_same_file_reads(soft_limit)
+        if next_count > hard_limit:
+            return (
+                "[megaplan file-read circuit breaker] REFUSED read_file: "
+                f"{path_key} has already been read {next_count} times in this "
+                "agent conversation. The repeated reads are a loop signal. "
+                "Do not call read_file for this path again; proceed with your "
+                "findings using the content already in context."
+            )
+        if next_count > soft_limit:
+            return (
+                "[megaplan file-read circuit breaker] Skipped read_file: "
+                f"{path_key} was already read {next_count} times in this agent "
+                "conversation and its content is unchanged. Reuse the content "
+                "already in context instead of re-reading it."
+            )
+        return None
 
     def _execute_tool_calls(self, assistant_message, messages: list, effective_task_id: str, api_call_count: int = 0) -> None:
         """Execute tool calls from the assistant message and append results to messages.
@@ -5567,7 +5730,9 @@ class AIAgent:
             """Worker function executed in a thread."""
             start = time.time()
             try:
-                result = self._invoke_tool(function_name, function_args, effective_task_id)
+                result = self._maybe_short_circuit_file_read(function_name, function_args)
+                if result is None:
+                    result = self._invoke_tool(function_name, function_args, effective_task_id)
             except Exception as tool_error:
                 result = f"Error executing tool '{function_name}': {tool_error}"
                 logger.error("_invoke_tool raised for %s: %s", function_name, tool_error, exc_info=True)
@@ -5747,8 +5912,14 @@ class AIAgent:
                     pass  # never block tool execution
 
             tool_start_time = time.time()
+            _file_read_guard_result = self._maybe_short_circuit_file_read(
+                function_name, function_args
+            )
 
-            if function_name == "todo":
+            if _file_read_guard_result is not None:
+                function_result = _file_read_guard_result
+                tool_duration = time.time() - tool_start_time
+            elif function_name == "todo":
                 from tools.todo_tool import todo_tool as _todo_tool
                 function_result = _todo_tool(
                     todos=function_args.get("todos"),
@@ -6261,6 +6432,9 @@ class AIAgent:
         # a prior conversation's slow phase shouldn't extend the new one's
         # default deadline.
         self._streaming_timeout_streak = 0
+        self._last_streaming_timeout_tokens = None
+        self._streaming_timeout_wall_start_monotonic = None
+        self._last_streaming_request_started_at = None
         # NOTE: _turns_since_memory and _iters_since_skill are NOT reset here.
         # They are initialized in __init__ and must persist across run_conversation
         # calls so that nudge logic accumulates correctly in CLI mode.
@@ -7165,7 +7339,27 @@ class AIAgent:
                         or is_read_timeout
                     )
                     if is_streaming_timeout:
-                        self._streaming_timeout_streak += 1
+                        timeout_abort = self._record_streaming_timeout_or_abort(
+                            approx_tokens=approx_tokens,
+                            message_count=len(api_messages),
+                            elapsed_seconds=elapsed_time,
+                        )
+                        if timeout_abort:
+                            self._vprint(
+                                f"{self.log_prefix}❌ {timeout_abort}",
+                                force=True,
+                            )
+                            logging.error("%s%s", self.log_prefix, timeout_abort)
+                            self._persist_session(messages, conversation_history)
+                            return {
+                                "final_response": None,
+                                "messages": messages,
+                                "api_calls": api_call_count,
+                                "completed": False,
+                                "failed": True,
+                                "non_retryable": True,
+                                "error": timeout_abort,
+                            }
                         next_deadline = self._api_timeout_seconds()
                         self._vprint(
                             f"{self.log_prefix}⚠️  Streaming deadline exceeded "

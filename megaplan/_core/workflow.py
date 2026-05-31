@@ -77,10 +77,12 @@ def adaptive_critique_enabled(state: PlanState) -> bool:
 def pinned_critic_model(state: PlanState) -> str:
     """Return the model the farmed-out critic is pinned to, or "" if unpinned.
 
-    When set, the adaptive evaluator still selects lenses, but every critic
-    dispatch is forced to this model instead of the evaluator's per-lens
-    assignment (which can escalate to premium models).
+    Only an explicitly operator-provided pin is honored. Older/persisted states
+    may carry a ``config.critic_model`` value from a profile or stale default;
+    without the provenance bit that value must not shadow per-lens routing.
     """
+    if not bool(state["config"].get("critic_model_explicit", False)):
+        return ""
     return str(state["config"].get("critic_model", "") or "").strip()
 
 

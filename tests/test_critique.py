@@ -840,6 +840,7 @@ def test_handle_critique_pin_forces_critic_model_over_evaluator_assignment(
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
     persisted["config"]["adaptive_critique"] = True
     persisted["config"]["critic_model"] = "deepseek-v4-pro"
+    persisted["config"]["critic_model_explicit"] = True
     state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
     all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
@@ -2052,6 +2053,7 @@ def test_operator_pin_overrides_all_per_lens_complexity_routing(
     persisted["config"]["adaptive_critique"] = True
     # Set the operator pin — this must override complexity routing.
     persisted["config"]["critic_model"] = "deepseek-v4-pro"
+    persisted["config"]["critic_model_explicit"] = True
     state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
     all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
@@ -2496,6 +2498,7 @@ def test_operator_pin_forces_same_resolved_model_across_all_lenses_with_non_herm
     persisted["config"]["adaptive_critique"] = True
     # Operator pin to deepseek-v4-pro — must override all complexity routing.
     persisted["config"]["critic_model"] = "deepseek-v4-pro"
+    persisted["config"]["critic_model_explicit"] = True
     state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
     all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]

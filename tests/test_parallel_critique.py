@@ -15,7 +15,7 @@ from megaplan.audits.robustness import checks_for_robustness
 from megaplan.workers.hermes import parse_agent_output
 from megaplan.orchestration.parallel_critique import _run_check, run_parallel_critique
 from megaplan.prompts.critique import write_single_check_template
-from megaplan.types import AgentMode, PlanState
+from megaplan.types import AgentMode, CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
 
@@ -96,6 +96,20 @@ def _check_payload(check: dict[str, str], detail: str, *, flagged: bool = False)
     }
 
 
+def _raw_critique_payload(
+    check_payload: dict[str, Any],
+    *,
+    verified: list[str] | None = None,
+    disputed: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "checks": [check_payload],
+        "flags": [],
+        "verified_flag_ids": verified or [],
+        "disputed_flag_ids": disputed or [],
+    }
+
+
 def _resolved_mode(
     agent: str = "hermes",
     mode: str = "creative",
@@ -126,16 +140,15 @@ def test_run_parallel_critique_merges_in_original_order(monkeypatch: pytest.Monk
     raw_checks = checks_for_robustness("standard")
     enriched = _enrich_checks(raw_checks)
 
-    # Build synthetic ordered_results in the shape _parse_result returns:
-    # (check_payload, verified_ids, disputed_ids)
     def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
-        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
+        items: list[dict[str, object]] = []
         for i, chk in enumerate(enriched):
-            items.append((
-                _check_payload(chk, f"Checked {chk['id']} in detail for ordered merge coverage.", flagged=False),
-                [f"FLAG-{i + 1:03d}"],
-                [],
-            ))
+            items.append(
+                _raw_critique_payload(
+                    _check_payload(chk, f"Checked {chk['id']} in detail for ordered merge coverage.", flagged=False),
+                    verified=[f"FLAG-{i + 1:03d}"],
+                )
+            )
         return GenericScatterResult(
             ordered_results=items,
             total_cost=0.25 * len(enriched),
@@ -170,15 +183,17 @@ def test_run_parallel_critique_disputed_flags_override_verified(
     enriched = _enrich_checks(raw_checks[:2])
 
     def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
-        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
+        items: list[dict[str, object]] = []
         for i, chk in enumerate(enriched):
             verified = ["FLAG-001"] if i == 0 else []
             disputed = ["FLAG-001"] if i == 1 else []
-            items.append((
-                _check_payload(chk, f"Checked {chk['id']} with explicit flag merge coverage.", flagged=(i == 1)),
-                verified,
-                disputed,
-            ))
+            items.append(
+                _raw_critique_payload(
+                    _check_payload(chk, f"Checked {chk['id']} with explicit flag merge coverage.", flagged=(i == 1)),
+                    verified=verified,
+                    disputed=disputed,
+                )
+            )
         return GenericScatterResult(
             ordered_results=items,
             total_cost=0.2,
@@ -197,6 +212,152 @@ def test_run_parallel_critique_disputed_flags_override_verified(
 
     assert result.payload["disputed_flag_ids"] == ["FLAG-001"]
     assert "FLAG-001" not in result.payload["verified_flag_ids"]
+
+
+def test_run_parallel_critique_retries_malformed_worker_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A malformed single worker payload is retried without aborting the batch."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    enriched = _enrich_checks(checks_for_robustness("standard")[:2])
+    bad_id = enriched[0]["id"]
+    attempts: dict[str, int] = {}
+    calls: list[list[str]] = []
+    retry_prompts: list[str] = []
+
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        calls.append([unit.extra["check_id"] for unit in units])
+        items: list[dict[str, object]] = []
+        for unit in units:
+            check_id = unit.extra["check_id"]
+            attempts[check_id] = attempts.get(check_id, 0) + 1
+            chk = next(chk for chk in enriched if chk["id"] == check_id)
+            if check_id == bad_id and attempts[check_id] == 1:
+                items.append({"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []})
+            else:
+                if check_id == bad_id:
+                    retry_prompts.append(unit.prompt)
+                items.append(
+                    _raw_critique_payload(
+                        _check_payload(chk, f"valid payload for {check_id}", flagged=False),
+                        verified=[f"FLAG-{check_id}"],
+                    )
+                )
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.1 * len(items),
+            total_prompt_tokens=10 * len(items),
+            total_completion_tokens=5 * len(items),
+            total_tokens=15 * len(items),
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert [check["id"] for check in result.payload["checks"]] == [chk["id"] for chk in enriched]
+    assert attempts[bad_id] == 2
+    assert attempts[enriched[1]["id"]] == 1
+    assert calls == [[chk["id"] for chk in enriched], [bad_id]]
+    assert retry_prompts and retry_prompts[0].startswith("Return a JSON object with a top-level `checks` array")
+    assert result.prompt_tokens == 30
+    assert "worker '" + bad_id + "' returned 0 checks, retrying (attempt 2/3)" in capsys.readouterr().err
+
+
+def test_run_parallel_critique_retry_budget_exhaustion_reraises_for_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A persistently malformed worker raises after a bounded retry budget."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    enriched = _enrich_checks(checks_for_robustness("standard")[:2])
+    bad_id = enriched[0]["id"]
+    attempts: dict[str, int] = {}
+    calls: list[list[str]] = []
+
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        calls.append([unit.extra["check_id"] for unit in units])
+        items: list[dict[str, object]] = []
+        for unit in units:
+            check_id = unit.extra["check_id"]
+            attempts[check_id] = attempts.get(check_id, 0) + 1
+            chk = next(chk for chk in enriched if chk["id"] == check_id)
+            if check_id == bad_id:
+                items.append(
+                    {
+                        "checks": [
+                            _check_payload(chk, "first duplicate malformed payload", flagged=False),
+                            _check_payload(chk, "second duplicate malformed payload", flagged=False),
+                        ],
+                        "flags": [],
+                        "verified_flag_ids": [],
+                        "disputed_flag_ids": [],
+                    }
+                )
+            else:
+                items.append(_raw_critique_payload(_check_payload(chk, f"valid payload for {check_id}", flagged=False)))
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    with pytest.raises(CliError, match="retry budget exhausted"):
+        run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert attempts[bad_id] == 3
+    assert attempts[enriched[1]["id"]] == 1
+    assert calls == [[chk["id"] for chk in enriched], [bad_id], [bad_id]]
+
+
+def test_run_parallel_critique_well_formed_output_does_not_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Well-formed output still succeeds in one scatter pass."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    enriched = _enrich_checks(checks_for_robustness("standard")[:2])
+    calls = 0
+
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        nonlocal calls
+        calls += 1
+        items: list[dict[str, object]] = []
+        for unit in units:
+            chk = next(chk for chk in enriched if chk["id"] == unit.extra["check_id"])
+            items.append(_raw_critique_payload(_check_payload(chk, f"valid payload for {chk['id']}", flagged=False)))
+        return GenericScatterResult(
+            ordered_results=items,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert calls == 1
+    assert [check["id"] for check in result.payload["checks"]] == [chk["id"] for chk in enriched]
 
 
 def test_write_single_check_template_filters_prior_findings_to_target_check(tmp_path: Path) -> None:
@@ -311,14 +472,15 @@ def test_run_parallel_critique_does_not_mutate_session_state(
     raw_checks = checks_for_robustness("standard")
     enriched = _enrich_checks(raw_checks)
 
-    def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
-        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
-        for chk in enriched:
-            items.append((
-                _check_payload(chk, f"Checked {chk['id']} while preserving the outer session state.", flagged=False),
-                [],
-                [],
-            ))
+    def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
+        items: list[dict[str, object]] = []
+        for unit in units:
+            chk = next(chk for chk in enriched if chk["id"] == unit.extra["check_id"])
+            items.append(
+                _raw_critique_payload(
+                    _check_payload(chk, f"Checked {chk['id']} while preserving the outer session state.", flagged=False)
+                )
+            )
         return GenericScatterResult(
             ordered_results=items,
             total_cost=0.0,
@@ -357,9 +519,10 @@ def test_run_parallel_critique_builds_read_only_worker_units(
 
     def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
         captured_units.extend(units)
-        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
-        for chk in enriched:
-            items.append((_check_payload(chk, "read-only verify", flagged=False), [], []))
+        items: list[dict[str, object]] = []
+        for unit in units:
+            chk = next(chk for chk in enriched if chk["id"] == unit.extra["check_id"])
+            items.append(_raw_critique_payload(_check_payload(chk, "read-only verify", flagged=False)))
         return GenericScatterResult(
             ordered_results=items,
             total_cost=0.0,
@@ -403,9 +566,10 @@ def test_run_parallel_critique_uses_per_lens_resolved_agent_mode(
 
     def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
         captured_units.extend(units)
-        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
-        for chk in enriched:
-            items.append((_check_payload(chk, "per-lens verify", flagged=False), [], []))
+        items: list[dict[str, object]] = []
+        for unit in units:
+            chk = next(chk for chk in enriched if chk["id"] == unit.extra["check_id"])
+            items.append(_raw_critique_payload(_check_payload(chk, "per-lens verify", flagged=False)))
         return GenericScatterResult(
             ordered_results=items,
             total_cost=0.0,
@@ -442,9 +606,10 @@ def test_run_parallel_critique_unique_output_paths_per_check(
 
     def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
         captured_units.extend(units)
-        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
-        for chk in enriched:
-            items.append((_check_payload(chk, "unique paths verify", flagged=False), [], []))
+        items: list[dict[str, object]] = []
+        for unit in units:
+            chk = next(chk for chk in enriched if chk["id"] == unit.extra["check_id"])
+            items.append(_raw_critique_payload(_check_payload(chk, "unique paths verify", flagged=False)))
         return GenericScatterResult(
             ordered_results=items,
             total_cost=0.0,
@@ -487,6 +652,8 @@ def test_run_parallel_critique_missing_resolved_agent_mode_raises_invariant_erro
     raw_checks = checks_for_robustness("standard")
     # Do NOT enrich — leave checks without _resolved_agent_mode
     bare_checks = [dict(chk) for chk in raw_checks]
+    for chk in bare_checks:
+        chk.pop("_resolved_agent_mode", None)
 
     from megaplan.types import CliError
 
@@ -520,9 +687,10 @@ def test_run_parallel_critique_worker_units_have_unique_step_paths(
 
     def _fake_scatter(*, units: Any, **kwargs: Any) -> GenericScatterResult:
         captured_units.extend(units)
-        items: list[tuple[dict[str, Any], list[str], list[str]]] = []
-        for chk in enriched:
-            items.append((_check_payload(chk, "unique step/path verify", flagged=False), [], []))
+        items: list[dict[str, object]] = []
+        for unit in units:
+            chk = next(chk for chk in enriched if chk["id"] == unit.extra["check_id"])
+            items.append(_raw_critique_payload(_check_payload(chk, "unique step/path verify", flagged=False)))
         return GenericScatterResult(
             ordered_results=items,
             total_cost=0.0,
