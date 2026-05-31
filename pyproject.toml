@@ -72,4 +72,5 @@ markers = [
     "version_skew: tests verifying compatibility across version skew scenarios",
     "hinge_gate: gate test for the M3 hinge (R1 authority flip)",
     "substrate_swap: M4 oracle tests that must remain green under substrate substitution (lease/budget/journal swap)",
+    "replay_oracle: M5c replay tests that capture legacy control outputs and opt into routed parity action by action",
 ]

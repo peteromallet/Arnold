@@ -9,6 +9,7 @@ from megaplan.chain.m5_eval_gates import (
     check_calibration_source_purity,
     check_no_bare_float_judgments,
     check_no_second_eval_journals,
+    check_sdk_state_mechanism_purity,
     replay_oracle_corpus_marker,
     run_m5_eval_gates,
 )
@@ -238,7 +239,7 @@ def test_calibration_source_purity_passes_current_repo() -> None:
     """The current calibration source tree must be clean."""
     findings = check_calibration_source_purity()
     assert findings == (), (
-        f"Calibration source purity violations: "
+        "Calibration source purity violations: "
         + "; ".join(f"{f.code}:{f.path}:{f.line}" for f in findings)
     )
 
@@ -363,7 +364,7 @@ def test_calibration_gate_allows_valid_evaluandref_usage(
     )
     findings = check_calibration_source_purity(tmp_path)
     assert findings == (), (
-        f"Valid EvaluandRef usage tripped gate: "
+        "Valid EvaluandRef usage tripped gate: "
         + "; ".join(f"{f.code}:{f.line}" for f in findings)
     )
 
@@ -393,9 +394,113 @@ def test_calibration_gate_allows_normal_calibration_code(
     )
     findings = check_calibration_source_purity(tmp_path)
     assert findings == (), (
-        f"Normal calibration code tripped gate: "
+        "Normal calibration code tripped gate: "
         + "; ".join(f"{f.code}:{f.line}" for f in findings)
     )
+
+
+def test_sdk_state_mechanism_gate_passes_current_repo() -> None:
+    findings = check_sdk_state_mechanism_purity()
+    assert findings == (), (
+        "SDK state mechanism violations: "
+        + "; ".join(f"{f.code}:{f.path}:{f.line}" for f in findings)
+    )
+
+
+def test_sdk_state_mechanism_gate_rejects_state_imports_in_sdk_module(
+    tmp_path,
+) -> None:
+    _write(
+        tmp_path,
+        "megaplan/control_interface.py",
+        "from megaplan.types import STATE_BLOCKED\n",
+    )
+
+    findings = check_sdk_state_mechanism_purity(
+        tmp_path,
+        paths=["megaplan/control_interface.py"],
+    )
+
+    assert {finding.code for finding in findings} == {"M5_CAL_STATE_STAR_IMPORT"}
+
+
+def test_sdk_state_mechanism_gate_rejects_state_name_usage_in_sdk_module(
+    tmp_path,
+) -> None:
+    _write(
+        tmp_path,
+        "megaplan/run_outcome.py",
+        "def project(state):\n"
+        "    return STATE_BLOCKED if state else None\n",
+    )
+
+    findings = check_sdk_state_mechanism_purity(
+        tmp_path,
+        paths=["megaplan/run_outcome.py"],
+    )
+
+    assert {finding.code for finding in findings} == {"M5_CAL_STATE_STAR_USAGE"}
+
+
+def test_sdk_state_mechanism_gate_allows_planning_compatibility_surface(
+    tmp_path,
+) -> None:
+    _write(
+        tmp_path,
+        "megaplan/planning/control_binding.py",
+        "from megaplan.types import STATE_BLOCKED\n"
+        "RECOVERY = {'current_state': 'blocked', 'resume_cursor': {'phase': 'execute'}}\n",
+    )
+
+    assert (
+        check_sdk_state_mechanism_purity(
+            tmp_path,
+            paths=["megaplan/planning/control_binding.py"],
+        )
+        == ()
+    )
+
+
+def test_sdk_state_mechanism_gate_rejects_persisted_recovery_resume_map_in_sdk_module(
+    tmp_path,
+) -> None:
+    _write(
+        tmp_path,
+        "megaplan/control_interface.py",
+        "RECOVERY_MAP = {\n"
+        "    'current_state': 'blocked',\n"
+        "    'resume_cursor': {'phase': 'execute'},\n"
+        "}\n",
+    )
+
+    findings = check_sdk_state_mechanism_purity(
+        tmp_path,
+        paths=["megaplan/control_interface.py"],
+    )
+
+    assert {finding.code for finding in findings} == {
+        "M5_CONTROL_PERSISTED_RECOVERY_MECHANISM"
+    }
+
+
+def test_sdk_state_mechanism_gate_rejects_mechanism_state_delta_in_sdk_module(
+    tmp_path,
+) -> None:
+    _write(
+        tmp_path,
+        "megaplan/control_interface.py",
+        "from megaplan._pipeline.types import StateDelta\n"
+        "delta = StateDelta(op='replace', key='resume_cursor', value={'phase': 'execute'})\n",
+    )
+
+    findings = check_sdk_state_mechanism_purity(
+        tmp_path,
+        paths=["megaplan/control_interface.py"],
+    )
+
+    assert {finding.code for finding in findings} == {
+        "M5_CONTROL_PERSISTED_RECOVERY_MECHANISM"
+    }
 
 
 def test_m5_eval_gate_preserved_after_calibration_gate_addition() -> None:

@@ -14,17 +14,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.resume import check_awaiting_user, with_entry
 from megaplan._pipeline.steps.human_gate import HumanDecisionStep
 from megaplan._pipeline.types import (
-    Edge,
     Pipeline,
     Stage,
     StepContext,
-    StepResult,
 )
 
 
@@ -141,7 +137,7 @@ class TestHumanDecisionStep:
             _resume_choice=None,
         )
         ctx = _minimal_ctx(tmp_path)
-        result = step.run(ctx)
+        step.run(ctx)
 
         awaiting_path = tmp_path / "awaiting_user.json"
         data = json.loads(awaiting_path.read_text())
@@ -345,6 +341,7 @@ class TestPauseResumeInPipeline:
         assert result["halt_reason"] == "awaiting_user"
         assert result["final_stage"] == "decide"
         assert (plan_dir / "awaiting_user.json").exists()
+        assert result["state"].get("_pipeline_paused_stage") == "decide"
 
         # State patch lands in state.json on pause.
         state_data = json.loads((plan_dir / "state.json").read_text())
@@ -416,6 +413,12 @@ class TestPauseResumeInPipeline:
         assert (plan_dir / "write" / "v1.md").read_text() == "USER EDITED v1"
         # Should pause again at decide (decide's _resume_choice is single-use).
         assert result2["halt_reason"] == "awaiting_user"
+        assert result2["state"].get("_pipeline_paused_stage") == "decide"
+        state_data2 = json.loads((plan_dir / "state.json").read_text())
+        assert state_data2.get("_pipeline_paused") is True
+        assert state_data2.get("_pipeline_paused_stage") == "decide"
+        awaiting_data_after_resume = json.loads((plan_dir / "awaiting_user.json").read_text())
+        assert awaiting_data_after_resume["stage"] == "decide"
 
         # ── Resume with 'stop' via disk → complete ──
         awaiting_data2 = json.loads((plan_dir / "awaiting_user.json").read_text())

@@ -23,6 +23,20 @@ NEW_EVAL_MODULES: tuple[str, ...] = (
     "megaplan/observability/evaluand.py",
 )
 
+SDK_STATELESS_TARGETS: tuple[str, ...] = (
+    "megaplan/control_interface.py",
+    "megaplan/run_outcome.py",
+)
+
+STATE_MECHANISM_COMPAT_ALLOWLIST: tuple[str, ...] = (
+    "megaplan/control.py",
+    "megaplan/cli/status_view.py",
+    "megaplan/observability/introspect.py",
+    "megaplan/planning/control_binding.py",
+)
+
+STATE_MECHANISM_TEST_PREFIXES: tuple[str, ...] = ("tests/",)
+
 OLD_PATH_ALLOWLIST: tuple[str, ...] = (
     "megaplan/_pipeline/demo_judges.py",
     "megaplan/_pipeline/planning_bindings.py",
@@ -94,6 +108,10 @@ _VENDOR_SUBSTRINGS: tuple[str, ...] = (
     "kimi",
 )
 
+_RECOVERY_RESUME_MECHANISM_KEYS: frozenset[str] = frozenset(
+    {"current_state", "latest_failure", "phase_result", "resume_cursor"}
+)
+
 
 @dataclass(frozen=True)
 class M5EvalGateFinding:
@@ -122,6 +140,11 @@ def _relative_path(path: Path, root: Path) -> str:
 
 def _candidate_paths(root: Path, paths: Sequence[str] | None) -> tuple[Path, ...]:
     selected = paths if paths is not None else NEW_EVAL_MODULES
+    return tuple(root / path for path in selected)
+
+
+def _sdk_target_paths(root: Path, paths: Sequence[str] | None = None) -> tuple[Path, ...]:
+    selected = paths if paths is not None else SDK_STATELESS_TARGETS
     return tuple(root / path for path in selected)
 
 
@@ -473,6 +496,98 @@ def _find_state_star_references(
     return findings
 
 
+def _string_literal(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _dict_mechanism_keys(node: ast.AST) -> frozenset[str]:
+    if not isinstance(node, ast.Dict):
+        return frozenset()
+    keys: set[str] = set()
+    for key in node.keys:
+        literal = _string_literal(key) if key is not None else None
+        if literal in _RECOVERY_RESUME_MECHANISM_KEYS:
+            keys.add(literal)
+    return frozenset(keys)
+
+
+def _find_persisted_recovery_resume_maps(
+    tree: ast.AST,
+    *,
+    rel_path: str,
+) -> list[M5EvalGateFinding]:
+    findings: list[M5EvalGateFinding] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            call_name = _call_name(node.func)
+            if call_name.endswith("StateDelta"):
+                for keyword in node.keywords:
+                    if keyword.arg != "key":
+                        continue
+                    key_name = _string_literal(keyword.value)
+                    if key_name in _RECOVERY_RESUME_MECHANISM_KEYS:
+                        findings.append(
+                            M5EvalGateFinding(
+                                rel_path,
+                                node.lineno,
+                                "M5_CONTROL_PERSISTED_RECOVERY_MECHANISM",
+                                "SDK modules must not persist planning recovery/resume mechanism keys outside graph-derived projection code",
+                            )
+                        )
+            for mapping_node in (*node.args, *(kw.value for kw in node.keywords)):
+                keys = _dict_mechanism_keys(mapping_node)
+                if len(keys) >= 2:
+                    findings.append(
+                        M5EvalGateFinding(
+                            rel_path,
+                            node.lineno,
+                            "M5_CONTROL_PERSISTED_RECOVERY_MECHANISM",
+                            "SDK modules must not introduce persisted recovery/resume maps outside graph-derived projection code",
+                        )
+                    )
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if "resume" not in target.id.lower() and "recover" not in target.id.lower():
+                    continue
+                keys = _dict_mechanism_keys(node.value)
+                if len(keys) >= 2:
+                    findings.append(
+                        M5EvalGateFinding(
+                            rel_path,
+                            node.lineno,
+                            "M5_CONTROL_PERSISTED_RECOVERY_MECHANISM",
+                            "SDK modules must not define persisted recovery/resume maps outside graph-derived projection code",
+                        )
+                    )
+    return findings
+
+
+def check_sdk_state_mechanism_purity(
+    root: Path | str = REPO_ROOT,
+    *,
+    paths: Sequence[str] | None = None,
+) -> tuple[M5EvalGateFinding, ...]:
+    repo_root = Path(root)
+    findings: list[M5EvalGateFinding] = []
+    for path in _sdk_target_paths(repo_root, paths):
+        if not path.exists():
+            continue
+        rel_path = _relative_path(path, repo_root)
+        if rel_path in STATE_MECHANISM_COMPAT_ALLOWLIST:
+            continue
+        if any(rel_path.startswith(prefix) for prefix in STATE_MECHANISM_TEST_PREFIXES):
+            continue
+        tree = ast.parse(_read_source(path), filename=rel_path)
+        findings.extend(_find_state_star_references(tree, rel_path=rel_path))
+        findings.extend(_find_persisted_recovery_resume_maps(tree, rel_path=rel_path))
+    return tuple(findings)
+
+
 def _find_gaterecommendation_refs(
     tree: ast.AST,
     *,
@@ -594,6 +709,7 @@ def run_m5_eval_gates(root: Path | str = REPO_ROOT) -> M5EvalGateResult:
         + check_no_second_eval_journals(root)
         + check_better_join_is_pure(root)
         + check_calibration_source_purity(root)
+        + check_sdk_state_mechanism_purity(root)
     )
     return M5EvalGateResult(passed=not findings, findings=findings)
 
@@ -619,6 +735,7 @@ __all__ = [
     "check_calibration_source_purity",
     "check_no_bare_float_judgments",
     "check_no_second_eval_journals",
+    "check_sdk_state_mechanism_purity",
     "format_findings",
     "replay_oracle_corpus_marker",
     "run_m5_eval_gates",
