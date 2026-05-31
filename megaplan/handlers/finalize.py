@@ -4,7 +4,6 @@ import argparse
 import logging
 import os
 import re
-import shlex
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +21,7 @@ from megaplan._core import (
     sha256_file,
 )
 
-from .shared import _finish_step, _raise_step_validation_error, _run_worker, shutil, subprocess
+from .shared import _finish_step, _raise_step_validation_error, _run_worker
 
 LOGGER = logging.getLogger("megaplan")
 
@@ -276,10 +275,16 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
     if (
         state["config"].get("mode", "code") == "code"
         and _strict_finalize_validation_enabled()
-        and not _final_task_is_test_verification(tasks)
     ):
-        LOGGER.warning("Finalize output rejected: final task is not a test verification task.")
-        _reject("Finalize output final task must run tests or otherwise verify the change.")
+        # Negatively assert: no re-run-until-pass task may survive in the payload.
+        # The harness owns the authoritative verification — the LLM must not author
+        # a task that loops the suite.
+        for task in tasks:
+            if isinstance(task, dict) and _task_matches_verification_pattern(task):
+                _reject(
+                    "Finalize output contains a re-run-until-pass task. "
+                    "The harness owns test verification — do NOT author a re-run-until-pass task."
+                )
     validation = payload.get("validation")
     if isinstance(validation, dict):
         for index, entry in enumerate(validation.get("plan_steps_covered", []), start=1):
@@ -305,76 +310,87 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
                         "step and must include `requires_human_only_reason`."
                     )
 
-def _ensure_verification_task(payload: dict, state: dict) -> None:
-    """Ensure the task list ends with a test verification task.
+# ---------------------------------------------------------------------------
+# Scrubber detection helpers (shared between the scrubber and strict validation)
+# ---------------------------------------------------------------------------
 
-    If the last task already looks like a verification/test task, leave it.
-    Otherwise append one that depends on all other tasks.
+# Tightened keywords: require a run/re-run action word to co-occur with a
+# test/pytest/verification target.  The standalone "test suite" keyword is
+# intentionally dropped — it was too broad and caught unrelated descriptions.
+_VERIFY_ACTIONS = ("run", "re-run", "re run", "rerun")
+_VERIFY_TARGETS = ("test", "pytest", "verification")
+
+# Catch-all regexes that match re-run-until-pass phrasing even when the
+# tightened keyword heuristic misses it.
+_RE_RUN_UNTIL_PASS_PATTERNS = [
+    re.compile(r"re-?run.*(?:until|all).*(?:pass|green)", re.IGNORECASE),
+    re.compile(r"iterate.*until.*(?:pass|succeed)", re.IGNORECASE),
+    re.compile(r"loop.*(?:test|suite)", re.IGNORECASE),
+]
+
+
+def _task_matches_verification_pattern(task: dict[str, Any]) -> bool:
+    """Return True if *task* describes a re-run-until-pass verification loop."""
+    description = (task.get("description") or "").lower()
+
+    # Tightened keyword heuristic: need both an action AND a target
+    has_action = any(action in description for action in _VERIFY_ACTIONS)
+    has_target = any(target in description for target in _VERIFY_TARGETS)
+    if has_action and has_target:
+        return True
+
+    # Catch-all regexes
+    if any(pattern.search(description) for pattern in _RE_RUN_UNTIL_PASS_PATTERNS):
+        return True
+
+    return False
+
+
+def _ensure_verification_task(payload: dict, state: dict) -> None:
+    """Scrub re-run-until-pass language from any task that matches verification patterns.
+
+    Scans ALL tasks (not just ``tasks[-1]``).  For every task whose description
+    matches the tightened verification keywords or the catch-all regexes the
+    description is rewritten to the bounded "introduce no new failures" contract.
+    No new task is injected — the harness owns the authoritative post-execute
+    verification run.
     """
     tasks = payload.get("tasks", [])
     if not tasks:
         return
 
-    # Check if last task is already a verification task
-    last_desc = (tasks[-1].get("description") or "").lower()
-    test_keywords = ("run test", "run the test", "verify", "verification", "pytest", "test suite", "run existing test")
-    has_verification_task = any(kw in last_desc for kw in test_keywords)
+    REWRITTEN_DESCRIPTION = (
+        "Introduce no new failures vs the recorded baseline; "
+        "do not try to make pre-existing baseline failures pass; "
+        "do not narrow to individual functions. "
+        "The harness will run the authoritative post-execute verification — "
+        "do not loop the suite."
+    )
 
-    if not has_verification_task:
-        # Build the verification task
-        all_ids = [t["id"] for t in tasks]
-        next_num = max((int(t["id"].lstrip("T")) for t in tasks if t["id"].startswith("T")), default=0) + 1
-        task_id = f"T{next_num}"
+    rewritten_tasks: list[dict[str, Any]] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        if _task_matches_verification_pattern(task):
+            task["description"] = REWRITTEN_DESCRIPTION
+            rewritten_tasks.append(task)
 
-        # Pull specific test IDs from the original prompt if available
-        idea = state.get("idea", "") or ""
-        notes = "\n".join(state.get("notes", []) or [])
-        source_text = idea + "\n" + notes
-
-        if "FAIL_TO_PASS" in source_text or "test must pass" in source_text.lower() or "verification" in source_text.lower():
-            desc = (
-                "Run the tests specified in the task description to verify the fix — run the full test file/module, not just individual functions. "
-                "Run the project's existing test suite — do NOT create new test files. "
-                "If any test fails, read the error, fix the code, and re-run until all tests pass."
-            )
-        else:
-            desc = (
-                "Run tests relevant to the changed files to verify correctness and check for regressions — run the full test file/module, not just individual functions. "
-                "Find and run the project's existing test suite — do NOT create new test files. "
-                "If any test fails, read the error, fix the code, and re-run until all tests pass."
-            )
-
-        verification_task = {
-            "id": task_id,
-            "description": desc,
-            "depends_on": [all_ids[-1]],
-            "status": "pending",
-            "executor_notes": "",
-            "files_changed": [],
-            "commands_run": [],
-            "evidence_files": [],
-            "reviewer_verdict": "",
-        }
-        tasks.append(verification_task)
-
-        # Add a sense check for it
-        sense_checks = payload.get("sense_checks", [])
-        sc_num = max((int(sc["id"].lstrip("SC")) for sc in sense_checks if sc["id"].startswith("SC")), default=0) + 1
-        sense_checks.append({
-            "id": f"SC{sc_num}",
-            "task_id": task_id,
-            "question": "Did the verification tests pass? Were any regressions found and fixed?",
-            "executor_note": "",
-            "verdict": "",
-        })
-        _append_plan_step_coverage(payload, "Run verification tests", task_id)
-
+    # Sense-check injection and _append_plan_step_coverage removed — the harness owns verification.
     failures = payload.get("baseline_test_failures")
     if isinstance(failures, list) and failures:
-        tasks[-1]["description"] += (
-            f" Note: {len(failures)} tests were already failing before your changes "
-            "(see baseline_test_failures in finalize.json) — do not scope-creep into fixing these."
-        )
+        if rewritten_tasks:
+            # Append baseline-failure note only to a task that was rewritten.
+            rewritten_tasks[-1]["description"] += (
+                f" Note: {len(failures)} tests were already failing before your changes "
+                "(see baseline_test_failures in finalize.json) — "
+                "do not scope-creep into fixing these."
+            )
+        else:
+            # Surface the note exclusively via finalize.json.baseline_test_note.
+            payload["baseline_test_note"] = (
+                f"Note: {len(failures)} tests were already failing before your changes "
+                "(see baseline_test_failures in finalize.json)."
+            )
 
 def _ensure_user_actions_pre_gate_task(payload: dict[str, Any], state: dict[str, Any]) -> None:
     if state["config"].get("mode", "code") != "code":
@@ -496,64 +512,80 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
     if os.getenv(MOCK_ENV_VAR) == "1":
         return {
             "baseline_test_failures": [],
-            "baseline_test_command": "pytest --tb=no -q --no-header",
+            "baseline_test_command": "pytest --tb=no -q --no-header -rA",
         }
 
-    configured_command = config.get("test_command")
-    cmd_string: str | None = None
-
-    if isinstance(configured_command, str) and configured_command.strip():
-        cmd_string = configured_command.strip()
-        if cmd_string.startswith("pytest"):
-            cmd_string = f"{cmd_string} --tb=no -q --no-header"
-    elif shutil.which("pytest"):
-        cmd_string = "pytest --tb=no -q --no-header"
-
-    if cmd_string is None:
-        return {
-            "baseline_test_failures": None,
-            "baseline_test_command": None,
-            "baseline_test_note": (
-                "No supported test runner detected on PATH (looked for: pytest). "
-                "Configure test_command in state config to specify one."
-            ),
-        }
-
+    # Configurable timeout -- read from config, validate as positive int, default 900s.
+    raw_timeout = config.get("test_baseline_timeout")
     try:
-        result = subprocess.run(
-            shlex.split(cmd_string),
-            cwd=project_dir,
-            timeout=120,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.TimeoutExpired:
+        if raw_timeout is not None:
+            timeout = int(raw_timeout)
+            if timeout <= 0:
+                raise ValueError(f"test_baseline_timeout must be a positive int, got {raw_timeout!r}")
+        else:
+            timeout = 900
+    except (ValueError, TypeError):
         return {
             "baseline_test_failures": None,
-            "baseline_test_command": cmd_string,
+            "baseline_test_command": config.get("test_command"),
             "baseline_test_note": (
-                f"Baseline test capture timed out after 120 seconds while running: {cmd_string}"
+                f"test_baseline_timeout config value is invalid ({raw_timeout!r}); "
+                "must be a positive integer."
             ),
         }
-    except Exception as exc:
+
+    import time as _time_mod
+    from megaplan.orchestration.suite_runner import append_suite_run, run_suite
+
+    deadline = _time_mod.monotonic() + timeout
+    result = run_suite(
+        project_dir,
+        config,
+        phase="baseline",
+        deadline_seconds=deadline,
+    )
+    plan_dir_str = config.get("plan_dir")
+    if plan_dir_str:
+        append_suite_run(Path(plan_dir_str), result)
+
+    # NOTE: The new parser (regex-based nodeid extraction via
+    # ``_NODEID_LINE_RE`` in ``suite_runner._parse_pytest_output``) is more
+    # precise than the old ``' FAILED'``-substring scan that was previously
+    # here.  Shadow mode's *verdict structure* is unchanged, but
+    # ``baseline_test_failures`` content may now render as full nodeids
+    # (e.g. ``tests/test_foo.py::test_param[a-1]``) rather than loose lines.
+    # The set identity holds — the same failing tests are reported.
+
+    if result.status == "timeout":
+        return {
+            "baseline_test_failures": None,
+            "baseline_test_command": result.command,
+            "baseline_test_note": (
+                f"Baseline test capture timed out after {timeout} seconds "
+                f"while running: {result.command}"
+            ),
+        }
+    if result.status == "runner_error":
         return {
             "baseline_test_failures": None,
             "baseline_test_command": None,
-            "baseline_test_note": f"Baseline capture crashed: {exc}",
+            "baseline_test_note": (
+                f"Baseline capture failed: runner error"
+                + (f" (exit code: {result.exit_code})" if result.exit_code is not None else "")
+            ),
+        }
+    if result.status == "not_applicable":
+        return {
+            "baseline_test_failures": None,
+            "baseline_test_command": result.command,
+            "baseline_test_note": "No tests collected (pytest exit code 5).",
         }
 
-    failures: list[str] = []
-    for raw_line in result.stdout.splitlines():
-        line = raw_line.strip()
-        if not line.endswith(" FAILED"):
-            continue
-        test_id = line[: -len(" FAILED")].strip()
-        if test_id:
-            failures.append(test_id)
-
+    # ``passed`` or ``failed`` — baseline captures whatever was failing *before*
+    # the plan runs so the delta computation in post-execute can compare.
     return {
-        "baseline_test_failures": failures,
-        "baseline_test_command": cmd_string,
+        "baseline_test_failures": result.failures,
+        "baseline_test_command": result.command,
     }
 
 def _normalize_task_complexity(payload: dict[str, Any]) -> None:
@@ -599,11 +631,13 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         payload["baseline_test_command"] = None
         payload["baseline_test_note"] = "Test baseline not applicable in doc mode."
     else:
-        baseline = _capture_test_baseline(Path(state["config"]["project_dir"]), state.get("config", {}))
+        _config = dict(state.get("config", {}))
+        _config["plan_dir"] = str(plan_dir)
+        baseline = _capture_test_baseline(Path(_config["project_dir"]), _config)
         payload.update(baseline)
-        _ensure_verification_task(payload, state)
         _ensure_user_actions_pre_gate_task(payload, state)
         _ensure_user_actions_post_gate_task(payload, state)
+    _ensure_verification_task(payload, state)  # scrubber runs unconditionally for every mode
     _apply_programmatic_coverage(payload, plan_dir, state)
     _normalize_task_complexity(payload)
     _reconcile_validation_after_mutation(payload)

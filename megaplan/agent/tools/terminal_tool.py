@@ -42,6 +42,23 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+MAX_TOOL_RESULT_CHARS = 50000
+
+
+def _truncate_tool_result(output: str, limit: int = MAX_TOOL_RESULT_CHARS) -> str:
+    """Hard-cap one tool-result message and include a precise truncation marker."""
+    if len(output) <= limit:
+        return output
+    total = len(output)
+    marker = f"\n[truncated 0 of {total} chars]"
+    kept = max(0, limit - len(marker))
+    while True:
+        marker = f"\n[truncated {kept} of {total} chars]"
+        next_kept = max(0, limit - len(marker))
+        if next_kept == kept:
+            return output[:kept] + marker
+        kept = next_kept
+
 
 # ---------------------------------------------------------------------------
 # Global interrupt event: set by the agent when a user interrupt arrives.
@@ -1167,17 +1184,7 @@ def terminal_tool(
             # Add helpful message for sudo failures in messaging context
             output = _handle_sudo_failure(output, env_type)
             
-            # Truncate output if too long, keeping both head and tail
-            MAX_OUTPUT_CHARS = 50000
-            if len(output) > MAX_OUTPUT_CHARS:
-                head_chars = int(MAX_OUTPUT_CHARS * 0.4)  # 40% head (error messages often appear early)
-                tail_chars = MAX_OUTPUT_CHARS - head_chars  # 60% tail (most recent/relevant output)
-                omitted = len(output) - head_chars - tail_chars
-                truncated_notice = (
-                    f"\n\n... [OUTPUT TRUNCATED - {omitted} chars omitted "
-                    f"out of {len(output)} total] ...\n\n"
-                )
-                output = output[:head_chars] + truncated_notice + output[-tail_chars:]
+            output = _truncate_tool_result(output)
 
             # Strip ANSI escape sequences so the model never sees terminal
             # formatting — prevents it from copying escapes into file writes.
