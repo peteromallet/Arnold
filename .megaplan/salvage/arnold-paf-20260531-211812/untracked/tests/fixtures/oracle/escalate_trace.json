@@ -1,0 +1,20 @@
+[
+  [
+    "critique",
+    "gate",
+    "normal",
+    null
+  ],
+  [
+    "gate",
+    "escalate",
+    "gate",
+    "escalate"
+  ],
+  [
+    "escalate_sub",
+    "proceed",
+    "normal",
+    null
+  ]
+]

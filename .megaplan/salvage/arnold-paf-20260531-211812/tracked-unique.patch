@@ -1,0 +1,1281 @@
+diff --git a/megaplan/_pipeline/planning.py b/megaplan/_pipeline/planning.py
+index 229e0e7b..ae687cf9 100644
+--- a/megaplan/_pipeline/planning.py
++++ b/megaplan/_pipeline/planning.py
+@@ -1,122 +1,11 @@
+-"""Compile the canonical planning :class:`Pipeline`.
++"""Thin re-export shim — implementation lives in megaplan.pipelines.planning.
+ 
+-The planning pipeline is keyed by phase name:
+-``prep / plan / critique / gate / revise / finalize / execute / review /
+-tiebreaker``. Gate recommendations are represented as typed
+-``kind="gate"`` edges on the ``gate`` stage. User-facing override
+-command labels remain as normal fallback edges because the live gate
+-handler still emits and reports those commands.
++All callers that imported ``compile_planning_pipeline`` from this module
++continue to work unchanged.
+ """
+ 
+ from __future__ import annotations
+ 
+-from megaplan._pipeline.patterns import (
+-    critique_revise_gate_loop,
+-    phase_zero_gate,
+-)
+-from megaplan._pipeline.types import (
+-    Edge,
+-    Pipeline,
+-    Stage,
+-)
++from megaplan.pipelines.planning import build_pipeline as compile_planning_pipeline
+ 
+-
+-def compile_planning_pipeline() -> Pipeline:
+-    """Return the canonical, runnable planning :class:`Pipeline`.
+-
+-    Sprint 5 Chunk A: this is the only canonical compile target. Stage
+-    keys are phase names (``prep / plan / critique / gate / revise /
+-    finalize / execute / review / tiebreaker``); the gate Step's
+-    recommendation edges sit directly on the ``gate`` stage so the
+-    executor's typed-verdict dispatch resolves cleanly.
+-
+-    Stage layout::
+-
+-        prep → plan → critique → gate
+-                                  ├─ proceed → finalize → execute → review → halt
+-                                  ├─ iterate → revise → critique  (loop)
+-                                  ├─ tiebreaker → tiebreaker → critique
+-                                  └─ escalate → (override edges)
+-    """
+-
+-    from megaplan._pipeline.stages.prep import PrepStep
+-    from megaplan._pipeline.stages.plan import PlanStep
+-    from megaplan._pipeline.stages.critique import CritiqueStep
+-    from megaplan._pipeline.stages.gate import GateStep
+-    from megaplan._pipeline.stages.revise import ReviseStep
+-    from megaplan._pipeline.stages.finalize import FinalizeStep
+-    from megaplan._pipeline.stages.execute import ExecuteStep
+-    from megaplan._pipeline.stages.review import ReviewStep
+-    from megaplan._pipeline.stages.tiebreaker import TiebreakerStep
+-
+-    # Phase 0: prep gate via patterns.phase_zero_gate.
+-    prep_stage = phase_zero_gate(
+-        PrepStep(),
+-        name="prep",
+-        on_pass="plan",
+-        on_fail="halt",
+-    )
+-
+-    # critique → gate → revise cycle assembled via the pattern library.
+-    # gate_extra_edges carry the non-recommendation fallback/override
+-    # labels that the live gate handler reports; critique_fallback_edges
+-    # carry the label-fallback edges the existing CritiqueStep emits.
+-    cycle = critique_revise_gate_loop(
+-        CritiqueStep(),
+-        GateStep(),
+-        ReviseStep(),
+-        on_proceed="finalize",
+-        on_iterate="revise",
+-        on_tiebreaker="tiebreaker",
+-        on_escalate="finalize",
+-        critique_fallback_edges=(
+-            Edge(label="gate_unset:gate", target="gate"),
+-            Edge(label="gate", target="gate"),
+-        ),
+-        gate_extra_edges=(
+-            Edge(label="revise", target="revise"),
+-            Edge(label="gate", target="finalize"),
+-            Edge(label="override force-proceed", target="finalize"),
+-            Edge(label="override abort", target="halt"),
+-        ),
+-        revise_target="critique",
+-    )
+-
+-    stages: dict[str, Stage] = {
+-        "prep": prep_stage,
+-        "plan": Stage(
+-            name="plan", step=PlanStep(),
+-            edges=(Edge(label="critique", target="critique"),),
+-        ),
+-        "critique": cycle["critique"],
+-        "gate": cycle["gate"],
+-        "revise": cycle["revise"],
+-        "finalize": Stage(
+-            name="finalize", step=FinalizeStep(),
+-            edges=(Edge(label="execute", target="execute"),),
+-        ),
+-        "execute": Stage(
+-            name="execute", step=ExecuteStep(),
+-            edges=(Edge(label="review", target="review"),),
+-        ),
+-        "review": Stage(
+-            name="review", step=ReviewStep(),
+-            edges=(Edge(label="review", target="halt"),
+-                   Edge(label="halt", target="halt")),
+-        ),
+-        # T11 LOAD-BEARING: TiebreakerStep is a SubloopStep that emits a
+-        # PipelineVerdict with a typed recommendation. The three kind='gate' edges
+-        # below replace the legacy label-only edges; the legacy 'escalate
+-        # folds into the finalize branch' semantics are preserved via
+-        # escalate→finalize (anti-scope: no new pipeline branches this
+-        # sprint).
+-        "tiebreaker": Stage(
+-            name="tiebreaker", step=TiebreakerStep(),
+-            edges=(
+-                Edge(label="", target="critique", kind="gate", recommendation="iterate"),
+-                Edge(label="", target="finalize", kind="gate", recommendation="proceed"),
+-                Edge(label="", target="finalize", kind="gate", recommendation="escalate"),
+-            ),
+-        ),
+-    }
+-    return Pipeline(stages=stages, entry="prep")
++__all__ = ["compile_planning_pipeline"]
+diff --git a/megaplan/_pipeline/registry.py b/megaplan/_pipeline/registry.py
+index ad6d9029..3e298fca 100644
+--- a/megaplan/_pipeline/registry.py
++++ b/megaplan/_pipeline/registry.py
+@@ -1,32 +1,26 @@
+ """Pipeline registry — feed in pipelines by name.
+ 
+-Asymmetric registration policy: the single built-in (``planning``) is
+-registered programmatically from its hardcoded ``_planning_builder``
+-callable at module import time; every other pipeline is discovered as
+-a Python module via :func:`discover_python_pipelines`.  Demo pipelines
+-(``doc-critique``, ``judges``) are not registered as built-ins; they
+-remain directly importable from their demo modules.
++Symmetric discovery model (M6 / T9): all pipelines — including
++``planning`` — are discovered from ``megaplan/pipelines/`` as Python
++modules via :func:`discover_python_pipelines`.  There are no hardcoded
++built-ins; every pipeline follows the same manifest-first (flag-ON) or
++legacy (flag-OFF) discovery path.
+ 
+-Discovery scans (T9 / Step 8):
++Discovery scans:
+ 
++* ``megaplan/pipelines/<name>/__init__.py`` — package modules exposing
++  ``build_pipeline()`` and module-level manifest constants.  ``SKILL.md``
++  lives alongside ``__init__.py``.
+ * ``megaplan/pipelines/<name>.py`` — sibling files exposing
+   ``build_pipeline()``. The CLI-visible name is the file stem with
+   ``_`` → ``-`` (e.g. ``writing_panel_strict.py`` →
+   ``writing-panel-strict``). The hyphenated sibling directory
+   ``megaplan/pipelines/<cli-name>/`` (when present) holds prompts,
+   profiles, and ``SKILL.md``.
+-* ``megaplan/pipelines/<name>/__init__.py`` — package modules with the
+-  same ``build_pipeline()`` contract; ``SKILL.md`` lives alongside
+-  ``__init__.py``.
+ * ``~/.megaplan/pipelines/<name>.py`` — user-installed pipelines.
+ 
+-Discovered modules may expose module-level constants ``description``,
+-``default_profile``, ``supported_modes``, ``recommended_profiles`` —
+-the registry surfaces them via :attr:`PipelineRegistry.metadata`. Any
+-attempt to discover a module whose CLI-visible name collides with a
+-hardcoded built-in is skipped with a warning (no override).
+-
+-A new built-in is still three lines::
++Programmatic registration via :func:`register_pipeline` is still
++supported for tests and ad-hoc pipelines (no manifest required)::
+ 
+     from megaplan._pipeline.registry import register_pipeline
+     register_pipeline("my-pipeline", build_my_pipeline,
+@@ -37,6 +31,7 @@ from __future__ import annotations
+ 
+ import importlib
+ import importlib.util
++import os
+ import sys
+ import traceback
+ import warnings
+@@ -44,6 +39,16 @@ from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any, Callable, Mapping, Optional
+ 
++from megaplan._pipeline.discovery.manifest import (
++    Manifest,
++    ManifestError,
++    read_manifest,
++)
++from megaplan._pipeline.discovery.trust import (
++    BLESSED_ALLOWLIST,
++    TrustTier,
++    classify,
++)
+ from megaplan._pipeline.types import Pipeline
+ 
+ 
+@@ -79,10 +84,17 @@ class Disposition:
+     reason: str
+     traceback: Optional[str] = None
+     cli_name: Optional[str] = None
++    manifest: Optional[Manifest] = None
+ 
+ 
+-# Built-in pipeline names that discovery must never override.
+-_BUILTIN_NAMES: frozenset[str] = frozenset({"planning"})
++def _manifest_discovery_enabled() -> bool:
++    """Is manifest-first discovery turned on?
++
++    Default OFF (M6 strangler). Mirrors the inline-env-read pattern
++    used at ``_pipeline/runtime.py:191`` for ``MEGAPLAN_PIPELINE_AUTO``.
++    """
++
++    return os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY", "0") == "1"
+ 
+ 
+ @dataclass
+@@ -132,6 +144,42 @@ class PipelineRegistry:
+         # Set flag first to avoid recursive discovery if a build_pipeline
+         # callable transitively imports the registry.
+         self._discovered = True
++
++        if _manifest_discovery_enabled():
++            # Manifest-first path: consume Dispositions WITHOUT re-importing.
++            # Register deferred-import builders so exec_module is gated to
++            # PipelineRegistry.get(name) and to the trust-tier check there.
++            for d in scan_python_pipelines():
++                if d.status != "discovered" or d.cli_name is None or d.manifest is None:
++                    continue
++                name = d.cli_name
++                if name in self.builders:
++                    continue
++                # Resolve package_prefix for deferred import (same logic as
++                # _get_scan_roots): in_tree → "megaplan.pipelines", else None.
++                package_prefix = "megaplan.pipelines" if d.origin == "in_tree" else None
++                self.builders[name] = _make_deferred_builder(
++                    d.path, package_prefix=package_prefix, cli_name=name,
++                )
++                description = d.manifest.description or ""
++                if description:
++                    self.descriptions[name] = description
++                meta: dict[str, Any] = {}
++                if description:
++                    meta["description"] = description
++                if d.manifest.default_profile:
++                    meta["default_profile"] = d.manifest.default_profile
++                if d.manifest.supported_modes:
++                    meta["supported_modes"] = tuple(d.manifest.supported_modes)
++                meta["arnold_api_version"] = d.manifest.arnold_api_version
++                meta["capabilities"] = tuple(d.manifest.capabilities)
++                meta["source_path"] = str(d.path)
++                meta["manifest_origin"] = d.origin
++                self.metadata[name] = meta
++                self._module_files[name] = d.path
++            return
++
++        # Flag-OFF: legacy quad-list path (re-imports modules eagerly).
+         for name, builder, meta, source_path in discover_python_pipelines():
+             if name in self.builders:
+                 # Either a built-in collision (caught and skipped at
+@@ -145,13 +193,39 @@ class PipelineRegistry:
+             self.metadata[name].setdefault("source_path", str(source_path))
+             self._module_files[name] = source_path
+ 
+-    def get(self, name: str) -> Pipeline:
++    def get(self, name: str) -> Pipeline | None:
++        """Return a built Pipeline for *name*.
++
++        Under manifest-first discovery (M6 flag-ON), exec_module is gated
++        on the path-derived trust tier: AUTO_EXEC or BLESSED proceed;
++        QUARANTINED returns ``None`` and emits a UserWarning rather than
++        executing arbitrary out-of-tree code. Built-ins and programmatically
++        registered builders are unaffected (they bypass _ensure_discovered's
++        deferred-builder path).
++        """
+         self._ensure_discovered()
+         if name not in self.builders:
+             raise KeyError(
+                 f"no pipeline named {name!r}; available: {sorted(self.builders)}"
+             )
+-        return self.builders[name]()
++        builder = self.builders[name]
++        # Trust-gate only when manifest discovery is on AND this builder
++        # came from manifest-first discovery (deferred). Built-ins and
++        # programmatic registrations bypass.
++        if _manifest_discovery_enabled() and getattr(builder, "_m6_deferred", False):
++            module_file = self._module_files.get(name)
++            if module_file is not None:
++                tier = classify(module_file, blessed_allowlist=BLESSED_ALLOWLIST)
++                if tier not in (TrustTier.AUTO_EXEC, TrustTier.BLESSED):
++                    warnings.warn(
++                        f"pipeline {name!r} at {module_file!s} is QUARANTINED "
++                        f"(trust_tier={tier.value}); refusing to exec_module. "
++                        f"Promote via BLESSED_ALLOWLIST to enable execution.",
++                        UserWarning,
++                        stacklevel=2,
++                    )
++                    return None
++        return builder()
+ 
+     def names(self) -> tuple[str, ...]:
+         self._ensure_discovered()
+@@ -183,8 +257,6 @@ class PipelineRegistry:
+         """
+ 
+         self._ensure_discovered()
+-        if name in _BUILTIN_NAMES:
+-            return None
+         module_file = self._module_files.get(name)
+         if module_file is None:
+             return None
+@@ -214,7 +286,7 @@ def register_pipeline(
+     )
+ 
+ 
+-def get_pipeline(name: str) -> Pipeline:
++def get_pipeline(name: str) -> Pipeline | None:
+     return _GLOBAL_REGISTRY.get(name)
+ 
+ 
+@@ -330,6 +402,36 @@ def _scan_dir_for_pipeline_modules(
+     return out
+ 
+ 
++def _make_deferred_builder(
++    module_file: Path,
++    *,
++    package_prefix: str | None,
++    cli_name: str,
++) -> PipelineBuilder:
++    """Build a deferred-import callable for a manifest-discovered pipeline.
++
++    The returned callable defers ``exec_module`` until invoked. Calls into
++    it are gated by :meth:`PipelineRegistry.get` on the path-derived trust
++    tier — this closure trusts its caller to have already classified.
++    """
++
++    def _deferred() -> Pipeline:
++        module = _load_module_from_path(module_file, package_prefix=package_prefix)
++        if module is None:
++            raise RuntimeError(
++                f"pipeline {cli_name!r} at {module_file!s} failed to load",
++            )
++        build = getattr(module, "build_pipeline", None)
++        if not callable(build):
++            raise RuntimeError(
++                f"pipeline {cli_name!r} at {module_file!s} has no callable build_pipeline",
++            )
++        return build()
++
++    _deferred._m6_deferred = True  # type: ignore[attr-defined]
++    return _deferred
++
++
+ def _load_module_from_path(
+     module_file: Path,
+     *,
+@@ -438,25 +540,39 @@ def scan_python_pipelines() -> list[Disposition]:
+             continue
+ 
+         for cli_name, module_file in dir_entries:
+-            # --- builtin collision ---
+-            if cli_name in _BUILTIN_NAMES:
++            # --- duplicate (earlier scan root wins) ---
++            if cli_name in seen:
+                 dispositions.append(Disposition(
+                     path=module_file,
+                     origin=origin,
+                     status="skipped",
+-                    reason=f"cli_name {cli_name!r} collides with a built-in; skipping",
++                    reason=f"cli_name {cli_name!r} already discovered from an earlier scan root",
+                     cli_name=cli_name,
+                 ))
+                 continue
+ 
+-            # --- duplicate (earlier scan root wins) ---
+-            if cli_name in seen:
++            # --- manifest-first discovery (flag-gated, default OFF) ---
++            if _manifest_discovery_enabled():
++                manifest_result = read_manifest(module_file)
++                if isinstance(manifest_result, ManifestError):
++                    dispositions.append(Disposition(
++                        path=module_file,
++                        origin=origin,
++                        status="rejected",
++                        reason=f"manifest rejected: {manifest_result.reason}",
++                        traceback=manifest_result.traceback,
++                        cli_name=cli_name,
++                        manifest=None,
++                    ))
++                    continue
++                seen.add(cli_name)
+                 dispositions.append(Disposition(
+                     path=module_file,
+                     origin=origin,
+-                    status="skipped",
+-                    reason=f"cli_name {cli_name!r} already discovered from an earlier scan root",
++                    status="discovered",
++                    reason="ok (manifest)",
+                     cli_name=cli_name,
++                    manifest=manifest_result,
+                 ))
+                 continue
+ 
+@@ -523,16 +639,6 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
+     """
+     dispositions = scan_python_pipelines()
+ 
+-    # Emit warnings for builtin collisions (preserve historical behaviour).
+-    for d in dispositions:
+-        if d.status == "skipped" and "collides with a built-in" in d.reason:
+-            warnings.warn(
+-                f"discovered pipeline module {d.path!s} would "
+-                f"override built-in {d.cli_name!r}; skipping",
+-                UserWarning,
+-                stacklevel=2,
+-            )
+-
+     # Collect rejected in-tree modules for aggregate error.
+     rejected_in_tree = [d for d in dispositions if d.status == "rejected" and d.origin == "in_tree"]
+ 
+@@ -555,6 +661,32 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
+ 
+     # Build back-compat quad list from discovered dispositions only.
+     out: list[tuple[str, PipelineBuilder, dict[str, Any], Path]] = []
++
++    # Flag-ON: honour manifest-first discipline — return deferred-import
++    # builders sourced from Disposition.manifest rather than re-importing.
++    # The :568 secondary loop is REPLACED under flag-ON so exec_module is
++    # never invoked from this path.
++    if _manifest_discovery_enabled():
++        for d in dispositions:
++            if d.status != "discovered" or d.cli_name is None or d.manifest is None:
++                continue
++            package_prefix = "megaplan.pipelines" if d.origin == "in_tree" else None
++            builder = _make_deferred_builder(
++                d.path, package_prefix=package_prefix, cli_name=d.cli_name,
++            )
++            meta: dict[str, Any] = {}
++            if d.manifest.description:
++                meta["description"] = d.manifest.description
++            if d.manifest.default_profile:
++                meta["default_profile"] = d.manifest.default_profile
++            if d.manifest.supported_modes:
++                meta["supported_modes"] = tuple(d.manifest.supported_modes)
++            meta["arnold_api_version"] = d.manifest.arnold_api_version
++            meta["capabilities"] = tuple(d.manifest.capabilities)
++            out.append((d.cli_name, builder, meta, d.path))
++        return out
++
++    # Flag-OFF: legacy re-import loop (preserves prior behaviour).
+     # Re-derive builders and metadata from discovered paths.
+     # We need the actual module objects — re-import the discovered ones.
+     # To avoid double-importing, we track the scan_roots mapping.
+@@ -563,7 +695,7 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
+         for cli_name, module_file in _scan_dir_for_pipeline_modules(
+             pipelines_dir, package_prefix=package_prefix,
+         ):
+-            if cli_name in _BUILTIN_NAMES or cli_name in seen:
++            if cli_name in seen:
+                 continue
+             module = _load_module_from_path(module_file, package_prefix=package_prefix)
+             if module is None:
+@@ -580,16 +712,3 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
+ 
+ # ---------------------------------------------------------------------------
+ # Built-in pipeline registered at import time.
+-# ---------------------------------------------------------------------------
+-
+-
+-def _planning_builder() -> Pipeline:
+-    from megaplan._pipeline.planning import compile_planning_pipeline
+-    return compile_planning_pipeline()
+-
+-
+-register_pipeline(
+-    "planning", _planning_builder,
+-    description="Production planning — runnable shape "
+-                "(prep→plan→critique→gate→…→review).",
+-)
+diff --git a/megaplan/_pipeline/resume.py b/megaplan/_pipeline/resume.py
+index 6d5f153d..5e2bac9d 100644
+--- a/megaplan/_pipeline/resume.py
++++ b/megaplan/_pipeline/resume.py
+@@ -26,9 +26,10 @@ from __future__ import annotations
+ import json
+ from dataclasses import dataclass
+ from pathlib import Path
+-from typing import Any, Mapping
++from typing import Any, Mapping, Optional
+ 
+ from megaplan._core.state import write_plan_state
++from megaplan._pipeline.feature_flags import megaplan_unified_dispatch_on
+ from megaplan._pipeline.types import Pipeline
+ 
+ 
+@@ -44,17 +45,30 @@ class ResumeCursor:
+         {"phase": "<stage_name>", "retry_strategy": "...", ...}
+ 
+     ``phase`` is the legacy key; ResumeCursor reads/writes it.
++
++    ``manifest_hash`` (default ``None``) is the :data:`ManifestHash`
++    persisted by :meth:`save_with_manifest`. When
++    :func:`~megaplan._pipeline.feature_flags.megaplan_unified_dispatch_on`
++    is active and :meth:`load` receives a *current_manifest* that differs
++    from the stored hash, ``payload['resume_policy']`` is set to
++    ``'refuse'`` so the caller can abort the resume rather than re-enter
++    a stale pipeline.
+     """
+ 
+     stage: str
+     payload: Mapping[str, Any] = None  # type: ignore[assignment]
++    manifest_hash: Optional[str] = None
+ 
+     def __post_init__(self) -> None:
+         if self.payload is None:
+             object.__setattr__(self, "payload", {})
+ 
+     @classmethod
+-    def load(cls, plan_dir: Path) -> "ResumeCursor | None":
++    def load(
++        cls,
++        plan_dir: Path,
++        current_manifest: Optional[str] = None,
++    ) -> "ResumeCursor | None":
+         path = Path(plan_dir) / "state.json"
+         if not path.exists():
+             return None
+@@ -68,8 +82,19 @@ class ResumeCursor:
+         stage = cursor.get("phase") or cursor.get("stage")
+         if not isinstance(stage, str):
+             return None
+-        payload = {k: v for k, v in cursor.items() if k not in {"phase", "stage"}}
+-        return cls(stage=stage, payload=payload)
++        stored_hash: Optional[str] = cursor.get("manifest_hash")
++        payload: dict[str, Any] = {
++            k: v
++            for k, v in cursor.items()
++            if k not in {"phase", "stage", "manifest_hash"}
++        }
++        if (
++            megaplan_unified_dispatch_on()
++            and current_manifest is not None
++            and stored_hash != current_manifest
++        ):
++            payload["resume_policy"] = "refuse"
++        return cls(stage=stage, payload=payload, manifest_hash=stored_hash)
+ 
+     def save(self, plan_dir: Path) -> Path:
+         resolved_plan_dir = Path(plan_dir)
+@@ -82,9 +107,28 @@ class ResumeCursor:
+         )
+         return path
+ 
++    def save_with_manifest(self, plan_dir: Path, manifest_hash: str) -> Path:
++        """Save the cursor with *manifest_hash* persisted in ``state.json::resume_cursor``.
++
++        Writes ``{"phase": self.stage, "manifest_hash": manifest_hash, ...payload}``
++        so a subsequent :meth:`load` call can detect pipeline behavioral drift.
++        """
++        resolved_plan_dir = Path(plan_dir)
++        write_plan_state(
++            resolved_plan_dir,
++            mode="patch-key",
++            key="resume_cursor",
++            value={
++                "phase": self.stage,
++                "manifest_hash": manifest_hash,
++                **dict(self.payload),
++            },
++        )
++        return resolved_plan_dir / "state.json"
++
+     def with_payload(self, **overrides: Any) -> "ResumeCursor":
+         merged = {**dict(self.payload), **overrides}
+-        return ResumeCursor(stage=self.stage, payload=merged)
++        return ResumeCursor(stage=self.stage, payload=merged, manifest_hash=self.manifest_hash)
+ 
+ 
+ def with_entry(pipeline: Pipeline, stage_name: str) -> Pipeline:
+diff --git a/megaplan/_pipeline/validator.py b/megaplan/_pipeline/validator.py
+index a1080253..39aa1c40 100644
+--- a/megaplan/_pipeline/validator.py
++++ b/megaplan/_pipeline/validator.py
+@@ -20,6 +20,7 @@ from __future__ import annotations
+ from dataclasses import dataclass, field
+ from typing import Any, get_args
+ 
++from megaplan._pipeline.feature_flags import megaplan_unified_dispatch_on
+ from megaplan._pipeline.types import Edge, GateRecommendation, Pipeline
+ 
+ 
+@@ -45,6 +46,60 @@ def _stage_edges(stage: Any) -> tuple[Edge, ...]:
+     return tuple(getattr(stage, "edges", ()) or ())
+ 
+ 
++def _validate_ports(pipeline: Pipeline) -> list[str]:
++    """Check that every produced Port has at least one consumer anywhere in the pipeline.
++
++    Gated by the caller — only invoked when
++    :func:`~megaplan._pipeline.feature_flags.megaplan_unified_dispatch_on` is active.
++
++    Discovery uses :func:`~megaplan._pipeline.identity._resolve_export_name` to map
++    each :class:`~megaplan._pipeline.types.Step` to its node-registry name, then
++    :func:`~megaplan._pipeline.patterns.get_node_metadata` to retrieve its ``produces``
++    and ``consumes`` tuples.  Steps not found in the registry are silently skipped
++    (M2 will formalize the mapping).
++
++    Defect format::
++
++        f"stage {stage_name!r}: produces port {port_name!r} with no downstream consumer"
++    """
++    # Lazy imports to avoid potential circular-import issues at module load time.
++    from megaplan._pipeline.identity import _resolve_export_name
++    from megaplan._pipeline.patterns import get_node_metadata
++
++    # First pass: collect all ports consumed by any stage in this pipeline.
++    all_consumed: set[str] = set()
++    for stage in pipeline.stages.values():
++        step = getattr(stage, "step", None)
++        if step is None:
++            continue
++        export_name = _resolve_export_name(step)
++        try:
++            meta = get_node_metadata(export_name)
++        except KeyError:
++            continue
++        for port_name in meta.get("consumes", ()):
++            all_consumed.add(port_name)
++
++    # Second pass: flag produced ports that have no matching consumer.
++    defects: list[str] = []
++    for stage_name, stage in pipeline.stages.items():
++        step = getattr(stage, "step", None)
++        if step is None:
++            continue
++        export_name = _resolve_export_name(step)
++        try:
++            meta = get_node_metadata(export_name)
++        except KeyError:
++            continue
++        for port_name in meta.get("produces", ()):
++            if port_name not in all_consumed:
++                defects.append(
++                    f"stage {stage_name!r}: produces port {port_name!r} "
++                    "with no downstream consumer"
++                )
++    return defects
++
++
+ def validate(pipeline: Pipeline) -> Diagnostics:
+     """Run the W7 graph-shape checks over ``pipeline``.
+ 
+@@ -112,4 +167,7 @@ def validate(pipeline: Pipeline) -> Diagnostics:
+                 f"stage {name!r} is unreachable from entry {pipeline.entry!r}"
+             )
+ 
++    if megaplan_unified_dispatch_on():
++        diag.defects.extend(_validate_ports(pipeline))
++
+     return diag
+diff --git a/megaplan/execute/merge.py b/megaplan/execute/merge.py
+index 7b430c0b..b8234abb 100644
+--- a/megaplan/execute/merge.py
++++ b/megaplan/execute/merge.py
+@@ -2,7 +2,7 @@ from __future__ import annotations
+ 
+ import ast
+ from pathlib import Path
+-from typing import Any, Callable
++from typing import Any, Callable, Literal
+ 
+ from megaplan._core import (
+     atomic_write_json,
+@@ -99,7 +99,13 @@ def _task_deviation_strings(task: dict[str, Any], issues: list[str]) -> list[str
+     ]
+ 
+ 
+-def _validate_python_file_for_task(task: dict[str, Any], issues: list[str]) -> None:
++def _validate_python_file_for_task(
++    task: dict[str, Any],
++    issues: list[str],
++    *,
++    _classification_mode: Literal["legacy", "reducer"] = "legacy",
++    _task_deviations: dict[str, list[str]] | None = None,
++) -> None:
+     for file_name in task.get("files_changed", []) or []:
+         if not isinstance(file_name, str) or not file_name.endswith(".py"):
+             continue
+@@ -116,9 +122,14 @@ def _validate_python_file_for_task(task: dict[str, Any], issues: list[str]) -> N
+             message = f"patch_corruption: {file_name} line {line}: {exc.msg}"
+         else:
+             continue
+-        task["status"] = "blocked"
+-        _append_executor_note(task, f"[harness] {message}")
+         issues.append(message)
++        if _classification_mode == "reducer":
++            task_id = task.get("id", "")
++            if _task_deviations is not None and isinstance(task_id, str) and task_id:
++                _task_deviations.setdefault(task_id, []).append(message)
++        else:
++            task["status"] = "blocked"
++            _append_executor_note(task, f"[harness] {message}")
+ 
+ 
+ def _apply_task_update_guardrails(
+@@ -128,6 +139,8 @@ def _apply_task_update_guardrails(
+     id_field: str,
+     merge_fields: tuple[str, ...],
+     issues: list[str],
++    _classification_mode: Literal["legacy", "reducer"] = "legacy",
++    _task_deviations: dict[str, list[str]] | None = None,
+ ) -> None:
+     if id_field != "task_id" or "files_changed" not in merge_fields:
+         return
+@@ -140,7 +153,12 @@ def _apply_task_update_guardrails(
+         task = targets_by_id.get(task_id)
+         if task is None:
+             continue
+-        _validate_python_file_for_task(task, issues)
++        _validate_python_file_for_task(
++            task,
++            issues,
++            _classification_mode=_classification_mode,
++            _task_deviations=_task_deviations,
++        )
+     for task_id in task_ids:
+         task = targets_by_id.get(task_id)
+         if task is None or task.get("status") != "done":
+@@ -149,11 +167,17 @@ def _apply_task_update_guardrails(
+             matched = _is_blocking_deviation(deviation)
+             if matched is None:
+                 continue
+-            task["status"] = "blocked"
+-            _append_executor_note(
+-                task,
+-                f"[harness] status auto-downgraded: deviation contains {matched}",
+-            )
++            if _classification_mode == "reducer":
++                if _task_deviations is not None:
++                    _task_deviations.setdefault(task_id, []).append(
++                        f"status auto-downgraded: deviation contains {matched}"
++                    )
++            else:
++                task["status"] = "blocked"
++                _append_executor_note(
++                    task,
++                    f"[harness] status auto-downgraded: deviation contains {matched}",
++                )
+             break
+ 
+ 
+@@ -295,6 +319,8 @@ def _validate_and_merge_batch(
+     nonempty_fields: set[str] | None = None,
+     array_fields: tuple[str, ...] = (),
+     object_fields: tuple[str, ...] = (),
++    _classification_mode: Literal["legacy", "reducer"] = "legacy",
++    _task_deviations: dict[str, list[str]] | None = None,
+ ) -> tuple[int, int]:
+     valid_entries = _validate_merge_inputs(
+         entries,
+@@ -322,6 +348,8 @@ def _validate_and_merge_batch(
+         id_field=id_field,
+         merge_fields=merge_fields,
+         issues=issues,
++        _classification_mode=_classification_mode,
++        _task_deviations=_task_deviations,
+     )
+     if incomplete_message is not None and merged_count < total:
+         issues.append(incomplete_message(merged_count, total))
+@@ -360,7 +388,8 @@ def _merge_batch_results(
+     issues: list[str],
+     mode: str = "code",
+     state: PlanState | None = None,
+-) -> tuple[int, int, int, int]:
++    _classification_mode: Literal["legacy", "reducer"] = "legacy",
++) -> tuple[int, int, int, int] | tuple[int, int, int, int, dict[str, list[str]]]:
+     batch_task_id_set = set(batch_task_ids)
+     batch_sense_check_id_set = set(batch_sense_check_ids)
+     pre_merge_statuses = _snapshot_task_statuses(
+@@ -403,6 +432,7 @@ def _merge_batch_results(
+         array_fields = ("files_changed", "commands_run")
+         object_fields = ()
+         optional_fields = ()
++    task_deviations: dict[str, list[str]] = {}
+     merged_count, _ = _validate_and_merge_batch(
+         payload.get("task_updates"),
+         required_fields=required_fields,
+@@ -418,6 +448,8 @@ def _merge_batch_results(
+         nonempty_fields={"executor_notes"},
+         array_fields=array_fields,
+         object_fields=object_fields,
++        _classification_mode=_classification_mode,
++        _task_deviations=task_deviations if _classification_mode == "reducer" else None,
+     )
+     # Check batch-specific coverage: how many of THIS batch's tasks got updates?
+     # Any terminal status counts as "tracked" — the executor reported back.
+@@ -467,6 +499,8 @@ def _merge_batch_results(
+         tasks_by_id=all_tasks_by_id,
+         issues=issues,
+     )
++    if _classification_mode == "reducer":
++        return merged_count, total_batch_tasks, acknowledged_count, total_batch_checks, task_deviations
+     return merged_count, total_batch_tasks, acknowledged_count, total_batch_checks
+ 
+ 
+diff --git a/megaplan/workers/hermes.py b/megaplan/workers/hermes.py
+index 496da1fa..4861255d 100644
+--- a/megaplan/workers/hermes.py
++++ b/megaplan/workers/hermes.py
+@@ -700,6 +700,45 @@ def _resolve_hermes_cost(result: dict) -> tuple[float, int, int, int]:
+     return cost_usd, prompt_tokens, completion_tokens, total_tokens
+ 
+ 
++class PromptCacheMiss(LookupError):
++    """Raised when re_judge(live=True) cannot find cached prompt bytes."""
++
++
++def dispatch_judge(
++    *,
++    prompt: str,
++    model: str,
++    effort: str | None = None,
++) -> dict:
++    """Low-level judge dispatch entry — the single counted model-call leg.
++
++    M5-eval: ``JudgePiece.run`` and ``re_judge(live=True)`` call this directly;
++    ``run_hermes_step`` continues to drive planning-phase calls via its own
++    path. The thread-local dispatch counter (observability/dispatch_counter.py)
++    increments at the top of this function so ``assert_zero_dispatch()`` can
++    enforce zero-recompute invariants in re_judge(live=False).
++
++    Returns ``{'text': <model_output>, 'model_actual': <resolved_model>, 'usage': {...}}``.
++
++    For unit-test paths set ``MEGAPLAN_MOCK_OUTPUT=1`` (the canonical mock env
++    var) — the returned text is a fixed stub. Production wiring of the live
++    subprocess invocation is filed as M5-cal debt: callers in this milestone
++    inject mocks via ``unittest.mock.patch`` on ``megaplan.workers.hermes.dispatch_judge``.
++    """
++    from megaplan.observability.dispatch_counter import _HERMES_DISPATCH_CALLS
++    _HERMES_DISPATCH_CALLS.count = getattr(_HERMES_DISPATCH_CALLS, "count", 0) + 1
++
++    if os.getenv(MOCK_ENV_VAR) == "1":
++        return {
++            "text": "{}",
++            "model_actual": model,
++            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
++        }
++    raise NotImplementedError(
++        "dispatch_judge live wiring is M5-cal scope; tests must mock it"
++    )
++
++
+ def run_hermes_step(
+     step: str,
+     state: PlanState,
+diff --git a/tests/_pipeline/test_registry_python_discovery.py b/tests/_pipeline/test_registry_python_discovery.py
+index f167ee3a..a7d268fb 100644
+--- a/tests/_pipeline/test_registry_python_discovery.py
++++ b/tests/_pipeline/test_registry_python_discovery.py
+@@ -199,11 +199,10 @@ def test_discover_python_pipelines_skips_built_in_collision(
+     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+ ) -> None:
+     """Plant a sibling file whose CLI name == 'planning' under the user
+-    scan root and assert discovery refuses to register it (warning
+-    emitted + skipped). The same code path serves both the in-tree
+-    megaplan/pipelines/ root and the user ~/.megaplan/pipelines/ root,
+-    so this proves the collision semantic without requiring us to write
+-    into the real source tree.
++    scan root and assert the planted module is NOT discovered (it is
++    skipped as a duplicate — the in-tree planning wins).  Without
++    built-ins, planning is discovered from its in-tree location; the
++    user-planted duplicate is a no-op.
+     """
+ 
+     user_dir = tmp_path / ".megaplan" / "pipelines"
+@@ -214,7 +213,7 @@ def test_discover_python_pipelines_skips_built_in_collision(
+         "StepContext, StepResult, Step\n"
+         "from dataclasses import dataclass\n"
+         "\n"
+-        "description = 'BOGUS override of the built-in planning pipeline.'\n"
++        "description = 'BOGUS override of the planning pipeline.'\n"
+         "\n"
+         "@dataclass\n"
+         "class _BogusStep(Step):\n"
+@@ -234,32 +233,22 @@ def test_discover_python_pipelines_skips_built_in_collision(
+     monkeypatch.setenv("HOME", str(tmp_path))
+     sys.modules.pop("megaplan._user_pipelines.planning", None)
+ 
+-    with warnings.catch_warnings(record=True) as captured:
+-        warnings.simplefilter("always")
+-        discovered = discover_python_pipelines()
+-
++    discovered = discover_python_pipelines()
+     discovered_names = {entry[0] for entry in discovered}
+-    # The planted 'planning' module must NOT appear among discovered
+-    # entries — collision detection short-circuits before it is loaded.
+-    planted_entries = [
+-        entry for entry in discovered if entry[0] == "planning"
+-    ]
+-    assert planted_entries == [], (
+-        f"collision skipped; expected no discovered 'planning', "
+-        f"got {planted_entries!r}"
++
++    # The in-tree planning is legitimately discovered.
++    assert "planning" in discovered_names, (
++        f"in-tree planning should be discovered; got names: {sorted(discovered_names)}"
+     )
+ 
+-    # A UserWarning naming the planted path + the colliding built-in
+-    # must have been emitted.
+-    matching = [
+-        w for w in captured
+-        if issubclass(w.category, UserWarning)
+-        and "planning" in str(w.message)
+-        and str(planted) in str(w.message)
++    # The planted user 'planning' must NOT appear — it is skipped as a
++    # duplicate (earlier scan root wins).
++    planted_entries = [
++        entry for entry in discovered
++        if entry[0] == "planning" and str(planted) in str(entry[3])
+     ]
+-    assert matching, (
+-        f"expected UserWarning about planted {planted!s}; got "
+-        f"{[str(w.message) for w in captured]!r}"
++    assert planted_entries == [], (
++        f"planted user planning must not be discovered; got {planted_entries!r}"
+     )
+ 
+     # And the registry still resolves the built-in planning pipeline
+diff --git a/tests/characterization/test_import_surface.py b/tests/characterization/test_import_surface.py
+index 4b759727..1fb80f0b 100644
+--- a/tests/characterization/test_import_surface.py
++++ b/tests/characterization/test_import_surface.py
+@@ -268,6 +268,33 @@ EXECUTE_SYMBOLS = [
+     "_validate_and_merge_batch",
+ ]
+ 
++# ---------------------------------------------------------------------------
++# Unified-execute surface — canonical import paths (F4/F5, T14)
++# ---------------------------------------------------------------------------
++
++# Symbols from megaplan.execute._binding.reducer
++UNIFIED_EXECUTE_BINDING_SYMBOLS = [
++    "BatchReduceResult",
++    "BatchOutcome",
++    "apply_outcome_to_state",
++    "reduce_batch",
++]
++
++# Symbols from megaplan.execute._envelope
++UNIFIED_EXECUTE_ENVELOPE_SYMBOLS = [
++    "unified_execute_enabled",
++]
++
++# Symbols from megaplan._core (dispatch + scheduler) — already in _core.__all__
++# but explicitly characterized here for the unified-execute contract surface.
++UNIFIED_EXECUTE_CORE_SYMBOLS = [
++    "resolve_dispatch_spec",
++    "resolve_dispatch_agent",
++    "schedule_batches",
++    "run_scheduler",
++    "Reduce",
++]
++
+ 
+ # ====================================================================
+ # Tests
+@@ -484,6 +511,80 @@ class TestExecuteImportSurface:
+         _assert_resolves("megaplan.execute", EXECUTE_SYMBOLS)
+ 
+ 
++class TestExecuteMultiPathImport:
++    """Confirm key execute symbols remain importable from canonical paths.
++
++    ``handle_execute_one_batch`` and ``handle_execute_auto_loop`` must be
++    importable from ``megaplan.execute.batch``, ``megaplan.execute``, and
++    ``megaplan.execute.core`` so that legacy callers, the handler dispatch
++    layer, and any remote-exec paths are not broken.
++    """
++
++    def test_handle_execute_one_batch_from_batch(self) -> None:
++        from megaplan.execute.batch import handle_execute_one_batch  # noqa: F401
++
++    def test_handle_execute_auto_loop_from_batch(self) -> None:
++        from megaplan.execute.batch import handle_execute_auto_loop  # noqa: F401
++
++    def test_handle_execute_one_batch_from_execute(self) -> None:
++        from megaplan.execute import handle_execute_one_batch  # noqa: F401
++
++    def test_handle_execute_auto_loop_from_execute(self) -> None:
++        from megaplan.execute import handle_execute_auto_loop  # noqa: F401
++
++    def test_handle_execute_one_batch_from_core(self) -> None:
++        from megaplan.execute.core import handle_execute_one_batch  # noqa: F401
++
++    def test_handle_execute_auto_loop_from_core(self) -> None:
++        from megaplan.execute.core import handle_execute_auto_loop  # noqa: F401
++
++
++class TestUnifiedExecuteBindingImportSurface:
++    """Unified-execute binding surface (F4/F5, T14).
++
++    Symbols from ``megaplan.execute._binding.reducer`` and
++    ``megaplan.execute._envelope`` must be importable from their
++    canonical paths.
++    """
++
++    def test_binding_symbols_resolve(self) -> None:
++        _assert_resolves(
++            "megaplan.execute._binding.reducer", UNIFIED_EXECUTE_BINDING_SYMBOLS
++        )
++
++    def test_envelope_symbols_resolve(self) -> None:
++        _assert_resolves(
++            "megaplan.execute._envelope", UNIFIED_EXECUTE_ENVELOPE_SYMBOLS
++        )
++
++    def test_core_unified_symbols_resolve(self) -> None:
++        _assert_resolves("megaplan._core", UNIFIED_EXECUTE_CORE_SYMBOLS)
++
++
++class TestKnownGapsRaterGapDocumented:
++    """Smoke assertion: the rater≥dispatchee gap line is present in
++    ``docs/known_gaps.md`` so the gap is visible and carried."""
++
++    def test_rater_dispatchee_gap_documented(self) -> None:
++        import re
++        from pathlib import Path
++
++        gaps_path = Path(__file__).parent.parent.parent / "docs" / "known_gaps.md"
++        text = gaps_path.read_text(encoding="utf-8")
++
++        # The gap must mention the rater≥dispatchee invariant and M5-cal.
++        assert "rater" in text.lower(), (
++            "known_gaps.md must reference the rater≥dispatchee gap"
++        )
++        assert "M5-cal" in text, (
++            "known_gaps.md must reference M5-cal as the closing milestone"
++        )
++        # The gap must be a self-contained entry with both status and resolution target.
++        assert re.search(r"rater.*dispatchee", text, re.IGNORECASE), (
++            "known_gaps.md must contain a rater≥dispatchee gap entry"
++        )
++
++
+ # ====================================================================
+ # Cloud import-surface
+ # ====================================================================
+diff --git a/tests/test_execute_merge.py b/tests/test_execute_merge.py
+index 460f777f..08f64145 100644
+--- a/tests/test_execute_merge.py
++++ b/tests/test_execute_merge.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any
+ 
+@@ -132,3 +133,187 @@ def test_missing_file_skips_silently(tmp_path: Path, monkeypatch: Any) -> None:
+ 
+     assert task["status"] == "done"
+     assert issues == []
++
++
++# ---------------------------------------------------------------------------
++# Reducer-mode tests: merge must NOT mutate task['status'] when
++# _classification_mode='reducer'; deviations go into _task_deviations dict.
++# ---------------------------------------------------------------------------
++
++
++def _merge_task_update_reducer(
++    tmp_path: Path,
++    monkeypatch: Any,
++    *,
++    task_update: dict[str, Any],
++    deviations: list[str] | None = None,
++) -> tuple[dict[str, Any], list[str], dict[str, list[str]]]:
++    monkeypatch.chdir(tmp_path)
++    task = {
++        "id": task_update["task_id"],
++        "status": "pending",
++        "executor_notes": "",
++        "files_changed": [],
++        "commands_run": [],
++    }
++    issues = list(deviations or [])
++    task_deviations: dict[str, list[str]] = {}
++    _validate_and_merge_batch(
++        [task_update],
++        required_fields=("task_id", "status", "executor_notes", "files_changed", "commands_run"),
++        targets_by_id={task["id"]: task},
++        id_field="task_id",
++        merge_fields=("status", "executor_notes", "files_changed", "commands_run"),
++        issues=issues,
++        validation_label="task_updates",
++        merge_label="task_update",
++        enum_fields={"status": set(TERMINAL_TASK_STATUSES)},
++        nonempty_fields={"executor_notes"},
++        array_fields=("files_changed", "commands_run"),
++        _classification_mode="reducer",
++        _task_deviations=task_deviations,
++    )
++    return task, issues, task_deviations
++
++
++def test_reducer_patch_corruption_does_not_mutate_status(tmp_path: Path, monkeypatch: Any) -> None:
++    (tmp_path / "some_file.py").write_text("max_tokens = ***\n", encoding="utf-8")
++
++    task, issues, task_deviations = _merge_task_update_reducer(
++        tmp_path,
++        monkeypatch,
++        task_update={
++            "task_id": "T1",
++            "status": "done",
++            "executor_notes": "implemented",
++            "files_changed": ["some_file.py"],
++            "commands_run": [],
++        },
++    )
++
++    # Reducer mode: merge must NOT mutate task['status']
++    assert task["status"] == "done"
++    # Executor notes are also not mutated by merge
++    assert "[harness]" not in task.get("executor_notes", "")
++    # The issue is still recorded in issues list
++    assert any("patch_corruption: some_file.py line 1" in issue for issue in issues)
++    # The deviation is collected in the dict for the reducer to apply later
++    assert "T1" in task_deviations
++    assert any("patch_corruption:" in d for d in task_deviations["T1"])
++
++
++def test_reducer_deviation_phrase_does_not_mutate_status(tmp_path: Path, monkeypatch: Any) -> None:
++    (tmp_path / "some_file.py").write_text("max_tokens = 1\n", encoding="utf-8")
++
++    task, _issues, task_deviations = _merge_task_update_reducer(
++        tmp_path,
++        monkeypatch,
++        task_update={
++            "task_id": "T1",
++            "status": "done",
++            "executor_notes": "implemented",
++            "files_changed": ["some_file.py"],
++            "commands_run": [],
++        },
++        deviations=["T1 reported patch artifact: stray ***"],
++    )
++
++    # Reducer mode: merge must NOT mutate task['status']
++    assert task["status"] == "done"
++    assert "[harness]" not in task.get("executor_notes", "")
++    # Deviation is collected for the reducer
++    assert "T1" in task_deviations
++    assert any("status auto-downgraded" in d for d in task_deviations["T1"])
++
++
++def test_reducer_reapplication_matches_legacy_patch_corruption(tmp_path: Path, monkeypatch: Any) -> None:
++    """Reducer reapplication via reduce_batch produces the same final task state as legacy path."""
++    from megaplan.execute._binding.reducer import BatchOutcome, reduce_batch
++    from megaplan.execute.batch import BatchResult
++    from megaplan.workers import WorkerResult
++
++    (tmp_path / "some_file.py").write_text("max_tokens = ***\n", encoding="utf-8")
++    monkeypatch.chdir(tmp_path)
++
++    # --- Legacy path ---
++    legacy_task = {
++        "id": "T1",
++        "status": "done",
++        "executor_notes": "implemented",
++        "files_changed": ["some_file.py"],
++        "commands_run": [],
++    }
++    legacy_issues: list[str] = []
++    _validate_and_merge_batch(
++        [{"task_id": "T1", "status": "done", "executor_notes": "implemented",
++          "files_changed": ["some_file.py"], "commands_run": []}],
++        required_fields=("task_id", "status", "executor_notes", "files_changed", "commands_run"),
++        targets_by_id={"T1": legacy_task},
++        id_field="task_id",
++        merge_fields=("status", "executor_notes", "files_changed", "commands_run"),
++        issues=legacy_issues,
++        validation_label="task_updates",
++        merge_label="task_update",
++        enum_fields={"status": set(TERMINAL_TASK_STATUSES)},
++        nonempty_fields={"executor_notes"},
++        array_fields=("files_changed", "commands_run"),
++    )
++
++    # --- Reducer path ---
++    reducer_task = {
++        "id": "T1",
++        "status": "done",
++        "executor_notes": "implemented",
++        "files_changed": ["some_file.py"],
++        "commands_run": [],
++    }
++    reducer_issues: list[str] = []
++    reducer_deviations: dict[str, list[str]] = {}
++    _validate_and_merge_batch(
++        [{"task_id": "T1", "status": "done", "executor_notes": "implemented",
++          "files_changed": ["some_file.py"], "commands_run": []}],
++        required_fields=("task_id", "status", "executor_notes", "files_changed", "commands_run"),
++        targets_by_id={"T1": reducer_task},
++        id_field="task_id",
++        merge_fields=("status", "executor_notes", "files_changed", "commands_run"),
++        issues=reducer_issues,
++        validation_label="task_updates",
++        merge_label="task_update",
++        enum_fields={"status": set(TERMINAL_TASK_STATUSES)},
++        nonempty_fields={"executor_notes"},
++        array_fields=("files_changed", "commands_run"),
++        _classification_mode="reducer",
++        _task_deviations=reducer_deviations,
++    )
++
++    # Before reducer reapplication, status is still "done" in reducer path
++    assert reducer_task["status"] == "done"
++
++    # Apply the reducer (T7 helper)
++    worker = WorkerResult(payload={}, raw_output="", duration_ms=0, cost_usd=0.0)
++    batch_result = BatchResult(
++        worker=worker,
++        agent="test",
++        mode="code",
++        refreshed=False,
++        payload={},
++        batch_number=1,
++        batch_task_ids=["T1"],
++        batch_sense_check_ids=[],
++        merged_task_count=1,
++        total_task_count=1,
++        acknowledged_sense_check_count=0,
++        total_sense_check_count=0,
++        missing_task_evidence=[],
++        execution_audit={},
++        finalize_hash="",
++        deviation_dict=reducer_deviations,
++    )
++    finalize_data = {"tasks": [reducer_task]}
++    reduce_batch(batch_result, finalize_data=finalize_data, batch_task_ids=["T1"],
++                 task_deviation_dict=reducer_deviations)
++
++    # After reducer reapplication, the final task state matches the legacy path
++    assert reducer_task["status"] == legacy_task["status"] == "blocked"
++    assert "patch_corruption" in reducer_task.get("executor_notes", "")
++    assert "patch_corruption" in legacy_task.get("executor_notes", "")
+diff --git a/tests/test_pipeline_tiebreaker_subloop.py b/tests/test_pipeline_tiebreaker_subloop.py
+index b2c770f2..fb911cf6 100644
+--- a/tests/test_pipeline_tiebreaker_subloop.py
++++ b/tests/test_pipeline_tiebreaker_subloop.py
+@@ -9,6 +9,7 @@ the parent flow has to thread.
+ 
+ from __future__ import annotations
+ 
++from megaplan._pipeline._forward_m2_m3 import RoutingKey  # TODO(M2/M3)
+ from megaplan._pipeline.stages.tiebreaker import (
+     TiebreakerStep,
+     _build_tiebreaker_child_pipeline,
+@@ -31,9 +32,9 @@ def test_tiebreaker_child_pipeline_has_run_and_decide() -> None:
+ 
+ 
+ def test_promote_maps_states_to_typed_recommendation() -> None:
+-    assert _promote_from_child_state({"current_state": "critiqued"}) == "iterate"
+-    assert _promote_from_child_state({"current_state": "aborted"}) == "escalate"
+-    assert _promote_from_child_state({"current_state": "anything_else"}) == "proceed"
++    assert _promote_from_child_state({"current_state": "critiqued"}) == RoutingKey(name="iterate", kind="revise")
++    assert _promote_from_child_state({"current_state": "aborted"}) == RoutingKey(name="escalate", kind="escalate")
++    assert _promote_from_child_state({"current_state": "anything_else"}) == RoutingKey(name="proceed", kind="advance")
+ 
+ 
+ def test_tiebreaker_is_one_node_not_two() -> None:
