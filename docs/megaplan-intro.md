@@ -24,6 +24,8 @@ With appropriate context, frontier models are now extremely good at assessing ho
 
 ## Putting it together: Megaplan
 
+![Megaplan pipeline overview](assets/megaplan-pipeline-hero.png)
+
 [Megaplan](https://github.com/peteromallet/arnold) is a free, open-source harness pipeline that combines these three insights, and the first pipeline built on **Arnold**, an open framework for assembling your own. Megaplan runs your work through a fixed sequence of phases - prep, plan, critique, gate, revise, finalize, execute, review - and at *every* step it separates the **judgment** from the **labour**: the frontier model makes the few expensive decisions, and cheap models do the high-volume work those decisions create.
 
 That split runs through the whole pipeline:
