@@ -8,15 +8,15 @@ Over the past few months I've been building a harness that does exactly that: it
 
 First, the insights:
 
-## 1. Premium models are mostly overkill — and often unreliable
+## 1. Premium models are overkill for most tasks — and often unreliable
 
-Premium models earn their keep on complex planning and intricate execution. But most of the tasks inside a real coding project just… aren't that. Even in complex projects there are *so* many simple tasks — researching one element, making a documentation change, refactoring something, moving files around.
+Premium models earn their keep on complex planning and intricate execution. But most of the tasks inside a real coding project just… aren't that. Premium models are overkill for most tasks. Even in complex projects there are *so* many simple tasks — researching one element, making a documentation change, refactoring something, moving files around.
 
 Even the most intelligent models are inconsistent: sometimes, they'll run a thorough research process; other times they won't. Sometimes they'll run the tests; sometimes they won't. 
 
-## 2. Routing every task by hand is a mental tax
+## 2. Routing every task by hand is a huge mental task
 
-Say you buy that most work can go to cheaper models, you still have to decide *which* model does *what*, task by task. Is this one simple enough for a cheap model, or does it need a frontier one? Get that wrong in one direction and you're back to paying frontier prices to hammer in nails; get it wrong in the other and a weaker model quietly botches something that needed the horsepower. Holding that judgment in your head for every step of every project is a real mental tax.
+Say you buy that most work can go to cheaper models, you still have to decide *which* model does *what*, task by task. Is this one simple enough for a cheap model, or does it need a frontier one? Get that wrong in one direction and you're back to paying frontier prices to hammer in nails; get it wrong in the other and a weaker model quietly botches something that needed the horsepower. Routing every task by hand is a huge mental task.
 
 ## 3. Frontier models are great at judging difficulty
 
