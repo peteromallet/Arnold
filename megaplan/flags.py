@@ -327,5 +327,9 @@ def update_flags_after_gate(
             by_id[flag_id]["status"] = "gate_disputed"
         elif action == "accept_tradeoff":
             by_id[flag_id]["status"] = "accepted_tradeoff"
+        elif action == "verify_fixed":
+            by_id[flag_id]["status"] = "verified"
+            by_id[flag_id]["verified"] = True
+            by_id[flag_id]["verified_in"] = "gate.json"
     save_flag_registry(plan_dir, registry)
     return registry

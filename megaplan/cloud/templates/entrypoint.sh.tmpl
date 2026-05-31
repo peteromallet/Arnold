@@ -59,12 +59,12 @@ echo "Codex model: ${CODEX_MODEL}, reasoning: ${CODEX_REASONING}, sandbox: dange
 # Megaplan install: always re-pull on boot so entrypoint restarts pick up the
 # requested ref without rebuilding the base image.
 #
-# MEGAPLAN_INSTALL_SPEC – pip install spec; defaults to PyPI megaplan-harness[agent].
-#   Set to a git URL (e.g. "megaplan-harness[agent] @ git+https://github.com/...")
+# MEGAPLAN_INSTALL_SPEC – pip install spec; defaults to PyPI megaplan-harness.
+#   Set to a git URL (e.g. "megaplan-harness @ git+https://github.com/...")
 #   to install from source. When using a git spec, MEGAPLAN_REF appends @ref.
 # MEGAPLAN_REF – git ref (branch/tag/commit); only used when MEGAPLAN_INSTALL_SPEC
 #   contains "git+". Ignored (with a warning) for PyPI install specs.
-MEGAPLAN_INSTALL_SPEC="$${MEGAPLAN_INSTALL_SPEC:-megaplan-harness[agent]}"
+MEGAPLAN_INSTALL_SPEC="$${MEGAPLAN_INSTALL_SPEC:-megaplan-harness}"
 MEGAPLAN_REF="$${MEGAPLAN_REF:-${MEGAPLAN_REF}}"
 
 if [[ -n "$$MEGAPLAN_REF" ]] && [[ "$$MEGAPLAN_INSTALL_SPEC" == *git+* ]]; then

@@ -10,16 +10,19 @@ from __future__ import annotations
 import argparse
 import pickle
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from megaplan._core.worker_fanout import (
     WorkerUnit,
+    WorkerUnitResult,
     _scatter_worker_unit_from_packed,
+    _worker_unit_to_agent_request,
     scatter_worker_unit,
     scatter_worker_units,
 )
+from megaplan.agent_runtime import AgentRequest, AgentResult
 from megaplan._core.hermes_fanout import GenericScatterResult
 from megaplan.types import AgentMode
 from megaplan.workers import WorkerResult
@@ -73,8 +76,102 @@ def _worker_result(
     )
 
 
+def _worker_unit_result(
+    unit: WorkerUnit,
+    *,
+    payload: dict | None = None,
+    cost_usd: float = 0.01,
+    prompt_tokens: int = 100,
+    completion_tokens: int = 50,
+    total_tokens: int = 150,
+) -> WorkerUnitResult:
+    return WorkerUnitResult.from_worker_result(
+        _worker_result(
+            payload=payload,
+            cost_usd=cost_usd,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        ),
+        unit,
+    )
+
+
 def _scatter_args() -> argparse.Namespace:
     return argparse.Namespace()
+
+
+# ===================================================================
+# WorkerResult compatibility tests
+# ===================================================================
+
+
+class TestWorkerResultCompatibility:
+    """Compatibility projection between WorkerResult and AgentResult."""
+
+    def test_to_agent_result_preserves_all_fields(self) -> None:
+        worker = WorkerResult(
+            payload={"ok": True},
+            raw_output='{"ok": true}',
+            duration_ms=123,
+            cost_usd=0.42,
+            session_id="sess-123",
+            trace_output="trace",
+            rendered_prompt="rendered",
+            model_actual="gpt-5.5",
+            prompt_tokens=21,
+            completion_tokens=34,
+            total_tokens=55,
+            shannon_plan={"kind": "resume", "session_id": "shannon-1"},
+        )
+
+        result = worker.to_agent_result()
+
+        assert isinstance(result, AgentResult)
+        assert result.payload == worker.payload
+        assert result.raw_output == worker.raw_output
+        assert result.duration_ms == worker.duration_ms
+        assert result.cost_usd == worker.cost_usd
+        assert result.session_id == worker.session_id
+        assert result.trace_output == worker.trace_output
+        assert result.rendered_prompt == worker.rendered_prompt
+        assert result.model_actual == worker.model_actual
+        assert result.prompt_tokens == worker.prompt_tokens
+        assert result.completion_tokens == worker.completion_tokens
+        assert result.total_tokens == worker.total_tokens
+        assert result.shannon_plan == worker.shannon_plan
+
+    def test_from_agent_result_preserves_all_fields(self) -> None:
+        result = AgentResult(
+            payload={"ok": True},
+            raw_output='{"ok": true}',
+            duration_ms=321,
+            cost_usd=0.24,
+            session_id="sess-456",
+            trace_output="trace-2",
+            rendered_prompt="rendered-2",
+            model_actual="claude-opus-4-7",
+            prompt_tokens=13,
+            completion_tokens=8,
+            total_tokens=21,
+            shannon_plan={"kind": "resume", "session_id": "shannon-2"},
+        )
+
+        worker = WorkerResult.from_agent_result(result)
+
+        assert isinstance(worker, WorkerResult)
+        assert worker.payload == result.payload
+        assert worker.raw_output == result.raw_output
+        assert worker.duration_ms == result.duration_ms
+        assert worker.cost_usd == result.cost_usd
+        assert worker.session_id == result.session_id
+        assert worker.trace_output == result.trace_output
+        assert worker.rendered_prompt == result.rendered_prompt
+        assert worker.model_actual == result.model_actual
+        assert worker.prompt_tokens == result.prompt_tokens
+        assert worker.completion_tokens == result.completion_tokens
+        assert worker.total_tokens == result.total_tokens
+        assert worker.shannon_plan == result.shannon_plan
 
 
 # ===================================================================
@@ -155,6 +252,126 @@ class TestWorkerUnit:
 
 
 # ===================================================================
+# WorkerUnit -> AgentRequest adapter tests
+# ===================================================================
+
+
+class TestWorkerUnitToAgentRequest:
+    """Local compatibility adapter for the runtime request contract."""
+
+    def test_preserves_every_required_field_without_process_fanout(
+        self, tmp_path: Path
+    ) -> None:
+        state = _state(tmp_path)
+        args = argparse.Namespace(worker_timeout=99, flag=True)
+        parse_result = lambda index, payload, worker_unit: (index, payload, worker_unit.step)
+        on_unit_error = lambda index, exc: ({"error": f"{index}:{exc}"}, 0.0, 0, 0, 0)
+        unit = WorkerUnit(
+            step="critique",
+            resolved=AgentMode(
+                agent="codex",
+                mode="read",
+                refreshed=True,
+                model="gpt-5.3-codex",
+                effort="high",
+                resolved_model="gpt-5.3-codex-actual",
+            ),
+            prompt="check contract",
+            output_path=tmp_path / "critique_0.json",
+            read_only=False,
+            extra={"check_id": "CHK-001", "area": "correctness"},
+        )
+
+        request = _worker_unit_to_agent_request(
+            unit,
+            state=state,
+            plan_dir=tmp_path / "plan",
+            root=tmp_path,
+            args=args,
+            index=4,
+            parse_result=parse_result,
+            on_unit_error=on_unit_error,
+            max_concurrent=2,
+            timeout_seconds=45.5,
+            isolation="process",
+        )
+
+        assert isinstance(request, AgentRequest)
+        assert request.agent == "codex"
+        assert request.mode == "read"
+        assert request.model == "gpt-5.3-codex"
+        assert request.resolved_model == "gpt-5.3-codex-actual"
+        assert request.effort == "high"
+        assert request.spec == ("codex", "gpt-5.3-codex")
+        assert request.spec.effort == "high"
+        assert request.read_only is False
+        assert request.prompt == "check contract"
+        assert request.timeout_seconds == 45.5
+        assert request.provenance is not None
+        assert request.provenance.agent == "codex"
+        assert request.provenance.mode == "read"
+        assert request.provenance.model == "gpt-5.3-codex"
+        assert request.provenance.resolved_model == "gpt-5.3-codex-actual"
+        assert request.provenance.effort == "high"
+        assert request.provenance.metadata == {
+            "worker_step": "critique",
+            "output_path": str(unit.output_path),
+            "read_only": False,
+        }
+        assert request.metadata["worker_unit"] == {
+            "index": 4,
+            "step": "critique",
+            "output_path": str(unit.output_path),
+            "read_only": False,
+            "extra": {"check_id": "CHK-001", "area": "correctness"},
+        }
+        assert request.metadata["paths"] == {
+            "plan_dir": str(tmp_path / "plan"),
+            "root": str(tmp_path),
+        }
+        assert request.metadata["state"] is state
+        assert request.metadata["args"] is args
+        assert request.metadata["fanout"]["parse_result"] is parse_result
+        assert request.metadata["fanout"]["on_unit_error"] is on_unit_error
+        assert request.metadata["fanout"]["max_concurrent"] == 2
+        assert request.metadata["fanout"]["timeout_seconds"] == 45.5
+        assert request.metadata["fanout"]["isolation"] == "process"
+        assert request.attestation == {
+            "adapter": "megaplan._core.worker_fanout._worker_unit_to_agent_request",
+            "legacy_worker_entrypoint": "scatter_worker_unit",
+        }
+
+    def test_preserves_parse_hooks_and_error_hooks(self, tmp_path: Path) -> None:
+        unit = WorkerUnit(
+            step="critique",
+            resolved=_agent_mode(),
+            prompt="check",
+            output_path=tmp_path / "out.json",
+        )
+
+        def _parse(index: int, payload: dict, worker_unit: WorkerUnit) -> str:
+            return f"{index}:{worker_unit.step}:{payload['ok']}"
+
+        def _on_error(index: int, exc: Exception):
+            return ({"error": f"{index}:{exc}"}, 0.0, 0, 0, 0)
+
+        request = _worker_unit_to_agent_request(
+            unit,
+            state=_state(tmp_path),
+            plan_dir=tmp_path,
+            root=tmp_path,
+            args=_scatter_args(),
+            parse_result=_parse,
+            on_unit_error=_on_error,
+            timeout_seconds=12.0,
+        )
+
+        assert request.metadata["fanout"]["parse_result"] is _parse
+        assert request.metadata["fanout"]["on_unit_error"] is _on_error
+        assert request.metadata["fanout"]["timeout_seconds"] == 12.0
+
+
+# ===================================================================
 # scatter_worker_unit tests
 # ===================================================================
 
@@ -187,7 +404,8 @@ class TestScatterWorkerUnit:
         assert len(result) == 6
         idx, payload, cost, pt, ct, tt = result
         assert idx == 0
-        assert payload == {"status": "ok"}
+        assert isinstance(payload, WorkerUnitResult)
+        assert payload.payload == {"status": "ok"}
         assert cost == 0.01
         assert pt == 100
         assert ct == 50
@@ -225,6 +443,38 @@ class TestScatterWorkerUnit:
         assert _call_args[1]["resolved"] == unit.resolved
         assert _call_args[1]["prompt_override"] == "check correctness"
         assert _call_args[1]["read_only"] is True
+
+    def test_forwards_json_like_worker_options(self, tmp_path: Path) -> None:
+        state = _state(tmp_path)
+        worker_options = {
+            "template_path": str(tmp_path / "template.json"),
+            "session_db_path": str(tmp_path / "review.db"),
+            "max_tokens": 40000,
+            "resolved_model": "qwen/qwen3-32b",
+            "reasoning_config": {"enabled": False},
+        }
+        unit = WorkerUnit(
+            step="review",
+            resolved=_agent_mode(agent="hermes", mode="persistent", model="minimax:MiniMax-M2"),
+            prompt="review this",
+            output_path=tmp_path / "review.json",
+            extra={"worker_options": worker_options, "check_id": "CHK-001"},
+        )
+
+        with patch(
+            "megaplan.workers.run_step_with_worker",
+            return_value=(_worker_result(), "hermes", "persistent", False),
+        ) as mock_run:
+            scatter_worker_unit(
+                1,
+                unit,
+                state=state,
+                plan_dir=tmp_path,
+                root=tmp_path,
+                args=_scatter_args(),
+            )
+
+        assert mock_run.call_args.kwargs["worker_options"] == worker_options
 
     def test_read_only_true_forwarded(self, tmp_path: Path) -> None:
         """WorkerUnit(read_only=True) must be dispatched as read_only=True."""
@@ -389,7 +639,69 @@ class TestScatterWorkerUnit:
                 args=_scatter_args(),
             )
 
-        assert result == (7, {"verdict": "pass"}, 0.42, 2048, 512, 2560)
+        idx, payload, cost, pt, ct, tt = result
+        assert idx == 7
+        assert isinstance(payload, WorkerUnitResult)
+        assert payload.payload == {"verdict": "pass"}
+        assert cost == 0.42
+        assert pt == 2048
+        assert ct == 512
+        assert tt == 2560
+
+    def test_projects_through_agent_result_and_returns_raw_payload_dict(
+        self, tmp_path: Path
+    ) -> None:
+        """The adapter path preserves provenance inside the tuple payload."""
+        state = _state(tmp_path)
+        payload = {"nested": {"status": "ok"}}
+        worker = _worker_result(
+            payload=payload,
+            cost_usd=0.33,
+            prompt_tokens=11,
+            completion_tokens=22,
+            total_tokens=33,
+        )
+        unit = WorkerUnit(
+            step="critique",
+            resolved=_agent_mode(agent="codex", mode="read", model="gpt-5.3-codex"),
+            prompt="check via adapter",
+            output_path=tmp_path / "adapter_out.json",
+            read_only=False,
+        )
+
+        with patch(
+            "megaplan.workers.run_step_with_worker",
+            return_value=(worker, "codex", "read", False),
+        ) as mock_run:
+            result = scatter_worker_unit(
+                2,
+                unit,
+                state=state,
+                plan_dir=tmp_path / "plan",
+                root=tmp_path,
+                args=_scatter_args(),
+                isolation="process",
+            )
+
+        idx, unit_result, cost, pt, ct, tt = result
+        assert idx == 2
+        assert isinstance(unit_result, WorkerUnitResult)
+        assert unit_result.payload is payload
+        assert unit_result.cost_usd == cost == 0.33
+        assert unit_result.prompt_tokens == pt == 11
+        assert unit_result.completion_tokens == ct == 22
+        assert unit_result.total_tokens == tt == 33
+        assert unit_result.step == "critique"
+        assert unit_result.output_path == str(tmp_path / "adapter_out.json")
+        assert unit_result.read_only is False
+        assert unit_result.agent == "codex"
+        assert unit_result.mode == "read"
+        assert unit_result.model == "gpt-5.3-codex"
+        mock_run.assert_called_once()
+        assert mock_run.call_args[0][1] is state
+        assert mock_run.call_args[1]["prompt_override"] == "check via adapter"
+        assert mock_run.call_args[1]["read_only"] is False
+        assert mock_run.call_args[1]["output_path"] == tmp_path / "adapter_out.json"
 
 
 # ===================================================================
@@ -438,7 +750,11 @@ class TestScatterWorkerUnits:
 
         # Simulate scatter_gather_processes returning results in order
         raw = GenericScatterResult(
-            ordered_results=["result-0", "result-1", "result-2"],
+            ordered_results=[
+                _worker_unit_result(units[0], payload={"value": "result-0"}),
+                _worker_unit_result(units[1], payload={"value": "result-1"}),
+                _worker_unit_result(units[2], payload={"value": "result-2"}),
+            ],
             total_cost=0.03,
             total_prompt_tokens=300,
             total_completion_tokens=150,
@@ -458,7 +774,11 @@ class TestScatterWorkerUnits:
                 args=_scatter_args(),
             )
 
-        assert result.ordered_results == ["result-0", "result-1", "result-2"]
+        assert result.ordered_results == [
+            {"value": "result-0"},
+            {"value": "result-1"},
+            {"value": "result-2"},
+        ]
 
         # Verify packed units are correctly formed
         mock_sgp.assert_called_once()
@@ -475,7 +795,10 @@ class TestScatterWorkerUnits:
         units = [self._unit(i, tmp_path) for i in range(2)]
 
         raw = GenericScatterResult(
-            ordered_results=["a", "b"],
+            ordered_results=[
+                _worker_unit_result(units[0], payload={"value": "a"}),
+                _worker_unit_result(units[1], payload={"value": "b"}),
+            ],
             total_cost=0.07,
             total_prompt_tokens=500,
             total_completion_tokens=200,
@@ -505,7 +828,10 @@ class TestScatterWorkerUnits:
         units = [self._unit(i, tmp_path) for i in range(2)]
 
         raw = GenericScatterResult(
-            ordered_results=[{"v": 1}, {"v": 2}],
+            ordered_results=[
+                _worker_unit_result(units[0], payload={"v": 1}),
+                _worker_unit_result(units[1], payload={"v": 2}),
+            ],
             total_cost=0.02,
             total_prompt_tokens=100,
             total_completion_tokens=50,
@@ -513,8 +839,8 @@ class TestScatterWorkerUnits:
             side_results=[],
         )
 
-        def _parse(index: int, payload: dict, unit: WorkerUnit) -> str:
-            return f"unit-{unit.extra['index']}-v{payload['v']}"
+        def _parse(index: int, result: WorkerUnitResult, unit: WorkerUnit) -> str:
+            return f"unit-{unit.extra['index']}-v{result.payload['v']}"
 
         with patch(
             "megaplan._core.worker_fanout.scatter_gather_processes",
@@ -538,7 +864,11 @@ class TestScatterWorkerUnits:
         units = [self._unit(i, tmp_path) for i in range(3)]
 
         raw = GenericScatterResult(
-            ordered_results=["r0", "r1", "r2"],
+            ordered_results=[
+                _worker_unit_result(units[0], payload={"value": "r0"}),
+                _worker_unit_result(units[1], payload={"value": "r1"}),
+                _worker_unit_result(units[2], payload={"value": "r2"}),
+            ],
             total_cost=0.03,
             total_prompt_tokens=300,
             total_completion_tokens=150,
@@ -546,11 +876,11 @@ class TestScatterWorkerUnits:
             side_results=[],
         )
 
-        seen: list[tuple[int, WorkerUnit]] = []
+        seen: list[tuple[int, WorkerUnitResult, WorkerUnit]] = []
 
-        def _parse(index: int, payload: str, unit: WorkerUnit) -> str:
-            seen.append((index, unit))
-            return payload
+        def _parse(index: int, result: WorkerUnitResult, unit: WorkerUnit) -> dict:
+            seen.append((index, result, unit))
+            return result.payload
 
         with patch(
             "megaplan._core.worker_fanout.scatter_gather_processes",
@@ -566,9 +896,188 @@ class TestScatterWorkerUnits:
             )
 
         assert len(seen) == 3
-        for i, (idx, wu) in enumerate(seen):
+        for i, (idx, result, wu) in enumerate(seen):
             assert idx == i
+            assert isinstance(result, WorkerUnitResult)
+            assert result.payload == {"value": f"r{i}"}
             assert wu is units[i]
+
+    def test_side_units_share_flattened_process_batch_and_split_ordered_results(
+        self, tmp_path: Path
+    ) -> None:
+        """Main and side units are one process batch, then split by original role."""
+        units = [self._unit(i, tmp_path) for i in range(2)]
+        side_units = [
+            self._unit(10, tmp_path, extra={"side": 0}),
+            self._unit(11, tmp_path, extra={"side": 1}),
+        ]
+
+        raw = GenericScatterResult(
+            ordered_results=[
+                _worker_unit_result(units[0], payload={"main": 0}),
+                _worker_unit_result(units[1], payload={"main": 1}),
+                _worker_unit_result(side_units[0], payload={"side": 0}),
+                _worker_unit_result(side_units[1], payload={"side": 1}),
+            ],
+            total_cost=0.40,
+            total_prompt_tokens=400,
+            total_completion_tokens=200,
+            total_tokens=600,
+            side_results=[],
+        )
+
+        with patch(
+            "megaplan._core.worker_fanout.scatter_gather_processes",
+            return_value=raw,
+        ) as mock_sgp:
+            result = scatter_worker_units(
+                units=units,
+                side_units=side_units,
+                state=_state(tmp_path),
+                plan_dir=tmp_path,
+                root=tmp_path,
+                args=_scatter_args(),
+            )
+
+        assert result.ordered_results == [{"main": 0}, {"main": 1}]
+        assert result.side_results == [{"side": 0}, {"side": 1}]
+        packed = mock_sgp.call_args[1]["units"]
+        assert [(u["role"], u["original_index"]) for u in packed] == [
+            ("main", 0),
+            ("main", 1),
+            ("side", 0),
+            ("side", 1),
+        ]
+
+    def test_side_parse_hook_receives_side_units_in_side_order(
+        self, tmp_path: Path
+    ) -> None:
+        units = [self._unit(0, tmp_path)]
+        side_units = [self._unit(20, tmp_path), self._unit(21, tmp_path)]
+
+        raw = GenericScatterResult(
+            ordered_results=[
+                _worker_unit_result(units[0], payload={"main": "ok"}),
+                _worker_unit_result(side_units[0], payload={"v": "a"}),
+                _worker_unit_result(side_units[1], payload={"v": "b"}),
+            ],
+            total_cost=0.03,
+            total_prompt_tokens=30,
+            total_completion_tokens=15,
+            total_tokens=45,
+            side_results=[],
+        )
+        seen: list[tuple[int, WorkerUnitResult, WorkerUnit]] = []
+
+        def _parse_side(index: int, result: WorkerUnitResult, unit: WorkerUnit) -> str:
+            seen.append((index, result, unit))
+            return f"side-{index}-{result.payload['v']}"
+
+        with patch(
+            "megaplan._core.worker_fanout.scatter_gather_processes",
+            return_value=raw,
+        ):
+            result = scatter_worker_units(
+                units=units,
+                side_units=side_units,
+                state=_state(tmp_path),
+                plan_dir=tmp_path,
+                root=tmp_path,
+                args=_scatter_args(),
+                parse_side_result=_parse_side,
+            )
+
+        assert result.ordered_results == [{"main": "ok"}]
+        assert result.side_results == ["side-0-a", "side-1-b"]
+        assert [idx for idx, _result, _unit in seen] == [0, 1]
+        assert [unit for _idx, _result, unit in seen] == side_units
+
+    def test_zero_main_plus_side_units_supported(self, tmp_path: Path) -> None:
+        side_units = [self._unit(30, tmp_path), self._unit(31, tmp_path)]
+        raw = GenericScatterResult(
+            ordered_results=[
+                _worker_unit_result(side_units[0], payload={"side": "a"}),
+                _worker_unit_result(side_units[1], payload={"side": "b"}),
+            ],
+            total_cost=0.02,
+            total_prompt_tokens=20,
+            total_completion_tokens=10,
+            total_tokens=30,
+            side_results=[],
+        )
+
+        with patch(
+            "megaplan._core.worker_fanout.scatter_gather_processes",
+            return_value=raw,
+        ) as mock_sgp:
+            result = scatter_worker_units(
+                units=[],
+                side_units=side_units,
+                state=_state(tmp_path),
+                plan_dir=tmp_path,
+                root=tmp_path,
+                args=_scatter_args(),
+            )
+
+        assert result.ordered_results == []
+        assert result.side_results == [{"side": "a"}, {"side": "b"}]
+        packed = mock_sgp.call_args[1]["units"]
+        assert [(u["role"], u["original_index"]) for u in packed] == [
+            ("side", 0),
+            ("side", 1),
+        ]
+
+    def test_side_failure_propagates(self, tmp_path: Path) -> None:
+        side_units = [self._unit(40, tmp_path)]
+
+        with patch(
+            "megaplan._core.worker_fanout.scatter_gather_processes",
+            side_effect=RuntimeError("side worker failed"),
+        ):
+            with pytest.raises(RuntimeError, match="side worker failed"):
+                scatter_worker_units(
+                    units=[],
+                    side_units=side_units,
+                    state=_state(tmp_path),
+                    plan_dir=tmp_path,
+                    root=tmp_path,
+                    args=_scatter_args(),
+                )
+
+    def test_aggregate_accounting_includes_main_and_side_units(
+        self, tmp_path: Path
+    ) -> None:
+        units = [self._unit(0, tmp_path)]
+        side_units = [self._unit(50, tmp_path)]
+        raw = GenericScatterResult(
+            ordered_results=[
+                _worker_unit_result(units[0], payload={"main": 0}),
+                _worker_unit_result(side_units[0], payload={"side": 0}),
+            ],
+            total_cost=0.12,
+            total_prompt_tokens=120,
+            total_completion_tokens=34,
+            total_tokens=154,
+            side_results=[],
+        )
+
+        with patch(
+            "megaplan._core.worker_fanout.scatter_gather_processes",
+            return_value=raw,
+        ):
+            result = scatter_worker_units(
+                units=units,
+                side_units=side_units,
+                state=_state(tmp_path),
+                plan_dir=tmp_path,
+                root=tmp_path,
+                args=_scatter_args(),
+            )
+
+        assert result.total_cost == 0.12
+        assert result.total_prompt_tokens == 120
+        assert result.total_completion_tokens == 34
+        assert result.total_tokens == 154
 
     def test_on_unit_error_propagates_to_scatter_gather(self, tmp_path: Path) -> None:
         """on_unit_error is passed through to scatter_gather_processes."""

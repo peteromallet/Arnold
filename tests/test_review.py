@@ -514,6 +514,69 @@ def test_review_softens_substantive_verdict_without_evidence_files_and_can_kick_
     assert pr.exit_kind == "success"
 
 
+def test_review_incomplete_rework_payload_stays_in_review(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+
+    worker = WorkerResult(
+        payload={
+            "review_verdict": "needs_rework",
+            "criteria": [{"name": "criterion", "pass": False, "evidence": "review did not inspect repository"}],
+            "issues": ["No repository inspection was performed; review output is incomplete."],
+            "summary": "Review infrastructure failed.",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "issue": "No repository inspection was performed.",
+                    "expected": "Review should inspect repository state before requesting implementation rework.",
+                    "actual": "Placeholder review response.",
+                    "source": "review_incomplete",
+                }
+            ],
+            "task_verdicts": [
+                {"task_id": "T1", "reviewer_verdict": "Placeholder.", "evidence_files": ["IMPLEMENTED_BY_MEGAPLAN.txt"]},
+                {"task_id": "T2", "reviewer_verdict": "Placeholder.", "evidence_files": ["IMPLEMENTED_BY_MEGAPLAN.txt"]},
+            ],
+            "sense_check_verdicts": [
+                {"sense_check_id": "SC1", "verdict": "Placeholder."},
+                {"sense_check_id": "SC2", "verdict": "Placeholder."},
+            ],
+        },
+        raw_output="review incomplete",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="review-incomplete",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "codex", "persistent", False),
+    )
+
+    response = megaplan.handle_review(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+
+    assert response["success"] is False
+    assert response["state"] == megaplan.STATE_EXECUTED
+    assert response["next_step"] == "review"
+    assert "review infrastructure" in response["summary"]
+    assert state["current_state"] == megaplan.STATE_EXECUTED
+    assert state["history"][-1]["result"] == "blocked"
+
+
 def test_review_works_after_batch_by_batch_execution(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,

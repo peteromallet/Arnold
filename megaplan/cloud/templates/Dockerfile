@@ -77,7 +77,7 @@ RUN . "$NVM_DIR/nvm.sh" \
     && claude --version
 
 # Megaplan from PyPI (override via build-arg MEGAPLAN_INSTALL_SPEC for git/custom sources)
-ARG MEGAPLAN_INSTALL_SPEC="megaplan-harness[agent]"
+ARG MEGAPLAN_INSTALL_SPEC="megaplan-harness"
 RUN pip install --no-cache-dir "$MEGAPLAN_INSTALL_SPEC" \
     && megaplan --help > /dev/null
 ${TOOLCHAIN_BLOCK}

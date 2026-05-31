@@ -116,6 +116,61 @@ def _phase_status(plan: str, state: str = "planning", next_step: str = "prep") -
     }
 
 
+def test_drive_routes_post_revise_plan_to_gate_before_recritique(tmp_path: Path) -> None:
+    plan = "post-revise-gate"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "planned",
+                "history": [{"step": "revise", "result": "success"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "plan_v2.meta.json").write_text(
+        json.dumps({"flags_addressed": [{"id": "FLAG-001", "resolution": "fixed"}]}),
+        encoding="utf-8",
+    )
+    (plan_dir / "faults.json").write_text(
+        json.dumps(
+            {
+                "flags": [
+                    {
+                        "id": "FLAG-001",
+                        "status": "addressed",
+                        "severity": "significant",
+                        "category": "correctness",
+                        "concern": "verify post-revise gate",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    statuses = [
+        {**_phase_status(plan, state="planned", next_step="critique"), "iteration": 2},
+        _done_status(plan),
+    ]
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        assert plan_name == plan
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(plan, cwd=tmp_path, max_iterations=3, poll_sleep=0, writer=lambda _message: None)
+
+    assert outcome.status == "done"
+    assert run_calls[0][:1] == ["gate"]
+    assert any("post-revise gate ready" in event.get("msg", "") for event in outcome.events)
+
+
 def _active_wait_status(plan: str, state: str = "planning", next_step: str = "plan") -> dict:
     response = _phase_status(plan, state=state, next_step=next_step)
     response["active_step"] = {

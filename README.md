@@ -46,7 +46,7 @@ Hand this to your coding agent:
 ```
 Please install and set up megaplan for this project:
 
-pip install 'megaplan-harness[agent]'
+pip install megaplan-harness
 megaplan setup
 
 The default `partnered` profile pairs a premium model (Claude or Codex) with cheap DeepSeek. Ask me for whichever I have — an Anthropic/Claude or OpenAI/Codex login — plus a DeepSeek API key (or Fireworks key), and wire them up. Once set up, ask me what I need megaplan for.
@@ -55,13 +55,13 @@ The default `partnered` profile pairs a premium model (Claude or Codex) with che
 Or do it yourself:
 
 ```
-pip install 'megaplan-harness[agent]'
+pip install megaplan-harness
 megaplan setup
 ```
 
-`megaplan setup` detects your installed agents and walks you through credentials. You need two things:
+`megaplan setup` detects your installed agents and walks you through credentials. The old `[agent]` extra remains as a no-op compatibility alias on current releases, but it is no longer required. You need two things:
 
-- **A premium model** — **Claude** (the default; your Claude Code login or `ANTHROPIC_API_KEY`) **or Codex** (your Codex login or `OPENAI_API_KEY`, selected with `--vendor codex`).
+- **A premium model** — **Claude** (the default; your Claude Code login or `ANTHROPIC_API_KEY`) **or Codex** (your Codex login or `OPENAI_API_KEY`, selected with `--vendor codex`). The public `claude` agent route always uses the Shannon-backed interactive tmux worker — it preserves OAuth subscription billing and never falls back to a headless `claude -p` subprocess.
 - **DeepSeek access** for the cheap phases — a **`DEEPSEEK_API_KEY`** (the default route) or a **Fireworks** key (`FIREWORKS_API_KEY`, via `--deepseek-provider fireworks`).
 
 Direct-provider keys live in `~/.hermes/.env`. Then point megaplan at an idea:

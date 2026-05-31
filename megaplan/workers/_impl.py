@@ -255,6 +255,43 @@ class WorkerResult:
     # ``None`` for non-Shannon workers.
     shannon_plan: dict[str, Any] | None = None
 
+    @classmethod
+    def from_agent_result(cls, agent_result: Any) -> WorkerResult:
+        """Project a runtime ``AgentResult`` into the worker compatibility type."""
+        return cls(
+            payload=agent_result.payload,
+            raw_output=agent_result.raw_output,
+            duration_ms=agent_result.duration_ms,
+            cost_usd=agent_result.cost_usd,
+            session_id=agent_result.session_id,
+            trace_output=agent_result.trace_output,
+            rendered_prompt=agent_result.rendered_prompt,
+            model_actual=agent_result.model_actual,
+            prompt_tokens=agent_result.prompt_tokens,
+            completion_tokens=agent_result.completion_tokens,
+            total_tokens=agent_result.total_tokens,
+            shannon_plan=agent_result.shannon_plan,
+        )
+
+    def to_agent_result(self) -> Any:
+        """Project the worker compatibility type into the runtime ``AgentResult``."""
+        from megaplan.agent_runtime import AgentResult
+
+        return AgentResult(
+            payload=self.payload,
+            raw_output=self.raw_output,
+            duration_ms=self.duration_ms,
+            cost_usd=self.cost_usd,
+            session_id=self.session_id,
+            trace_output=self.trace_output,
+            rendered_prompt=self.rendered_prompt,
+            model_actual=self.model_actual,
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=self.completion_tokens,
+            total_tokens=self.total_tokens,
+            shannon_plan=self.shannon_plan,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Worker working directory resolution (git-worktree isolation)
@@ -2439,8 +2476,8 @@ def _is_agent_available(agent: str) -> bool:
         # The legacy filesystem probe pointed at megaplan/workers/agent/, which
         # has never existed — run_agent.py lives one directory up at
         # megaplan/agent/. The probe therefore always returned False on every
-        # install, and the downstream "pip install 'megaplan-harness[agent]'"
-        # error message fired even when the agent runtime was fully present.
+        # install, and the downstream install guidance fired even when the
+        # agent runtime was fully present.
         # Importing megaplan.agent triggers the sys.path side effect at
         # megaplan/agent/__init__.py that makes run_agent / hermes_state
         # resolvable; we probe both so a partial install also fails closed.
@@ -2580,7 +2617,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
             if agent == "hermes":
                 raise CliError(
                     "agent_deps_missing",
-                    "hermes backend requires: pip install 'megaplan-harness[agent]'",
+                    "hermes backend requires the bundled runtime packages: pip install megaplan-harness (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
                 )
             if agent == "shannon":
                 from megaplan._core.io import shannon_missing_deps
@@ -2604,14 +2641,14 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
         if agent == "hermes":
             raise CliError(
                 "agent_deps_missing",
-                "hermes backend requires: pip install 'megaplan-harness[agent]'",
+                "hermes backend requires the bundled runtime packages: pip install megaplan-harness (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
             )
         # Try fallback
         available = detect_available_agents()
         if not available:
             raise CliError(
                 "agent_not_found",
-                "No supported agents found. Install claude or codex, or pip install 'megaplan-harness[agent]' for hermes.",
+                "No supported agents found. Install claude or codex, or install megaplan-harness (or pip install -e . in a source checkout) for hermes. The legacy '[agent]' extra is only a no-op compatibility alias.",
             )
         fallback = available[0]
         args._agent_fallback = {
@@ -2672,6 +2709,7 @@ def run_step_with_worker(
     prompt_kwargs: dict[str, Any] | None = None,
     read_only: bool = False,
     output_path: Path | None = None,
+    worker_options: dict[str, Any] | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
@@ -2709,6 +2747,8 @@ def run_step_with_worker(
                     model=model,
                     effort=effort,
                     prompt_override=prompt_override,
+                    output_path=output_path,
+                    worker_options=worker_options,
                 )
             elif agent in ("claude", "shannon"):
                 # Both the ``claude`` agent (Claude via the shannon CLI, e.g.

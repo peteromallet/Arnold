@@ -84,7 +84,7 @@ def _run_check(
 
     # Cap output tokens to match the main-line hermes worker (Qwen repetition
     # mitigation). Drives the Fireworks streaming gate below.
-    agent_max_tokens = 131072
+    agent_max_tokens = 32768
     _stream = output_stream if output_stream is not None else sys.stderr
 
     def _make_agent(m: str, kw: dict) -> "AIAgent":
@@ -263,8 +263,15 @@ def run_parallel_critique(
     # ------------------------------------------------------------------
     def _parse_result(_index: int, raw_payload: Any, unit: WorkerUnit) -> tuple[dict[str, Any], list[str], list[str]]:
         _checks_list = raw_payload.get("checks") if isinstance(raw_payload, dict) else []
+        _cid = unit.extra.get("check_id", "?")
+        if isinstance(_checks_list, list) and len(_checks_list) != 1:
+            _matching = [
+                item for item in _checks_list
+                if isinstance(item, dict) and item.get("id") == _cid
+            ]
+            if len(_matching) == 1:
+                _checks_list = _matching
         if not isinstance(_checks_list, list) or len(_checks_list) != 1 or not isinstance(_checks_list[0], dict):
-            _cid = unit.extra.get("check_id", "?")
             raise CliError(
                 "worker_parse_error",
                 f"Parallel critique output for check '{_cid}' did not contain exactly one check",

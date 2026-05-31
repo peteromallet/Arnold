@@ -190,3 +190,31 @@ def test_active_fixed_quality_blocker_requires_rerun() -> None:
     assert detail["requires_rerun"] is True
     assert detail["is_non_terminal"] is False
     assert detail["fallback_mode"] == "rerun"
+
+
+def test_scope_drift_quality_blocker_id_is_stable_across_file_lists() -> None:
+    first = Deviation.from_string(
+        "scope_drift_severity=high: unclaimed files ['a.py'] "
+        "with 10 LOC outside the claimed set"
+    )
+    second = Deviation.from_string(
+        "scope_drift_severity=high: unclaimed files ['a.py', 'b.py'] "
+        "with 20 LOC outside the claimed set"
+    )
+
+    assert quality_blocker_id(first) == "quality:global:scope-drift-high"
+    assert quality_blocker_id(second) == "quality:global:scope-drift-high"
+
+
+def test_unclaimed_files_quality_blocker_id_is_stable_across_file_lists() -> None:
+    first = Deviation.from_string(
+        "Advisory audit finding: Git status shows changed files not claimed "
+        "by any task: a.py"
+    )
+    second = Deviation.from_string(
+        "Advisory audit finding: Git status shows changed files not claimed "
+        "by any task: a.py, b.py"
+    )
+
+    assert quality_blocker_id(first) == "quality:global:unclaimed-files"
+    assert quality_blocker_id(second) == "quality:global:unclaimed-files"

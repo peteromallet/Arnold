@@ -59,6 +59,7 @@ from megaplan.types import (
     STATE_FAILED,
     STATE_FINALIZED,
     STATE_PAUSED,
+    STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 )
@@ -558,6 +559,40 @@ def _phase_command(next_step: str) -> list[str]:
         # non-interactively and transitions reviewed → done.
         return ["feedback", "workflow"]
     return shlex.split(next_step)
+
+
+def _post_revise_gate_ready(plan_dir: Path | None, status: dict[str, Any]) -> bool:
+    if plan_dir is None:
+        return False
+    if status.get("state") != STATE_PLANNED or status.get("next_step") != "critique":
+        return False
+    try:
+        iteration = int(status.get("iteration", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if iteration < 2:
+        return False
+    try:
+        latest_meta = read_json(plan_dir / f"plan_v{iteration}.meta.json")
+        state_data = read_json(plan_dir / "state.json")
+    except (FileNotFoundError, OSError, ValueError):
+        return False
+    flags_addressed = latest_meta.get("flags_addressed")
+    if not isinstance(flags_addressed, list) or not flags_addressed:
+        return False
+    history = state_data.get("history", [])
+    if not (history and isinstance(history[-1], dict) and history[-1].get("step") == "revise"):
+        return False
+    try:
+        faults = read_json(plan_dir / "faults.json")
+    except (FileNotFoundError, OSError, ValueError):
+        return True
+    return any(
+        isinstance(flag, dict)
+        and flag.get("status") == "addressed"
+        and flag.get("severity") in {"significant", "likely-significant"}
+        for flag in faults.get("flags", [])
+    )
 
 
 def _resolve_plan_dir(plan: str, cwd: Path | None) -> Path | None:
@@ -1935,6 +1970,15 @@ def drive(
             next_step=next_step,
             valid_next=valid_next,
         )
+        if _post_revise_gate_ready(plan_dir, status):
+            log(
+                "post-revise gate ready — routing revised plan to gate before another critique",
+                iteration=status.get("iteration"),
+                previous_next_step=next_step,
+            )
+            next_step = "gate"
+            if "gate" not in valid_next:
+                valid_next = [*valid_next, "gate"]
 
         if state == STATE_FAILED and _recover_execute_callback_failure_state(plan_dir):
             log("recovered execute state after phase-complete callback failure; resuming")
