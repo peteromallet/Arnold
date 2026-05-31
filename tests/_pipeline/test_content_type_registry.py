@@ -18,7 +18,7 @@ from megaplan._pipeline.types import (
 
 
 class TestBuiltinsPresent:
-    """The six builtin content types must be registered at import time."""
+    """The seven builtin content types must be registered at import time."""
 
     BUILTIN_NAMES = frozenset(
         {
@@ -28,10 +28,11 @@ class TestBuiltinsPresent:
             "application/x-verdict+json",
             "application/x-routing-key+json",
             "application/x-fanout-results+json",
+            "application/x-evaluand-record+json",
         }
     )
 
-    def test_all_six_builtins_registered(self) -> None:
+    def test_all_seven_builtins_registered(self) -> None:
         registered = set(CONTENT_TYPES.names())
         assert registered == self.BUILTIN_NAMES
 

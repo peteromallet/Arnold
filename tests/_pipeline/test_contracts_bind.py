@@ -3,6 +3,15 @@
 from __future__ import annotations
 
 from megaplan._pipeline.contracts import BindResult, RepairGradient, bind
+from megaplan._pipeline.judge_manifest import (
+    EVALUAND_RECORD_CONTENT_TYPE,
+    JudgeManifestPort,
+    make_judge_manifest,
+)
+from megaplan._pipeline.judge_manifest_discovery import (
+    manifest_to_binder_ports,
+    validate_manifest_bindings,
+)
 from megaplan._pipeline.types import (
     Edge,
     ParallelStage,
@@ -120,3 +129,76 @@ def test_bind_reads_stage_produces_first_then_step():
     result = bind(stages, _edges_map())
     assert isinstance(result, BindResult)
     assert result.binding_map[("sink", "overridden")] == ("src", "overridden")
+
+
+def _m5_judge_manifest():
+    return make_judge_manifest(
+        name="m5-wrapper-eval",
+        implementation="megaplan.eval.wrapper:Judge",
+        arnold_api_version="2026-05-31",
+        model_identity="model:gpt-5.4",
+        rubric_body={"rubric": "score the candidate"},
+        consumes=(JudgeManifestPort("candidate", "text/markdown"),),
+        produces=(JudgeManifestPort("evaluand", EVALUAND_RECORD_CONTENT_TYPE),),
+        source_hash="sha256:cafebabe",
+    )
+
+
+def test_manifest_ports_convert_to_existing_binder_types():
+    consumes, produces = manifest_to_binder_ports(_m5_judge_manifest())
+
+    assert consumes == (PortRef(port_name="candidate", content_type="text/markdown"),)
+    assert produces == (
+        Port(name="evaluand", content_type=EVALUAND_RECORD_CONTENT_TYPE),
+    )
+
+
+def test_manifest_ports_preserve_taint_in_binder_representation():
+    manifest = make_judge_manifest(
+        name="m5-wrapper-eval",
+        implementation="megaplan.eval.wrapper:Judge",
+        arnold_api_version="2026-05-31",
+        model_identity="model:gpt-5.4",
+        rubric_body={"rubric": "score the candidate"},
+        consumes=(JudgeManifestPort("candidate", "text/markdown", taint=("user",)),),
+        produces=(JudgeManifestPort("evaluand", EVALUAND_RECORD_CONTENT_TYPE, taint=("audit",)),),
+        source_hash="sha256:cafebabe",
+    )
+
+    consumes, produces = manifest_to_binder_ports(manifest)
+
+    assert consumes == (PortRef(port_name="candidate", content_type="text/markdown"),)
+    assert produces == (
+        Port(
+            name="evaluand",
+            content_type=EVALUAND_RECORD_CONTENT_TYPE,
+            taint=frozenset({"audit"}),
+        ),
+    )
+
+
+def test_manifest_judge_stage_binds_to_upstream_producer():
+    producer = Stage(
+        name="producer",
+        step=_Source(),
+        edges=(Edge(label="judge", target="judge"),),
+        produces=(Port(name="candidate", content_type="text/markdown"),),
+    )
+    judge = Stage(
+        name="judge",
+        step=_Sink(()),
+        edges=(Edge(label="halt", target="halt"),),
+    )
+    pipeline = Pipeline(stages={"producer": producer, "judge": judge}, entry="producer")
+
+    result = validate_manifest_bindings(
+        pipeline,
+        judge_stage_name="judge",
+        manifest=_m5_judge_manifest(),
+    )
+
+    assert isinstance(result, BindResult)
+    assert result.binding_map[("judge", "candidate")] == (
+        "producer",
+        "candidate",
+    )

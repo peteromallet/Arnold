@@ -20,7 +20,24 @@ from megaplan.observability.event_sink import (
     NdjsonBackend,
     StoreBackend,
 )
-from megaplan.observability.evaluand import EvaluandRecord
+from megaplan.observability.evaluand import (
+    BetterResult,
+    EvaluandRecord,
+    ModelIORef,
+    RecordedModelIO,
+    RecordedIOScorer,
+    RecordedIOUnavailable,
+    ReJudgeOutcome,
+    better,
+    derive_params_hash,
+    raw_prompt_sha256,
+    read_evaluand,
+    read_evaluand_events,
+    re_judge,
+    stage_receipt,
+    write_evaluand,
+    write_evaluand_event,
+)
 
 __all__ = [
     "EventWriter",
@@ -34,4 +51,19 @@ __all__ = [
     "NdjsonBackend",
     "StoreBackend",
     "EvaluandRecord",
+    "BetterResult",
+    "ModelIORef",
+    "RecordedModelIO",
+    "RecordedIOScorer",
+    "RecordedIOUnavailable",
+    "ReJudgeOutcome",
+    "raw_prompt_sha256",
+    "derive_params_hash",
+    "better",
+    "re_judge",
+    "write_evaluand",
+    "write_evaluand_event",
+    "read_evaluand",
+    "read_evaluand_events",
+    "stage_receipt",
 ]

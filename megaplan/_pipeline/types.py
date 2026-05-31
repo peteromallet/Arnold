@@ -449,6 +449,7 @@ _BUILTIN_CONTENT_TYPES: frozenset[str] = frozenset(
         "application/x-verdict+json",
         "application/x-routing-key+json",
         "application/x-fanout-results+json",
+        "application/x-evaluand-record+json",
     }
 )
 

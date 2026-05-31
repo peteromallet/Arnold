@@ -98,12 +98,12 @@ def _resolve_run_id() -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 class EventKind:
-    """String-literal constants for all 27 event kinds.
+    """String-literal constants for all 30 event kinds.
 
     Use these instead of bare strings so typos are caught at import time.
     """
 
-    # ── Lifecycle (9) ──────────────────────────────────────────────────
+    # ── Lifecycle (10) ─────────────────────────────────────────────────
     INIT: str = "init"
     PHASE_START: str = "phase_start"
     PHASE_END: str = "phase_end"
@@ -130,7 +130,7 @@ class EventKind:
     ARTIFACT_WRITTEN: str = "artifact_written"
     ARTIFACT_INVALIDATED: str = "artifact_invalidated"
 
-    # ── Decisions (4) ──────────────────────────────────────────────────
+    # ── Decisions (5) ──────────────────────────────────────────────────
     OVERRIDE_APPLIED: str = "override_applied"
     FLAG_RAISED: str = "flag_raised"
     FLAG_RESOLVED: str = "flag_resolved"
@@ -141,6 +141,9 @@ class EventKind:
 
     # ── Cost (1) ───────────────────────────────────────────────────────
     COST_RECORDED: str = "cost_recorded"
+
+    # ── Evaluation (1) ─────────────────────────────────────────────────
+    EVALUAND_RECORDED: str = "evaluand_recorded"
 
     # ── Diagnostics (2) ────────────────────────────────────────────────
     HEALTH_CHECK_FAILED: str = "health_check_failed"
@@ -183,6 +186,7 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.NOTE_ADDED,
         EventKind.TIER_ESCALATED,
         EventKind.COST_RECORDED,
+        EventKind.EVALUAND_RECORDED,
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,
         EventKind.ACTIVATION_TRANSITIONED,

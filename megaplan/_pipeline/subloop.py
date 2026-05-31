@@ -39,6 +39,8 @@ from typing import Any, Mapping
 from megaplan._pipeline._forward_m2_m3 import RoutingKey  # TODO(M2/M3)
 from megaplan._pipeline.types import (
     Pipeline,
+    Port,
+    PortRef,
     StepContext,
     StepResult,
     PipelineVerdict,
@@ -69,6 +71,8 @@ class SubloopStep:
     child_pipeline: Pipeline | None = None
     promote: PromoteFn = field(default=_DEFAULT_PROMOTE)
     artifact_subdir: str | None = None
+    produces: tuple[Port, ...] = field(default_factory=tuple)
+    consumes: tuple[PortRef, ...] = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         from megaplan._pipeline.executor import run_pipeline

@@ -14,6 +14,7 @@ from megaplan._core.io import atomic_write_text
 from megaplan.observability.events import (
     EventKind,
     EventWriter,
+    _ALL_EVENT_KINDS,
     emit,
     read_events,
 )
@@ -240,3 +241,9 @@ def test_atomic_write_text_logs_warning_when_artifact_emit_fails(
 
     assert target.read_text(encoding="utf-8") == "payload"
     assert any("M3A_WARN_EMIT_ARTIFACT_WRITTEN" in record.getMessage() for record in caplog.records)
+
+
+def test_evaluand_recorded_is_registered_event_kind() -> None:
+    assert EventKind.EVALUAND_RECORDED == "evaluand_recorded"
+    assert EventKind.EVALUAND_RECORDED in _ALL_EVENT_KINDS
+    assert len(_ALL_EVENT_KINDS) == 30
