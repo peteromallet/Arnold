@@ -68,6 +68,7 @@ def build_gate_artifact(
         "criteria_check": signals["criteria_check"],
         "preflight_results": preflight,
         "unresolved_flags": signals["unresolved_flags"],
+        "addressed_flags": list(signals["signals"].get("addressed_flags", [])),
         "recommendation": recommendation,
         "rationale": gate_payload["rationale"],
         "signals_assessment": gate_payload["signals_assessment"],

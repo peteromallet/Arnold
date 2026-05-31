@@ -66,6 +66,7 @@ from .shared import (
     worker_module,
 )
 from megaplan.orchestration.phase_result import _emit_phase_result
+from megaplan.receipts.extractors import review_metrics
 
 """Review handler — post-execute implementation-evidence pass.
 
@@ -86,7 +87,13 @@ def _build_review_blocked_message(
     check_count: int,
     total_checks: int,
     missing_reviewer_evidence: list[str],
+    infrastructure_failure: bool = False,
 ) -> str:
+    if infrastructure_failure:
+        return (
+            "Blocked: review infrastructure produced an incomplete review instead of repository-backed verdicts. "
+            "Re-run review to complete repository inspection."
+        )
     if missing_reviewer_evidence:
         return (
             "Blocked: done tasks are missing reviewer evidence_files without a substantive reviewer_verdict ("
@@ -101,6 +108,56 @@ def _build_review_blocked_message(
 
 def _is_substantive_reviewer_verdict(text: str) -> bool:
     return not is_rubber_stamp(text, strict=True)
+
+
+_REVIEW_INFRASTRUCTURE_SOURCES = {"review_incomplete"}
+_NO_REPOSITORY_INSPECTION_MARKERS = (
+    "no repository inspection",
+    "without repository inspection",
+    "did not inspect the repository",
+    "didn't inspect the repository",
+    "could not inspect the repository",
+    "no repo inspection",
+    "without repo inspection",
+)
+
+
+def _text_indicates_no_repository_inspection(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    lowered = value.lower()
+    return any(marker in lowered for marker in _NO_REPOSITORY_INSPECTION_MARKERS)
+
+
+def _review_infrastructure_failure(
+    payload: dict[str, Any],
+    *,
+    issues: list[str],
+    total_tasks: int,
+    total_checks: int,
+) -> bool:
+    """Detect placeholder review output that must be retried as review infra.
+
+    These payloads are not implementation rework. Routing them to execute turns
+    a reviewer failure into a bogus executor pass and can overwrite useful
+    execution evidence.
+    """
+    for item in payload.get("rework_items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source")
+        if isinstance(source, str) and source in _REVIEW_INFRASTRUCTURE_SOURCES:
+            return True
+        if _text_indicates_no_repository_inspection(item.get("issue")):
+            return True
+    if any(_text_indicates_no_repository_inspection(issue) for issue in issues):
+        return True
+    task_verdicts = payload.get("task_verdicts")
+    sense_verdicts = payload.get("sense_check_verdicts")
+    return (
+        (total_tasks > 0 and isinstance(task_verdicts, list) and not task_verdicts)
+        or (total_checks > 0 and isinstance(sense_verdicts, list) and not sense_verdicts)
+    )
 
 def _build_review_prompt_override(
     agent_type: str,
@@ -214,6 +271,7 @@ def _resolve_review_outcome(
     state: PlanState,
     issues: list[str],
     criteria: list[dict[str, Any]] | None = None,
+    infrastructure_failure: bool = False,
 ) -> tuple[str, str, str | None]:
     """Determine review result, next state, and next step.
 
@@ -221,7 +279,8 @@ def _resolve_review_outcome(
     """
     robustness = normalize_robustness(robustness)
     blocked = (
-        verdict_count < total_tasks
+        infrastructure_failure
+        or verdict_count < total_tasks
         or check_count < total_checks
         or bool(missing_evidence)
     )
@@ -398,6 +457,14 @@ def _finalize_review_outcome(
         worker.payload, review_projection, issues,
     )
     worker.payload["issues"] = issues
+    worker.payload["total_tasks"] = total_tasks
+    worker.payload["total_sense_checks"] = total_checks
+    infrastructure_failure = _review_infrastructure_failure(
+        worker.payload,
+        issues=issues,
+        total_tasks=total_tasks,
+        total_checks=total_checks,
+    )
     atomic_write_json(plan_dir / "review.json", worker.payload)
     atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
     finalize_hash = sha256_file(plan_dir / "finalize.json")
@@ -409,6 +476,7 @@ def _finalize_review_outcome(
         robustness,
         state, issues,
         criteria=worker.payload.get("criteria", []),
+        infrastructure_failure=infrastructure_failure,
     )
     state["current_state"] = next_state
 
@@ -429,6 +497,7 @@ def _finalize_review_outcome(
             finalize_hash=finalize_hash,
         ),
     )
+    worker.receipt_metrics = review_metrics(worker.payload, plan_dir / "review.json")
     _emit_receipt(
         plan_dir=plan_dir,
         state=state,
@@ -449,6 +518,7 @@ def _finalize_review_outcome(
             verdict_count=verdict_count, total_tasks=total_tasks,
             check_count=check_count, total_checks=total_checks,
             missing_reviewer_evidence=missing_evidence,
+            infrastructure_failure=infrastructure_failure,
         )
     elif result == "needs_rework":
         summary = "Review requested another execute pass. Re-run execute using the review findings as context."

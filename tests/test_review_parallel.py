@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan._core import atomic_write_json, atomic_write_text
+from megaplan._core import atomic_write_json, atomic_write_text, ensure_runtime_layout
+from megaplan._core.hermes_fanout import GenericScatterResult
+from megaplan._core.worker_fanout import WorkerUnitResult
 from megaplan.prompts.review import _filtered_prior_flags
 from megaplan.review.checks import get_check_by_id
-from megaplan.review.parallel import _run_check
+from megaplan.review.parallel import run_parallel_review
 from megaplan.types import PlanState
 
 
@@ -30,6 +32,7 @@ def _scaffold(tmp_path: Path) -> tuple[Path, Path, PlanState]:
     plan_dir.mkdir()
     project_dir.mkdir()
     (project_dir / ".git").mkdir()
+    ensure_runtime_layout(project_dir)
     atomic_write_text(plan_dir / "plan_v1.md", "# Plan\n")
     atomic_write_json(plan_dir / "plan_v1.meta.json", {"success_criteria": []})
     atomic_write_json(plan_dir / "finalize.json", {"tasks": [], "sense_checks": []})
@@ -64,65 +67,62 @@ def test_parallel_check_agent_receives_filtered_flags() -> None:
     ]
 
 
-def test_run_check_passes_prior_flags_to_prompt(monkeypatch, tmp_path: Path) -> None:
+def test_run_parallel_review_passes_prior_flags_to_prompt(monkeypatch, tmp_path: Path) -> None:
     plan_dir, project_dir, state = _scaffold(tmp_path)
     check = get_check_by_id("coverage")
     assert check is not None
     captured: dict[str, object] = {}
+    atomic_write_json(
+        plan_dir / "faults.json",
+        {"flags": [{"id": "FLAG-1", "category": "completeness", "status": "open", "concern": "missing case"}]},
+    )
 
     def fake_prompt(state, plan_dir, root, check, output_path, pre_check_flags, prior_flags):
         captured["prior_flags"] = prior_flags
         return "prompt"
 
     monkeypatch.setattr("megaplan.review.parallel.single_check_review_prompt", fake_prompt)
-
-    def fake_import_runtime():
-        class FakeAgent:
-            def __init__(self, **kwargs):
-                self._print_fn = None
-
-            def run_conversation(self, *, user_message):
-                return {
-                    "final_response": "{}",
-                    "estimated_cost_usd": 0,
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                }
-
-        class FakeSessionDB:
-            def __init__(self, db_path=None):
-                pass
-
-        return FakeAgent, FakeSessionDB
-
-    monkeypatch.setattr("megaplan.workers.hermes._import_hermes_runtime", fake_import_runtime)
     monkeypatch.setattr("megaplan.review.parallel._resolve_model", lambda model: ("mock", {}))
-    monkeypatch.setattr("megaplan.review.parallel._toolsets_for_phase", lambda phase: [])
-    monkeypatch.setattr(
-        "megaplan.review.parallel.parse_agent_output",
-        lambda *args, **kwargs: (
-            {
-                "checks": [{"id": "coverage", "question": check.question, "findings": [{"detail": "x", "flagged": False, "status": "n/a"}]}],
-                "verified_flag_ids": [],
-                "disputed_flag_ids": [],
-            },
-            "{}",
-        ),
-    )
 
-    _run_check(
-        0,
-        check,
-        state=state,
-        plan_dir=plan_dir,
-        root=tmp_path,
+    def fake_scatter_worker_units(**kwargs):
+        unit = kwargs["units"][0]
+        side_unit = kwargs["side_units"][0]
+        parsed = kwargs["parse_result"](
+            0,
+            WorkerUnitResult(
+                payload={
+                    "checks": [
+                        {
+                            "id": "coverage",
+                            "question": check.question,
+                            "findings": [{"detail": "x", "flagged": False, "status": "n/a"}],
+                        }
+                    ],
+                    "verified_flag_ids": [],
+                    "disputed_flag_ids": [],
+                },
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+            ),
+            unit,
+        )
+        side = kwargs["parse_side_result"](
+            0,
+            WorkerUnitResult(payload={"review_verdict": "approved"}, raw_output="{}", duration_ms=1, cost_usd=0.0),
+            side_unit,
+        )
+        return GenericScatterResult([parsed], 0.0, 0, 0, 0, [side])
+
+    monkeypatch.setattr("megaplan.review.parallel.scatter_worker_units", fake_scatter_worker_units)
+
+    run_parallel_review(
+        state,
+        plan_dir,
+        root=project_dir,
         model="mock",
-        schema={},
-        project_dir=project_dir,
+        checks=(check,),
         pre_check_flags=[],
-        prior_flags=[{"id": "FLAG-1"}],
     )
 
-    assert captured["prior_flags"] == [{"id": "FLAG-1"}]
-
+    assert captured["prior_flags"] == [{"id": "FLAG-1", "concern": "missing case", "category": "completeness", "status": "open", "severity": "uncertain", "evidence": ""}]

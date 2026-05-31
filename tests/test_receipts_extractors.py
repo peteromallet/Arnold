@@ -253,6 +253,32 @@ def test_receipt_extractors_return_expected_metric_keys(tmp_path: Path) -> None:
     assert REVIEW_KEYS <= load_and_extract(tmp_path, "review", 1).keys()
 
 
+def test_review_metrics_uses_finalize_totals_when_verdict_arrays_empty(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "finalize.json",
+        {
+            "tasks": [{"id": "T1"}, {"id": "T2"}, {"id": "T3"}],
+            "sense_checks": [{"id": "SC1"}, {"id": "SC2"}],
+        },
+    )
+    _write_json(
+        tmp_path / "review.json",
+        {
+            "review_verdict": "needs_rework",
+            "task_verdicts": [],
+            "sense_check_verdicts": [],
+            "rework_items": [],
+        },
+    )
+
+    metrics = load_and_extract(tmp_path, "review", 1)
+
+    assert metrics["task_verdicts_count"] == 0
+    assert metrics["total_tasks"] == 3
+    assert metrics["sense_check_verdicts_count"] == 0
+    assert metrics["total_sense_checks"] == 2
+
+
 def test_extract_for_phase_prep_returns_non_empty_metrics_and_revise_stays_empty_without_warning(caplog) -> None:
     with caplog.at_level(logging.WARNING):
         prep = extract_for_phase(

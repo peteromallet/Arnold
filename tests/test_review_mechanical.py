@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -85,6 +86,30 @@ def test_diff_noise_filter_excludes_megaplan_and_caches(tmp_path: Path) -> None:
     # Explicitly assert the noise wasn't counted.
     assert "2912" not in sanity["detail"]
     assert ".megaplan" not in sanity.get("evidence_file", "")
+
+
+def test_diff_size_sanity_scales_for_finalized_multi_task_integration_plan(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init(repo)
+    (repo / "src.py").write_text("BASELINE = True\n", encoding="utf-8")
+    _git_commit_all(repo, "initial")
+
+    (repo / "src.py").write_text(
+        "BASELINE = True\n" + "\n".join(f"VALUE_{index} = {index}" for index in range(400)) + "\n",
+        encoding="utf-8",
+    )
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": f"T{index}"} for index in range(1, 14)], "sense_checks": []}) + "\n",
+        encoding="utf-8",
+    )
+
+    flags = run_pre_checks(plan_dir, _state(repo), repo)
+    sanity_flags = [flag for flag in flags if flag["check"] == "diff_size_sanity"]
+
+    assert not any(flag["severity"] == "significant" and "expected≈10" in flag["detail"] for flag in sanity_flags)
 
 
 def test_run_pre_checks_dead_guard_static_gracefully_reports_parse_failures(tmp_path: Path) -> None:

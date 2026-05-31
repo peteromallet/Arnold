@@ -169,11 +169,15 @@ def execute_metrics(aggregate_payload: dict[str, Any], drift_report: Any = None)
 
 @_safe
 def review_metrics(payload: dict[str, Any], artifact_path: Path | None = None) -> dict[str, Any]:
-    del artifact_path
     if not isinstance(payload, dict):
         raise TypeError("payload must be a dict")
     task_verdicts = _as_list(payload.get("task_verdicts"))
     sense_verdicts = _as_list(payload.get("sense_check_verdicts"))
+    finalize_payload = None
+    if artifact_path is not None:
+        finalize_payload = _read_json_if_exists(artifact_path.parent / "finalize.json")
+    finalize_tasks = _as_list((finalize_payload or {}).get("tasks"))
+    finalize_sense_checks = _as_list((finalize_payload or {}).get("sense_checks"))
     criteria = _as_list(payload.get("criteria") or payload.get("success_criteria"))
     missing_evidence = 0
     rework = len(_as_list(payload.get("rework_items")))
@@ -194,9 +198,9 @@ def review_metrics(payload: dict[str, Any], artifact_path: Path | None = None) -
     return {
         "review_verdict": payload.get("review_verdict") or payload.get("verdict"),
         "task_verdicts_count": len(task_verdicts),
-        "total_tasks": int(payload.get("total_tasks") or len(task_verdicts)),
+        "total_tasks": int(payload.get("total_tasks") or len(finalize_tasks) or len(task_verdicts)),
         "sense_check_verdicts_count": len(sense_verdicts),
-        "total_sense_checks": int(payload.get("total_sense_checks") or len(sense_verdicts)),
+        "total_sense_checks": int(payload.get("total_sense_checks") or len(finalize_sense_checks) or len(sense_verdicts)),
         "missing_evidence_count": missing_evidence,
         "rework_items_count": rework,
         "criteria_pass_count": passed,

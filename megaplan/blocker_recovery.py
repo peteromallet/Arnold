@@ -161,9 +161,27 @@ def quality_blocker_id(deviation: Deviation) -> str:
     if isinstance(explicit_blocker_id, str) and explicit_blocker_id:
         return explicit_blocker_id
     task_part = deviation.task_id or "global"
+    stable_kind = _stable_quality_blocker_kind(deviation.message)
+    if stable_kind is not None:
+        return f"quality:{task_part}:{stable_kind}"
     digest_source = f"{deviation.kind}\n{deviation.task_id or ''}\n{deviation.message}"
     digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:12]
     return f"quality:{task_part}:{digest}"
+
+
+def _stable_quality_blocker_kind(message: str) -> str | None:
+    if message.startswith("scope_drift_severity="):
+        severity = message.split(":", 1)[0].split("=", 1)[-1].strip() or "unknown"
+        return f"scope-drift-{severity}"
+    if message.startswith(
+        "Advisory audit finding: Git status shows changed files not claimed by any task:"
+    ):
+        return "unclaimed-files"
+    if message.startswith(
+        "Advisory audit finding: Executor claimed changed files not present in git status:"
+    ):
+        return "claimed-files-missing-from-status"
+    return None
 
 
 def _task_id(task: Any) -> str | None:

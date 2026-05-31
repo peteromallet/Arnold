@@ -8,11 +8,7 @@ The canonical import paths are now ``megaplan.review.parallel``,
 ``megaplan.review.checks``, and ``megaplan.review.mechanical``.
 """
 
-from megaplan.review.parallel import (
-    _run_check,
-    _run_criteria_verdict,
-    run_parallel_review,
-)
+from megaplan.review.parallel import run_parallel_review
 from megaplan.review.checks import (
     REVIEW_CHECKS,
     ReviewCheckSpec,

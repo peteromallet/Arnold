@@ -182,14 +182,31 @@ def _source_touch_flags(metadata: _DiffMetadata) -> list[dict[str, str]]:
     ]
 
 
-def _rough_issue_expectation(state: PlanState) -> int:
+def _finalized_task_count(plan_dir: Path) -> int:
+    finalize_path = plan_dir / "finalize.json"
+    if not finalize_path.exists():
+        return 0
+    try:
+        import json
+
+        payload = json.loads(finalize_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    tasks = payload.get("tasks") if isinstance(payload, dict) else None
+    return len(tasks) if isinstance(tasks, list) else 0
+
+
+def _rough_issue_expectation(state: PlanState, *, finalized_task_count: int = 0) -> int:
     intent_block = intent_and_notes_block(state)
     fenced_snippets = intent_block.count("```") // 2
-    return max(1, fenced_snippets) * 10
+    base = max(1, fenced_snippets) * 10
+    if finalized_task_count >= 5:
+        return max(base, finalized_task_count * 30)
+    return base
 
 
-def _diff_size_sanity_flags(metadata: _DiffMetadata, state: PlanState) -> list[dict[str, str]]:
-    expected_lines = _rough_issue_expectation(state)
+def _diff_size_sanity_flags(metadata: _DiffMetadata, state: PlanState, *, finalized_task_count: int = 0) -> list[dict[str, str]]:
+    expected_lines = _rough_issue_expectation(state, finalized_task_count=finalized_task_count)
     actual_lines = metadata.changed_lines
     if expected_lines <= 0:
         return []
@@ -207,6 +224,8 @@ def _diff_size_sanity_flags(metadata: _DiffMetadata, state: PlanState) -> list[d
                 f"ratio={ratio:.2f}, files={len(metadata.files)}, hunks={metadata.hunks}."
             )
         severity = "significant" if ratio > 3.0 or actual_lines == 0 else "minor"
+        if finalized_task_count >= 5 and actual_lines != 0:
+            severity = "minor"
         evidence_file = metadata.files[0] if metadata.files else None
         return [_pre_check_flag("diff_size_sanity", detail, severity=severity, evidence_file=evidence_file)]
     return []
@@ -365,11 +384,11 @@ def _dead_guard_static_flags(project_dir: Path, metadata: _DiffMetadata) -> list
 
 
 def run_pre_checks(plan_dir: Path, state: PlanState, project_dir: Path) -> list[dict[str, str]]:
-    del plan_dir
     metadata = _parse_diff_metadata(collect_git_diff_patch(project_dir))
+    finalized_task_count = _finalized_task_count(plan_dir)
     flags: list[dict[str, str]] = []
     flags.extend(_source_touch_flags(metadata))
-    flags.extend(_diff_size_sanity_flags(metadata, state))
+    flags.extend(_diff_size_sanity_flags(metadata, state, finalized_task_count=finalized_task_count))
     flags.extend(_dead_guard_static_flags(project_dir, metadata))
     return flags
 

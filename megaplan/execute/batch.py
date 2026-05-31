@@ -70,6 +70,7 @@ from megaplan.types import (
     STATE_FINALIZED,
     StepResponse,
 )
+from megaplan.blocker_recovery import evaluate_quality_blockers
 from megaplan.workers import WorkerResult
 
 log = logging.getLogger(__name__)
@@ -273,6 +274,29 @@ def build_blocking_reasons(
     if timeout_reason is not None:
         reasons.append(timeout_reason)
     return reasons
+
+
+def _filter_non_terminal_quality_blocking_reasons(
+    blocking_reasons: list[str],
+    state: PlanState,
+) -> list[str]:
+    """Honor accepted quality-resolution events before deciding to block.
+
+    Execute constructs some aggregate blockers directly from audit strings
+    (tracking gaps, missing evidence, scope drift). Operators can resolve those
+    quality blockers through the quality-gate ledger, so this final decision
+    point must read the same ledger instead of treating the fresh strings as
+    unconditionally terminal.
+    """
+    if not blocking_reasons:
+        return []
+    evaluation = evaluate_quality_blockers(state, blocking_reasons)
+    non_terminal_messages = {
+        blocker.message for blocker in evaluation.blockers if blocker.is_non_terminal
+    }
+    if not non_terminal_messages:
+        return blocking_reasons
+    return [reason for reason in blocking_reasons if reason not in non_terminal_messages]
 
 
 def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
@@ -695,6 +719,10 @@ def handle_execute_one_batch(
         )
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
+    blocking_reasons = _filter_non_terminal_quality_blocking_reasons(
+        blocking_reasons,
+        state,
+    )
     blocked = bool(blocking_reasons)
     if is_final_batch and all_tracked and not blocked:
         state["current_state"] = STATE_EXECUTED
@@ -813,6 +841,11 @@ def handle_execute_one_batch(
         )
 
     phase_outcome = "blocked_by_quality" if blocked else "success"
+    response_deviations = result.payload.get("deviations", [])
+    if blocked:
+        response_deviations = _stable_unique_strings(
+            [*response_deviations, *blocking_reasons]
+        )
     response: StepResponse = {
         "success": not blocked,
         "step": "execute",
@@ -825,7 +858,7 @@ def handle_execute_one_batch(
         "batches_total": batches_total,
         "batches_remaining": batches_remaining,
         "files_changed": result.payload.get("files_changed", []),
-        "deviations": result.payload.get("deviations", []),
+        "deviations": response_deviations,
         "warnings": warnings,
         "auto_approve": auto_approve,
         "user_approved_gate": user_approved_gate,
@@ -893,6 +926,87 @@ def _reset_blocked_tasks_to_pending(finalize_data: dict[str, Any]) -> list[str]:
     return sorted(reset_ids)
 
 
+def _review_requests_rework(review_data: dict[str, Any]) -> bool:
+    return (
+        review_data.get("review_verdict") == "needs_rework"
+        or bool(review_data.get("rework_items"))
+    )
+
+
+def _review_rework_task_ids(
+    review_data: dict[str, Any],
+    finalize_data: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    task_ids = {
+        task["id"]
+        for task in finalize_data.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    }
+    runnable: list[str] = []
+    unrunnable: list[str] = []
+    seen: set[str] = set()
+    for item in review_data.get("rework_items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source")
+        task_id = item.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            unrunnable.append(str(task_id or "<missing>"))
+            continue
+        if source == "review_incomplete":
+            unrunnable.append(task_id)
+            continue
+        if task_id not in task_ids:
+            unrunnable.append(task_id)
+            continue
+        if task_id in seen:
+            continue
+        seen.add(task_id)
+        runnable.append(task_id)
+    return runnable, unrunnable
+
+
+def _block_no_runnable_rework(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    auto_approve: bool,
+    reason: str,
+    unrunnable_task_ids: list[str] | None = None,
+) -> StepResponse:
+    summary = f"Blocked: {reason}"
+    append_history(
+        state,
+        make_history_entry(
+            "execute",
+            duration_ms=0,
+            cost_usd=0.0,
+            result="blocked",
+            message=summary,
+        ),
+    )
+    save_state_merge_meta(plan_dir, state)
+    response: StepResponse = {
+        "success": False,
+        "step": "execute",
+        "summary": summary,
+        "artifacts": ["review.json", "finalize.json", "final.md"],
+        "monitor_hint": build_monitor_hint(plan_dir),
+        "next_step": "execute",
+        "state": STATE_FINALIZED,
+        "files_changed": [],
+        "deviations": [summary],
+        "warnings": [summary],
+        "auto_approve": auto_approve,
+        "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
+        "_phase_outcome": "blocked_by_quality",
+    }
+    if unrunnable_task_ids:
+        response["unrunnable_rework_task_ids"] = sorted(set(unrunnable_task_ids))
+    _attach_next_step_runtime(response)
+    return response
+
+
 def handle_execute_auto_loop(
     *,
     root: Path,
@@ -958,6 +1072,46 @@ def handle_execute_auto_loop(
         for task in tasks
         if task.get("status") == "pending" and isinstance(task.get("id"), str)
     ]
+    review_data: dict[str, Any] = {}
+    review_rework_task_ids: list[str] = []
+    unrunnable_rework_task_ids: list[str] = []
+    rework_mode = False
+    if not pending_tasks and (plan_dir / "review.json").exists():
+        try:
+            loaded_review = read_json(plan_dir / "review.json")
+        except (OSError, UnicodeDecodeError, ValueError):
+            loaded_review = {}
+        if isinstance(loaded_review, dict):
+            review_data = loaded_review
+            if _review_requests_rework(review_data):
+                review_rework_task_ids, unrunnable_rework_task_ids = _review_rework_task_ids(
+                    review_data,
+                    finalize_data,
+                )
+                if not review_rework_task_ids:
+                    extra = ""
+                    if unrunnable_rework_task_ids:
+                        extra = (
+                            " Unmatched rework task_id(s): "
+                            + ", ".join(sorted(set(unrunnable_rework_task_ids)))
+                            + "."
+                        )
+                    return _block_no_runnable_rework(
+                        plan_dir=plan_dir,
+                        state=state,
+                        auto_approve=auto_approve,
+                        reason=(
+                            "review requested rework but no runnable finalize task IDs could be derived."
+                            f"{extra} Re-run review so rework_items reference concrete finalize task IDs."
+                        ),
+                        unrunnable_task_ids=unrunnable_rework_task_ids,
+                    )
+                rework_mode = True
+                pending_tasks = [
+                    task
+                    for task in tasks
+                    if task.get("id") in set(review_rework_task_ids)
+                ]
     if blocked_task_ids:
         # Cross-session retry detection: if any blocked task was recorded
         # under a *different* invocation_id, this is a fresh session and we
@@ -1039,11 +1193,17 @@ def handle_execute_auto_loop(
             _attach_next_step_runtime(response)
             return response
 
+    effective_completed_task_ids = (
+        completed_task_ids - set(review_rework_task_ids)
+        if rework_mode
+        else completed_task_ids
+    )
+
     if (
         all_task_ids
         and not pending_tasks
         and not blocked_task_ids
-        and set(all_task_ids) <= completed_task_ids
+        and set(all_task_ids) <= effective_completed_task_ids
     ):
         max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
         expected_batches = split_oversized_batches(
@@ -1113,7 +1273,7 @@ def handle_execute_auto_loop(
         return response
 
     pending_batches = compute_task_batches(
-        pending_tasks, completed_ids=completed_task_ids
+        pending_tasks, completed_ids=effective_completed_task_ids
     )
     max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
     split_batches = split_oversized_batches(pending_batches, max_tasks_per_batch)
@@ -1132,7 +1292,10 @@ def handle_execute_auto_loop(
                 max_tasks_per_batch,
             )
     single_batch_mode = (
-        len(split_batches) <= 1 and len(all_task_ids) <= max_tasks_per_batch
+        not rework_mode
+        and bool(pending_tasks)
+        and len(split_batches) <= 1
+        and len(all_task_ids) <= max_tasks_per_batch
     )
     global_batches = split_oversized_batches(
         compute_global_batches(finalize_data),
@@ -1142,6 +1305,13 @@ def handle_execute_auto_loop(
         tuple(batch): index + 1 for index, batch in enumerate(global_batches)
     }
     batches_to_run = [all_task_ids] if single_batch_mode else split_batches
+    if not batches_to_run:
+        return _block_no_runnable_rework(
+            plan_dir=plan_dir,
+            state=state,
+            auto_approve=auto_approve,
+            reason="no pending tasks or runnable review rework tasks are available for execute.",
+        )
     total_batches = len(batches_to_run) or 1
     active_task_ids = set(
         all_task_ids if single_batch_mode else [task["id"] for task in pending_tasks]
@@ -1519,6 +1689,10 @@ def handle_execute_auto_loop(
         blocking_reasons.append(blocked_task_reason)
     _append_scope_drift_blocker(blocking_reasons, state, drift)
 
+    blocking_reasons = _filter_non_terminal_quality_blocking_reasons(
+        blocking_reasons,
+        state,
+    )
     blocked = bool(blocking_reasons)
     if not blocked and timeout_error is None:
         state["current_state"] = STATE_EXECUTED
@@ -1627,6 +1801,9 @@ def handle_execute_auto_loop(
         phase_outcome = "blocked_by_quality"
     else:
         phase_outcome = "success"
+    response_deviations = deviations
+    if blocked and phase_outcome == "blocked_by_quality":
+        response_deviations = _stable_unique_strings([*deviations, *blocking_reasons])
 
     # Collect blocked task notes for blocked_by_prereq path
     blocked_task_notes: dict[str, str] = {}
@@ -1649,7 +1826,7 @@ def handle_execute_auto_loop(
             STATE_FINALIZED if blocked or timeout_error is not None else STATE_EXECUTED
         ),
         "files_changed": aggregate_payload.get("files_changed", []),
-        "deviations": deviations,
+        "deviations": response_deviations,
         "warnings": [summary] if blocked or timeout_error is not None else [],
         "auto_approve": auto_approve,
         "user_approved_gate": user_approved_gate,
