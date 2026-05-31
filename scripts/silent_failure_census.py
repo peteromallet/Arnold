@@ -16,7 +16,7 @@ Results are classified into four buckets according to the M3a policy:
 - ``needs_review``: Everything else — blocks Phase 2 until resolved.
 
 Usage:
-    python tools/silent_failure_census.py [--json] [--quiet]
+    python scripts/silent_failure_census.py [--json] [--quiet]
 
 Output goes to stdout as a human-readable report (default) or JSON.
 """

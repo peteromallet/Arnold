@@ -603,7 +603,7 @@ def test_cloud_chain_preflight_blocks_missing_remote_commands_before_tmux(
     assert "bun" in commands[1]
     assert "claude" in commands[1]
     # Post-cutover: Shannon is no longer a PATH-resolved command — it runs
-    # from vendor/shannon under bun.
+    # from megaplan/vendor/shannon under bun.
     assert "shannon" not in commands[1]
     assert "tmux" in commands[1]
     assert "codex" not in commands[1]

@@ -9,6 +9,9 @@ Current scripts:
   the chain can resume at execute.
 - `backfill_step_receipts.py` dry-runs by default and can add provenance-tracked
   backfilled token or cost fields to historical `step_receipt_*.json` files.
+- `silent_failure_census.py` scans `megaplan/**/*.py` for silent exception
+  handlers and direct `stderr` writes, then classifies them for the M3a cleanup
+  policy.
 
 Prefer dry-run modes first, and run scripts from the repository root unless a
 script's help text says otherwise.

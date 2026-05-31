@@ -17,7 +17,7 @@ from tests._workers_helpers import FakeShutil, _mock_state
 @pytest.fixture(autouse=True)
 def _assume_shannon_patched(monkeypatch: pytest.MonkeyPatch) -> None:
     # No-op shim: the runtime patcher is gone (T4); patches are baked into the
-    # vendored fork at vendor/shannon/index.ts. The fixture name is retained so
+    # vendored fork at megaplan/vendor/shannon/index.ts. The fixture name is retained so
     # tests that opt-out via override (`monkeypatch.setattr(..., lambda: False)`)
     # still parse, even though the support-detection helpers no longer exist.
     # Also sanitise any leaked MEGAPLAN_SHANNON_SESSION_ROULETTE from a crashed

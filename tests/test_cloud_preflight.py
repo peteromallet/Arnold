@@ -24,7 +24,7 @@ def test_cloud_chain_dependency_resolution_uses_profile_despite_cloud_default(
     assert result["base_branch"] == "setup/cloud"
     assert result["cloud_default_agent"] == "codex"
     assert result["warning"] == AGENTS_DEFAULT_WARNING
-    # Post-cutover Shannon runs from vendor/shannon via bun — no ``shannon``
+    # Post-cutover Shannon runs from megaplan/vendor/shannon via bun — no ``shannon``
     # binary on PATH, so it is no longer a required runtime command.
     assert result["runtime_commands"] == ["bun", "claude", "tmux"]
     assert result["env_hints"] == ["ANTHROPIC_API_KEY"]

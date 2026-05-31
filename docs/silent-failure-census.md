@@ -2,7 +2,7 @@
 
 > **Phase 1 checkpoint** — completed T3, refined T4 (2026-05-25)
 >
-> Census tool: `tools/silent_failure_census.py`
+> Census tool: `scripts/silent_failure_census.py`
 >
 > `needs_review` is **empty** ✅ — all 1,049 silent `except` handlers and 100 `print(..., file=sys.stderr)` sites across 255 files are classified into exactly one of three buckets.
 
@@ -362,10 +362,10 @@ After classification: **0 files in `needs_review`** ✅
 
 ```bash
 # Run the census — exit code 0 means needs_review is empty
-python tools/silent_failure_census.py --quiet && echo "PASS: Phase 1 checkpoint satisfied"
+python scripts/silent_failure_census.py --quiet && echo "PASS: Phase 1 checkpoint satisfied"
 
 # Count classifications
-python tools/silent_failure_census.py --json | python3 -c "
+python scripts/silent_failure_census.py --json | python3 -c "
 import json, sys
 b = json.load(sys.stdin)['buckets']
 for k in ['in_scope_core','explicitly_excluded','classified_out_of_m3a','needs_review']:
