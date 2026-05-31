@@ -112,6 +112,26 @@ _RECOVERY_RESUME_MECHANISM_KEYS: frozenset[str] = frozenset(
     {"current_state", "latest_failure", "phase_result", "resume_cursor"}
 )
 
+SUPERVISOR_TARGET_PATTERNS: tuple[str, ...] = (
+    "megaplan/supervisor/**/*.py",
+)
+
+SUPERVISOR_CHAIN_ROUTING_PATTERNS: tuple[str, ...] = (
+    "megaplan/chain/runner_supervisor.py",
+    "megaplan/chain/supervisor_router.py",
+)
+
+SUPERVISOR_BAKEOFF_BINDING_PATTERNS: tuple[str, ...] = (
+    "megaplan/bakeoff/supervisor_binding.py",
+    "megaplan/bakeoff/supervisor_runner.py",
+)
+
+_FORCE_PROCEED_SUBSTRINGS: tuple[str, ...] = (
+    "force-proceed",
+    "force_proceed",
+    "FORCE_PROCEED",
+)
+
 
 @dataclass(frozen=True)
 class M5EvalGateFinding:
@@ -643,6 +663,180 @@ def _find_gaterecommendation_refs(
     return findings
 
 
+def _find_supervisor_state_star_references(
+    tree: ast.AST,
+    *,
+    rel_path: str,
+) -> list[M5EvalGateFinding]:
+    """Detect ``STATE_*`` imports and bare ``STATE_*`` name/attribute references
+    in supervisor sources, using supervisor-specific finding codes."""
+    findings: list[M5EvalGateFinding] = []
+
+    for node in ast.walk(tree):
+        # Import: import megaplan.types as t (allows t.STATE_*)
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname and alias.asname.startswith("STATE_"):
+                    findings.append(
+                        M5EvalGateFinding(
+                            rel_path,
+                            node.lineno,
+                            "M5_SUP_STATE_STAR_IMPORT",
+                            f"supervisor sources must not import STATE_* names: {alias.asname}",
+                        )
+                    )
+
+        # ImportFrom: from megaplan.types import STATE_INITIALIZED, ...
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                name = alias.asname or alias.name
+                if name.startswith("STATE_"):
+                    findings.append(
+                        M5EvalGateFinding(
+                            rel_path,
+                            node.lineno,
+                            "M5_SUP_STATE_STAR_IMPORT",
+                            f"supervisor sources must not import STATE_*: {name}",
+                        )
+                    )
+
+        # Bare Name usage: STATE_INITIALIZED, etc.
+        elif isinstance(node, ast.Name) and node.id.startswith("STATE_"):
+            findings.append(
+                M5EvalGateFinding(
+                    rel_path,
+                    node.lineno,
+                    "M5_SUP_STATE_STAR_USAGE",
+                    f"supervisor sources must not reference STATE_* names: {node.id}",
+                )
+            )
+
+        # Attribute access: types.STATE_INITIALIZED
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("STATE_"):
+            findings.append(
+                M5EvalGateFinding(
+                    rel_path,
+                    node.lineno,
+                    "M5_SUP_STATE_STAR_USAGE",
+                    f"supervisor sources must not reference STATE_* attributes: .{node.attr}",
+                )
+            )
+
+    return findings
+
+
+def _find_supervisor_force_proceed_refs(
+    tree: ast.AST,
+    *,
+    rel_path: str,
+) -> list[M5EvalGateFinding]:
+    """Detect ``force-proceed`` string literals and function references
+    in supervisor sources."""
+    findings: list[M5EvalGateFinding] = []
+
+    for node in ast.walk(tree):
+        # String literal containing "force-proceed" or "force_proceed"
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            lowered = node.value.lower()
+            if any(sub.lower() in lowered for sub in _FORCE_PROCEED_SUBSTRINGS):
+                findings.append(
+                    M5EvalGateFinding(
+                        rel_path,
+                        node.lineno,
+                        "M5_SUP_FORCE_PROCEED",
+                        "supervisor sources must not reference force-proceed strings",
+                    )
+                )
+
+        # Function or method named *_force_proceed*
+        elif isinstance(node, ast.FunctionDef):
+            lowered = node.name.lower()
+            if any(sub.lower() in lowered for sub in _FORCE_PROCEED_SUBSTRINGS):
+                findings.append(
+                    M5EvalGateFinding(
+                        rel_path,
+                        node.lineno,
+                        "M5_SUP_FORCE_PROCEED",
+                        f"supervisor sources must not define force-proceed functions: {node.name}",
+                    )
+                )
+
+        # Call to function named *_force_proceed*
+        elif isinstance(node, ast.Call):
+            call_name = _call_name(node.func)
+            lowered = call_name.lower()
+            if any(sub.lower() in lowered for sub in _FORCE_PROCEED_SUBSTRINGS):
+                findings.append(
+                    M5EvalGateFinding(
+                        rel_path,
+                        node.lineno,
+                        "M5_SUP_FORCE_PROCEED",
+                        f"supervisor sources must not call force-proceed functions: {call_name}",
+                    )
+                )
+
+    return findings
+
+
+def _resolve_supervisor_target_paths(root: Path) -> tuple[Path, ...]:
+    """Resolve all supervisor target paths from glob patterns and specific targets.
+
+    Missing directories and empty glob results are treated as clean —
+    no paths are returned for patterns that match nothing.
+    """
+    paths: list[Path] = []
+
+    for pattern in SUPERVISOR_TARGET_PATTERNS:
+        paths.extend(sorted(root.glob(pattern)))
+
+    for pattern in SUPERVISOR_CHAIN_ROUTING_PATTERNS:
+        matched = tuple(root.glob(pattern))
+        paths.extend(sorted(matched))
+
+    for pattern in SUPERVISOR_BAKEOFF_BINDING_PATTERNS:
+        matched = tuple(root.glob(pattern))
+        paths.extend(sorted(matched))
+
+    return tuple(dict.fromkeys(paths))  # deduplicate, preserve order
+
+
+def check_supervisor_source_purity(
+    root: Path | str = REPO_ROOT,
+) -> tuple[M5EvalGateFinding, ...]:
+    """Scan supervisor sources for prohibited patterns.
+
+    Scans ``megaplan/supervisor/**/*.py``, new chain routing modules,
+    and bakeoff supervisor binding modules.  Missing or empty directories
+    are treated as clean (no findings).
+
+    Enforces two invariants:
+
+    1. **No STATE_* imports or usages** — any import of a ``STATE_*``
+       constant from ``megaplan.types``, or bare ``STATE_*`` name/attribute
+       reference.
+    2. **No force-proceed references** — string literals, function
+       definitions, or function calls referencing ``force-proceed``,
+       ``force_proceed``, or ``FORCE_PROCEED``.
+
+    The check is purely AST-based — it never imports the symbols it is
+    checking for.
+    """
+    repo_root = Path(root)
+    findings: list[M5EvalGateFinding] = []
+
+    for path in _resolve_supervisor_target_paths(repo_root):
+        rel_path = _relative_path(path, repo_root)
+        tree = ast.parse(_read_source(path), filename=rel_path)
+        findings.extend(
+            _find_supervisor_state_star_references(tree, rel_path=rel_path)
+        )
+        findings.extend(
+            _find_supervisor_force_proceed_refs(tree, rel_path=rel_path)
+        )
+
+    return tuple(findings)
+
+
 def check_calibration_guard_targets(
     root: Path | str = REPO_ROOT,
 ) -> tuple[M5EvalGateFinding, ...]:
@@ -710,6 +904,7 @@ def run_m5_eval_gates(root: Path | str = REPO_ROOT) -> M5EvalGateResult:
         + check_better_join_is_pure(root)
         + check_calibration_source_purity(root)
         + check_sdk_state_mechanism_purity(root)
+        + check_supervisor_source_purity(root)
     )
     return M5EvalGateResult(passed=not findings, findings=findings)
 
@@ -729,6 +924,9 @@ __all__ = [
     "GUARDED_CALIBRATION_TARGETS",
     "REPLAY_ORACLE_MARKER_NAME",
     "REPLAY_ORACLE_MARKER_PATH",
+    "SUPERVISOR_TARGET_PATTERNS",
+    "SUPERVISOR_CHAIN_ROUTING_PATTERNS",
+    "SUPERVISOR_BAKEOFF_BINDING_PATTERNS",
     "assert_m5_eval_gates_before_calibration",
     "check_better_join_is_pure",
     "check_calibration_guard_targets",
@@ -736,6 +934,7 @@ __all__ = [
     "check_no_bare_float_judgments",
     "check_no_second_eval_journals",
     "check_sdk_state_mechanism_purity",
+    "check_supervisor_source_purity",
     "format_findings",
     "replay_oracle_corpus_marker",
     "run_m5_eval_gates",

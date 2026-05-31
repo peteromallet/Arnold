@@ -5,16 +5,28 @@ Wires every M3 hinge gate in the mandated order and produces a single
 emitted ONLY when every gate passes; any red gate produces an unlabelled
 result so the milestone commit is never falsely stamped.
 
-Gate order (locked by T33 contract):
+Gate order (locked by T33 contract — extended T43 for M5d):
 
-1. parity           — workflow-topology parity gate (T10)
-2. fold_baseline    — fold-equivalence oracle, baseline MANIFEST (T26)
-3. fold_flag_on     — fold-equivalence oracle, flag-ON MANIFEST (T26)
-4. crash_isolation  — subprocess crash-isolation oracle (T28)
-5. version_skew     — A/B version-skew oracle (T29)
-6. cloud_smoke      — cloud phase_command shim (T17)
-7. acceptance_toy   — N-queens backtrack-solver acceptance toy (T31)
-8. dual_green       — dual-green strangler guard (T32)
+1. parity              — workflow-topology parity gate (T10)
+2. fold_baseline       — fold-equivalence oracle, baseline MANIFEST (T26)
+3. fold_flag_on        — fold-equivalence oracle, flag-ON MANIFEST (T26)
+4. crash_isolation     — subprocess crash-isolation oracle (T28)
+5. version_skew        — A/B version-skew oracle (T29)
+6. cloud_smoke         — cloud phase_command shim (T17)
+7. acceptance_toy      — N-queens backtrack-solver acceptance toy (T31)
+8. dual_green          — dual-green strangler guard (T32)
+9. supervisor_purity   — M5d supervisor AST purity gate (T43)
+
+Old-path retention (T43 doc)::
+  The legacy chain orchestrator (megaplan/chain/__init__.py) and bakeoff
+  orchestrator (megaplan/bakeoff/) are **not deleted** in M5d.  Both remain
+  the default execution path behind ``MEGAPLAN_SUPERVISOR_TIER=0`` (or unset).
+
+Retirement gate (T43 doc)::
+  Old chain/bakeoff code retirement requires a later dual-green window plus
+  a passing oracle pass.  No retirement may happen without:
+  * dual-green (flag-off legacy path AND flag-on supervisor path both green)
+  * replay oracle pass (boundary-trace corpus matches between old and new substrates)
 
 Stub-survival:
   ``assert_program_md()`` ensures ``briefs/validation/sequencing/PROGRAM.md``
@@ -23,12 +35,13 @@ Stub-survival:
 
 Public surface:
 
-* ``GateOutcome``      — per-gate pass/fail row.
-* ``ChainCIResult``   — frozen dataclass; ``passed`` / ``gate_outcomes``.
-* ``run_chain_ci``    — execute every gate once and return the result.
-* ``commit_label``    — returns ``"[HINGE GATE: GREEN]"`` iff result is green.
-* ``assert_program_md`` — stub-survival guard for PROGRAM.md.
-* ``GATE_ORDER``       — ordered tuple of (gate_name, callable) pairs.
+* ``GateOutcome``           — per-gate pass/fail row.
+* ``ChainCIResult``        — frozen dataclass; ``passed`` / ``gate_outcomes``.
+* ``run_chain_ci``         — execute every gate once and return the result.
+* ``commit_label``         — returns ``"[HINGE GATE: GREEN]"`` iff result is green.
+* ``assert_program_md``     — stub-survival guard for PROGRAM.md.
+* ``GATE_ORDER``            — ordered tuple of (gate_name, callable) pairs.
+* ``gate_supervisor_purity`` — M5d supervisor AST purity gate (T43).
 """
 
 from __future__ import annotations
@@ -197,8 +210,29 @@ def gate_dual_green() -> GateOutcome:
     return GateOutcome(name="dual_green", ok=False, detail="; ".join(parts))
 
 
+def gate_supervisor_purity() -> GateOutcome:
+    """M5d supervisor AST purity gate (T43).
+
+    Runs ``run_m5_eval_gates()`` which includes:
+    * ``check_supervisor_source_purity()`` — no STATE_* imports/usages or
+      force-proceed references in supervisor source files.
+    * Plus the existing M5 eval gates (bare-float judgments, second journals,
+      calibration purity, SDK state mechanism purity, better-join purity).
+
+    This gate does NOT delete old chain/bakeoff code; retirement requires
+    a later dual-green window plus a passing replay oracle pass.
+    """
+    from megaplan.chain.m5_eval_gates import run_m5_eval_gates, format_findings
+
+    result = run_m5_eval_gates()
+    if result.passed:
+        return GateOutcome(name="supervisor_purity", ok=True, detail="no findings")
+    detail = format_findings(result.findings)
+    return GateOutcome(name="supervisor_purity", ok=False, detail=detail)
+
+
 # ---------------------------------------------------------------------------
-# Ordered gate list (T33 contract — do not reorder)
+# Ordered gate list (T33 contract extended by T43 — do not reorder)
 # ---------------------------------------------------------------------------
 
 
@@ -211,6 +245,7 @@ GATE_ORDER: Tuple[Tuple[str, Callable[[], GateOutcome]], ...] = (
     ("cloud_smoke", gate_cloud_smoke),
     ("acceptance_toy", gate_acceptance_toy),
     ("dual_green", gate_dual_green),
+    ("supervisor_purity", gate_supervisor_purity),
 )
 
 
@@ -289,4 +324,5 @@ __all__ = [
     "gate_cloud_smoke",
     "gate_acceptance_toy",
     "gate_dual_green",
+    "gate_supervisor_purity",
 ]

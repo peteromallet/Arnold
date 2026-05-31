@@ -10,6 +10,7 @@ from megaplan.chain.m5_eval_gates import (
     check_no_bare_float_judgments,
     check_no_second_eval_journals,
     check_sdk_state_mechanism_purity,
+    check_supervisor_source_purity,
     replay_oracle_corpus_marker,
     run_m5_eval_gates,
 )
@@ -501,6 +502,325 @@ def test_sdk_state_mechanism_gate_rejects_mechanism_state_delta_in_sdk_module(
     assert {finding.code for finding in findings} == {
         "M5_CONTROL_PERSISTED_RECOVERY_MECHANISM"
     }
+
+
+# ---------------------------------------------------------------------------
+# T6 — supervisor source purity gate tests
+# ---------------------------------------------------------------------------
+
+
+def test_supervisor_source_purity_passes_current_repo() -> None:
+    """The current repository must pass supervisor source purity
+    (no `megaplan/supervisor/` files exist yet)."""
+    findings = check_supervisor_source_purity()
+    assert findings == (), (
+        f"Supervisor source purity violations: "
+        + "; ".join(f"{f.code}:{f.path}:{f.line}" for f in findings)
+    )
+
+
+def test_supervisor_purity_missing_directory_is_clean(tmp_path) -> None:
+    """Calling `check_supervisor_source_purity` on a root with no
+    `megaplan/supervisor/` directory at all must return an empty tuple."""
+    findings = check_supervisor_source_purity(tmp_path)
+    assert findings == (), (
+        f"Expected no findings for missing directory; got: "
+        + "; ".join(f"{f.code}:{f.path}" for f in findings)
+    )
+
+
+def test_supervisor_purity_empty_directory_is_clean(tmp_path) -> None:
+    """An existing `megaplan/supervisor/` directory containing no `.py`
+    files must return an empty tuple."""
+    supervisor_dir = tmp_path / "megaplan" / "supervisor"
+    supervisor_dir.mkdir(parents=True, exist_ok=True)
+    # Create a non-.py file to confirm it isn't scanned
+    (supervisor_dir / "README.md").write_text("# supervisor\n", encoding="utf-8")
+
+    findings = check_supervisor_source_purity(tmp_path)
+    assert findings == (), (
+        f"Expected no findings for directory with no .py files; got: "
+        + "; ".join(f"{f.code}:{f.path}" for f in findings)
+    )
+
+
+def test_supervisor_purity_catches_state_star_import_from(tmp_path) -> None:
+    """Detect ``from megaplan.types import STATE_DONE`` in supervisor sources."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/bad.py",
+        "from megaplan.types import STATE_DONE, STATE_FAILED\n",
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_STATE_STAR_IMPORT" in codes, (
+        f"Expected M5_SUP_STATE_STAR_IMPORT; got: {codes}"
+    )
+
+
+def test_supervisor_purity_catches_state_star_bare_usage(tmp_path) -> None:
+    """Detect bare ``STATE_BLOCKED`` name references in supervisor sources."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/bad.py",
+        "def check(state):\n"
+        "    return state == STATE_BLOCKED\n",
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_STATE_STAR_USAGE" in codes, (
+        f"Expected M5_SUP_STATE_STAR_USAGE; got: {codes}"
+    )
+
+
+def test_supervisor_purity_catches_state_star_attribute(tmp_path) -> None:
+    """Detect ``t.STATE_PAUSED`` attribute references in supervisor sources."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/bad.py",
+        "import megaplan.types as t\n"
+        "def check(state):\n"
+        "    return state == t.STATE_PAUSED\n",
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_STATE_STAR_USAGE" in codes, (
+        f"Expected M5_SUP_STATE_STAR_USAGE; got: {codes}"
+    )
+
+
+def test_supervisor_purity_catches_force_proceed_string_literal(
+    tmp_path,
+) -> None:
+    """Detect ``\"force-proceed\"`` string literals in supervisor sources."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/bad.py",
+        'OVERRIDE = "force-proceed"\n',
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_FORCE_PROCEED" in codes, (
+        f"Expected M5_SUP_FORCE_PROCEED; got: {codes}"
+    )
+
+
+def test_supervisor_purity_catches_force_proceed_variant_string(
+    tmp_path,
+) -> None:
+    """Detect ``\"FORCE_PROCEED\"`` (uppercase) string literals."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/bad.py",
+        'ACTION = "FORCE_PROCEED"\n',
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_FORCE_PROCEED" in codes, (
+        f"Expected M5_SUP_FORCE_PROCEED for uppercase variant; got: {codes}"
+    )
+
+
+def test_supervisor_purity_catches_force_proceed_function_def(
+    tmp_path,
+) -> None:
+    """Detect functions named ``force_proceed_override`` in supervisor sources."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/bad.py",
+        "def force_proceed_override(state):\n"
+        "    return True\n",
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_FORCE_PROCEED" in codes, (
+        f"Expected M5_SUP_FORCE_PROCEED for FunctionDef; got: {codes}"
+    )
+
+
+def test_supervisor_purity_catches_force_proceed_call(tmp_path) -> None:
+    """Detect calls to ``force_proceed_pipeline()`` in supervisor sources."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/bad.py",
+        "def runner(state):\n"
+        "    return do_force_proceed(state)\n",
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_FORCE_PROCEED" in codes, (
+        f"Expected M5_SUP_FORCE_PROCEED for Call; got: {codes}"
+    )
+
+
+def test_supervisor_purity_clean_file_passes(tmp_path) -> None:
+    """A clean supervisor source file with no violations must pass."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/clean.py",
+        "from pathlib import Path\n"
+        "\n"
+        "def run(plan_dir: Path) -> dict:\n"
+        "    return {'status': 'ok', 'plan_dir': str(plan_dir)}\n",
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    assert findings == (), (
+        f"Expected no findings for clean file; got: "
+        + "; ".join(f"{f.code}:{f.line}" for f in findings)
+    )
+
+
+def test_supervisor_purity_catches_chain_routing_violation(tmp_path) -> None:
+    """Detect STATE_* imports in chain routing modules
+    (``megaplan/chain/runner_supervisor.py``)."""
+    _write(
+        tmp_path,
+        "megaplan/chain/runner_supervisor.py",
+        "from megaplan.types import STATE_DONE\n"
+        "def route(state):\n"
+        "    return state == STATE_DONE\n",
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_STATE_STAR_IMPORT" in codes, (
+        f"Expected M5_SUP_STATE_STAR_IMPORT in chain routing; got: {codes}"
+    )
+    assert "M5_SUP_STATE_STAR_USAGE" in codes, (
+        f"Expected M5_SUP_STATE_STAR_USAGE in chain routing; got: {codes}"
+    )
+
+
+def test_supervisor_purity_catches_bakeoff_binding_violation(tmp_path) -> None:
+    """Detect force-proceed references in bakeoff binding modules
+    (``megaplan/bakeoff/supervisor_binding.py``)."""
+    _write(
+        tmp_path,
+        "megaplan/bakeoff/supervisor_binding.py",
+        "BINDING = {\n"
+        '    "force-proceed": "allow",\n'
+        "}\n",
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_FORCE_PROCEED" in codes, (
+        f"Expected M5_SUP_FORCE_PROCEED in bakeoff binding; got: {codes}"
+    )
+
+
+def test_supervisor_purity_neutral_planning_binding_allowed(
+    tmp_path,
+) -> None:
+    """Neutral planning bindings (no STATE_* or force-proceed) must pass
+    even when placed in supervisor-scanned paths."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/planning_adapter.py",
+        "from megaplan.planning.control_binding import PlanningControlBinding\n"
+        "\n"
+        "def bind_controls(state, plan_dir):\n"
+        "    binding = PlanningControlBinding(state, plan_dir=plan_dir)\n"
+        "    transition = {\n"
+        '        "action": "recover-from-stuck",\n'
+        '        "plan_dir": plan_dir,\n'
+        "    }\n"
+        "    return binding.apply_transition(**transition)\n",
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    assert findings == (), (
+        f"Expected no findings for neutral planning binding; got: "
+        + "; ".join(f"{f.code}:{f.line}" for f in findings)
+    )
+
+
+def test_supervisor_purity_simultaneous_violations(tmp_path) -> None:
+    """A file containing both STATE_* and force-proceed issues must
+    report all violations simultaneously."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/bad.py",
+        "from megaplan.types import STATE_BLOCKED\n"
+        "\n"
+        "def check(state):\n"
+        '    return state == STATE_BLOCKED or "force-proceed"\n',
+    )
+    findings = check_supervisor_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_SUP_STATE_STAR_IMPORT" in codes
+    assert "M5_SUP_STATE_STAR_USAGE" in codes
+    assert "M5_SUP_FORCE_PROCEED" in codes
+    assert len(findings) >= 3, (
+        f"Expected at least 3 findings; got {len(findings)}: "
+        + "; ".join(f"{f.code}:{f.line}" for f in findings)
+    )
+
+
+def test_supervisor_purity_included_in_run_m5_eval_gates(tmp_path) -> None:
+    """Verify that `run_m5_eval_gates` includes supervisor source purity
+    in its aggregated result, and that a supervisor violation causes
+    the overall gate to fail."""
+    _write(
+        tmp_path,
+        "megaplan/supervisor/bad.py",
+        "from megaplan.types import STATE_INITIALIZED\n",
+    )
+    # We also need the other scanned modules to exist cleanly or be absent.
+    # Create minimal clean versions of other required files.
+    _write(
+        tmp_path,
+        "megaplan/_pipeline/eval_judge_wrapper.py",
+        "def run():\n    return None\n",
+    )
+    _write(
+        tmp_path,
+        "megaplan/_pipeline/judge_manifest.py",
+        "# empty\n",
+    )
+    _write(
+        tmp_path,
+        "megaplan/_pipeline/judge_manifest_discovery.py",
+        "# empty\n",
+    )
+    _write(
+        tmp_path,
+        "megaplan/observability/evaluand.py",
+        "def better(*, plan_dir, judge_version, rubric_version, input_set_hash):\n"
+        "    return plan_dir, judge_version, rubric_version, input_set_hash\n",
+    )
+    _write(
+        tmp_path,
+        "megaplan/control_interface.py",
+        "# empty\n",
+    )
+    _write(
+        tmp_path,
+        "megaplan/run_outcome.py",
+        "# empty\n",
+    )
+    # Also create clean SDK stateless targets so the overall gate doesn't
+    # fail on missing files.
+    _write(
+        tmp_path,
+        "megaplan/cli/status_view.py",
+        "# empty\n",
+    )
+    _write(
+        tmp_path,
+        "megaplan/observability/introspect.py",
+        "# empty\n",
+    )
+
+    result = run_m5_eval_gates(tmp_path)
+
+    assert not result.passed, (
+        f"Expected run_m5_eval_gates to fail due to supervisor violation; "
+        f"got passed=True"
+    )
+
+    codes = {f.code for f in result.findings}
+    assert "M5_SUP_STATE_STAR_IMPORT" in codes, (
+        f"Expected M5_SUP_STATE_STAR_IMPORT in aggregated gate result; "
+        f"got codes: {codes}"
+    )
 
 
 def test_m5_eval_gate_preserved_after_calibration_gate_addition() -> None:

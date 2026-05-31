@@ -25,6 +25,13 @@ def _chain_tick_command(remote_spec_path: str, *, one_shot: bool = False) -> str
 
     session name, log path, trusted env, and quoting are shared with
     ``_run_chain_wrapper()`` via the same helper in ``megaplan.cloud.cli``.
+
+    **M5d boundary note:** This function lives in the cloud tier, which is a
+    long-lived host *above* the supervisor tier.  Cloud wraps the supervisor
+    as a tick host and is explicitly anti-scope for M5d — it continues to
+    construct and execute ``megaplan chain start`` commands regardless of
+    whether the chain runner routes through the old engine or the new
+    ``MEGAPLAN_SUPERVISOR_TIER=1`` path.  Cloud is not ported in M5d.
     """
     from megaplan.cloud.cli import _chain_start_command as _cmd
 

@@ -149,6 +149,18 @@ def control_interface_routing_on() -> bool:
     return os.getenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING") == "1"
 
 
+def supervisor_tier_routing_on() -> bool:
+    """Return ``True`` only when ``MEGAPLAN_SUPERVISOR_TIER=1``.
+
+    The supervisor tier (M5d) routes remain independent from the
+    unified-dispatch master gate and all companion inheritance helpers.
+    No routing is changed by this flag alone — consumers must explicitly
+    check this function before dispatching to the supervisor path.
+    """
+
+    return os.getenv("MEGAPLAN_SUPERVISOR_TIER") == "1"
+
+
 # Alias for the master gate, exposed under the conventional name used by the
 # M4 brief / consumers ("is the unified dispatch path enabled?").
 def unified_dispatch_enabled() -> bool:

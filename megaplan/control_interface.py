@@ -25,6 +25,11 @@ class ControlTarget:
 ControlTargetRef = ControlTarget
 ControlInterfaceTarget = ControlTarget
 
+CONTROL_TARGET_FORCE_ADVANCE = "force-advance"
+CONTROL_TARGET_REROUTE = "re-route"
+CONTROL_TARGET_RECOVER_FROM_STUCK = "recover-from-stuck"
+CONTROL_TARGET_ABORT = "abort"
+
 
 @dataclass(frozen=True)
 class ControlProjection:
@@ -205,6 +210,41 @@ def _extract_state_deltas(result: ControlTransitionResult) -> tuple[StateDelta, 
     return tuple(delta for delta in raw if isinstance(delta, StateDelta))
 
 
+def _with_plan_dir(
+    transition: ControlTransition | ControlTransitionRequest,
+    plan_dir: str | Path | None,
+) -> ControlTransition | ControlTransitionRequest:
+    if plan_dir is None:
+        return transition
+    plan_dir_str = str(plan_dir)
+    if isinstance(transition, ControlTransitionRequest):
+        payload = transition.payload
+        if payload.get("plan_dir") == plan_dir_str:
+            return transition
+        params = dict(transition.params)
+        params.setdefault("plan_dir", plan_dir_str)
+        return ControlTransitionRequest(
+            action=transition.action,
+            target_id=transition.target_id,
+            params=params,
+            actor=transition.actor,
+            source=transition.source,
+            reason=transition.reason,
+            note=transition.note,
+            metadata=dict(transition.metadata),
+            expected_versions=dict(transition.expected_versions),
+            idempotency_key=transition.idempotency_key,
+        )
+    if transition.payload.get("plan_dir") == plan_dir_str:
+        return transition
+    return ControlTransition(
+        op=transition.op,
+        target_id=transition.target_id,
+        payload={**dict(transition.payload), "plan_dir": plan_dir_str},
+        idempotency_key=transition.idempotency_key,
+    )
+
+
 def _projection_from_targets(
     targets: Sequence[ControlTarget],
     *,
@@ -234,6 +274,11 @@ def _resolve_binding_and_state(
     run_state: RunStateView | Mapping[str, Any],
     binding: ControlBinding | str,
 ) -> tuple[RunStateView, ControlBinding]:
+    # Only "planning" is supported as a legacy string dispatch.
+    # New bindings (e.g. bakeoff) use direct ControlBinding instance
+    # injection — no string dispatch is added.  The caller imports
+    # and constructs the binding (e.g. bakeoff_control_binding()) and
+    # passes it directly.
     if isinstance(binding, str):
         if binding != "planning":
             raise ValueError(f"unknown control binding: {binding!r}")
@@ -292,6 +337,7 @@ def apply_transition(
             reason="control_interface_transition_stub",
         )
     run_state, binding = _resolve_binding_and_state(run_state, binding)
+    transition = _with_plan_dir(transition, plan_dir)
     if plan_dir is None:
         return binding.apply_transition(run_state, transition)
 
@@ -411,6 +457,10 @@ def apply_transition(
 
 __all__ = [
     "ControlBinding",
+    "CONTROL_TARGET_ABORT",
+    "CONTROL_TARGET_FORCE_ADVANCE",
+    "CONTROL_TARGET_RECOVER_FROM_STUCK",
+    "CONTROL_TARGET_REROUTE",
     "ArtifactRequest",
     "ControlProjection",
     "ControlInterfaceTarget",
