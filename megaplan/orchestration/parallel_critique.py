@@ -23,6 +23,11 @@ from megaplan._core import (
     WorkerUnit,
     scatter_worker_units,
 )
+from megaplan.orchestration.critique_status import (
+    UNVERIFIABLE_STATUS,
+    annotate_unverifiable_checks,
+    unverifiable_detail,
+)
 from megaplan.prompts.critique import single_check_critique_prompt, write_single_check_template
 from megaplan.pipelines.creative.prompts.critique_joke import single_check_critique_joke_prompt
 from megaplan.types import CliError, PlanState
@@ -33,6 +38,10 @@ _CRITIQUE_WORKER_SHAPE_RETRIES = 2
 _CRITIQUE_REPAIR_INSTRUCTION = (
     "Return a JSON object with a top-level `checks` array containing EXACTLY ONE "
     "check object for this single lens. Do not include multiple checks or wrap it differently."
+)
+_CRITIQUE_UNVERIFIABLE_SHAPE_REASON = (
+    "parallel critique worker output did not contain a usable check object for "
+    "this lens after retry; operator review may be needed"
 )
 
 
@@ -46,6 +55,18 @@ class _RetryableCritiqueShapeError(Exception):
         self.check_id = check_id
         self.check_count = check_count
         self.raw_payload = raw_payload
+
+
+def _unverifiable_check_payload(check_id: str, question: str, reason: str) -> dict[str, Any]:
+    return {
+        "id": check_id,
+        "question": question,
+        "status": UNVERIFIABLE_STATUS,
+        "unverifiable_reason": reason,
+        "findings": [
+            {"detail": unverifiable_detail(reason), "flagged": False},
+        ],
+    }
 
 
 def _run_check(
@@ -273,7 +294,11 @@ def run_parallel_critique(
                 prompt=_prompt,
                 output_path=_output_path,
                 read_only=True,
-                extra={"check_id": _check["id"], "index": _idx},
+                extra={
+                    "check_id": _check["id"],
+                    "question": _check.get("question", ""),
+                    "index": _idx,
+                },
             )
         )
 
@@ -283,20 +308,67 @@ def run_parallel_critique(
     def _parse_result(_index: int, raw_payload: Any, unit: WorkerUnit) -> tuple[dict[str, Any], list[str], list[str]]:
         _checks_list = raw_payload.get("checks") if isinstance(raw_payload, dict) else None
         _cid = unit.extra.get("check_id", "?")
+        if isinstance(raw_payload, dict):
+            _status = raw_payload.get("status") or raw_payload.get("result")
+            _status_text = str(_status).strip().lower() if _status is not None else ""
+            if _status_text == UNVERIFIABLE_STATUS or raw_payload.get(UNVERIFIABLE_STATUS) is True:
+                _reason = (
+                    raw_payload.get("reason")
+                    or raw_payload.get("detail")
+                    or raw_payload.get("message")
+                    or "the worker could not verify this check"
+                )
+                return (
+                    {
+                        "id": _cid,
+                        "question": unit.extra.get("question", ""),
+                        "status": UNVERIFIABLE_STATUS,
+                        "unverifiable_reason": str(_reason),
+                        "findings": [
+                            {"detail": unverifiable_detail(str(_reason)), "flagged": False}
+                        ],
+                    },
+                    [],
+                    [],
+                )
         if isinstance(_checks_list, list) and len(_checks_list) != 1:
             _matching = [
                 item for item in _checks_list
                 if isinstance(item, dict) and item.get("id") == _cid
             ]
-            if len(_matching) == 1:
-                _checks_list = _matching
+            _dict_checks = [item for item in _checks_list if isinstance(item, dict)]
+            _selected = _matching[0] if _matching else (_dict_checks[0] if _dict_checks else None)
+            if _selected is not None:
+                print(
+                    f"[parallel-critique] worker '{_cid}' returned "
+                    f"{len(_checks_list)} checks; using "
+                    f"{'matching' if _matching else 'first'} check",
+                    file=sys.stderr,
+                )
+                _checks_list = [_selected]
         if not isinstance(_checks_list, list) or len(_checks_list) != 1 or not isinstance(_checks_list[0], dict):
             _count = len(_checks_list) if isinstance(_checks_list, list) else 0
             raise _RetryableCritiqueShapeError(str(_cid), _count, raw_payload)
         _verified = raw_payload.get("verified_flag_ids", [])
         _disputed = raw_payload.get("disputed_flag_ids", [])
+        _check_payload = _checks_list[0]
+        if _check_payload.get("id") != _cid:
+            _check_payload = dict(_check_payload)
+            _check_payload["id"] = _cid
+            print(
+                f"[parallel-critique] worker '{_cid}' returned check id "
+                f"'{_checks_list[0].get('id', '?')}'; normalizing to requested check",
+                file=sys.stderr,
+            )
+        if (
+            not isinstance(_check_payload.get("question"), str)
+            or not _check_payload.get("question", "").strip()
+        ):
+            _check_payload = dict(_check_payload)
+            _check_payload["question"] = unit.extra.get("question", "")
+        annotate_unverifiable_checks({"checks": [_check_payload]})
         return (
-            _checks_list[0],
+            _check_payload,
             _verified if isinstance(_verified, list) else [],
             _disputed if isinstance(_disputed, list) else [],
         )
@@ -378,18 +450,21 @@ def run_parallel_critique(
         for _idx, _unit in _retry_units_by_index.items():
             _retry_units[_idx] = _unit
 
-    if _failures:
-        _details = ", ".join(
-            f"{exc.check_id} returned {exc.check_count} checks"
-            for exc in _failures.values()
+    for _idx, _failure in _failures.items():
+        _unit = _retry_units[_idx]
+        print(
+            f"[parallel-critique] worker '{_failure.check_id}' returned "
+            f"{_failure.check_count} checks after retry budget; marking check unverifiable",
+            file=sys.stderr,
         )
-        raise CliError(
-            "worker_parse_error",
-            "Parallel critique worker shape retry budget exhausted: " + _details,
-            extra={
-                "attempts": _CRITIQUE_WORKER_SHAPE_RETRIES + 1,
-                "raw_outputs": {idx: str(exc.raw_payload) for idx, exc in _failures.items()},
-            },
+        _parsed_results[_idx] = (
+            _unverifiable_check_payload(
+                _failure.check_id,
+                str(_unit.extra.get("question", "")),
+                _CRITIQUE_UNVERIFIABLE_SHAPE_REASON,
+            ),
+            [],
+            [],
         )
 
     # ------------------------------------------------------------------

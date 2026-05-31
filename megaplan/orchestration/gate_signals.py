@@ -5,6 +5,7 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from megaplan.orchestration.critique_status import build_unverifiable_warnings
 from megaplan.types import FLAG_BLOCKING_STATUSES, FlagRecord, GateSignals, PlanState
 from megaplan._core import (
     configured_robustness,
@@ -137,6 +138,15 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
         for flag in flag_registry["flags"]
         if flag["status"] == "verified"
     ]
+    unverifiable_checks: list[dict[str, object]] = []
+    critique_path = current_iteration_artifact(plan_dir, "critique", iteration)
+    if critique_path.exists():
+        critique_payload = read_json(critique_path)
+        raw_unverifiable = critique_payload.get("unverifiable_checks", [])
+        if isinstance(raw_unverifiable, list):
+            unverifiable_checks = [
+                item for item in raw_unverifiable if isinstance(item, dict)
+            ]
 
     delta_history = state["meta"].get("plan_deltas", [])
     if weighted_history:
@@ -215,6 +225,9 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
         },
         "warnings": [],
     }
+    if unverifiable_checks:
+        result["signals"]["unverifiable_checks"] = unverifiable_checks
+        result["warnings"].extend(build_unverifiable_warnings(unverifiable_checks))
     if open_scope_creep:
         result["warnings"].append(
             "Scope creep detected: the plan appears to be expanding beyond the original idea or recorded user notes."

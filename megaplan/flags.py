@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan._core import load_flag_registry, save_flag_registry
+from megaplan.orchestration.critique_status import is_unverifiable_check
 from megaplan.types import FlagRecord, FlagRegistry
 
 
@@ -78,6 +79,8 @@ def _synthesize_flags_from_checks(
 ) -> list[dict[str, Any]]:
     synthetic_flags: list[dict[str, Any]] = []
     for check in checks:
+        if is_unverifiable_check(check):
+            continue
         check_id = check.get("id", "")
         if not isinstance(check_id, str) or not check_id:
             continue
