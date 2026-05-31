@@ -26,7 +26,17 @@ def test_adopt_rebinds_plan_project_dir_and_clears_active_step(tmp_path: Path) -
 
     spec_path = tmp_path / "chain.yaml"
     spec_path.write_text(
-        yaml.safe_dump({"milestones": [{"label": "m6-strangler"}]}),
+        yaml.safe_dump(
+            {
+                "milestones": [
+                    {
+                        "label": "m6-strangler",
+                        "vendor": "codex",
+                        "depth": "max",
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     chain_state_path = adopt_plan._compute_chain_state_path(spec_path)
@@ -46,7 +56,18 @@ def test_adopt_rebinds_plan_project_dir_and_clears_active_step(tmp_path: Path) -
                 "latest_failure": {"kind": "old"},
                 "last_failure": {"kind": "older"},
                 "active_step": {"phase": "execute", "worker_pid": 12345},
-                "config": {"project_dir": str(stale_project_dir)},
+                "config": {
+                    "project_dir": str(stale_project_dir),
+                    "vendor": "claude",
+                    "depth": "low",
+                    "phase_model": ["plan=claude:low", "execute=claude:high"],
+                    "tier_models": {
+                        "execute": {
+                            "1": "hermes:deepseek:deepseek-v4-pro",
+                            "4": "claude:low",
+                        }
+                    },
+                },
             }
         ),
         encoding="utf-8",
@@ -62,6 +83,14 @@ def test_adopt_rebinds_plan_project_dir_and_clears_active_step(tmp_path: Path) -
     target_state_path = project_dir / ".megaplan" / "plans" / "m6-plan" / "state.json"
     target_state = json.loads(target_state_path.read_text(encoding="utf-8"))
     assert target_state["config"]["project_dir"] == str(project_dir)
+    assert target_state["config"]["vendor"] == "codex"
+    assert target_state["config"]["depth"] == "max"
+    assert target_state["config"]["phase_model"] == [
+        "plan=codex:low",
+        "execute=codex:high",
+    ]
+    assert target_state["config"]["tier_models"]["execute"]["4"] == "codex:low"
+    assert target_state["config"]["tier_models"]["execute"]["1"].startswith("hermes:")
     assert "active_step" not in target_state
     assert target_state["latest_failure"] is None
     assert target_state["last_failure"] is None
