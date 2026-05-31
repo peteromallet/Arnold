@@ -10,7 +10,7 @@ First, the insights:
 
 ## 1. Premium models are overkill for most tasks - and often unreliable
 
-Premium models earn their keep on complex planning and intricate execution. But most of the tasks inside a real coding project just… aren't that. Premium models are overkill for most tasks. Even in complex projects there are *so* many simple tasks - researching one element, making a documentation change, refactoring something, moving files around.
+Premium models earn their keep on complex planning and intricate execution. But most of the tasks inside a real coding project just… aren't that, and premium models are mostly overkill. Even in complex projects there are so many simple tasks - researching one element, making a documentation change, refactoring something, moving files around.
 
 Even the most intelligent models are inconsistent: sometimes, they'll run a thorough research process; other times they won't. Sometimes they'll run the tests; sometimes they won't. 
 
