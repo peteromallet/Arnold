@@ -150,6 +150,27 @@ from .hermes_fanout import (
     with_429_openrouter_fallback,
 )
 
+# -- dispatch.py: tier→spec and tier→agent resolution -----------------------
+from .dispatch import (
+    resolve_dispatch_spec,
+    resolve_dispatch_agent,
+)
+
+# -- scheduler/types.py: generic Reduce[T] frozen dataclass ------------------
+from .scheduler.types import (
+    Reduce,
+)
+
+# -- scheduler/topo.py: topological batch scheduling -------------------------
+from .scheduler.topo import (
+    schedule_batches,
+)
+
+# -- scheduler/run.py: scatter → batch → process → reduce loop ----------------
+from .scheduler.run import (
+    run_scheduler,
+)
+
 # -- workflow.py: state machine, transitions ---------------------------------
 from megaplan.types import ROBUSTNESS_LEVELS, STATE_EXECUTED, STATE_REVIEWED, STATE_DONE  # noqa: F401 — accessed by tests via megaplan._core
 
@@ -317,4 +338,11 @@ __all__ = [
     "scatter_gather",
     "scatter_gather_checks",
     "with_429_openrouter_fallback",
+    # dispatch
+    "resolve_dispatch_spec",
+    "resolve_dispatch_agent",
+    # scheduler
+    "Reduce",
+    "schedule_batches",
+    "run_scheduler",
 ]

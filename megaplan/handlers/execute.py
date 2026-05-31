@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 from pathlib import Path
 from typing import Any
 
@@ -40,25 +39,6 @@ from megaplan.workers import validate_payload, warn_if_work_dir_differs_from_pro
 from .shared import _agent_mode_parts, _emit_phase_notice, attach_agent_fallback, worker_module
 from megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
 
-
-def _resolve_execute_tier_spec(
-    base_args: argparse.Namespace,
-    tier_spec: str,
-) -> tuple[str, str, str | None]:
-    """Resolve a tier spec string to (agent, mode, model) without mutating *base_args*.
-
-    Copies *base_args*, sets ``phase_model=["execute=<tier_spec>"]`` on the
-    copy, and calls ``resolve_agent_mode``.  Does not prepend ahead of a
-    user CLI override — the override guard in ``apply_profile_expansion``
-    already strips ``tier_models.execute`` when ``--phase-model execute=…``
-    is present, so this helper is only called when tier routing is active.
-    """
-    tier_args = copy.copy(base_args)
-    tier_args.phase_model = [f"execute={tier_spec}"]
-    agent, _mode, _refreshed, model = worker_module.resolve_agent_mode(
-        "execute", tier_args
-    )
-    return agent, _mode, model
 
 def _is_rework_reexecution(state: PlanState) -> bool:
     """Check if the last completed step was a review with needs_rework."""
@@ -197,8 +177,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         if response.get("result") == "blocked":
             save_state_merge_meta(plan_dir, state)
             _record_execute_blocked(plan_dir, response)
-            from megaplan._core.io import read_plan_state_cached
-            state = read_plan_state_cached(plan_dir, mode="authority")
+            state = read_json(plan_dir / "state.json")
             response["state"] = STATE_BLOCKED
             response["next_step"] = None
             response.pop("next_step_runtime", None)
