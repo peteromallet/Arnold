@@ -15,6 +15,7 @@ from megaplan.cloud.cli import (
     _ensure_repo_command,
     _marker_dir,
     _persistent_deploy_dir,
+    _tmux_chain_restart_command,
     build_cloud_parser,
     run_cloud_cli,
 )
@@ -141,7 +142,8 @@ def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
             "echo 'megaplan-chain session already running'; "
             "else "
             "tmux new-session -d -s megaplan-chain -c /workspace/app "
-            "'MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/chain.yaml >> .megaplan/cloud-chain.log 2>&1'; "
+            "'/usr/local/bin/mp-refresh-megaplan 2>&1 | tail -3 || true; "
+            "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/chain.yaml >> .megaplan/cloud-chain.log 2>&1'; "
             "echo 'started megaplan-chain session'; "
             "fi"
         )
@@ -949,3 +951,13 @@ def test_mp_chain_wrapper_matches_canonical_command(tmp_path: Path) -> None:
     assert "MEGAPLAN_TRUSTED_CONTAINER=1" in expected_cmd_one
     assert ".megaplan/cloud-chain.log" in expected_cmd_one
     assert "--one" in expected_cmd_one
+
+
+def test_tmux_chain_restart_refreshes_megaplan_before_one_shot_start() -> None:
+    command = _tmux_chain_restart_command("/workspace/app", "/workspace/app/chain.yaml")
+
+    assert (
+        "'/usr/local/bin/mp-refresh-megaplan 2>&1 | tail -3 || true; "
+        "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/chain.yaml --one "
+        ">> .megaplan/cloud-chain.log 2>&1'"
+    ) in command

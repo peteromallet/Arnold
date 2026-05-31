@@ -59,6 +59,8 @@ class ResourcesSpec:
 @dataclass(frozen=True)
 class MegaplanSpec:
     ref: str = "main"
+    repo: str | None = None
+    install_spec: str | None = None
 
 
 @dataclass(frozen=True)
@@ -317,7 +319,14 @@ def load_spec(path: Path) -> CloudSpec:
     agents = _agents(raw.get("agents"))
 
     megaplan_raw = _mapping(raw.get("megaplan"), "megaplan")
-    megaplan = MegaplanSpec(ref=_string(megaplan_raw.get("ref"), "megaplan.ref", default="main"))
+    megaplan = MegaplanSpec(
+        ref=_string(megaplan_raw.get("ref"), "megaplan.ref", default="main"),
+        repo=_optional_string(megaplan_raw.get("repo"), "megaplan.repo"),
+        install_spec=_optional_string(
+            megaplan_raw.get("install_spec"),
+            "megaplan.install_spec",
+        ),
+    )
 
     resources_raw = _mapping(raw.get("resources"), "resources")
     resources = ResourcesSpec(

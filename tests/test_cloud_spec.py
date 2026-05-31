@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from megaplan.cloud.spec import LocalSpec, RailwaySpec, SshSpec, ToolchainSpec, load_spec
+from megaplan.cloud.spec import LocalSpec, MegaplanSpec, RailwaySpec, SshSpec, ToolchainSpec, load_spec
 from megaplan.types import CliError, DEFAULT_AGENT_ROUTING
 
 
@@ -77,6 +77,53 @@ def test_load_spec_rejects_non_absolute_workspace(tmp_path: Path) -> None:
 def test_load_spec_rejects_unknown_mode(tmp_path: Path) -> None:
     payload = _base_spec(mode="mystery")
     with pytest.raises(CliError, match="auto, chain, idle"):
+        load_spec(_write_spec(tmp_path, payload))
+
+
+def test_load_spec_parses_megaplan_source_fields(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["megaplan"] = {
+        "ref": "feature/cloud-refresh",
+        "repo": "https://github.com/peteromallet/arnold.git",
+        "install_spec": "megaplan-harness[agent] @ git+https://github.com/peteromallet/arnold.git",
+    }
+
+    spec = load_spec(_write_spec(tmp_path, payload))
+
+    assert spec.megaplan == MegaplanSpec(
+        ref="feature/cloud-refresh",
+        repo="https://github.com/peteromallet/arnold.git",
+        install_spec="megaplan-harness[agent] @ git+https://github.com/peteromallet/arnold.git",
+    )
+
+
+def test_load_spec_defaults_megaplan_source_fields_when_absent(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["megaplan"] = {"ref": "main"}
+
+    spec = load_spec(_write_spec(tmp_path, payload))
+
+    assert spec.megaplan == MegaplanSpec(ref="main", repo=None, install_spec=None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("repo", 123),
+        ("repo", ""),
+        ("install_spec", ["megaplan"]),
+        ("install_spec", ""),
+    ],
+)
+def test_load_spec_rejects_invalid_megaplan_source_fields(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    payload = _base_spec()
+    payload["megaplan"][field] = value  # type: ignore[index]
+
+    with pytest.raises(CliError, match=f"megaplan.{field}"):
         load_spec(_write_spec(tmp_path, payload))
 
 

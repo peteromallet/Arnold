@@ -80,9 +80,16 @@ chain:
 #       RUN curl -fsSL https://example.com/tool/install.sh | bash
 
 # megaplan:
-#   Branch/tag/SHA used for the boot-time `pip install --upgrade` of megaplan.
+#   ref           Branch/tag/SHA used for git installs.
+#   repo          Optional git URL of the megaplan source repo. When set, the
+#                 container installs current megaplan from this repo at `ref`
+#                 on every boot and before each `megaplan cloud chain` run.
+#   install_spec  Advanced pip-spec override, installed verbatim. Git specs get
+#                 `@ref` appended.
 megaplan:
   ref: main
+  # repo: https://github.com/peteromallet/arnold.git
+  # install_spec: megaplan-harness[agent] @ git+https://github.com/peteromallet/arnold.git
 
 # resources:
 #   volume  Provider-specific persistent volume name. `destroy` deletes it.
