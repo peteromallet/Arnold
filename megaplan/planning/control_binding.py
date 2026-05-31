@@ -24,8 +24,13 @@ from megaplan._core import (
 )
 from megaplan._pipeline.types import StateDelta
 from megaplan.control_interface import (
+    CONTROL_TARGET_ABORT,
+    CONTROL_TARGET_FORCE_ADVANCE,
+    CONTROL_TARGET_RECOVER_FROM_STUCK,
+    CONTROL_TARGET_REROUTE,
     ControlTargetRef,
     ControlTransition,
+    ControlTransitionRequest,
     ControlTransitionResult,
     RunStateView,
 )
@@ -106,6 +111,7 @@ def planning_run_state_view(
     raw_state: Mapping[str, object],
     *,
     run_id: str | None = None,
+    projection_surface: str = "legacy",
 ) -> RunStateView:
     state = _coerce_plan_state(raw_state) or dict(raw_state)
     resolved_run_id = run_id
@@ -127,8 +133,23 @@ def planning_run_state_view(
         metadata={
             "planning_state": state.get("current_state"),
             "blocking_reason": blocking_reason,
+            "projection_surface": projection_surface,
         },
         raw_state=state,
+    )
+
+
+def planning_supervisor_run_state_view(
+    raw_state: Mapping[str, object],
+    *,
+    run_id: str | None = None,
+) -> RunStateView:
+    """Build a planning run-state view for neutral supervisor-facing projections."""
+
+    return planning_run_state_view(
+        raw_state,
+        run_id=run_id,
+        projection_surface="supervisor",
     )
 
 
@@ -167,6 +188,25 @@ def _workflow_step_target(
     if operator_action is not None:
         metadata["operator_action"] = operator_action
     return ControlTargetRef(id=step, label=step, metadata=metadata)
+
+
+def _neutral_target(
+    target_id: str,
+    *,
+    source_state: str,
+    direction: str,
+) -> ControlTargetRef:
+    return ControlTargetRef(
+        id=target_id,
+        label=target_id,
+        metadata={
+            "kind": "control_target",
+            "direction": direction,
+            "actionable": True,
+            "source_state": source_state,
+            "surface": "supervisor",
+        },
+    )
 
 
 def _string_from_path(raw_state: Mapping[str, object], path: tuple[str, ...]) -> str | None:
@@ -288,6 +328,135 @@ def _root_dir(state: Mapping[str, object], transition: ControlTransition) -> Pat
     if isinstance(raw, str) and raw:
         return Path(raw)
     return _project_dir(state)
+
+
+_NEUTRAL_TO_INTERNAL_ACTIONS = {
+    CONTROL_TARGET_FORCE_ADVANCE: "force-proceed",
+    CONTROL_TARGET_REROUTE: "replan",
+    CONTROL_TARGET_RECOVER_FROM_STUCK: "recover-blocked",
+    CONTROL_TARGET_ABORT: "abort",
+}
+
+
+def _projection_surface(run_state: RunStateView) -> str:
+    surface = run_state.metadata.get("projection_surface")
+    return surface if isinstance(surface, str) and surface else "legacy"
+
+
+def _supervisor_forward_targets(state: Mapping[str, object]) -> tuple[ControlTargetRef, ...]:
+    current_state = state.get("current_state")
+    if not isinstance(current_state, str):
+        return ()
+    if current_state == STATE_CRITIQUED:
+        return (
+            _neutral_target(
+                CONTROL_TARGET_FORCE_ADVANCE,
+                source_state=current_state,
+                direction="forward",
+            ),
+            _neutral_target(
+                CONTROL_TARGET_REROUTE,
+                source_state=current_state,
+                direction="forward",
+            ),
+            _neutral_target(
+                CONTROL_TARGET_ABORT,
+                source_state=current_state,
+                direction="forward",
+            ),
+        )
+    if current_state in {STATE_GATED, STATE_FINALIZED, STATE_FAILED}:
+        return (
+            _neutral_target(
+                CONTROL_TARGET_REROUTE,
+                source_state=current_state,
+                direction="forward",
+            ),
+            _neutral_target(
+                CONTROL_TARGET_ABORT,
+                source_state=current_state,
+                direction="forward",
+            ),
+        )
+    if current_state == STATE_BLOCKED:
+        targets = [
+            _neutral_target(
+                CONTROL_TARGET_RECOVER_FROM_STUCK,
+                source_state=current_state,
+                direction="recovery",
+            ),
+            _neutral_target(
+                CONTROL_TARGET_ABORT,
+                source_state=current_state,
+                direction="forward",
+            ),
+        ]
+        if _last_gate_is_agent_availability_preflight_block(state):
+            targets.insert(
+                1,
+                _neutral_target(
+                    CONTROL_TARGET_FORCE_ADVANCE,
+                    source_state=current_state,
+                    direction="forward",
+                ),
+            )
+        return tuple(targets)
+    return ()
+
+
+def _supervisor_recover_targets(state: Mapping[str, object]) -> tuple[ControlTargetRef, ...]:
+    current_state = state.get("current_state")
+    if current_state == STATE_BLOCKED:
+        return (
+            _neutral_target(
+                CONTROL_TARGET_RECOVER_FROM_STUCK,
+                source_state=current_state,
+                direction="recovery",
+            ),
+        )
+    if current_state == STATE_FAILED:
+        return (
+            _neutral_target(
+                CONTROL_TARGET_REROUTE,
+                source_state=current_state,
+                direction="recovery",
+            ),
+        )
+    return ()
+
+
+def _normalize_transition_action(
+    transition: ControlTransition | ControlTransitionRequest,
+) -> tuple[str | None, ControlTransition | ControlTransitionRequest]:
+    action = transition.target_id
+    if action is None:
+        request_action = getattr(transition, "action", None)
+        if isinstance(request_action, str) and request_action:
+            action = request_action
+    normalized_action = _NEUTRAL_TO_INTERNAL_ACTIONS.get(action, action)
+    if normalized_action == action:
+        return action, transition
+
+    if isinstance(transition, ControlTransitionRequest):
+        return normalized_action, ControlTransitionRequest(
+            action=transition.action,
+            target_id=normalized_action,
+            params=dict(transition.params),
+            actor=transition.actor,
+            source=transition.source,
+            reason=transition.reason,
+            note=transition.note,
+            metadata=dict(transition.metadata),
+            expected_versions=dict(transition.expected_versions),
+            idempotency_key=transition.idempotency_key,
+        )
+
+    return normalized_action, ControlTransition(
+        op=transition.op,
+        target_id=normalized_action,
+        payload=dict(transition.payload),
+        idempotency_key=transition.idempotency_key,
+    )
 
 
 _EXTERNAL_ERROR_RETRY_STRATEGIES = frozenset({"external_error", "provider_error", "wait_and_retry"})
@@ -559,6 +728,10 @@ class PlanningControlBinding:
                     "planning target projection requires current_state and config",
                 ),
             )
+        if _projection_surface(run_state) == "supervisor":
+            projected = _supervisor_forward_targets(state)
+            if projected:
+                return projected
         return tuple(
             _workflow_step_target(step, direction="forward")
             for step in workflow_next(state)
@@ -573,6 +746,11 @@ class PlanningControlBinding:
                     "planning recovery projection requires current_state and config",
                 ),
             )
+        if _projection_surface(run_state) == "supervisor":
+            projected = _supervisor_recover_targets(state)
+            if projected:
+                return projected
+            return ()
 
         current_state = state["current_state"]
         if current_state == STATE_AWAITING_HUMAN:
@@ -633,11 +811,7 @@ class PlanningControlBinding:
                 reason="malformed_plan_state",
             )
 
-        action = transition.target_id
-        if action is None:
-            request_action = getattr(transition, "action", None)
-            if isinstance(request_action, str) and request_action:
-                action = request_action
+        action, transition = _normalize_transition_action(transition)
         if transition.op != "override" and action is None:
             return ControlTransitionResult(
                 accepted=False,

@@ -13,8 +13,11 @@ from megaplan._pipeline.flags import control_interface_routing_on
 from megaplan._pipeline.types import StateDelta
 from megaplan.control_interface import (
     ArtifactRequest,
+    CONTROL_TARGET_ABORT,
+    CONTROL_TARGET_FORCE_ADVANCE,
+    CONTROL_TARGET_RECOVER_FROM_STUCK,
+    CONTROL_TARGET_REROUTE,
     ControlProjection,
-    ControlInterfaceTarget,
     ControlTarget,
     ControlTargetRef,
     ControlTransition,
@@ -72,6 +75,19 @@ class _DeltaBinding(_Binding):
         )
 
 
+class _PlanDirBinding(_Binding):
+    def __init__(self) -> None:
+        self.last_transition: ControlTransition | ControlTransitionRequest | None = None
+
+    def apply_transition(
+        self,
+        run_state: RunStateView,
+        transition: ControlTransition,
+    ) -> ControlTransitionResult:
+        self.last_transition = transition
+        return ControlTransitionResult(accepted=True, reason="saw-plan-dir")
+
+
 def _state(**overrides):
     state = {
         "name": "p",
@@ -97,6 +113,13 @@ def test_control_interface_import_surface_from_module_and_package() -> None:
     assert control_interface.RunOutcome is RunOutcome
     assert control_interface.ControlTarget is ControlTarget
     assert control_interface.ControlInterfaceTarget is ControlTarget
+    assert control_interface.CONTROL_TARGET_FORCE_ADVANCE == CONTROL_TARGET_FORCE_ADVANCE
+    assert control_interface.CONTROL_TARGET_REROUTE == CONTROL_TARGET_REROUTE
+    assert (
+        control_interface.CONTROL_TARGET_RECOVER_FROM_STUCK
+        == CONTROL_TARGET_RECOVER_FROM_STUCK
+    )
+    assert control_interface.CONTROL_TARGET_ABORT == CONTROL_TARGET_ABORT
     assert control_interface.ControlProjection is ControlProjection
     assert control_interface.ControlTransitionRequest is ControlTransitionRequest
     assert control_interface.ArtifactRequest is ArtifactRequest
@@ -144,7 +167,7 @@ def test_control_interface_delegates_projections_and_artifacts() -> None:
 
 def test_control_transition_request_and_artifact_request_are_public_contracts() -> None:
     request = ControlTransitionRequest(
-        action="force-advance",
+        action=CONTROL_TARGET_FORCE_ADVANCE,
         target_id="gate",
         params={"recommendation": "PROCEED"},
         actor="operator",
@@ -161,7 +184,7 @@ def test_control_transition_request_and_artifact_request_are_public_contracts() 
         params={"path": "gate.json"},
     )
 
-    assert request.op == "force-advance"
+    assert request.op == CONTROL_TARGET_FORCE_ADVANCE
     assert request.payload == {
         "actor": "operator",
         "source": "cli",
@@ -171,6 +194,54 @@ def test_control_transition_request_and_artifact_request_are_public_contracts() 
     }
     assert artifact_request.transition is request
     assert ControlTarget(kind="operator", id="recover").kind == "operator"
+
+
+def test_neutral_control_target_constants_are_stable_and_project_through_targets() -> None:
+    assert CONTROL_TARGET_FORCE_ADVANCE == "force-advance"
+    assert CONTROL_TARGET_REROUTE == "re-route"
+    assert CONTROL_TARGET_RECOVER_FROM_STUCK == "recover-from-stuck"
+    assert CONTROL_TARGET_ABORT == "abort"
+    assert control_interface.__all__ == [
+        "ControlBinding",
+        "CONTROL_TARGET_ABORT",
+        "CONTROL_TARGET_FORCE_ADVANCE",
+        "CONTROL_TARGET_RECOVER_FROM_STUCK",
+        "CONTROL_TARGET_REROUTE",
+        "ArtifactRequest",
+        "ControlProjection",
+        "ControlInterfaceTarget",
+        "ControlTarget",
+        "ControlTargetRef",
+        "ControlTransition",
+        "ControlTransitionConflict",
+        "ControlTransitionRequest",
+        "ControlTransitionResult",
+        "RunOutcome",
+        "RunStateView",
+        "apply_transition",
+        "read_valid_targets",
+        "synthesize_artifacts",
+    ]
+
+    projection = ControlProjection(
+        valid_targets=(
+            ControlTargetRef(id=CONTROL_TARGET_FORCE_ADVANCE),
+            ControlTargetRef(id=CONTROL_TARGET_REROUTE),
+        ),
+        recover_targets=(
+            ControlTargetRef(id=CONTROL_TARGET_RECOVER_FROM_STUCK),
+            ControlTargetRef(id=CONTROL_TARGET_ABORT),
+        ),
+    )
+
+    assert [target.id for target in projection.valid_targets] == [
+        CONTROL_TARGET_FORCE_ADVANCE,
+        CONTROL_TARGET_REROUTE,
+    ]
+    assert [target.id for target in projection.recover_targets] == [
+        CONTROL_TARGET_RECOVER_FROM_STUCK,
+        CONTROL_TARGET_ABORT,
+    ]
 
 
 def test_read_valid_targets_supports_default_planning_dispatch() -> None:
@@ -187,7 +258,7 @@ def test_read_valid_targets_supports_named_planning_binding() -> None:
 
 def test_apply_transition_is_non_mutating_stub_without_binding() -> None:
     state = RunStateView(run_id="run-1")
-    transition = ControlTransition(op="force-advance")
+    transition = ControlTransition(op=CONTROL_TARGET_FORCE_ADVANCE)
 
     result = apply_transition(state, transition)
 
@@ -200,13 +271,13 @@ def test_apply_transition_is_non_mutating_stub_without_binding() -> None:
 
 def test_apply_transition_delegates_when_binding_is_supplied() -> None:
     state = RunStateView(run_id="run-1")
-    transition = ControlTransition(op="force-advance")
+    transition = ControlTransition(op=CONTROL_TARGET_FORCE_ADVANCE)
 
     result = apply_transition(state, transition, _Binding())
 
     assert result.accepted is True
     assert result.mutated is True
-    assert result.reason == "run-1:force-advance"
+    assert result.reason == f"run-1:{CONTROL_TARGET_FORCE_ADVANCE}"
 
 
 def test_apply_transition_applies_binding_deltas_with_patch_many_cas(tmp_path: Path) -> None:
@@ -340,6 +411,17 @@ def test_control_transition_request_action_routes_planning_override(tmp_path: Pa
     assert state["meta"]["notes"][-1]["source"] == "api"
 
 
+def test_apply_transition_injects_plan_dir_into_binding_request(tmp_path: Path) -> None:
+    binding = _PlanDirBinding()
+    request = ControlTransitionRequest(action=CONTROL_TARGET_FORCE_ADVANCE)
+
+    result = apply_transition(_state(), request, binding, plan_dir=tmp_path)
+
+    assert result.accepted is True
+    assert binding.last_transition is not None
+    assert binding.last_transition.payload["plan_dir"] == str(tmp_path)
+
+
 def test_control_interface_routing_flag_is_default_off_and_exact_opt_in() -> None:
     with patch.dict(os.environ, {}, clear=True):
         assert control_interface_routing_on() is False
@@ -349,6 +431,140 @@ def test_control_interface_routing_flag_is_default_off_and_exact_opt_in() -> Non
         assert control_interface_routing_on() is False
     with patch.dict(os.environ, {"MEGAPLAN_CONTROL_INTERFACE_ROUTING": "1"}, clear=True):
         assert control_interface_routing_on() is True
+
+
+# ---------------------------------------------------------------------------
+# T8: stable neutral IDs, export surface, ControlTargetRef / ControlProjection
+# ---------------------------------------------------------------------------
+
+
+def test_control_target_ref_is_identical_to_control_target() -> None:
+    """ControlTargetRef must be the same type as ControlTarget (alias)."""
+    assert ControlTargetRef is ControlTarget
+    # Constructing through either name produces the same shape.
+    a = ControlTargetRef(id="t1")
+    b = ControlTarget(id="t1")
+    assert a == b
+    assert a.id == b.id == "t1"
+    assert a.kind == b.kind == "workflow_step"
+
+
+def test_control_projection_sequence_protocol() -> None:
+    """ControlProjection supports iteration, len, and indexing."""
+    targets = (
+        ControlTargetRef(id=CONTROL_TARGET_FORCE_ADVANCE),
+        ControlTargetRef(id=CONTROL_TARGET_REROUTE),
+    )
+    proj = ControlProjection(valid_targets=targets)
+
+    # __len__
+    assert len(proj) == 2
+    # __iter__
+    assert [t.id for t in proj] == [CONTROL_TARGET_FORCE_ADVANCE, CONTROL_TARGET_REROUTE]
+    # __getitem__
+    assert proj[0].id == CONTROL_TARGET_FORCE_ADVANCE
+    assert proj[1].id == CONTROL_TARGET_REROUTE
+
+    # Empty projection
+    empty = ControlProjection()
+    assert len(empty) == 0
+    assert list(empty) == []
+
+
+def test_control_projection_recovery_flag_switches_targets() -> None:
+    """When recovery=True, targets returns recover_targets instead of valid_targets."""
+    proj = ControlProjection(
+        valid_targets=(ControlTargetRef(id="forward"),),
+        recover_targets=(ControlTargetRef(id="backward"),),
+        recovery=True,
+    )
+    assert proj.recovery is True
+    assert [t.id for t in proj] == ["backward"]
+    assert proj == (ControlTargetRef(id="backward"),)
+
+    # Non-recovery projection returns valid_targets.
+    proj2 = ControlProjection(
+        valid_targets=(ControlTargetRef(id="forward"),),
+        recover_targets=(ControlTargetRef(id="backward"),),
+        recovery=False,
+    )
+    assert [t.id for t in proj2] == ["forward"]
+
+
+def test_control_projection_eq_with_tuple_and_non_tuple() -> None:
+    """ControlProjection __eq__ delegates to targets for tuples, identity otherwise."""
+    proj = ControlProjection(
+        valid_targets=(ControlTargetRef(id="a"), ControlTargetRef(id="b")),
+    )
+    # Tuple comparison: __eq__ compares targets sequence to the tuple
+    assert proj == (ControlTargetRef(id="a"), ControlTargetRef(id="b"))
+    assert proj != (ControlTargetRef(id="a"),)
+
+    # Same-targets projection is still a different object (identity-based fallback).
+    proj2 = ControlProjection(
+        valid_targets=(ControlTargetRef(id="a"), ControlTargetRef(id="b")),
+    )
+    assert proj is not proj2
+    # Non-tuple, non-projection comparison uses identity (object.__eq__)
+    assert proj != "not-a-projection"
+
+    # Equality with itself holds
+    assert proj == proj
+
+
+def test_neutral_ids_round_trip_through_targetref_and_projection() -> None:
+    """Every neutral ID constant round-trips through ControlTargetRef → ControlProjection."""
+    neutral_ids = (
+        CONTROL_TARGET_FORCE_ADVANCE,
+        CONTROL_TARGET_REROUTE,
+        CONTROL_TARGET_RECOVER_FROM_STUCK,
+        CONTROL_TARGET_ABORT,
+    )
+
+    # Build targets from every neutral ID
+    refs = tuple(ControlTargetRef(id=nid) for nid in neutral_ids)
+    proj = ControlProjection(valid_targets=refs, recover_targets=refs)
+
+    # All IDs survive the round-trip
+    assert [t.id for t in proj.valid_targets] == list(neutral_ids)
+    assert [t.id for t in proj.recover_targets] == list(neutral_ids)
+
+    # Recovery mode switches to recover_targets
+    recovery_proj = ControlProjection(
+        valid_targets=refs, recover_targets=refs, recovery=True
+    )
+    assert [t.id for t in recovery_proj] == list(neutral_ids)
+
+    # Each ref is a proper ControlTarget with the neutral ID as its id
+    for ref, nid in zip(refs, neutral_ids):
+        assert isinstance(ref, ControlTarget)
+        assert ref.id == nid
+        assert ref.kind == "workflow_step"
+
+
+def test_neutral_id_constants_are_importable_and_hashable() -> None:
+    """Neutral ID constants must be importable strings usable as dict keys and set members."""
+    ids = {
+        CONTROL_TARGET_FORCE_ADVANCE,
+        CONTROL_TARGET_REROUTE,
+        CONTROL_TARGET_RECOVER_FROM_STUCK,
+        CONTROL_TARGET_ABORT,
+    }
+    assert len(ids) == 4
+
+    # Usable as mapping keys
+    routing = {
+        CONTROL_TARGET_FORCE_ADVANCE: "advance_handler",
+        CONTROL_TARGET_REROUTE: "reroute_handler",
+        CONTROL_TARGET_RECOVER_FROM_STUCK: "recover_handler",
+        CONTROL_TARGET_ABORT: "abort_handler",
+    }
+    assert routing[CONTROL_TARGET_FORCE_ADVANCE] == "advance_handler"
+    assert routing["force-advance"] == "advance_handler"
+
+    # Immutable string identity
+    assert isinstance(CONTROL_TARGET_FORCE_ADVANCE, str)
+    assert CONTROL_TARGET_FORCE_ADVANCE is control_interface.CONTROL_TARGET_FORCE_ADVANCE
 
 
 def test_control_interface_has_no_planning_imports_or_literals() -> None:

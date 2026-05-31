@@ -30,6 +30,7 @@ from megaplan.chain import (
     run_chain_cli,
     save_chain_state,
 )
+from megaplan.supervisor.state import load_supervisor_state
 from megaplan.types import CliError
 
 
@@ -94,6 +95,54 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=True,
     )
+
+
+class _CliSmokeDriver:
+    def __init__(self, statuses: list[str]) -> None:
+        self.statuses = list(statuses)
+        self.plans: list[str] = []
+
+    def drive(self, request) -> DriverOutcome:
+        self.plans.append(request.plan)
+        status = self.statuses.pop(0)
+        return DriverOutcome(
+            status=status,
+            plan=request.plan,
+            final_state="done" if status == "done" else status,
+            iterations=len(self.plans),
+            reason=f"status:{status}",
+            last_phase="execute",
+        )
+
+
+class _CliSmokePackRunner:
+    def __init__(self) -> None:
+        self.nodes: list[str] = []
+
+    def prepare_plan(self, *, root: Path, node) -> str:
+        self.nodes.append(node.node_id)
+        plan_name = f"cli-smoke-{node.node_id}-{self.nodes.count(node.node_id)}"
+        plan_dir = root / ".megaplan" / "plans" / plan_name
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        state_payload = {
+            "name": plan_name,
+            "config": {"robustness": "standard"},
+        }
+        if node.node_id == "a":
+            state_payload.update(
+                {
+                    "current_state": "awaiting_pr_merge",
+                    "resume_cursor": {"kind": "awaiting_pr_merge", "pr_number": 42},
+                    "pr_number": 42,
+                }
+            )
+        else:
+            state_payload["current_state"] = "done"
+        (plan_dir / "state.json").write_text(
+            json.dumps(state_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return plan_name
 
 
 # ---------------------------------------------------------------------------
@@ -1186,6 +1235,216 @@ def test_chain_start_invokes_driver(
     ]
     assert start_payload["status"] == "done"
     assert alias_payload["status"] == "done"
+
+
+def test_chain_start_routes_to_supervisor_only_when_flag_on(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = _setup_two_milestones(tmp_path)
+    calls: list[tuple[str, Path, Path, bool | None, bool | None, bool]] = []
+
+    def fake_legacy_run_chain(
+        spec_path_arg: Path,
+        root: Path,
+        *,
+        no_git_refresh: bool = False,
+        no_push: bool = False,
+        one: bool = False,
+    ) -> dict[str, object]:
+        calls.append(("legacy", spec_path_arg, root, no_git_refresh, no_push, one))
+        return {"status": "done", "chain_state": {}}
+
+    def fake_supervisor_run_chain(
+        spec_path_arg: Path,
+        root: Path,
+        *,
+        writer,
+        one: bool = False,
+    ) -> dict[str, object]:
+        del writer
+        calls.append(("supervisor", spec_path_arg, root, None, None, one))
+        return {"status": "done", "chain_state": {}}
+
+    monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
+    monkeypatch.setattr(chain_module, "run_chain", fake_legacy_run_chain)
+    monkeypatch.setattr("megaplan.supervisor.chain_runner.run_chain", fake_supervisor_run_chain)
+
+    rc = run_chain_cli(
+        tmp_path,
+        argparse.Namespace(
+            chain_action="start",
+            spec=str(spec_path),
+            no_git_refresh=True,
+            no_push=True,
+            one=True,
+        ),
+    )
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "done"
+    assert calls == [("supervisor", spec_path.resolve(), tmp_path, None, None, True)]
+
+
+def test_chain_override_stays_on_legacy_path_when_supervisor_flag_on(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(_touch_idea(tmp_path, "m1.txt"))}]},
+    )
+    supervisor_called = False
+
+    def fail_if_supervisor_called(*args, **kwargs):
+        del args, kwargs
+        nonlocal supervisor_called
+        supervisor_called = True
+        raise AssertionError("supervisor chain runner should not handle override")
+
+    monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
+    monkeypatch.setattr("megaplan.supervisor.chain_runner.run_chain", fail_if_supervisor_called)
+
+    rc = run_chain_cli(
+        tmp_path,
+        argparse.Namespace(
+            chain_action="override",
+            spec=str(spec_path),
+            set_prerequisite_policy="required",
+            set_validation_policy=None,
+            set_review_clean_milestone_pr=None,
+        ),
+        writer=lambda _m: None,
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["effective_policy"]["prerequisite_policy"] == "required"
+    assert supervisor_called is False
+
+
+def test_chain_status_stays_on_legacy_path_when_supervisor_flag_on(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    fake_spec = chain_module.chain_spec.ChainSpec(milestones=[])
+    fake_state = chain_module.chain_spec.ChainState()
+    supervisor_called = False
+
+    def fail_if_supervisor_called(*args, **kwargs):
+        del args, kwargs
+        nonlocal supervisor_called
+        supervisor_called = True
+        raise AssertionError("supervisor chain runner should not handle status")
+
+    monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
+    monkeypatch.setattr("megaplan.supervisor.chain_runner.run_chain", fail_if_supervisor_called)
+    monkeypatch.setattr(chain_module.chain_spec, "load_spec", lambda _path: fake_spec)
+    monkeypatch.setattr(chain_module.chain_spec, "load_chain_state", lambda _path: fake_state)
+    monkeypatch.setattr(chain_module.chain_spec, "load_runtime_policy", lambda _path: {})
+    monkeypatch.setattr(
+        chain_module.chain_spec,
+        "effective_chain_policy",
+        lambda _spec, _overrides: {"prerequisite_policy": "none", "validation_policy": "none"},
+    )
+    monkeypatch.setattr(chain_module, "format_chain_status", lambda _spec, _state: {"status": "idle"})
+
+    rc = run_chain_cli(
+        tmp_path,
+        argparse.Namespace(chain_action="status", spec=str(spec_path)),
+        writer=lambda _msg: None,
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"] == {"status": "idle"}
+    assert supervisor_called is False
+
+
+def test_chain_start_supervisor_flag_on_smoke_uses_fakes_and_persists_serial_deps(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "a", "idea": str(_touch_idea(tmp_path, "a.txt"))},
+                {
+                    "label": "b",
+                    "idea": str(_touch_idea(tmp_path, "b.txt")),
+                    "depends_on": ["a"],
+                },
+            ]
+        },
+    )
+    driver = _CliSmokeDriver(["awaiting_human", "done"])
+    pack_runner = _CliSmokePackRunner()
+    ready_calls: list[tuple[Path, int]] = []
+    merge_calls: list[tuple[Path, int]] = []
+
+    monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
+    monkeypatch.setattr(
+        "megaplan.supervisor.chain_runner.DefaultRunDriver",
+        lambda: driver,
+    )
+    monkeypatch.setattr(
+        "megaplan.supervisor.chain_runner.ChainMilestonePackRunner",
+        lambda: pack_runner,
+    )
+    monkeypatch.setattr("megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
+    monkeypatch.setattr(
+        "megaplan.supervisor.pr_merge.git_ops._run_command",
+        lambda _root, argv, **_kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            '{"state":"OPEN","mergeStateStatus":"CLEAN","isDraft":false}',
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        "megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
+        lambda root, pr_number, *, writer: ready_calls.append((root, pr_number)),
+    )
+    monkeypatch.setattr(
+        "megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
+        lambda root, pr_number, *, writer: merge_calls.append((root, pr_number)) or "open",
+    )
+
+    rc = run_chain_cli(
+        tmp_path,
+        argparse.Namespace(
+            chain_action="start",
+            spec=str(spec_path),
+            no_git_refresh=True,
+            no_push=True,
+            one=False,
+        ),
+        writer=lambda _msg: None,
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "done"
+    assert [item["label"] for item in payload["milestone_results"]] == ["a", "b"]
+    assert [event["kind"] for event in payload["events"]].count("pr_merge_resolution") == 1
+    assert driver.plans == ["cli-smoke-a-1", "cli-smoke-b-1"]
+    assert pack_runner.nodes == ["a", "b"]
+    assert ready_calls == [(tmp_path, 42)]
+    assert merge_calls == [(tmp_path, 42)]
+
+    supervisor_state = load_supervisor_state(tmp_path, str(spec_path.resolve()))
+    assert supervisor_state is not None
+    assert [
+        (assertion.node_id, assertion.depends_on)
+        for assertion in supervisor_state.dependency_assertions
+    ] == [("a", ()), ("b", ("a",))]
 
 
 def test_run_chain_stops_on_failure(tmp_path: Path) -> None:
@@ -2375,6 +2634,48 @@ def test_chain_override_accumulates_multiple_setters(
     saved = json.loads(runtime_path.read_text(encoding="utf-8"))
     assert saved["prerequisite_policy"] == "required"
     assert saved["review_policy"]["clean_milestone_pr"] == "manual"
+
+
+def test_chain_status_cli_uses_shared_spec_module(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Status routing should resolve spec/state through ``megaplan.chain.spec``."""
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    calls: list[tuple[str, Path]] = []
+    fake_spec = chain_module.chain_spec.ChainSpec(milestones=[])
+    fake_state = chain_module.chain_spec.ChainState()
+
+    def fake_load_spec(path: Path) -> chain_module.ChainSpec:
+        calls.append(("load_spec", path))
+        return fake_spec
+
+    def fake_load_chain_state(path: Path) -> chain_module.ChainState:
+        calls.append(("load_chain_state", path))
+        return fake_state
+
+    monkeypatch.setattr(chain_module.chain_spec, "load_spec", fake_load_spec)
+    monkeypatch.setattr(chain_module.chain_spec, "load_chain_state", fake_load_chain_state)
+    monkeypatch.setattr(chain_module.chain_spec, "load_runtime_policy", lambda _path: {})
+    monkeypatch.setattr(
+        chain_module.chain_spec,
+        "effective_chain_policy",
+        lambda _spec, _overrides: {"prerequisite_policy": "none", "validation_policy": "none"},
+    )
+    monkeypatch.setattr(chain_module, "format_chain_status", lambda _spec, _state: {"status": "idle"})
+
+    rc = run_chain_cli(
+        tmp_path,
+        argparse.Namespace(chain_action="status", spec=str(spec_path)),
+        writer=lambda _msg: None,
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is True
+    assert payload["chain_state"] == fake_state.to_dict()
+    assert payload["summary"] == {"status": "idle"}
+    assert calls == [("load_spec", spec_path.resolve()), ("load_chain_state", spec_path.resolve())]
 
 
 # ---------------------------------------------------------------------------

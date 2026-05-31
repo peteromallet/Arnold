@@ -158,7 +158,12 @@ def _compute_execute_scope_drift(
     state: PlanState | None = None,
     plan_dir: Path | None = None,
 ):
-    files_claimed = _collect_execute_claimed_paths(aggregate_payload, project_dir)
+    # This call's own claims drive the claimed-but-missing signal. The
+    # per-batch union below only broadens the claimed set for unclaimed-addition
+    # detection; it must not make files changed and later reverted by old
+    # batches look fabricated in the final aggregate pass.
+    per_call_claimed = _collect_execute_claimed_paths(aggregate_payload, project_dir)
+    files_claimed = set(per_call_claimed)
     # Union per-batch claims from disk so per-batch execute mode compares the
     # working-tree diff against every batch's claims, not just this call's.
     files_claimed |= _collect_per_batch_claimed_paths(plan_dir, project_dir)
@@ -168,6 +173,9 @@ def _compute_execute_scope_drift(
             output_path = config.get("output_path")
             if isinstance(output_path, str) and output_path.strip():
                 files_claimed.add(
+                    _normalize_execute_claimed_path(output_path, project_dir)
+                )
+                per_call_claimed.add(
                     _normalize_execute_claimed_path(output_path, project_dir)
                 )
     try:
@@ -185,6 +193,7 @@ def _compute_execute_scope_drift(
         files_claimed=files_claimed,
         files_in_diff=files_in_diff,
         loc_by_file=loc_by_file,
+        files_claimed_for_missing=per_call_claimed,
     )
 
 

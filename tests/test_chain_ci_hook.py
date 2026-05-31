@@ -46,6 +46,7 @@ _GATE_NAMES_EXPECTED = [
     "cloud_smoke",
     "acceptance_toy",
     "dual_green",
+    "supervisor_purity",
 ]
 
 
@@ -66,8 +67,8 @@ def _all_green_gates():
 # ---------------------------------------------------------------------------
 
 
-def test_gate_order_has_8_gates():
-    assert len(GATE_ORDER) == 8
+def test_gate_order_has_9_gates():
+    assert len(GATE_ORDER) == 9
 
 
 def test_gate_order_names_match():
@@ -88,7 +89,7 @@ def test_gate_order_all_callable():
 def test_run_chain_ci_all_green_passes():
     result = run_chain_ci(gates=_all_green_gates())
     assert result.passed is True
-    assert len(result.gate_outcomes) == 8
+    assert len(result.gate_outcomes) == 9
     assert all(g.ok for g in result.gate_outcomes)
 
 
@@ -98,14 +99,14 @@ def test_run_chain_ci_no_short_circuit_on_red():
     rest_green = [(name, lambda n=name: _make_green(n)) for name in _GATE_NAMES_EXPECTED[1:]]
     result = run_chain_ci(gates=first_red + rest_green)
     assert result.passed is False
-    assert len(result.gate_outcomes) == 8  # all 8 collected
+    assert len(result.gate_outcomes) == 9  # all 9 collected
 
 
 def test_run_chain_ci_collects_all_failures():
     gates = [(name, lambda n=name: _make_red(n)) for name in _GATE_NAMES_EXPECTED]
     result = run_chain_ci(gates=gates)
     assert not result.passed
-    assert len(result.failures) == 8
+    assert len(result.failures) == 9
 
 
 def test_run_chain_ci_partial_red():
@@ -243,6 +244,7 @@ def test_failures_property_empty_when_all_green():
     "gate_cloud_smoke",
     "gate_acceptance_toy",
     "gate_dual_green",
+    "gate_supervisor_purity",
 ])
 def test_gate_callable_importable(gate_name):
     mod = importlib.import_module("megaplan.chain.ci_hook")
