@@ -1198,6 +1198,80 @@ def handle_execute_auto_loop(
         if rework_mode
         else completed_task_ids
     )
+
+    if (
+        all_task_ids
+        and not pending_tasks
+        and not blocked_task_ids
+        and set(all_task_ids) <= effective_completed_task_ids
+    ):
+        max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
+        expected_batches = split_oversized_batches(
+            compute_global_batches(finalize_data),
+            max_tasks_per_batch,
+        )
+        batch_payloads = [read_json(path) for path in list_batch_artifacts(plan_dir)]
+        plan_mode = state["config"].get("mode", "code")
+        aggregate_payload = _build_aggregate_execution_payload(
+            batch_payloads,
+            completed_batches=len(batch_payloads),
+            total_batches=max(len(expected_batches), len(batch_payloads)),
+            mode=plan_mode,
+            plan_dir=plan_dir,
+            state=state,
+        )
+        if not aggregate_payload.get("output"):
+            aggregate_payload["output"] = (
+                f"Execution already complete: {len(completed_task_ids)}/{len(all_task_ids)} "
+                "tasks tracked."
+            )
+        execution_audit = validate_execution_evidence(
+            finalize_data,
+            project_dir,
+            mode=plan_mode,
+            state=state,
+        )
+        atomic_write_json(plan_dir / "execution.json", aggregate_payload)
+        atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
+        atomic_write_json(plan_dir / "finalize.json", finalize_data)
+        atomic_write_text(
+            plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
+        )
+        state["current_state"] = STATE_EXECUTED
+        append_history(
+            state,
+            make_history_entry(
+                "execute",
+                duration_ms=0,
+                cost_usd=0.0,
+                result="success",
+                output_file="execution.json",
+            ),
+        )
+        save_state_merge_meta(plan_dir, state)
+        response: StepResponse = {
+            "success": True,
+            "step": "execute",
+            "summary": aggregate_payload.get("output", "Execution already complete."),
+            "artifacts": [
+                "execution.json",
+                "execution_audit.json",
+                "finalize.json",
+                "final.md",
+            ],
+            "monitor_hint": build_monitor_hint(plan_dir),
+            "next_step": "review",
+            "state": STATE_EXECUTED,
+            "files_changed": aggregate_payload.get("files_changed", []),
+            "deviations": aggregate_payload.get("deviations", []),
+            "warnings": [],
+            "auto_approve": auto_approve,
+            "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
+            "_phase_outcome": "success",
+        }
+        _attach_next_step_runtime(response)
+        return response
+
     pending_batches = compute_task_batches(
         pending_tasks, completed_ids=effective_completed_task_ids
     )

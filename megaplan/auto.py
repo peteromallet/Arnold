@@ -558,6 +558,13 @@ def _phase_command(next_step: str) -> list[str]:
         # and block on human input.  "feedback workflow" scaffolds the file
         # non-interactively and transitions reviewed → done.
         return ["feedback", "workflow"]
+    if next_step == "recover-blocked":
+        return [
+            "override",
+            "recover-blocked",
+            "--reason",
+            "megaplan auto: recover blocked plan after blocker resolution",
+        ]
     return shlex.split(next_step)
 
 

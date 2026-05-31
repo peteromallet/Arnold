@@ -364,11 +364,17 @@ def _prerequisite_detail(
     action_id = scope.action_id if scope is not None else "unknown"
     blocker_id = prerequisite_blocker_id(action_id, task_id)
     state = resolution_state(resolution_event, source="memory") or UNRESOLVED
-    behavior = classify_resolution_behavior(state)
+    if scope is None:
+        behavior = RERUN_REQUIRED
+    else:
+        behavior = classify_resolution_behavior(state)
     is_non_terminal = behavior in {OMIT, FALLBACK}
-    is_terminal = not is_non_terminal
+    requires_rerun = behavior == RERUN_REQUIRED
+    is_terminal = not is_non_terminal and not requires_rerun
     suggested_commands: tuple[str, ...] = ()
-    if is_terminal:
+    if requires_rerun:
+        suggested_commands = ("execute --retry-blocked-tasks",)
+    elif is_terminal:
         suggested_commands = (
             f"user-action resolve --action-id {action_id} --tasks {task_id}",
         )
@@ -394,6 +400,7 @@ def _prerequisite_detail(
         protected_task_ids=scope.protected_task_ids if scope is not None else (),
         is_non_terminal=is_non_terminal,
         is_terminal=is_terminal,
+        requires_rerun=requires_rerun,
         malformed_reason=malformed_reason
         or (
             scope.malformed_reason if scope is not None else "no blocking action scope"

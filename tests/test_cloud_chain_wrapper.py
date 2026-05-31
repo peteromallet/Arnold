@@ -11,10 +11,14 @@ import pytest
 import yaml
 
 from megaplan.cloud.cli import (
+    _chain_launch_verification_command,
     _chain_start_command,
+    _chain_state_reset_command,
     _ensure_repo_command,
     _marker_dir,
     _persistent_deploy_dir,
+    _tmux_chain_launch_command,
+    _tmux_chain_restart_command,
     build_cloud_parser,
     run_cloud_cli,
 )
@@ -121,11 +125,16 @@ def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
         assert run_cloud_cli(tmp_path, args) == 0
 
         assert uploads[:2] == [
-            (idea_dir / "ideas" / "foundation.txt", "/workspace/app/ideas/foundation.txt"),
+            (idea_dir / "ideas" / "foundation.txt", "/workspace/chain-8fb6734d/app/ideas/foundation.txt"),
             (idea_dir / "external.txt", "/opt/external.txt"),
         ]
-        assert uploads[2][1] == "/workspace/app/chain.yaml"
-        ensure_command = _ensure_repo_command(_cloud_spec(provider_name))
+        assert uploads[2][1] == "/workspace/chain-8fb6734d/app/chain.yaml"
+        ensure_command = _ensure_repo_command(
+            replace(
+                _cloud_spec(provider_name),
+                repo=replace(_cloud_spec(provider_name).repo, workspace="/workspace/chain-8fb6734d/app"),
+            )
+        )
         assert commands[0] == ensure_command
         assert "command -v" in commands[1]
         assert "codex" in commands[1]
@@ -133,20 +142,19 @@ def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
         assert "shannon" not in commands[1]
         assert "claude" not in commands[1]
         assert "bun" not in commands[1]
-        assert "git -C /workspace/app rev-parse --abbrev-ref HEAD" in commands[2]
-        assert "git -C /workspace/app rev-parse HEAD" in commands[2]
-        assert commands[3] == (
-            "mkdir -p /workspace/app/.megaplan && "
-            "if tmux has-session -t megaplan-chain 2>/dev/null; then "
-            "echo 'megaplan-chain session already running'; "
-            "else "
-            "tmux new-session -d -s megaplan-chain -c /workspace/app "
-            "'MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/chain.yaml >> .megaplan/cloud-chain.log 2>&1'; "
-            "echo 'started megaplan-chain session'; "
-            "fi"
-        )
+        assert "git -C /workspace/chain-8fb6734d/app rev-parse --abbrev-ref HEAD" in commands[2]
+        assert "git -C /workspace/chain-8fb6734d/app rev-parse HEAD" in commands[2]
+        assert "python3 - <<'MEGAPLAN_RESET'" in commands[3]
+        assert ".megaplan/cloud-chain-megaplan-chain-chain-8fb6734d.log" in commands[3]
+        assert "tmux has-session -t megaplan-chain-chain-8fb6734d" in commands[4]
+        assert "git -C \"$SRC\" pull --ff-only" in commands[4]
+        assert "pip install -e \"$SRC\"" in commands[4]
+        assert "/usr/local/bin/mp-refresh-megaplan" not in commands[4]
+        assert "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/chain-8fb6734d/app/chain.yaml" in commands[4]
+        assert "python3 - <<'MEGAPLAN_VERIFY'" in commands[5]
         marker_payload = json.loads((_marker_dir(cloud_yaml_path) / "last_chain.json").read_text(encoding="utf-8"))
-        assert marker_payload["remote_spec"] == "/workspace/app/chain.yaml"
+        assert marker_payload["remote_spec"] == "/workspace/chain-8fb6734d/app/chain.yaml"
+        assert marker_payload["chain_session"] == "megaplan-chain-chain-8fb6734d"
         if provider_name == "local":
             assert _persistent_deploy_dir(_cloud_spec("local")).exists()
 
@@ -200,11 +208,11 @@ def test_cloud_chain_three_sprint_smoke_dispatches_trusted_container_command(
     assert run_cloud_cli(tmp_path, args) == 0
 
     assert len(yaml.safe_load(spec_path.read_text(encoding="utf-8"))["milestones"]) == 3
-    assert len(commands) == 4
-    assert commands[0] == _ensure_repo_command(_cloud_spec("railway"))
+    assert len(commands) == 6
+    assert "/workspace/cloud-chain-smoke-4bb0e3d6/app" in commands[0]
     assert "command -v" in commands[1]
-    assert "git -C /workspace/app rev-parse --abbrev-ref HEAD" in commands[2]
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/chain.yaml" in commands[3]
+    assert "git -C /workspace/cloud-chain-smoke-4bb0e3d6/app rev-parse --abbrev-ref HEAD" in commands[2]
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/cloud-chain-smoke-4bb0e3d6/app/chain.yaml" in commands[4]
 
 
 def test_cloud_chain_prints_launch_provenance_after_success(
@@ -263,14 +271,14 @@ def test_cloud_chain_prints_launch_provenance_after_success(
 
     payload = _json_payload_from_output(capsys.readouterr().out)
     assert payload["event"] == "cloud_chain_launched"
-    assert payload["remote_spec"] == "/workspace/app/chain.yaml"
+    assert payload["remote_spec"] == "/workspace/chain-c055b7fa/app/chain.yaml"
     assert payload["current_milestone"] == "m1"
     assert payload["plan_name"] is None
     assert payload["pr_number"] is None
     assert payload["repo"] == {
         "url": "https://github.com/example/app.git",
         "branch": "setup/cloud",
-        "workspace": "/workspace/app",
+        "workspace": "/workspace/chain-c055b7fa/app",
         "head": "deadbeefcafebabe",
         "checked_out_branch": "setup/cloud",
     }
@@ -282,7 +290,12 @@ def test_cloud_chain_prints_launch_provenance_after_success(
         "install_source": "cloud_image_runtime",
     }
     assert payload["uploaded_idea_count"] == 1
-    assert payload["tmux"] == {"session": "megaplan-chain", "status": "started"}
+    assert payload["tmux"] == {"session": "megaplan-chain-chain-c055b7fa", "status": "unknown"}
+    assert payload["log"]["chain_log"].endswith(
+        "/.megaplan/cloud-chain-megaplan-chain-chain-c055b7fa.log"
+    )
+    assert payload["launch"]["derived_workspace"] is True
+    assert payload["launch"]["derived_session"] is True
 
 
 def test_cloud_chain_injects_repo_branch_into_uploaded_spec_without_mutating_local(
@@ -329,7 +342,9 @@ def test_cloud_chain_injects_repo_branch_into_uploaded_spec_without_mutating_loc
     assert yaml.safe_load(spec_path.read_text(encoding="utf-8")) == {
         "milestones": [{"label": "m1", "idea": "/workspace/app/ideas/foundation.txt"}],
     }
-    assert uploaded_specs["/workspace/app/chain.yaml"]["base_branch"] == "setup/cloud"
+    uploaded = uploaded_specs["/workspace/chain-c055b7fa/app/chain.yaml"]
+    assert uploaded["base_branch"] == "setup/cloud"
+    assert uploaded["milestones"][0]["idea"] == "/workspace/chain-c055b7fa/app/ideas/foundation.txt"
     marker_payload = json.loads((_marker_dir(cloud_yaml_path) / "last_chain.json").read_text(encoding="utf-8"))
     assert marker_payload["base_branch"] == "setup/cloud"
 
@@ -379,7 +394,9 @@ def test_cloud_chain_preserves_explicit_base_branch_in_uploaded_spec(
     )
     assert run_cloud_cli(tmp_path, args) == 0
 
-    assert uploaded_specs["/workspace/app/chain.yaml"]["base_branch"] == "release/candidate"
+    uploaded = uploaded_specs["/workspace/chain-c055b7fa/app/chain.yaml"]
+    assert uploaded["base_branch"] == "release/candidate"
+    assert uploaded["milestones"][0]["idea"] == "/workspace/chain-c055b7fa/app/ideas/foundation.txt"
     marker_payload = json.loads((_marker_dir(cloud_yaml_path) / "last_chain.json").read_text(encoding="utf-8"))
     assert marker_payload["base_branch"] == "release/candidate"
 
@@ -598,7 +615,7 @@ def test_cloud_chain_preflight_blocks_missing_remote_commands_before_tmux(
     assert payload["missing_env"] == []
     assert "ANTHROPIC_API_KEY" in payload["preflight"]["env_hints"]
     assert "cloud.yaml agents.default does not override" in payload["preflight"]["warning"]
-    assert commands[0] == _ensure_repo_command(_cloud_spec("railway"))
+    assert "/workspace/chain-c055b7fa/app" in commands[0]
     assert "command -v" in commands[1]
     assert "bun" in commands[1]
     assert "claude" in commands[1]
@@ -654,7 +671,7 @@ def test_cloud_chain_preflight_blocks_missing_codex_commands_before_tmux(
     assert payload["missing_env"] == []
     assert payload["preflight"]["runtime_commands"] == ["codex", "tmux"]
     assert "OPENAI_API_KEY" in payload["preflight"]["env_hints"]
-    assert commands[0] == _ensure_repo_command(_cloud_spec("railway"))
+    assert "/workspace/chain-c055b7fa/app" in commands[0]
     assert "command -v" in commands[1]
     assert "codex" in commands[1]
     assert "tmux" in commands[1]
@@ -949,3 +966,182 @@ def test_mp_chain_wrapper_matches_canonical_command(tmp_path: Path) -> None:
     assert "MEGAPLAN_TRUSTED_CONTAINER=1" in expected_cmd_one
     assert ".megaplan/cloud-chain.log" in expected_cmd_one
     assert "--one" in expected_cmd_one
+
+
+def test_tmux_chain_restart_refreshes_megaplan_before_one_shot_start() -> None:
+    command = _tmux_chain_restart_command("/workspace/app", "/workspace/app/chain.yaml")
+
+    assert "/usr/local/bin/mp-refresh-megaplan" not in command
+    assert "source clone missing at $SRC; skipping editable install" in command
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/chain.yaml --one" in command
+    assert ">> .megaplan/cloud-chain.log 2>&1" in command
+    assert "refusing restart" in command
+
+
+def test_chain_state_reset_command_removes_stalled_unstarted_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plans = workspace / ".megaplan" / "plans"
+    half_plan = plans / "half-init-plan"
+    half_plan.mkdir(parents=True)
+    state_path = plans / ".chains" / "chain-deadbeef.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 0,
+                "current_plan_name": "half-init-plan",
+                "last_state": "stalled",
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan").mkdir(exist_ok=True)
+
+    command = _chain_state_reset_command(
+        workspace=str(workspace),
+        state_path=str(state_path),
+        log_relative=".megaplan/reset.log",
+    )
+    result = subprocess.run(["bash", "-lc", command], text=True, capture_output=True, check=False)
+
+    assert result.returncode == 0
+    assert not state_path.exists()
+    assert not half_plan.exists()
+    log = (workspace / ".megaplan" / "reset.log").read_text(encoding="utf-8")
+    assert '"status": "reset"' in log
+    assert "stalled-without-completed-milestones" in log
+
+
+def test_chain_state_reset_command_preserves_progressed_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    state_path = workspace / ".megaplan" / "plans" / ".chains" / "chain-deadbeef.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 1,
+                "current_plan_name": "plan-for-m2",
+                "last_state": "stalled",
+                "completed": [{"label": "m1", "plan": "plan-for-m1", "status": "done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    command = _chain_state_reset_command(
+        workspace=str(workspace),
+        state_path=str(state_path),
+        log_relative=".megaplan/reset.log",
+    )
+    result = subprocess.run(["bash", "-lc", command], text=True, capture_output=True, check=False)
+
+    assert result.returncode == 0
+    assert state_path.exists()
+    log = (workspace / ".megaplan" / "reset.log").read_text(encoding="utf-8")
+    assert '"status": "preserved"' in log
+
+
+def test_tmux_chain_launch_refuses_running_different_chain(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    tmux = bin_dir / "tmux"
+    tmux.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = has-session ]; then exit 0; fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    tmux.chmod(0o755)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    marker = tmp_path / "markers" / "megaplan-chain-a.json"
+    marker.parent.mkdir()
+    marker.write_text(json.dumps({"identity_digest": "other"}), encoding="utf-8")
+    command = _tmux_chain_launch_command(
+        str(workspace),
+        str(workspace / "chain.yaml"),
+        session_name="megaplan-chain-a",
+        marker_path=str(marker),
+        identity_digest="this-chain",
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+    )
+
+    assert result.returncode == 17
+    assert "different chain" in result.stdout
+
+
+def test_tmux_chain_launch_builds_clone_based_refresh_command() -> None:
+    spec = replace(
+        _cloud_spec("railway"),
+        megaplan=MegaplanSpec(
+            ref="feature/cloud-refresh",
+            repo="https://github.com/peteromallet/arnold.git",
+            src_path="/workspace/shared/arnold",
+        ),
+    )
+
+    command = _tmux_chain_launch_command(
+        "/workspace/app",
+        "/workspace/app/chain.yaml",
+        session_name="megaplan-chain-a",
+        spec=spec,
+        log_relative=".megaplan/cloud-chain-megaplan-chain-a.log",
+        marker_path="/workspace/.megaplan/cloud-sessions/megaplan-chain-a.json",
+        identity_digest="abc123",
+    )
+
+    assert "/usr/local/bin/mp-refresh-megaplan" not in command
+    assert "SRC=/workspace/shared/arnold" in command
+    assert "REPO=https://github.com/peteromallet/arnold.git" in command
+    assert "git clone --branch \"$REF\" \"$CLONE_URL\" \"$SRC\"" in command
+    assert "x-access-token:${GITHUB_TOKEN}@github.com" in command
+    assert "git -C \"$SRC\" pull --ff-only" in command
+    assert "pip install -e \"$SRC\"" in command
+    assert ">> .megaplan/cloud-chain-megaplan-chain-a.log 2>&1" in command
+
+
+def test_chain_launch_verification_reports_alive_and_advanced(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    tmux = bin_dir / "tmux"
+    tmux.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    tmux.chmod(0o755)
+    workspace = tmp_path / "workspace"
+    state_path = workspace / ".megaplan" / "plans" / ".chains" / "chain-deadbeef.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps({"current_milestone_index": 0, "current_plan_name": "plan-m1", "completed": []}),
+        encoding="utf-8",
+    )
+    log_path = workspace / ".megaplan" / "cloud-chain-megaplan-chain-a.log"
+    log_path.write_text("driver started\n", encoding="utf-8")
+    command = _chain_launch_verification_command(
+        workspace=str(workspace),
+        session_name="megaplan-chain-a",
+        state_path=str(state_path),
+        log_path=str(log_path),
+        attempts=1,
+        sleep_seconds=0,
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", command],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["session_alive"] is True
+    assert payload["advanced_past_init"] is True
+    assert payload["chain_log_size"] > 0

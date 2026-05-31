@@ -17,7 +17,9 @@ Mechanism:
 1. Resolve milestone index from the spec's milestones[] list (match by label).
 2. Refuse if milestone label is already in chain-state completed[].
 3. Copy the source finalized plan dir into <project>/.megaplan/plans/<plan-name>.
-4. Patch the copied plan's state.json: current_state='finalized', clear failures.
+4. Patch the copied plan's state.json: current_state='finalized', clear failures,
+   clear stale active worker metadata, and bind config.project_dir to the target
+   project.
 5. Patch chain-state JSON: current_milestone_index → resolved index,
    current_plan_name → adopted plan name, last_state → null,
    retry_counts[<label>] → 0.
@@ -139,6 +141,44 @@ def _target_plan_path(project_dir: Path, plan_name: str) -> Path:
     return project_dir / ".megaplan" / "plans" / plan_name
 
 
+def _rewrite_premium_vendor(spec: Any, vendor: str) -> Any:
+    """Rewrite claude:/codex: premium specs to the chain-selected vendor."""
+    if vendor not in {"claude", "codex"}:
+        return spec
+    if isinstance(spec, str):
+        if "=" in spec:
+            phase, value = spec.split("=", 1)
+            return f"{phase}={_rewrite_premium_vendor(value, vendor)}"
+        for premium in ("claude", "codex"):
+            if spec == premium:
+                return vendor
+            if spec.startswith(f"{premium}:"):
+                return f"{vendor}:{spec.split(':', 1)[1]}"
+        return spec
+    if isinstance(spec, list):
+        return [_rewrite_premium_vendor(item, vendor) for item in spec]
+    if isinstance(spec, dict):
+        return {key: _rewrite_premium_vendor(value, vendor) for key, value in spec.items()}
+    return spec
+
+
+def _patch_config_from_milestone(
+    config: dict[str, Any],
+    milestone: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply chain milestone knobs to a copied finalized plan config."""
+    for key in ("profile", "robustness", "depth", "vendor", "deepseek_provider"):
+        value = milestone.get(key)
+        if value is not None:
+            config[key] = value
+    vendor = config.get("vendor")
+    if isinstance(vendor, str):
+        for key in ("agent", "phase_model", "tier_models"):
+            if key in config:
+                config[key] = _rewrite_premium_vendor(config[key], vendor)
+    return config
+
+
 # ---------------------------------------------------------------------------
 # Core adoption logic
 # ---------------------------------------------------------------------------
@@ -252,10 +292,28 @@ def adopt(
         plan_state_before_current = plan_state.get("current_state")
         plan_state_before_latest_failure = plan_state.get("latest_failure")
         plan_state_before_last_failure = plan_state.get("last_failure")
+        plan_state_before_project_dir = (
+            plan_state.get("config", {}).get("project_dir")
+            if isinstance(plan_state.get("config"), dict)
+            else None
+        )
+        plan_state_before_vendor = (
+            plan_state.get("config", {}).get("vendor")
+            if isinstance(plan_state.get("config"), dict)
+            else None
+        )
+        plan_state_before_active_step = plan_state.get("active_step")
 
         plan_state["current_state"] = "finalized"
         plan_state["latest_failure"] = None
         plan_state["last_failure"] = None
+        plan_state.pop("active_step", None)
+        config = plan_state.get("config")
+        if not isinstance(config, dict):
+            config = {}
+            plan_state["config"] = config
+        config["project_dir"] = str(project_dir)
+        patched_config = _patch_config_from_milestone(config, milestone)
         _save_json(target_state_path, plan_state)
 
         changes.append({
@@ -273,14 +331,46 @@ def adopt(
                 "before": plan_state_before_last_failure,
                 "after": None,
             },
+            "active_step": {
+                "before": plan_state_before_active_step,
+                "after": None,
+            },
+            "config.project_dir": {
+                "before": plan_state_before_project_dir,
+                "after": str(project_dir),
+            },
+            "config.vendor": {
+                "before": plan_state_before_vendor,
+                "after": patched_config.get("vendor"),
+            },
         })
     else:
+        source_config = source_state.get("config")
+        source_project_dir = (
+            source_config.get("project_dir")
+            if isinstance(source_config, dict)
+            else None
+        )
+        source_vendor = (
+            source_config.get("vendor")
+            if isinstance(source_config, dict)
+            else None
+        )
         changes.append({
             "action": "patch_plan_state",
             "path": str(target_state_path),
             "current_state": {"before": "(source)", "after": "finalized"},
             "latest_failure": {"before": "(source)", "after": None},
             "last_failure": {"before": "(source)", "after": None},
+            "active_step": {"before": source_state.get("active_step"), "after": None},
+            "config.project_dir": {
+                "before": source_project_dir,
+                "after": str(project_dir),
+            },
+            "config.vendor": {
+                "before": source_vendor,
+                "after": milestone.get("vendor", source_vendor),
+            },
             "dry_run": True,
         })
 

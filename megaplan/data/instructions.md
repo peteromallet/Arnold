@@ -188,6 +188,32 @@ For the full reference — `cloud.yaml` fields, the `extra_repos[]` + `chain_ses
 - You want to log an observation that doesn't block the current task but should be tracked
 
 The command prints only a ULID to stdout on success. Tickets live as `.megaplan/tickets/{ulid}-{slug}.md` files and are auto-discovered by the planner for future epics. Link them to epics with `megaplan ticket link <ticket> <epic> --resolves` so they auto-address when the epic completes.
+
+## Briefs
+`megaplan brief` creates canonical source artifacts for work you intend to run.
+Use it when:
+- You are turning an idea into a durable single-plan input
+- You are scaffolding an epic's `chain.yaml` and milestone idea files
+- You want the source document committed before `megaplan init` snapshots it into plan state
+
+Briefs live as committed files under `.megaplan/briefs/`. Single-plan ideas live
+at `.megaplan/briefs/{slug}.md`; epics live at
+`.megaplan/briefs/{epic-slug}/chain.yaml` with milestone briefs beside the chain
+spec. This is ticket-like in storage and ergonomics, but not in lifecycle:
+briefs feed `megaplan init` / `megaplan chain start`; tickets are open problem
+notes that can be discovered, linked, and auto-addressed by epics.
+
+Briefs and tickets share the local artifact substrate: common `.megaplan/<kind>/`
+path handling, slug normalization, optional frontmatter parsing, keyword
+filtering, and snippets. Use `megaplan brief list`, `megaplan brief show`, and
+`megaplan brief search` for the brief side of that common read surface.
+
+`megaplan init --idea-file <path>` reads the file and snapshots its text; it does
+not move arbitrary files into `.megaplan/briefs/`. If the idea file is a markdown
+artifact with YAML frontmatter, `init` snapshots only the markdown body. Use
+`megaplan brief new --init` to create the canonical source file first and then
+initialize from it.
+
 ## Feedback
 See **megaplan-prep** for when to add the feedback phase (`--with-feedback`). This section covers the CLI mechanics once you've decided to use it.
 
@@ -261,6 +287,11 @@ megaplan bakeoff pick --exp <id> --profile <name> --rationale "..."
 megaplan bakeoff merge --exp <id>
 megaplan bakeoff resume --exp <id>
 megaplan bakeoff abandon --exp <id>
+megaplan brief new <slug> [-b <body> | --from <path> | -] [--force] [--init]
+megaplan brief epic <slug> --milestone LABEL=TITLE [--base-branch <branch>] [--force]
+megaplan brief list [--json]
+megaplan brief show <id-or-path> [--json]
+megaplan brief search [KW ...] [--all] [--sort path|title|length] [--desc] [--limit N] [--json]
 megaplan ticket new "title" -b "body"
 megaplan ticket list [--status <s>] [--tags <t>] [--json]
 megaplan ticket show <id> [--json]

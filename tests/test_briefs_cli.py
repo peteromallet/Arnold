@@ -35,7 +35,9 @@ def test_brief_new_writes_canonical_file(tmp_path: Path) -> None:
     payload = json.loads(proc.stdout)
     path = tmp_path / ".megaplan" / "briefs" / "my-idea.md"
     assert payload["path"] == str(path)
-    assert path.read_text(encoding="utf-8") == "Do the thing.\n"
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("---\ntype: brief\nslug: my-idea\n")
+    assert text.endswith("\nDo the thing.\n")
 
 
 def test_brief_new_init_runs_from_created_brief(tmp_path: Path) -> None:
@@ -83,3 +85,29 @@ def test_brief_epic_scaffolds_chain_and_milestones(tmp_path: Path) -> None:
         {"label": "m1-schema", "idea": ".megaplan/briefs/artifact-store/m1-schema.md"},
         {"label": "m2-api", "idea": ".megaplan/briefs/artifact-store/m2-api.md"},
     ]
+
+
+def test_brief_list_show_and_search_use_common_artifact_shape(tmp_path: Path) -> None:
+    create = _run_megaplan(
+        ["brief", "new", "Shared Shape", "-b", "Searchable artifact body"],
+        cwd=tmp_path,
+    )
+    assert create.returncode == 0, create.stderr
+
+    listed = _run_megaplan(["brief", "list"], cwd=tmp_path)
+    assert listed.returncode == 0, listed.stderr
+    list_payload = json.loads(listed.stdout)
+    assert list_payload["briefs"][0]["id"] == "shared-shape"
+    assert list_payload["briefs"][0]["title"] == "Shared Shape"
+
+    shown = _run_megaplan(["brief", "show", "shared-shape"], cwd=tmp_path)
+    assert shown.returncode == 0, shown.stderr
+    show_payload = json.loads(shown.stdout)
+    assert show_payload["brief"]["body"] == "Searchable artifact body"
+    assert show_payload["brief"]["metadata"]["type"] == "brief"
+
+    searched = _run_megaplan(["brief", "search", "artifact"], cwd=tmp_path)
+    assert searched.returncode == 0, searched.stderr
+    search_payload = json.loads(searched.stdout)
+    assert [item["id"] for item in search_payload["briefs"]] == ["shared-shape"]
+    assert "snippet" in search_payload["briefs"][0]

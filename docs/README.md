@@ -11,6 +11,7 @@ sprint briefs, and one-off review artifacts live in `archive/`.
 - [Cloud](cloud.md) - cloud orchestration model and command examples.
 - [Megaplan prep](megaplan-prep.md) - setup guidance for choosing profile, robustness, and thinking depth.
 - [Megaplan epic](megaplan-epic.md) - running multi-sprint epics through `megaplan chain`.
+- [Briefs](briefs.md) - committed source docs for single plans and epic chains.
 
 ## Core Workflows
 

@@ -29,6 +29,25 @@ from megaplan.types import CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
 
+_CRITIQUE_WORKER_SHAPE_RETRIES = 2
+_CRITIQUE_REPAIR_INSTRUCTION = (
+    "Return a JSON object with a top-level `checks` array containing EXACTLY ONE "
+    "check object for this single lens. Do not include multiple checks or wrap it differently."
+)
+
+
+class _RetryableCritiqueShapeError(Exception):
+    """Internal signal for a critique worker payload that can be repaired by retry."""
+
+    def __init__(self, check_id: str, check_count: int, raw_payload: Any) -> None:
+        super().__init__(
+            f"Parallel critique output for check '{check_id}' did not contain exactly one check"
+        )
+        self.check_id = check_id
+        self.check_count = check_count
+        self.raw_payload = raw_payload
+
+
 def _run_check(
     index: int,
     check: dict[str, Any],
@@ -262,7 +281,7 @@ def run_parallel_critique(
     # Parse hook: extract exactly one check + verified/disputed per unit
     # ------------------------------------------------------------------
     def _parse_result(_index: int, raw_payload: Any, unit: WorkerUnit) -> tuple[dict[str, Any], list[str], list[str]]:
-        _checks_list = raw_payload.get("checks") if isinstance(raw_payload, dict) else []
+        _checks_list = raw_payload.get("checks") if isinstance(raw_payload, dict) else None
         _cid = unit.extra.get("check_id", "?")
         if isinstance(_checks_list, list) and len(_checks_list) != 1:
             _matching = [
@@ -272,11 +291,8 @@ def run_parallel_critique(
             if len(_matching) == 1:
                 _checks_list = _matching
         if not isinstance(_checks_list, list) or len(_checks_list) != 1 or not isinstance(_checks_list[0], dict):
-            raise CliError(
-                "worker_parse_error",
-                f"Parallel critique output for check '{_cid}' did not contain exactly one check",
-                extra={"raw_output": str(raw_payload)},
-            )
+            _count = len(_checks_list) if isinstance(_checks_list, list) else 0
+            raise _RetryableCritiqueShapeError(str(_cid), _count, raw_payload)
         _verified = raw_payload.get("verified_flag_ids", [])
         _disputed = raw_payload.get("disputed_flag_ids", [])
         return (
@@ -285,18 +301,96 @@ def run_parallel_critique(
             _disputed if isinstance(_disputed, list) else [],
         )
 
+    def _repair_unit(unit: WorkerUnit) -> WorkerUnit:
+        return WorkerUnit(
+            step=unit.step,
+            resolved=unit.resolved,
+            prompt=f"{_CRITIQUE_REPAIR_INSTRUCTION}\n\n{unit.prompt}",
+            output_path=unit.output_path,
+            read_only=unit.read_only,
+            extra=dict(unit.extra),
+        )
+
+    def _scatter_raw(current_units: list[WorkerUnit]) -> Any:
+        return scatter_worker_units(
+            units=current_units,
+            state=state,
+            plan_dir=plan_dir,
+            root=root,
+            args=_args,
+            max_concurrent=max_concurrent,
+        )
+
+    def _accumulate_scatter_totals(scatter_result: Any) -> None:
+        nonlocal _total_cost, _total_prompt_tokens, _total_completion_tokens, _total_tokens
+        _total_cost += scatter_result.total_cost
+        _total_prompt_tokens += scatter_result.total_prompt_tokens
+        _total_completion_tokens += scatter_result.total_completion_tokens
+        _total_tokens += scatter_result.total_tokens
+
     # ------------------------------------------------------------------
-    # Scatter
+    # Scatter + repair malformed worker shapes locally
     # ------------------------------------------------------------------
-    sr = scatter_worker_units(
-        units=units,
-        state=state,
-        plan_dir=plan_dir,
-        root=root,
-        args=_args,
-        parse_result=_parse_result,
-        max_concurrent=max_concurrent,
-    )
+    _total_cost = 0.0
+    _total_prompt_tokens = 0
+    _total_completion_tokens = 0
+    _total_tokens = 0
+    _parsed_results: list[tuple[dict[str, Any], list[str], list[str]] | None] = [None] * len(units)
+
+    _sr = _scatter_raw(units)
+    _accumulate_scatter_totals(_sr)
+
+    _failures: dict[int, _RetryableCritiqueShapeError] = {}
+    for _idx, _payload in enumerate(_sr.ordered_results):
+        try:
+            _parsed_results[_idx] = _parse_result(_idx, _payload, units[_idx])
+        except _RetryableCritiqueShapeError as exc:
+            _failures[_idx] = exc
+
+    _retry_units = units
+    for _retry_number in range(1, _CRITIQUE_WORKER_SHAPE_RETRIES + 1):
+        if not _failures:
+            break
+        _next_attempt = _retry_number + 1
+        _total_attempts = _CRITIQUE_WORKER_SHAPE_RETRIES + 1
+        _retry_indices = list(_failures)
+        for _failure in _failures.values():
+            print(
+                f"[parallel-critique] worker '{_failure.check_id}' returned "
+                f"{_failure.check_count} checks, retrying (attempt {_next_attempt}/{_total_attempts})",
+                file=sys.stderr,
+            )
+
+        _subset_units = [_repair_unit(_retry_units[_idx]) for _idx in _retry_indices]
+        _retry_units_by_index = dict(zip(_retry_indices, _subset_units, strict=True))
+        _retry_sr = _scatter_raw(_subset_units)
+        _accumulate_scatter_totals(_retry_sr)
+
+        _next_failures: dict[int, _RetryableCritiqueShapeError] = {}
+        for _subset_pos, _payload in enumerate(_retry_sr.ordered_results):
+            _original_idx = _retry_indices[_subset_pos]
+            _unit = _retry_units_by_index[_original_idx]
+            try:
+                _parsed_results[_original_idx] = _parse_result(_original_idx, _payload, _unit)
+            except _RetryableCritiqueShapeError as exc:
+                _next_failures[_original_idx] = exc
+        _failures = _next_failures
+        for _idx, _unit in _retry_units_by_index.items():
+            _retry_units[_idx] = _unit
+
+    if _failures:
+        _details = ", ".join(
+            f"{exc.check_id} returned {exc.check_count} checks"
+            for exc in _failures.values()
+        )
+        raise CliError(
+            "worker_parse_error",
+            "Parallel critique worker shape retry budget exhausted: " + _details,
+            extra={
+                "attempts": _CRITIQUE_WORKER_SHAPE_RETRIES + 1,
+                "raw_outputs": {idx: str(exc.raw_payload) for idx, exc in _failures.items()},
+            },
+        )
 
     # ------------------------------------------------------------------
     # Reduce: ordered checks + flag merge (disputed trumps verified)
@@ -304,7 +398,12 @@ def run_parallel_critique(
     ordered_checks: list[dict[str, Any]] = []
     verified_groups: list[list[str]] = []
     disputed_groups: list[list[str]] = []
-    for _item in sr.ordered_results:
+    for _item in _parsed_results:
+        if _item is None:
+            raise CliError(
+                "worker_parse_error",
+                "Parallel critique worker result missing after retry processing",
+            )
         _check_payload, _v_ids, _d_ids = _item
         ordered_checks.append(_check_payload)
         verified_groups.append(_v_ids)
@@ -325,9 +424,9 @@ def run_parallel_critique(
         },
         raw_output="parallel",
         duration_ms=int((time.monotonic() - started) * 1000),
-        cost_usd=sr.total_cost,
+        cost_usd=_total_cost,
         session_id=None,
-        prompt_tokens=sr.total_prompt_tokens,
-        completion_tokens=sr.total_completion_tokens,
-        total_tokens=sr.total_tokens,
+        prompt_tokens=_total_prompt_tokens,
+        completion_tokens=_total_completion_tokens,
+        total_tokens=_total_tokens,
     )

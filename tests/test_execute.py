@@ -1336,6 +1336,10 @@ def test_step_failure_records_error_in_history(plan_fixture: PlanFixture, monkey
     def failing_worker(*a, **kw):
         raise megaplan.CliError("test_error", "Worker blew up", extra={"raw_output": "boom"})
 
+    monkeypatch.setattr(
+        "megaplan.handlers.critique.run_parallel_critique",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("force sequential fallback")),
+    )
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", failing_worker)
     with pytest.raises(megaplan.CliError, match="Worker blew up"):
         megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -1351,6 +1355,10 @@ def test_step_failure_stores_raw_output_file(plan_fixture: PlanFixture, monkeypa
     def failing_worker(*a, **kw):
         raise megaplan.CliError("test_error", "fail", extra={"raw_output": "raw content here"})
 
+    monkeypatch.setattr(
+        "megaplan.handlers.critique.run_parallel_critique",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("force sequential fallback")),
+    )
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", failing_worker)
     with pytest.raises(megaplan.CliError):
         megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -1367,6 +1375,10 @@ def test_step_failure_uses_message_when_no_raw_output(plan_fixture: PlanFixture,
     def failing_worker(*a, **kw):
         raise megaplan.CliError("test_error", "the error message")
 
+    monkeypatch.setattr(
+        "megaplan.handlers.critique.run_parallel_critique",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("force sequential fallback")),
+    )
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", failing_worker)
     with pytest.raises(megaplan.CliError):
         megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -4654,6 +4666,114 @@ def test_handle_execute_auto_loop_deterministic_characterization(
 
     # No warnings on success.
     assert response["warnings"] == []
+
+
+def test_handle_execute_auto_loop_all_tasks_done_is_idempotent(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resumed execute with no pending tasks must advance to review.
+
+    Regression coverage for the auto-loop re-running execute after the final
+    batch had already marked every task done. Without this guard the empty
+    aggregate had no claimed files, scope-drift treated the existing diff as
+    unclaimed, and auto retried execute until it stalled at ``finalized``.
+    """
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(
+            plan=plan_fixture.plan_name,
+            override_action="force-proceed",
+            reason="test",
+        ),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    changed = plan_fixture.project_dir / "already_done.py"
+    changed.write_text("VALUE = 1\n", encoding="utf-8")
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["tasks"] = [
+        {
+            "id": "T1",
+            "description": "Already completed.",
+            "depends_on": [],
+            "status": "done",
+            "executor_notes": "Completed before resume.",
+            "files_changed": ["already_done.py"],
+            "commands_run": ["python -m py_compile already_done.py"],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        }
+    ]
+    finalize_data["sense_checks"] = []
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+    (plan_fixture.plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "output": "Executed T1.",
+                "files_changed": ["already_done.py"],
+                "commands_run": ["python -m py_compile already_done.py"],
+                "deviations": [],
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "executor_notes": "Completed before resume.",
+                        "files_changed": ["already_done.py"],
+                        "commands_run": ["python -m py_compile already_done.py"],
+                    }
+                ],
+                "sense_check_acknowledgments": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_capture_git_status_snapshot",
+        lambda *_: ({}, None),
+    )
+
+    def _fail_worker(**_kwargs):
+        raise AssertionError("no worker should run when every task is already done")
+
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_run_and_merge_batch",
+        _fail_worker,
+    )
+
+    state = load_state(plan_fixture.plan_dir)
+    response = megaplan.execute.core.handle_execute_auto_loop(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+        ),
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+    )
+
+    assert response["success"] is True
+    assert response["state"] == megaplan.STATE_EXECUTED
+    assert response["next_step"] == "review"
+    assert response["_phase_outcome"] == "success"
+    assert response["warnings"] == []
+    assert load_state(plan_fixture.plan_dir)["current_state"] == megaplan.STATE_EXECUTED
+    execution = read_json(plan_fixture.plan_dir / "execution.json")
+    assert execution["files_changed"] == ["already_done.py"]
 
     # Monitor hint is present.
     assert isinstance(response["monitor_hint"], str)
