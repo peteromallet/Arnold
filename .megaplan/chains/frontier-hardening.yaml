@@ -1,11 +1,13 @@
-# STATUS (2026-05-31) — s3 + s4 COMPLETE; remaining s1/s2/s5 run under --vendor codex
+# STATUS (2026-05-31) — COMPLETE; all five frontier-hardening sprints landed on main
 #
-#   s3-intent-oracle    DONE — branch frontier-s3-intent @ 9e91dc6, merging to main
-#   s4-capability-fence DONE — branch frontier-s4-capability @ 6d5e3e4, merging to main
-#                          (reconciled against main's existing vibecomfy/security/ module)
-#   s1-oracle-durability QUEUED — launchable now, independent of m4/m5
-#   s2-dynamic-widget-fence GATED — waits on scratchpad-emitter m4/m5 (emit_ui_json hot zone)
-#   s5-felt-fidelity-gate    GATED — waits on scratchpad-emitter m4/m5 (emit_ui_json hot zone)
+#   s3-intent-oracle        LANDED — frontier-s3-intent @ 9e91dc6, integrated in e5772b0
+#   s4-capability-fence     LANDED — frontier-s4-capability @ 6d5e3e4, integrated in e5772b0
+#   s5-felt-fidelity-gate   LANDED — PR #34, main commit fb192d2
+#   s2-dynamic-widget-fence LANDED — PR #36, main commit 92dfdb8
+#   s1-oracle-durability    LANDED — PR #35, main commit 38b01ac
+#
+# Final post-merge main checks on 38b01ac:
+#   ci SUCCESS, canonical-parity SUCCESS, Strict Ready SUCCESS.
 #
 # Epic: frontier-hardening — robustness BEYOND round-trip fidelity
 #

@@ -1,4 +1,4 @@
-# Frontier-Hardening Runbook — operator HOWTO
+# Frontier-Hardening Runbook — completion record
 
 Last updated: 2026-05-31.
 
@@ -6,73 +6,31 @@ Last updated: 2026-05-31.
 
 | Sprint | Branch | Commit | Status |
 |--------|--------|--------|--------|
-| s3-intent-oracle | `frontier-s3-intent` | `9e91dc6` | DONE — merging to main |
-| s4-capability-fence | `frontier-s4-capability` | `6d5e3e4` | DONE — merging to main (reconciled against main's existing `vibecomfy/security/`) |
-| s1-oracle-durability | (not started) | — | QUEUED — launchable now |
-| s2-dynamic-widget-fence | (not started) | — | READY AFTER REGROUND — m4-m7 landed; consume existing `refuse.py` |
-| s5-felt-fidelity-gate | (not started) | — | READY AFTER REGROUND — m4-m7 landed; consume existing delta/change-report primitives |
+| s3-intent-oracle | `frontier-s3-intent` | `9e91dc6` / integrated in `e5772b0` | LANDED |
+| s4-capability-fence | `frontier-s4-capability` | `6d5e3e4` / integrated in `e5772b0` | LANDED |
+| s5-felt-fidelity-gate | `frontier-s5-felt-fidelity` | `fb192d2` | LANDED via PR #34 |
+| s2-dynamic-widget-fence | `frontier-s2-widget-fence` | `92dfdb8` | LANDED via PR #36 |
+| s1-oracle-durability | `frontier-s1-oracle` | `38b01ac` | LANDED via PR #35 |
 
-s3 and s4 are the two existential gates (roadmap §14). Both now exist — the write-enabled-editor
-tripwire is satisfiable.
+All five frontier-hardening sprints have landed on `main`. The final main commit for the sequence is
+`38b01ac5651b5e0877fc426cc783b73a8fa1d46f` (`Harden oracle durability checks`).
 
-## Launch commands (Codex vendor)
+Post-merge GitHub checks on that commit:
 
-All remaining sprints run with `--vendor codex`. Commands are issued from the repo root.
+- `ci`: success, including the Layer-3 Comfy oracle gate.
+- `canonical-parity`: success.
+- `Strict Ready`: success.
 
-### s1-oracle-durability — launchable NOW
+s3 and s4 are the two existential gates (roadmap §14). Both exist on main, and the remaining
+durability/trust gates are also landed, so the write-enabled-editor tripwire is satisfiable from
+this frontier-hardening sequence's side.
 
-s1 is independent of scratchpad-emitter m4/m5 and can be launched immediately:
+## Launch commands
 
-```
-PYENV_VERSION=3.11.11 megaplan init \
-  --in-worktree frontier-s1-oracle \
-  --worktree-from origin/main \
-  --clean-worktree \
-  --idea-file .megaplan/ideas/frontier-hardening/s1-oracle-durability.md \
-  --profile directed \
-  --robustness full \
-  --depth low \
-  --vendor codex \
-  --auto-start
-```
-
-### s2-dynamic-widget-fence — launch after current-main reground
-
-s2 touches the `emit_ui_json` hot zone, but scratchpad-emitter m4-m7 have now landed on main. Its brief
-must be grounded against the landed `vibecomfy/porting/refuse.py` module: s2 should add widget-shape
-verdicts/reasons into the existing refusal spine, not rebuild the generic detector. Launch with:
-
-```
-PYENV_VERSION=3.11.11 megaplan init \
-  --in-worktree frontier-s2-widget-fence \
-  --worktree-from origin/main \
-  --clean-worktree \
-  --idea-file .megaplan/ideas/frontier-hardening/s2-dynamic-widget-fence.md \
-  --profile partnered \
-  --robustness full \
-  --depth medium \
-  --vendor codex \
-  --auto-start
-```
-
-### s5-felt-fidelity-gate — launch after current-main reground
-
-s5 also touches `emit_ui_json`. m4-m7 have landed, and current main already has `layout/delta.py`,
-`layout/reconcile.py`, `build_change_report(...)`, and `change_report_out`. s5 should consume those
-primitives first and add only the minimal missing felt-fidelity classifier/gate. Launch with:
-
-```
-PYENV_VERSION=3.11.11 megaplan init \
-  --in-worktree frontier-s5-felt-fidelity \
-  --worktree-from origin/main \
-  --clean-worktree \
-  --idea-file .megaplan/ideas/frontier-hardening/s5-felt-fidelity-gate.md \
-  --profile directed \
-  --robustness full \
-  --depth low \
-  --vendor codex \
-  --auto-start
-```
+Historical launch commands were removed from this runbook after completion to avoid stale
+"not started" operator guidance. Use the committed sprint ideas under
+`.megaplan/ideas/frontier-hardening/` and the merged PR history if a future follow-up needs to
+replay or audit the work.
 
 ## Babysit/watchdog gotchas
 
