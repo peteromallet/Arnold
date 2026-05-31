@@ -407,6 +407,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="After writing the brief, run `megaplan init --idea-file` against it.",
     )
 
+    brief_list_parser = brief_sub.add_parser("list", help="List briefs")
+    brief_list_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
     brief_epic_parser = brief_sub.add_parser(
         "epic", help="Create .megaplan/briefs/<epic>/chain.yaml plus milestone stubs"
     )
@@ -420,6 +423,43 @@ def build_parser() -> argparse.ArgumentParser:
     )
     brief_epic_parser.add_argument("--base-branch", default="main")
     brief_epic_parser.add_argument("--force", action="store_true")
+
+    brief_show_parser = brief_sub.add_parser("show", help="Show a single brief")
+    brief_show_parser.add_argument("brief_id", help="Brief id, slug, or path")
+    brief_show_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    brief_search_parser = brief_sub.add_parser("search", help="Search briefs")
+    brief_search_parser.add_argument(
+        "keywords",
+        nargs="*",
+        help="Keywords to match across id, title, body, tags, and epic.",
+    )
+    brief_search_parser.add_argument(
+        "--all",
+        dest="keywords_all",
+        action="store_true",
+        help="Require all keywords to match.",
+    )
+    brief_search_parser.add_argument(
+        "--sort",
+        choices=["path", "title", "length"],
+        default="path",
+        help="Sort key (default: path)",
+    )
+    brief_search_parser.add_argument(
+        "--desc",
+        action="store_true",
+        help="Descending order (default: ascending)",
+    )
+    brief_search_parser.add_argument("--limit", type=int, default=None)
+    brief_search_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    brief_search_parser.add_argument(
+        "--no-snippet",
+        dest="snippet",
+        action="store_false",
+        default=True,
+        help="Hide snippet fields in JSON output",
+    )
 
     # --- ticket subcommand group ---
     ticket_parser = subparsers.add_parser(

@@ -2,29 +2,32 @@
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import yaml
+
+from megaplan.artifacts import (
+    artifact_dir,
+    artifact_title,
+    filter_keyword_artifacts,
+    iter_markdown_artifacts,
+    slugify as artifact_slugify,
+    write_markdown_artifact,
+)
 
 
 def slugify(value: str) -> str:
     """Return a stable file-safe slug for a brief or epic name."""
-    slug = value.lower().strip()
-    slug = re.sub(r"[^\w\s.-]", "", slug)
-    slug = re.sub(r"[\s_]+", "-", slug)
-    slug = re.sub(r"-+", "-", slug)
-    return slug.strip(".-")[:96]
+    return artifact_slugify(value, max_length=96, allow_dots=True)
 
 
 def briefs_dir(repo_root: str | Path) -> Path:
     """Return and create ``.megaplan/briefs/`` inside *repo_root*."""
-    path = Path(repo_root) / ".megaplan" / "briefs"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return artifact_dir(repo_root, "briefs")
 
 
 def brief_path(repo_root: str | Path, slug: str) -> Path:
@@ -57,7 +60,16 @@ def write_single_brief(
     path = brief_path(repo_root, slug)
     if path.exists() and not force:
         raise FileExistsError(path)
-    path.write_text(body + "\n", encoding="utf-8")
+    write_markdown_artifact(
+        path,
+        body,
+        metadata={
+            "type": "brief",
+            "slug": path.stem,
+            "title": slug.replace("-", " ").title(),
+            "created_at": datetime.now(timezone.utc),
+        },
+    )
     return path
 
 
@@ -93,7 +105,8 @@ def scaffold_epic(
         path = directory / f"{label}.md"
         if path.exists() and not force:
             raise FileExistsError(path)
-        path.write_text(
+        write_markdown_artifact(
+            path,
             "\n".join(
                 [
                     f"# {title}",
@@ -108,7 +121,13 @@ def scaffold_epic(
                     "",
                 ]
             ),
-            encoding="utf-8",
+            metadata={
+                "type": "brief",
+                "slug": label,
+                "title": title,
+                "epic": directory.name,
+                "created_at": datetime.now(timezone.utc),
+            },
         )
         written.append(path)
         chain_milestones.append({"label": label, "idea": str(path.relative_to(repo_root))})
@@ -131,6 +150,80 @@ def scaffold_epic(
         encoding="utf-8",
     )
     return chain_path, written
+
+
+def list_briefs(repo_root: str | Path) -> list[dict[str, Any]]:
+    """Return canonical brief records under ``.megaplan/briefs``."""
+    root = briefs_dir(repo_root)
+    records: list[dict[str, Any]] = []
+    for artifact in iter_markdown_artifacts(repo_root, "briefs", recursive=True):
+        rel = artifact.path.relative_to(root)
+        identifier = rel.with_suffix("").as_posix()
+        records.append(
+            {
+                "id": identifier,
+                "title": artifact_title(artifact.path, artifact),
+                "path": str(artifact.path),
+                "relative_path": str(Path(".megaplan") / "briefs" / rel),
+                "slug": artifact.path.stem,
+                "epic": rel.parts[0] if len(rel.parts) > 1 else None,
+                "tags": artifact.metadata.get("tags", []),
+                "body": artifact.body,
+                "metadata": artifact.metadata,
+            }
+        )
+    return records
+
+
+def show_brief(repo_root: str | Path, identifier: str) -> dict[str, Any] | None:
+    """Return a brief by id, slug, or path."""
+    query = identifier.strip()
+    query_path = Path(query)
+    for record in list_briefs(repo_root):
+        candidates = {
+            str(record["id"]),
+            str(record["slug"]),
+            str(record["path"]),
+            str(record["relative_path"]),
+        }
+        if query in candidates:
+            return record
+        if query_path.suffix == ".md" and query_path.name == Path(str(record["path"])).name:
+            return record
+    return None
+
+
+def search_briefs(
+    repo_root: str | Path,
+    keywords: Sequence[str] | None = None,
+    *,
+    keywords_all: bool = False,
+    sort: str = "path",
+    order: str = "asc",
+    limit: int | None = None,
+    snippet: bool = False,
+) -> list[dict[str, Any]]:
+    """Search canonical brief records."""
+    records = filter_keyword_artifacts(
+        list_briefs(repo_root),
+        keywords,
+        keywords_all=keywords_all,
+        fields=("id", "title", "body", "tags", "epic"),
+        snippet=snippet,
+    )
+    if sort not in {"path", "title", "length"}:
+        raise ValueError("sort must be one of 'path', 'title', or 'length'")
+    if order not in {"asc", "desc"}:
+        raise ValueError("order must be 'asc' or 'desc'")
+    key = {
+        "path": lambda item: str(item.get("relative_path") or ""),
+        "title": lambda item: str(item.get("title") or "").lower(),
+        "length": lambda item: len(str(item.get("body") or "")),
+    }[sort]
+    records.sort(key=key, reverse=(order == "desc"))
+    if limit is not None:
+        records = records[:limit]
+    return records
 
 
 def init_from_brief(

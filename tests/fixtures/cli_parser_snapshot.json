@@ -812,6 +812,44 @@
               ],
               "subcommands": {}
             },
+            "list": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "json",
+                  "help": "Output as JSON",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--json"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
             "new": {
               "mutually_exclusive_groups": [
                 {
@@ -968,6 +1006,189 @@
                   "default": null,
                   "dest": "slug",
                   "help": "Brief slug",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "subcommands": {}
+            },
+            "search": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "keywords_all",
+                  "help": "Require all keywords to match.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--all"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": [
+                    "path",
+                    "title",
+                    "length"
+                  ],
+                  "const": null,
+                  "default": "path",
+                  "dest": "sort",
+                  "help": "Sort key (default: path)",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--sort"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "desc",
+                  "help": "Descending order (default: ascending)",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--desc"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "limit",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--limit"
+                  ],
+                  "required": false,
+                  "type": "int"
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "json",
+                  "help": "Output as JSON",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--json"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreFalseAction",
+                  "choices": null,
+                  "const": false,
+                  "default": true,
+                  "dest": "snippet",
+                  "help": "Hide snippet fields in JSON output",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--no-snippet"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "keywords",
+                  "help": "Keywords to match across id, title, body, tags, and epic.",
+                  "metavar": null,
+                  "nargs": "*",
+                  "option_strings": [],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "subcommands": {}
+            },
+            "show": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "json",
+                  "help": "Output as JSON",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--json"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "brief_id",
+                  "help": "Brief id, slug, or path",
                   "metavar": null,
                   "nargs": null,
                   "option_strings": [],

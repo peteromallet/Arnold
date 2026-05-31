@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from megaplan.artifacts import markdown_body
 from megaplan.runtime.doc_assembly import extract_settled_decisions
 from megaplan.forms import available_form_ids
 from megaplan.profiles import apply_profile_expansion, load_profile_metadata
@@ -291,7 +292,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     if idea_file:
         idea_path = Path(idea_file).expanduser().resolve()
         try:
-            idea_text = idea_path.read_text(encoding="utf-8").strip()
+            idea_text = markdown_body(idea_path).strip()
         except OSError as exc:
             raise CliError("invalid_args", f"Unable to read --idea-file {idea_path}: {exc}") from exc
         if not idea_text:

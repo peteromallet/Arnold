@@ -724,7 +724,14 @@ def handle_ticket(args: argparse.Namespace) -> int:
 
 def handle_brief(root: Path, args: argparse.Namespace) -> StepResponse:
     """Dispatch ``megaplan brief ...`` subcommands."""
-    from megaplan.briefs import init_from_brief, scaffold_epic, write_single_brief
+    from megaplan.briefs import (
+        init_from_brief,
+        list_briefs,
+        scaffold_epic,
+        search_briefs,
+        show_brief,
+        write_single_brief,
+    )
 
     action = args.brief_action
     if action == "new":
@@ -773,6 +780,13 @@ def handle_brief(root: Path, args: argparse.Namespace) -> StepResponse:
             "action": "new",
             "path": str(path),
         }
+    if action == "list":
+        return {
+            "success": True,
+            "step": "brief",
+            "action": "list",
+            "briefs": _brief_cli_records(list_briefs(root)),
+        }
     if action == "epic":
         try:
             chain_path, milestone_paths = scaffold_epic(
@@ -797,7 +811,52 @@ def handle_brief(root: Path, args: argparse.Namespace) -> StepResponse:
             "chain": str(chain_path),
             "milestones": [str(path) for path in milestone_paths],
         }
+    if action == "show":
+        record = show_brief(root, args.brief_id)
+        if record is None:
+            raise CliError("not_found", f"Brief not found: {args.brief_id}")
+        return {
+            "success": True,
+            "step": "brief",
+            "action": "show",
+            "brief": _brief_cli_record(record, include_body=True),
+        }
+    if action == "search":
+        try:
+            records = search_briefs(
+                root,
+                args.keywords or None,
+                keywords_all=bool(args.keywords_all),
+                sort=args.sort,
+                order="desc" if args.desc else "asc",
+                limit=args.limit,
+                snippet=bool(args.snippet) and bool(args.keywords),
+            )
+        except ValueError as exc:
+            raise CliError("invalid_args", str(exc)) from exc
+        return {
+            "success": True,
+            "step": "brief",
+            "action": "search",
+            "briefs": _brief_cli_records(records),
+        }
     raise CliError("invalid_args", f"Unknown brief action: {action}")
+
+
+def _brief_cli_record(record: dict[str, Any], *, include_body: bool = False) -> dict[str, Any]:
+    """Trim internal brief records for CLI JSON output."""
+    keys = ["id", "title", "path", "relative_path", "slug", "epic", "tags", "snippet"]
+    out = {key: record.get(key) for key in keys if key in record}
+    metadata = record.get("metadata")
+    if metadata:
+        out["metadata"] = metadata
+    if include_body:
+        out["body"] = record.get("body", "")
+    return out
+
+
+def _brief_cli_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_brief_cli_record(record) for record in records]
 
 
 def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
