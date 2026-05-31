@@ -22,6 +22,8 @@ The two connect: the same decomposition that makes the process robust is what le
 
 ## How it works
 
+![How megaplan splits every phase - the frontier model decides, cheap models do the work](docs/assets/scribble-routing-fan.png)
+
 ```
 prep → plan → critique → gate → [revise → critique → gate]* → finalize → execute → review
 ```
