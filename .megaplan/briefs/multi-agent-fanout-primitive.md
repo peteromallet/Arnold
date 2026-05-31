@@ -115,6 +115,66 @@ The one load-bearing change vs. the branch: `resolved` + `prompt` + `parse` move
 
 ---
 
+## 0.2 UPDATE 2026-05-31 — runtime extraction, fan-out naming, and follow-up notes
+
+**The proven one-shot shape.** `AgentRequest` / `AgentResult` (the runtime contracts in
+`megaplan.agent_runtime`) generalize the pattern that was proven on the prep-vendor-agnostic
+branch: `run_step_with_worker(read_only=True, output_path=<caller-owned>)`. That one-shot
+call — a stateless read-only worker invocation with a deterministic output path — is what
+made the first vendor-agnostic parallel fan-out work. `AgentRequest` captures the same
+semantics (agent, mode, model, output path, read_only, prompt, timeout, parse hooks) in a
+standard dataclass so injected dispatchers, process fan-out, and future read/write reducers
+all speak the same contract.
+
+**Worker fan-out vs. pipeline fan-out.** These are two distinct dispatch layers:
+- **Worker fan-out** (`megaplan._core.worker_fanout`) scatters work through
+  `run_step_with_worker` — the CLI-backed worker function that drives Claude (via
+  Shannon/tmux), Codex, and Hermes. It is *process fan-out*: each unit runs in a
+  separate process via `scatter_gather_processes`, with caller-supplied per-unit prompts,
+  output paths, parse hooks, and error handlers.
+- **Pipeline fan-out** (`megaplan._pipeline.executor._run_parallel_stage`) scatters work
+  through a pipeline executor that can invoke any backend via the pipeline's own dispatch
+  machinery. It is thread-based and used for pipeline-internal parallelism (panel reviews,
+  demo judges). It does not use `run_step_with_worker`.
+
+The two share the scatter/gather *pattern*, but worker fan-out is the proven CLI path,
+while pipeline fan-out is the executor path. The naming reflects the dispatch target, not
+the reduce strategy.
+
+**The public Claude route is Shannon-backed.** The `claude` agent route in megaplan always
+uses the Shannon interactive tmux worker — it does *not* use a headless `claude -p`
+subprocess. This preserves OAuth subscription billing (no API-key metering) and ensures
+the same Claude Code session machinery (workspace trust gates, tool permissions, file
+access) is active for every invocation. The Shannon hardening sprint (see §0) makes this
+worker robust against tmux-session leaks and interactive-gate hangs.
+
+**Follow-up notes.**
+
+- **Write fan-out.** The current worker fan-out (`scatter_worker_units`) is read-only.
+  A write-capable variant (worktree isolation per unit, `git apply` merge with conflict
+  hard-gating) is downstream future work — the read-only core must stabilize first, and
+  bakeoff's write-merge machinery (`bakeoff/worktree.py`, `bakeoff/merge.py`) is the
+  natural extraction source.
+
+- **Operator diagnostics.** The `FanoutResult` and `GenericScatterResult` types carry
+  aggregate cost and token counts. Future operator-facing diagnostics (per-unit latency
+  histograms, 429-retry counts, stale-session recovery events) should attach to these
+  result types or their metadata dicts rather than inventing a separate telemetry channel.
+
+- **External package publishing.** `megaplan.agent_runtime` is the vendorable boundary
+  for external consumers. When published as a standalone package, the public surface is
+  exactly `megaplan.agent_runtime.__all__` (contracts + adapter protocols + process
+  fan-out aliases). The underlying `megaplan._core.*` modules remain private and may
+  change without notice.
+
+- **`megaplan.runtime` vs. `megaplan.agent_runtime` naming.** `megaplan.runtime` is the
+  pre-existing internal runtime module (worker dispatch, session plumbing, pipeline
+  machinery). `megaplan.agent_runtime` is the *new*, additive vendorable contract surface
+  created in this extraction sprint. The two are distinct namespaces: `megaplan.runtime`
+  stays internal; `megaplan.agent_runtime` is the public boundary. Do not merge them.
+
+---
+
 Everything below this line is the **original full proposal**, retained for the record.
 
 ---

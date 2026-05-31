@@ -43,14 +43,20 @@ PY
 - root-level `*.json` files under `megaplan/agent/`
 - import sites that justify retaining `gateway/`, `cron/`, and `honcho_integration/`
 
+**Note:** The public `claude` agent route always uses the Shannon-backed interactive
+tmux worker — it preserves OAuth subscription billing and never falls back to a
+headless `claude -p` subprocess. This is the same Shannon worker that drives the
+vendored Hermes runtime's Claude invocations.
+
 ## Fresh-environment Hermes smoke
 
-After `[agent]` extras are installable, verify the vendored runtime in a fresh
-environment instead of relying on the current interpreter state:
+After installing the package from source, verify the vendored runtime in a
+fresh environment instead of relying on the current interpreter state. The
+legacy `[agent]` extra is only a no-op compatibility alias on older guidance.
 
 ```bash
 python -m venv /tmp/megaplan-agent-smoke
-/tmp/megaplan-agent-smoke/bin/pip install -e '.[agent]'
+/tmp/megaplan-agent-smoke/bin/pip install -e .
 HOME=$(mktemp -d) /tmp/megaplan-agent-smoke/bin/python - <<'PY'
 from megaplan.workers.hermes import _import_hermes_runtime
 
@@ -63,4 +69,4 @@ PY
 ```
 
 For an end-to-end CLI run, initialize a scratch plan and execute a Hermes phase
-in that same venv once the optional deps are present.
+in that same venv once the package is installed.

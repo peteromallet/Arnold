@@ -15,7 +15,7 @@ from megaplan.orchestration.evaluation import (
     run_gate_checks,
 )
 from megaplan.profiles import apply_profile_expansion
-from megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, STATE_BLOCKED, STATE_CRITIQUED, STATE_GATED, StepResponse
+from megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, STATE_BLOCKED, STATE_CRITIQUED, STATE_GATED, STATE_PLANNED, StepResponse
 from megaplan.workers import WorkerResult
 from megaplan._core import (
     add_or_increment_debt,
@@ -169,6 +169,19 @@ def _remaining_significant_flags(plan_dir: Path) -> list[dict[str, str]]:
         if flag["status"] in FLAG_BLOCKING_STATUSES and flag.get("severity") == "significant"
     ]
 
+def _post_revise_gate_allowed(state: PlanState, plan_dir: Path) -> bool:
+    if state.get("current_state") != STATE_PLANNED or int(state.get("iteration", 0) or 0) < 2:
+        return False
+    try:
+        latest_meta = read_json(plan_dir / f"plan_v{state['iteration']}.meta.json")
+    except (FileNotFoundError, OSError, ValueError):
+        return False
+    flags_addressed = latest_meta.get("flags_addressed")
+    if not isinstance(flags_addressed, list) or not flags_addressed:
+        return False
+    history = state.get("history", [])
+    return bool(history and isinstance(history[-1], dict) and history[-1].get("step") == "revise")
+
 def _gate_response_fields(state: PlanState, gate_summary: dict[str, Any], debt_entries_added: int) -> dict[str, Any]:
     return {
         "auto_approve": bool(state["config"].get("auto_approve", False)),
@@ -182,6 +195,7 @@ def _gate_response_fields(state: PlanState, gate_summary: dict[str, Any], debt_e
         "criteria_check": gate_summary["criteria_check"],
         "preflight_results": gate_summary["preflight_results"],
         "unresolved_flags": gate_summary["unresolved_flags"],
+        "addressed_flags": gate_summary.get("addressed_flags", []),
         "orchestrator_guidance": gate_summary["orchestrator_guidance"],
         "signals": gate_summary["signals"],
         "debt_entries_added": debt_entries_added,
@@ -485,38 +499,68 @@ def _apply_gate_outcome(
     # Process explicit flag resolutions when the gate recommends PROCEED.
     if gate_summary["recommendation"] == "PROCEED":
         unresolved = gate_summary.get("unresolved_flags", [])
+        addressed = [
+            flag for flag in gate_summary.get("addressed_flags", [])
+            if isinstance(flag, dict)
+            and flag.get("severity") in ("significant", "likely-significant")
+        ]
         resolutions = gate_summary.get("flag_resolutions", [])
 
         # Validate each explicit resolution
+        addressed_ids = {f.get("id") for f in addressed if f.get("id")}
         valid_resolved_ids: set[str] = set()
+        valid_resolutions: list[dict[str, Any]] = []
         for res in resolutions:
             action = res.get("action", "")
             flag_id = res.get("flag_id", "")
-            if action == "dispute":
+            if action == "verify_fixed":
+                evidence = res.get("evidence", "").strip()
+                if not evidence or is_rubber_stamp(evidence, strict=True):
+                    continue
+                if flag_id not in addressed_ids:
+                    continue
+            elif action == "dispute":
                 evidence = res.get("evidence", "").strip()
                 if not evidence or is_rubber_stamp(evidence, strict=True):
                     continue  # invalid dispute — skip
+                if flag_id in addressed_ids:
+                    continue
             elif action == "accept_tradeoff":
                 rationale = res.get("rationale", "").strip()
                 if not rationale or is_rubber_stamp(rationale, strict=True):
                     continue  # invalid tradeoff acceptance — skip
+                if flag_id in addressed_ids:
+                    continue
             else:
                 continue  # unknown action — skip
             valid_resolved_ids.add(flag_id)
+            valid_resolutions.append(res)
 
-        blocking_unresolved = [
+        blocking_by_id: dict[str, dict[str, Any]] = {}
+        for flag in [
             f for f in unresolved
             if f.get("severity") in ("significant", "likely-significant")
             and f.get("status") in FLAG_BLOCKING_STATUSES
             and f.get("id") not in valid_resolved_ids
-        ]
-        blocking_unresolved_ids = [f.get("id", "") for f in blocking_unresolved if f.get("id")]
+        ]:
+            flag_id = flag.get("id")
+            if flag_id:
+                blocking_by_id[str(flag_id)] = flag
+        for flag in [
+            f for f in addressed
+            if f.get("id") not in valid_resolved_ids
+        ]:
+            flag_id = flag.get("id")
+            if flag_id:
+                blocking_by_id[str(flag_id)] = flag
+        blocking_unresolved_ids = list(blocking_by_id)
 
         # Persist explicit resolutions
-        if valid_resolved_ids:
-            update_flags_after_gate(plan_dir, resolutions)
+        if valid_resolutions:
+            update_flags_after_gate(plan_dir, valid_resolutions)
 
         if blocking_unresolved_ids:
+            state["current_state"] = STATE_CRITIQUED
             return "unresolved_flags", "gate", summary, blocking_unresolved_ids
 
     if gate_summary["recommendation"] == "PROCEED" and gate_summary["passed"]:
@@ -648,7 +692,11 @@ def _prior_unresolved_flag_ids(plan_dir: Path, current_iteration: int) -> set[st
 
 def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="gate") as (plan_dir, state):
-        require_state(state, "gate", {STATE_CRITIQUED})
+        post_revise_gate = _post_revise_gate_allowed(state, plan_dir)
+        if not post_revise_gate:
+            require_state(state, "gate", {STATE_CRITIQUED})
+        else:
+            _append_to_meta(state, "post_revise_gate_iterations", state["iteration"])
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         iteration = state["iteration"]
         gate_signals, signals_filename, signals_artifact = _build_gate_signals_artifact(plan_dir, state, iteration=iteration, root=root)

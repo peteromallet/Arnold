@@ -173,6 +173,44 @@ def test_run_parallel_critique_merges_in_original_order(monkeypatch: pytest.Monk
     assert result.session_id is None
 
 
+def test_run_parallel_critique_accepts_multi_check_payload_when_one_matches_unit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks[:1])
+
+    def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
+        return GenericScatterResult(
+            ordered_results=[
+                {
+                    "checks": [
+                        _check_payload({"id": "other", "question": "Other"}, "not this check", flagged=False),
+                        _check_payload(enriched[0], "matched the assigned unit", flagged=False),
+                    ],
+                    "verified_flag_ids": ["FLAG-MATCH"],
+                    "disputed_flag_ids": [],
+                }
+            ],
+            total_cost=0.25,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert [check["id"] for check in result.payload["checks"]] == [enriched[0]["id"]]
+    assert result.payload["verified_flag_ids"] == ["FLAG-MATCH"]
+
+
 def test_run_parallel_critique_disputed_flags_override_verified(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

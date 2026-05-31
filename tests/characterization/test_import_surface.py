@@ -256,6 +256,36 @@ EXECUTE_SYMBOLS = [
     "_validate_and_merge_batch",
 ]
 
+AGENT_RUNTIME_ALL = [
+    "AgentRequest",
+    "AgentResult",
+    "TokenUsage",
+    "CostUsage",
+    "ResultProvenance",
+    "FanoutUnit",
+    "FanoutResult",
+    "scatter_agent_units",
+    "AgentSpec",
+    "AgentMode",
+    "parse_agent_spec",
+    "format_agent_spec",
+    "AgentDispatcher",
+    "PromptProvider",
+    "SessionStore",
+    "EventEmitter",
+    "LivenessTouch",
+    "KeySource",
+]
+
+AGENT_RUNTIME_EXCLUSIONS = [
+    "CommandRunner",
+    "CommandResult",
+    "resolved_default_model_for_agent",
+    "_run_agent_runtime_process_unit",
+    "_review_process_worker",
+    "_run_review_process_unit",
+]
+
 
 # ====================================================================
 # Tests
@@ -380,6 +410,35 @@ class TestExecuteImportSurface:
 
     def test_all_symbols_resolve(self) -> None:
         _assert_resolves("megaplan.execute", EXECUTE_SYMBOLS)
+
+
+class TestAgentRuntimeImportSurface:
+    """Explicit vendorable runtime surface: keep the package API exact and
+    identity-preserving for downstream vendoring."""
+
+    def test_all_symbols_resolve(self) -> None:
+        _assert_resolves("megaplan.agent_runtime", AGENT_RUNTIME_ALL)
+
+    def test_all_is_exact(self) -> None:
+        import megaplan.agent_runtime as runtime
+
+        assert runtime.__all__ == AGENT_RUNTIME_ALL
+
+    def test_identity_preserving_aliases(self) -> None:
+        import megaplan.types as types
+        import megaplan.agent_runtime as runtime
+
+        assert runtime.AgentSpec is types.AgentSpec
+        assert runtime.AgentMode is types.AgentMode
+        assert runtime.parse_agent_spec is types.parse_agent_spec
+        assert runtime.format_agent_spec is types.format_agent_spec
+
+    def test_lower_level_helpers_are_not_exported(self) -> None:
+        import megaplan.agent_runtime as runtime
+
+        for name in AGENT_RUNTIME_EXCLUSIONS:
+            assert name not in runtime.__all__
+            assert not hasattr(runtime, name)
 
 
 # ====================================================================

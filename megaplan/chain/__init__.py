@@ -2441,8 +2441,9 @@ def _preflight_agent_backends(spec: "ChainSpec", *, writer) -> None:
         f"installed. Milestone {first_label!r} phase {first_phase!r} (and: "
         f"{detail}) will route to the hermes runtime. Reinstall the engine so "
         "the agent backend is present, e.g. `uv pip install -e .` (its packages "
-        "are core dependencies) or, on an older checkout, "
-        "`uv pip install -e '.[agent]'`. "
+        "are core dependencies) or `pip install megaplan-harness` from PyPI. "
+        "The legacy `[agent]` extra is only a no-op compatibility alias on "
+        "current builds. "
         "Verify with: python -c \"import megaplan.agent; "
         "import sys; sys.path.insert(0, megaplan.agent.__path__[0]); "
         "from run_agent import AIAgent\".",

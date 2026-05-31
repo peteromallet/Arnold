@@ -244,6 +244,110 @@ def test_gate_iterate_with_empty_accepted_tradeoffs_creates_no_debt(
     assert pr.phase == "gate"
 
 
+def test_gate_can_verify_addressed_flags_after_revise(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flag = ensure_blocking_flags(plan_fixture.plan_dir, 1)[0]
+    registry = read_json(plan_fixture.plan_dir / "faults.json")
+    for item in registry["flags"]:
+        if item["id"] == flag["id"]:
+            item["status"] = "addressed"
+            item["addressed_in"] = "plan_v2.md"
+            item["resolution"] = {"kind": "fixed", "claim": "Plan v2 adds the missing contract.", "where": "plan_v2.md"}
+    (plan_fixture.plan_dir / "faults.json").write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+    plan_v1 = (plan_fixture.plan_dir / "plan_v1.md").read_text(encoding="utf-8")
+    (plan_fixture.plan_dir / "plan_v2.md").write_text(plan_v1 + "\nPost-revise verification contract.\n", encoding="utf-8")
+    meta_v1 = read_json(plan_fixture.plan_dir / "plan_v1.meta.json")
+    meta_v2 = {**meta_v1, "flags_addressed": [{"id": flag["id"], "resolution": "fixed"}]}
+    (plan_fixture.plan_dir / "plan_v2.meta.json").write_text(json.dumps(meta_v2, indent=2) + "\n", encoding="utf-8")
+    state = load_state(plan_fixture.plan_dir)
+    state["iteration"] = 2
+    state["current_state"] = megaplan.STATE_PLANNED
+    state["history"].append({"step": "revise", "result": "success"})
+    state["plan_versions"].append({"version": 2, "file": "plan_v2.md", "hash": "test", "timestamp": "2026-05-31T00:00:00Z"})
+    (plan_fixture.plan_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    worker = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="The addressed blocker is verified against plan v2.",
+        signals_assessment="Addressed flag has concrete verification evidence and preflight passes.",
+        flag_resolutions=[
+            {
+                "flag_id": flag["id"],
+                "action": "verify_fixed",
+                "evidence": "plan_v2.md: Post-revise verification contract.",
+                "rationale": "",
+            }
+        ],
+        session_id="gate-post-revise",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    registry = read_json(plan_fixture.plan_dir / "faults.json")
+    verified = next(item for item in registry["flags"] if item["id"] == flag["id"])
+
+    assert response["recommendation"] == "PROCEED"
+    assert response["next_step"] == "finalize"
+    assert response["addressed_flags"][0]["id"] == flag["id"]
+    assert verified["status"] == "verified"
+    assert verified["verified_in"] == "gate.json"
+
+
+def test_gate_does_not_clear_addressed_flag_with_dispute(
+    plan_fixture: PlanFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flag = {
+        "id": "FLAG-ADDRESSED",
+        "concern": "Addressed flags require verification, not dispute.",
+        "category": "correctness",
+        "severity": "significant",
+        "status": "addressed",
+    }
+    gate_summary = {
+        "recommendation": "PROCEED",
+        "passed": True,
+        "rationale": "Trying to clear addressed flag with dispute.",
+        "unresolved_flags": [],
+        "addressed_flags": [flag],
+        "flag_resolutions": [
+            {
+                "flag_id": "FLAG-ADDRESSED",
+                "action": "dispute",
+                "evidence": "plan_v2.md: added text",
+                "rationale": "",
+            }
+        ],
+        "preflight_results": {
+            "project_dir_exists": True,
+            "project_dir_writable": True,
+            "success_criteria_present": True,
+            "claude_available": True,
+            "codex_available": True,
+        },
+    }
+    state = load_state(plan_fixture.plan_dir)
+
+    result, next_step, _summary, blocking_ids = megaplan.handlers._apply_gate_outcome(
+        state,
+        gate_summary,
+        robustness="thorough",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert result == "unresolved_flags"
+    assert next_step == "gate"
+    assert blocking_ids == ["FLAG-ADDRESSED"]
+    assert state["current_state"] == megaplan.STATE_CRITIQUED
+
+
 def test_gate_proceed_agent_unavailable_routes_to_force_proceed_not_revise(
     plan_fixture: PlanFixture,
 ) -> None:

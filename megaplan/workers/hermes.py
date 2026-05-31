@@ -42,6 +42,46 @@ def _worker_db_path(plan_dir: Path, identifier: str) -> Path:
     return plan_dir / '.hermes_state' / f'state_{sanitized}.db'
 
 
+def _normalize_worker_options(worker_options: dict[str, object] | None) -> dict[str, object]:
+    """Validate the small picklable worker-options surface used by fan-out callers."""
+    if worker_options is None:
+        return {}
+    if not isinstance(worker_options, dict):
+        raise CliError("invalid_args", "Hermes worker options must be a dict")
+
+    normalized: dict[str, object] = {}
+    for key in ("output_path", "template_path", "session_db_path"):
+        value = worker_options.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, (str, Path)):
+            raise CliError("invalid_args", f"Hermes worker option '{key}' must be a string path")
+        normalized[key] = str(value)
+
+    resolved_model = worker_options.get("resolved_model")
+    if resolved_model is not None:
+        if not isinstance(resolved_model, str) or not resolved_model.strip():
+            raise CliError("invalid_args", "Hermes worker option 'resolved_model' must be a non-empty string")
+        normalized["resolved_model"] = resolved_model
+
+    max_tokens = worker_options.get("max_tokens")
+    if max_tokens is not None:
+        try:
+            normalized["max_tokens"] = int(max_tokens)
+        except (TypeError, ValueError) as exc:
+            raise CliError("invalid_args", "Hermes worker option 'max_tokens' must be an int") from exc
+        if normalized["max_tokens"] <= 0:
+            raise CliError("invalid_args", "Hermes worker option 'max_tokens' must be positive")
+
+    reasoning_config = worker_options.get("reasoning_config")
+    if reasoning_config is not None:
+        if not isinstance(reasoning_config, dict):
+            raise CliError("invalid_args", "Hermes worker option 'reasoning_config' must be a dict")
+        normalized["reasoning_config"] = dict(reasoning_config)
+
+    return normalized
+
+
 def _import_hermes_runtime():
     import megaplan.agent  # noqa: F401
 
@@ -53,7 +93,7 @@ def _import_hermes_runtime():
 
         raise CliError(
             "agent_deps_missing",
-            "hermes backend requires: pip install 'megaplan-harness[agent]'",
+            "hermes backend requires the bundled runtime packages: pip install megaplan-harness (or pip install -e . in a source checkout; '[agent]' is only a no-op compatibility extra).",
         ) from exc
     return AIAgent, SessionDB
 
@@ -913,6 +953,8 @@ def run_hermes_step(
     model: str | None = None,
     effort: str | None = None,
     prompt_override: str | None = None,
+    output_path: Path | None = None,
+    worker_options: dict[str, object] | None = None,
 ) -> WorkerResult:
     """Run a megaplan phase using Hermes Agent via OpenRouter.
 
@@ -939,7 +981,20 @@ def run_hermes_step(
         else STEP_SCHEMA_FILENAMES[step]
     )
     schema = read_json(schemas_root(root) / schema_name)
-    output_path: Path | None = None
+    normalized_worker_options = _normalize_worker_options(worker_options)
+    explicit_output_path = output_path
+    if explicit_output_path is None and normalized_worker_options.get("output_path"):
+        explicit_output_path = Path(str(normalized_worker_options["output_path"]))
+    template_path = normalized_worker_options.get("template_path")
+    template_seed_path = (
+        Path(str(template_path))
+        if template_path is not None
+        else None
+    )
+    template_seed_text: str | None = None
+    if template_seed_path is not None and template_seed_path.exists():
+        template_seed_text = template_seed_path.read_text(encoding="utf-8")
+    output_path = explicit_output_path
 
     # Session management
     session_key = session_key_for(step, "hermes", model=model)
@@ -990,10 +1045,15 @@ def run_hermes_step(
     # Critique and review: use custom template writers that pre-populate IDs.
     # Other template-file phases: hermes_worker writes a generic template.
     if step == "critique":
-        output_path = plan_dir / "critique_output.json"
+        output_path = output_path or template_seed_path or (plan_dir / "critique_output.json")
     elif step == "review":
-        from megaplan.prompts.review import _write_review_template
-        output_path = _write_review_template(plan_dir, state)
+        if output_path is None:
+            output_path = template_seed_path
+        if output_path is None or (
+            template_seed_text is None and not output_path.exists()
+        ):
+            from megaplan.prompts.review import _write_review_template
+            output_path = _write_review_template(plan_dir, state)
         prompt += (
             f"\n\nOUTPUT FILE: {output_path}\n"
             "This file is your ONLY output. It contains a JSON template PRE-POPULATED with "
@@ -1008,9 +1068,10 @@ def run_hermes_step(
             "Do NOT put your results in a text response. The file is the only output that matters."
         )
     elif step in _TEMPLATE_FILE_PHASES and toolsets:
-        output_path = plan_dir / f"{step}_output.json"
+        output_path = output_path or template_seed_path or (plan_dir / f"{step}_output.json")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
-            _build_output_template(step, schema),
+            template_seed_text if template_seed_text is not None else _build_output_template(step, schema),
             encoding="utf-8",
         )
         prompt += (
@@ -1029,6 +1090,14 @@ def run_hermes_step(
             "Do NOT use markdown. Do NOT wrap in code fences. Output ONLY raw JSON "
             "matching this template:\n\n" + template
         )
+
+    if (
+        output_path is not None
+        and template_seed_text is not None
+        and step in {"critique", "review"}
+    ):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(template_seed_text, encoding="utf-8")
 
     rendered_prompt = prompt
 
@@ -1050,12 +1119,18 @@ def run_hermes_step(
     # Uses the key pool for key rotation and cooldown on 429s.
     from megaplan.runtime.key_pool import resolve_model as _resolve_model, acquire_key, report_429
     resolved_model, agent_kwargs = _resolve_model(model)
+    effective_resolved_model = str(normalized_worker_options.get("resolved_model") or resolved_model or "")
 
     # Resolve the reasoning override from model family + profile depth. Off
     # families (which return structured output outside the content field) stay
     # disabled; otherwise the requested effort sets the thinking budget. DeepSeek
     # V4 with no effort yields None, matching the Fireworks route's default.
-    _reasoning_off = _reasoning_config_for_model(resolved_model, effort)
+    _reasoning_off = normalized_worker_options.get("reasoning_config")
+    if _reasoning_off is None:
+        _reasoning_off = _reasoning_config_for_model(
+            effective_resolved_model or resolved_model,
+            effort,
+        )
 
     # Cap output tokens to prevent repetition loops (Qwen generates 330K+
     # of repeated text without a limit). Sized to fit large finalize.json
@@ -1063,9 +1138,17 @@ def run_hermes_step(
     # Also drives the Fireworks streaming gate below — any value >4096 forces
     # streaming on `fireworks:*` models because Fireworks rejects >4096 max_tokens
     # without `stream=true`.
-    agent_max_tokens = 65536 if step == "execute" else 32768
+    agent_max_tokens = int(
+        normalized_worker_options.get("max_tokens")
+        or (65536 if step == "execute" else 32768)
+    )
 
-    _hermes_db_path = _worker_db_path(plan_dir, session_key)
+    db_override = normalized_worker_options.get("session_db_path")
+    _hermes_db_path = (
+        Path(str(db_override))
+        if db_override is not None
+        else _worker_db_path(plan_dir, session_key)
+    )
 
     def _make_agent(agent_model: str, extra_kwargs: dict):
         current_agent = AIAgent(
@@ -1089,6 +1172,10 @@ def run_hermes_step(
     def _rewrite_output_template(current_output_path: Path | None) -> Path | None:
         if current_output_path is None:
             return None
+        if template_seed_text is not None:
+            current_output_path.parent.mkdir(parents=True, exist_ok=True)
+            current_output_path.write_text(template_seed_text, encoding="utf-8")
+            return current_output_path
         if step == "critique":
             from megaplan._core import configured_robustness
             from megaplan.prompts import _write_critique_template
@@ -1168,7 +1255,7 @@ def run_hermes_step(
             # Emit llm_call_start
             prompt_text = rendered_prompt or prompt_override or ""
             prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16] if prompt_text else None
-            _emit_llm_start(plan_dir, step, resolved_model, prompt_hash, is_streaming)
+            _emit_llm_start(plan_dir, step, effective_resolved_model or resolved_model, prompt_hash, is_streaming)
 
             # Heartbeat thread for streaming calls
             heartbeat_stop = threading.Event()
@@ -1203,7 +1290,7 @@ def run_hermes_step(
                     plan_dir,
                     step,
                     provider=(current_model or model or "").split(":", 1)[0] or None,
-                    model=resolved_model,
+                    model=effective_resolved_model or resolved_model,
                     tokens_emitted=watchdog.tokens_at_trip,
                     reasoning_emitted=watchdog.reasoning_at_trip,
                     seconds_since_progress=watchdog.seconds_since_progress,
@@ -1300,7 +1387,14 @@ def run_hermes_step(
             request_id = _extract_request_id(current_result)
             tokens_in = int(current_result.get("prompt_tokens", 0) or 0)
             tokens_out = int(current_result.get("completion_tokens", 0) or 0)
-            _emit_llm_end(plan_dir, step, tokens_in, tokens_out, request_id, model=resolved_model)
+            _emit_llm_end(
+                plan_dir,
+                step,
+                tokens_in,
+                tokens_out,
+                request_id,
+                model=effective_resolved_model or resolved_model,
+            )
 
             try:
                 validate_payload(step, current_payload)
@@ -1469,8 +1563,12 @@ def run_hermes_step(
             payload={
                 "request_id": _extract_request_id(result),
                 "cost_usd": float(cost_usd),
-                "provider": (resolved_model or "").split(":")[0] if resolved_model else None,
-                "model": result.get("model") or resolved_model,
+                "provider": (
+                    (effective_resolved_model or resolved_model or "").split(":")[0]
+                    if (effective_resolved_model or resolved_model)
+                    else None
+                ),
+                "model": result.get("model") or effective_resolved_model or resolved_model,
             },
         )
     except Exception:

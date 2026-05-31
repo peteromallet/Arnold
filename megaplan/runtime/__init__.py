@@ -1,84 +1,58 @@
-"""Runtime infrastructure helpers grouped under ``megaplan.runtime``.
+"""Runtime infrastructure helpers grouped under ``megaplan.runtime``."""
 
-Bundles four leaf modules that sit at the bottom of the dependency graph:
+from __future__ import annotations
 
-- :mod:`megaplan.runtime.sandbox` — terminal/patch/write validators wired into Claude tool hooks.
-- :mod:`megaplan.runtime.key_pool` — hermes API key rotation and model resolution.
-- :mod:`megaplan.runtime.capabilities` — agent-capability sets and routing defaults.
-- :mod:`megaplan.runtime.doc_assembly` — doc-mode section assembly from plan artifacts.
+from importlib import import_module
+from typing import Any
 
-``megaplan.types`` and ``megaplan.flags`` deliberately remain at the top level —
-they are imported from so many places that consolidating them would create
-churn without organizational benefit.
-"""
+_MODULE_EXPORTS = {
+    "capabilities": "megaplan.runtime.capabilities",
+    "doc_assembly": "megaplan.runtime.doc_assembly",
+    "key_pool": "megaplan.runtime.key_pool",
+    "sandbox": "megaplan.runtime.sandbox",
+}
 
-from megaplan.runtime import capabilities, doc_assembly, key_pool, sandbox
-from megaplan.runtime.capabilities import (
-    ALL_CAPABILITIES,
-    CONTAINER_CAPABILITIES,
-    DEFAULT_AGENT_ROUTING,
-    DEFAULT_CONTAINER_CAPABILITIES,
-    DEFAULT_HUMAN_CAPABILITIES,
-    HUMAN_CAPABILITIES,
-    get_worker_capabilities,
-    union_verifies,
-    validate_capabilities,
-)
-from megaplan.runtime.doc_assembly import (
-    assemble_doc,
-    extract_sections,
-    extract_settled_decisions,
-)
-from megaplan.runtime.key_pool import (
-    KeyEntry,
-    KeyPool,
-    acquire_key,
-    has_keys,
-    minimax_openrouter_model,
-    report_429,
-    report_failure,
-    resolve_model,
-)
-from megaplan.runtime.sandbox import (
-    SANDBOXED_EXEC_TOOLS,
-    SANDBOXED_WRITE_TOOLS,
-    SandboxViolation,
-    install_sandbox,
-    validate_terminal_command,
-    validate_v4a_patch,
-    validate_write_path,
-)
+_SYMBOL_EXPORTS = {
+    "ALL_CAPABILITIES": "megaplan.runtime.capabilities",
+    "CONTAINER_CAPABILITIES": "megaplan.runtime.capabilities",
+    "DEFAULT_AGENT_ROUTING": "megaplan.runtime.capabilities",
+    "DEFAULT_CONTAINER_CAPABILITIES": "megaplan.runtime.capabilities",
+    "DEFAULT_HUMAN_CAPABILITIES": "megaplan.runtime.capabilities",
+    "HUMAN_CAPABILITIES": "megaplan.runtime.capabilities",
+    "get_worker_capabilities": "megaplan.runtime.capabilities",
+    "union_verifies": "megaplan.runtime.capabilities",
+    "validate_capabilities": "megaplan.runtime.capabilities",
+    "assemble_doc": "megaplan.runtime.doc_assembly",
+    "extract_sections": "megaplan.runtime.doc_assembly",
+    "extract_settled_decisions": "megaplan.runtime.doc_assembly",
+    "KeyEntry": "megaplan.runtime.key_pool",
+    "KeyPool": "megaplan.runtime.key_pool",
+    "acquire_key": "megaplan.runtime.key_pool",
+    "has_keys": "megaplan.runtime.key_pool",
+    "minimax_openrouter_model": "megaplan.runtime.key_pool",
+    "report_429": "megaplan.runtime.key_pool",
+    "report_failure": "megaplan.runtime.key_pool",
+    "resolve_model": "megaplan.runtime.key_pool",
+    "SANDBOXED_EXEC_TOOLS": "megaplan.runtime.sandbox",
+    "SANDBOXED_WRITE_TOOLS": "megaplan.runtime.sandbox",
+    "SandboxViolation": "megaplan.runtime.sandbox",
+    "install_sandbox": "megaplan.runtime.sandbox",
+    "validate_terminal_command": "megaplan.runtime.sandbox",
+    "validate_v4a_patch": "megaplan.runtime.sandbox",
+    "validate_write_path": "megaplan.runtime.sandbox",
+}
 
-__all__ = [
-    "capabilities",
-    "doc_assembly",
-    "key_pool",
-    "sandbox",
-    "ALL_CAPABILITIES",
-    "CONTAINER_CAPABILITIES",
-    "DEFAULT_AGENT_ROUTING",
-    "DEFAULT_CONTAINER_CAPABILITIES",
-    "DEFAULT_HUMAN_CAPABILITIES",
-    "HUMAN_CAPABILITIES",
-    "get_worker_capabilities",
-    "union_verifies",
-    "validate_capabilities",
-    "assemble_doc",
-    "extract_sections",
-    "extract_settled_decisions",
-    "KeyEntry",
-    "KeyPool",
-    "acquire_key",
-    "has_keys",
-    "minimax_openrouter_model",
-    "report_429",
-    "report_failure",
-    "resolve_model",
-    "SANDBOXED_EXEC_TOOLS",
-    "SANDBOXED_WRITE_TOOLS",
-    "SandboxViolation",
-    "install_sandbox",
-    "validate_terminal_command",
-    "validate_v4a_patch",
-    "validate_write_path",
-]
+__all__ = [*_MODULE_EXPORTS, *_SYMBOL_EXPORTS]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _MODULE_EXPORTS:
+        value = import_module(_MODULE_EXPORTS[name])
+        globals()[name] = value
+        return value
+    if name in _SYMBOL_EXPORTS:
+        module = import_module(_SYMBOL_EXPORTS[name])
+        value = getattr(module, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

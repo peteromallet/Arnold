@@ -4,25 +4,22 @@ from __future__ import annotations
 
 import argparse
 import json
-import multiprocessing as mp
-import queue
-import sys
-import threading
 import time
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import atomic_write_json, atomic_write_text
-from megaplan._core.hermes_fanout import (
-    GenericScatterResult,
-    scatter_gather_processes,
-    with_429_openrouter_fallback,
+from megaplan._core import (
+    WorkerUnit,
+    WorkerUnitResult,
+    atomic_write_json,
+    atomic_write_text,
+    scatter_worker_units,
 )
+from megaplan._core.process_fanout import GenericScatterResult
 from megaplan.profiles import CANONICAL_PREP_MODELS, validate_prep_stage_provider
 from megaplan.prompts import _prep_distill_prompt, _prep_research_prompt, _prep_triage_prompt
-from megaplan.schemas import SCHEMAS, strict_schema
+from megaplan.schemas import SCHEMAS
 from megaplan.types import (
     AgentMode,
     AgentSpec,
@@ -34,7 +31,6 @@ from megaplan.types import (
 )
 from megaplan.workers import WorkerResult, run_step_with_worker, update_session_state
 
-_PREP_RESEARCH_FINDING_SCHEMA = strict_schema(SCHEMAS["research.json"]["properties"]["findings"]["items"])
 _PREP_RESEARCH_STATUSES = {"complete", "partial", "timed_out", "error", "not_needed"}
 _PREP_RESEARCH_CONFIDENCE = {"high", "medium", "low"}
 
@@ -49,9 +45,7 @@ PREP_COMPATIBLE_KEYS = {
     "primary_criterion",
     "open_questions",
 }
-PREP_RESEARCH_TOOLSETS = ["file-readonly", "web"]
 DEFAULT_PREP_RESEARCH_MAX_ITERATIONS = 12
-DEFAULT_RESEARCH_HARD_KILL_GRACE_SECONDS = 2.0
 PREP_AREA_CAPS: dict[str, int] = {
     "bare": 1,
     "light": 2,
@@ -237,54 +231,6 @@ def _prep_stage_agent_spec(resolved: AgentMode) -> str:
             effort=resolved.effort,
         )
     )
-
-
-def scatter_over_worker_step(
-    index: int,
-    unit: dict[str, Any],
-    *,
-    isolation: str = "thread",
-) -> tuple[int, dict[str, Any], float, int, int, int]:
-    if isolation not in {"thread", "process"}:
-        raise ValueError(f"unsupported isolation: {isolation}")
-    area = dict(unit["area"])
-    state = dict(unit["state"])
-    plan_dir = Path(unit["plan_dir"])
-    root = Path(unit["root"])
-    resolved = _prep_stage_agent_mode(str(unit["resolved_model_spec"]))
-    output_path = plan_dir / ".hermes_state" / f"prep_research_{index}.json"
-    prompt = _prep_research_prompt(
-        state,
-        plan_dir,
-        area=area,
-        output_path=output_path,
-        root=root,
-    )
-    worker, _agent, _mode, _refreshed = run_step_with_worker(
-        "prep-research",
-        state,
-        plan_dir,
-        _prep_worker_args(),
-        root=root,
-        resolved=resolved,
-        prompt_override=prompt,
-        read_only=True,
-    )
-    if not isinstance(worker.payload, dict):
-        raise CliError("worker_parse_error", "Prep research unit returned invalid payload")
-    finding = _normalize_research_finding(area, worker.payload)
-    return (
-        index,
-        _research_unit_payload(finding, elapsed_time_ms=worker.duration_ms),
-        worker.cost_usd,
-        worker.prompt_tokens,
-        worker.completion_tokens,
-        worker.total_tokens,
-    )
-
-
-def scatter_over_worker_step_process(index: int, unit: dict[str, Any]) -> tuple[int, dict[str, Any], float, int, int, int]:
-    return scatter_over_worker_step(index, unit, isolation="process")
 
 
 def resolve_prep_stage_model(state: PlanState, stage: str) -> AgentMode:
@@ -942,219 +888,6 @@ def write_skip_prep_artifacts(plan_dir: Path) -> dict[str, Any]:
     return payload
 
 
-def _import_hermes_runtime():
-    import megaplan.agent  # noqa: F401
-    from hermes_state import SessionDB
-    from run_agent import AIAgent
-
-    return AIAgent, SessionDB
-
-
-def _run_research_child(payload: dict[str, Any], out_queue: mp.Queue) -> None:
-    area = payload["area"]
-    plan_dir = Path(payload["plan_dir"])
-    root = Path(payload["root"])
-    state = payload["state"]
-    model = payload["model"]
-    timeout_seconds = payload["timeout_seconds"]
-    max_iterations = payload["max_iterations"]
-    session_id = str(uuid.uuid4())
-    agent = None
-    timer: threading.Timer | None = None
-    started = time.monotonic()
-    try:
-        AIAgent, SessionDB = _import_hermes_runtime()
-        db_path = plan_dir / ".hermes_state" / f"state_prep_research_{payload['index']}.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path = plan_dir / ".hermes_state" / f"prep_research_{payload['index']}.json"
-        prompt = _prep_research_prompt(
-            state,
-            plan_dir,
-            area=area,
-            output_path=output_path,
-            root=root,
-        )
-        from megaplan.runtime.key_pool import resolve_model as _resolve_model
-        from megaplan.workers.hermes import (
-            _resolve_hermes_cost,
-            _streaming_run_kwargs,
-            clean_parsed_payload,
-            parse_agent_output,
-        )
-        resolved_model, agent_kwargs = _resolve_model(model)
-        agent_max_tokens = 32768
-        run_kwargs = _streaming_run_kwargs(model, agent_max_tokens)
-
-        def _timeout() -> None:
-            if agent is not None:
-                agent.interrupt("research timeout")
-
-        timer = threading.Timer(timeout_seconds, _timeout)
-        timer.daemon = True
-        timer.start()
-
-        def _make_agent(current_model: str, current_kwargs: dict[str, Any]) -> Any:
-            nonlocal agent
-            agent = AIAgent(
-                model=current_model,
-                quiet_mode=True,
-                skip_context_files=True,
-                skip_memory=True,
-                enabled_toolsets=PREP_RESEARCH_TOOLSETS,
-                session_id=session_id,
-                session_db=SessionDB(db_path=db_path),
-                max_iterations=max_iterations,
-                max_tokens=agent_max_tokens,
-                **current_kwargs,
-            )
-            agent._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=sys.stderr)
-            return agent
-
-        def _run_attempt(
-            current_agent: Any,
-            current_output_path: Path,
-        ) -> tuple[dict[str, Any], dict[str, Any], float, int, int, int]:
-            result = current_agent.run_conversation(user_message=prompt, **run_kwargs)
-            parsed, _raw_output = parse_agent_output(
-                current_agent,
-                result,
-                output_path=current_output_path,
-                schema=_PREP_RESEARCH_FINDING_SCHEMA,
-                step="prep",
-                project_dir=Path(state["config"]["project_dir"]),
-                plan_dir=plan_dir,
-                run_kwargs=run_kwargs,
-            )
-            clean_parsed_payload(parsed, _PREP_RESEARCH_FINDING_SCHEMA, "prep")
-            finding = _normalize_research_finding(area, parsed)
-            cost_usd, prompt_tokens, completion_tokens, total_tokens = _resolve_hermes_cost(result)
-            return result, finding, cost_usd, prompt_tokens, completion_tokens, total_tokens
-
-        runner = _make_agent(resolved_model, agent_kwargs)
-        try:
-            result, finding, cost_usd, prompt_tokens, completion_tokens, total_tokens = _run_attempt(runner, output_path)
-        except Exception as exc:
-            result, finding, cost_usd, prompt_tokens, completion_tokens, total_tokens = (
-                with_429_openrouter_fallback(
-                    model=model,
-                    agent_kwargs=agent_kwargs,
-                    exc=exc,
-                    log_prefix="[prep-research]",
-                    rebuild_template_fn=lambda: output_path,
-                    make_agent_fn=lambda m, kw: _make_agent(m, kw),
-                    run_attempt_fn=lambda a, op: _run_attempt(a, op),
-                    on_fail_message=lambda primary_exc, fallback_exc: (
-                        "Prep research failed "
-                        f"(both primary and fallback): primary={str(primary_exc) or primary_exc.__class__.__name__}; "
-                        f"fallback={str(fallback_exc) or fallback_exc.__class__.__name__}"
-                    ),
-                    stream=sys.stderr,
-                )
-            )
-        unit_payload = _research_unit_payload(
-            finding,
-            elapsed_time_ms=int((time.monotonic() - started) * 1000),
-        )
-        out_queue.put(
-            {
-                "ok": True,
-                "index": payload["index"],
-                "payload": unit_payload,
-                "cost_usd": cost_usd,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "session_id": session_id,
-                "duration_ms": int((time.monotonic() - started) * 1000),
-            }
-        )
-    except BaseException as exc:
-        finding = research_sentinel(area, "error", str(exc) or exc.__class__.__name__)
-        out_queue.put(
-            {
-                "ok": False,
-                "index": payload["index"],
-                "payload": _research_unit_payload(
-                    finding,
-                    elapsed_time_ms=int((time.monotonic() - started) * 1000),
-                ),
-                "cost_usd": 0.0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-                "session_id": session_id,
-                "duration_ms": int((time.monotonic() - started) * 1000),
-            }
-        )
-    finally:
-        if timer is not None:
-            timer.cancel()
-
-
-def run_hermes_research_unit_process(
-    *,
-    index: int,
-    area: dict[str, Any],
-    state: PlanState,
-    plan_dir: Path,
-    root: Path,
-    model: str,
-    timeout_seconds: float,
-    hard_kill_grace_seconds: float = DEFAULT_RESEARCH_HARD_KILL_GRACE_SECONDS,
-    max_iterations: int = DEFAULT_PREP_RESEARCH_MAX_ITERATIONS,
-    child_target: Any = _run_research_child,
-) -> tuple[int, dict[str, Any], float, int, int, int]:
-    ctx = mp.get_context("spawn")
-    out_queue: mp.Queue = ctx.Queue()
-    payload = {
-        "index": index,
-        "area": area,
-        "state": dict(state),
-        "plan_dir": str(plan_dir),
-        "root": str(root),
-        "model": model,
-        "timeout_seconds": timeout_seconds,
-        "max_iterations": max_iterations,
-    }
-    proc = ctx.Process(target=child_target, args=(payload, out_queue))
-    proc.start()
-    proc.join(timeout_seconds + hard_kill_grace_seconds)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(hard_kill_grace_seconds)
-    if proc.is_alive():
-        proc.kill()
-        proc.join()
-    try:
-        result = out_queue.get_nowait()
-    except queue.Empty:
-        return (
-            index,
-            _research_unit_payload(
-                research_sentinel(area, "timed_out", "research timeout"),
-                elapsed_time_ms=int((timeout_seconds + hard_kill_grace_seconds) * 1000),
-            ),
-            0.0,
-            0,
-            0,
-            0,
-        )
-    unit_payload = result.get("payload")
-    if not isinstance(unit_payload, dict) or not isinstance(unit_payload.get("finding"), dict):
-        unit_payload = _research_unit_payload(
-            research_sentinel(area, "error", "research child returned invalid finding"),
-            elapsed_time_ms=int(result.get("duration_ms", 0) or 0),
-        )
-    return (
-        index,
-        unit_payload,
-        float(result.get("cost_usd", 0.0) or 0.0),
-        int(result.get("prompt_tokens", 0) or 0),
-        int(result.get("completion_tokens", 0) or 0),
-        int(result.get("total_tokens", 0) or 0),
-    )
-
-
 def run_research_fanout(
     state: PlanState,
     plan_dir: Path,
@@ -1165,23 +898,47 @@ def run_research_fanout(
     max_concurrent: int | None = None,
 ) -> GenericScatterResult:
     model = resolve_prep_stage_model(state, "fanout")
-    resolved_model_spec = _prep_stage_agent_spec(model)
-    units = [
-        {
-            "area": area,
-            "state": state,
-            "plan_dir": str(plan_dir),
-            "root": str(root),
-            "resolved_model_spec": resolved_model_spec,
-        }
-        for area in areas
-    ]
+    units = []
+    for index, area in enumerate(areas):
+        output_path = plan_dir / ".hermes_state" / f"prep_research_{index}.json"
+        units.append(
+            WorkerUnit(
+                step="prep-research",
+                resolved=model,
+                prompt=_prep_research_prompt(
+                    state,
+                    plan_dir,
+                    area=area,
+                    output_path=output_path,
+                    root=root,
+                ),
+                output_path=output_path,
+                read_only=True,
+                extra={
+                    "index": index,
+                    "area": dict(area),
+                },
+            )
+        )
 
-    raw = scatter_gather_processes(
+    def _parse_result(index: int, item: Any, unit: WorkerUnit) -> dict[str, Any]:
+        if not isinstance(item, WorkerUnitResult) or not isinstance(item.payload, dict):
+            raise CliError("worker_parse_error", "Prep research fan-out returned invalid ordered payload")
+        area = unit.extra.get("area")
+        if not isinstance(area, dict):
+            raise CliError("worker_parse_error", "Prep research fan-out payload missing area metadata")
+        finding = _normalize_research_finding(area, item.payload)
+        return _research_unit_payload(finding, elapsed_time_ms=item.duration_ms)
+
+    raw = scatter_worker_units(
         units=units,
-        run_unit_fn=scatter_over_worker_step_process,
+        state=state,
+        plan_dir=plan_dir,
+        root=root,
+        args=_prep_worker_args(),
         max_concurrent=max_concurrent,
         timeout_seconds=timeout_seconds,
+        parse_result=_parse_result,
         on_unit_error=lambda index, exc: (
             _research_unit_payload(
                 research_sentinel(

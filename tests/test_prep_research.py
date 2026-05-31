@@ -2,23 +2,15 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-import queue
-import threading
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from megaplan._core import WorkerUnit, WorkerUnitResult
 from megaplan.orchestration import prep_research
 from megaplan.types import CliError, PlanState
 from megaplan.workers import WorkerResult
-
-
-def _slow_research_child(payload: dict[str, Any], out_queue: Any) -> None:
-    del payload, out_queue
-    import time
-
-    time.sleep(5)
 
 
 def _state(project_dir: Path) -> PlanState:
@@ -77,131 +69,33 @@ def test_explicit_non_read_only_prep_models_are_rejected(
     assert f"prep_models.{stage}" in exc_info.value.message
 
 
-def test_scatter_over_worker_step_is_picklable_with_representative_payload(tmp_path: Path) -> None:
-    state = _state(tmp_path)
-    unit = {
-        "area": {"id": "a", "area": "Area A", "brief": "inspect A", "suggested_files": ["src/a.py"]},
-        "state": state,
-        "plan_dir": str(tmp_path / "plan"),
-        "root": str(tmp_path),
-        "resolved_model_spec": "claude:low",
-    }
-
-    encoded = pickle.dumps((prep_research.scatter_over_worker_step, unit))
-    decoded_fn, decoded_unit = pickle.loads(encoded)
-
-    assert decoded_fn is prep_research.scatter_over_worker_step
-    assert decoded_unit == unit
-    process_encoded = pickle.dumps((prep_research.scatter_over_worker_step_process, unit))
-    process_fn, process_unit = pickle.loads(process_encoded)
-    assert process_fn is prep_research.scatter_over_worker_step_process
-    assert process_unit == unit
-
-
-@pytest.mark.parametrize(
-    ("resolved_model_spec", "expected_agent", "expected_model", "expected_effort"),
-    [
-        ("hermes:deepseek:deepseek-v4-pro", "hermes", "deepseek:deepseek-v4-pro", None),
-        ("codex:gpt-5.4:medium", "codex", "gpt-5.4", "medium"),
-        ("claude:low", "claude", None, "low"),
-        ("shannon:claude-opus-4-7", "shannon", "claude-opus-4-7", None),
-    ],
-)
-def test_scatter_over_worker_step_dispatches_read_only_and_normalizes_payload(
-    tmp_path: Path,
-    resolved_model_spec: str,
-    expected_agent: str,
-    expected_model: str | None,
-    expected_effort: str | None,
-) -> None:
+def test_prep_research_worker_unit_is_picklable_with_representative_payload(tmp_path: Path) -> None:
     state = _state(tmp_path)
     plan_dir = tmp_path / "plan"
-    plan_dir.mkdir()
-    area = {
-        "id": "a",
-        "area": "Area A",
-        "brief": "Inspect files",
-        "suggested_files": ["src/a.py"],
-    }
-    unit = {
-        "area": area,
-        "state": state,
-        "plan_dir": str(plan_dir),
-        "root": str(tmp_path),
-        "resolved_model_spec": resolved_model_spec,
-    }
-    worker = WorkerResult(
-        payload={
-            "area": "",
-            "brief": "",
-            "status": "complete",
-            "findings": "first finding\nsecond finding",
-            "files": {"src/a.py": "read"},
-            "code_refs": "pkg.a, pkg.b",
-            "confidence": "high",
-            "error": "",
-        },
-        raw_output="research",
-        duration_ms=17,
-        cost_usd=0.2,
-        session_id="research-session",
-        prompt_tokens=5,
-        completion_tokens=8,
-        total_tokens=13,
+    output_path = plan_dir / ".hermes_state" / "prep_research_0.json"
+    decoded_unit = pickle.loads(
+        pickle.dumps(
+            WorkerUnit(
+                step="prep-research",
+                resolved=prep_research.resolve_prep_stage_model(state, "fanout"),
+                prompt="research prompt",
+                output_path=output_path,
+                read_only=True,
+                extra={"area": {"id": "a", "area": "Area A", "brief": "inspect A"}},
+            )
+        )
     )
 
-    with (
-        patch.object(prep_research, "_prep_research_prompt", return_value="research prompt") as prompt_fn,
-        patch.object(
-            prep_research,
-            "run_step_with_worker",
-            return_value=(worker, expected_agent, "ephemeral", True),
-        ) as run_step,
-    ):
-        index, payload, cost, pt, ct, tt = prep_research.scatter_over_worker_step(3, unit)
+    assert isinstance(decoded_unit, WorkerUnit)
+    assert decoded_unit.step == "prep-research"
+    assert decoded_unit.read_only is True
+    assert decoded_unit.output_path == output_path
+    assert decoded_unit.extra["area"]["id"] == "a"
 
-    assert index == 3
-    assert payload == {
-        "finding": {
-            "area": "a",
-            "brief": "Inspect files",
-            "status": "complete",
-            "findings": ["first finding", "second finding"],
-            "files": ["src/a.py"],
-            "code_refs": ["pkg.a", "pkg.b"],
-            "confidence": "high",
-            "error": "",
-        },
-        "metrics": {
-            "area": "a",
-            "status": "complete",
-            "elapsed_time_ms": 17,
-            "files": ["src/a.py"],
-            "code_refs": ["pkg.a", "pkg.b"],
-        },
-    }
-    assert (cost, pt, ct, tt) == (0.2, 5, 8, 13)
-    prompt_fn.assert_called_once_with(
-        state,
-        plan_dir,
-        area=area,
-        output_path=plan_dir / ".hermes_state" / "prep_research_3.json",
-        root=tmp_path,
-    )
-    run_step.assert_called_once()
-    assert run_step.call_args.args[:4] == (
-        "prep-research",
-        state,
-        plan_dir,
-        prep_research._prep_worker_args(),
-    )
-    assert run_step.call_args.kwargs["root"] == tmp_path
-    assert run_step.call_args.kwargs["prompt_override"] == "research prompt"
-    assert run_step.call_args.kwargs["read_only"] is True
-    resolved = run_step.call_args.kwargs["resolved"]
-    assert resolved.agent == expected_agent
-    assert resolved.model == expected_model
-    assert resolved.effort == expected_effort
+
+def test_obsolete_scatter_over_worker_step_helpers_are_removed() -> None:
+    assert not hasattr(prep_research, "scatter_over_worker_step")
+    assert not hasattr(prep_research, "scatter_over_worker_step_process")
 
 
 def test_run_prep_triage_dispatches_via_worker_read_only_and_updates_session(
@@ -814,19 +708,21 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
         {"id": "b", "area": "B", "brief": "second", "suggested_files": []},
         {"id": "c", "area": "C", "brief": "third", "suggested_files": []},
     ]
-    expected_model_spec = prep_research._prep_stage_agent_spec(
-        prep_research.resolve_prep_stage_model(state, "fanout")
-    )
+    expected_resolved = prep_research.resolve_prep_stage_model(state, "fanout")
 
-    def fake_scatter_processes(**kwargs: Any) -> prep_research.GenericScatterResult:
-        assert kwargs["run_unit_fn"] is prep_research.scatter_over_worker_step_process
+    def fake_scatter_worker_units(**kwargs: Any) -> prep_research.GenericScatterResult:
         assert kwargs["timeout_seconds"] == 1.0
         assert kwargs["max_concurrent"] == 3
-        assert "submit_unit_fn" not in kwargs
-        assert "side_tasks" not in kwargs
         units = kwargs["units"]
-        assert [unit["area"]["id"] for unit in units] == ["a", "b", "c"]
-        assert all(unit["resolved_model_spec"] == expected_model_spec for unit in units)
+        assert [unit.extra["area"]["id"] for unit in units] == ["a", "b", "c"]
+        assert all(isinstance(unit, WorkerUnit) for unit in units)
+        assert all(unit.resolved == expected_resolved for unit in units)
+        assert [unit.output_path.name for unit in units] == [
+            "prep_research_0.json",
+            "prep_research_1.json",
+            "prep_research_2.json",
+        ]
+        assert all(unit.read_only is True for unit in units)
         ordered_results: list[dict[str, Any]] = []
         total_cost = 0.0
         total_prompt_tokens = 0
@@ -839,16 +735,31 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
                 payload, cost_usd, pt, ct, tt = kwargs["on_unit_error"](index, TimeoutError("took too long"))
             else:
                 finding = {
-                    "area": unit["area"]["id"],
-                    "brief": unit["area"]["brief"],
+                    "area": unit.extra["area"]["id"],
+                    "brief": unit.extra["area"]["brief"],
                     "status": "complete",
                     "findings": [f"finding-{index}"],
-                    "files": [f"src/{unit['area']['id']}.py"],
-                    "code_refs": [f"pkg.{unit['area']['id']}"],
+                    "files": [f"src/{unit.extra['area']['id']}.py"],
+                    "code_refs": [f"pkg.{unit.extra['area']['id']}"],
                     "confidence": "high",
                     "error": "",
                 }
-                payload = prep_research._research_unit_payload(finding, elapsed_time_ms=11)
+                payload = kwargs["parse_result"](
+                    index,
+                    WorkerUnitResult(
+                        payload=finding,
+                        raw_output="{}",
+                        duration_ms=11,
+                        cost_usd=0.25,
+                        prompt_tokens=3,
+                        completion_tokens=4,
+                        total_tokens=7,
+                        output_path=str(unit.output_path),
+                        read_only=True,
+                        extra=dict(unit.extra),
+                    ),
+                    unit,
+                )
                 cost_usd, pt, ct, tt = 0.25, 3, 4, 7
             ordered_results.append(payload)
             total_cost += cost_usd
@@ -865,7 +776,7 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
         )
 
     with (
-        patch.object(prep_research, "scatter_gather_processes", side_effect=fake_scatter_processes),
+        patch.object(prep_research, "scatter_worker_units", side_effect=fake_scatter_worker_units),
         patch("megaplan._core.hermes_fanout.scatter_gather", side_effect=AssertionError("old thread fanout path should not be used")),
     ):
         result = prep_research.run_research_fanout(
@@ -1080,295 +991,6 @@ def test_run_prep_orchestration_caps_fanout_writes_dossier_and_returns_worker(
     assert "file megaplan/a.py appears in multiple areas with differing evidence/status" in dossier
     assert (plan_dir / "prep.json").exists()
     assert (plan_dir / "research.json").exists()
-
-
-def test_research_unit_process_timeout_returns_sentinel_without_sibling_state(
-    tmp_path: Path,
-) -> None:
-    state = _state(tmp_path)
-    plan_dir = tmp_path / "plan"
-    plan_dir.mkdir()
-    area = {"id": "slow", "area": "Slow", "brief": "times out", "suggested_files": []}
-
-    index, unit_payload, cost, pt, ct, tt = prep_research.run_hermes_research_unit_process(
-        index=0,
-        area=area,
-        state=state,
-        plan_dir=plan_dir,
-        root=tmp_path,
-        model="deepseek:deepseek-v4-flash",
-        timeout_seconds=0.05,
-        hard_kill_grace_seconds=0.05,
-        child_target=_slow_research_child,
-    )
-
-    assert index == 0
-    assert unit_payload["finding"]["status"] == "timed_out"
-    assert unit_payload["finding"]["error"] == "research timeout"
-    assert unit_payload["metrics"]["status"] == "timed_out"
-    assert (cost, pt, ct, tt) == (0.0, 0, 0, 0)
-
-
-def test_research_child_watchdog_calls_child_local_interrupt(tmp_path: Path) -> None:
-    state = _state(tmp_path)
-    plan_dir = tmp_path / "plan"
-    plan_dir.mkdir()
-    out: queue.Queue = queue.Queue()
-    interrupted: list[str] = []
-    agents: list["FakeAgent"] = []
-
-    class FakeSessionDB:
-        def __init__(self, db_path=None):
-            self.db_path = db_path
-
-    class FakeAgent:
-        def __init__(self, **kwargs: Any):
-            self.kwargs = kwargs
-            agents.append(self)
-
-        def interrupt(self, message: str) -> None:
-            interrupted.append(message)
-
-        def run_conversation(self, user_message: str, **kwargs: Any) -> dict[str, Any]:
-            del kwargs
-            import time
-
-            time.sleep(0.08)
-            return {
-                "final_response": '{"area":"a","brief":"b","status":"complete","findings":[],"files":[],"code_refs":[],"confidence":"high","error":""}',
-                "estimated_cost_usd": 0.1,
-                "prompt_tokens": 1,
-                "completion_tokens": 2,
-                "total_tokens": 3,
-            }
-
-    payload = {
-        "index": 0,
-        "area": {"id": "a", "area": "A", "brief": "b", "suggested_files": []},
-        "state": state,
-        "plan_dir": str(plan_dir),
-        "root": str(tmp_path),
-        "model": "deepseek:deepseek-v4-flash",
-        "timeout_seconds": 0.01,
-        "max_iterations": 7,
-    }
-
-    with patch.object(prep_research, "_import_hermes_runtime", return_value=(FakeAgent, FakeSessionDB)):
-        prep_research._run_research_child(payload, out)
-
-    result = out.get_nowait()
-    assert result["ok"] is True
-    assert interrupted == ["research timeout"]
-    assert agents[0].kwargs["enabled_toolsets"] == ["file-readonly", "web"]
-    assert agents[0].kwargs["max_iterations"] == 7
-    assert agents[0].kwargs["session_id"]
-    assert isinstance(agents[0].kwargs["session_db"], FakeSessionDB)
-
-
-def test_research_child_timeout_interrupt_is_isolated_from_concurrent_sibling(
-    tmp_path: Path,
-) -> None:
-    state = _state(tmp_path)
-    plan_dir = tmp_path / "plan"
-    plan_dir.mkdir()
-    out: queue.Queue = queue.Queue()
-    released = threading.Event()
-    interrupted: dict[int, list[str]] = {0: [], 1: []}
-
-    class FakeSessionDB:
-        def __init__(self, db_path=None):
-            self.db_path = db_path
-
-    class FakeAgent:
-        def __init__(self, **kwargs: Any):
-            self.index = int(str(kwargs["session_id"]).split("-")[-1])
-
-        def interrupt(self, message: str) -> None:
-            interrupted[self.index].append(message)
-            released.set()
-
-        def run_conversation(self, user_message: str, **kwargs: Any) -> dict[str, Any]:
-            del kwargs
-            del user_message
-            released.wait(timeout=1.0)
-            return {
-                "final_response": (
-                    '{"area":"a","brief":"b","status":"complete",'
-                    '"findings":[],"files":[],"code_refs":[],"confidence":"high","error":""}'
-                ),
-                "estimated_cost_usd": 0.0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-            }
-
-    payloads = [
-        {
-            "index": 0,
-            "area": {"id": "slow", "area": "Slow", "brief": "times out", "suggested_files": []},
-            "state": state,
-            "plan_dir": str(plan_dir),
-            "root": str(tmp_path),
-            "model": "deepseek:deepseek-v4-flash",
-            "timeout_seconds": 0.01,
-            "max_iterations": 7,
-        },
-        {
-            "index": 1,
-            "area": {"id": "sibling", "area": "Sibling", "brief": "continues", "suggested_files": []},
-            "state": state,
-            "plan_dir": str(plan_dir),
-            "root": str(tmp_path),
-            "model": "deepseek:deepseek-v4-flash",
-            "timeout_seconds": 1.0,
-            "max_iterations": 7,
-        },
-    ]
-
-    session_ids = iter(["session-0", "session-1"])
-
-    with (
-        patch.object(prep_research, "_import_hermes_runtime", return_value=(FakeAgent, FakeSessionDB)),
-        patch.object(prep_research.uuid, "uuid4", side_effect=lambda: next(session_ids)),
-    ):
-        threads = [
-            threading.Thread(target=prep_research._run_research_child, args=(payload, out))
-            for payload in payloads
-        ]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=2.0)
-
-    assert all(not thread.is_alive() for thread in threads)
-    results = sorted((out.get_nowait() for _ in threads), key=lambda item: item["index"])
-    assert [item["ok"] for item in results] == [True, True]
-    assert interrupted[0] == ["research timeout"]
-    assert interrupted[1] == []
-
-
-def test_research_child_parse_failure_becomes_error_sentinel(tmp_path: Path) -> None:
-    state = _state(tmp_path)
-    plan_dir = tmp_path / "plan"
-    plan_dir.mkdir()
-    out: queue.Queue = queue.Queue()
-
-    class FakeSessionDB:
-        def __init__(self, db_path=None):
-            self.db_path = db_path
-
-    class FakeAgent:
-        def __init__(self, **kwargs: Any):
-            self.kwargs = kwargs
-
-        def interrupt(self, message: str) -> None:
-            del message
-
-        def run_conversation(self, user_message: str, **kwargs: Any) -> dict[str, Any]:
-            del kwargs
-            del user_message
-            return {
-                "final_response": "not json",
-                "messages": [{"role": "assistant", "content": "not json"}],
-                "estimated_cost_usd": 0.0,
-                "prompt_tokens": 2,
-                "completion_tokens": 3,
-                "total_tokens": 5,
-            }
-
-    payload = {
-        "index": 0,
-        "area": {"id": "a", "area": "A", "brief": "b", "suggested_files": []},
-        "state": state,
-        "plan_dir": str(plan_dir),
-        "root": str(tmp_path),
-        "model": "deepseek:deepseek-v4-flash",
-        "timeout_seconds": 0.5,
-        "max_iterations": 7,
-    }
-
-    with patch.object(prep_research, "_import_hermes_runtime", return_value=(FakeAgent, FakeSessionDB)):
-        prep_research._run_research_child(payload, out)
-
-    result = out.get_nowait()
-    assert result["ok"] is False
-    assert result["payload"]["finding"]["status"] == "error"
-    assert "invalid json" in result["payload"]["finding"]["error"].lower()
-    assert result["cost_usd"] == 0.0
-
-
-def test_research_child_uses_parse_fallback_chain_and_keeps_metrics(tmp_path: Path) -> None:
-    state = _state(tmp_path)
-    plan_dir = tmp_path / "plan"
-    plan_dir.mkdir()
-    out: queue.Queue = queue.Queue()
-
-    class FakeSessionDB:
-        def __init__(self, db_path=None):
-            self.db_path = db_path
-
-    class FakeAgent:
-        def __init__(self, **kwargs: Any):
-            self.kwargs = kwargs
-            self.calls: list[tuple[str, object]] = []
-
-        def interrupt(self, message: str) -> None:
-            del message
-
-        def run_conversation(self, *, user_message: str, conversation_history: object = None, **kwargs: Any) -> dict[str, Any]:
-            del kwargs
-            self.calls.append((user_message, conversation_history))
-            if len(self.calls) == 1:
-                return {
-                    "final_response": "",
-                    "messages": [
-                        {
-                            "role": "assistant",
-                            "tool_calls": [{"function": {"name": "read_file", "arguments": "{}"}}],
-                        }
-                    ],
-                    "estimated_cost_usd": 0.42,
-                    "prompt_tokens": 5,
-                    "completion_tokens": 6,
-                    "total_tokens": 11,
-                }
-            return {
-                "final_response": (
-                    '{"area":"a","brief":"b","status":"complete","findings":["f"],'
-                    '"files":["megaplan/orchestration/prep_research.py"],'
-                    '"code_refs":["prep_research.run_research_fanout"],'
-                    '"confidence":"high","error":""}'
-                ),
-                "messages": [{"role": "assistant", "content": "{}"}],
-                "estimated_cost_usd": 0.0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-            }
-
-    payload = {
-        "index": 0,
-        "area": {"id": "a", "area": "A", "brief": "b", "suggested_files": []},
-        "state": state,
-        "plan_dir": str(plan_dir),
-        "root": str(tmp_path),
-        "model": "deepseek:deepseek-v4-flash",
-        "timeout_seconds": 0.5,
-        "max_iterations": 7,
-    }
-
-    with patch.object(prep_research, "_import_hermes_runtime", return_value=(FakeAgent, FakeSessionDB)):
-        prep_research._run_research_child(payload, out)
-
-    result = out.get_nowait()
-    assert result["ok"] is True
-    assert result["payload"]["finding"]["status"] == "complete"
-    assert result["payload"]["metrics"]["files"] == ["megaplan/orchestration/prep_research.py"]
-    assert result["payload"]["metrics"]["code_refs"] == ["prep_research.run_research_fanout"]
-    assert result["cost_usd"] == pytest.approx(0.42)
-    assert result["prompt_tokens"] == 5
-    assert result["completion_tokens"] == 6
-    assert result["total_tokens"] == 11
 
 
 # ---------------------------------------------------------------------------

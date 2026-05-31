@@ -108,6 +108,9 @@ def _gate_prompt(
         Unresolved significant flags:
         {json_dump(open_flags).strip()}
 
+        Addressed but unverified flags:
+        {json_dump(gate_signals.get("signals", {}).get("addressed_flags", [])).strip()}
+
         {debt_block}
 
         {_iteration_pressure_block(state, plan_dir)}
@@ -124,14 +127,16 @@ def _gate_prompt(
         - TIEBREAKER when a flag group reflects an *unresolvable constraint tension* (architectural or philosophical — requires a human call) rather than a plan-quality issue. Use TIEBREAKER only when the Iteration Pressure Analysis shows `addressed_then_reopened_count >= 2` for a fuzzy group OR the group has >=2 member flags across >=2 iterations. If the concern is simply that the plan writer hasn't tried hard enough, use ITERATE instead. When recommending TIEBREAKER you MUST provide `tiebreaker_question` (the decision question for human resolution), `tiebreaker_flag_ids` (which flags this resolves), and `tiebreaker_fuzzy_group_id` (which group this resolves). Cite specific flag IDs and iterations in your rationale.
         - `signals_assessment`: one paragraph summarizing score trajectory, flag status, and preflight posture.
 
-        Flags come in two tiers:
+        Flags come in three gate states:
         - **Blocking** (severity = significant/likely-significant): These are serious concerns. If you recommend PROCEED, you MUST provide a `flag_resolutions` entry for every blocking flag. There is no implicit acceptance.
+        - **Addressed but unverified**: The revision claims these were fixed. Treat significant/likely-significant addressed flags as verification obligations. If you recommend PROCEED, provide a `flag_resolutions` entry with `action: "verify_fixed"` and concrete evidence for every addressed blocking flag. If the evidence is insufficient, choose ITERATE.
         - **Noted** (everything else): Acknowledge in your rationale but they don't block PROCEED.
 
-        If there are blocking flags and you want to PROCEED, provide `flag_resolutions` with one entry per blocking flag. If you cannot resolve every blocking flag, choose ITERATE (send back for revision) or ESCALATE (human intervention needed).
+        If there are blocking or addressed-blocking flags and you want to PROCEED, provide `flag_resolutions` with one entry per flag. If you cannot resolve every required flag, choose ITERATE (send back for revision) or ESCALATE (human intervention needed).
         Structurally unresolvable flags (for example, infrastructure outside the repo or product decisions that require a human) are ESCALATE, not PROCEED with a non-answer.
 
-        For each blocking flag:
+        For each required flag:
+        - **verify_fixed**: The concern was real and the revised plan now fixes it. Evidence must cite the concrete changed plan section, file path, command, or contract that proves the fix.
         - **dispute**: The critique is factually wrong. Evidence must cite something specific (file path, line, API doc, etc.). Generic statements like "handled correctly" are invalid.
         - **accept_tradeoff**: The concern is real but intentionally accepted as a known limitation. Rationale must be specific to this flag. Boilerplate like "acceptable within scope" is invalid.
         - Schema requirement: every `flag_resolutions` entry must include both `evidence` and `rationale`. Use `""` for the field that does not apply to that action.
@@ -149,6 +154,7 @@ def _gate_prompt(
           "signals_assessment": "Score stable at 2.5, preflight passed, no recurring critiques.",
           "warnings": ["Verify edge case with composite moduli during execution."],
           "flag_resolutions": [
+            {{"flag_id": "addressed-1", "action": "verify_fixed", "evidence": "plan_v3.md Phase 1 Step 2 requires an exact __all__ assertion and tests/characterization/test_import_surface.py coverage.", "rationale": ""}},
             {{"flag_id": "correctness-1", "action": "dispute", "evidence": "allow_migrate and allow_migrate_model produce identical behavior for this use case (verified at django/db/utils.py:286).", "rationale": ""}},
             {{"flag_id": "performance-1", "action": "accept_tradeoff", "evidence": "", "rationale": "Cold-start latency remains 40ms above target because the cache warmup job is owned by platform and outside this repo; rollout is still approved for the limited internal beta."}},
             {{"flag_id": "conventions-1", "action": "accept_tradeoff", "evidence": "", "rationale": "Minor naming inconsistency is confined to this helper and would create churn across generated fixtures; track it as follow-up cleanup instead of blocking this fix."}}

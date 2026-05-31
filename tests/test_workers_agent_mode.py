@@ -31,7 +31,7 @@ def test_resolve_agent_mode_uses_configured_fallback() -> None:
     assert args._agent_fallback["requested"] == "claude"
 
 def test_resolve_agent_mode_for_review_claude_defaults_to_fresh() -> None:
-    with patch("megaplan._core.io.shutil", FakeShutil("shannon", "tmux", "claude")):
+    with patch("megaplan._core.io.shutil", FakeShutil("bun", "tmux", "claude")):
         agent, mode, refreshed, model = resolve_agent_mode("review", Namespace(agent="claude", ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     assert agent == "claude"
     assert mode == "persistent"

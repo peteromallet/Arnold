@@ -155,6 +155,7 @@ from .hermes_fanout import (
 # -- worker_fanout.py: generic worker-step fan-out ---------------------------
 from .worker_fanout import (
     WorkerUnit,
+    WorkerUnitResult,
     scatter_worker_unit,
     scatter_worker_units,
 )

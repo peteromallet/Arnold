@@ -116,6 +116,18 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
     recurring = compute_recurring_critiques(plan_dir, iteration)
     from megaplan.flags import flag_resolution_summary
 
+    addressed_flags = [
+        {
+            "id": flag["id"],
+            "concern": flag["concern"],
+            "category": flag.get("category", "other"),
+            "severity": flag.get("severity", "unknown"),
+            "resolution": flag_resolution_summary(flag),
+            "addressed_in": flag.get("addressed_in", ""),
+        }
+        for flag in flag_registry["flags"]
+        if flag["status"] == "addressed"
+    ]
     resolved_flags = [
         {
             "id": flag["id"],
@@ -139,6 +151,7 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
         f"Iteration {iteration}. Weighted score trajectory: {trajectory}. "
         f"Plan deltas: {delta_summary}. "
         f"Recurring critiques: {len(recurring)}. "
+        f"Addressed-unverified flags: {len(addressed_flags)}. "
         f"Resolved flags: {len(resolved_flags)}. "
         f"Open significant flags: {len(unresolved)}."
     )
@@ -183,6 +196,7 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
                 }
                 for flag in unresolved
             ],
+            "addressed_flags": addressed_flags,
             "resolved_flags": resolved_flags,
             "weighted_score": weighted_score,
             "weighted_history": weighted_history,

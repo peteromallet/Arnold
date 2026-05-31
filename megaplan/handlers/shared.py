@@ -280,8 +280,10 @@ def _build_gate_prompt_override(
         "Your previous response recommended PROCEED but left blocking flags unresolved.\n"
         f"Missing blocking flag IDs: {missing_flags}.\n"
         "Return a complete gate response. If you recommend PROCEED, you MUST include "
-        "`flag_resolutions` entries for every blocking flag. If you cannot resolve every "
-        "blocking flag, return ITERATE or ESCALATE instead."
+        "`flag_resolutions` entries for every blocking flag. For addressed-but-unverified "
+        "flags, the action MUST be `verify_fixed` with concrete evidence from the revised "
+        "plan; `dispute` and `accept_tradeoff` do not clear addressed flags. If you cannot "
+        "resolve every blocking flag, return ITERATE or ESCALATE instead."
     )
     return f"{base_prompt}\n\n{addendum}"
 

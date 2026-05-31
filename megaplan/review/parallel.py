@@ -10,14 +10,13 @@ runners remain easy to compare and later extract into a shared utility.
 
 from __future__ import annotations
 
-import sys
+import argparse
+import re
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import load_flag_registry, read_json, schemas_root, scatter_gather_checks, with_429_openrouter_fallback
-from megaplan.workers.hermes import _toolsets_for_phase, clean_parsed_payload, parse_agent_output, _worker_db_path
+from megaplan._core import WorkerUnit, WorkerUnitResult, load_flag_registry, read_json, schemas_root, scatter_worker_units
 from megaplan.prompts.review import (
     _filtered_prior_flags,
     _write_criteria_verdict_review_template,
@@ -25,7 +24,7 @@ from megaplan.prompts.review import (
     parallel_criteria_review_prompt,
     single_check_review_prompt,
 )
-from megaplan.types import CliError, PlanState
+from megaplan.types import AgentMode, CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
 from megaplan.runtime.key_pool import (
@@ -44,212 +43,111 @@ def _clean_review_check_payload(payload: dict[str, Any]) -> None:
         check.pop("prior_findings", None)
 
 
-def _failure_reason(exc: Exception) -> str:
-    if isinstance(exc, CliError):
-        return exc.message
-    return str(exc) or exc.__class__.__name__
+def _merge_unique(groups: list[list[str]]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            if item not in seen:
+                seen.add(item)
+                merged.append(item)
+    return merged
 
 
-def _run_check(
+def _review_worker_db_path(plan_dir: Path, identifier: str) -> Path:
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", identifier)
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    if len(sanitized) > 100:
+        sanitized = sanitized[:100]
+    return plan_dir / ".hermes_state" / f"state_{sanitized or 'default'}.db"
+
+
+def _review_reasoning_config(resolved_model: str | None) -> dict[str, bool] | None:
+    model_lower = (resolved_model or "").lower()
+    reasoning_families = ("qwen/qwen3", "deepseek/deepseek-r1")
+    if any(model_lower.startswith(prefix) for prefix in reasoning_families):
+        return {"enabled": False}
+    return None
+
+
+def _review_agent_mode(model: str | None, resolved_model: str | None) -> AgentMode:
+    return AgentMode(
+        agent="hermes",
+        mode="persistent",
+        refreshed=False,
+        model=model,
+        resolved_model=resolved_model,
+    )
+
+
+def _review_worker_options(
+    *,
+    output_path: Path,
+    session_db_path: Path,
+    resolved_model: str | None,
+) -> dict[str, object]:
+    options: dict[str, object] = {
+        "output_path": str(output_path),
+        "template_path": str(output_path),
+        "session_db_path": str(session_db_path),
+        "max_tokens": 32768,
+    }
+    if resolved_model:
+        options["resolved_model"] = resolved_model
+    reasoning_config = _review_reasoning_config(resolved_model)
+    if reasoning_config is not None:
+        options["reasoning_config"] = reasoning_config
+    return options
+
+
+def _parse_parallel_review_result(
     index: int,
-    check: Any,
-    *,
-    state: PlanState,
-    plan_dir: Path,
-    root: Path,
-    model: str | None,
-    schema: dict[str, Any],
-    project_dir: Path,
-    pre_check_flags: list[dict[str, Any]],
-    prior_flags: list[dict[str, Any]] | None = None,
-    output_stream: Any | None = None,
+    item: WorkerUnitResult,
+    unit: WorkerUnit,
 ) -> tuple[int, dict[str, Any], list[str], list[str], float, int, int, int]:
-    from megaplan.workers.hermes import _import_hermes_runtime
-
-    AIAgent, SessionDB = _import_hermes_runtime()
-
-    check_id = check["id"] if isinstance(check, dict) else getattr(check, "id")
-    _review_db_path = _worker_db_path(plan_dir, f"review_{check_id}")
-    output_path = _write_single_check_review_template(plan_dir, state, check, f"review_check_{check_id}.json")
-    prompt = single_check_review_prompt(state, plan_dir, root, check, output_path, pre_check_flags, prior_flags)
-    resolved_model, agent_kwargs = _resolve_model(model)
-
-    _model_lower = (resolved_model or "").lower()
-    _reasoning_families = ("qwen/qwen3", "deepseek/deepseek-r1")
-    _reasoning_off = (
-        {"enabled": False}
-        if any(_model_lower.startswith(prefix) for prefix in _reasoning_families)
-        else None
-    )
-
-    _stream = output_stream if output_stream is not None else sys.stderr
-
-    def _make_agent(m: str, kw: dict) -> "AIAgent":
-        agent = AIAgent(
-            model=m,
-            quiet_mode=True,
-            skip_context_files=True,
-            skip_memory=True,
-            enabled_toolsets=_toolsets_for_phase("review"),
-            session_id=str(uuid.uuid4()),
-            session_db=SessionDB(db_path=_review_db_path),
-            max_tokens=32768,
-            reasoning_config=_reasoning_off,
-            **kw,
+    del index
+    payload = item.payload
+    if not isinstance(payload, dict):
+        raise CliError("worker_parse_error", "Review worker payload must be a dict")
+    _clean_review_check_payload(payload)
+    payload_checks = payload.get("checks")
+    if not isinstance(payload_checks, list) or len(payload_checks) != 1 or not isinstance(payload_checks[0], dict):
+        check_id = unit.extra.get("check_id", "?")
+        raise CliError(
+            "worker_parse_error",
+            f"Parallel review output for check '{check_id}' did not contain exactly one check",
+            extra={"raw_output": item.raw_output},
         )
-        agent._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=_stream)
-        return agent
-
-    def _run_attempt(current_agent, current_output_path: Path) -> tuple[dict[str, Any], dict[str, Any], list[str], list[str], float, int, int, int]:
-        current_result = current_agent.run_conversation(user_message=prompt)
-        payload, raw_output = parse_agent_output(
-            current_agent,
-            current_result,
-            output_path=current_output_path,
-            schema=schema,
-            step="review",
-            project_dir=project_dir,
-            plan_dir=plan_dir,
-        )
-        clean_parsed_payload(payload, schema, "review")
-        _clean_review_check_payload(payload)
-        payload_checks = payload.get("checks")
-        if not isinstance(payload_checks, list) or len(payload_checks) != 1 or not isinstance(payload_checks[0], dict):
-            raise CliError(
-                "worker_parse_error",
-                f"Parallel review output for check '{check_id}' did not contain exactly one check",
-                extra={"raw_output": raw_output},
-            )
-        verified = payload.get("verified_flag_ids", [])
-        disputed = payload.get("disputed_flag_ids", [])
-        return (
-            current_result,
-            payload_checks[0],
-            verified if isinstance(verified, list) else [],
-            disputed if isinstance(disputed, list) else [],
-            float(current_result.get("estimated_cost_usd", 0.0) or 0.0),
-            int(current_result.get("prompt_tokens", 0) or 0),
-            int(current_result.get("completion_tokens", 0) or 0),
-            int(current_result.get("total_tokens", 0) or 0),
-        )
-
-    agent = _make_agent(resolved_model, agent_kwargs)
-    try:
-        _result, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = _run_attempt(agent, output_path)
-    except Exception as exc:
-        _result, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = with_429_openrouter_fallback(
-            model=model,
-            agent_kwargs=agent_kwargs,
-            exc=exc,
-            log_prefix="[parallel-review]",
-            rebuild_template_fn=lambda: _write_single_check_review_template(plan_dir, state, check, f"review_check_{check_id}.json"),
-            make_agent_fn=_make_agent,
-            run_attempt_fn=_run_attempt,
-            on_fail_message=lambda exc, fallback_exc: (
-                f"Parallel review failed for check '{check_id}' "
-                f"(both MiniMax and OpenRouter): primary={_failure_reason(exc)}; "
-                f"fallback={_failure_reason(fallback_exc)}"
-            ),
-            stream=_stream,
-        )
+    verified = payload.get("verified_flag_ids", [])
+    disputed = payload.get("disputed_flag_ids", [])
     return (
-        index,
-        check_payload,
-        verified_ids,
-        disputed_ids,
-        cost_usd,
-        pt,
-        ct,
-        tt,
+        int(unit.extra.get("index", 0) or 0),
+        payload_checks[0],
+        verified if isinstance(verified, list) else [],
+        disputed if isinstance(disputed, list) else [],
+        item.cost_usd,
+        item.prompt_tokens,
+        item.completion_tokens,
+        item.total_tokens,
     )
 
 
-def _run_criteria_verdict(
-    *,
-    state: PlanState,
-    plan_dir: Path,
-    root: Path,
-    model: str | None,
-    schema: dict[str, Any],
-    project_dir: Path,
-    output_stream: Any | None = None,
+def _parse_parallel_review_side_result(
+    index: int,
+    item: WorkerUnitResult,
+    unit: WorkerUnit,
 ) -> tuple[dict[str, Any], float, int, int, int]:
-    from megaplan.workers.hermes import _import_hermes_runtime
-
-    AIAgent, SessionDB = _import_hermes_runtime()
-
-    _criteria_db_path = _worker_db_path(plan_dir, "review_criteria_verdict")
-    output_path = _write_criteria_verdict_review_template(plan_dir, state, "review_criteria_verdict.json")
-    prompt = parallel_criteria_review_prompt(state, plan_dir, root, output_path)
-    resolved_model, agent_kwargs = _resolve_model(model)
-
-    _model_lower = (resolved_model or "").lower()
-    _reasoning_families = ("qwen/qwen3", "deepseek/deepseek-r1")
-    _reasoning_off = (
-        {"enabled": False}
-        if any(_model_lower.startswith(prefix) for prefix in _reasoning_families)
-        else None
+    del index, unit
+    payload = item.payload
+    if not isinstance(payload, dict):
+        raise CliError("worker_parse_error", "Review criteria payload must be a dict")
+    return (
+        payload,
+        item.cost_usd,
+        item.prompt_tokens,
+        item.completion_tokens,
+        item.total_tokens,
     )
-
-    _stream_cv = output_stream if output_stream is not None else sys.stderr
-
-    def _make_agent(m: str, kw: dict) -> "AIAgent":
-        agent = AIAgent(
-            model=m,
-            quiet_mode=True,
-            skip_context_files=True,
-            skip_memory=True,
-            enabled_toolsets=_toolsets_for_phase("review"),
-            session_id=str(uuid.uuid4()),
-            session_db=SessionDB(db_path=_criteria_db_path),
-            max_tokens=32768,
-            reasoning_config=_reasoning_off,
-            **kw,
-        )
-        agent._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=_stream_cv)
-        return agent
-
-    def _run_attempt(current_agent, current_output_path: Path) -> tuple[dict[str, Any], dict[str, Any], float, int, int, int]:
-        current_result = current_agent.run_conversation(user_message=prompt)
-        payload, _raw_output = parse_agent_output(
-            current_agent,
-            current_result,
-            output_path=current_output_path,
-            schema=schema,
-            step="review",
-            project_dir=project_dir,
-            plan_dir=plan_dir,
-        )
-        clean_parsed_payload(payload, schema, "review")
-        return (
-            current_result,
-            payload,
-            float(current_result.get("estimated_cost_usd", 0.0) or 0.0),
-            int(current_result.get("prompt_tokens", 0) or 0),
-            int(current_result.get("completion_tokens", 0) or 0),
-            int(current_result.get("total_tokens", 0) or 0),
-        )
-
-    agent = _make_agent(resolved_model, agent_kwargs)
-    try:
-        _result, payload, cost_usd, pt, ct, tt = _run_attempt(agent, output_path)
-    except Exception as exc:
-        _result, payload, cost_usd, pt, ct, tt = with_429_openrouter_fallback(
-            model=model,
-            agent_kwargs=agent_kwargs,
-            exc=exc,
-            log_prefix="[parallel-review]",
-            rebuild_template_fn=lambda: _write_criteria_verdict_review_template(plan_dir, state, "review_criteria_verdict.json"),
-            make_agent_fn=_make_agent,
-            run_attempt_fn=_run_attempt,
-            on_fail_message=lambda exc, fallback_exc: (
-                "Parallel review criteria verdict failed "
-                f"(both MiniMax and OpenRouter): primary={_failure_reason(exc)}; "
-                f"fallback={_failure_reason(fallback_exc)}"
-            ),
-            stream=_stream_cv,
-        )
-    return payload, cost_usd, pt, ct, tt
 
 
 def run_parallel_review(
@@ -263,46 +161,69 @@ def run_parallel_review(
     max_concurrent: int | None = None,
 ) -> WorkerResult:
     started = time.monotonic()
-    schema = read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES["review"])
-    project_dir = Path(state["config"]["project_dir"])
+    read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES["review"])
     prior_flags = load_flag_registry(plan_dir).get("flags", [])
-    output_stream = sys.stderr
+    resolved_model, _agent_kwargs = _resolve_model(model)
+    resolved = _review_agent_mode(model, resolved_model)
 
-    def _submit_checks(executor):
-        return [
-            executor.submit(
-                _run_check,
-                index,
-                check,
-                state=state,
-                plan_dir=plan_dir,
-                root=root,
-                model=model,
-                schema=schema,
-                project_dir=project_dir,
-                pre_check_flags=pre_check_flags,
-                prior_flags=_filtered_prior_flags(check, prior_flags),
-                output_stream=output_stream,
+    units: list[WorkerUnit] = []
+    for index, check in enumerate(checks):
+        check_id = check["id"] if isinstance(check, dict) else getattr(check, "id")
+        output_path = _write_single_check_review_template(plan_dir, state, check, f"review_check_{check_id}.json")
+        prompt = single_check_review_prompt(
+            state,
+            plan_dir,
+            root,
+            check,
+            output_path,
+            pre_check_flags,
+            _filtered_prior_flags(check, prior_flags),
+        )
+        units.append(
+            WorkerUnit(
+                step="review",
+                resolved=resolved,
+                prompt=prompt,
+                output_path=output_path,
+                read_only=True,
+                extra={
+                    "index": index,
+                    "check_id": check_id,
+                    "worker_options": _review_worker_options(
+                        output_path=output_path,
+                        session_db_path=_review_worker_db_path(plan_dir, f"review_{check_id}"),
+                        resolved_model=resolved_model,
+                    ),
+                },
             )
-            for index, check in enumerate(checks)
-        ]
-
-    def _submit_criteria(executor):
-        return executor.submit(
-            _run_criteria_verdict,
-            state=state,
-            plan_dir=plan_dir,
-            root=root,
-            model=model,
-            schema=schema,
-            project_dir=project_dir,
-            output_stream=output_stream,
         )
 
-    sr = scatter_gather_checks(
-        num_checks=len(checks),
-        submit_check_fn=_submit_checks,
-        side_tasks=[_submit_criteria],
+    criteria_output_path = _write_criteria_verdict_review_template(plan_dir, state, "review_criteria_verdict.json")
+    criteria_unit = WorkerUnit(
+        step="review",
+        resolved=resolved,
+        prompt=parallel_criteria_review_prompt(state, plan_dir, root, criteria_output_path),
+        output_path=criteria_output_path,
+        read_only=True,
+        extra={
+            "worker_options": _review_worker_options(
+                output_path=criteria_output_path,
+                session_db_path=_review_worker_db_path(plan_dir, "review_criteria_verdict"),
+                resolved_model=resolved_model,
+            ),
+        },
+    )
+
+    args = argparse.Namespace(agent=None, hermes=None, phase_model=[], ephemeral=False, fresh=False, persist=False)
+    sr = scatter_worker_units(
+        units=units,
+        side_units=[criteria_unit],
+        state=state,
+        plan_dir=plan_dir,
+        root=root,
+        args=args,
+        parse_result=_parse_parallel_review_result,
+        parse_side_result=_parse_parallel_review_side_result,
         max_concurrent=max_concurrent,
     )
 
@@ -310,11 +231,25 @@ def run_parallel_review(
     if criteria_payload is None:
         raise CliError("worker_error", "Parallel review did not return a criteria verdict payload")
 
+    ordered_checks: list[dict[str, Any]] = []
+    verified_groups: list[list[str]] = []
+    disputed_groups: list[list[str]] = []
+    for item in sr.ordered_results:
+        _index, check_payload, verified_ids, disputed_ids, *_metrics = item
+        ordered_checks.append(check_payload)
+        verified_groups.append(verified_ids)
+        disputed_groups.append(disputed_ids)
+    disputed_flag_ids = _merge_unique(disputed_groups)
+    disputed_set = set(disputed_flag_ids)
+    verified_flag_ids = [
+        flag_id for flag_id in _merge_unique(verified_groups) if flag_id not in disputed_set
+    ]
+
     return WorkerResult(
         payload={
-            "checks": sr.ordered_checks,
-            "verified_flag_ids": sr.verified_flag_ids,
-            "disputed_flag_ids": sr.disputed_flag_ids,
+            "checks": ordered_checks,
+            "verified_flag_ids": verified_flag_ids,
+            "disputed_flag_ids": disputed_flag_ids,
             "criteria_payload": criteria_payload,
         },
         raw_output="parallel",
