@@ -6,8 +6,9 @@ exec > >(tee -a "$$LOG") 2>&1
 
 echo "=== $$(date -Iseconds) entrypoint starting ==="
 
-mkdir -p /workspace /root/.ssh /root/.config/megaplan /root/.codex
+mkdir -p /workspace /root/.ssh /root/.config/megaplan /root/.codex /root/.hermes /workspace/.creds
 chmod 700 /root/.ssh
+chmod 700 /root/.codex /root/.hermes /workspace/.creds
 
 REPO_URL="$${REPO_URL:-${REPO_URL}}"
 REPO_BRANCH="$${REPO_BRANCH:-${REPO_BRANCH}}"
@@ -16,6 +17,7 @@ MODE="${MODE}"
 IDEA_FILE="${IDEA_FILE}"
 CHAIN_SPEC="${CHAIN_SPEC}"
 AUTO_PLAN_NAME="${AUTO_PLAN_NAME}"
+CODEX_AUTH_METHOD="${CODEX_AUTH_METHOD}"
 export MEGAPLAN_TRUSTED_CONTAINER=1
 
 # Git identity
@@ -38,8 +40,22 @@ fi
 # Clone repo if missing (volume may already have it from a prior boot)
 ${ENSURE_REPO_BLOCK}
 
-# Codex auth from env
-if [[ -n "$${OPENAI_API_KEY:-}" ]] && [[ ! -f /root/.codex/auth.json ]]; then
+# Codex OAuth seed from persistent volume. /root is ephemeral; /workspace persists.
+if [[ "$$CODEX_AUTH_METHOD" == "chatgpt" ]]; then
+  if [[ -s /workspace/.creds/codex-auth.json ]]; then
+    install -m 600 /workspace/.creds/codex-auth.json /root/.codex/auth.json
+    echo "Codex auth: seeded ChatGPT OAuth credentials from persistent volume"
+  else
+    echo "Codex auth: ChatGPT OAuth selected; no persisted /workspace/.creds/codex-auth.json seed found"
+  fi
+  if [[ -s /workspace/.creds/hermes-auth.json ]]; then
+    install -m 600 /workspace/.creds/hermes-auth.json /root/.hermes/auth.json
+    echo "Hermes auth: seeded OpenAI Codex OAuth credentials from persistent volume"
+  fi
+fi
+
+# Codex auth from env, only for explicit API-key billing opt-out.
+if [[ "$$CODEX_AUTH_METHOD" == "apikey" ]] && [[ -n "$${OPENAI_API_KEY:-}" ]] && [[ ! -f /root/.codex/auth.json ]]; then
   echo "Authenticating codex with OPENAI_API_KEY"
   printf '%s' "$$OPENAI_API_KEY" | codex login --with-api-key 2>&1 | tail -3 || true
 fi
@@ -53,8 +69,9 @@ model = "${CODEX_MODEL}"
 model_reasoning_effort = "${CODEX_REASONING}"
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
+${CODEX_AUTH_CONFIG_BLOCK}
 EOF
-echo "Codex model: ${CODEX_MODEL}, reasoning: ${CODEX_REASONING}, sandbox: danger-full-access (container-sandboxed)"
+echo "Codex model: ${CODEX_MODEL}, reasoning: ${CODEX_REASONING}, auth: $$CODEX_AUTH_METHOD, sandbox: danger-full-access (container-sandboxed)"
 
 # Megaplan install: always re-pull on boot so entrypoint restarts pick up the
 # requested ref without rebuilding the base image. The refresh helper is also

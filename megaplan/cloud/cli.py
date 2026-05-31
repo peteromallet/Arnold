@@ -6,11 +6,12 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
 from datetime import datetime, timezone
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from importlib import resources
 from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile, TemporaryDirectory
@@ -18,6 +19,7 @@ from typing import Any
 
 import yaml
 
+from megaplan.cloud.auth import seed_codex_oauth
 from megaplan.cloud.providers.base import _write_redacted_output, get_provider
 from megaplan.cloud.spec import CloudSpec, RailwaySpec, apply_repo_overrides, load_spec as load_cloud_spec
 from megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
@@ -62,6 +64,13 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Directory containing local idea files referenced by the chain spec",
     )
+    chain_parser.add_argument(
+        "--fresh",
+        "--reset",
+        dest="fresh",
+        action="store_true",
+        help="Reset this chain's remote state before launch",
+    )
     _add_repo_override_args(chain_parser)
 
     bootstrap_parser = cloud_sub.add_parser(
@@ -83,6 +92,11 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         "--chain",
         action="store_true",
         help="Fetch remote chain_state.json and render core chain status",
+    )
+    status_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="List active cloud chain tmux sessions on the shared runner",
     )
     status_parser.add_argument(
         "--remote-spec",
@@ -110,6 +124,12 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         "--no-follow",
         action="store_true",
         help="Fetch recent logs without streaming",
+    )
+
+    cloud_sub.add_parser(
+        "chains",
+        parents=[shared],
+        help="List active cloud chain tmux sessions on the shared runner",
     )
 
     exec_parser = cloud_sub.add_parser(
@@ -194,9 +214,36 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         if action == "deploy":
             secrets = {name: os.environ.get(name, "") for name in spec.secrets}
             with _materialized_deploy_dir(spec) as deploy_dir:
-                return provider.deploy(deploy_dir, secrets=secrets)
+                result = provider.deploy(deploy_dir, secrets=secrets)
+            if result == 0:
+                seed_codex_oauth(spec, provider)
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "success": result == 0,
+                        "event": "cloud_deploy",
+                        "provider": spec.provider,
+                        "service": _get_provider_identity(spec),
+                        "deploy_dir": str(deploy_dir),
+                        "action": "provider_deploy_invoked",
+                        "rebuilt_or_pushed": "provider-controlled",
+                        "no_op": False,
+                        "image_model": "stable_base",
+                        "note": (
+                            "cloud deploy updates the thin runner service. "
+                            "Routine megaplan behavior refreshes from the on-volume source clone during cloud chain launch."
+                        ),
+                        "logs": _deploy_log_hint(spec),
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            return result
 
         if action == "status":
+            if bool(getattr(args, "all", False)):
+                return _run_cloud_chains(spec, provider)
             if bool(getattr(args, "chain", False)):
                 return _run_chain_status(root, args, spec, provider)
             payload = cloud_status_payload(args, spec, provider)
@@ -208,6 +255,9 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
 
         if action == "logs":
             return provider.logs(follow=not bool(getattr(args, "no_follow", False)))
+
+        if action == "chains":
+            return _run_cloud_chains(spec, provider)
 
         if action == "exec":
             result = provider.ssh_exec(args.command)
@@ -381,12 +431,49 @@ def _chain_spec_has_explicit_base_branch(path: Path) -> bool:
     return "base_branch" in _read_chain_yaml(path)
 
 
-def _normalized_chain_upload_spec(local_spec_path: Path, *, base_branch: str) -> Path:
+def _rewrite_remote_workspace_path(remote_path: str, *, source_workspace: str, target_workspace: str) -> str:
+    source = PurePosixPath(source_workspace)
+    target = PurePosixPath(target_workspace)
+    path = PurePosixPath(remote_path)
+    if path == source:
+        return str(target)
+    if path.is_absolute() and str(path).startswith(f"{source}/"):
+        return str(target / path.relative_to(source))
+    return remote_path
+
+
+def _normalized_chain_upload_spec(
+    local_spec_path: Path,
+    *,
+    base_branch: str,
+    source_workspace: str | None = None,
+    target_workspace: str | None = None,
+) -> Path:
     raw = _read_chain_yaml(local_spec_path)
-    if "base_branch" in raw:
+    workspace_changed = (
+        bool(source_workspace)
+        and bool(target_workspace)
+        and source_workspace != target_workspace
+    )
+    if "base_branch" in raw and not workspace_changed:
         return local_spec_path
     normalized = dict(raw)
-    normalized["base_branch"] = base_branch
+    if "base_branch" not in normalized:
+        normalized["base_branch"] = base_branch
+    if workspace_changed and isinstance(normalized.get("milestones"), list):
+        rewritten: list[Any] = []
+        for item in normalized["milestones"]:
+            if isinstance(item, dict) and isinstance(item.get("idea"), str):
+                copied = dict(item)
+                copied["idea"] = _rewrite_remote_workspace_path(
+                    copied["idea"],
+                    source_workspace=source_workspace or "",
+                    target_workspace=target_workspace or "",
+                )
+                rewritten.append(copied)
+            else:
+                rewritten.append(item)
+        normalized["milestones"] = rewritten
     with NamedTemporaryFile("w", suffix=".yaml", encoding="utf-8", delete=False) as handle:
         yaml.safe_dump(normalized, handle, sort_keys=False)
         return Path(handle.name)
@@ -464,25 +551,26 @@ def _resolved_phase_map_summary(preflight_summary: dict[str, Any]) -> list[dict[
 def _cloud_chain_launch_provenance(
     *,
     spec: CloudSpec,
-    remote_spec_path: str,
+    ctx: ChainLaunchContext,
     chain_spec,
     preflight_summary: dict[str, Any],
     uploaded_idea_count: int,
     repo_head: dict[str, str | None],
     tmux_result,
+    verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     current_milestone = chain_spec.milestones[0].label if chain_spec.milestones else None
     return {
         "success": True,
         "event": "cloud_chain_launched",
-        "remote_spec": remote_spec_path,
+        "remote_spec": ctx.remote_spec_path,
         "current_milestone": current_milestone,
         "plan_name": None,
         "pr_number": None,
         "repo": {
             "url": spec.repo.url,
             "branch": spec.repo.branch,
-            "workspace": spec.repo.workspace,
+            "workspace": ctx.workspace,
             "head": repo_head.get("head"),
             "checked_out_branch": repo_head.get("branch"),
         },
@@ -500,9 +588,17 @@ def _cloud_chain_launch_provenance(
         },
         "uploaded_idea_count": uploaded_idea_count,
         "tmux": {
-            "session": spec.chain_session,
-            "status": _tmux_launch_status(tmux_result, session_name=spec.chain_session),
+            "session": ctx.session_name,
+            "status": _tmux_launch_status(tmux_result, session_name=ctx.session_name),
         },
+        "log": {"chain_log": ctx.log_path},
+        "launch": {
+            "identity_digest": ctx.digest,
+            "session_marker": ctx.marker_path,
+            "derived_workspace": not spec.repo.workspace_explicit,
+            "derived_session": not spec.chain_session_explicit,
+        },
+        "verification": verification or {},
     }
 
 
@@ -512,7 +608,81 @@ def _cloud_chain_launch_provenance(
 
 CHAIN_SESSION_NAME = "megaplan-chain"
 _CHAIN_LOG_RELATIVE = ".megaplan/cloud-chain.log"
-_MEGAPLAN_REFRESH_COMMAND = "/usr/local/bin/mp-refresh-megaplan 2>&1 | tail -3 || true"
+_CHAIN_SESSION_MARKER_DIR = "/workspace/.megaplan/cloud-sessions"
+_CHAIN_VERIFY_ATTEMPTS = 6
+_CHAIN_VERIFY_SLEEP_SECONDS = 5
+
+
+@dataclass(frozen=True)
+class ChainLaunchContext:
+    identity: str
+    slug: str
+    digest: str
+    workspace: str
+    remote_spec_path: str
+    session_name: str
+    log_relative: str
+    log_path: str
+    state_path: str
+    marker_path: str
+
+
+def _slugify_chain_identity(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip().lower()).strip(".-")
+    return slug[:48] or "chain"
+
+
+def _repo_dir_name(repo_url: str) -> str:
+    tail = repo_url.rstrip("/").rsplit("/", 1)[-1] or "app"
+    if tail.endswith(".git"):
+        tail = tail[:-4]
+    return _slugify_chain_identity(tail) or "app"
+
+
+def _chain_identity_for(local_spec_path: Path, chain_spec: Any) -> tuple[str, str, str]:
+    labels = ",".join(m.label for m in getattr(chain_spec, "milestones", []) if getattr(m, "label", None))
+    seed = getattr(chain_spec, "seed_plan", None) or ""
+    identity = f"{local_spec_path.stem}:{seed}:{labels}"
+    digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:10]
+    return identity, _slugify_chain_identity(local_spec_path.stem), digest
+
+
+def _derive_chain_launch_context(
+    *,
+    spec: CloudSpec,
+    local_spec_path: Path,
+    chain_spec: Any,
+) -> ChainLaunchContext:
+    from megaplan import chain as chain_module
+
+    identity, slug, digest = _chain_identity_for(local_spec_path, chain_spec)
+    session_name = (
+        spec.chain_session
+        if spec.chain_session_explicit
+        else f"{CHAIN_SESSION_NAME}-{slug}-{digest[:8]}"
+    )
+    workspace = (
+        spec.repo.workspace
+        if spec.repo.workspace_explicit
+        else f"/workspace/{slug}-{digest[:8]}/{_repo_dir_name(spec.repo.url)}"
+    )
+    remote_spec_path = str(PurePosixPath(workspace) / "chain.yaml")
+    state_path = str(chain_module._state_path_for(Path(remote_spec_path)))
+    log_relative = f".megaplan/cloud-chain-{session_name}.log"
+    log_path = str(PurePosixPath(workspace) / log_relative)
+    marker_path = str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{session_name}.json")
+    return ChainLaunchContext(
+        identity=identity,
+        slug=slug,
+        digest=digest,
+        workspace=workspace,
+        remote_spec_path=remote_spec_path,
+        session_name=session_name,
+        log_relative=log_relative,
+        log_path=log_path,
+        state_path=state_path,
+        marker_path=marker_path,
+    )
 
 
 def _get_provider_identity(spec: CloudSpec) -> str | None:
@@ -537,7 +707,23 @@ def _get_provider_identity(spec: CloudSpec) -> str | None:
     return None
 
 
-def _chain_start_command(remote_spec_path: str, *, one_shot: bool = False) -> str:
+def _deploy_log_hint(spec: CloudSpec) -> dict[str, Any]:
+    if spec.provider == "railway":
+        service = spec.railway.service if spec.railway is not None else "agent"
+        return {"command": f"megaplan cloud logs --no-follow", "service": service}
+    if spec.provider == "local":
+        return {"command": "megaplan cloud logs --no-follow"}
+    if spec.provider == "ssh":
+        return {"command": "megaplan cloud logs --no-follow"}
+    return {"status": "unknown"}
+
+
+def _chain_start_command(
+    remote_spec_path: str,
+    *,
+    one_shot: bool = False,
+    log_relative: str = _CHAIN_LOG_RELATIVE,
+) -> str:
     """Construct the ``megaplan chain start`` command with canonical quoting.
 
     Both ``_run_chain_wrapper`` and ``cloud_supervise_tick`` use this helper
@@ -549,12 +735,55 @@ def _chain_start_command(remote_spec_path: str, *, one_shot: bool = False) -> st
         flags += " --one"
     return (
         f"MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start {flags} "
-        f">> {shlex.quote(_CHAIN_LOG_RELATIVE)} 2>&1"
+        f">> {shlex.quote(log_relative)} 2>&1"
     )
 
 
-def _refresh_then_chain_start_command(remote_spec_path: str, *, one_shot: bool = False) -> str:
-    return f"{_MEGAPLAN_REFRESH_COMMAND}; {_chain_start_command(remote_spec_path, one_shot=one_shot)}"
+def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
+    src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
+    repo = (spec.megaplan.repo or "") if spec is not None else ""
+    ref = spec.megaplan.ref if spec is not None else "main"
+    lines = [
+        "set +e",
+        "echo \"[megaplan-refresh] $(date -Iseconds) starting\"",
+        f"SRC={shlex.quote(src)}",
+        f"REPO={shlex.quote(repo)}",
+        f"REF={shlex.quote(ref)}",
+        'if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then',
+        '  mkdir -p "$(dirname "$SRC")"',
+        '  CLONE_URL="$REPO"',
+        '  if [ -n "${GITHUB_TOKEN:-}" ]; then',
+        '    case "$CLONE_URL" in',
+        '      https://github.com/*) CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${CLONE_URL#https://github.com/}" ;;',
+        "    esac",
+        "  fi",
+        '  git clone --branch "$REF" "$CLONE_URL" "$SRC"',
+        "fi",
+        'if [ -d "$SRC/.git" ]; then',
+        '  git -C "$SRC" pull --ff-only',
+        '  pip install -e "$SRC"',
+        "else",
+        '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
+        "fi",
+        'echo "[megaplan-refresh] done"',
+        "set -e",
+        "true",
+    ]
+    return "\n".join(lines)
+
+
+def _refresh_then_chain_start_command(
+    remote_spec_path: str,
+    *,
+    spec: CloudSpec | None = None,
+    one_shot: bool = False,
+    log_relative: str = _CHAIN_LOG_RELATIVE,
+) -> str:
+    refresh = _megaplan_refresh_command(spec)
+    return (
+        f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 || true; "
+        f"{_chain_start_command(remote_spec_path, one_shot=one_shot, log_relative=log_relative)}"
+    )
 
 
 def _tmux_chain_launch_command(
@@ -563,6 +792,11 @@ def _tmux_chain_launch_command(
     *,
     one_shot: bool = False,
     session_name: str | None = None,
+    spec: CloudSpec | None = None,
+    log_relative: str = _CHAIN_LOG_RELATIVE,
+    marker_path: str | None = None,
+    identity_digest: str | None = None,
+    marker_payload: dict[str, Any] | None = None,
 ) -> str:
     """Return a single shell command that ensures a tmux session is running the chain.
 
@@ -573,15 +807,41 @@ def _tmux_chain_launch_command(
     when not provided.
     """
     name = session_name or CHAIN_SESSION_NAME
-    chain_cmd = _refresh_then_chain_start_command(remote_spec_path, one_shot=one_shot)
+    if log_relative == _CHAIN_LOG_RELATIVE and name != CHAIN_SESSION_NAME:
+        log_relative = f".megaplan/cloud-chain-{name}.log"
+    chain_cmd = _refresh_then_chain_start_command(
+        remote_spec_path,
+        spec=spec,
+        one_shot=one_shot,
+        log_relative=log_relative,
+    )
+    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
+    digest = identity_digest or ""
+    marker_json = json.dumps(
+        marker_payload
+        or {
+            "session": name,
+            "workspace": workspace,
+            "remote_spec": remote_spec_path,
+            "identity_digest": digest,
+        },
+        sort_keys=True,
+    )
     return (
-        f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
+        f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))} "
+        f"{shlex.quote(str(PurePosixPath(marker).parent))}"
         " && "
         f"if tmux has-session -t {shlex.quote(name)} 2>/dev/null; then "
-        f"echo '{name} session already running'; "
+        f"if [ -f {shlex.quote(marker)} ] && grep -F {shlex.quote(digest)} {shlex.quote(marker)} >/dev/null 2>&1; then "
+        f"echo {shlex.quote(f'{name} session already running for this chain')}; "
         "else "
+        f"echo {shlex.quote(f'ERROR: {name} session already running for a different chain; refusing to disturb it')}; "
+        "exit 17; "
+        "fi; "
+        "else "
+        f"printf %s {shlex.quote(marker_json)} > {shlex.quote(marker)}; "
         f"tmux new-session -d -s {shlex.quote(name)} -c {shlex.quote(workspace)} {shlex.quote(chain_cmd)}; "
-        f"echo 'started {name} session'; "
+        f"echo {shlex.quote(f'started {name} session')}; "
         "fi"
     )
 
@@ -591,6 +851,9 @@ def _tmux_chain_restart_command(
     remote_spec_path: str,
     *,
     session_name: str | None = None,
+    spec: CloudSpec | None = None,
+    log_relative: str = _CHAIN_LOG_RELATIVE,
+    marker_path: str | None = None,
 ) -> str:
     """Return a shell command that kills any existing tmux session and starts a
     fresh one-shot tick.
@@ -602,14 +865,184 @@ def _tmux_chain_restart_command(
     when not provided.
     """
     name = session_name or CHAIN_SESSION_NAME
-    chain_cmd = _refresh_then_chain_start_command(remote_spec_path, one_shot=True)
+    if log_relative == _CHAIN_LOG_RELATIVE and name != CHAIN_SESSION_NAME:
+        log_relative = f".megaplan/cloud-chain-{name}.log"
+    chain_cmd = _refresh_then_chain_start_command(
+        remote_spec_path,
+        spec=spec,
+        one_shot=True,
+        log_relative=log_relative,
+    )
+    marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
         " && "
+        f"if tmux has-session -t {shlex.quote(name)} 2>/dev/null; then "
+        f"if [ -f {shlex.quote(marker)} ] && grep -F {shlex.quote(remote_spec_path)} {shlex.quote(marker)} >/dev/null 2>&1; then "
         f"tmux kill-session -t {shlex.quote(name)} 2>/dev/null; "
+        "else "
+        f"echo {shlex.quote(f'ERROR: {name} session marker does not match {remote_spec_path}; refusing restart')}; "
+        "exit 17; "
+        "fi; "
+        "fi; "
         f"tmux new-session -d -s {shlex.quote(name)} -c {shlex.quote(workspace)} {shlex.quote(chain_cmd)}; "
-        f"echo 'restarted {name} session'"
+        f"echo {shlex.quote(f'restarted {name} session')}"
     )
+
+
+def _chain_state_reset_command(
+    *,
+    workspace: str,
+    state_path: str,
+    log_relative: str,
+    force: bool = False,
+) -> str:
+    script = f"""
+import json, pathlib, shutil
+workspace = pathlib.Path({workspace!r})
+state_path = pathlib.Path({state_path!r})
+force = {bool(force)!r}
+reason = None
+removed = []
+if state_path.exists():
+    try:
+        raw = json.loads(state_path.read_text())
+    except Exception as exc:
+        raw = {{}}
+        reason = "invalid-json:" + str(exc)
+    completed = raw.get("completed") or []
+    last_state = raw.get("last_state")
+    current_plan = raw.get("current_plan_name")
+    current_index = raw.get("current_milestone_index", -1)
+    no_progress = not completed and current_index in (-1, 0)
+    if force:
+        reason = reason or "forced"
+    elif not completed and last_state == "stalled":
+        reason = "stalled-without-completed-milestones"
+    elif no_progress and last_state is None and not current_plan:
+        reason = "empty-no-progress-state"
+    if reason:
+        state_path.unlink(missing_ok=True)
+        removed.append(str(state_path))
+        if isinstance(current_plan, str) and current_plan and "/" not in current_plan:
+            plan_dir = workspace / ".megaplan" / "plans" / current_plan
+            try:
+                plan_dir.relative_to(workspace / ".megaplan" / "plans")
+                if plan_dir.exists():
+                    shutil.rmtree(plan_dir)
+                    removed.append(str(plan_dir))
+            except Exception as exc:
+                print("[chain-reset] skipped plan dir:", exc)
+        print(json.dumps({{"status": "reset", "reason": reason, "removed": removed}}, sort_keys=True))
+    else:
+        print(json.dumps({{"status": "preserved", "reason": "resumable-or-progressed-state", "state_path": str(state_path)}}, sort_keys=True))
+else:
+    print(json.dumps({{"status": "absent", "state_path": str(state_path)}}, sort_keys=True))
+"""
+    return (
+        f"cd {shlex.quote(workspace)} && "
+        f"python3 - <<'MEGAPLAN_RESET' >> {shlex.quote(log_relative)} 2>&1\n"
+        f"{script.strip()}\n"
+        "MEGAPLAN_RESET"
+    )
+
+
+def _chain_launch_verification_command(
+    *,
+    workspace: str,
+    session_name: str,
+    state_path: str,
+    log_path: str,
+    attempts: int = _CHAIN_VERIFY_ATTEMPTS,
+    sleep_seconds: int = _CHAIN_VERIFY_SLEEP_SECONDS,
+) -> str:
+    script = f"""
+import json, pathlib, subprocess, time
+workspace = pathlib.Path({workspace!r})
+session = {session_name!r}
+state_path = pathlib.Path({state_path!r})
+log_path = pathlib.Path({log_path!r})
+attempts = {int(attempts)!r}
+sleep_seconds = {int(sleep_seconds)!r}
+last_state = None
+advanced = False
+for idx in range(max(1, attempts)):
+    alive = subprocess.run(["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    log_size = log_path.stat().st_size if log_path.exists() else 0
+    state = None
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text())
+        except Exception as exc:
+            state = {{"error": str(exc)}}
+    plan_dirs = []
+    plans_root = workspace / ".megaplan" / "plans"
+    if plans_root.exists():
+        plan_dirs = sorted(p.name for p in plans_root.iterdir() if p.is_dir() and p.name != ".chains")
+    advanced = bool(
+        state
+        and (
+            state.get("current_plan_name")
+            or state.get("completed")
+            or int(state.get("current_milestone_index", -1)) >= 0
+        )
+    ) or bool(plan_dirs)
+    last_state = {{
+        "session_alive": alive,
+        "chain_log": str(log_path),
+        "chain_log_size": log_size,
+        "state_path": str(state_path),
+        "state_present": state_path.exists(),
+        "advanced_past_init": advanced,
+        "plan_dirs": plan_dirs[:5],
+        "attempts": idx + 1,
+    }}
+    if alive and advanced:
+        break
+    if idx + 1 < attempts:
+        time.sleep(sleep_seconds)
+likely = None
+if not last_state["session_alive"]:
+    likely = "driver exited; inspect chain log for missing megaplan or dependency failures"
+elif not last_state["advanced_past_init"]:
+    likely = "driver stayed at init; inspect chain log for stale state, git refresh conflict, or missing megaplan"
+last_state["likely_cause"] = likely
+print(json.dumps(last_state, sort_keys=True))
+"""
+    return f"python3 - <<'MEGAPLAN_VERIFY'\n{script.strip()}\nMEGAPLAN_VERIFY"
+
+
+def _run_chain_launch_verification(provider, ctx: ChainLaunchContext) -> dict[str, Any]:
+    result = provider.ssh_exec(
+        _chain_launch_verification_command(
+            workspace=ctx.workspace,
+            session_name=ctx.session_name,
+            state_path=ctx.state_path,
+            log_path=ctx.log_path,
+        )
+    )
+    raw = (result.stdout or "").strip().splitlines()
+    if result.returncode != 0:
+        return {
+            "session_alive": False,
+            "advanced_past_init": False,
+            "chain_log": ctx.log_path,
+            "status": "verification_failed",
+            "likely_cause": (result.stderr or result.stdout or "verification command failed").strip(),
+        }
+    try:
+        payload = json.loads(raw[-1] if raw else "{}")
+    except json.JSONDecodeError as exc:
+        return {
+            "session_alive": None,
+            "advanced_past_init": None,
+            "chain_log": ctx.log_path,
+            "status": "verification_unparseable",
+            "likely_cause": f"verification output was not JSON: {exc}",
+            "raw": result.stdout,
+        }
+    payload["status"] = "ok" if payload.get("session_alive") and payload.get("advanced_past_init") else "warning"
+    return payload
 
 
 def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
@@ -621,13 +1054,23 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     explicit_base_branch = _chain_spec_has_explicit_base_branch(local_spec_path)
     if not explicit_base_branch:
         chain_spec.base_branch = spec.repo.branch
+    launch_ctx = _derive_chain_launch_context(
+        spec=spec,
+        local_spec_path=local_spec_path,
+        chain_spec=chain_spec,
+    )
+    launch_spec = replace(
+        spec,
+        repo=replace(spec.repo, workspace=launch_ctx.workspace),
+        chain_session=launch_ctx.session_name,
+    )
     preflight_summary = resolve_cloud_chain_runtime_dependencies(
         chain_spec,
         project_dir=root,
         cloud_default_agent=spec.agents.get("default"),
     )
     idea_dir = Path(args.idea_dir).expanduser().resolve() if args.idea_dir else local_spec_path.parent.resolve()
-    remote_spec_path = str(PurePosixPath(spec.repo.workspace) / "chain.yaml")
+    remote_spec_path = launch_ctx.remote_spec_path
     uploads: list[tuple[Path, str]] = []
 
     for milestone in chain_spec.milestones:
@@ -651,7 +1094,16 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                     "tried_paths": [str(path) for path in tried_paths],
                 },
             )
-        uploads.append((local_source, milestone.idea))
+        uploads.append(
+            (
+                local_source,
+                _rewrite_remote_workspace_path(
+                    milestone.idea,
+                    source_workspace=spec.repo.workspace,
+                    target_workspace=launch_ctx.workspace,
+                ),
+            )
+        )
 
     missing_env = _missing_configured_secrets(spec, os.environ)
     if missing_env:
@@ -665,7 +1117,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             },
         )
 
-    _ensure_repo_checkout(spec, provider, relay=False)
+    _ensure_repo_checkout(launch_spec, provider, relay=False)
     required_commands = list(preflight_summary.get("runtime_commands", []))
     missing_commands = _run_remote_dependency_check(provider, required_commands)
     if missing_commands:
@@ -679,31 +1131,83 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             },
         )
 
-    repo_head = _remote_repo_head(provider, spec.repo.workspace)
+    seed_codex_oauth(spec, provider)
+    repo_head = _remote_repo_head(provider, launch_ctx.workspace)
     for local_source, remote_path in uploads:
         provider.upload_file(local_source, remote_path)
-    upload_spec_path = _normalized_chain_upload_spec(local_spec_path, base_branch=chain_spec.base_branch)
+    upload_spec_path = _normalized_chain_upload_spec(
+        local_spec_path,
+        base_branch=chain_spec.base_branch,
+        source_workspace=spec.repo.workspace,
+        target_workspace=launch_ctx.workspace,
+    )
     try:
         provider.upload_file(upload_spec_path, remote_spec_path)
     finally:
         if upload_spec_path != local_spec_path:
             upload_spec_path.unlink(missing_ok=True)
-    launch_session = spec.chain_session
-    session_name = spec.chain_session
+    reset_result = provider.ssh_exec(
+        _chain_state_reset_command(
+            workspace=launch_ctx.workspace,
+            state_path=launch_ctx.state_path,
+            log_relative=launch_ctx.log_relative,
+            force=bool(getattr(args, "fresh", False)),
+        )
+    )
+    if reset_result.returncode != 0:
+        _relay_output(reset_result, secret_names=spec.secrets, env=os.environ)
+        raise CliError(
+            "provider_failed",
+            f"remote chain state reset check failed (exit {reset_result.returncode})",
+        )
+
+    launch_session = launch_ctx.session_name
+    session_name = launch_ctx.session_name
+    marker_payload = {
+        "session": launch_ctx.session_name,
+        "workspace": launch_ctx.workspace,
+        "remote_spec": launch_ctx.remote_spec_path,
+        "identity_digest": launch_ctx.digest,
+        "chain_slug": launch_ctx.slug,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
     result = provider.ssh_exec(
         _tmux_chain_launch_command(
-            spec.repo.workspace, remote_spec_path, session_name=session_name
+            launch_ctx.workspace,
+            remote_spec_path,
+            session_name=session_name,
+            spec=launch_spec,
+            log_relative=launch_ctx.log_relative,
+            marker_path=launch_ctx.marker_path,
+            identity_digest=launch_ctx.digest,
+            marker_payload=marker_payload,
         )
     )
     _relay_output(result, secret_names=spec.secrets, env=os.environ)
+    if result.returncode != 0:
+        raise CliError(
+            "chain_session_collision" if result.returncode == 17 else "provider_failed",
+            (result.stderr or result.stdout or "remote tmux launch failed").strip(),
+        )
+    verification = _run_chain_launch_verification(provider, launch_ctx)
     provenance = _cloud_chain_launch_provenance(
         spec=spec,
-        remote_spec_path=remote_spec_path,
+        ctx=launch_ctx,
         chain_spec=chain_spec,
         preflight_summary=preflight_summary,
         uploaded_idea_count=len(uploads),
         repo_head=repo_head,
         tmux_result=result,
+        verification=verification,
+    )
+    sys.stderr.write(
+        "cloud chain launch: "
+        f"session={launch_ctx.session_name} "
+        f"alive={verification.get('session_alive')} "
+        f"advanced={verification.get('advanced_past_init')} "
+        f"log={launch_ctx.log_path}"
+        + (f" likely_cause={verification.get('likely_cause')}" if verification.get("likely_cause") else "")
+        + "\n"
     )
     sys.stdout.write(json.dumps(provenance, indent=2) + "\n")
 
@@ -715,11 +1219,12 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "base_branch": chain_spec.base_branch,
                 "provenance": provenance,
-                "workspace": spec.repo.workspace,
+                "workspace": launch_ctx.workspace,
                 "chain_session": launch_session,
+                "chain_log": launch_ctx.log_path,
                 "extra_repos": [
                     {"url": repo.url, "branch": repo.branch, "workspace": repo.workspace}
-                    for repo in spec.extra_repos
+                    for repo in launch_spec.extra_repos
                 ],
                 "provider": spec.provider,
                 "provider_identity": _get_provider_identity(spec),
@@ -821,6 +1326,56 @@ def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) ->
         plan=getattr(args, "plan", None),
         workspace=spec.repo.workspace,
     )
+
+
+def _cloud_chains_command() -> str:
+    script = f"""
+import json, pathlib, subprocess
+marker_dir = pathlib.Path({_CHAIN_SESSION_MARKER_DIR!r})
+proc = subprocess.run(["tmux", "list-sessions", "-F", "#S"], text=True, capture_output=True)
+sessions = []
+if proc.returncode == 0:
+    for line in proc.stdout.splitlines():
+        name = line.strip()
+        if not name.startswith({CHAIN_SESSION_NAME!r}):
+            continue
+        marker = marker_dir / (name + ".json")
+        payload = {{"session": name, "status": "running", "marker": str(marker)}}
+        if marker.exists():
+            try:
+                payload.update(json.loads(marker.read_text()))
+                payload["marker_status"] = "present"
+            except Exception as exc:
+                payload["marker_status"] = "invalid"
+                payload["marker_error"] = str(exc)
+        else:
+            payload["marker_status"] = "missing"
+        sessions.append(payload)
+print(json.dumps({{"success": True, "sessions": sessions}}, sort_keys=True))
+"""
+    return f"python3 - <<'MEGAPLAN_CHAINS'\n{script.strip()}\nMEGAPLAN_CHAINS"
+
+
+def _run_cloud_chains(spec: CloudSpec, provider) -> int:
+    del spec
+    result = provider.ssh_exec(_cloud_chains_command())
+    if result.returncode != 0:
+        _relay_output(result, secret_names=[], env=os.environ)
+        raise CliError("provider_failed", "unable to list remote cloud chain sessions")
+    try:
+        payload = json.loads((result.stdout or "").strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise CliError("provider_failed", f"cloud chains did not return JSON: {exc}") from exc
+    sessions = payload.get("sessions") if isinstance(payload, dict) else []
+    if isinstance(sessions, list):
+        sys.stderr.write(f"active cloud chains: {len(sessions)}\n")
+        for item in sessions:
+            if isinstance(item, dict):
+                sys.stderr.write(
+                    f"- {item.get('session')} workspace={item.get('workspace')} spec={item.get('remote_spec')}\n"
+                )
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    return 0
 
 
 def _try_provider_method(provider, method_name: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -1277,7 +1832,12 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         runner = {"status": "unknown", "reason": str(exc)}
 
     # Log paths (structured from the resolved workspace).
-    chain_log_path = (PurePosixPath(resolved_workspace) / ".megaplan" / "cloud-chain.log").as_posix()
+    chain_log_name = (
+        f"cloud-chain-{resolved_session}.log"
+        if resolved_session != CHAIN_SESSION_NAME
+        else "cloud-chain.log"
+    )
+    chain_log_path = (PurePosixPath(resolved_workspace) / ".megaplan" / chain_log_name).as_posix()
     chain_log_info: dict[str, Any] = {"path": chain_log_path}
     try:
         ssh_meth = getattr(provider, "ssh_exec", None)
