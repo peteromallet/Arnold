@@ -170,11 +170,13 @@ def test_render_dockerfile_installs_cloud_agent_runtime_dependencies() -> None:
     rendered = render_dockerfile(_spec("idle"))
 
     assert "      unzip \\" in rendered
-    assert "npm i -g @openai/codex @anthropic-ai/claude-code @dexh/shannon@0.0.2" in rendered
+    assert "npm i -g @openai/codex @anthropic-ai/claude-code" in rendered
+    # Shannon is no longer installed via npm — it runs from vendor/shannon via bun.
+    assert "@dexh/shannon" not in rendered
+    assert "/usr/local/bin/shannon" not in rendered
     assert "https://bun.sh/install" in rendered
     assert 'ln -sf "$NVBIN/codex"  /usr/local/bin/codex' in rendered
     assert 'ln -sf "$NVBIN/claude" /usr/local/bin/claude' in rendered
-    assert 'ln -sf "$NVBIN/shannon" /usr/local/bin/shannon' in rendered
     assert "ln -sf /root/.bun/bin/bun /usr/local/bin/bun" in rendered
 
 

@@ -160,8 +160,9 @@ def test_reconcile_reaps_residual_same_name_session_and_proceeds(
     plan_dir, state = _mock_state(tmp_path)
 
     # Construct the deterministic session name that run_shannon_step will use.
-    from megaplan.workers.shannon import _tmux_slug
-    session_name = f"megaplan-{_tmux_slug(state['name'])}-{_tmux_slug('plan')}"
+    # T9 Step 7: session name is sha256(plan|step|iteration)[:12], not megaplan-slug.
+    import hashlib
+    session_name = hashlib.sha256(f"{state['name']}|plan|{state.get('iteration', 0)}".encode()).hexdigest()[:12]
 
     # Track calls.
     teardown_calls: list[str] = []
@@ -316,8 +317,9 @@ def test_different_plan_name_session_not_touched_no_backstop(
     # for this plan's name only.
     assert isinstance(result, WorkerResult)
     assert result.payload is not None
-    from megaplan.workers.shannon import _tmux_slug
-    plan_session = f"megaplan-{_tmux_slug(state['name'])}-{_tmux_slug('plan')}"
+    # T9 Step 7: session name is sha256(plan|step|iteration)[:12].
+    import hashlib
+    plan_session = hashlib.sha256(f"{state['name']}|plan|{state.get('iteration', 0)}".encode()).hexdigest()[:12]
     for call in teardown_calls:
         assert call == plan_session, f"Touched unrelated session: {call}"
 
@@ -432,11 +434,12 @@ def test_both_run_command_sites_receive_tmux_session(
             f"run_command call {i} has different tmux_session than call 0"
         )
 
-    # env must have SHANNON_TMUX_SESSION_NAME set.
+    # env must have SHANNON_TMUX_SESSION_NAME set (T9 Step 7: sha256 hash, 12 hex chars).
     for call_kwargs in run_command_calls:
         env = call_kwargs.get("env")
         assert isinstance(env, dict)
         assert "SHANNON_TMUX_SESSION_NAME" in env, (
             "SHANNON_TMUX_SESSION_NAME not in env"
         )
-        assert env["SHANNON_TMUX_SESSION_NAME"].startswith("megaplan-")
+        assert len(env["SHANNON_TMUX_SESSION_NAME"]) == 12
+        assert all(c in "0123456789abcdef" for c in env["SHANNON_TMUX_SESSION_NAME"])

@@ -250,6 +250,10 @@ class WorkerResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    # Populated by the Shannon worker so the receipt records the rolled
+    # session plan (kind, session_id, voice, pre-turn kinds + pre_sleep_s).
+    # ``None`` for non-Shannon workers.
+    shannon_plan: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -2568,7 +2572,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
                 raise CliError(
                     "agent_deps_missing",
                     f"Shannon requires: {', '.join(missing)}. "
-                    "Install with: npm install -g @dexh/shannon@0.0.2",
+                    "Install bun (https://bun.sh) and ensure the vendored fork at vendor/shannon/index.ts is present.",
                 )
             if agent == "claude":
                 from megaplan._core.io import shannon_missing_deps
@@ -2576,7 +2580,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
                 raise CliError(
                     "agent_deps_missing",
                     f"Claude routes through Shannon and requires: {', '.join(missing)}. "
-                    "Install with: npm install -g @dexh/shannon@0.0.2",
+                    "Install bun (https://bun.sh) and ensure the vendored fork at vendor/shannon/index.ts is present.",
                 )
             raise CliError("agent_not_found", f"Agent '{agent}' not found on PATH")
         # For hermes via agent=="hermes" config default when not explicitly requested,

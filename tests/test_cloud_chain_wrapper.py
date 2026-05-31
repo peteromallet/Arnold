@@ -579,7 +579,7 @@ def test_cloud_chain_preflight_blocks_missing_remote_commands_before_tmux(
                 return subprocess.CompletedProcess(
                     args=["ssh"],
                     returncode=0,
-                    stdout="bun claude shannon tmux\n",
+                    stdout="bun claude tmux\n",
                     stderr="",
                 )
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
@@ -594,7 +594,7 @@ def test_cloud_chain_preflight_blocks_missing_remote_commands_before_tmux(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"] == "agent_deps_missing"
-    assert payload["missing_commands"] == ["bun", "claude", "shannon", "tmux"]
+    assert payload["missing_commands"] == ["bun", "claude", "tmux"]
     assert payload["missing_env"] == []
     assert "ANTHROPIC_API_KEY" in payload["preflight"]["env_hints"]
     assert "cloud.yaml agents.default does not override" in payload["preflight"]["warning"]
@@ -602,7 +602,9 @@ def test_cloud_chain_preflight_blocks_missing_remote_commands_before_tmux(
     assert "command -v" in commands[1]
     assert "bun" in commands[1]
     assert "claude" in commands[1]
-    assert "shannon" in commands[1]
+    # Post-cutover: Shannon is no longer a PATH-resolved command — it runs
+    # from vendor/shannon under bun.
+    assert "shannon" not in commands[1]
     assert "tmux" in commands[1]
     assert "codex" not in commands[1]
     assert "tmux new-session" not in " ".join(commands)
