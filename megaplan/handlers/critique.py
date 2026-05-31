@@ -50,6 +50,75 @@ from .tiebreaker import _build_tiebreaker_reprompt
 
 log = logging.getLogger("megaplan")
 
+
+def _apply_adaptive_critique_routing(
+    state: PlanState,
+    args: argparse.Namespace,
+    active_checks: list[dict[str, Any]],
+) -> str | None:
+    """Attach per-check critic modes or return an explicit operator pin."""
+    _pin = pinned_critic_model(state)
+    if _pin:
+        if any(isinstance(check.get("complexity"), int) and check["complexity"] >= 4 for check in active_checks):
+            msg = (
+                "[megaplan] WARNING: explicit critic_model pin "
+                f"{_pin!r} disables per-lens critique escalation for "
+                "complexity >= 4 checks; all selected lenses will run on the pin."
+            )
+            print(msg, file=sys.stderr, flush=True)
+            log.warning(msg)
+        return _pin
+
+    # No operator pin: resolve per-check AgentMode from tier_models.critique
+    # (complexity-based routing, SD1). Cache complexity -> AgentMode to avoid
+    # redundant resolution when multiple checks share the same complexity tier.
+    _tier_models = getattr(args, "tier_models", None)
+    if not isinstance(_tier_models, dict):
+        return None
+    _critique_tiers = _tier_models.get("critique")
+    if not isinstance(_critique_tiers, dict) or not _critique_tiers:
+        return None
+
+    from megaplan.execute.batch import _resolve_tier_spec
+    from megaplan.types import AgentMode as _TierAgentMode
+
+    _complexity_cache: dict[int, _TierAgentMode] = {}
+    for _check in active_checks:
+        _cid = _check.get("id", "?")
+        _cx = _check.get("complexity")
+        if not isinstance(_cx, int) or _cx < 1 or _cx > 5:
+            raise CliError(
+                "critique_complexity_invariant",
+                f"Check '{_cid}' has missing or invalid "
+                f"complexity ({_cx!r}); cannot resolve tier "
+                "routing. This is an invariant error in "
+                "the evaluator output.",
+            )
+        if _cx not in _complexity_cache:
+            _spec = _critique_tiers.get(_cx)
+            if not _spec:
+                raise CliError(
+                    "critique_tier_missing",
+                    f"No tier spec for complexity {_cx} "
+                    f"in tier_models.critique; cannot "
+                    f"route check '{_cid}'.",
+                )
+            _t_agent, _t_mode, _t_model = _resolve_tier_spec(
+                args, _spec, phase="critique"
+            )
+            _complexity_cache[_cx] = _TierAgentMode(
+                agent=_t_agent,
+                mode=_t_mode,
+                refreshed=False,
+                model=_t_model,
+                effort=None,
+                resolved_model=_t_model,
+            )
+        _check["_resolved_agent_mode"] = _complexity_cache[_cx]
+
+    return None
+
+
 def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="critique") as (plan_dir, state):
         require_state(state, "critique", {STATE_PLANNED})
@@ -336,64 +405,14 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
             expected_ids = [check["id"] for check in active_checks]
             resolved = _pkg.resolve_agent_mode("critique", args)
-        # Operator pin: when execution.critic_model is set, the evaluator still
-        # selects which lenses fire, but every farmed-out critic is forced to
-        # the pinned model instead of the complexity-based tier routing
-        # (tier_models.critique). "" leaves tier-based routing in force.
+        # Explicit operator pin: when execution.critic_model was explicitly
+        # supplied, the evaluator still selects which lenses fire, but every
+        # critic is forced to that model. Stale/profile/default critic_model
+        # values are ignored so tier_models.critique can route per complexity.
         if adaptive_path:
-            _pin = pinned_critic_model(state)
-            if _pin:
-                critic_model_override = _pin
-            else:
-                # No operator pin: resolve per-check AgentMode from
-                # tier_models.critique (complexity-based routing, SD1).
-                # Cache complexity → AgentMode to avoid redundant resolution
-                # when multiple checks share the same complexity tier.
-                _tier_models = getattr(args, "tier_models", None)
-                if isinstance(_tier_models, dict):
-                    _critique_tiers = _tier_models.get("critique")
-                    if isinstance(_critique_tiers, dict) and _critique_tiers:
-                        from megaplan.execute.batch import _resolve_tier_spec
-                        from megaplan.types import AgentMode as _TierAgentMode
-
-                        _complexity_cache: dict[int, _TierAgentMode] = {}
-                        for _check in active_checks:
-                            _cid = _check.get("id", "?")
-                            _cx = _check.get("complexity")
-                            if not isinstance(_cx, int) or _cx < 1 or _cx > 5:
-                                raise CliError(
-                                    "critique_complexity_invariant",
-                                    f"Check '{_cid}' has missing or invalid "
-                                    f"complexity ({_cx!r}); cannot resolve tier "
-                                    "routing. This is an invariant error in "
-                                    "the evaluator output.",
-                                )
-                            if _cx not in _complexity_cache:
-                                _spec = _critique_tiers.get(_cx)
-                                if not _spec:
-                                    raise CliError(
-                                        "critique_tier_missing",
-                                        f"No tier spec for complexity {_cx} "
-                                        f"in tier_models.critique; cannot "
-                                        f"route check '{_cid}'.",
-                                    )
-                                (
-                                    _t_agent,
-                                    _t_mode,
-                                    _t_model,
-                                ) = _resolve_tier_spec(
-                                    args, _spec, phase="critique"
-                                )
-                                _complexity_cache[_cx] = _TierAgentMode(
-                                    agent=_t_agent,
-                                    mode=_t_mode,
-                                    refreshed=False,
-                                    model=_t_model,
-                                    effort=None,
-                                    resolved_model=_t_model,
-                                )
-                            # Attach resolved AgentMode to check metadata (SD1)
-                            _check["_resolved_agent_mode"] = _complexity_cache[_cx]
+            critic_model_override = _apply_adaptive_critique_routing(
+                state, args, active_checks
+            )
         from megaplan.types import AgentMode as _AgentMode
 
         agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
