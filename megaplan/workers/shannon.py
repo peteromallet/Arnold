@@ -788,19 +788,32 @@ def plan_session(
     )
 
 
-def _seeded_rng_for_run(state: PlanState, step: str) -> random.Random:
+def _shannon_run_nonce(state: PlanState, step: str) -> int:
+    """Advance and return a per-state Shannon run nonce for retry-safe new sessions."""
+    iteration = int(state.get("iteration", 0) or 0)
+    meta = state.setdefault("meta", {})
+    nonces = meta.setdefault("shannon_run_nonces", {})
+    if not isinstance(nonces, dict):
+        nonces = {}
+        meta["shannon_run_nonces"] = nonces
+    key = f"{step}:{iteration}"
+    current = int(nonces.get(key, 0) or 0) + 1
+    nonces[key] = current
+    return current
+
+
+def _seeded_rng_for_run(state: PlanState, step: str, *, nonce: int = 0) -> random.Random:
     """Per-(plan, step, iteration) seeded rng for ``plan_session``.
 
-    Pinning randomness to (plan_id, step, iteration) is the intentional
-    reproducibility trade noted at :func:`_select_session_strategy`: rolls
-    for human-likeness are reproducible across reruns of the same step, so a
-    stall in CI is debuggable. T7/T8 will persist this seed alongside the
-    run so a forensic replay can rebuild the exact rolled SessionPlan.
+    Pinning randomness to (plan_id, step, iteration, nonce) keeps rolls
+    inspectable while avoiding a poisonous collision after a failed "new"
+    Shannon session. Without the nonce, retries reuse the same session id and
+    can keep timing out against the previous transcript/session state.
     """
     plan_id = str(state.get("name", ""))
     iteration = int(state.get("iteration", 0) or 0)
     seed_bytes = hashlib.sha256(
-        f"{plan_id}|{step}|{iteration}".encode("utf-8")
+        f"{plan_id}|{step}|{iteration}|{nonce}".encode("utf-8")
     ).digest()
     return random.Random(int.from_bytes(seed_bytes[:8], "big"))
 
@@ -2034,7 +2047,8 @@ def run_shannon_step(
     # ── (f) plan the session ────────────────────────────────────────────
     # plan_session owns every roll (strategy, handshake, context-op delays,
     # new-session id) under a seeded RNG so a run is replayable for forensics.
-    session_rng = _seeded_rng_for_run(state, step)
+    session_nonce = _shannon_run_nonce(state, step)
+    session_rng = _seeded_rng_for_run(state, step, nonce=session_nonce)
     plan = plan_session(
         step,
         stored_id=stored_session_id,
