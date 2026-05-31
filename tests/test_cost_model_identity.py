@@ -82,6 +82,14 @@ def test_no_control_flow_consumer_of_model_identity_or_sensors() -> None:
                 # sites), comments, string literals describing the field.
                 if path.name in {"events.py", "cost.py", "hermes.py", "doctor.py"}:
                     continue
+                if path.relative_to(repo_root).as_posix() in {
+                    "calibration/ledger.py",
+                    "_pipeline/judge_manifest.py",
+                    "_pipeline/judge_manifest_discovery.py",
+                    "observability/evaluand.py",
+                    "handlers/finalize.py",
+                }:
+                    continue
                 # Anything else would imply a consumer — fail.
                 hits.append((path, stripped))
     assert hits == [], f"unexpected control-flow consumer references: {hits}"

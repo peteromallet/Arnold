@@ -410,6 +410,42 @@ def _validate_tier_models(
     return validated
 
 
+def _validate_projected_tier_models(
+    tier_models: Any,
+    *,
+    path: Any = "<calibration_projection>",
+    profile_name: str = "calibration_projection",
+) -> dict[str, dict[int, str]]:
+    """Validate a projected ``tier_models`` view with the existing grammar.
+
+    Calibration projection helpers should not duplicate the profile grammar.
+    This wrapper reuses ``_extract_tier_models`` + ``_validate_tier_models`` so
+    projected data is held to the same phase/tier/spec contract as TOML-backed
+    profile metadata.
+    """
+    extracted = _extract_tier_models(
+        tier_models or {},
+        path=path,
+        profile_name=profile_name,
+    )
+    return _validate_tier_models(path, profile_name, extracted)
+
+
+def _canonicalize_tier_models_for_json(
+    tier_models: dict[str, dict[int, str]] | None,
+) -> dict[str, dict[str, str]]:
+    """Return a JSON-parity ``tier_models`` mapping with string tier keys."""
+    if not tier_models:
+        return {}
+    canonical: dict[str, dict[str, str]] = {}
+    for phase, tiers in tier_models.items():
+        canonical[str(phase)] = {
+            str(tier): spec
+            for tier, spec in sorted(tiers.items())
+        }
+    return canonical
+
+
 def _parse_profiles_doc(
     path: Any, content: str
 ) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
@@ -1771,7 +1807,9 @@ __all__ = [
     "resolve_prep_models",
     "resolve_profile",
     "resolve_pipeline_profile",
+    "_canonicalize_tier_models_for_json",
     "_load_pipeline_local_profiles",
     "_load_pipeline_local_metadata",
+    "_validate_projected_tier_models",
     "_resolve_with_inheritance",
 ]

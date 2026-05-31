@@ -296,7 +296,14 @@ def scatter_gather_processes(
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_tokens = 0
-    with ProcessPoolExecutor(max_workers=concurrency) as executor:
+    try:
+        executor_cm = ProcessPoolExecutor(max_workers=concurrency)
+    except (NotImplementedError, PermissionError):
+        # Some sandboxed Python builds block semaphore-backed process pools.
+        # Preserve ordered fan-out semantics by degrading to threads instead of
+        # failing before any units run.
+        executor_cm = ThreadPoolExecutor(max_workers=concurrency)
+    with executor_cm as executor:
         future_to_idx = {
             executor.submit(run_unit_fn, index, unit): index
             for index, unit in enumerate(units)

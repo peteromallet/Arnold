@@ -1050,6 +1050,11 @@ def make_history_entry(
     batch_complexity: int | None = None,
     tier_model_spec: str | None = None,
     tier_model_resolved: str | None = None,
+    # T14: route metadata (omitted for flat profiles / pre-calibration paths).
+    tier_routing_source: str | None = None,
+    tier_projected: int | None = None,
+    tier_counterfactual_tag: str | None = None,
+    tier_low_confidence: bool = False,
 ) -> HistoryEntry:
     entry: HistoryEntry = {
         "step": step,
@@ -1093,6 +1098,15 @@ def make_history_entry(
         entry["tier_model_spec"] = tier_model_spec
     if tier_model_resolved is not None:
         entry["tier_model_resolved"] = tier_model_resolved
+    # T14: route metadata — only present when tier routing is active.
+    if tier_routing_source is not None:
+        entry["tier_routing_source"] = tier_routing_source
+    if tier_projected is not None:
+        entry["tier_projected"] = tier_projected
+    if tier_counterfactual_tag is not None:
+        entry["tier_counterfactual_tag"] = tier_counterfactual_tag
+    if tier_low_confidence:
+        entry["tier_low_confidence"] = tier_low_confidence
     return entry
 
 

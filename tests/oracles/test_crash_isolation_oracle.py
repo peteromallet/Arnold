@@ -189,6 +189,7 @@ def test_in_process_os_exit_terminates_interpreter(tmp_path: Path) -> None:
         [sys.executable, "-c", wrapper],
         capture_output=True,
         cwd=str(tmp_path),
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])},
         timeout=15,
     )
     assert proc.returncode == 137, (

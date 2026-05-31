@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import megaplan.workers as worker_module
+from megaplan._pipeline.flags import calibration_query_route_on
 from megaplan._core import (
     apply_session_update,
     append_history,
@@ -33,6 +34,7 @@ from megaplan._core import (
     store_raw_worker_output,
 )
 from megaplan.audits.quality_gates import capture_before_line_counts
+from megaplan.calibration import query_route_if_enabled
 from megaplan.execute.aggregation import (
     _append_scope_drift_blocker,
     _build_aggregate_execution_payload,
@@ -75,6 +77,91 @@ from megaplan.workers import WorkerResult
 log = logging.getLogger(__name__)
 
 _BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
+
+
+def _batch_task_signature(batch_task_ids: Iterable[str], batch_complexity: int) -> str:
+    """Build the calibration task signature for a batch query."""
+    ids = [task_id for task_id in batch_task_ids if isinstance(task_id, str) and task_id]
+    return f"batch:max_complexity={batch_complexity}:task_ids={','.join(sorted(ids))}"
+
+
+@dataclass(frozen=True)
+class _TierResolution:
+    """Resolved tier metadata from one route decision.
+
+    Carries the selected spec along with observability tags that describe
+    *how* the decision was reached (source, projected tier, exploration,
+    confidence).  ``spec`` is ``None`` when no usable tier could be resolved.
+    """
+
+    spec: str | None
+    source: str  # "toml" or "calibration_query"
+    projected_tier: int | None
+    counterfactual_tag: str | None
+    low_confidence: bool
+
+
+def _calibration_tier_spec(
+    *,
+    plan_dir: Path,
+    tier_map: dict[int, str],
+    batch_task_ids: Iterable[str],
+    batch_complexity: int,
+) -> _TierResolution:
+    """Return a validated calibration suggestion or fall back to TOML routing.
+
+    The fallback behaviour is deliberately identical to the historical
+    ``tier_map.get(batch_complexity)`` path when the flag is off, no suggestion
+    exists, or the suggestion is malformed.
+
+    Returns a :class:`_TierResolution` whose ``spec`` field is the selected
+    tier spec string (or ``None`` when no spec could be resolved).
+    """
+    fallback_spec = tier_map.get(batch_complexity)
+    if not calibration_query_route_on():
+        return _TierResolution(
+            spec=fallback_spec,
+            source="toml",
+            projected_tier=batch_complexity if fallback_spec else None,
+            counterfactual_tag=None,
+            low_confidence=False,
+        )
+    suggestion = query_route_if_enabled(
+        _batch_task_signature(batch_task_ids, batch_complexity),
+        plan_dir=plan_dir,
+        taint_class=None,
+        exploration_budget=0.0,
+        default_tier=batch_complexity,
+        tier_models={"execute": {str(k): str(v) for k, v in tier_map.items()}},
+    )
+    if suggestion is None:
+        return _TierResolution(
+            spec=fallback_spec,
+            source="toml",
+            projected_tier=batch_complexity if fallback_spec else None,
+            counterfactual_tag=None,
+            low_confidence=False,
+        )
+    suggested_spec = suggestion.tier_spec
+    if (
+        not isinstance(suggested_spec, str)
+        or not suggested_spec.strip()
+        or suggested_spec not in {str(spec) for spec in tier_map.values()}
+    ):
+        return _TierResolution(
+            spec=fallback_spec,
+            source="toml",
+            projected_tier=batch_complexity if fallback_spec else None,
+            counterfactual_tag=None,
+            low_confidence=False,
+        )
+    return _TierResolution(
+        spec=suggested_spec,
+        source="calibration_query",
+        projected_tier=suggestion.projected_tier,
+        counterfactual_tag=suggestion.counterfactual_tag,
+        low_confidence=suggestion.low_confidence,
+    )
 
 def _resolve_tier_spec(
     args: argparse.Namespace,
@@ -524,14 +611,28 @@ def handle_execute_one_batch(
     tier_complexity: int | None = None
     tier_spec_raw: str | None = None
     tier_resolved_model: str | None = None
+    # New T14 metadata fields.
+    tier_routing_source: str | None = None
+    tier_projected: int | None = None
+    tier_counterfactual_tag: str | None = None
+    tier_low_confidence: bool = False
     if tier_map:
         batch_complexity = compute_batch_complexity(finalize_data, batch_task_ids)
         tier_complexity = batch_complexity
-        tier_spec = tier_map.get(batch_complexity)
-        if tier_spec:
-            tier_spec_raw = tier_spec
+        resolution = _calibration_tier_spec(
+            plan_dir=plan_dir,
+            tier_map=tier_map,
+            batch_task_ids=batch_task_ids,
+            batch_complexity=batch_complexity,
+        )
+        tier_routing_source = resolution.source
+        tier_projected = resolution.projected_tier
+        tier_counterfactual_tag = resolution.counterfactual_tag
+        tier_low_confidence = resolution.low_confidence
+        if resolution.spec:
+            tier_spec_raw = resolution.spec
             tier_agent, tier_mode, tier_model = _resolve_tier_spec(
-                args, tier_spec
+                args, resolution.spec
             )
             tier_resolved_model = tier_model
             agent, mode, model = tier_agent, tier_mode, tier_model
@@ -689,6 +790,10 @@ def handle_execute_one_batch(
             batch_complexity=tier_complexity if tier_routing_active else None,
             tier_model_spec=tier_spec_raw if tier_routing_active else None,
             tier_model_resolved=tier_resolved_model if tier_routing_active else None,
+            tier_routing_source=tier_routing_source if tier_routing_active else None,
+            tier_projected=tier_projected if tier_routing_active else None,
+            tier_counterfactual_tag=tier_counterfactual_tag if tier_routing_active else None,
+            tier_low_confidence=tier_low_confidence if tier_routing_active else False,
         ),
     )
     if aggregate_payload is not None and drift is not None:
@@ -802,6 +907,13 @@ def handle_execute_one_batch(
         response["tier_agent"] = agent
         response["tier_mode"] = mode
         response["tier_model"] = model
+        if tier_routing_source is not None:
+            response["tier_routing_source"] = tier_routing_source
+        if tier_projected is not None:
+            response["tier_projected"] = tier_projected
+        if tier_counterfactual_tag is not None:
+            response["tier_counterfactual_tag"] = tier_counterfactual_tag
+        response["tier_low_confidence"] = tier_low_confidence
     if next_step == "execute" and not blocked:
         response["guidance"] = f"Run --batch {batch_number + 1}"
     emitter = getattr(args, "progress_emitter", None)
@@ -1099,16 +1211,29 @@ def handle_execute_auto_loop(
         # Tier routing per-batch observability (only populated when active).
         batch_tier_complexity: int | None = None
         batch_tier_spec: str | None = None
+        batch_tier_source: str | None = None
+        batch_tier_projected: int | None = None
+        batch_tier_counterfactual_tag: str | None = None
+        batch_tier_low_confidence: bool = False
         if tier_map:
             batch_complexity = compute_batch_complexity(
                 finalize_data, batch_task_ids
             )
             batch_tier_complexity = batch_complexity
-            tier_spec = tier_map.get(batch_complexity)
-            if tier_spec:
-                batch_tier_spec = tier_spec
+            resolution = _calibration_tier_spec(
+                plan_dir=plan_dir,
+                tier_map=tier_map,
+                batch_task_ids=batch_task_ids,
+                batch_complexity=batch_complexity,
+            )
+            batch_tier_source = resolution.source
+            batch_tier_projected = resolution.projected_tier
+            batch_tier_counterfactual_tag = resolution.counterfactual_tag
+            batch_tier_low_confidence = resolution.low_confidence
+            if resolution.spec:
+                batch_tier_spec = resolution.spec
                 tier_agent, tier_mode, tier_model = _resolve_tier_spec(
-                    args, tier_spec
+                    args, resolution.spec
                 )
                 batch_agent, batch_mode, batch_model = (
                     tier_agent, tier_mode, tier_model
@@ -1228,6 +1353,10 @@ def handle_execute_auto_loop(
                 "resolved_agent": batch_agent,
                 "resolved_mode": batch_mode,
                 "resolved_model": batch_model,
+                "routing_source": batch_tier_source,
+                "projected_tier": batch_tier_projected,
+                "counterfactual_tag": batch_tier_counterfactual_tag,
+                "low_confidence": batch_tier_low_confidence,
             })
         batch_payloads.append(result.payload)
         all_attribution_records.extend(result.attribution_records)

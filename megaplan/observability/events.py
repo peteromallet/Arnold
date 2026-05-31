@@ -157,6 +157,17 @@ class EventKind:
     # rewritten with the WAL-derived truth.
     STATE_CACHE_DRIFT: str = "state_cache_drift"
 
+    # ── M5 Calibration (2) ────────────────────────────────────────────
+    # Capability claim recorded in the calibration ledger (M5-cal).
+    # Payload carries a full CapabilityClaim dict with an EvaluandRef
+    # outcome — never a bare numeric score.
+    CAPABILITY_CLAIM: str = "capability_claim"
+
+    # Calibration experiment finding (M5-cal T14).
+    # Payload carries a deterministic CalibrationExperimentFinding value
+    # object.  Always governs_live_policy=False, write-only.
+    CALIBRATION_EXPERIMENT: str = "calibration_experiment"
+
 
 # Convenience set for fast membership checks.
 _ALL_EVENT_KINDS: Set[str] = frozenset(
@@ -191,6 +202,8 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.DRIFT_DETECTED,
         EventKind.ACTIVATION_TRANSITIONED,
         EventKind.STATE_CACHE_DRIFT,
+        EventKind.CAPABILITY_CLAIM,
+        EventKind.CALIBRATION_EXPERIMENT,
     }
 )
 
