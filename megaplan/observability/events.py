@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Dict, Generator, Iterator, Optional, Sequ
 
 if TYPE_CHECKING:
     from megaplan._pipeline.envelope import RunEnvelope
+    from megaplan.store import Store
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +216,35 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
 _SEQ_FILE = ".events.seq"
 _INIT_TS_FILE = ".events.init_ts"
 _NDJSON_FILE = "events.ndjson"
+_TELEMETRY_NDJSON_FILE = "telemetry.ndjson"
+
+_TELEMETRY_EVENT_KINDS: Set[str] = frozenset(
+    {
+        EventKind.SUBPROCESS_SPAWNED,
+        EventKind.SUBPROCESS_EXITED,
+        EventKind.SUBPROCESS_SIGNALED,
+        EventKind.LLM_CALL_START,
+        EventKind.LLM_TOKEN_HEARTBEAT,
+        EventKind.LLM_CALL_END,
+        EventKind.LLM_CALL_ERROR,
+        EventKind.COST_RECORDED,
+    }
+)
+
+_SYSTEM_EVENT_KINDS: Set[str] = frozenset(
+    {
+        EventKind.LOCK_ACQUIRED,
+        EventKind.LOCK_RELEASED,
+        EventKind.HEALTH_CHECK_FAILED,
+        EventKind.DRIFT_DETECTED,
+    }
+)
+
+
+def _transaction_id(plan_id: str, phase: Optional[str], seq: int) -> str:
+    phase_key = phase or "cli"
+    raw = f"{plan_id}::{phase_key}::{seq}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
@@ -237,12 +267,12 @@ class EventWriter:
         writer.emit("init", payload={"plan_name": "my-plan"})
     """
 
-    def __init__(self, plan_dir: Path) -> None:
+    def __init__(self, plan_dir: Path, *, store: "Store | None" = None) -> None:
         self._plan_dir = Path(plan_dir)
         self._plan_dir.mkdir(parents=True, exist_ok=True)
-        self._ndjson_path = self._plan_dir / _NDJSON_FILE
         self._seq_path = self._plan_dir / _SEQ_FILE
         self._init_ts_path = self._plan_dir / _INIT_TS_FILE
+        self._store = store or _default_store_for_plan_dir(self._plan_dir)
 
         # Per-instance lock for thread safety within the same process.
         self._thread_lock = threading.Lock()
@@ -266,8 +296,6 @@ class EventWriter:
         sidecar ``.events.seq`` file, guaranteeing monotonic seq *and*
         strict file order even across multiple OS processes.
         """
-        ts_utc = datetime.now(timezone.utc)
-
         with self._thread_lock:
             init_ts = self._load_init_ts()
 
@@ -277,7 +305,7 @@ class EventWriter:
             event: dict = {
                 "seq": -1,  # placeholder — assigned under flock
                 "schema_version": 1,
-                "ts_utc": ts_utc.isoformat(),
+                "ts_utc": "",
                 "ts_rel_init_s": None,
                 "kind": kind,
                 "phase": phase,
@@ -289,21 +317,11 @@ class EventWriter:
             _rid = _resolve_run_id()
             if _rid is not None:
                 event["run_id"] = _rid
-            if init_ts is not None:
-                event["ts_rel_init_s"] = (ts_utc - init_ts).total_seconds()
-            if kind == EventKind.INIT and init_ts is None:
-                event["ts_rel_init_s"] = 0.0
-
-            line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-
             # ── FULL critical section under flock ─────────────────────
-            # Open or create both the seq counter and the ndjson file.
+            # Open or create the seq counter. The durable event write goes
+            # through Store while this per-plan-dir flock is held, preserving
+            # legacy ordering without writing events.ndjson directly.
             seq_fd = os.open(str(self._seq_path), os.O_RDWR | os.O_CREAT, 0o644)
-            ndjson_fd = os.open(
-                str(self._ndjson_path),
-                os.O_WRONLY | os.O_APPEND | os.O_CREAT,
-                0o644,
-            )
             try:
                 fcntl.flock(seq_fd, fcntl.LOCK_EX)
 
@@ -319,23 +337,42 @@ class EventWriter:
                 os.ftruncate(seq_fd, os.lseek(seq_fd, 0, os.SEEK_CUR))
                 os.fsync(seq_fd)
 
-                # (2) Patch the real seq into the event line and append.
+                # (2) Patch the real seq/timestamp into the event line and append.
+                ts_utc = datetime.now(timezone.utc)
                 event["seq"] = new_seq
-                final_line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-                os.write(ndjson_fd, (final_line + "\n").encode("utf-8"))
-                os.fsync(ndjson_fd)
+                event["ts_utc"] = ts_utc.isoformat()
+                if init_ts is not None:
+                    event["ts_rel_init_s"] = (ts_utc - init_ts).total_seconds()
+                if kind == EventKind.INIT and init_ts is None:
+                    event["ts_rel_init_s"] = 0.0
+                event["transaction_id"] = _transaction_id(
+                    self._plan_dir.name,
+                    phase,
+                    new_seq,
+                )
+                if kind in _TELEMETRY_EVENT_KINDS:
+                    event["store_method"] = "append_telemetry_event"
+                elif kind in _SYSTEM_EVENT_KINDS:
+                    event["store_method"] = "log_system_event"
+                else:
+                    event["store_method"] = "record_epic_event"
+                _store_event(self._store, self._plan_dir.name, event)
+                from megaplan.observability.events_projection import write_projection
 
-                # (3) Release flock AFTER both writes are complete.
+                write_projection(
+                    self._plan_dir,
+                    self._store,
+                    plan_id=self._plan_dir.name,
+                    force=True,
+                )
+
+                # (3) Release flock AFTER Store write + projection complete.
                 fcntl.flock(seq_fd, fcntl.LOCK_UN)
             finally:
                 # Close regardless of lock state (already unlocked if we
                 # reached the explicit unlock above; still safe to call).
                 try:
                     os.close(seq_fd)
-                except OSError:
-                    pass
-                try:
-                    os.close(ndjson_fd)
                 except OSError:
                     pass
 
@@ -370,16 +407,53 @@ _WRITERS: Dict[str, EventWriter] = {}
 _WRITERS_LOCK = threading.Lock()
 
 
-def _writer_key(plan_dir: Path) -> str:
-    return str(plan_dir.resolve())
+def _writer_key(plan_dir: Path, store: "Store | None" = None) -> str:
+    return f"{plan_dir.resolve()}::{id(store) if store is not None else 'default'}"
 
 
-def _get_writer(plan_dir: Path) -> EventWriter:
-    key = _writer_key(plan_dir)
+def _default_store_root(plan_dir: Path) -> Path:
+    parts = plan_dir.parts
+    if len(parts) >= 3 and parts[-3:-1] == (".megaplan", "plans"):
+        return Path(*parts[:-2])
+    return plan_dir.parent / ".megaplan-event-store"
+
+
+def _default_store_for_plan_dir(plan_dir: Path) -> "Store":
+    from megaplan.store.file import FileStore
+
+    return FileStore(_default_store_root(Path(plan_dir)))
+
+
+def _store_event(store: "Store", plan_id: str, event: dict[str, Any]) -> None:
+    kind = str(event.get("kind") or "")
+    if kind in _TELEMETRY_EVENT_KINDS:
+        store.append_telemetry_event(kind, {"event": dict(event)}, scope=plan_id)
+    elif kind in _SYSTEM_EVENT_KINDS:
+        store.log_system_event(
+            level="debug",
+            category="system",
+            event_type=kind,
+            message=f"{kind} emitted",
+            details={"event": dict(event)},
+            epic_id=plan_id,
+        )
+    else:
+        store.record_epic_event(
+            epic_id=plan_id,
+            transaction_id=str(event.get("transaction_id") or ""),
+            event_type="state_change",
+            summary=f"{kind} emitted",
+            prior_state=None,
+            post_state={"event": dict(event)},
+        )
+
+
+def _get_writer(plan_dir: Path, *, store: "Store | None" = None) -> EventWriter:
+    key = _writer_key(plan_dir, store)
     with _WRITERS_LOCK:
         writer = _WRITERS.get(key)
         if writer is None:
-            writer = EventWriter(plan_dir)
+            writer = EventWriter(plan_dir, store=store)
             _WRITERS[key] = writer
         return writer
 
@@ -390,12 +464,30 @@ def emit(
     *,
     phase: Optional[str] = None,
     payload: Optional[Dict[str, Any]] = None,
+    store: "Store | None" = None,
 ) -> dict:
     """Module-level convenience: write one event to *plan_dir*/events.ndjson.
 
     Returns the full event dict.
     """
-    return _get_writer(plan_dir).emit(kind, phase=phase, payload=payload)
+    return _get_writer(plan_dir, store=store).emit(kind, phase=phase, payload=payload)
+
+
+def append_telemetry_event(
+    plan_dir: Path,
+    kind: str,
+    payload: Optional[Dict[str, Any]] = None,
+    *,
+    scope: Optional[str] = None,
+    phase: Optional[str] = None,
+    store: "Store | None" = None,
+) -> dict:
+    """Append one telemetry event through the plan-scoped event store."""
+
+    body = dict(payload or {})
+    if scope is not None:
+        body.setdefault("scope", scope)
+    return _get_writer(plan_dir, store=store).emit(kind, phase=phase, payload=body)
 
 
 def compute_model_identity(
@@ -476,6 +568,10 @@ def read_events(
     Yields:
         Parsed event dicts in file order.
     """
+    from megaplan.observability.events_projection import ensure_events_projection
+
+    writer = _get_writer(Path(plan_dir))
+    ensure_events_projection(Path(plan_dir), store=writer._store, plan_id=Path(plan_dir).name)
     ndjson_path = Path(plan_dir) / _NDJSON_FILE
     if not ndjson_path.exists():
         return

@@ -38,6 +38,7 @@ _PROMPTS: Path = _PIPELINE_DIR / "prompts"
 
 # ── Module-level metadata surfaced via PipelineRegistry (T9) ──────────
 
+name: str = "writing-panel-strict"
 description: str = (
     "Adversarial review of prose drafts by N reviewers, then revise. "
     "Not for code."
@@ -49,6 +50,10 @@ recommended_profiles: tuple[str, ...] = (
     "@writing-panel-strict:standard",
     "@writing-panel-strict:cheap",
 )
+driver: tuple[str, str] = ("graph", "dispatch+emit")
+entrypoint: str = "build_pipeline"
+arnold_api_version: str = "1.0"
+capabilities: tuple[str, ...] = ("writing", "critique", "revise")
 
 
 def build_pipeline() -> Pipeline:
@@ -99,4 +104,8 @@ __all__ = [
     "default_profile",
     "supported_modes",
     "recommended_profiles",
+    "driver",
+    "entrypoint",
+    "arnold_api_version",
+    "capabilities",
 ]

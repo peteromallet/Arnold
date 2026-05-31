@@ -83,9 +83,10 @@ class TestLegacySuperviseSubprocess:
         assert "env" in params
         assert "liveness_plan_dir" in params
 
-    def test_is_separate_from_auto_run_megaplan(self):
-        """legacy must be a copy, not a reference to auto._run_megaplan."""
-        assert _snap.legacy_supervise_subprocess is not _auto._run_megaplan
+    def test_auto_run_megaplan_is_retired(self):
+        """auto no longer exposes the legacy subprocess command seam."""
+        assert not hasattr(_auto, "_run_megaplan")
+        assert _snap.legacy_supervise_subprocess is not _auto._run_planning_phase
 
     def test_returns_tuple_on_trivial_invocation(self, tmp_path):
         """Call with a trivial command that exits quickly — smoke test."""

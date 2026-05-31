@@ -785,6 +785,7 @@ def build_parser() -> argparse.ArgumentParser:
             "add-note",
             "replan",
             "recover-blocked",
+            "resume-clarify",
             "set-robustness",
             "set-profile",
             "set-model",

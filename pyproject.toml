@@ -46,6 +46,7 @@ agent = [
 ]
 [project.scripts]
 megaplan = "megaplan.cli:cli_entry"
+arnold = "megaplan.cli.arnold:cli_entry"
 
 [tool.hatch.build]
 exclude = [

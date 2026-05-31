@@ -399,7 +399,7 @@ def _supervise_subprocess(
     return int(proc.returncode or 0), stdout, stderr, state
 
 
-def _run_megaplan(
+def _run_planning_phase(
     args: list[str],
     *,
     cwd: Path | None = None,
@@ -408,63 +408,187 @@ def _run_megaplan(
     progress_env: dict[str, str] | None = None,
     liveness_plan_dir: Path | None = None,
 ) -> tuple[int, str, str]:
-    """Run a megaplan sub-command in its own process.
+    """Run one auto-dispatched command in-process.
 
-    We shell out rather than importing the handlers directly so each phase gets
-    a fresh argparse/handler lifecycle. This matches how external orchestrators
-    drive the CLI and avoids subtle state leakage between phases.
-
-    ``timeout`` is seconds to wait before killing the subprocess. On timeout we
-    return exit code ``PHASE_TIMEOUT_EXIT_CODE`` and append a marker to stderr
-    so the driver can surface it as a phase failure without crashing the loop.
-    The subprocess is killed; any grandchildren it spawned (e.g. codex) may
-    need a moment to settle but will exit when their parent's pipes close.
+    Kept as the test seam replacing the retired subprocess helper.
     """
-    env = None
-    if progress_env:
-        env = os.environ.copy()
-        env.update(progress_env)
-    if idle_timeout is None:
-        try:
-            proc = subprocess.run(
-                [sys.executable, "-m", "megaplan", *args],
-                cwd=str(cwd) if cwd else None,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=env,
-            )
-            return proc.returncode, proc.stdout, proc.stderr
-        except subprocess.TimeoutExpired as error:
-            out = error.output or ""
-            err = error.stderr or ""
-            if isinstance(out, bytes):
-                out = out.decode("utf-8", errors="replace")
-            if isinstance(err, bytes):
-                err = err.decode("utf-8", errors="replace")
-            marker = f"\n[megaplan auto] subprocess timed out after {timeout}s"
-            return PHASE_TIMEOUT_EXIT_CODE, out, (err + marker).strip()
-        except FileNotFoundError as error:
-            return 127, "", str(error)
-    try:
-        proc = spawn(
-            [sys.executable, "-m", "megaplan", *args],
-            cwd=str(cwd) if cwd else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-        )
-    except FileNotFoundError as error:
-        return 127, "", str(error)
 
-    exit_code, stdout, stderr, _state = _supervise_subprocess(
-        proc,
-        liveness_plan_dir,
-        idle_timeout,
-        timeout,
-        args=args,
+    del timeout, idle_timeout
+    if not args:
+        return 1, "", "missing command"
+    if args[0] == "override":
+        return _run_override_command(args, cwd=cwd)
+    plan = _plan_arg(args)
+    if plan is None:
+        return 1, "", "missing --plan"
+    from megaplan._pipeline.registry import PipelineRegistry
+
+    pipeline = PipelineRegistry().get("planning")
+    if pipeline is None:
+        return 1, "", "planning pipeline unavailable"
+    return pipeline.run_phase(
+        args[0],
+        plan=plan,
+        cwd=cwd,
+        plan_dir=liveness_plan_dir,
+        argv=args,
+        progress_env=progress_env,
     )
-    return exit_code, stdout, stderr
+
+
+def _plan_arg(args: list[str]) -> str | None:
+    try:
+        index = args.index("--plan")
+    except ValueError:
+        return None
+    if index + 1 >= len(args):
+        return None
+    return args[index + 1]
+
+
+def _run_override_command(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+) -> tuple[int, str, str]:
+    plan = _plan_arg(args)
+    if plan is None:
+        return 1, "", "missing --plan"
+    action = args[1] if len(args) > 1 else ""
+    root = Path(cwd or Path.cwd())
+    try:
+        from megaplan.cli import load_plan
+        from megaplan.handlers.override import (
+            _override_abort,
+            _override_force_proceed,
+            handle_override,
+        )
+        from megaplan._core.io import json_dump
+
+        plan_dir, state = load_plan(root, plan)
+        namespace = _override_namespace(args, plan=plan)
+        if action == "force-proceed":
+            response = _override_force_proceed(root, plan_dir, state, namespace)
+        elif action == "abort":
+            response = _override_abort(root, plan_dir, state, namespace)
+        else:
+            response = handle_override(root, namespace)
+        return 0, json_dump(response), ""
+    except CliError as error:
+        payload: dict[str, Any] = {
+            "success": False,
+            "error": error.code,
+            "message": error.message,
+        }
+        if error.extra:
+            payload["details"] = dict(error.extra)
+        return error.exit_code, "", json.dumps(payload)
+    except Exception as error:  # noqa: BLE001 - match CLI failure surface.
+        return 1, "", f"{type(error).__name__}: {error}"
+
+
+def _override_namespace(args: list[str], *, plan: str) -> argparse.Namespace:
+    action = args[1] if len(args) > 1 else ""
+    values: dict[str, Any] = {
+        "plan": plan,
+        "override_action": action,
+        "note": None,
+        "reason": "",
+        "source": "user",
+        "user_approved": False,
+        "robustness": None,
+        "profile": None,
+        "phase": None,
+        "model": None,
+        "vendor": None,
+        "strict_notes": None,
+    }
+    index = 2
+    while index < len(args):
+        token = args[index]
+        if token in {
+            "--plan",
+            "--note",
+            "--reason",
+            "--source",
+            "--robustness",
+            "--profile",
+            "--phase",
+            "--model",
+            "--vendor",
+        } and index + 1 < len(args):
+            values[token[2:].replace("-", "_")] = args[index + 1]
+            index += 1
+        elif token == "--user-approved":
+            values["user_approved"] = True
+        index += 1
+    return argparse.Namespace(**values)
+
+
+def _override_force_proceed_in_process(
+    *,
+    root: Path,
+    plan: str,
+    reason: str,
+    user_approved: bool = False,
+) -> tuple[int, str, str]:
+    from megaplan.cli import load_plan
+    from megaplan.handlers.override import _override_force_proceed
+    from megaplan._core.io import json_dump
+
+    try:
+        plan_dir, state = load_plan(root, plan)
+        args = argparse.Namespace(
+            plan=plan,
+            override_action="force-proceed",
+            reason=reason,
+            user_approved=user_approved,
+            strict_notes=None,
+        )
+        return 0, json_dump(_override_force_proceed(root, plan_dir, state, args)), ""
+    except CliError as error:
+        payload: dict[str, Any] = {
+            "success": False,
+            "error": error.code,
+            "message": error.message,
+        }
+        if error.extra:
+            payload["details"] = dict(error.extra)
+        return error.exit_code, "", json.dumps(payload)
+    except Exception as error:  # noqa: BLE001
+        return 1, "", f"{type(error).__name__}: {error}"
+
+
+def _override_abort_in_process(
+    *,
+    root: Path,
+    plan: str,
+    reason: str,
+) -> tuple[int, str, str]:
+    from megaplan.cli import load_plan
+    from megaplan.handlers.override import _override_abort
+    from megaplan._core.io import json_dump
+
+    try:
+        plan_dir, state = load_plan(root, plan)
+        args = argparse.Namespace(
+            plan=plan,
+            override_action="abort",
+            reason=reason,
+            strict_notes=None,
+        )
+        return 0, json_dump(_override_abort(root, plan_dir, state, args)), ""
+    except CliError as error:
+        payload: dict[str, Any] = {
+            "success": False,
+            "error": error.code,
+            "message": error.message,
+        }
+        if error.extra:
+            payload["details"] = dict(error.extra)
+        return error.exit_code, "", json.dumps(payload)
+    except Exception as error:  # noqa: BLE001
+        return 1, "", f"{type(error).__name__}: {error}"
 
 
 def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
@@ -565,13 +689,12 @@ def _status(
     timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
     progress_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {"cwd": cwd, "timeout": timeout}
-    if progress_env:
-        kwargs["progress_env"] = progress_env
-    code, out, err = _run_megaplan(["status", "--plan", plan], **kwargs)
-    if code != 0:
-        raise RuntimeError(f"megaplan status failed (exit {code}): {err.strip() or out.strip()}")
-    return json.loads(out)
+    del timeout, progress_env
+    from megaplan.cli.status_view import handle_status
+
+    root = Path(cwd or Path.cwd())
+    response = handle_status(root, argparse.Namespace(plan=plan, pending_human=False))
+    return dict(response)
 
 
 def _has_valid_next(status: dict[str, Any], action: str) -> bool:
@@ -1474,9 +1597,9 @@ def drive(
             run_kwargs["progress_env"] = progress_env
         _apply_envelope_handshake(run_kwargs, plan_dir)
         try:
-            code, out, err = _run_megaplan(cmd, **run_kwargs)
+            code, out, err = _run_planning_phase(cmd, **run_kwargs)
         except TypeError as error:
-            # Several unit tests monkeypatch _run_megaplan with the pre-idle-timeout
+            # Several unit tests monkeypatch _run_planning_phase with the pre-idle-timeout
             # signature. Keep that surface compatible without weakening the real path.
             if (
                 "idle_timeout" not in str(error)
@@ -1487,7 +1610,7 @@ def drive(
             run_kwargs.pop("idle_timeout", None)
             run_kwargs.pop("liveness_plan_dir", None)
             run_kwargs.pop("progress_env", None)
-            code, out, err = _run_megaplan(cmd, **run_kwargs)
+            code, out, err = _run_planning_phase(cmd, **run_kwargs)
 
         # Read the structured phase_result.json only when this command actually
         # produced it. A stale result from the previous phase must not mask a
@@ -1939,16 +2062,10 @@ def drive(
                     if progress_env:
                         run_kwargs["progress_env"] = progress_env
                     _apply_envelope_handshake(run_kwargs, plan_dir)
-                    code, out, err = _run_megaplan(
-                        [
-                            "override",
-                            "force-proceed",
-                            "--plan",
-                            plan,
-                            "--reason",
-                            "megaplan auto: escalate → force-proceed",
-                        ],
-                        **run_kwargs,
+                    code, out, err = _override_force_proceed_in_process(
+                        root=Path(cwd or Path.cwd()),
+                        plan=plan,
+                        reason="megaplan auto: escalate → force-proceed",
                     )
                     if code != 0:
                         log(f"force-proceed failed (exit {code}): {err.strip() or out.strip()}")
@@ -2006,16 +2123,10 @@ def drive(
                     if progress_env:
                         run_kwargs["progress_env"] = progress_env
                     _apply_envelope_handshake(run_kwargs, plan_dir)
-                    _run_megaplan(
-                        [
-                            "override",
-                            "abort",
-                            "--plan",
-                            plan,
-                            "--reason",
-                            "megaplan auto: escalate → abort",
-                        ],
-                        **run_kwargs,
+                    _override_abort_in_process(
+                        root=Path(cwd or Path.cwd()),
+                        plan=plan,
+                        reason="megaplan auto: escalate → abort",
                     )
                     return _outcome(
                         "aborted",

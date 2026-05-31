@@ -201,7 +201,7 @@ def test_auto_waits_for_healthy_active_step_instead_of_rerunning_phase(tmp_path:
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -298,7 +298,7 @@ def test_auto_recovers_orphaned_active_step_after_silent_phase_death(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -380,7 +380,7 @@ def test_auto_orphan_recovery_leaves_non_empty_output_alone(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         drive(
             plan,
             cwd=tmp_path,
@@ -489,7 +489,7 @@ def test_auto_clears_rerun_execute_before_redispatch(tmp_path: Path) -> None:
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -580,7 +580,7 @@ def test_auto_orphan_recovery_with_shannon_session_id_in_metadata(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -638,7 +638,7 @@ def test_stall_counter_resets_when_review_json_is_rewritten(tmp_path: Path) -> N
     # Cap iterations low and allow plenty of rework cycles so we exercise
     # the reset path without tripping the rework cap.
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -686,7 +686,7 @@ def test_rework_cap_bails_after_exceeding_max_review_rework_cycles(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -730,7 +730,7 @@ def test_rework_cap_does_not_bail_after_review_approves(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -762,7 +762,7 @@ def test_stall_still_trips_without_review_progress(tmp_path: Path) -> None:
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -807,26 +807,26 @@ def test_get_review_marker_returns_none_when_review_missing(
     assert isinstance(marker, float)
 
 
-def test_run_megaplan_uses_module_launcher(tmp_path: Path) -> None:
-    proc = auto.subprocess.CompletedProcess(
-        args=[],
-        returncode=0,
-        stdout="{}",
-        stderr="",
-    )
+def test_run_planning_phase_dispatches_through_registry(tmp_path: Path) -> None:
+    class FakePipeline:
+        def run_phase(self, phase, **kwargs):
+            assert phase == "execute"
+            assert kwargs["plan"] == "demo"
+            assert kwargs["cwd"] == tmp_path
+            assert kwargs["argv"] == ["execute", "--plan", "demo"]
+            return 0, "{}", ""
 
-    with patch.object(auto.subprocess, "run", return_value=proc) as mock_run:
-        code, out, err = auto._run_megaplan(["status", "--plan", "demo"], cwd=tmp_path, timeout=5)
+    class FakeRegistry:
+        def get(self, name):
+            assert name == "planning"
+            return FakePipeline()
+
+    with patch("megaplan._pipeline.registry.PipelineRegistry", return_value=FakeRegistry()):
+        code, out, err = auto._run_planning_phase(
+            ["execute", "--plan", "demo"], cwd=tmp_path, timeout=5
+        )
 
     assert (code, out, err) == (0, "{}", "")
-    assert mock_run.call_args.args[0] == [
-        sys.executable,
-        "-m",
-        "megaplan",
-        "status",
-        "--plan",
-        "demo",
-    ]
 
 
 def test_phase_command_splits_multi_token_next_step() -> None:
@@ -897,7 +897,7 @@ def test_drive_dispatches_multi_token_next_step_correctly(tmp_path: Path) -> Non
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1024,7 +1024,7 @@ def test_auto_driver_stops_on_lifecycle_terminal_states_without_phase_runs(tmp_p
         calls: list[list[str]] = []
 
         with patch.object(auto, "_status", return_value=_terminal_status(plan, state)), \
-             patch.object(auto, "_run_megaplan", side_effect=lambda *args, **kwargs: calls.append(list(args[0])) or (0, "", "")):
+             patch.object(auto, "_run_planning_phase", side_effect=lambda *args, **kwargs: calls.append(list(args[0])) or (0, "", "")):
             outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
         assert outcome.status == status
@@ -1058,7 +1058,7 @@ def test_auto_driver_recovers_blocked_gate_agent_preflight_via_valid_next(tmp_pa
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1101,7 +1101,7 @@ def test_context_retry_success_retries_execute_with_fresh(tmp_path: Path) -> Non
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
     assert outcome.status == "done"
@@ -1125,7 +1125,7 @@ def test_context_retry_exhaustion_stops_after_max_retries(tmp_path: Path) -> Non
         return 1, fragment, ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1156,7 +1156,7 @@ def test_context_retry_zero_disables_context_handling(tmp_path: Path) -> None:
         return 1, "", fragment
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1186,7 +1186,7 @@ def test_generic_execute_failure_uses_stall_path_not_fresh_retry(tmp_path: Path)
         return 1, "", "ordinary execute failure"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1220,7 +1220,7 @@ def test_phase_failure_persists_failure_before_next_status(tmp_path: Path) -> No
         return 7, "", "prep exploded"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
@@ -1271,7 +1271,7 @@ def test_cost_cap_aborts_after_cumulative_cost_exceeds_cap(tmp_path: Path) -> No
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1303,7 +1303,7 @@ def test_cost_cap_equal_boundary_does_not_abort(tmp_path: Path) -> None:
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1333,7 +1333,7 @@ def test_cost_cap_single_expensive_phase_finishes_before_abort(tmp_path: Path) -
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1365,7 +1365,7 @@ def test_unset_cost_cap_does_not_terminate_on_high_cost(tmp_path: Path) -> None:
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1479,7 +1479,7 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(
              auto,
-             "_run_megaplan",
+             "_run_planning_phase",
              side_effect=fake_run_with_phase_result(
                  plan_dir,
                  exit_kind="blocked_by_quality",
@@ -1564,7 +1564,7 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(
              auto,
-             "_run_megaplan",
+             "_run_planning_phase",
              side_effect=fake_run_with_phase_result(
                  plan_dir,
                  exit_kind="blocked_by_prereq",
@@ -1621,7 +1621,7 @@ def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) 
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(
              auto,
-             "_run_megaplan",
+             "_run_planning_phase",
              side_effect=fake_run_with_phase_result(plan_dir, exit_kind="blocked_by_quality"),
          ):
         outcome = drive(
@@ -1649,7 +1649,7 @@ def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_pat
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(
              auto,
-             "_run_megaplan",
+             "_run_planning_phase",
              side_effect=fake_run_with_phase_result(plan_dir, exit_kind="success"),
          ):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
@@ -1681,7 +1681,7 @@ def test_stale_phase_result_from_previous_phase_does_not_mask_failure(tmp_path: 
         return 1, "", "gate crashed before phase_result emission"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1756,7 +1756,7 @@ def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step
         raise RuntimeError("nested publish failed")
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1813,7 +1813,7 @@ def test_failed_execute_callback_resume_restores_executed_state(tmp_path: Path) 
         return 0, "review ok", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
     assert outcome.status == "done"
@@ -1861,7 +1861,7 @@ def test_failed_execute_callback_resume_restores_blocked_execute_to_finalized(tm
         return 0, "execute ok", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
     assert outcome.status == "done"
@@ -1883,7 +1883,7 @@ def test_phase_complete_callback_skipped_after_nonzero_phase(tmp_path: Path) -> 
         callback_calls.append(step)
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1940,8 +1940,21 @@ def test_auto_strict_notes_blocks_force_proceed_after_escalate(tmp_path: Path) -
             return 1, "", "CliError: escalate_requires_user_approval — user must approve"
         return 0, "{}", ""
 
+    def fake_force_proceed(*, root, plan, reason, user_approved=False):
+        return fake_run(
+            [
+                "override",
+                "force-proceed",
+                "--plan",
+                plan,
+                "--reason",
+                reason,
+            ],
+            cwd=root,
+        )
+
     with patch.object(auto, "_status", side_effect=escalated_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_override_force_proceed_in_process", side_effect=fake_force_proceed):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2052,7 +2065,7 @@ def test_drive_supplies_note_arg_when_dispatching_override_add_note(tmp_path: Pa
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2105,7 +2118,7 @@ def test_drive_escalates_to_force_proceed_after_max_add_note_attempts(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2168,7 +2181,7 @@ def test_drive_surfaces_external_error_distinctly(tmp_path: Path) -> None:
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=phase_runner,
     ):
         outcome = drive(
@@ -2231,7 +2244,7 @@ def test_drive_auto_retries_stream_stall_once_for_non_execute_phase(tmp_path: Pa
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ):
         outcome = drive(
@@ -2287,7 +2300,7 @@ def test_drive_blocks_after_retryable_external_error_fails_twice(tmp_path: Path)
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ):
         outcome = drive(
@@ -2346,7 +2359,7 @@ def test_drive_does_not_auto_retry_permanent_external_errors(tmp_path: Path) -> 
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ):
         outcome = drive(
@@ -2393,7 +2406,7 @@ def test_drive_does_not_auto_retry_execute_external_stream_stall(tmp_path: Path)
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ):
         outcome = drive(
@@ -2505,7 +2518,7 @@ def test_drive_logs_warning_when_phase_start_emit_fails(
     caplog.set_level("WARNING", logger="megaplan")
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ), patch.object(auto, "emit_event", side_effect=maybe_fail_emit):
         outcome = drive(plan, cwd=tmp_path, max_iterations=3, poll_sleep=0, writer=lambda _message: None)
@@ -2567,7 +2580,7 @@ def test_drive_halts_before_progress_when_orphan_clear_read_fails(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=lambda *_args, **_kwargs: _orphaned_critique_status(plan)), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         with pytest.raises(CliError, match="M3B_HALT_ORPHAN_CLEAR_READ"):
             drive(
                 plan,
@@ -2629,7 +2642,7 @@ def test_drive_halts_before_progress_when_orphan_clear_write_fails(
     monkeypatch.setattr(auto, "write_plan_state", broken_write)
 
     with patch.object(auto, "_status", side_effect=lambda *_args, **_kwargs: _orphaned_critique_status(plan)), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         with pytest.raises(CliError, match="M3B_HALT_ORPHAN_CLEAR_WRITE"):
             drive(
                 plan,
@@ -2846,7 +2859,7 @@ def test_consecutive_failures_escalate_up_to_next_distinct_model(
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2914,7 +2927,7 @@ def test_at_ceiling_no_escalation_and_manual_review_halt_fires(
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2962,7 +2975,7 @@ def test_escalate_forces_fresh_dispatch(tmp_path: Path) -> None:
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         drive(
             plan,
             cwd=tmp_path,
@@ -3010,7 +3023,7 @@ def test_non_tier_routed_run_no_ops_gracefully(tmp_path: Path) -> None:
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -3060,7 +3073,7 @@ def test_failure_streak_resets_on_progress(tmp_path: Path) -> None:
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,

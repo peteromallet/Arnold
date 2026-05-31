@@ -563,6 +563,27 @@ class MultiStore(Store):
             idempotency_key=idempotency_key,
         )
 
+    def append_telemetry_event(
+        self,
+        kind: str,
+        payload: Mapping[str, Any],
+        *,
+        scope: str | None = None,
+    ) -> dict[str, Any]:
+        return self.file.append_telemetry_event(kind, payload, scope=scope)
+
+    def events_for_plan(self, plan_id: str):
+        events = list(self.file.events_for_plan(plan_id)) + list(self.db.events_for_plan(plan_id))
+        events.sort(
+            key=lambda event: (
+                event.seq if event.seq is not None else -1,
+                str(event.occurred_at or ""),
+                event.source or "",
+                event.id or "",
+            )
+        )
+        return iter(events)
+
     def list_epic_events(self, epic_id: str, *, since: str | None = None, until: str | None = None, kinds: Sequence[str] | None = None, limit: int | None = None) -> list[EpicEvent]:
         return self._route_for_epic(epic_id).list_epic_events(epic_id, since=since, until=until, kinds=kinds, limit=limit)
 

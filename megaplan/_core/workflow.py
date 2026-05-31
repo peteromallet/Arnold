@@ -12,8 +12,6 @@ parallel sources, no parity-drift risk.
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -392,17 +390,6 @@ def _resume_phase_args(phase: str, cursor: dict[str, Any], plan: str) -> list[st
     return args
 
 
-def _default_resume_runner(args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
-    proc = subprocess.run(
-        [sys.executable, "-m", "megaplan", *args],
-        cwd=str(cwd) if cwd else None,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return proc.returncode, proc.stdout, proc.stderr
-
-
 # `_RESUME_ACTIVE_STATES` is now derived on demand from the realized graph
 # via `topology.predecessors(phase, policy='resume')` — see M3 Step 7.
 
@@ -430,8 +417,38 @@ def resume_plan(
     if not isinstance(phase, str) or not phase:
         raise CliError("invalid_resume_cursor", f"Plan '{plan}' has an invalid resume cursor", extra={"resume_cursor": cursor})
     args = _resume_phase_args(phase, cursor, plan)
-    runner_fn = runner or _default_resume_runner
     previous_state = repo.load_state()
+    pipeline_name = (
+        cursor.get("pipeline")
+        if isinstance(cursor.get("pipeline"), str) and cursor.get("pipeline")
+        else previous_state.get("_pipeline_name")
+    )
+    if not isinstance(pipeline_name, str) or not pipeline_name:
+        pipeline_name = "planning"
+    from megaplan._pipeline.registry import canonical_pipeline_name, pipeline_metadata
+
+    pipeline_name = canonical_pipeline_name(pipeline_name)
+    stored_manifest_hash = cursor.get("pipeline_manifest_hash")
+    if not isinstance(stored_manifest_hash, str) or not stored_manifest_hash:
+        stored_manifest_hash = previous_state.get("_pipeline_manifest_hash")
+    if isinstance(stored_manifest_hash, str) and stored_manifest_hash:
+        current_manifest_hash = pipeline_metadata(pipeline_name).get("manifest_hash")
+        if not isinstance(current_manifest_hash, str) or not current_manifest_hash:
+            raise CliError(
+                "pipeline_manifest_unavailable",
+                f"Cannot verify pipeline identity for '{pipeline_name}' during resume",
+                extra={"pipeline": pipeline_name, "stored_manifest_hash": stored_manifest_hash},
+            )
+        if current_manifest_hash != stored_manifest_hash:
+            raise CliError(
+                "pipeline_manifest_mismatch",
+                f"Refusing to resume '{plan}' with changed pipeline manifest for '{pipeline_name}'",
+                extra={
+                    "pipeline": pipeline_name,
+                    "stored_manifest_hash": stored_manifest_hash,
+                    "current_manifest_hash": current_manifest_hash,
+                },
+            )
     from megaplan._core import topology as _topology
     active_state = _topology.predecessors(phase, policy="resume")
     if active_state and previous_state.get("current_state") in {"failed", "blocked"}:
@@ -439,7 +456,22 @@ def resume_plan(
         state["current_state"] = active_state
         repo.save_state(state)
     try:
-        code, stdout, stderr = runner_fn(args, cwd=root)
+        if runner is None:
+            from megaplan._pipeline.registry import PipelineRegistry
+
+            pipeline = PipelineRegistry().get(pipeline_name)
+            if pipeline is None:
+                code, stdout, stderr = 1, "", "planning pipeline unavailable"
+            else:
+                code, stdout, stderr = pipeline.run_phase(
+                    phase,
+                    plan=plan,
+                    cwd=root,
+                    plan_dir=plan_dir,
+                    argv=args,
+                )
+        else:
+            code, stdout, stderr = runner(args, cwd=root)
     except RevisionConflict as error:
         repo.save_state(previous_state)
         state = repo.load_state()

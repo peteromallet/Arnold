@@ -20,6 +20,12 @@ from megaplan.observability.event_sink import (
     NdjsonBackend,
     StoreBackend,
 )
+from megaplan.observability.events_projection import (
+    ensure_events_projection,
+    project_events,
+    project_events_ndjson,
+    schema_equivalence_triples,
+)
 from megaplan.observability.evaluand import (
     BetterResult,
     EvaluandRecord,
@@ -50,6 +56,10 @@ __all__ = [
     "EventEnvelope",
     "NdjsonBackend",
     "StoreBackend",
+    "ensure_events_projection",
+    "project_events",
+    "project_events_ndjson",
+    "schema_equivalence_triples",
     "EvaluandRecord",
     "BetterResult",
     "ModelIORef",

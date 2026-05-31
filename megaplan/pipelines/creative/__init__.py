@@ -37,6 +37,7 @@ from megaplan.pipelines.creative import prompts as _prompts  # noqa: F401, E402
 
 # ── Module-level metadata surfaced via PipelineRegistry ────────────────
 
+name: str = "creative"
 description: str = (
     "Creative-form pipeline: form-aware prep → execute → critique → "
     "revise → finalize. Forms registry validates --form; "
@@ -45,6 +46,10 @@ description: str = (
 default_profile: str | None = None
 supported_modes: tuple[str, ...] = ()
 recommended_profiles: tuple[str, ...] = ()
+driver: tuple[str, str] = ("subprocess_isolated", "linear")
+entrypoint: str = "build_pipeline"
+arnold_api_version: str = "1.0"
+capabilities: tuple[str, ...] = ("creative",)
 
 
 STAGE_SPECS: tuple[tuple[str, str | None, str], ...] = (
@@ -140,4 +145,7 @@ __all__ = [
     "default_profile",
     "supported_modes",
     "recommended_profiles",
+    "driver",
+    "arnold_api_version",
+    "capabilities",
 ]

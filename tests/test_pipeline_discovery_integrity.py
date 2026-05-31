@@ -9,7 +9,6 @@ from megaplan._pipeline.registry import (
     Disposition,
     scan_python_pipelines,
     discover_python_pipelines,
-    _BUILTIN_NAMES,
 )
 
 
