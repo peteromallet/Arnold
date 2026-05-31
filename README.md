@@ -46,17 +46,27 @@ Hand this to your coding agent:
 ```
 Please install and set up megaplan for this project:
 
-pip install 'megaplan-harness[agent]'
-megaplan setup
+Clone it as a local editable checkout so I can inspect and edit the source:
 
-The default `partnered` profile pairs a premium model (Claude or Codex) with cheap DeepSeek. Ask me for whichever I have — an Anthropic/Claude or OpenAI/Codex login — plus a DeepSeek API key (or Fireworks key), and wire them up. Once set up, ask me what I need megaplan for.
+cd ~/Documents
+git clone https://github.com/peteromallet/arnold.git
+cd arnold
+python -m pip install -e .
+python -m megaplan setup
+
+The default `partnered` profile pairs a premium model (Claude or Codex) with cheap DeepSeek. Ask me for whichever I have — an Anthropic/Claude or OpenAI/Codex login — plus a DeepSeek API key (or Fireworks key), and wire them up.
+
+Before initializing a plan, read docs/megaplan-prep.md and use it to choose the profile, robustness level, and thinking tier for my task. Once set up, ask me what I need megaplan for.
 ```
 
 Or do it yourself:
 
 ```
-pip install 'megaplan-harness[agent]'
-megaplan setup
+cd ~/Documents
+git clone https://github.com/peteromallet/arnold.git
+cd arnold
+python -m pip install -e .
+python -m megaplan setup
 ```
 
 `megaplan setup` detects your installed agents and walks you through credentials. You need two things:

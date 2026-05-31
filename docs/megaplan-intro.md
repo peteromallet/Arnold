@@ -109,6 +109,8 @@ And ~4× is the *conservative* read. That ~$94 of premium is inflated on purpose
 
 **On provenance.** The DeepSeek figures are from the real invoice — token counts and the 94% cache-hit rate are measured, not estimated. The GPT-5.5 figures are priced at the same ~94% cache rate DeepSeek saw (we don't have GPT's actual cache behavior here); if GPT caches less, the premium numbers — and the gap — only grow.
 
+**Token consumption differences.** Some people have suggested that DeepSeek may use more tokens than premium models to complete the same task. I haven't accounted for that here yet; I'm going to run a direct experiment on it soon. But the gap is large enough that even if DeepSeek is materially less token-efficient, it can still be dramatically cheaper for the parts of the work it can handle reliably.
+
 ## Conclusion
 
 This is a single example — and a deliberately cautious one. A live planning-and-execution engine is about as unforgiving as a codebase gets, so I let the frontier model spend freely on judgment and pinned the one unrecoverable milestone to premium end-to-end. Even handicapped that way, DeepSeek did ~79% of the execution and wrote **100% of the code on eleven of the twelve milestones**, at a fraction of the all-premium cost.
@@ -117,14 +119,32 @@ To be precise about the flip side: the other ~21% — essentially the entire sto
 
 And I think we're barely scratching the surface of what cheap, open models can do. The caution here was warranted by the work — most software development isn't this sensitive. In the general case, an overwhelming amount of real engineering can be handed to models that cost on the order of **~35× less per token**, with the frontier model reserved for the handful of decisions that actually need it.
 
-megaplan is one pipeline that makes that split practical today — and it's only the first. It's built on **Arnold**, the open framework underneath, which I'm opening up so anyone can assemble their own pipelines on the same routing-and-robustness foundation.
+megaplan is one pipeline that makes that split practical today — and it's only the first. It's built on **Arnold**, the open framework underneath, which I'm soon going to open up so anyone can assemble their own pipelines on the same routing-and-robustness foundation.
 
 ## Test it yourself
 
 It's free and open source, and works with Codex, Claude, and open models via Hermes (DeepSeek, Kimi, and others). You don't have to swap your whole workflow — point it at a real task in your own repo and watch where it routes the work:
 
 ```
-megaplan init "<your task>"
+Please install and set up megaplan for this project:
+
+Clone it as a local editable checkout so I can inspect and edit the source:
+
+cd ~/Documents
+git clone https://github.com/peteromallet/arnold.git
+cd arnold
+python -m pip install -e .
+python -m megaplan setup
+
+The default `partnered` profile pairs a premium model (Claude or Codex) with cheap DeepSeek. Ask me for whichever I have — an Anthropic/Claude or OpenAI/Codex login — plus a DeepSeek API key (or Fireworks key), and wire them up.
+
+Before initializing a plan, read docs/megaplan-prep.md and use it to choose the profile, robustness level, and thinking tier for my task. Once set up, ask me what I need megaplan for.
+```
+
+Then read `docs/megaplan-prep.md`, use it to choose the profile, robustness level, and thinking tier for your task, and point megaplan at an idea:
+
+```
+python -m megaplan init --project-dir . "<your task>"
 ```
 
 You could, of course, just point your existing tools at a DeepSeek API key. The harness is the difference between that and *this*: it never hands the cheap model a decision it can't make safely, and it enforces the research, the critique, and the tests that a raw model skips when it feels like it.
