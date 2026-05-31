@@ -345,3 +345,90 @@ def test_compute_batch_complexity_all_valid_tasks_returns_correct_max() -> None:
     assert compute_batch_complexity(finalize_data, ["T1", "T3"]) == 2
     assert compute_batch_complexity(finalize_data, ["T2", "T4"]) == 4
     assert compute_batch_complexity(finalize_data, ["T1", "T2", "T3", "T4"]) == 4
+
+
+# ---------------------------------------------------------------------------
+# compute_batch_complexity tier_override tests
+# ---------------------------------------------------------------------------
+
+
+def _ctask_with_override(task_id: str, complexity: int, tier_override: object = None) -> dict[str, object]:
+    t: dict[str, object] = {"id": task_id, "complexity": complexity}
+    if tier_override is not None:
+        t["tier_override"] = tier_override
+    return t
+
+
+def test_compute_batch_complexity_no_override_unchanged() -> None:
+    """Without tier_override the result equals the base complexity."""
+    finalize_data: dict[str, object] = {
+        "tasks": [_ctask_with_override("T1", 3)]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 3
+
+
+def test_compute_batch_complexity_override_greater_raises_batch_tier() -> None:
+    """tier_override > complexity: effective = tier_override."""
+    finalize_data: dict[str, object] = {
+        "tasks": [_ctask_with_override("T1", 2, tier_override=4)]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 4
+
+
+def test_compute_batch_complexity_override_less_than_complexity_is_noop() -> None:
+    """tier_override <= complexity: effective = complexity (override is no-op)."""
+    finalize_data: dict[str, object] = {
+        "tasks": [_ctask_with_override("T1", 4, tier_override=2)]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 4
+
+
+def test_compute_batch_complexity_override_equal_to_complexity_is_noop() -> None:
+    """tier_override == complexity: effective = complexity."""
+    finalize_data: dict[str, object] = {
+        "tasks": [_ctask_with_override("T1", 3, tier_override=3)]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 3
+
+
+def test_compute_batch_complexity_override_out_of_range_ignored() -> None:
+    """tier_override out of 1..5 is silently ignored."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            _ctask_with_override("T1", 2, tier_override=0),
+            _ctask_with_override("T2", 2, tier_override=6),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 2
+    assert compute_batch_complexity(finalize_data, ["T2"]) == 2
+
+
+def test_compute_batch_complexity_override_non_int_ignored() -> None:
+    """Non-integer tier_override is silently ignored."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            _ctask_with_override("T1", 2, tier_override="high"),
+            _ctask_with_override("T2", 2, tier_override=3.5),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 2
+    assert compute_batch_complexity(finalize_data, ["T2"]) == 2
+
+
+def test_compute_batch_complexity_override_raises_batch_tier_across_tasks() -> None:
+    """Batch max is taken after override is applied per task."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            _ctask_with_override("T1", 1, tier_override=5),
+            _ctask_with_override("T2", 2),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1", "T2"]) == 5
+
+
+def test_compute_batch_complexity_fail_safe_intact_with_missing_complexity() -> None:
+    """Missing complexity still returns 5 even when tier_override is present."""
+    finalize_data: dict[str, object] = {
+        "tasks": [{"id": "T1", "tier_override": 4}]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 5

@@ -136,10 +136,14 @@ def compute_batch_complexity(
 ) -> int:
     """Return the maximum valid task complexity for a batch of tasks.
 
-    Indexes finalize tasks by ID and returns ``max(task.complexity)``
-    for the batch.  Treats missing task IDs, missing ``complexity``,
-    non-integer complexity, and out-of-range values as **5** (fail-safe:
-    expensive model).  Returns 5 for empty or malformed batch input.
+    Indexes finalize tasks by ID and returns ``max(effective_complexity)``
+    for the batch.  Each task's effective complexity is
+    ``max(task.complexity, task.tier_override)`` when ``tier_override`` is an
+    integer in 1..5; out-of-range or non-integer ``tier_override`` values are
+    silently ignored and the base ``complexity`` is used.  Treats missing task
+    IDs, missing ``complexity``, non-integer complexity, and out-of-range
+    values as **5** (fail-safe: expensive model).  Returns 5 for empty or
+    malformed batch input.
     """
     if not batch_task_ids:
         return 5
@@ -160,8 +164,13 @@ def compute_batch_complexity(
             return 5
         if complexity < 1 or complexity > 5:
             return 5
-        if complexity > max_complexity:
-            max_complexity = complexity
+        tier_override = task.get("tier_override")
+        if isinstance(tier_override, int) and 1 <= tier_override <= 5:
+            effective = max(complexity, tier_override)
+        else:
+            effective = complexity
+        if effective > max_complexity:
+            max_complexity = effective
     return max_complexity if max_complexity > 0 else 5
 
 
