@@ -21,7 +21,7 @@ from megaplan.store import ChecklistItemInput, RevisionConflict, StoreError
 from megaplan.store.snapshot import canonical_sha256
 from megaplan.tickets.files import read_ticket_file, slugify, ticket_file_path, write_ticket_file
 from megaplan.tickets.identity import repo_codebase_identity
-from tests.contract.store_contract import run_arnold_adapter_contract, run_store_contract
+from tests.contract._store_contract import run_arnold_adapter_contract, run_store_contract
 
 
 def _init_git_repo(repo_root: Path) -> str:

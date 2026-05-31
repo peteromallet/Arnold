@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from megaplan.store import ChecklistItemInput
-from tests.contract.store_contract import run_dbstore_preflight_contract, run_store_contract
+from tests.contract._store_contract import run_dbstore_preflight_contract, run_store_contract
 
 
 def test_db_store_contract(db_store_factory) -> None:

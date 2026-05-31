@@ -1,4 +1,8 @@
 __pycache__/
+.venv/
+.ruff_cache/
+.pytest_cache/
+.codex/
 .claude/
 .megaplan/
 chain_state.json
@@ -8,6 +12,7 @@ chain_state.json
 .env
 .env.*
 *.env
+!.env.example
 .DS_Store
 dist/
 *.egg-info/
