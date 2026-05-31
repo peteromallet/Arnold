@@ -53,7 +53,7 @@ from typing import Any
 # (drop-root path), so the absolute path is required for the shell join to
 # resolve regardless of the child's cwd.
 VENDORED_SHANNON_PATH = (
-    Path(__file__).resolve().parents[2] / "vendor" / "shannon" / "index.ts"
+    Path(__file__).resolve().parents[1] / "vendor" / "shannon" / "index.ts"
 ).resolve()
 
 from megaplan.runtime.process import OrphanDetectedError, TmuxSession, pane_pids
@@ -91,7 +91,7 @@ def _assert_vendored_shannon_sentinel() -> None:
     """Fail fast if the vendored Shannon fork is missing or unrecognized.
 
     Replaces the prior auto-patcher's graceful-degradation net: if the
-    sentinel comment isn't on the first few lines of vendor/shannon/index.ts,
+    sentinel comment isn't on the first few lines of megaplan/vendor/shannon/index.ts,
     the megaplan patches are not present and slash-completion / paste-first-turn
     / env-scrub silently break. Raise a ``CliError(code='shannon_vendor_missing')``
     so the operator sees the problem at the boundary.
@@ -106,15 +106,15 @@ def _assert_vendored_shannon_sentinel() -> None:
         raise CliError(
             "shannon_vendor_missing",
             f"Vendored Shannon fork not readable at {VENDORED_SHANNON_PATH}: {exc}. "
-            "Ensure vendor/shannon/index.ts is present and run "
-            "`bun install` inside vendor/shannon/.",
+            "Ensure megaplan/vendor/shannon/index.ts is present and run "
+            "`bun install` inside megaplan/vendor/shannon/.",
         ) from exc
     if _SHANNON_VENDOR_SENTINEL not in head:
         raise CliError(
             "shannon_vendor_missing",
             f"Vendored Shannon fork at {VENDORED_SHANNON_PATH} is missing the "
             f"`{_SHANNON_VENDOR_SENTINEL}` sentinel — patches not applied. "
-            "Re-stage the vendored fork (see vendor/shannon/VENDOR.md).",
+            "Re-stage the vendored fork (see megaplan/vendor/shannon/VENDOR.md).",
         )
     _shannon_vendor_sentinel_ok = True
 

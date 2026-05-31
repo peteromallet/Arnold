@@ -2572,7 +2572,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
                 raise CliError(
                     "agent_deps_missing",
                     f"Shannon requires: {', '.join(missing)}. "
-                    "Install bun (https://bun.sh) and ensure the vendored fork at vendor/shannon/index.ts is present.",
+                    "Install bun (https://bun.sh) and ensure the vendored fork at megaplan/vendor/shannon/index.ts is present.",
                 )
             if agent == "claude":
                 from megaplan._core.io import shannon_missing_deps
@@ -2580,7 +2580,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
                 raise CliError(
                     "agent_deps_missing",
                     f"Claude routes through Shannon and requires: {', '.join(missing)}. "
-                    "Install bun (https://bun.sh) and ensure the vendored fork at vendor/shannon/index.ts is present.",
+                    "Install bun (https://bun.sh) and ensure the vendored fork at megaplan/vendor/shannon/index.ts is present.",
                 )
             raise CliError("agent_not_found", f"Agent '{agent}' not found on PATH")
         # For hermes via agent=="hermes" config default when not explicitly requested,

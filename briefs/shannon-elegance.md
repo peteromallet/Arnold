@@ -32,10 +32,10 @@ converged on **vendoring** as the fix. 65 unit tests pass; `/compact`, `/clear`,
    sets timeout/idle/liveness/tmux, runs `run_command`, and extracts the landed session id.
    Plus one `session_id_of(raw)` (NDJSON + legacy-array + dict). `run_shannon_step` becomes
    a thin orchestrator: build config → plan → run pre_turns → run main → parse/repair.
-4. **Vendor the fork**: copy `@dexh/shannon` `index.ts` into `vendor/shannon/`, apply ALL
+4. **Vendor the fork**: copy `@dexh/shannon` `index.ts` into `megaplan/vendor/shannon/`, apply ALL
    megaplan patches statically (turn-timeout, tool_use guard, slash-completion,
    paste-first-turn, `sendPrompt` stdin `load-buffer`+`paste-buffer -p`, root-safe args,
-   startup-enter, AND native `SHANNON_TMUX_SESSION_NAME` honoring). Run `bun vendor/shannon/
+   startup-enter, AND native `SHANNON_TMUX_SESSION_NAME` honoring). Run `bun megaplan/vendor/shannon/
    index.ts`. **Delete** `_ensure_shannon_parent_timeout_control`, the support-detection
    helpers, the version sentinels, the atomic-write dance — all moot once we own the source.
 5. **Close cheap structural tells** (fold into ShannonConfig): neutral deterministic tmux
@@ -62,7 +62,7 @@ converged on **vendoring** as the fix. 65 unit tests pass; `/compact`, `/clear`,
   concurrent work — do not stage, modify, or depend on them.
 
 ## Locked decisions
-- Vendor the fork; run `bun vendor/shannon/index.ts`; patches applied statically; runtime
+- Vendor the fork; run `bun megaplan/vendor/shannon/index.ts`; patches applied statically; runtime
   patcher deleted.
 - Abstraction shapes as in Scope #1–3.
 - Keep randomness, seeded + recorded.
@@ -70,7 +70,7 @@ converged on **vendoring** as the fix. 65 unit tests pass; `/compact`, `/clear`,
 
 ## Open questions (resolve in prep)
 - Does the vendored `index.ts` have runtime deps (e.g. `commander`)? If so, make them
-  resolvable for `bun vendor/shannon/index.ts` (vendored `node_modules`? a minimal
+  resolvable for `bun megaplan/vendor/shannon/index.ts` (vendored `node_modules`? a minimal
   `package.json` + `bun install`? bun auto-install?).
 - How to keep the vendored fork maintainable vs upstream (a `VENDOR.md` recording the diff,
   or a regen script)?
@@ -92,7 +92,7 @@ converged on **vendoring** as the fix. 65 unit tests pass; `/compact`, `/clear`,
   turns are all `Turn`s through one `run_turn`. Runtime string-patcher gone.
 - 65 tests green + new tests: `plan_session` purity + seeded reproducibility (same seed →
   identical `SessionPlan` sequence), `session_id_of` across formats, and a non-mocked test
-  that runs the vendored `bun vendor/shannon/index.ts` for a trivial turn.
+  that runs the vendored `bun megaplan/vendor/shannon/index.ts` for a trivial turn.
 - Live proofs re-pass against the vendored fork (document the runs in the PR/notes):
   `/compact` completes in ~compaction-time not the timeout; `/clear` rotates+resumes the new
   id; a ~90KB multi-line prompt is delivered byte-exact as one message.
@@ -100,6 +100,6 @@ converged on **vendoring** as the fix. 65 unit tests pass; `/compact`, `/clear`,
   keystroke cadence unless the optional mode is enabled) documented as out-of-scope-on-tmux.
 
 ## Touchpoints
-`megaplan/workers/shannon.py`; new `vendor/shannon/` (`index.ts` + dep manifest + `VENDOR.md`);
+`megaplan/workers/shannon.py`; new `megaplan/vendor/shannon/` (`index.ts` + dep manifest + `VENDOR.md`);
 `tests/test_workers_shannon.py`; possibly `megaplan/_core` for the run-dir / config-dir;
 `megaplan/workers/_impl.py` only if `run_command` genuinely needs a tweak (it should not).

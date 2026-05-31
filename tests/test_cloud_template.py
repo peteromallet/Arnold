@@ -171,7 +171,7 @@ def test_render_dockerfile_installs_cloud_agent_runtime_dependencies() -> None:
 
     assert "      unzip \\" in rendered
     assert "npm i -g @openai/codex @anthropic-ai/claude-code" in rendered
-    # Shannon is no longer installed via npm — it runs from vendor/shannon via bun.
+    # Shannon is no longer installed via npm — it runs from megaplan/vendor/shannon via bun.
     assert "@dexh/shannon" not in rendered
     assert "/usr/local/bin/shannon" not in rendered
     assert "https://bun.sh/install" in rendered

@@ -408,9 +408,9 @@ grep -F 'const TURN_TIMEOUT_MS = 180_000' package/index.ts
 grep -F 'const tmuxSession = `shannon-${randomUUID()}`' package/index.ts
 
 # 3. Stage
-cp package/index.ts vendor/shannon/index.ts
-cp package/package.json vendor/shannon/package.json
-cd vendor/shannon && bun install && cd ../..
+cp package/index.ts megaplan/vendor/shannon/index.ts
+cp package/package.json megaplan/vendor/shannon/package.json
+cd megaplan/vendor/shannon && bun install && cd ../..
 
 # 4. Apply patches in P1..P15 order. Reference implementation:
 #    megaplan/workers/shannon.py::_ensure_shannon_parent_timeout_control (and siblings)
@@ -421,7 +421,7 @@ cd vendor/shannon && bun install && cd ../..
 #    // MEGAPLAN_SHANNON_VENDORED v1 — patches: P1..P15
 
 # 6. Smoke test:
-bun vendor/shannon/index.ts --help    # exits 1, prints "(outputHelp)" — pristine
+bun megaplan/vendor/shannon/index.ts --help    # exits 1, prints "(outputHelp)" — pristine
                                        # commander/exitOverride behavior; not a failure.
 ```
 
@@ -440,7 +440,7 @@ bun vendor/shannon/index.ts --help    # exits 1, prints "(outputHelp)" — prist
 
 ### Static verification (all 15 patches)
 
-All 15 patches (P1..P15) were verified present in `vendor/shannon/index.ts` via grep-anchored source-string checks. Each patch's replacement text is uniquely identifiable and matches the catalog in VENDOR.md exactly once.
+All 15 patches (P1..P15) were verified present in `megaplan/vendor/shannon/index.ts` via grep-anchored source-string checks. Each patch's replacement text is uniquely identifiable and matches the catalog in VENDOR.md exactly once.
 
 - P1 `TURN_TIMEOUT_MS = Number(Bun.env.SHANNON_TURN_TIMEOUT_MS ?? 900_000)` ✓
 - P2 `row.message?.stop_reason === "tool_use"` guard ✓
@@ -467,7 +467,7 @@ A throwaway script pointed `VENDORED_SHANNON_PATH` at a temp file lacking the `M
 
 #### Non-mocked smoke turn (partial)
 
-A direct `bun vendor/shannon/index.ts --session-id smoke-test-session --output-format stream-json -p "…"` invocation was attempted against a trivial 1-turn prompt. The vendored fork launched successfully, `SHANNON_TMUX_SESSION_NAME` was set to the deterministic 12-char sha256 hash, and Shannon began creating a tmux session. The turn did not complete within the 90s timeout — Claude Code's workspace-trust handshake appears to require pre-seeded trust settings (which the Python orchestrator normally handles via `_ensure_workspace_trusted`). **Partial success**: Shannon binary loads, parses flags, creates named tmux session, passes env vars. Full turn completion requires the orchestrator's pre-trust step which is exercised by the Python test suite.
+A direct `bun megaplan/vendor/shannon/index.ts --session-id smoke-test-session --output-format stream-json -p "…"` invocation was attempted against a trivial 1-turn prompt. The vendored fork launched successfully, `SHANNON_TMUX_SESSION_NAME` was set to the deterministic 12-char sha256 hash, and Shannon began creating a tmux session. The turn did not complete within the 90s timeout — Claude Code's workspace-trust handshake appears to require pre-seeded trust settings (which the Python orchestrator normally handles via `_ensure_workspace_trusted`). **Partial success**: Shannon binary loads, parses flags, creates named tmux session, passes env vars. Full turn completion requires the orchestrator's pre-trust step which is exercised by the Python test suite.
 
 **Workspace**: `/tmp/claude-501/shannon_live_proof_<random>` (cleaned up after run).
 
@@ -503,7 +503,7 @@ Pre-existing test failures (unrelated to Shannon vendoring): `test_audits.py` (d
 - **CLAUDE_CONFIG_DIR leakage**: Per-run Claude config dir prevents `/clear` session-file churn from accumulating in `~/.claude/`.
 - **Inner env contamination**: P15 scrubs all `MEGAPLAN_*` / `SHANNON_*` keys from the grandchild Claude process via `env -u KEY` prefixes.
 - **Turn-timeout advertisement**: The parent timeout is passed via `SHANNON_TURN_TIMEOUT_MS` (env, not argv).
-- **Globally-installed `shannon` binary requirement**: Gone. The vendored fork ships as `vendor/shannon/index.ts` and is invoked via `bun <absolute-path>`.
+- **Globally-installed `shannon` binary requirement**: Gone. The vendored fork ships as `megaplan/vendor/shannon/index.ts` and is invoked via `bun <absolute-path>`.
 
 ### Tells residual (documented, not addressed)
 

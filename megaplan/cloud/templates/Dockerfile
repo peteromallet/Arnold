@@ -67,7 +67,7 @@ RUN curl -fsSL https://bun.sh/install | bash \
 
 # Codex CLI + Claude Code, symlinked into /usr/local/bin so non-interactive
 # shells see them. Shannon is no longer installed via npm — the megaplan-vendored
-# fork at vendor/shannon/index.ts is invoked directly via ``bun``.
+# fork at megaplan/vendor/shannon/index.ts is invoked directly via ``bun``.
 RUN . "$NVM_DIR/nvm.sh" \
     && npm i -g @openai/codex @anthropic-ai/claude-code \
     && NVBIN=$(ls -d /root/.nvm/versions/node/*/bin | head -1) \

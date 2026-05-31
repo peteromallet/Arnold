@@ -805,15 +805,15 @@ def setting_is_explicit(section: str, key: str, *, home: Path | None = None) -> 
 # Absolute path to the megaplan-vendored Shannon fork. Kept in sync with
 # ``megaplan.workers.shannon.VENDORED_SHANNON_PATH`` so this module does not
 # import the workers package at module load (workers depends on _core).
-# parents[0]=_core, parents[1]=megaplan, parents[2]=repo root.
+# parents[0]=_core, parents[1]=megaplan.
 _VENDORED_SHANNON_PATH = (
-    Path(__file__).resolve().parents[2] / "vendor" / "shannon" / "index.ts"
+    Path(__file__).resolve().parents[1] / "vendor" / "shannon" / "index.ts"
 ).resolve()
 
 
 def is_shannon_available(*, shutil_ref: Any = None) -> bool:
     """Return True iff bun + claude + tmux are on PATH and the vendored
-    Shannon fork is present at ``vendor/shannon/index.ts``.
+    Shannon fork is present at ``megaplan/vendor/shannon/index.ts``.
 
     Replaces the legacy ``shutil.which`` probe for ``shannon``: the runtime now
     invokes ``bun <vendored-index.ts>`` directly, so the binary is bun and the
@@ -833,7 +833,7 @@ def shannon_missing_deps(*, shutil_ref: Any = None) -> list[str]:
         shutil_ref = shutil
     missing = [bin for bin in ("bun", "tmux", "claude") if not shutil_ref.which(bin)]
     if not _VENDORED_SHANNON_PATH.is_file():
-        missing.append("vendor/shannon/index.ts")
+        missing.append("megaplan/vendor/shannon/index.ts")
     return missing
 
 
