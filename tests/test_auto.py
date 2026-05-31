@@ -953,6 +953,12 @@ def test_phase_command_splits_multi_token_next_step() -> None:
     assert auto._phase_command("override add-note") == ["override", "add-note"]
     assert auto._phase_command("override force-proceed") == ["override", "force-proceed"]
     assert auto._phase_command("override abort") == ["override", "abort"]
+    assert auto._phase_command("recover-blocked") == [
+        "override",
+        "recover-blocked",
+        "--reason",
+        "megaplan auto: recover blocked plan after blocker resolution",
+    ]
     # Single-token phases unchanged.
     assert auto._phase_command("review") == ["review"]
     assert auto._phase_command("step") == ["step"]
