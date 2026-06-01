@@ -29,6 +29,7 @@ custom_nodes/
 # Agent task briefs and prompts — historical scratchpads, not project docs
 docs/megaplan_briefs/
 docs/subagent_prompts/
+docs/local_agent_text_to_graph_e2e.md
 this.env
 _debug_*.py
 install.log
