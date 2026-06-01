@@ -704,6 +704,136 @@ def _snapshot_dir(epic_id: str) -> Path:
     return Path.home() / ".megaplan" / "snapshots" / f"{epic_id}-{timestamp}"
 
 
+def _capsule_blob_store(store: Any, *, epic_id: str | None = None) -> Any:
+    backend = None
+    if epic_id is not None and hasattr(store, "_route_for_epic"):
+        backend = store._route_for_epic(epic_id)
+    elif hasattr(store, "file"):
+        backend = store.file
+    else:
+        backend = store
+    blob_store = getattr(backend, "blobs", None)
+    if blob_store is None:
+        raise CliError(
+            "capsule_blob_store_unavailable",
+            "Capsule operations require a BlobStore-backed epic backend",
+        )
+    return blob_store
+
+
+def _parse_json_object_arg(value: str | None, *, arg_name: str) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise CliError("invalid_args", f"{arg_name} must be valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise CliError("invalid_args", f"{arg_name} must be a JSON object")
+    return parsed
+
+
+def _handle_epic_capsule(root: Path, args: argparse.Namespace) -> StepResponse:
+    from megaplan._pipeline.flags import m7_sinks_on
+    from megaplan.store.capsule import (
+        CapsuleStorageError,
+        build_capsule,
+        fork_capsule,
+        inspect_capsule,
+        list_capsules,
+    )
+
+    if not m7_sinks_on():
+        raise CliError(
+            "feature_disabled",
+            "M7 Capsule commands are disabled; set MEGAPLAN_M7_SINKS=1 to enable them.",
+        )
+
+    store = build_epic_store(root)
+    try:
+        action = args.capsule_action
+        try:
+            if action == "build":
+                blob_store = _capsule_blob_store(store, epic_id=args.epic_id)
+                result = build_capsule(
+                    store,
+                    args.epic_id,
+                    blob_store,
+                    allow_degraded=bool(args.allow_degraded),
+                    created_by=args.created_by,
+                )
+                return {
+                    "success": True,
+                    "step": "epic",
+                    "action": "capsule-build",
+                    "epic_id": args.epic_id,
+                    "capsule_hash": result.capsule.capsule_hash,
+                    "capsule_record_blob_id": result.write_result.capsule_ref.blob_id,
+                    "index_blob_id": result.write_result.index_blob_id,
+                    "completeness": result.capsule.completeness,
+                    "replay_ready": result.capsule.replay_ready,
+                    "record_count": len(result.record_refs),
+                }
+            if action == "inspect":
+                blob_store = _capsule_blob_store(store)
+                inspection = inspect_capsule(blob_store, args.capsule_hash)
+                if not inspection.contract_check.ok or inspection.capsule.completeness != "complete":
+                    raise CliError(
+                        "capsule_contract_failed",
+                        "Capsule inspect found degraded or unmet Contract requirements",
+                        extra={
+                            "summary": dict(inspection.summary),
+                            "failures": list(inspection.contract_check.failures),
+                            "adaptations": list(inspection.contract_check.adaptations),
+                        },
+                    )
+                return {
+                    "success": True,
+                    "step": "epic",
+                    "action": "capsule-inspect",
+                    "capsule": dict(inspection.summary),
+                    "failures": [],
+                    "adaptations": list(inspection.contract_check.adaptations),
+                }
+            if action == "fork":
+                blob_store = _capsule_blob_store(store)
+                overrides = _parse_json_object_arg(
+                    args.definition_overrides_json,
+                    arg_name="--definition-overrides-json",
+                )
+                result = fork_capsule(
+                    blob_store,
+                    args.capsule_hash,
+                    definition_overrides=overrides,
+                    created_by=args.created_by,
+                )
+                return {
+                    "success": True,
+                    "step": "epic",
+                    "action": "capsule-fork",
+                    "source_capsule_hash": args.capsule_hash,
+                    "capsule_hash": result.capsule.capsule_hash,
+                    "parent_edges": result.capsule.lineage.parent_edges,
+                    "parent_edge_count": len(result.capsule.lineage.parent_edges),
+                    "index_blob_id": result.write_result.index_blob_id,
+                }
+            if action == "list":
+                blob_store = _capsule_blob_store(store)
+                return {
+                    "success": True,
+                    "step": "epic",
+                    "action": "capsule-list",
+                    "capsules": list_capsules(blob_store),
+                }
+        except CapsuleStorageError as exc:
+            raise CliError(exc.error_kind, str(exc), extra=exc.details) from exc
+    finally:
+        close = getattr(store, "close", None)
+        if callable(close):
+            close()
+    raise CliError("invalid_args", f"Unknown epic capsule action: {args.capsule_action}")
+
+
 def handle_ticket(args: argparse.Namespace) -> int:
     """Dispatch ``megaplan ticket ...`` subcommands."""
     from megaplan.handlers.tickets import TICKET_DISPATCH
@@ -725,6 +855,8 @@ def handle_ticket(args: argparse.Namespace) -> int:
 
 def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
     action = args.epic_action
+    if action == "capsule":
+        return _handle_epic_capsule(root, args)
     if action == "snapshot":
         store = build_epic_store(root)
         try:
@@ -1112,6 +1244,13 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         if not name:
             print("pipelines new: missing pipeline name", file=sys.stderr)
             return 1
+        driver = getattr(args, "driver", "graph")
+        if driver != "graph":
+            print(
+                f"pipelines new: unsupported driver {driver!r}; only 'graph' is supported",
+                file=sys.stderr,
+            )
+            return 1
 
         # Derive the module stem (hyphens → underscores) and directory name.
         module_stem = name.replace("-", "_")
@@ -1156,7 +1295,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             f'description: str = "TODO: add a description"\n'
             f"default_profile: str | None = None\n"
             f"supported_modes: tuple[str, ...] = ()\n"
-            f'driver: tuple[str, str] = ("graph", "dispatch+emit")\n'
+            f'driver: tuple[str, str] = ({driver!r}, "dispatch+emit")\n'
             f'entrypoint: str = "build_pipeline"\n'
             f'arnold_api_version: str = "1.0"\n'
             f"capabilities: tuple[str, ...] = ()\n"

@@ -148,6 +148,14 @@ def _handle_pipelines(argv: list[str]) -> int:
     check_parser = sub.add_parser("check", help="Validate a discovered module")
     check_parser.add_argument("module")
     sub.add_parser("doctor", help="Print discovery dispositions")
+    new_parser = sub.add_parser("new", help="Scaffold a new module")
+    new_parser.add_argument("module")
+    new_parser.add_argument(
+        "--driver",
+        choices=["graph"],
+        default="graph",
+        help="Scaffold driver shape. Only 'graph' is supported today.",
+    )
     ns = parser.parse_args(argv)
 
     if ns.action == "list":
@@ -171,6 +179,16 @@ def _handle_pipelines(argv: list[str]) -> int:
         return _megaplan_main(["pipelines", "check", canonical_pipeline_name(ns.module)])
     if ns.action == "doctor":
         return _megaplan_main(["pipelines", "doctor"])
+    if ns.action == "new":
+        return _megaplan_main(
+            [
+                "pipelines",
+                "new",
+                canonical_pipeline_name(ns.module),
+                "--driver",
+                ns.driver,
+            ]
+        )
     return 2
 
 
@@ -249,7 +267,7 @@ def _handle_module_verb(module: str, argv: list[str]) -> int:
 def _print_usage(*, file=None) -> None:  # type: ignore[no-untyped-def]
     target = file or sys.stdout
     print(
-        "usage: arnold run ... | arnold pipelines {list,check,doctor} | "
+        "usage: arnold run ... | arnold pipelines {list,check,doctor,new} | "
         "arnold <module> {run,check,doctor,describe,auto} | "
         "arnold planning override ... | arnold auto [planning] ... | "
         "arnold override ...",

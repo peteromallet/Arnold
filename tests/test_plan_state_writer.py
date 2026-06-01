@@ -325,6 +325,7 @@ def test_no_direct_production_plan_run_state_writes_regression() -> None:
         "megaplan/_core/state.py:",
         "megaplan/_core/io.py:",
         "megaplan/loop/engine.py:",
+        "megaplan/supervisor/state.py:",
         "megaplan/workers/shannon.py:",
         "megaplan/agent/tests/",
     )

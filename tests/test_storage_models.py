@@ -7,6 +7,11 @@ import pytest
 from megaplan.schemas import (
     AutomationActor,
     BotTurn,
+    Capsule,
+    CapsuleContract,
+    CapsuleDefinition,
+    CapsuleEvidence,
+    CapsuleLineage,
     ChecklistItem,
     CodeArtifact,
     Codebase,
@@ -31,7 +36,15 @@ from megaplan.schemas import (
     SprintItem,
     SystemLog,
     ToolCall,
+    Warrant,
+    WarrantAccount,
+    WarrantAuthority,
+    WarrantRationaleAnchor,
+    WarrantSignature,
+    WarrantSourceCompleteness,
+    WarrantSourceProjection,
 )
+from megaplan.store.snapshot import canonical_json_dumps
 from tests.conftest import load_state
 
 
@@ -417,3 +430,217 @@ def test_feedback_and_sprint_constraints_match_design_extensions() -> None:
                 "status": "queued",
             }
         )
+
+
+def _capsule_payload() -> dict[str, object]:
+    return {
+        "capsule_hash": "sha256:capsule",
+        "definition": {
+            "identity_hash": "sha256:definition",
+            "static_behavioral_hash": "sha256:static",
+            "runtime_topology_hash": "sha256:runtime",
+            "pipeline_name": "select-tournament",
+            "ports": [{"name": "input", "content_type": "application/json"}],
+            "replay_ready": True,
+        },
+        "contract": {
+            "manifest_abi": "arnold.pipeline.v1",
+            "static_behavioral_hash": "sha256:static",
+            "runtime_topology_hash": "sha256:runtime",
+            "port_expectations": [{"name": "input"}],
+            "evidence_refs": [{"evidence_id": "evidence_1"}],
+            "repo_commit": "abc123",
+            "model_version_requirements": {"execute": "codex:gpt-5.5"},
+            "tool_version_requirements": {"python": "3.12"},
+            "environment_variable_requirements": {"MEGAPLAN_PROFILE": "solo"},
+            "secret_shape_declarations": {
+                "OPENAI_API_KEY": {"kind": "api_key", "prefix": "sk-", "min_length": 20}
+            },
+            "model_requirements": {"execute": "gpt-5.5"},
+        },
+        "lineage": {"capsule_hash": "sha256:capsule"},
+        "evidence": [
+            {
+                "evidence_id": "evidence_1",
+                "evidence_type": "export_manifest",
+                "payload_ref": {"blob_id": "blob_1", "sha256": "sha256:blob"},
+            }
+        ],
+    }
+
+
+def _warrant_payload() -> dict[str, object]:
+    authority = {
+        "authority_id": "authority_1",
+        "policy_envelope": {"spend_ceiling_usd": 10, "autonomy": "bounded"},
+        "grantor": "operator",
+    }
+    account = {
+        "account_id": "account_1",
+        "verified_work_units": [{"task_id": "T1", "status": "done"}],
+        "verified_result_ref": {"receipt_id": "receipt_1"},
+    }
+    rationale_anchor = {
+        "anchor_id": "rationale_1",
+        "manifest_hash": "sha256:manifest",
+        "rationale_ref": {"event_id": "event_1"},
+    }
+    return {
+        "warrant_id": "warrant_1",
+        "authority": authority,
+        "account": account,
+        "rationale_anchor": rationale_anchor,
+        "behavioral_manifest_hash": "sha256:manifest",
+        "verified_result_ref": {"receipt_id": "receipt_1"},
+        "signature": {
+            "signed_payload_sha256": "sha256:payload",
+            "signature": "hex-signature",
+            "key_id": "test-key",
+        },
+    }
+
+
+def test_capsule_warrant_and_source_projection_schema_defaults_and_forward_keys() -> None:
+    capsule = Capsule.model_validate({**_capsule_payload(), "future_capsule_key": "ignored"})
+    warrant = Warrant.model_validate({**_warrant_payload(), "future_warrant_key": "ignored"})
+    source_projection = WarrantSourceProjection.model_validate(
+        {
+            "projection_id": "projection_1",
+            "completeness": {
+                "present": ["authority", "account"],
+                "missing": ["rationale_anchor"],
+                "unsupported": [],
+                "required_fields": ["authority", "account", "rationale_anchor"],
+                "signable": False,
+                "future_completeness_key": "ignored",
+            },
+            "authority": _warrant_payload()["authority"],
+            "source_refs": {"receipts": ["receipt_1"]},
+            "future_projection_key": "ignored",
+        }
+    )
+
+    assert capsule.schema_version == 1
+    assert capsule.definition.schema_version == 1
+    assert capsule.contract.schema_version == 1
+    assert capsule.contract.model_version_requirements == {"execute": "codex:gpt-5.5"}
+    assert capsule.contract.tool_version_requirements == {"python": "3.12"}
+    assert capsule.contract.environment_variable_requirements == {"MEGAPLAN_PROFILE": "solo"}
+    assert capsule.contract.secret_shape_declarations == {
+        "OPENAI_API_KEY": {"kind": "api_key", "prefix": "sk-", "min_length": 20}
+    }
+    assert capsule.lineage.schema_version == 1
+    assert capsule.evidence[0].schema_version == 1
+    assert warrant.schema_version == 1
+    assert warrant.authority.schema_version == 1
+    assert warrant.account.schema_version == 1
+    assert warrant.rationale_anchor.schema_version == 1
+    assert warrant.signature.schema_version == 1
+    assert source_projection.schema_version == 1
+    assert source_projection.completeness.schema_version == 1
+    assert "future_capsule_key" not in capsule.model_dump(mode="json")
+    assert "future_warrant_key" not in warrant.model_dump(mode="json")
+    assert "future_projection_key" not in source_projection.model_dump(mode="json")
+    assert "future_completeness_key" not in source_projection.completeness.model_dump(mode="json")
+
+    minimal_contract = CapsuleContract.model_validate(
+        {
+            "manifest_abi": "arnold.pipeline.v1",
+            "static_behavioral_hash": "sha256:static",
+        }
+    )
+    assert minimal_contract.repo_commit is None
+    assert minimal_contract.model_version_requirements == {}
+    assert minimal_contract.tool_version_requirements == {}
+    assert minimal_contract.environment_variable_requirements == {}
+    assert minimal_contract.secret_shape_declarations == {}
+
+
+@pytest.mark.parametrize(
+    ("model_cls", "payload"),
+    [
+        (CapsuleDefinition, {"static_behavioral_hash": "sha256:static"}),
+        (
+            CapsuleContract,
+            {"static_behavioral_hash": "sha256:static"},
+        ),
+        (
+            CapsuleEvidence,
+            {"evidence_id": "evidence_1", "evidence_type": "receipt"},
+        ),
+        (Capsule, {"capsule_hash": "sha256:capsule"}),
+        (WarrantAuthority, {"authority_id": "authority_1"}),
+        (WarrantAccount, {"account_id": "account_1"}),
+        (
+            WarrantRationaleAnchor,
+            {"anchor_id": "rationale_1", "rationale_ref": {"event_id": "event_1"}},
+        ),
+        (WarrantSignature, {"signature": "hex"}),
+        (Warrant, {"warrant_id": "warrant_1"}),
+        (
+            WarrantSourceProjection,
+            {"projection_id": "projection_1"},
+        ),
+    ],
+)
+def test_capsule_warrant_models_validate_required_fields(model_cls, payload) -> None:
+    with pytest.raises(ValueError):
+        model_cls.model_validate(payload)
+
+
+def test_warrant_source_completeness_rejects_signable_missing_required_fields() -> None:
+    with pytest.raises(ValueError):
+        WarrantSourceCompleteness.model_validate(
+            {
+                "present": ["authority"],
+                "missing": ["account"],
+                "unsupported": [],
+                "required_fields": ["authority", "account"],
+                "signable": True,
+            }
+        )
+
+
+def test_capsule_warrant_and_source_projection_canonical_round_trips() -> None:
+    capsule = Capsule.model_validate(_capsule_payload())
+    warrant = Warrant.model_validate(_warrant_payload())
+    source_projection = WarrantSourceProjection.model_validate(
+        {
+            "projection_id": "projection_1",
+            "completeness": {
+                "present": [
+                    "authority",
+                    "account",
+                    "rationale_anchor",
+                    "behavioral_manifest_hash",
+                    "verified_result_ref",
+                ],
+                "missing": [],
+                "unsupported": [],
+                "required_fields": [
+                    "authority",
+                    "account",
+                    "rationale_anchor",
+                    "behavioral_manifest_hash",
+                    "verified_result_ref",
+                ],
+                "signable": True,
+            },
+            "authority": _warrant_payload()["authority"],
+            "account": _warrant_payload()["account"],
+            "rationale_anchor": _warrant_payload()["rationale_anchor"],
+            "behavioral_manifest_hash": "sha256:manifest",
+            "verified_result_ref": {"receipt_id": "receipt_1"},
+            "source_refs": {"receipts": ["receipt_1"], "events": ["event_1"]},
+        }
+    )
+
+    for model_cls, instance in [
+        (Capsule, capsule),
+        (Warrant, warrant),
+        (WarrantSourceProjection, source_projection),
+    ]:
+        canonical = canonical_json_dumps(instance.model_dump(mode="json"))
+        restored = model_cls.model_validate_json(canonical)
+
+        assert canonical_json_dumps(restored.model_dump(mode="json")) == canonical

@@ -139,6 +139,16 @@ def calibration_query_route_on() -> bool:
     return os.getenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE") == "1"
 
 
+def m7_sinks_on() -> bool:
+    """Return ``True`` only when ``MEGAPLAN_M7_SINKS=1``.
+
+    Capsule, Warrant, and Builder sinks remain default-off public surfaces
+    until this exact env var is flipped.
+    """
+
+    return os.getenv("MEGAPLAN_M7_SINKS") == "1"
+
+
 def control_interface_routing_on() -> bool:
     """Return ``True`` only when ``MEGAPLAN_CONTROL_INTERFACE_ROUTING=1``.
 

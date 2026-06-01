@@ -798,6 +798,7 @@ DEFAULTS = {
     # fail-closed behaviour is a documented TODO). See
     # megaplan/orchestration/completion_contract.py.
     "execution.completion_contract_mode": "shadow",
+    "signing.warrant_key": "",
 }
 
 # Valid pin values for execution.critic_model. Mirrors CRITIC_MODEL_ROSTER in

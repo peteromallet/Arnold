@@ -16,7 +16,7 @@ EXPECTED_SURFACE = {
         "select-tournament",
         "writing-panel-strict",
     ],
-    "pipelines_actions": ["check", "doctor", "list"],
+    "pipelines_actions": ["check", "doctor", "list", "new"],
     "module_verbs": ["run", "check", "doctor", "describe", "auto"],
     "planning_module_verbs": ["run", "check", "doctor", "describe", "auto", "override"],
     "umbrella_override_actions": [
@@ -115,7 +115,7 @@ def _current_surface() -> dict[str, object]:
     return {
         "top_level": ["auto", "override", "pipelines", "run", "<module>"],
         "discovered_modules": sorted(arnold._discovered_module_names()),
-        "pipelines_actions": ["check", "doctor", "list"],
+        "pipelines_actions": ["check", "doctor", "list", "new"],
         "module_verbs": list(arnold.MODULE_VERBS),
         "planning_module_verbs": list(arnold.PLANNING_MODULE_VERBS),
         "umbrella_override_actions": list(arnold.UMBRELLA_OVERRIDE_ACTIONS),
