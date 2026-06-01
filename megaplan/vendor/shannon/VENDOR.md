@@ -30,9 +30,9 @@ All patches are anchor-based (verbatim source-string replacement, **never** line
 
 ### Ordering dependencies
 
-- **P7 → P8** (load-bearing). Both patches target the shared anchor `    let launchedWithPrompt = true;\n`. P7 *prepends* `void maybeSendStartupEnterKeys(tmuxSession);` before that line and leaves the line intact. P8 then *replaces* the (still-present) `let launchedWithPrompt = true;` line with the `!(...PASTE_FIRST_TURN...)` flag form. If P8 ran first, P7's anchor would still match in pristine source — but in the static patch order assumed by the catalog and by the regeneration recipe, P7 MUST precede P8. Applying out of order silently corrupts the launchedWithPrompt expression. Encoded by the patcher's P1..P15 ordering.
+- **P7 → P8** (load-bearing). Both patches target the shared anchor `    let launchedWithPrompt = true;\n`. P7 *prepends* `void maybeSendStartupEnterKeys(tmuxSession);` before that line and leaves the line intact. P8 then removes the launched-with-prompt branch so every turn is pasted after prompt readiness instead of being passed in Claude argv. Encoded by the patcher's P1..P15 ordering.
 - **P3/P4/P5/P10 → P6** All four helpers (isRootProcess, rootSafeClaudeArgs, maybeSendStartupEnterKeys, slash-helpers block) prepend before the same anchor `export function buildClaudeArgs(...)`. They are applied in P3, P4, P5, P10 order; final file ordering (top to bottom) is: isRoot, rootSafe, startup-enter, slash-helpers, buildClaudeArgs.
-- **P6 → P8b → P15** P6 introduces the `claudeLaunchArgs` ternary at the new-session launch site. P8b extends the non-root branch into a nested PASTE_FIRST_TURN ternary. P15 prepends `_mpEnvPrefix` into all three claude-arg arrays. P15's anchor matches the *post-P8b* form.
+- **P6 → P8b → P15** P6 introduces `claudeLaunchArgs` at the new-session launch site. P8b removes prompt argv from every inner Claude launch. P15 prepends `_mpEnvPrefix` so the tmux-spawned Claude child does not inherit Megaplan/Shannon control vars.
 - **P10 → P11, P10 → P12, P10 → P13** P11/P12/P13 all reference helpers defined inside the P10 slash-helpers block (`megaplanSlashPromptMatches`, `megaplanSlashCompletionRow`, the embedded `if (cmd === "/clear")` shortcut).
 
 ---
@@ -172,9 +172,10 @@ Anchor (verbatim):
 
 Replacement:
 ```ts
-    const claudeLaunchArgs = isRootProcess()
-      ? ["claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]
-      : ["claude", ...options.claudeArgs, prompt];
+    const claudeLaunchArgs = [
+      "claude",
+      ...(isRootProcess() ? rootSafeClaudeArgs(options.claudeArgs) : options.claudeArgs),
+    ];
     await runCommand([
       "tmux",
       "new-session",
@@ -187,7 +188,7 @@ Replacement:
     ]);
 ```
 
-megaplan reason: Routes the new-session launch through `isRootProcess()`/`rootSafeClaudeArgs(...)` so a root-context Shannon uses `claude -p` (print/non-interactive) with sanitized args while non-root uses the stock interactive form.
+megaplan reason: Routes the new-session launch through `isRootProcess()`/`rootSafeClaudeArgs(...)` while always starting native interactive Claude. Root still gets unsafe resume/bypass args sanitized, but no prompt is passed to Claude argv.
 
 ---
 
@@ -211,11 +212,11 @@ megaplan reason: Fires the startup-enter nudge immediately after the tmux sessio
 
 ---
 
-# Patch P8 — paste-first-turn-conditional
+# Patch P8 — native-paste-all-turns
 
-**Depends on P7.** Two-part replacement targeting (a) the (P7-preserved) `let launchedWithPrompt = true;` line and (b) the non-root branch of `claudeLaunchArgs` (introduced by P6).
+**Depends on P7.** Two-part replacement targeting (a) the (P7-preserved) `let launchedWithPrompt = true;` line and (b) the `claudeLaunchArgs` launch shape (introduced by P6).
 
-## P8a — launchedWithPrompt flag
+## P8a — remove launchedWithPrompt branch
 
 Anchor (verbatim):
 ```ts
@@ -224,24 +225,38 @@ Anchor (verbatim):
 
 Replacement:
 ```ts
-    let launchedWithPrompt = !(Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN && !isRootProcess());
+    while (prompt) {
+      promptCount += 1;
+
+      await waitUntilReadyToSend(tmuxSession);
+      const promptSentAt = Date.now();
+      await sendPrompt(tmuxSession, prompt);
 ```
 
-## P8b — claudeLaunchArgs non-root branch
+## P8b — claudeLaunchArgs no-prompt launch
 
 Anchor (verbatim):
 ```ts
+    const claudeLaunchArgs = isRootProcess()
+      ? ["claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]
       : ["claude", ...options.claudeArgs, prompt];
 ```
 
 Replacement:
 ```ts
-      : (Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN
-          ? ["claude", ...options.claudeArgs]
-          : ["claude", ...options.claudeArgs, prompt]);
+    const claudeLaunchArgs = [
+      "claude",
+      ...(isRootProcess() ? rootSafeClaudeArgs(options.claudeArgs) : options.claudeArgs),
+    ];
 ```
 
-megaplan reason: When `MEGAPLAN_SHANNON_PASTE_FIRST_TURN` is set on the non-root path, Claude is launched with no prompt in argv; turn 1 is delivered via the same paste path as every later turn. Removes the ARG_MAX cap and eliminates the "read this file" launcher tell.
+megaplan reason: Claude is always launched with no prompt in argv; turn 1 is delivered via the same readiness-gated paste path as every later turn. Removes the ARG_MAX cap and makes the inner launch match native `tmux ... claude`.
+
+Readiness behavior:
+- Shannon waits for a terminal composer prompt before every send.
+- It sleeps a bounded random delay (`SHANNON_SEND_DELAY_MIN_MS` / `SHANNON_SEND_DELAY_MAX_MS`) after readiness and before paste.
+- It classifies known blocker screens (workspace trust, auth/login, approvals, onboarding/acknowledgements) before accepting a pane as ready, and fails with the captured pane instead of pasting a work prompt into the wrong UI.
+- `SHANNON_START_TIMEOUT_MS` can extend the startup/readiness window on slow hosts.
 
 ---
 
@@ -371,22 +386,21 @@ megaplan reason: Megaplan injects a deterministic per-(plan, step, iteration) tm
 
 Anchor (verbatim — matches the post-P6/post-P8b shape of the launch site):
 ```ts
-    const claudeLaunchArgs = isRootProcess()
-      ? ["claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]
-      : (Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN
-          ? ["claude", ...options.claudeArgs]
-          : ["claude", ...options.claudeArgs, prompt]);
+    const claudeLaunchArgs = [
+      "claude",
+      ...(isRootProcess() ? rootSafeClaudeArgs(options.claudeArgs) : options.claudeArgs),
+    ];
 ```
 
-Replacement (prepends `_mpScrubKeys`/`_mpEnvPrefix` declarations AND threads `_mpEnvPrefix` into every claude-arg array):
+Replacement (prepends `_mpScrubKeys`/`_mpEnvPrefix` declarations AND threads `_mpEnvPrefix` into the claude-arg array):
 ```ts
     const _mpScrubKeys = Object.keys(Bun.env).filter((k) => /^(MEGAPLAN_|SHANNON_)/.test(k));
     const _mpEnvPrefix = _mpScrubKeys.length > 0 ? ["env", ..._mpScrubKeys.flatMap((k) => ["-u", k])] : [];
-    const claudeLaunchArgs = isRootProcess()
-      ? [..._mpEnvPrefix, "claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]
-      : (Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN
-          ? [..._mpEnvPrefix, "claude", ...options.claudeArgs]
-          : [..._mpEnvPrefix, "claude", ...options.claudeArgs, prompt]);
+    const claudeLaunchArgs = [
+      ..._mpEnvPrefix,
+      "claude",
+      ...(isRootProcess() ? rootSafeClaudeArgs(options.claudeArgs) : options.claudeArgs),
+    ];
 ```
 
 megaplan reason: Python parent cannot selectively scrub the grandchild claude's env — the bun process reads `SHANNON_*`/`MEGAPLAN_*` itself before stripping them from what it forwards. P15 uses `env -u KEY` prefixes at the tmux-spawned exec so the inner claude never sees `MEGAPLAN_*` or `SHANNON_*` (prevents behavioral contamination of the nested session). Patch lives inside `index.ts` because Python-side filtering can't reach the grandchild env.
@@ -447,10 +461,10 @@ All 15 patches (P1..P15) were verified present in `megaplan/vendor/shannon/index
 - P3 `isRootProcess()` helper ✓
 - P4 `rootSafeClaudeArgs()` helper ✓
 - P5 `maybeSendStartupEnterKeys()` helper ✓
-- P6 `claudeLaunchArgs` ternary with root/non-root branches ✓
+- P6 `claudeLaunchArgs` native no-prompt launch with root arg sanitization ✓
 - P7 `void maybeSendStartupEnterKeys(tmuxSession)` before `launchedWithPrompt` ✓
-- P8a `launchedWithPrompt = !(Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN && !isRootProcess())` ✓
-- P8b nested PASTE_FIRST_TURN ternary in claudeLaunchArgs non-root branch ✓
+- P8a no `launchedWithPrompt` branch ✓
+- P8b no prompt in inner Claude argv ✓
 - P9 `tmux load-buffer … -` stdin delivery (no argv size cap) ✓
 - P10 slash-completion helpers block (`megaplanSlashCompletionRow` et al.) ✓
 - P11 `megaplanSlashPromptMatches` discovery gate ✓
