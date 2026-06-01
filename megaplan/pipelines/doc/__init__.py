@@ -51,6 +51,7 @@ from megaplan.pipelines.doc import prompts as _prompts  # noqa: F401
 
 # ── Module-level metadata surfaced via PipelineRegistry ────────────────
 
+name: str = "doc"
 description: str = (
     "Linear doc pipeline: outline → per-section drafts (dynamic fanout) "
     "→ critique → revise → assembly. Single-pass; no gate."
@@ -58,6 +59,10 @@ description: str = (
 default_profile: str | None = None
 supported_modes: tuple[str, ...] = ()
 recommended_profiles: tuple[str, ...] = ()
+driver: tuple[str, str] = ("subprocess_isolated", "dynamic-fanout")
+entrypoint: str = "build_pipeline"
+arnold_api_version: str = "1.0"
+capabilities: tuple[str, ...] = ("doc",)
 
 
 # ── Pipeline assembly ──────────────────────────────────────────────────
@@ -120,4 +125,7 @@ __all__ = [
     "default_profile",
     "supported_modes",
     "recommended_profiles",
+    "driver",
+    "arnold_api_version",
+    "capabilities",
 ]

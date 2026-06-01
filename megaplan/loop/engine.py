@@ -86,7 +86,57 @@ def _time_budget_seconds(state: LoopState, args: argparse.Namespace | None) -> i
         or state.get("time_budget_seconds")
         or _DEFAULT_TIME_BUDGET_SECONDS
     )
+    # T21: UNIFIED_BUDGET=1 routes the loop time budget read through the
+    # budget authority. Flag-OFF byte-identical to pre-T21 behavior.
+    try:
+        from megaplan._pipeline.flags import unified_budget_on
+        from megaplan.runtime.budget_authority import current_authority
+
+        if unified_budget_on():
+            auth = current_authority()
+            if auth is not None:
+                override = getattr(auth, "loop_time_budget_seconds", None)
+                if callable(override):
+                    val = override(default=int(budget))
+                    if val is not None:
+                        budget = val
+    except Exception:
+        pass
     return max(int(budget), 1)
+
+
+def _record_dispatch_attribution(
+    *,
+    lease_id: str | None,
+    fencing_token: int | None,
+    amount_usd: float,
+) -> None:
+    """T21 — Dispatch attribution write seam routed through the budget
+    authority when UNIFIED_BUDGET=1. Flag-OFF is a no-op (byte-identical).
+
+    Step 10b's dispatch attribution writer hands amounts off to the
+    authority via charge(), which de-duplicates by (lease_id, fencing_token)
+    so a retried dispatch never double-counts.
+    """
+    if amount_usd <= 0 or lease_id is None or fencing_token is None:
+        return
+    try:
+        from megaplan._pipeline.flags import unified_budget_on
+        from megaplan.runtime.budget_authority import current_authority
+
+        if not unified_budget_on():
+            return
+        auth = current_authority()
+        if auth is None:
+            return
+        auth.charge(
+            lease_id=lease_id,
+            fencing_token=int(fencing_token),
+            amount_usd=float(amount_usd),
+        )
+    except Exception:
+        # Authority binding failures must never break the loop engine.
+        return
 def _truncate_output(text: str, *, limit: int = _COMMAND_OUTPUT_LIMIT) -> str:
     if len(text) <= limit:
         return text
@@ -422,6 +472,8 @@ def save_loop_state(plan_dir: Path, state: LoopState) -> None:
             state["pause_reason"] = str(state.get("pause_reason") or persisted.get("pause_reason") or "Pause requested by user.")
     state["updated_at"] = now_utc()
     atomic_write_json(state_path, state)
+    from megaplan.observability.events import emit_state_wal
+    emit_state_wal(plan_dir, dict(state))
 
 
 def load_loop_state(project_dir: str | Path, name: str) -> LoopState:

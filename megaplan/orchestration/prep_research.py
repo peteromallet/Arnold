@@ -105,7 +105,6 @@ def minimal_prep_metrics() -> dict[str, Any]:
             "existing_files": [],
             "missing_files": [],
             "shared_files": [],
-            "to_be_built_files": [],
         },
         "stage_metrics": {
             "triage": _stage_metrics(),

@@ -57,7 +57,12 @@ class PlanRepository:
         store: Store | None = None,
         home: str | Path | None = None,
     ) -> PlanRepository:
-        return cls(plan_dir, store=store, home=home)
+        repo = cls(plan_dir, store=store, home=home)
+        if store is not None and repo.is_bound:
+            from megaplan.observability.events_projection import ensure_events_projection
+
+            ensure_events_projection(repo.plan_dir, store=store, plan_id=repo.plan_name)
+        return repo
 
     @staticmethod
     def _looks_like_plan_dir(path: Path) -> bool:
@@ -172,7 +177,8 @@ class PlanRepository:
             path.unlink()
 
     def load_state(self) -> dict[str, Any]:
-        return read_json(self.plan_dir / "state.json")
+        from megaplan._core.io import read_plan_state_cached
+        return read_plan_state_cached(self.plan_dir, mode="authority")
 
     def save_state(self, state: dict[str, Any]) -> None:
         write_plan_state(self.plan_dir, mode="replace", state=state)

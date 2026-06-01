@@ -6,10 +6,134 @@ import uuid
 from typing import Any, Sequence
 
 from megaplan.schemas import EpicEvent
+from megaplan.store.base import StoredEvent
 
 from .common import _jb
 
 class DBEventMixin:
+    def events_for_plan(self, plan_id: str):
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            SELECT id, event_type, prior_state, pre_state, post_state, occurred_at
+            FROM epic_events
+            WHERE epic_id = %s
+            ORDER BY occurred_at ASC, id ASC
+            """,
+            [plan_id],
+        ).fetchall()
+        events: list[StoredEvent] = []
+        for row in rows:
+            payload = row["post_state"] or row["pre_state"] or row["prior_state"] or {}
+            phase = None
+            kind = str(row["event_type"] or "epic_event")
+            if isinstance(payload, dict):
+                envelope = payload.get("event")
+                if isinstance(envelope, dict):
+                    events.append(_stored_from_envelope(envelope, row["occurred_at"], row["id"], "record_epic_event"))
+                    continue
+                else:
+                    raw_phase = payload.get("phase")
+                    phase = str(raw_phase) if raw_phase is not None else None
+            events.append(
+                StoredEvent(
+                    kind=kind,
+                    phase=phase,
+                    payload=payload if isinstance(payload, dict) else {},
+                    occurred_at=row["occurred_at"],
+                    id=row["id"],
+                    source="record_epic_event",
+                )
+            )
+
+        telemetry_rows = conn.execute(
+            """
+            SELECT id, event_type, details, occurred_at
+            FROM system_logs
+            WHERE event_type LIKE 'telemetry.%'
+              AND (
+                epic_id = %s
+                OR details->>'scope' = %s
+                OR details->'payload'->>'scope' = %s
+              )
+            ORDER BY occurred_at ASC, id ASC
+            """,
+            [plan_id, plan_id, plan_id],
+        ).fetchall()
+        for row in telemetry_rows:
+            details = row["details"] or {}
+            payload = details.get("payload") if isinstance(details, dict) else {}
+            if isinstance(payload, dict) and isinstance(payload.get("event"), dict):
+                events.append(
+                    _stored_from_envelope(
+                        payload["event"],
+                        row["occurred_at"],
+                        row["id"],
+                        "append_telemetry_event",
+                    )
+                )
+                continue
+            payload = dict(payload) if isinstance(payload, dict) else {}
+            raw_phase = details.get("phase") if isinstance(details, dict) else None
+            if raw_phase is None:
+                raw_phase = payload.pop("phase", None)
+            kind = str(details.get("kind") or str(row["event_type"]).removeprefix("telemetry."))
+            events.append(
+                StoredEvent(
+                    kind=kind,
+                    phase=raw_phase if isinstance(raw_phase, str) else None,
+                    payload=payload,
+                    occurred_at=row["occurred_at"],
+                    id=row["id"],
+                    run_id=details.get("run_id") if isinstance(details.get("run_id"), str) else None,
+                    source="append_telemetry_event",
+                )
+            )
+
+        system_rows = conn.execute(
+            """
+            SELECT id, event_type, details, occurred_at
+            FROM system_logs
+            WHERE epic_id = %s
+              AND details ? 'event'
+            ORDER BY occurred_at ASC, id ASC
+            """,
+            [plan_id],
+        ).fetchall()
+        for row in system_rows:
+            details = row["details"] or {}
+            envelope = details.get("event") if isinstance(details, dict) else None
+            if isinstance(envelope, dict):
+                events.append(
+                    _stored_from_envelope(
+                        envelope,
+                        row["occurred_at"],
+                        row["id"],
+                        "log_system_event",
+                    )
+                )
+        events.sort(key=_stored_event_sort_key)
+        return iter(events)
+
+    def append_telemetry_event(
+        self,
+        kind: str,
+        payload: dict[str, Any],
+        *,
+        scope: str | None = None,
+    ) -> dict[str, Any]:
+        event = {"kind": kind, "payload": dict(payload), "scope": scope}
+        log = self.log_system_event(
+            level="debug",
+            category="system",
+            event_type=f"telemetry.{kind}",
+            message=f"telemetry event {kind}",
+            details=event,
+        )
+        event["id"] = log.id
+        event["occurred_at"] = log.occurred_at.isoformat()
+        return event
+
     def record_epic_event(
         self,
         *,
@@ -115,3 +239,28 @@ class DBEventMixin:
         return [EpicEvent(**row) for row in rows]
 
 __all__ = ["DBEventMixin"]
+
+
+def _stored_from_envelope(
+    envelope: dict[str, Any],
+    occurred_at: Any,
+    event_id: str | None,
+    source: str,
+) -> StoredEvent:
+    raw_phase = envelope.get("phase")
+    raw_payload = envelope.get("payload")
+    return StoredEvent(
+        kind=str(envelope.get("kind") or source),
+        phase=raw_phase if isinstance(raw_phase, str) else None,
+        payload=raw_payload if isinstance(raw_payload, dict) else {},
+        occurred_at=envelope.get("ts_utc") or occurred_at,
+        id=event_id,
+        seq=envelope.get("seq") if isinstance(envelope.get("seq"), int) else None,
+        run_id=envelope.get("run_id") if isinstance(envelope.get("run_id"), str) else None,
+        source=str(envelope.get("store_method") or source),
+    )
+
+
+def _stored_event_sort_key(event: StoredEvent) -> tuple[str, int, str, str]:
+    seq = event.seq if event.seq is not None else 10**12
+    return (str(event.occurred_at or ""), seq, event.source or "", event.id or "")

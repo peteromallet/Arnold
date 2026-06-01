@@ -21,6 +21,8 @@ class GateStep:
     prompt_key: str | None = "gate"
     slot: str | None = "gate"
     arg_overrides: Mapping[str, Any] = field(default_factory=dict)
+    produces: tuple = field(default_factory=tuple)
+    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         import megaplan

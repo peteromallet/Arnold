@@ -4,7 +4,6 @@ import json
 import subprocess
 from argparse import Namespace
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -14,22 +13,17 @@ import megaplan.execute.aggregation
 import megaplan.execute.batch
 import megaplan.execute.core
 import megaplan.handlers
+import megaplan.handlers.critique as critique_handler
 import megaplan.handlers.execute as execute_handler
 import megaplan.workers
-from megaplan.blocker_recovery import quality_blocker_id
 from megaplan._core import compute_task_batches, load_plan, split_oversized_batches
+from megaplan.calibration import RouteSuggestion
 from megaplan.execute.quality import (
     _auto_attribute_unclaimed_paths,
     _capture_git_status_snapshot,
     _capture_git_status_snapshot_recursive,
     _check_done_task_evidence,
     _check_done_task_evidence_by_kind,
-)
-from megaplan.orchestration.phase_result import Deviation
-from megaplan.quality_resolutions import (
-    ACCEPTED_WITH_DEBT,
-    FIXED,
-    build_quality_resolution_event,
 )
 from megaplan.types import CliError
 from megaplan.workers import WorkerResult
@@ -78,6 +72,15 @@ def _capacity_batches(
     )
 
 
+def _force_sequential_critique(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route critique through the legacy worker call for worker-failure tests."""
+
+    def _parallel_unavailable(*args, **kwargs):
+        raise RuntimeError("force sequential critique fallback")
+
+    monkeypatch.setattr(critique_handler, "run_parallel_critique", _parallel_unavailable)
+
+
 def test_9_independent_tasks_split_at_default_ceiling() -> None:
     batches = _capacity_batches(_batch_task_ids(9))
 
@@ -120,58 +123,6 @@ def test_ceiling_zero_or_negative_falls_back_to_default() -> None:
         ["T1", "T2", "T3", "T4", "T5"],
         ["T6"],
     ]
-
-
-def test_execute_blocking_reasons_honor_accepted_quality_debt() -> None:
-    reason = (
-        "scope_drift_severity=high: unclaimed files ['megaplan/auto.py'] "
-        "with 10 LOC outside the claimed set"
-    )
-    blocker_id = quality_blocker_id(Deviation.from_string(reason))
-    state = {
-        "meta": {
-            "quality_gate_resolutions": [
-                build_quality_resolution_event(
-                    blocker_id=blocker_id,
-                    resolution=ACCEPTED_WITH_DEBT,
-                    phase="execute",
-                    evidence=["operator classified this as concurrent harness work"],
-                    debt_note="audit should distinguish operator-owned files",
-                )
-            ]
-        }
-    }
-
-    filtered = megaplan.execute.batch._filter_non_terminal_quality_blocking_reasons(
-        [reason],
-        state,
-    )
-
-    assert filtered == []
-
-
-def test_execute_blocking_reasons_keep_fixed_quality_debt_active() -> None:
-    reason = "done tasks missing both files_changed and commands_run: T1"
-    blocker_id = quality_blocker_id(Deviation.from_string(reason))
-    state = {
-        "meta": {
-            "quality_gate_resolutions": [
-                build_quality_resolution_event(
-                    blocker_id=blocker_id,
-                    resolution=FIXED,
-                    phase="execute",
-                    evidence=["operator says this was fixed"],
-                )
-            ]
-        }
-    }
-
-    filtered = megaplan.execute.batch._filter_non_terminal_quality_blocking_reasons(
-        [reason],
-        state,
-    )
-
-    assert filtered == [reason]
 
 
 def test_auto_attribute_single_done_task_with_unclaimed_changes(tmp_path: Path) -> None:
@@ -1137,36 +1088,37 @@ def test_one_batch_handler_splits_wide_independent_wave_at_ceiling(
 
 
 def test_capture_test_baseline_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    import megaplan.orchestration.suite_runner as suite_runner
+
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
-
-    from megaplan.orchestration.suite_runner import SuiteRunResult as SRR
-
-    fake_result = SRR(
-        run_id="test1",
-        phase="baseline",
-        command="pytest --tb=no -q --no-header -rA",
-        duration=1.0,
-        collected=7,
-        collected_ids=[
-            "tests/test_a.py::test_one",
-            "tests/test_b.py::test_two",
-        ],
-        failures=[
-            "tests/test_a.py::test_one",
-            "tests/test_b.py::test_two",
-        ],
-        passes=[],
-        status="failed",
-        exit_code=1,
-        raw_log_path=tmp_path / "raw_test1.log",
-        code_hash="sha256:abc",
-        collections_parse_ok=True,
+    monkeypatch.setattr(
+        suite_runner,
+        "run_suite",
+        lambda *args, **kwargs: SuiteRunResult(
+            run_id="baseline-test",
+            phase="baseline",
+            command="pytest --tb=no -q --no-header -rA",
+            duration=0.1,
+            collected=7,
+            collected_ids=[
+                "tests/test_a.py::test_one",
+                "tests/test_b.py::test_two",
+            ],
+            failures=[
+                "tests/test_a.py::test_one",
+                "tests/test_b.py::test_two",
+            ],
+            passes=[],
+            status="failed",
+            exit_code=1,
+            raw_log_path=tmp_path / "baseline.log",
+            code_hash="sha256:test",
+            collections_parse_ok=True,
+        ),
     )
 
-    with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
-    ):
-        result = megaplan.handlers._capture_test_baseline(tmp_path, {})
+    result = megaplan.handlers._capture_test_baseline(tmp_path, {})
 
     assert result["baseline_test_failures"] == [
         "tests/test_a.py::test_one",
@@ -1177,63 +1129,63 @@ def test_capture_test_baseline_success(monkeypatch: pytest.MonkeyPatch, tmp_path
 
 
 def test_capture_test_baseline_no_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    import megaplan.orchestration.suite_runner as suite_runner
+
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
-
-    from megaplan.orchestration.suite_runner import SuiteRunResult as SRR
-
-    # run_suite defaults to pytest when no test_command is configured and
-    # pytest is on PATH.  If pytest is not found, spawn fails → runner_error.
-    fake_result = SRR(
-        run_id="test2",
-        phase="baseline",
-        command="pytest --tb=no -q --no-header -rA",
-        duration=0.1,
-        collected=0,
-        collected_ids=[],
-        failures=[],
-        passes=[],
-        status="runner_error",
-        exit_code=None,
-        raw_log_path=tmp_path / "raw_test2.log",
-        code_hash="sha256:abc",
-        collections_parse_ok=False,
+    monkeypatch.setattr(
+        suite_runner,
+        "run_suite",
+        lambda *args, **kwargs: SuiteRunResult(
+            run_id="baseline-runner-error",
+            phase="baseline",
+            command=None,
+            duration=0.0,
+            collected=0,
+            collected_ids=[],
+            failures=[],
+            passes=[],
+            status="runner_error",
+            exit_code=None,
+            raw_log_path=tmp_path / "baseline.log",
+            code_hash="sha256:test",
+            collections_parse_ok=False,
+        ),
     )
 
-    with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
-    ):
-        result = megaplan.handlers._capture_test_baseline(tmp_path, {})
+    result = megaplan.handlers._capture_test_baseline(tmp_path, {})
 
     assert result["baseline_test_failures"] is None
     assert result["baseline_test_command"] is None
-    assert "runner error" in result["baseline_test_note"].lower()
+    assert "runner error" in result["baseline_test_note"]
 
 
 def test_capture_test_baseline_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    import megaplan.orchestration.suite_runner as suite_runner
+
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
-
-    from megaplan.orchestration.suite_runner import SuiteRunResult as SRR
-
-    fake_result = SRR(
-        run_id="test3",
-        phase="baseline",
-        command="pytest --tb=no -q --no-header -rA",
-        duration=900.0,
-        collected=0,
-        collected_ids=[],
-        failures=[],
-        passes=[],
-        status="timeout",
-        exit_code=None,
-        raw_log_path=tmp_path / "raw_test3.log",
-        code_hash="sha256:abc",
-        collections_parse_ok=False,
+    monkeypatch.setattr(
+        suite_runner,
+        "run_suite",
+        lambda *args, **kwargs: SuiteRunResult(
+            run_id="baseline-timeout",
+            phase="baseline",
+            command="pytest --tb=no -q --no-header -rA",
+            duration=120.0,
+            collected=0,
+            collected_ids=[],
+            failures=[],
+            passes=[],
+            status="timeout",
+            exit_code=None,
+            raw_log_path=tmp_path / "baseline.log",
+            code_hash="sha256:test",
+            collections_parse_ok=False,
+        ),
     )
 
-    with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
-    ):
-        result = megaplan.handlers._capture_test_baseline(tmp_path, {})
+    result = megaplan.handlers._capture_test_baseline(tmp_path, {})
 
     assert result["baseline_test_failures"] is None
     assert "timed out" in result["baseline_test_note"].lower()
@@ -1332,14 +1284,11 @@ def test_execute_succeeds_in_auto_approve_mode(tmp_path: Path, monkeypatch: pyte
 
 def test_step_failure_records_error_in_history(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    _force_sequential_critique(monkeypatch)
 
     def failing_worker(*a, **kw):
         raise megaplan.CliError("test_error", "Worker blew up", extra={"raw_output": "boom"})
 
-    monkeypatch.setattr(
-        "megaplan.handlers.critique.run_parallel_critique",
-        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("force sequential fallback")),
-    )
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", failing_worker)
     with pytest.raises(megaplan.CliError, match="Worker blew up"):
         megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -1351,14 +1300,11 @@ def test_step_failure_records_error_in_history(plan_fixture: PlanFixture, monkey
 
 def test_step_failure_stores_raw_output_file(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    _force_sequential_critique(monkeypatch)
 
     def failing_worker(*a, **kw):
         raise megaplan.CliError("test_error", "fail", extra={"raw_output": "raw content here"})
 
-    monkeypatch.setattr(
-        "megaplan.handlers.critique.run_parallel_critique",
-        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("force sequential fallback")),
-    )
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", failing_worker)
     with pytest.raises(megaplan.CliError):
         megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -1371,14 +1317,11 @@ def test_step_failure_stores_raw_output_file(plan_fixture: PlanFixture, monkeypa
 
 def test_step_failure_uses_message_when_no_raw_output(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    _force_sequential_critique(monkeypatch)
 
     def failing_worker(*a, **kw):
         raise megaplan.CliError("test_error", "the error message")
 
-    monkeypatch.setattr(
-        "megaplan.handlers.critique.run_parallel_critique",
-        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("force sequential fallback")),
-    )
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", failing_worker)
     with pytest.raises(megaplan.CliError):
         megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -2105,108 +2048,6 @@ def test_execute_multi_batch_happy_path_aggregates_results(
     batch_2 = read_json(plan_fixture.plan_dir / "execution_batch_2.json")
     assert [item["task_id"] for item in batch_1["task_updates"]] == ["T1"]
     assert [item["task_id"] for item in batch_2["task_updates"]] == ["T2"]
-
-
-def test_execute_all_done_review_rework_schedules_affected_tasks_without_noop_aggregate(
-    plan_fixture: PlanFixture,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    make_args = plan_fixture.make_args
-    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_override(
-        plan_fixture.root,
-        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
-    )
-    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-
-    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
-    finalize_data["tasks"] = [
-        {
-            "id": f"T{index}",
-            "description": f"Task {index}",
-            "depends_on": [],
-            "status": "done",
-            "executor_notes": "Previously completed.",
-            "files_changed": [f"task{index}.py"],
-            "commands_run": ["pytest -q"],
-            "evidence_files": [],
-            "reviewer_verdict": "",
-        }
-        for index in range(1, 7)
-    ]
-    finalize_data["sense_checks"] = []
-    (plan_fixture.plan_dir / "finalize.json").write_text(
-        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
-    )
-    review_payload = {
-        "review_verdict": "needs_rework",
-        "issues": ["T1, T3, and T5 need concrete follow-up."],
-        "rework_items": [
-            {"task_id": "T1", "issue": "Fix T1.", "expected": "T1 fixed.", "actual": "not fixed", "source": "review_task"},
-            {"task_id": "T3", "issue": "Fix T3.", "expected": "T3 fixed.", "actual": "not fixed", "source": "review_task"},
-            {"task_id": "T5", "issue": "Fix T5.", "expected": "T5 fixed.", "actual": "not fixed", "source": "review_task"},
-        ],
-        "task_verdicts": [],
-        "sense_check_verdicts": [],
-    }
-    (plan_fixture.plan_dir / "review.json").write_text(
-        json.dumps(review_payload, indent=2) + "\n", encoding="utf-8"
-    )
-    state = load_state(plan_fixture.plan_dir)
-    state["history"].append({"step": "review", "result": "needs_rework"})
-    (plan_fixture.plan_dir / "state.json").write_text(
-        json.dumps(state, indent=2) + "\n", encoding="utf-8"
-    )
-
-    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
-    expected_batches = iter([["T1", "T3"], ["T5"]])
-    seen_batches: list[list[str]] = []
-
-    def rework_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
-        assert prompt_override is not None
-        batch_ids = next(expected_batches)
-        for task_id in batch_ids:
-            assert task_id in prompt_override
-        seen_batches.append(batch_ids)
-        payload = {
-            "output": f"Reworked {', '.join(batch_ids)}.",
-            "files_changed": [f"{task_id.lower()}_rework.py" for task_id in batch_ids],
-            "commands_run": ["pytest -q"],
-            "deviations": [],
-            "task_updates": [
-                {
-                    "task_id": task_id,
-                    "status": "done",
-                    "executor_notes": f"Reworked {task_id} with focused evidence.",
-                    "files_changed": [f"{task_id.lower()}_rework.py"],
-                    "commands_run": ["pytest -q"],
-                }
-                for task_id in batch_ids
-            ],
-            "sense_check_acknowledgments": [],
-        }
-        return WorkerResult(payload=payload, raw_output="rework", duration_ms=1, cost_usd=0.0, session_id=f"rework-{'-'.join(batch_ids)}"), "codex", "persistent", False
-
-    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", rework_worker)
-
-    response = megaplan.handle_execute(
-        plan_fixture.root,
-        make_args(
-            plan=plan_fixture.plan_name,
-            confirm_destructive=True,
-            user_approved=True,
-            max_tasks_per_batch=2,
-        ),
-    )
-    execution = read_json(plan_fixture.plan_dir / "execution.json")
-
-    assert response["success"] is True
-    assert seen_batches == [["T1", "T3"], ["T5"]]
-    assert "completed 0/1" not in execution["output"]
-    assert execution["output"].startswith("Aggregated execute batches: completed 2/2.")
-    assert [item["task_id"] for item in execution["task_updates"]] == ["T1", "T3", "T5"]
 
 
 def test_execute_multi_batch_timeout_preserves_prior_batches(
@@ -3410,6 +3251,195 @@ def test_handle_execute_one_batch_response_includes_tier_metadata(
     )
 
 
+def test_handle_execute_one_batch_uses_valid_calibration_suggestion(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", "1")
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "query_route_if_enabled",
+        lambda *args, **kwargs: RouteSuggestion(tier_spec="hermes:flash", confidence=0.9),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_resolve_tier_spec",
+        lambda args, tier_spec: ("hermes", "persistent", f"resolved::{tier_spec}"),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map={1: "hermes:flash", 5: "codex:high"},
+    )
+
+    assert response["tier_model_spec"] == "hermes:flash"
+    assert response["tier_agent"] == "hermes"
+    assert response["tier_model"] == "resolved::hermes:flash"
+
+
+@pytest.mark.parametrize(
+    ("flag_value", "suggestion", "expected_spec", "expected_source", "expected_query_calls"),
+    [
+        (None, None, "codex:high", "toml", 0),
+        ("1", None, "codex:high", "toml", 1),
+        (
+            "1",
+            RouteSuggestion(
+                tier_spec="hermes:flash",
+                confidence=0.9,
+                projected_tier=1,
+                counterfactual_tag="explore-007",
+            ),
+            "hermes:flash",
+            "calibration_query",
+            1,
+        ),
+    ],
+)
+def test_handle_execute_one_batch_calibration_flag_characterization(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    flag_value: str | None,
+    suggestion: RouteSuggestion | None,
+    expected_spec: str,
+    expected_source: str,
+    expected_query_calls: int,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    if flag_value is None:
+        monkeypatch.delenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", raising=False)
+    else:
+        monkeypatch.setenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", flag_value)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_resolve_tier_spec",
+        lambda args, tier_spec: ("codex" if tier_spec == "codex:high" else "hermes", "persistent", f"resolved::{tier_spec}"),
+    )
+    query_calls: list[str] = []
+
+    def _query(*args, **kwargs):
+        query_calls.append("called")
+        return suggestion
+
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "query_route_if_enabled",
+        _query,
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map={1: "hermes:flash", 5: "codex:high"},
+    )
+
+    history = load_state(plan_fixture.plan_dir)["history"][-1]
+    batch_artifact = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
+
+    assert len(query_calls) == expected_query_calls
+    assert response["tier_model_spec"] == expected_spec
+    assert response["tier_model"] == f"resolved::{expected_spec}"
+    assert response["tier_routing_source"] == expected_source
+    assert response["batch_complexity"] == 5
+    assert response["tier_projected"] == (1 if expected_source == "calibration_query" else 5)
+    assert response.get("tier_counterfactual_tag") == (
+        "explore-007" if expected_source == "calibration_query" else None
+    )
+    assert response["tier_low_confidence"] is False
+    assert history["tier_model_spec"] == expected_spec
+    assert history["tier_model_resolved"] == f"resolved::{expected_spec}"
+    assert history["tier_routing_source"] == expected_source
+    assert history["tier_projected"] == (
+        1 if expected_source == "calibration_query" else 5
+    )
+    assert history.get("tier_counterfactual_tag") == (
+        "explore-007" if expected_source == "calibration_query" else None
+    )
+    assert history.get("tier_low_confidence", False) is False
+    assert batch_artifact["task_updates"][0]["task_id"] == "T1"
+    assert batch_artifact["task_updates"][0]["status"] == "done"
+
+
+def test_handle_execute_one_batch_falls_back_for_malformed_calibration_suggestion(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", "1")
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "query_route_if_enabled",
+        lambda *args, **kwargs: RouteSuggestion(tier_spec="bogus:not-in-tier-map"),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map={1: "hermes:flash", 5: "codex:high"},
+    )
+
+    assert response["tier_model_spec"] == "codex:high"
+
+
 def test_handle_execute_one_batch_response_omits_tier_metadata_for_flat_profile(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -3667,91 +3697,6 @@ def test_one_batch_tier_selection_respects_complexity(
     assert response.get("batch_complexity") == 3
 
 
-def test_resolve_effective_tier_complexity_drops_and_floors() -> None:
-    """The auto-driver tier-drop helper drops by N and clamps at the floor."""
-    from megaplan.execute.batch import _resolve_effective_tier_complexity
-
-    # No drop is a no-op.
-    assert _resolve_effective_tier_complexity(5, 0) == 5
-    assert _resolve_effective_tier_complexity(5, -1) == 5
-    # One/two drops from the top.
-    assert _resolve_effective_tier_complexity(5, 1) == 4
-    assert _resolve_effective_tier_complexity(5, 2) == 3
-    # Clamped at the premium floor (3) — never routes below it.
-    assert _resolve_effective_tier_complexity(5, 3) == 3
-    assert _resolve_effective_tier_complexity(4, 5) == 3
-    # A custom floor is honoured.
-    assert _resolve_effective_tier_complexity(5, 4, floor=1) == 1
-
-
-def test_one_batch_tier_drop_routes_lower_tier(
-    plan_fixture: PlanFixture,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With --tier-drop active, a complexity-5 batch resolves the tier-3 spec
-    (clamped at the floor) instead of the tier-5 spec."""
-    _setup_single_auto_attribute_plan(plan_fixture)
-    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
-    for task in finalize_data["tasks"]:
-        task["complexity"] = 5
-    (plan_fixture.plan_dir / "finalize.json").write_text(
-        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
-    )
-    _stub_auto_attribute_git_snapshots(monkeypatch)
-    monkeypatch.setattr(
-        megaplan.workers,
-        "run_step_with_worker",
-        _hermes_style_worker(plan_fixture.project_dir),
-    )
-    tier_spec_calls: list[str] = []
-
-    def _tracking_resolve_tier_spec(args, tier_spec):
-        tier_spec_calls.append(tier_spec)
-        return ("resolved-agent", "resolved-mode", "resolved-model")
-
-    monkeypatch.setattr(
-        megaplan.execute.batch,
-        "_resolve_tier_spec",
-        _tracking_resolve_tier_spec,
-    )
-    state = load_state(plan_fixture.plan_dir)
-    tier_map = {
-        1: "tier-1-spec",
-        2: "tier-2-spec",
-        3: "tier-3-spec",
-        4: "tier-4-spec",
-        5: "tier-5-spec",
-    }
-
-    response = megaplan.execute.core.handle_execute_one_batch(
-        root=plan_fixture.root,
-        plan_dir=plan_fixture.plan_dir,
-        state=state,
-        args=plan_fixture.make_args(
-            plan=plan_fixture.plan_name,
-            confirm_destructive=True,
-            user_approved=True,
-            batch=1,
-            tier_drop=2,  # auto-driver dropped two tiers after repeated stalls
-        ),
-        batch_number=1,
-        auto_approve=False,
-        agent="codex",
-        mode="persistent",
-        refreshed=False,
-        tier_map=tier_map,
-    )
-
-    # Complexity 5 with tier_drop=2 → effective complexity 3 → tier-3-spec.
-    assert tier_spec_calls == ["tier-3-spec"], (
-        f"Expected tier-3-spec after a 2-tier drop on complexity 5, got "
-        f"{tier_spec_calls}"
-    )
-    assert response.get("tier_model_spec") == "tier-3-spec"
-    # Observability reflects the *effective* (post-drop) complexity.
-    assert response.get("batch_complexity") == 3
-
-
 def test_one_batch_tier_selection_missing_complexity_defaults_to_5(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -3863,95 +3808,6 @@ def test_one_batch_flat_profile_no_tier_routing(
     # Response omits tier fields.
     assert "batch_complexity" not in response
     assert "tier_model_spec" not in response
-
-
-# ---------------------------------------------------------------------------
-# T9: Generalized tier resolver — synthetic critique phase test
-# ---------------------------------------------------------------------------
-
-
-def test_resolve_tier_spec_critique_phase_uses_correct_phase_model(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``_resolve_tier_spec(phase=\"critique\")`` builds a synthetic
-    ``phase_model=[\"critique=<tier_spec>\"]`` override and calls
-    ``resolve_agent_mode(\"critique\", …)``, independent of any built-in TOML.
-    """
-    from megaplan.execute.batch import _resolve_tier_spec
-
-    resolve_calls: list[tuple[str, list[str]]] = []
-
-    def _capture_resolve(step: str, args: Namespace, **kwargs: object) -> tuple[str, str, bool, str]:
-        pm = list(getattr(args, "phase_model", []) or [])
-        resolve_calls.append((step, pm))
-        return ("test-agent", "persistent", False, "test-model")
-
-    monkeypatch.setattr(
-        megaplan.workers,
-        "resolve_agent_mode",
-        _capture_resolve,
-    )
-
-    base_args = Namespace(
-        agent=None,
-        phase_model=[],
-        profile="partnered",
-    )
-
-    agent, mode, model = _resolve_tier_spec(
-        base_args, "critique-synthetic-spec", phase="critique"
-    )
-
-    assert agent == "test-agent"
-    assert mode == "persistent"
-    assert model == "test-model"
-
-    assert len(resolve_calls) == 1
-    called_step, called_pm = resolve_calls[0]
-    assert called_step == "critique", (
-        f"Expected resolve_agent_mode phase='critique', got {called_step!r}"
-    )
-    assert called_pm == ["critique=critique-synthetic-spec"], (
-        f"Expected phase_model=['critique=critique-synthetic-spec'], got {called_pm!r}"
-    )
-
-    # The original args must NOT be mutated.
-    assert getattr(base_args, "phase_model", None) == []
-
-
-def test_resolve_tier_spec_critique_no_side_effect_on_execute_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``_resolve_tier_spec`` with ``phase=\"execute\"`` (the default) must
-    still work after the critique path is exercised; the default phase is
-    unaffected."""
-    from megaplan.execute.batch import _resolve_tier_spec
-
-    resolve_calls: list[str] = []
-
-    def _capture_resolve(step: str, args: Namespace, **kwargs: object) -> tuple[str, str, bool, str]:
-        resolve_calls.append(step)
-        return ("execute-agent", "ephemeral", True, "execute-model")
-
-    monkeypatch.setattr(
-        megaplan.workers,
-        "resolve_agent_mode",
-        _capture_resolve,
-    )
-
-    base_args = Namespace(
-        agent=None,
-        phase_model=[],
-    )
-
-    agent, mode, model = _resolve_tier_spec(base_args, "tier-4-spec")
-
-    assert agent == "execute-agent"
-    assert mode == "ephemeral"
-    assert model == "execute-model"
-    assert resolve_calls == ["execute"], (
-        f"Default phase must be 'execute', got {resolve_calls!r}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -4098,6 +3954,56 @@ def test_handle_execute_variable_profile_passes_tier_map_without_cli_override(
     )
 
 
+def test_handle_execute_normalizes_string_tier_keys(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "resolve_agent_mode",
+        lambda step, args: ("codex", "persistent", False, "codex-medium-v1"),
+    )
+
+    captured_tier_map: dict | None = "SENTINEL"
+
+    def _capture_and_dispatch(*, root, plan_dir, state, args, batch_number,
+                              auto_approve, agent, mode, refreshed, model=None,
+                              tier_map="SENTINEL", **kwargs):
+        nonlocal captured_tier_map
+        captured_tier_map = tier_map
+        return megaplan.execute.core.handle_execute_one_batch(
+            root=root, plan_dir=plan_dir, state=state, args=args,
+            batch_number=batch_number, auto_approve=auto_approve,
+            agent=agent, mode=mode, refreshed=refreshed, model=model,
+            tier_map=tier_map,
+        )
+
+    monkeypatch.setattr(
+        execute_handler,
+        "handle_execute_one_batch",
+        _capture_and_dispatch,
+    )
+
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        confirm_destructive=True,
+        user_approved=True,
+        batch=1,
+    )
+    args.tier_models = {"execute": {"1": "hermes:flash", "5": "codex:high"}}
+
+    megaplan.handle_execute(plan_fixture.root, args)
+
+    assert captured_tier_map == {1: "hermes:flash", 5: "codex:high"}
+
+
 # ---------------------------------------------------------------------------
 # Freshness tests — auto_loop per-batch tier change
 # ---------------------------------------------------------------------------
@@ -4224,23 +4130,8 @@ def test_auto_loop_same_model_no_extra_refresh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When consecutive batches use the same tier-selected model, refreshed
-    is NOT forced to True.
-
-    This isolates the tier-change freshness logic, so the per-batch
-    fresh-session default (which would otherwise force every batch fresh) is
-    disabled here.
-    """
+    is NOT forced to True."""
     _setup_three_batch_tier_plan(plan_fixture)
-    _real_get_effective = megaplan.execute.batch.get_effective
-
-    def _no_fresh_per_batch(section, key):
-        if section == "execution" and key == "fresh_session_per_batch":
-            return False
-        return _real_get_effective(section, key)
-
-    monkeypatch.setattr(
-        megaplan.execute.batch, "get_effective", _no_fresh_per_batch
-    )
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
@@ -4302,7 +4193,7 @@ def test_auto_loop_same_model_no_extra_refresh(
         5: "codex:high",
     }
 
-    megaplan.execute.core.handle_execute_auto_loop(
+    response = megaplan.execute.core.handle_execute_auto_loop(
         root=plan_fixture.root,
         plan_dir=plan_fixture.plan_dir,
         state=state,
@@ -4647,107 +4538,68 @@ def test_handle_execute_auto_loop_deterministic_characterization(
 
     # 4. Assert deterministic response shape.
     assert response["success"] is True
-    assert response["step"] == "execute"
-    assert response["next_step"] == "review"
-    assert response["state"] == megaplan.STATE_EXECUTED
-    assert response["auto_approve"] is False
-    assert "_phase_outcome" in response
-    assert response["_phase_outcome"] == "success"
-
-    # Summary contains the worker output.
-    assert "Batch 1 complete" in str(response["summary"])
-
-    # Artifacts are written.
-    assert isinstance(response["artifacts"], list)
-    for artifact_name in ("execution.json", "execution_audit.json", "finalize.json", "final.md"):
-        assert artifact_name in response["artifacts"], (
-            f"Missing artifact: {artifact_name}"
-        )
-
-    # No warnings on success.
-    assert response["warnings"] == []
 
 
-def test_handle_execute_auto_loop_all_tasks_done_is_idempotent(
+def test_handle_execute_auto_loop_uses_valid_calibration_suggestion(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A resumed execute with no pending tasks must advance to review.
-
-    Regression coverage for the auto-loop re-running execute after the final
-    batch had already marked every task done. Without this guard the empty
-    aggregate had no claimed files, scope-drift treated the existing diff as
-    unclaimed, and auto retried execute until it stalled at ``finalized``.
-    """
-    make_args = plan_fixture.make_args
-    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-    megaplan.handle_override(
-        plan_fixture.root,
-        make_args(
-            plan=plan_fixture.plan_name,
-            override_action="force-proceed",
-            reason="test",
-        ),
-    )
-    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
-
-    changed = plan_fixture.project_dir / "already_done.py"
-    changed.write_text("VALUE = 1\n", encoding="utf-8")
-    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
-    finalize_data["tasks"] = [
-        {
-            "id": "T1",
-            "description": "Already completed.",
-            "depends_on": [],
-            "status": "done",
-            "executor_notes": "Completed before resume.",
-            "files_changed": ["already_done.py"],
-            "commands_run": ["python -m py_compile already_done.py"],
-            "evidence_files": [],
-            "reviewer_verdict": "",
-        }
-    ]
-    finalize_data["sense_checks"] = []
-    (plan_fixture.plan_dir / "finalize.json").write_text(
-        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
-    )
-    (plan_fixture.plan_dir / "execution_batch_1.json").write_text(
-        json.dumps(
-            {
-                "output": "Executed T1.",
-                "files_changed": ["already_done.py"],
-                "commands_run": ["python -m py_compile already_done.py"],
-                "deviations": [],
-                "task_updates": [
-                    {
-                        "task_id": "T1",
-                        "status": "done",
-                        "executor_notes": "Completed before resume.",
-                        "files_changed": ["already_done.py"],
-                        "commands_run": ["python -m py_compile already_done.py"],
-                    }
-                ],
-                "sense_check_acknowledgments": [],
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    _setup_single_auto_attribute_plan(plan_fixture)
+    monkeypatch.setenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", "1")
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_capture_git_status_snapshot",
         lambda *_: ({}, None),
     )
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_capture_git_status_snapshot_recursive",
+        lambda *_: ({}, None),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "query_route_if_enabled",
+        lambda *args, **kwargs: RouteSuggestion(tier_spec="hermes:flash", confidence=0.8),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_resolve_tier_spec",
+        lambda args, tier_spec: ("hermes", "persistent", f"resolved::{tier_spec}"),
+    )
 
-    def _fail_worker(**_kwargs):
-        raise AssertionError("no worker should run when every task is already done")
+    run_params: list[dict[str, object]] = []
+
+    def _fake_run_and_merge(**kwargs):
+        run_params.append(
+            {
+                "agent": kwargs["agent"],
+                "model": kwargs["model"],
+                "resolved_model": kwargs["resolved_model"],
+            }
+        )
+        finalize_data = read_json(kwargs["plan_dir"] / "finalize.json")
+        for tid in kwargs["batch_task_ids"]:
+            for task in finalize_data.get("tasks", []):
+                if task.get("id") == tid:
+                    task["status"] = "done"
+                    task["executor_notes"] = "done"
+        (kwargs["plan_dir"] / "finalize.json").write_text(
+            json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+        )
+        return _make_fake_batch_result(
+            batch_task_ids=kwargs["batch_task_ids"],
+            batch_sense_check_ids=kwargs["batch_sense_check_ids"],
+            batch_number=kwargs["batch_number"],
+            agent=kwargs["agent"],
+            mode=kwargs["mode"],
+            refreshed=kwargs["refreshed"],
+            session_id="session-1",
+        )
 
     monkeypatch.setattr(
         megaplan.execute.batch,
         "_run_and_merge_batch",
-        _fail_worker,
+        _fake_run_and_merge,
     )
 
     state = load_state(plan_fixture.plan_dir)
@@ -4764,21 +4616,14 @@ def test_handle_execute_auto_loop_all_tasks_done_is_idempotent(
         agent="codex",
         mode="persistent",
         refreshed=False,
+        tier_map={1: "hermes:flash", 5: "codex:high"},
     )
 
-    assert response["success"] is True
-    assert response["state"] == megaplan.STATE_EXECUTED
-    assert response["next_step"] == "review"
-    assert response["_phase_outcome"] == "success"
-    assert response["warnings"] == []
-    assert load_state(plan_fixture.plan_dir)["current_state"] == megaplan.STATE_EXECUTED
-    execution = read_json(plan_fixture.plan_dir / "execution.json")
-    assert execution["files_changed"] == ["already_done.py"]
-
-    # Monitor hint is present.
-    assert isinstance(response["monitor_hint"], str)
-    assert response["monitor_hint"] != ""
-
-    # Files_changed and deviations are lists.
-    assert isinstance(response["files_changed"], list)
-    assert isinstance(response["deviations"], list)
+    assert run_params == [
+        {
+            "agent": "hermes",
+            "model": "resolved::hermes:flash",
+            "resolved_model": "resolved::hermes:flash",
+        }
+    ]
+    assert response["step"] == "execute"

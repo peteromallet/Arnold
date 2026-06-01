@@ -15,6 +15,7 @@ import megaplan._core
 import megaplan.cli
 import megaplan.execute.core
 import megaplan.handlers
+import megaplan.handlers.critique as critique_handler
 import megaplan.workers
 from megaplan._core import WORKFLOW, _ROBUSTNESS_OVERRIDES, clear_active_step, save_state, set_active_step, workflow_next
 from megaplan.orchestration.evaluation import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
@@ -698,7 +699,18 @@ def test_workflow_mock_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         recorded_steps.append(step)
         return original_run_step(step, *args, **kwargs)
 
+    def _record_parallel_critique(state: dict, plan_dir: Path, **kwargs: object) -> WorkerResult:
+        recorded_steps.append("critique")
+        return WorkerResult(
+            payload=_build_mock_payload("critique", state, plan_dir),
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="parallel-critique",
+        )
+
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _record)
+    monkeypatch.setattr(critique_handler, "run_parallel_critique", _record_parallel_critique)
     megaplan.handle_override(
         plan_fixture.root,
         make_args(plan=plan_fixture.plan_name, override_action="add-note", note="keep changes scoped"),

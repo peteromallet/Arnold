@@ -14,12 +14,14 @@ import os
 import re
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional, Tuple
 
+from megaplan.control_interface import read_valid_targets
 from megaplan.observability.events import EventKind, read_events
+from megaplan.planning.control_binding import planning_control_binding, planning_run_state_view
+from megaplan.run_outcome import RunOutcome
 
 # Default phase timeout (overridable from state)
 _DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
@@ -200,6 +202,7 @@ def _parse_decision_skill_profiles() -> list[str]:
 
 def _load_state(plan_dir: Path) -> Optional[dict]:
     """Load state.json from plan_dir, returning None if missing/unreadable."""
+    # cache-tolerant: introspect probe.
     state_file = plan_dir / "state.json"
     if not state_file.exists():
         return None
@@ -352,7 +355,8 @@ def _compute_block_details(plan_dir: Path, state: Optional[dict]) -> dict:
     if not isinstance(current_state, str):
         return result
 
-    # Determine if blocked — check for outstanding flags and certain states
+    # Determine if blocked — keep the legacy display semantics, but use the
+    # neutral outcome projection to decide whether recovery targets apply.
     flags_count = 0
     for path_obj in sorted(plan_dir.glob("gate_signals_v*.json"), reverse=True):
         try:
@@ -364,16 +368,33 @@ def _compute_block_details(plan_dir: Path, state: Optional[dict]) -> dict:
         except Exception:
             continue
 
-    blocked_states = {"gated", "failed", "awaiting_human", "clarifying"}
-    is_blocked = flags_count > 0 or current_state in blocked_states
+    run_state = planning_run_state_view(state)
+    is_blocked = flags_count > 0 or current_state in {"gated", "clarifying"} or run_state.outcome in {
+        RunOutcome.BLOCKED,
+        RunOutcome.AWAITING_HUMAN,
+        RunOutcome.FAILED,
+    }
     result["is_blocked"] = is_blocked
 
     if is_blocked:
         try:
-            from megaplan._core.workflow import workflow_next
-
-            recov = workflow_next(state)
-            result["recoverable_via"] = recov if recov else []
+            recovery = run_state.outcome in {
+                RunOutcome.BLOCKED,
+                RunOutcome.AWAITING_HUMAN,
+                RunOutcome.FAILED,
+            }
+            recov = read_valid_targets(
+                run_state,
+                planning_control_binding(),
+                recovery=recovery,
+            )
+            result["recoverable_via"] = [
+                target.id
+                for target in recov
+                if isinstance(target.id, str)
+                and target.id
+                and target.metadata.get("actionable", True)
+            ]
         except Exception:
             result["recoverable_via"] = []
 

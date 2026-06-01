@@ -22,10 +22,13 @@ import sys
 import traceback
 from typing import Any, Callable, Mapping
 
-from megaplan._core import read_json, save_state, slugify
+from megaplan._core import save_state, slugify
 from megaplan._core.workflow import resume_plan
+from megaplan._pipeline.flags import control_interface_routing_on
 from megaplan.auto import drive as drive_auto
+from megaplan.control_interface import ControlTransition, RunStateView, apply_transition
 from megaplan.handlers import handle_init, handle_override
+from megaplan.planning import planning_control_binding
 from megaplan.orchestration.progress import ProgressContext, ProgressEmitter
 from megaplan.schemas import ControlMessage, Sprint
 from megaplan.store import Store
@@ -224,7 +227,8 @@ class ControlTargetResolver:
 
     def _read_plan_state(self, plan_dir: Path) -> dict[str, Any]:
         try:
-            state = read_json(plan_dir / "state.json")
+            from megaplan._core.io import read_plan_state_cached
+            state = read_plan_state_cached(plan_dir, mode="authority")
         except Exception as error:
             raise CliError("invalid_plan_state", f"Failed to read {plan_dir / 'state.json'}: {error}") from error
         if not isinstance(state, dict):
@@ -391,7 +395,8 @@ def run_sprint_control_handler(target: ControlTarget, message: ControlMessage, *
             raise CliError("run_sprint_init_failed", f"Plan initialization failed for {plan!r}", extra={"response": response})
         created = True
         plan_dir = _plan_dir(target.project_root, plan)
-        state = read_json(plan_dir / "state.json")
+        from megaplan._core.io import read_plan_state_cached
+        state = read_plan_state_cached(plan_dir, mode="authority")
         meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
         state["meta"] = {**meta, "epic_id": target.epic_id, "sprint_id": target.sprint_id}
         save_state(plan_dir, state)
@@ -438,19 +443,27 @@ def resume_plan_control_handler(target: ControlTarget, message: ControlMessage, 
 
 
 def approve_gate_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
-    del message
     if target.intent != "approve_gate" or target.plan is None or target.gate_id is None:
         raise CliError("invalid_control_target", "approve_gate handler requires a resolved gate target")
     payload = target.payload or {}
-    response = handle_override(
-        target.project_root,
-        _override_args(
-            plan=target.plan,
+    reason = _payload_text(payload, "reason", "Approved from control message.")
+    if control_interface_routing_on():
+        response = _apply_gate_control_transition(
+            target,
+            message,
             action="force-proceed",
-            reason=_payload_text(payload, "reason", "Approved from control message."),
-            user_approved=True,
-        ),
-    )
+            payload={"user_approved": True, "reason": reason},
+        )
+    else:
+        response = handle_override(
+            target.project_root,
+            _override_args(
+                plan=target.plan,
+                action="force-proceed",
+                reason=reason,
+                user_approved=True,
+            ),
+        )
     event = _gate_resolved(target, store, decision="approved", summary=str(response.get("summary") or "Gate approved"))
     details: dict[str, Any] = {
         "gate": response,
@@ -464,25 +477,96 @@ def approve_gate_control_handler(target: ControlTarget, message: ControlMessage,
 
 
 def reject_gate_control_handler(target: ControlTarget, message: ControlMessage, *, store: Store) -> dict[str, Any]:
-    del message
     if target.intent != "reject_gate" or target.plan is None or target.gate_id is None:
         raise CliError("invalid_control_target", "reject_gate handler requires a resolved gate target")
     payload = target.payload or {}
-    response = handle_override(
-        target.project_root,
-        _override_args(
-            plan=target.plan,
+    reason = _payload_text(payload, "reason", "Gate rejected from control message.")
+    note = _payload_text(payload, "note", reason)
+    if control_interface_routing_on():
+        response = _apply_gate_control_transition(
+            target,
+            message,
             action="add-note",
-            note=_payload_text(payload, "note", _payload_text(payload, "reason", "Gate rejected from control message.")),
-            reason=_payload_text(payload, "reason", "Gate rejected from control message."),
-            source="user",
-        ),
-    )
+            payload={"note": note, "source": "user", "reason": reason},
+        )
+    else:
+        response = handle_override(
+            target.project_root,
+            _override_args(
+                plan=target.plan,
+                action="add-note",
+                note=note,
+                reason=reason,
+                source="user",
+            ),
+        )
     event = _gate_resolved(target, store, decision="rejected", summary=str(response.get("summary") or "Gate rejected"))
     return {
         "gate": response,
         "progress_event_id": getattr(event, "id", None) if event is not None else None,
     }
+
+
+def _apply_gate_control_transition(
+    target: ControlTarget,
+    message: ControlMessage,
+    *,
+    action: str,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    if target.plan is None or target.plan_dir is None:
+        raise CliError("invalid_control_target", "gate control requires a resolved filesystem plan")
+
+    from megaplan._core.io import read_plan_state_cached
+    from megaplan.handlers.override import _emit_routed_override_events, _routed_override_response
+
+    state = read_plan_state_cached(target.plan_dir, mode="authority")
+    transition = ControlTransition(
+        op="override",
+        target_id=action,
+        payload={
+            **dict(payload),
+            "root": str(target.project_root),
+            "plan_dir": str(target.plan_dir),
+        },
+        idempotency_key=f"control-message:{message.id}:{action}",
+    )
+    result = apply_transition(
+        RunStateView(
+            run_id=state.get("name", target.plan),
+            cursor=state.get("current_state"),
+            raw_state=state,
+        ),
+        transition,
+        planning_control_binding(),
+        plan_dir=target.plan_dir,
+    )
+    if not result.accepted:
+        if result.reason == "control_transition_conflict":
+            raise CliError(
+                "invalid_transition",
+                result.reason,
+                extra={"conflict": result.artifacts.get("conflict")},
+            )
+        raise CliError("invalid_transition", result.reason or "control transition rejected")
+
+    persisted_state = read_plan_state_cached(target.plan_dir, mode="authority")
+    args = _override_args(
+        plan=target.plan,
+        action=action,
+        reason=str(payload.get("reason") or ""),
+        note=payload.get("note") if isinstance(payload.get("note"), str) else None,
+        source=str(payload.get("source") or "user"),
+        user_approved=bool(payload.get("user_approved", False)),
+    )
+    _emit_routed_override_events(action, plan_dir=target.plan_dir, state=persisted_state, args=args)
+    return _routed_override_response(
+        action,
+        plan_dir=target.plan_dir,
+        state=persisted_state,
+        args=args,
+        artifacts=dict(result.artifacts),
+    )
 
 
 def _default_sprint_plan_name(sprint: Sprint) -> str:

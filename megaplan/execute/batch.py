@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import megaplan.workers as worker_module
+from megaplan._pipeline.flags import calibration_query_route_on
 from megaplan._core import (
     apply_session_update,
     append_history,
@@ -33,6 +34,7 @@ from megaplan._core import (
     store_raw_worker_output,
 )
 from megaplan.audits.quality_gates import capture_before_line_counts
+from megaplan.calibration import query_route_if_enabled
 from megaplan.execute.aggregation import (
     _append_scope_drift_blocker,
     _build_aggregate_execution_payload,
@@ -70,62 +72,117 @@ from megaplan.types import (
     STATE_FINALIZED,
     StepResponse,
 )
-from megaplan.blocker_recovery import evaluate_quality_blockers
 from megaplan.workers import WorkerResult
 
 log = logging.getLogger(__name__)
 
 _BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
 
+
+def _batch_task_signature(batch_task_ids: Iterable[str], batch_complexity: int) -> str:
+    """Build the calibration task signature for a batch query."""
+    ids = [task_id for task_id in batch_task_ids if isinstance(task_id, str) and task_id]
+    return f"batch:max_complexity={batch_complexity}:task_ids={','.join(sorted(ids))}"
+
+
+@dataclass(frozen=True)
+class _TierResolution:
+    """Resolved tier metadata from one route decision.
+
+    Carries the selected spec along with observability tags that describe
+    *how* the decision was reached (source, projected tier, exploration,
+    confidence).  ``spec`` is ``None`` when no usable tier could be resolved.
+    """
+
+    spec: str | None
+    source: str  # "toml" or "calibration_query"
+    projected_tier: int | None
+    counterfactual_tag: str | None
+    low_confidence: bool
+
+
+def _calibration_tier_spec(
+    *,
+    plan_dir: Path,
+    tier_map: dict[int, str],
+    batch_task_ids: Iterable[str],
+    batch_complexity: int,
+) -> _TierResolution:
+    """Return a validated calibration suggestion or fall back to TOML routing.
+
+    The fallback behaviour is deliberately identical to the historical
+    ``tier_map.get(batch_complexity)`` path when the flag is off, no suggestion
+    exists, or the suggestion is malformed.
+
+    Returns a :class:`_TierResolution` whose ``spec`` field is the selected
+    tier spec string (or ``None`` when no spec could be resolved).
+    """
+    fallback_spec = tier_map.get(batch_complexity)
+    if not calibration_query_route_on():
+        return _TierResolution(
+            spec=fallback_spec,
+            source="toml",
+            projected_tier=batch_complexity if fallback_spec else None,
+            counterfactual_tag=None,
+            low_confidence=False,
+        )
+    suggestion = query_route_if_enabled(
+        _batch_task_signature(batch_task_ids, batch_complexity),
+        plan_dir=plan_dir,
+        taint_class=None,
+        exploration_budget=0.0,
+        default_tier=batch_complexity,
+        tier_models={"execute": {str(k): str(v) for k, v in tier_map.items()}},
+    )
+    if suggestion is None:
+        return _TierResolution(
+            spec=fallback_spec,
+            source="toml",
+            projected_tier=batch_complexity if fallback_spec else None,
+            counterfactual_tag=None,
+            low_confidence=False,
+        )
+    suggested_spec = suggestion.tier_spec
+    if (
+        not isinstance(suggested_spec, str)
+        or not suggested_spec.strip()
+        or suggested_spec not in {str(spec) for spec in tier_map.values()}
+    ):
+        return _TierResolution(
+            spec=fallback_spec,
+            source="toml",
+            projected_tier=batch_complexity if fallback_spec else None,
+            counterfactual_tag=None,
+            low_confidence=False,
+        )
+    return _TierResolution(
+        spec=suggested_spec,
+        source="calibration_query",
+        projected_tier=suggestion.projected_tier,
+        counterfactual_tag=suggestion.counterfactual_tag,
+        low_confidence=suggestion.low_confidence,
+    )
+
 def _resolve_tier_spec(
     args: argparse.Namespace,
     tier_spec: str,
-    *,
-    phase: str = "execute",
 ) -> tuple[str, str, str | None]:
     """Resolve a tier spec string to (agent, mode, model) without mutating *args*.
 
-    Copies *args*, sets ``phase_model=["{phase}=<tier_spec>"]`` on the
+    Copies *args*, sets ``phase_model=["execute=<tier_spec>"]`` on the
     copy, and calls ``resolve_agent_mode``.  Does not prepend ahead of a
     user CLI override — the override guard in ``apply_profile_expansion``
-    already strips ``tier_models.{phase}`` when ``--phase-model {phase}=…``
+    already strips ``tier_models.execute`` when ``--phase-model execute=…``
     is present, so this helper is only called when tier routing is active.
     """
     import copy
 
     tier_args = copy.copy(args)
-    tier_args.phase_model = [f"{phase}={tier_spec}"]
+    tier_args.phase_model = [f"execute={tier_spec}"]
     agent, _mode, _refreshed, model = worker_module.resolve_agent_mode(
-        phase, tier_args
+        "execute", tier_args
     )
     return agent, _mode, model
-
-
-# Lowest complexity tier the auto-driver's tier-drop fallback will route to.
-# Premium tier maps put cheaper / less-capable models below tier 3 (e.g. the
-# DeepSeek tiers in profiles/premium.toml), so dropping below this floor risks
-# routing a genuinely-hard task to a model that cannot do it.  A floor of 3
-# keeps the worst-case drop at "premium-thinking" (e.g. Opus → Sonnet), which
-# is exactly the move that unblocks a repeatedly-stalling premium worker.
-DEFAULT_TIER_DROP_FLOOR = 3
-
-
-def _resolve_effective_tier_complexity(
-    batch_complexity: int,
-    tier_drop: int,
-    *,
-    floor: int = DEFAULT_TIER_DROP_FLOOR,
-) -> int:
-    """Apply an auto-driver tier-drop to a batch's resolved complexity.
-
-    ``tier_drop`` is the number of tiers the driver has decided to drop for
-    this dispatch after observing repeated worker stalls.  The result is
-    clamped at ``floor`` so the fallback never routes below the lowest
-    premium tier.  ``tier_drop <= 0`` is a no-op (normal routing).
-    """
-    if tier_drop <= 0:
-        return batch_complexity
-    return max(floor, batch_complexity - tier_drop)
 
 
 # Private marker set: dispatcher return paths stamp one of these four values.
@@ -274,29 +331,6 @@ def build_blocking_reasons(
     if timeout_reason is not None:
         reasons.append(timeout_reason)
     return reasons
-
-
-def _filter_non_terminal_quality_blocking_reasons(
-    blocking_reasons: list[str],
-    state: PlanState,
-) -> list[str]:
-    """Honor accepted quality-resolution events before deciding to block.
-
-    Execute constructs some aggregate blockers directly from audit strings
-    (tracking gaps, missing evidence, scope drift). Operators can resolve those
-    quality blockers through the quality-gate ledger, so this final decision
-    point must read the same ledger instead of treating the fresh strings as
-    unconditionally terminal.
-    """
-    if not blocking_reasons:
-        return []
-    evaluation = evaluate_quality_blockers(state, blocking_reasons)
-    non_terminal_messages = {
-        blocker.message for blocker in evaluation.blockers if blocker.is_non_terminal
-    }
-    if not non_terminal_messages:
-        return blocking_reasons
-    return [reason for reason in blocking_reasons if reason not in non_terminal_messages]
 
 
 def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
@@ -577,21 +611,28 @@ def handle_execute_one_batch(
     tier_complexity: int | None = None
     tier_spec_raw: str | None = None
     tier_resolved_model: str | None = None
+    # New T14 metadata fields.
+    tier_routing_source: str | None = None
+    tier_projected: int | None = None
+    tier_counterfactual_tag: str | None = None
+    tier_low_confidence: bool = False
     if tier_map:
         batch_complexity = compute_batch_complexity(finalize_data, batch_task_ids)
-        # Auto-driver tier-drop fallback: after repeated worker stalls the
-        # driver passes --tier-drop N to route this batch one (or N) tiers
-        # lower, clamped at the premium floor. tier_drop=0 is normal routing.
-        tier_drop = int(getattr(args, "tier_drop", 0) or 0)
-        effective_complexity = _resolve_effective_tier_complexity(
-            batch_complexity, tier_drop
+        tier_complexity = batch_complexity
+        resolution = _calibration_tier_spec(
+            plan_dir=plan_dir,
+            tier_map=tier_map,
+            batch_task_ids=batch_task_ids,
+            batch_complexity=batch_complexity,
         )
-        tier_complexity = effective_complexity
-        tier_spec = tier_map.get(effective_complexity)
-        if tier_spec:
-            tier_spec_raw = tier_spec
+        tier_routing_source = resolution.source
+        tier_projected = resolution.projected_tier
+        tier_counterfactual_tag = resolution.counterfactual_tag
+        tier_low_confidence = resolution.low_confidence
+        if resolution.spec:
+            tier_spec_raw = resolution.spec
             tier_agent, tier_mode, tier_model = _resolve_tier_spec(
-                args, tier_spec
+                args, resolution.spec
             )
             tier_resolved_model = tier_model
             agent, mode, model = tier_agent, tier_mode, tier_model
@@ -715,14 +756,9 @@ def handle_execute_one_batch(
             aggregate_payload=aggregate_payload,
             state=state,
             phase_context=f"final execute batch {batch_number}/{batches_total}",
-            plan_dir=plan_dir,
         )
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
-    blocking_reasons = _filter_non_terminal_quality_blocking_reasons(
-        blocking_reasons,
-        state,
-    )
     blocked = bool(blocking_reasons)
     if is_final_batch and all_tracked and not blocked:
         state["current_state"] = STATE_EXECUTED
@@ -754,6 +790,10 @@ def handle_execute_one_batch(
             batch_complexity=tier_complexity if tier_routing_active else None,
             tier_model_spec=tier_spec_raw if tier_routing_active else None,
             tier_model_resolved=tier_resolved_model if tier_routing_active else None,
+            tier_routing_source=tier_routing_source if tier_routing_active else None,
+            tier_projected=tier_projected if tier_routing_active else None,
+            tier_counterfactual_tag=tier_counterfactual_tag if tier_routing_active else None,
+            tier_low_confidence=tier_low_confidence if tier_routing_active else False,
         ),
     )
     if aggregate_payload is not None and drift is not None:
@@ -841,11 +881,6 @@ def handle_execute_one_batch(
         )
 
     phase_outcome = "blocked_by_quality" if blocked else "success"
-    response_deviations = result.payload.get("deviations", [])
-    if blocked:
-        response_deviations = _stable_unique_strings(
-            [*response_deviations, *blocking_reasons]
-        )
     response: StepResponse = {
         "success": not blocked,
         "step": "execute",
@@ -858,7 +893,7 @@ def handle_execute_one_batch(
         "batches_total": batches_total,
         "batches_remaining": batches_remaining,
         "files_changed": result.payload.get("files_changed", []),
-        "deviations": response_deviations,
+        "deviations": result.payload.get("deviations", []),
         "warnings": warnings,
         "auto_approve": auto_approve,
         "user_approved_gate": user_approved_gate,
@@ -872,6 +907,13 @@ def handle_execute_one_batch(
         response["tier_agent"] = agent
         response["tier_mode"] = mode
         response["tier_model"] = model
+        if tier_routing_source is not None:
+            response["tier_routing_source"] = tier_routing_source
+        if tier_projected is not None:
+            response["tier_projected"] = tier_projected
+        if tier_counterfactual_tag is not None:
+            response["tier_counterfactual_tag"] = tier_counterfactual_tag
+        response["tier_low_confidence"] = tier_low_confidence
     if next_step == "execute" and not blocked:
         response["guidance"] = f"Run --batch {batch_number + 1}"
     emitter = getattr(args, "progress_emitter", None)
@@ -924,87 +966,6 @@ def _reset_blocked_tasks_to_pending(finalize_data: dict[str, Any]) -> list[str]:
         task["reviewer_verdict"] = ""
         reset_ids.append(task_id)
     return sorted(reset_ids)
-
-
-def _review_requests_rework(review_data: dict[str, Any]) -> bool:
-    return (
-        review_data.get("review_verdict") == "needs_rework"
-        or bool(review_data.get("rework_items"))
-    )
-
-
-def _review_rework_task_ids(
-    review_data: dict[str, Any],
-    finalize_data: dict[str, Any],
-) -> tuple[list[str], list[str]]:
-    task_ids = {
-        task["id"]
-        for task in finalize_data.get("tasks", [])
-        if isinstance(task, dict) and isinstance(task.get("id"), str)
-    }
-    runnable: list[str] = []
-    unrunnable: list[str] = []
-    seen: set[str] = set()
-    for item in review_data.get("rework_items", []) or []:
-        if not isinstance(item, dict):
-            continue
-        source = item.get("source")
-        task_id = item.get("task_id")
-        if not isinstance(task_id, str) or not task_id:
-            unrunnable.append(str(task_id or "<missing>"))
-            continue
-        if source == "review_incomplete":
-            unrunnable.append(task_id)
-            continue
-        if task_id not in task_ids:
-            unrunnable.append(task_id)
-            continue
-        if task_id in seen:
-            continue
-        seen.add(task_id)
-        runnable.append(task_id)
-    return runnable, unrunnable
-
-
-def _block_no_runnable_rework(
-    *,
-    plan_dir: Path,
-    state: PlanState,
-    auto_approve: bool,
-    reason: str,
-    unrunnable_task_ids: list[str] | None = None,
-) -> StepResponse:
-    summary = f"Blocked: {reason}"
-    append_history(
-        state,
-        make_history_entry(
-            "execute",
-            duration_ms=0,
-            cost_usd=0.0,
-            result="blocked",
-            message=summary,
-        ),
-    )
-    save_state_merge_meta(plan_dir, state)
-    response: StepResponse = {
-        "success": False,
-        "step": "execute",
-        "summary": summary,
-        "artifacts": ["review.json", "finalize.json", "final.md"],
-        "monitor_hint": build_monitor_hint(plan_dir),
-        "next_step": "execute",
-        "state": STATE_FINALIZED,
-        "files_changed": [],
-        "deviations": [summary],
-        "warnings": [summary],
-        "auto_approve": auto_approve,
-        "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
-        "_phase_outcome": "blocked_by_quality",
-    }
-    if unrunnable_task_ids:
-        response["unrunnable_rework_task_ids"] = sorted(set(unrunnable_task_ids))
-    _attach_next_step_runtime(response)
-    return response
 
 
 def handle_execute_auto_loop(
@@ -1072,46 +1033,6 @@ def handle_execute_auto_loop(
         for task in tasks
         if task.get("status") == "pending" and isinstance(task.get("id"), str)
     ]
-    review_data: dict[str, Any] = {}
-    review_rework_task_ids: list[str] = []
-    unrunnable_rework_task_ids: list[str] = []
-    rework_mode = False
-    if not pending_tasks and (plan_dir / "review.json").exists():
-        try:
-            loaded_review = read_json(plan_dir / "review.json")
-        except (OSError, UnicodeDecodeError, ValueError):
-            loaded_review = {}
-        if isinstance(loaded_review, dict):
-            review_data = loaded_review
-            if _review_requests_rework(review_data):
-                review_rework_task_ids, unrunnable_rework_task_ids = _review_rework_task_ids(
-                    review_data,
-                    finalize_data,
-                )
-                if not review_rework_task_ids:
-                    extra = ""
-                    if unrunnable_rework_task_ids:
-                        extra = (
-                            " Unmatched rework task_id(s): "
-                            + ", ".join(sorted(set(unrunnable_rework_task_ids)))
-                            + "."
-                        )
-                    return _block_no_runnable_rework(
-                        plan_dir=plan_dir,
-                        state=state,
-                        auto_approve=auto_approve,
-                        reason=(
-                            "review requested rework but no runnable finalize task IDs could be derived."
-                            f"{extra} Re-run review so rework_items reference concrete finalize task IDs."
-                        ),
-                        unrunnable_task_ids=unrunnable_rework_task_ids,
-                    )
-                rework_mode = True
-                pending_tasks = [
-                    task
-                    for task in tasks
-                    if task.get("id") in set(review_rework_task_ids)
-                ]
     if blocked_task_ids:
         # Cross-session retry detection: if any blocked task was recorded
         # under a *different* invocation_id, this is a fresh session and we
@@ -1193,87 +1114,8 @@ def handle_execute_auto_loop(
             _attach_next_step_runtime(response)
             return response
 
-    effective_completed_task_ids = (
-        completed_task_ids - set(review_rework_task_ids)
-        if rework_mode
-        else completed_task_ids
-    )
-
-    if (
-        all_task_ids
-        and not pending_tasks
-        and not blocked_task_ids
-        and set(all_task_ids) <= effective_completed_task_ids
-    ):
-        max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
-        expected_batches = split_oversized_batches(
-            compute_global_batches(finalize_data),
-            max_tasks_per_batch,
-        )
-        batch_payloads = [read_json(path) for path in list_batch_artifacts(plan_dir)]
-        plan_mode = state["config"].get("mode", "code")
-        aggregate_payload = _build_aggregate_execution_payload(
-            batch_payloads,
-            completed_batches=len(batch_payloads),
-            total_batches=max(len(expected_batches), len(batch_payloads)),
-            mode=plan_mode,
-            plan_dir=plan_dir,
-            state=state,
-        )
-        if not aggregate_payload.get("output"):
-            aggregate_payload["output"] = (
-                f"Execution already complete: {len(completed_task_ids)}/{len(all_task_ids)} "
-                "tasks tracked."
-            )
-        execution_audit = validate_execution_evidence(
-            finalize_data,
-            project_dir,
-            mode=plan_mode,
-            state=state,
-        )
-        atomic_write_json(plan_dir / "execution.json", aggregate_payload)
-        atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
-        atomic_write_json(plan_dir / "finalize.json", finalize_data)
-        atomic_write_text(
-            plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
-        )
-        state["current_state"] = STATE_EXECUTED
-        append_history(
-            state,
-            make_history_entry(
-                "execute",
-                duration_ms=0,
-                cost_usd=0.0,
-                result="success",
-                output_file="execution.json",
-            ),
-        )
-        save_state_merge_meta(plan_dir, state)
-        response: StepResponse = {
-            "success": True,
-            "step": "execute",
-            "summary": aggregate_payload.get("output", "Execution already complete."),
-            "artifacts": [
-                "execution.json",
-                "execution_audit.json",
-                "finalize.json",
-                "final.md",
-            ],
-            "monitor_hint": build_monitor_hint(plan_dir),
-            "next_step": "review",
-            "state": STATE_EXECUTED,
-            "files_changed": aggregate_payload.get("files_changed", []),
-            "deviations": aggregate_payload.get("deviations", []),
-            "warnings": [],
-            "auto_approve": auto_approve,
-            "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
-            "_phase_outcome": "success",
-        }
-        _attach_next_step_runtime(response)
-        return response
-
     pending_batches = compute_task_batches(
-        pending_tasks, completed_ids=effective_completed_task_ids
+        pending_tasks, completed_ids=completed_task_ids
     )
     max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
     split_batches = split_oversized_batches(pending_batches, max_tasks_per_batch)
@@ -1292,10 +1134,7 @@ def handle_execute_auto_loop(
                 max_tasks_per_batch,
             )
     single_batch_mode = (
-        not rework_mode
-        and bool(pending_tasks)
-        and len(split_batches) <= 1
-        and len(all_task_ids) <= max_tasks_per_batch
+        len(split_batches) <= 1 and len(all_task_ids) <= max_tasks_per_batch
     )
     global_batches = split_oversized_batches(
         compute_global_batches(finalize_data),
@@ -1305,13 +1144,6 @@ def handle_execute_auto_loop(
         tuple(batch): index + 1 for index, batch in enumerate(global_batches)
     }
     batches_to_run = [all_task_ids] if single_batch_mode else split_batches
-    if not batches_to_run:
-        return _block_no_runnable_rework(
-            plan_dir=plan_dir,
-            state=state,
-            auto_approve=auto_approve,
-            reason="no pending tasks or runnable review rework tasks are available for execute.",
-        )
     total_batches = len(batches_to_run) or 1
     active_task_ids = set(
         all_task_ids if single_batch_mode else [task["id"] for task in pending_tasks]
@@ -1376,42 +1208,32 @@ def handle_execute_auto_loop(
         batch_agent, batch_mode, batch_refreshed, batch_model = (
             agent, mode, refreshed, model
         )
-        # Bound per-batch context: when fresh_session_per_batch is on, force a
-        # fresh worker session for every batch so the executor's conversation
-        # history cannot snowball across batches. Each batch prompt already
-        # carries the completed-task context it needs (see _execute_batch_prompt),
-        # so continuity is preserved by the prompt, not by an ever-growing session
-        # that is re-sent on every tool turn (the 2-3M cumulative-token / stalled
-        # -turn failure mode on large plans). First batch keeps the caller's
-        # refreshed value so a same-session resume from a prior phase still works.
-        if not single_batch_mode and get_effective(
-            "execution", "fresh_session_per_batch"
-        ):
-            # Refresh every batch, INCLUDING batch 1: separate `megaplan execute`
-            # reruns of the auto-loop (the driver restarts execute after each
-            # timeout/retry) otherwise resume the SAME persistent executor session
-            # and keep growing it across invocations — the cross-invocation half
-            # of the snowball. Batch 1 of a rerun is a fresh batch of pending
-            # tasks, so a fresh session is correct.
-            batch_refreshed = True
         # Tier routing per-batch observability (only populated when active).
         batch_tier_complexity: int | None = None
         batch_tier_spec: str | None = None
+        batch_tier_source: str | None = None
+        batch_tier_projected: int | None = None
+        batch_tier_counterfactual_tag: str | None = None
+        batch_tier_low_confidence: bool = False
         if tier_map:
             batch_complexity = compute_batch_complexity(
                 finalize_data, batch_task_ids
             )
-            # Auto-driver tier-drop fallback (see handle_execute_one_batch).
-            tier_drop = int(getattr(args, "tier_drop", 0) or 0)
-            effective_complexity = _resolve_effective_tier_complexity(
-                batch_complexity, tier_drop
+            batch_tier_complexity = batch_complexity
+            resolution = _calibration_tier_spec(
+                plan_dir=plan_dir,
+                tier_map=tier_map,
+                batch_task_ids=batch_task_ids,
+                batch_complexity=batch_complexity,
             )
-            batch_tier_complexity = effective_complexity
-            tier_spec = tier_map.get(effective_complexity)
-            if tier_spec:
-                batch_tier_spec = tier_spec
+            batch_tier_source = resolution.source
+            batch_tier_projected = resolution.projected_tier
+            batch_tier_counterfactual_tag = resolution.counterfactual_tag
+            batch_tier_low_confidence = resolution.low_confidence
+            if resolution.spec:
+                batch_tier_spec = resolution.spec
                 tier_agent, tier_mode, tier_model = _resolve_tier_spec(
-                    args, tier_spec
+                    args, resolution.spec
                 )
                 batch_agent, batch_mode, batch_model = (
                     tier_agent, tier_mode, tier_model
@@ -1531,6 +1353,10 @@ def handle_execute_auto_loop(
                 "resolved_agent": batch_agent,
                 "resolved_mode": batch_mode,
                 "resolved_model": batch_model,
+                "routing_source": batch_tier_source,
+                "projected_tier": batch_tier_projected,
+                "counterfactual_tag": batch_tier_counterfactual_tag,
+                "low_confidence": batch_tier_low_confidence,
             })
         batch_payloads.append(result.payload)
         all_attribution_records.extend(result.attribution_records)
@@ -1633,7 +1459,6 @@ def handle_execute_auto_loop(
         aggregate_payload=aggregate_payload,
         state=state,
         phase_context=f"execute auto-loop aggregate after {len(batch_payloads)}/{total_batches} completed batches",
-        plan_dir=plan_dir,
     )
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     atomic_write_json(plan_dir / "finalize.json", finalize_data)
@@ -1689,10 +1514,6 @@ def handle_execute_auto_loop(
         blocking_reasons.append(blocked_task_reason)
     _append_scope_drift_blocker(blocking_reasons, state, drift)
 
-    blocking_reasons = _filter_non_terminal_quality_blocking_reasons(
-        blocking_reasons,
-        state,
-    )
     blocked = bool(blocking_reasons)
     if not blocked and timeout_error is None:
         state["current_state"] = STATE_EXECUTED
@@ -1801,9 +1622,6 @@ def handle_execute_auto_loop(
         phase_outcome = "blocked_by_quality"
     else:
         phase_outcome = "success"
-    response_deviations = deviations
-    if blocked and phase_outcome == "blocked_by_quality":
-        response_deviations = _stable_unique_strings([*deviations, *blocking_reasons])
 
     # Collect blocked task notes for blocked_by_prereq path
     blocked_task_notes: dict[str, str] = {}
@@ -1826,7 +1644,7 @@ def handle_execute_auto_loop(
             STATE_FINALIZED if blocked or timeout_error is not None else STATE_EXECUTED
         ),
         "files_changed": aggregate_payload.get("files_changed", []),
-        "deviations": response_deviations,
+        "deviations": deviations,
         "warnings": [summary] if blocked or timeout_error is not None else [],
         "auto_approve": auto_approve,
         "user_approved_gate": user_approved_gate,

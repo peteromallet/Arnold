@@ -6,8 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from megaplan.schemas import Message, ResidentConversation
-from megaplan.store import ResidentConversationInput, Store, deterministic_idempotency_key
+from megaplan.schemas import Message, ProgressEvent, ResidentConversation, SystemLog
+from megaplan.store import ProgressEventInput, ResidentConversationInput, Store, deterministic_idempotency_key
 from megaplan.schemas.base import utc_now
 
 from .agent_loop import AgentRequest, AgentResponse, AgentRunner
@@ -39,6 +39,32 @@ class OutboundSink(Protocol):
         """Deliver a resident response."""
 
 
+class EmitProtocol(Protocol):
+    """Resident event-write surface exposed by the shared Store emit path."""
+
+    def log_system_event(
+        self,
+        *,
+        level: str,
+        category: str,
+        event_type: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+        turn_id: str | None = None,
+        epic_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> SystemLog:
+        ...
+
+    def append_progress_event(
+        self,
+        event: ProgressEventInput,
+        *,
+        idempotency_key: str | None = None,
+    ) -> ProgressEvent:
+        ...
+
+
 @dataclass(frozen=True)
 class PersistedInboundEvent:
     event: InboundEvent
@@ -62,6 +88,7 @@ class ResidentRuntime:
         self.config = config
         self.authorizer = authorizer
         self.store = store
+        self.emitter: EmitProtocol = store
         self.profile = profile
         self.runner = runner
         self.outbound = outbound
@@ -75,7 +102,7 @@ class ResidentRuntime:
         decision = self.authorizer.authorize_inbound(event.subject)
         if not decision.allowed:
             if decision.audit is not None:
-                self.store.log_system_event(
+                self.emitter.log_system_event(
                     level="warn",
                     category="system",
                     event_type="resident_inbound_denied",

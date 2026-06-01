@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+from megaplan._pipeline.flags import typed_ports_on
 from megaplan._pipeline.types import StepContext
 
 
@@ -100,7 +101,20 @@ def resolve_inputs(
             resolved[ref] = path
             continue
 
-        # Not yet produced — will be resolved on re-read (e.g. loop back)
+        # Not yet produced — will be resolved on re-read (e.g. loop back).
+        # Flag-ON (M2 / T11b): unresolved refs are a runtime port-binding
+        # failure — raise PortBindError instead of fabricating a path.
+        if typed_ports_on():
+            from megaplan._pipeline.contracts import PortBindError
+
+            raise PortBindError(
+                step_id=getattr(ctx, "step_id", "<unknown>"),
+                consume_name=ref,
+                detail=(
+                    f"no upstream artifact under {ctx.plan_dir / ref} "
+                    "and ref not in ctx.inputs"
+                ),
+            )
         resolved[ref] = ctx.plan_dir / ref / "v1.md"
 
     return resolved

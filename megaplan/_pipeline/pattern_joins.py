@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from megaplan._pipeline.pattern_types import JoinFn
+from megaplan._pipeline.flags import typed_ports_on
 from megaplan._pipeline.types import (
-    GateRecommendation,
     PipelineVerdict,
+    ReduceResult,
     StepContext,
     StepResult,
 )
@@ -16,48 +17,118 @@ from megaplan._pipeline.types import (
 
 def majority_vote(
     panel_output_key: str = "verdict",
+    *,
+    label_extractor: Callable[[StepResult], str | None] | None = None,
+    default_on_tie: str | None = "tiebreaker",
 ) -> JoinFn:
-    """Return a join callable that picks the majority recommendation."""
+    """Return a join callable that picks the majority recommendation.
+
+    Args:
+        panel_output_key: reserved for future per-key tallying.
+        label_extractor: callable extracting a vote label from a
+            StepResult. Default skips None verdicts/recommendations.
+        default_on_tie: label when no majority exists or the panel is
+            empty. ``None`` means ``verdict.recommendation`` will be
+            ``None`` (no tiebreaker label injected).
+    """
 
     del panel_output_key  # reserved for future per-key tallying
 
+    _extract = label_extractor or (
+        lambda r: (
+            r.verdict.recommendation
+            if r.verdict is not None and r.verdict.recommendation is not None
+            else None
+        )
+    )
+
     def _join(results: list[StepResult], ctx: StepContext) -> StepResult:
         del ctx  # vote is state-agnostic
-        recs: list[GateRecommendation] = []
+        typed = typed_ports_on()
+        recs: list[str] = []
+        counts: Counter[str] = Counter()
         for result in results:
-            if result.verdict is not None and result.verdict.recommendation is not None:
-                recs.append(result.verdict.recommendation)
-        chosen: GateRecommendation
+            label = _extract(result)
+            if label is not None:
+                recs.append(label)
+                counts[label] += 1
+
+        chosen: str | None
+        next_label: str
+        tally: tuple[float, ...] = ()
         if not recs:
-            chosen = "tiebreaker"
+            chosen = None
+            next_label = default_on_tie or "halt"
         else:
-            counts: Counter[GateRecommendation] = Counter(recs)
             top = counts.most_common()
+            tally = tuple(float(c) for _, c in top)
             if len(top) > 1 and top[0][1] == top[1][1]:
-                chosen = "tiebreaker"
+                chosen = None
+                next_label = default_on_tie or "halt"
             else:
                 chosen = top[0][0]
-        verdict = PipelineVerdict(score=1.0, recommendation=chosen)
-        return StepResult(verdict=verdict, next=chosen)
+                next_label = chosen
+
+        reduce_result = ReduceResult(
+            value=chosen,
+            label=chosen,
+            scores=tally,
+            tally=dict(counts),
+            provenance=(),
+        )
+        recommendation = None if typed else (chosen or next_label)
+        verdict = PipelineVerdict(
+            score=1.0,
+            recommendation=recommendation,  # type: ignore[arg-type]
+            payload={"reduce_result": reduce_result} if typed else {},
+        )
+        return StepResult(
+            verdict=verdict,
+            next=next_label,  # Note: M2 will re-type
+        )
 
     return _join
 
 
-def weighted_vote(weights: Mapping[str, float]) -> JoinFn:
-    """Return a join callable that picks the highest-weighted recommendation."""
+def weighted_vote(
+    weights: Mapping[str, float],
+    *,
+    label_extractor: Callable[[StepResult], str | None] | None = None,
+    default_on_tie: str | None = "tiebreaker",
+) -> JoinFn:
+    """Return a join callable that picks the highest-weighted recommendation.
+
+    Args:
+        weights: mapping of reviewer_id → weight (missing ids → 0.0).
+        label_extractor: callable extracting a vote label from a
+            StepResult. Default skips None verdicts/recommendations.
+        default_on_tie: label when no weighted winner exists or the
+            panel is empty. ``None`` means ``verdict.recommendation``
+            will be ``None`` (no tiebreaker label injected).
+    """
 
     weights_map: dict[str, float] = dict(weights)
 
+    _extract = label_extractor or (
+        lambda r: (
+            r.verdict.recommendation
+            if r.verdict is not None and r.verdict.recommendation is not None
+            else None
+        )
+    )
+
     def _join(results: list[StepResult], ctx: StepContext) -> StepResult:
         del ctx  # vote is state-agnostic
-        tally: dict[GateRecommendation, float] = {}
+        typed = typed_ports_on()
+        tally_map: dict[str, float] = {}
+        vote_counts: Counter[str] = Counter()
         any_vote = False
         for result in results:
-            if result.verdict is None or result.verdict.recommendation is None:
+            label = _extract(result)
+            if label is None:
                 continue
-            rec = result.verdict.recommendation
             reviewer_id: Any = None
-            payload = result.verdict.payload
+            payload = result.verdict.payload if result.verdict else {}
             if isinstance(payload, Mapping):
                 reviewer_id = payload.get("reviewer_id")
             weight = (
@@ -65,22 +136,45 @@ def weighted_vote(weights: Mapping[str, float]) -> JoinFn:
                 if reviewer_id is not None
                 else 0.0
             )
-            tally[rec] = tally.get(rec, 0.0) + weight
+            tally_map[label] = tally_map.get(label, 0.0) + weight
+            vote_counts[label] += 1
             any_vote = True
 
-        chosen: GateRecommendation
-        if not any_vote or not tally:
-            chosen = "tiebreaker"
+        chosen: str | None
+        next_label: str
+        tally: tuple[float, ...] = ()
+        if not any_vote or not tally_map:
+            chosen = None
+            next_label = default_on_tie or "halt"
         else:
-            ranked = sorted(tally.items(), key=lambda kv: kv[1], reverse=True)
+            ranked = sorted(tally_map.items(), key=lambda kv: kv[1], reverse=True)
+            tally = tuple(v for _, v in ranked)
             if ranked[0][1] <= 0.0:
-                chosen = "tiebreaker"
+                chosen = None
+                next_label = default_on_tie or "halt"
             elif len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
-                chosen = "tiebreaker"
+                chosen = None
+                next_label = default_on_tie or "halt"
             else:
                 chosen = ranked[0][0]
+                next_label = chosen
 
-        verdict = PipelineVerdict(score=1.0, recommendation=chosen)
-        return StepResult(verdict=verdict, next=chosen)
+        reduce_result = ReduceResult(
+            value=chosen,
+            label=chosen,
+            scores=tally,
+            tally=dict(vote_counts),
+            provenance=(),
+        )
+        recommendation = None if typed else (chosen or next_label)
+        verdict = PipelineVerdict(
+            score=1.0,
+            recommendation=recommendation,  # type: ignore[arg-type]
+            payload={"reduce_result": reduce_result} if typed else {},
+        )
+        return StepResult(
+            verdict=verdict,
+            next=next_label,  # Note: M2 will re-type
+        )
 
     return _join

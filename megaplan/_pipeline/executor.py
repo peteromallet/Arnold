@@ -65,6 +65,7 @@ from typing import Any, Mapping
 
 from megaplan._core.state import write_plan_state
 from megaplan.types import CliError
+from megaplan._pipeline.envelope import EMPTY_ENVELOPE, EnvelopeDroppedError, RunEnvelope
 from megaplan._pipeline.types import (
     ParallelStage,
     Pipeline,
@@ -95,6 +96,19 @@ def _write_forensic_backup(source: Path) -> Path:
     tmp.write_bytes(source.read_bytes())
     os.replace(tmp, backup_path)
     return backup_path
+
+
+def _assert_envelope_present(envelope: "RunEnvelope | None", context: str) -> None:
+    """Raise ``EnvelopeDroppedError`` when *envelope* is None and strict mode is on.
+
+    No-op when ``conveyance_strict_on()`` is ``False``.
+    """
+    from megaplan._pipeline.flags import conveyance_strict_on
+
+    if conveyance_strict_on() and envelope is None:
+        raise EnvelopeDroppedError(
+            f"Envelope dropped at {context!r}: envelope is None under conveyance_strict_on()"
+        )
 
 
 def _merge_state_to_disk(
@@ -143,7 +157,14 @@ def _verify_outputs(stage_name: str, outputs: Mapping[str, Path]) -> None:
             )
 
 
-def _record_error(artifact_root: Path, stage_name: str, exc: BaseException) -> None:
+def _record_error(
+    artifact_root: Path,
+    stage_name: str,
+    exc: BaseException,
+    *,
+    envelope: "RunEnvelope | None" = None,
+) -> None:
+    _assert_envelope_present(envelope, f"_record_error:{stage_name}")
     stage_dir = artifact_root / stage_name
     stage_dir.mkdir(parents=True, exist_ok=True)
     _atomic_write_json(
@@ -206,7 +227,26 @@ def _run_parallel_stage(node: ParallelStage, ctx: StepContext) -> StepResult:
             idx = future_to_idx[fut]
             results[idx] = fut.result()
 
-    return node.join(results, ctx)
+    joined = node.join(results, ctx)
+    # M4 T3 — fold the reduced envelope's shard spend into the active
+    # Governor accumulator (if installed).  No-op when no Governor is
+    # attached or when the envelope lacks lease_id / fencing_token, which
+    # preserves byte-identical behaviour on the single-process fallback
+    # path where no shared capacity ledger is configured.
+    try:
+        from megaplan.runtime.governor import current_governor as _cur_gov
+        _gov_p = _cur_gov()
+        if _gov_p is not None:
+            _gov_p.fold_shard_spend(joined.envelope)
+    except Exception:
+        # fold is observational; never mask the upstream join result.
+        # BudgetExceeded must still propagate, however — re-raise it.
+        from megaplan.runtime.governor import BudgetExceeded as _BE
+        import sys as _sys
+        _exc = _sys.exc_info()[1]
+        if isinstance(_exc, _BE):
+            raise
+    return joined
 
 
 def run_pipeline(
@@ -214,12 +254,21 @@ def run_pipeline(
     ctx: StepContext,
     *,
     artifact_root: Path,
+    policy: Any | None = None,
 ) -> dict[str, Any]:
     """Walk ``pipeline`` from its entry stage until a terminal sentinel.
 
     Returns ``{'state': <final state dict>, 'final_stage': <stage name>}``
     on normal termination. Raises on Step failure, missing declared
     output, or unmatched edge label.
+
+    When ``policy`` is None (production default), behavior is identical to the
+    pre-merge bare path. When a :class:`RuntimePolicy` is supplied (previously
+    only reachable via :func:`run_pipeline_with_policy`), per-iteration policy
+    guards engage: ``max_iterations`` cap, stall observation, cost-cap abort,
+    and escalate-policy fallback. ``find_override_edge`` dispatch runs
+    unconditionally for both paths — the policy path inherits the override
+    edge ladder from the bare path so verdict.override is honored consistently.
     """
 
     artifact_root = Path(artifact_root)
@@ -231,16 +280,142 @@ def run_pipeline(
         state = {}
 
     executor_owned_keys: set[str] = set()
+    envelope: RunEnvelope = ctx.envelope if ctx.envelope is not None else EMPTY_ENVELOPE
+
+    # M4 T2: under MEGAPLAN_UNIFIED_DISPATCH=1, install a tree-scoped Governor
+    # for the duration of this pipeline run.  Strangler-pattern: bare path is
+    # unchanged when the flag is off.
+    from megaplan._pipeline.flags import unified_dispatch_on as _udo
+    if _udo():
+        from megaplan.runtime import install_runtime_governor as _install_gov
+        _install_gov(envelope)
     cursor = pipeline.entry
+    iterations = 0
+    loop_iters: dict[str, int] = {}
     while True:
+        if policy is not None and iterations >= policy.max_iterations:
+            return {"state": state, "final_stage": cursor, "halt_reason": "max_iterations", "envelope": envelope}
+        iterations += 1
         node = pipeline.stages[cursor]
 
-        # Refresh ctx.state with the executor's working state so each
-        # iteration of a loop sees the latest state_patches. ctx is
-        # frozen; build a new instance via dataclasses.replace.
-        ctx = dataclasses.replace(ctx, state=state)
+        # Refresh ctx.state and ctx.envelope with the executor's working
+        # state/envelope so each iteration sees the latest patches and
+        # accumulated taint/cost/lineage. ctx is frozen; build a new
+        # instance via dataclasses.replace.
+        ctx = dataclasses.replace(ctx, state=state, envelope=envelope)
+
+        # Flag-ON (M2 / T11b): runtime port-binding. Resolve each Stage's
+        # consumes against Pipeline.binding_map and populate ctx.inputs
+        # with concrete upstream artifact paths. On miss raise
+        # PortBindError so the legacy v1.md fallback never silently fires.
+        from megaplan._pipeline.flags import typed_ports_on as _tpo
+        if _tpo() and getattr(pipeline, "binding_map", None) is not None:
+            from megaplan._pipeline.contracts import PortBindError
+
+            consumes = ()
+            if isinstance(node, Stage):
+                consumes = tuple(node.consumes) or tuple(
+                    getattr(node.step, "consumes", ()) or ()
+                )
+            elif isinstance(node, ParallelStage):
+                consumes = tuple(node.consumes)
+            if consumes:
+                new_inputs = dict(ctx.inputs)
+                for consume in consumes:
+                    cname = getattr(consume, "port_name", None) or getattr(
+                        consume, "name", ""
+                    )
+                    key = (node.name, cname)
+                    if key not in pipeline.binding_map:
+                        raise PortBindError(
+                            step_id=node.name,
+                            consume_name=cname,
+                            detail="not present in Pipeline.binding_map",
+                        )
+                    upstream_id, _upstream_port_name = pipeline.binding_map[key]
+                    upstream_dir = ctx.plan_dir / upstream_id
+                    path = None
+                    if upstream_dir.is_dir():
+                        candidates: list[tuple[int, Path]] = []
+                        for child in upstream_dir.iterdir():
+                            if child.is_file() and child.name.startswith("v"):
+                                stem = child.stem
+                                if stem[1:].isdigit():
+                                    candidates.append((int(stem[1:]), child))
+                        if candidates:
+                            candidates.sort(key=lambda x: x[0], reverse=True)
+                            path = candidates[0][1]
+                    if path is None:
+                        raise PortBindError(
+                            step_id=node.name,
+                            consume_name=cname,
+                            detail=(
+                                f"no upstream artifact under {upstream_dir} "
+                                f"for upstream stage {upstream_id!r}"
+                            ),
+                        )
+                    new_inputs[cname] = path
+                ctx = dataclasses.replace(ctx, inputs=new_inputs)
+
+        # Per-step Activation lifecycle: PENDING → READY → RUNNING → DONE/FAILED
+        # Emission is gated on activation_emit_on(); creation is always cheap.
+        from megaplan._pipeline.flags import activation_emit_on as _aeo
+        from megaplan._core.activation import (
+            Activation as _Activation,
+            LifecycleState as _LS,
+            ReadinessRule as _RR,
+            compute_activation_id as _compute_act_id,
+        )
+        from megaplan.observability.events import emit as _emit_event, EventKind as _EK
+
+        _node_consumes: tuple
+        if isinstance(node, Stage):
+            _node_consumes = tuple(getattr(node, "consumes", ()) or ()) or tuple(
+                getattr(node.step, "consumes", ()) or ()
+            )
+        else:
+            _node_consumes = tuple(getattr(node, "consumes", ()) or ())
+        _port_names: frozenset = frozenset(
+            getattr(_c, "port_name", None) or getattr(_c, "name", str(_c))
+            for _c in _node_consumes
+        )
+        _act_profile = str(ctx.state.get("profile", "")) if isinstance(ctx.state, dict) else ""
+        _act_id = _compute_act_id(node.name, list(_port_names), _act_profile)
+        _activation = _Activation(
+            id=_act_id,
+            node=node.name,
+            input_ports=_port_names,
+            profile=_act_profile,
+            readiness_rule=_RR.UPSTREAM_DONE,
+            lifecycle=_LS.PENDING,
+        )
+        _emit_on = _aeo()
+
+        def _act_transition(act: "_Activation", to: "_LS") -> "_Activation":
+            if _emit_on:
+                _emit_event(
+                    _EK.ACTIVATION_TRANSITIONED,
+                    ctx.plan_dir,
+                    payload={
+                        "activation_id": act.id,
+                        "node": act.node,
+                        "from": act.lifecycle.value,
+                        "to": to.value,
+                    },
+                )
+            return dataclasses.replace(act, lifecycle=to)
+
+        _activation = _act_transition(_activation, _LS.READY)
+        _activation = _act_transition(_activation, _LS.RUNNING)
 
         try:
+            # Governor charge at FIRING: BudgetExceeded propagates through the
+            # except block below (FAILED transition + escalate ladder re-raise).
+            from megaplan.runtime.governor import current_governor as _current_gov
+            _gov = _current_gov()
+            if _gov is not None:
+                _gov.charge(envelope)
+
             if isinstance(node, ParallelStage):
                 result = _run_parallel_stage(node, ctx)
             else:
@@ -249,20 +424,81 @@ def run_pipeline(
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
-            _record_error(artifact_root, node.name, exc)
+            _act_transition(_activation, _LS.FAILED)
+            _record_error(artifact_root, node.name, exc, envelope=envelope)
             raise
+
+        _activation = _act_transition(_activation, _LS.SUCCEEDED)
 
         _verify_outputs(node.name, result.outputs)
 
         patch = dict(result.state_patch)
-        state.update(patch)
-        executor_owned_keys.update(patch.keys())
-        _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
+        if _tpo():
+            from megaplan._pipeline.types import StateDelta, apply_delta
+
+            for _k, _v in patch.items():
+                _versions = state.get("_state_meta", {}).get("versions", {})
+                _current = int(_versions.get(_k, 0))
+                state, _ = apply_delta(
+                    state, StateDelta(op="replace", key=_k, value=_v, version=_current)
+                )
+                executor_owned_keys.add(_k)
+        else:
+            state.update(patch)
+            executor_owned_keys.update(patch.keys())
+
+        # Envelope join: accumulate cross-cutting metadata from each step.
+        _assert_envelope_present(result.envelope, f"step_result:{node.name}")
+        envelope = envelope.join(result.envelope)
+        # M4 T3 — fold the joined shard spend into the active Governor.
+        # No-op without lease_id / fencing_token (single-process fallback is
+        # byte-identical with the pre-M4 behaviour).
+        from megaplan.runtime.governor import current_governor as _cur_gov_seq
+        _gov_s = _cur_gov_seq()
+        if _gov_s is not None:
+            _gov_s.fold_shard_spend(envelope)
+
+        _assert_envelope_present(envelope, "_merge_state_to_disk")
+        # T24: gated behind UNIFIED_EVALUAND — wrap the state-merge +
+        # receipt write in a Store.transaction so state.json + receipt
+        # row + DB roll back together on mid-stage crash (UU#8).
+        from megaplan._pipeline.flags import unified_evaluand_on
+        if unified_evaluand_on():
+            from megaplan.observability.evaluand import _evaluand_transaction_boundary
+            with _evaluand_transaction_boundary(envelope):
+                _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
+        else:
+            _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
+
+        if policy is not None:
+            _assert_envelope_present(envelope, "stall_cost_observer")
+            policy.stall.observe(state)
+            if policy.stall.is_stalled():
+                return {"state": state, "final_stage": node.name, "halt_reason": "stalled", "envelope": envelope}
+            if policy.cost.should_abort(state):
+                return {"state": state, "final_stage": node.name, "halt_reason": "cost_cap", "envelope": envelope}
 
         if result.next == "halt":
             if state.get("_pipeline_paused"):
-                return {"state": state, "final_stage": node.name, "halt_reason": "awaiting_user"}
-            return {"state": state, "final_stage": node.name}
+                return {"state": state, "final_stage": node.name, "halt_reason": "awaiting_user", "envelope": envelope}
+            return {"state": state, "final_stage": node.name, "envelope": envelope}
+
+        # Stage.loop_condition (M2 / T9b): per-iteration evaluation of a
+        # caller-supplied predicate. True ⇒ exit the loop.
+        cond = getattr(node, "loop_condition", None)
+        if cond is not None:
+            _assert_envelope_present(envelope, "subloop_edge_dispatch")
+            from megaplan._pipeline.pattern_stops import LoopState
+
+            loop_iters[node.name] = loop_iters.get(node.name, 0) + 1
+            last_fanout = state.get("last_fanout_results")
+            ls = LoopState(
+                state=state,
+                last_fanout_results=last_fanout,
+                iteration=loop_iters[node.name],
+            )
+            if cond(ls):
+                return {"state": state, "final_stage": node.name, "halt_reason": "loop_condition", "envelope": envelope}
 
         # PipelineVerdict-first edge dispatch:
         #  - If verdict.override is set (Chunk D), match a kind="override" edge.
@@ -286,6 +522,19 @@ def run_pipeline(
                 ),
                 None,
             )
+            # Escalate-policy resolution (policy path only).
+            if policy is not None and rec == "escalate" and edge is None:
+                _assert_envelope_present(envelope, "escalate_path")
+                resolution = policy.escalate.resolve(node.name)
+                if resolution == "force_proceed":
+                    edge = next(
+                        (
+                            e
+                            for e in node.edges
+                            if e.kind == "gate" and e.recommendation == "proceed"
+                        ),
+                        None,
+                    )
         if edge is None:
             edge = next(
                 (
@@ -301,7 +550,7 @@ def run_pipeline(
                 f"recommendation={rec!r} but no matching edge was found"
             )
         if edge.target == "halt":
-            return {"state": state, "final_stage": node.name}
+            return {"state": state, "final_stage": node.name, "envelope": envelope}
         cursor = edge.target
 
 
@@ -312,96 +561,16 @@ def run_pipeline_with_policy(
     artifact_root: Path,
     policy: Any,
 ) -> dict[str, Any]:
-    """Walk ``pipeline`` under a :class:`RuntimePolicy`.
+    """Thin shim — delegates to :func:`run_pipeline` with ``policy=`` set.
 
-    Sprint 4 Chunk C: wraps :func:`run_pipeline` with stall detection,
-    cost capping, escalate-policy resolution, and context/blocked
-    retry hooks. The bare :func:`run_pipeline` stays unchanged for
-    hermetic demos.
-
-    The policy observes each stage's result via ``state_patch`` +
-    the state.json snapshot the executor writes between stages.
+    Preserves the historical TypeError-on-non-RuntimePolicy contract; behavior
+    is now provided by the merged superset in :func:`run_pipeline`.
     """
 
-    # Defer heavy imports — the policy module lives next door but we
-    # don't want a circular dependency in the standalone executor path.
     from megaplan._pipeline.runtime import RuntimePolicy as _Policy
 
     if not isinstance(policy, _Policy):
         raise TypeError(
             f"run_pipeline_with_policy requires a RuntimePolicy, got {type(policy)!r}"
         )
-
-    iterations = 0
-    artifact_root = Path(artifact_root)
-    artifact_root.mkdir(parents=True, exist_ok=True)
-
-    state: dict[str, Any] = dict(ctx.state) if isinstance(ctx.state, Mapping) else {}
-    executor_owned_keys: set[str] = set()
-    cursor = pipeline.entry
-    while True:
-        if iterations >= policy.max_iterations:
-            return {"state": state, "final_stage": cursor, "halt_reason": "max_iterations"}
-        iterations += 1
-
-        node = pipeline.stages[cursor]
-        ctx = dataclasses.replace(ctx, state=state)
-        try:
-            if isinstance(node, ParallelStage):
-                result = _run_parallel_stage(node, ctx)
-            else:
-                assert isinstance(node, Stage)
-                result = node.step.run(ctx)
-        except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                raise
-            _record_error(artifact_root, node.name, exc)
-            raise
-
-        _verify_outputs(node.name, result.outputs)
-        patch = dict(result.state_patch)
-        state.update(patch)
-        executor_owned_keys.update(patch.keys())
-        _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
-
-        # Policy hooks — observation is side-effecting.
-        policy.stall.observe(state)
-        if policy.stall.is_stalled():
-            return {"state": state, "final_stage": node.name, "halt_reason": "stalled"}
-        if policy.cost.should_abort(state):
-            return {"state": state, "final_stage": node.name, "halt_reason": "cost_cap"}
-
-        if result.next == "halt":
-            if state.get("_pipeline_paused"):
-                return {"state": state, "final_stage": node.name, "halt_reason": "awaiting_user"}
-            return {"state": state, "final_stage": node.name}
-
-        edge = None
-        rec = None
-        if result.verdict is not None and result.verdict.recommendation is not None:
-            rec = result.verdict.recommendation
-            edge = next(
-                (e for e in node.edges if e.kind == "gate" and e.recommendation == rec),
-                None,
-            )
-            # Apply escalate policy when the gate emits "escalate".
-            if rec == "escalate" and edge is None:
-                resolution = policy.escalate.resolve(node.name)
-                if resolution == "force_proceed":
-                    edge = next(
-                        (e for e in node.edges if e.kind == "gate" and e.recommendation == "proceed"),
-                        None,
-                    )
-        if edge is None:
-            edge = next(
-                (e for e in node.edges if e.kind == "normal" and e.label == result.next),
-                None,
-            )
-        if edge is None:
-            raise LookupError(
-                f"Stage {node.name!r} produced next={result.next!r} "
-                f"recommendation={rec!r} but no matching edge was found"
-            )
-        if edge.target == "halt":
-            return {"state": state, "final_stage": node.name}
-        cursor = edge.target
+    return run_pipeline(pipeline, ctx, artifact_root=artifact_root, policy=policy)

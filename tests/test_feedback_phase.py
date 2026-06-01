@@ -655,7 +655,7 @@ class TestRouting:
     """Profile loading and vendor-rewrite routing for the feedback slot."""
 
     def test_any_profile_loads_with_feedback_slot(self) -> None:
-        """Loading any TOML profile with feedback = 'claude:low' succeeds."""
+        """Loading any TOML profile with a valid feedback slot succeeds."""
         from megaplan.profiles import load_profile_sources
         sources = load_profile_sources()
         # sources is list[tuple[str, str, dict]]: (source, name, profile)
@@ -664,8 +664,15 @@ class TestRouting:
             assert "feedback" in profile, (
                 f"Profile '{name}' missing 'feedback' slot"
             )
-            # All built-in profiles should have feedback set
-            assert profile["feedback"] in ("claude:low", "claude"), (
+            # Most built-in profiles pin feedback to Claude. The Arnold launch
+            # profile is intentionally all-OpenRouter so a no-Anthropic-key run
+            # can keep every role on the available provider.
+            expected_feedback = (
+                ("hermes:openrouter:deepseek/deepseek-chat",)
+                if name == "arnold-openrouter"
+                else ("claude:low", "claude")
+            )
+            assert profile["feedback"] in expected_feedback, (
                 f"Profile '{name}' has unexpected feedback value: {profile['feedback']}"
             )
 

@@ -15,7 +15,7 @@ Spec format (YAML)::
       plan: milestone-m0-from-docs-state-20260415-0217
     milestones:
       - label: m1
-        idea: .megaplan/briefs/foundation-store/M1-foundation-store.txt
+        idea: /workspace/ideas/M1-foundation-store.txt
         branch: megaplan/m1-foundation-store   # optional, currently informational
         profile: thoughtful                     # optional init rubric knobs
         robustness: standard
@@ -29,11 +29,11 @@ Spec format (YAML)::
           to inflight tasks; skip CLI plumbing.
         deepseek_provider: fireworks
       - label: m1a
-        idea: .megaplan/briefs/foundation-store/M1a-settings-store.txt
+        idea: /workspace/ideas/M1a-settings-store.txt
     on_failure:
-      abort: stop_chain          # stop_chain | skip_milestone | resume_milestone | retry_milestone
+      abort: stop_chain          # stop_chain | skip_milestone | retry_milestone
     on_escalate:
-      abort: stop_chain          # stop_chain | skip_milestone | resume_milestone | retry_milestone
+      abort: stop_chain          # stop_chain | skip_milestone | retry_milestone
 
 Progress is persisted under ``.megaplan/plans/.chains/`` so a relaunched
 process can resume where the previous run left off without dirtying milestone
@@ -51,17 +51,8 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Literal
-
-try:
-    import yaml
-except ImportError as exc:  # pragma: no cover - import guard
-    raise RuntimeError(
-        "megaplan chain requires PyYAML. Install with `pip install pyyaml`."
-    ) from exc
+from typing import Any, Callable
 
 from megaplan.auto import (
     DEFAULT_MAX_ITERATIONS,
@@ -73,6 +64,7 @@ from megaplan.auto import (
     ESCALATE_ACTIONS,
     drive as auto_drive,
 )
+from megaplan._pipeline.flags import supervisor_tier_routing_on
 from megaplan._core import resolve_plan_dir
 from megaplan._core.user_config import VALID_VENDORS
 from megaplan.profiles import (
@@ -83,117 +75,41 @@ from megaplan.profiles import (
     load_profile_metadata,
 )
 from megaplan.types import CliError, STATE_AWAITING_PR_MERGE, STATE_EXECUTED, STATE_FINALIZED
+from . import spec as chain_spec
+
+APEX_EXTREME_RETRY_CAP = chain_spec.APEX_EXTREME_RETRY_CAP
+BLOCKED_EXECUTE_OUTCOME_STATUSES = chain_spec.BLOCKED_EXECUTE_OUTCOME_STATUSES
+ChainSpec = chain_spec.ChainSpec
+ChainState = chain_spec.ChainState
+DEFAULT_MILESTONE_RETRY_CAP = chain_spec.DEFAULT_MILESTONE_RETRY_CAP
+DEPTH_BUMP_ORDER = chain_spec.DEPTH_BUMP_ORDER
+FailurePolicy = chain_spec.FailurePolicy
+MilestoneSpec = chain_spec.MilestoneSpec
+PROFILE_BUMP_ORDER = chain_spec.PROFILE_BUMP_ORDER
+ROBUSTNESS_BUMP_ORDER = chain_spec.ROBUSTNESS_BUMP_ORDER
+VALID_FAILURE_ACTIONS = chain_spec.VALID_FAILURE_ACTIONS
+VALID_CLEAN_MILESTONE_PR_POLICIES = chain_spec.VALID_CLEAN_MILESTONE_PR_POLICIES
+VALID_PREREQUISITE_POLICIES = chain_spec.VALID_PREREQUISITE_POLICIES
+VALID_VALIDATION_POLICIES = chain_spec.VALID_VALIDATION_POLICIES
+RESUMABLE_RETRY_STATES = frozenset({STATE_FINALIZED, STATE_EXECUTED, "critiqued", "gated"})
+_bump_one_tier = chain_spec._bump_one_tier
+_legacy_state_path_for = chain_spec._legacy_state_path_for
+_optional_bool = chain_spec._optional_bool
+_optional_choice = chain_spec._optional_choice
+_runtime_policy_path_for = chain_spec._runtime_policy_path_for
+_state_path_for = chain_spec._state_path_for
+_warn_chain_fallback = chain_spec._warn_chain_fallback
+effective_chain_policy = chain_spec.effective_chain_policy
+load_chain_state = chain_spec.load_chain_state
+load_runtime_policy = chain_spec.load_runtime_policy
+load_spec = chain_spec.load_spec
+save_chain_state = chain_spec.save_chain_state
+save_runtime_policy = chain_spec.save_runtime_policy
+validate_paths = chain_spec.validate_paths
 
 log = logging.getLogger("megaplan")
 
 
-VALID_FAILURE_ACTIONS = (
-    "stop_chain",
-    "skip_milestone",
-    "resume_milestone",
-    "retry_milestone",
-    "bump_profile",
-    "bump_robustness",
-)
-VALID_MERGE_POLICIES = ("auto", "review")
-
-# Autonomy-ladder bump ordering. These are the *one-tier-up* escalation maps
-# the chain applies when a milestone exhausts its retry budget. There is no
-# tier above ``apex`` (apex.toml is the top premium profile) — a bump_profile
-# at apex is a no-op + warning, never an error.
-PROFILE_BUMP_ORDER = ("premium", "apex")
-ROBUSTNESS_BUMP_ORDER = ("thorough", "extreme")
-DEPTH_BUMP_ORDER = ("high", "max")
-
-# Default per-milestone retry budget before the ladder bumps.
-# Capped at 1 for apex profile / extreme robustness milestones to bound cost.
-DEFAULT_MILESTONE_RETRY_CAP = 2
-APEX_EXTREME_RETRY_CAP = 1
-RESUMABLE_RETRY_STATES = frozenset({"finalized", "executed", "critiqued", "gated"})
-
-
-def _bump_one_tier(current: str | None, order: tuple[str, ...]) -> tuple[str | None, bool]:
-    """Return (next_tier, bumped). At/above the top tier this is a no-op.
-
-    *current* of ``None`` (unset) is treated as the bottom of the ladder so a
-    bump moves to the second rung — the first explicit escalation tier.
-    """
-    if current is None:
-        return order[1] if len(order) > 1 else order[0], len(order) > 1
-    try:
-        idx = order.index(current)
-    except ValueError:
-        # Unknown/custom tier — leave it alone rather than guess.
-        return current, False
-    if idx >= len(order) - 1:
-        return current, False
-    return order[idx + 1], True
-
-
-@dataclass(frozen=True)
-class FailurePolicy:
-    """Structured autonomy ladder for ``on_failure`` / ``on_escalate``.
-
-    YAML may declare either a plain string (abort-only, back-compat)::
-
-        on_failure: stop_chain
-
-    or a structured ladder mapping::
-
-        on_failure:
-          retry: retry_milestone     # or resume_milestone; walked first, bounded by a counter
-          escalate: bump_profile     # walked once after retries exhaust
-          abort: stop_chain          # terminal action
-
-    ``retry`` / ``escalate`` are optional; ``abort`` defaults to ``stop_chain``.
-    """
-
-    abort: str = "stop_chain"
-    retry: str | None = None
-    escalate: str | None = None
-
-    @classmethod
-    def from_yaml(cls, value: Any, section: str, default_abort: str = "stop_chain") -> "FailurePolicy":
-        # Plain string (or absent) → abort-only, back-compat.
-        if value is None:
-            return cls(abort=default_abort)
-        if isinstance(value, str):
-            if value not in VALID_FAILURE_ACTIONS:
-                raise CliError(
-                    "invalid_spec",
-                    f"{section} must be one of {VALID_FAILURE_ACTIONS}; got {value!r}",
-                )
-            return cls(abort=value)
-        if not isinstance(value, dict):
-            raise CliError(
-                "invalid_spec",
-                f"`{section}` must be a string or a mapping of retry/escalate/abort",
-            )
-
-        def _check(key: str, fallback: str | None) -> str | None:
-            raw = value.get(key, fallback)
-            if raw is None:
-                return None
-            if raw not in VALID_FAILURE_ACTIONS:
-                raise CliError(
-                    "invalid_spec",
-                    f"{section}.{key} must be one of {VALID_FAILURE_ACTIONS}; got {raw!r}",
-                )
-            return raw
-
-        abort = _check("abort", default_abort) or default_abort
-        retry = _check("retry", None)
-        escalate = _check("escalate", None)
-        return cls(abort=abort, retry=retry, escalate=escalate)
-
-# Chain-level policy enums — conservative values following the
-# VALID_MERGE_POLICIES module-level tuple pattern.  These are
-# operator-facing contracts; renaming later is a breaking change.
-# Validated in ChainSpec.from_dict() with CliError("invalid_spec", ...).
-VALID_PREREQUISITE_POLICIES = ("none", "required")
-VALID_VALIDATION_POLICIES = ("none", "required")
-# review_policy.clean_milestone_pr
-VALID_CLEAN_MILESTONE_PR_POLICIES = ("auto", "manual")
 TERMINAL_SKIP_STATES = ("done", "aborted", "failed")
 GH_TRANSIENT_ERROR_PATTERNS = (
     " 500",
@@ -218,1242 +134,12 @@ GH_TRANSIENT_ERROR_PATTERNS = (
     "try again",
 )
 GH_PR_STATE_ATTEMPTS = 3
-
-
-def _warn_chain_fallback(
-    token: str,
-    *,
-    reason: str,
-    path: Path | None = None,
-    context: dict[str, Any] | None = None,
-) -> None:
-    details = [f"reason={reason}"]
-    if path is not None:
-        details.append(f"path={path}")
-    if context:
-        for key in sorted(context):
-            details.append(f"{key}={context[key]!r}")
-    log.warning("%s chain fallback (%s)", token, ", ".join(details), exc_info=True)
-BLOCKED_EXECUTE_OUTCOME_STATUSES = {"blocked", "worker_blocked"}
-
-
-def _optional_choice(
-    raw: dict[str, Any],
-    key: str,
-    choices: tuple[str, ...],
-    *,
-    index: int,
-) -> str | None:
-    value = raw.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise CliError("invalid_spec", f"milestones[{index}].{key} must be a string")
-    if value not in choices:
-        raise CliError(
-            "invalid_spec",
-            f"milestones[{index}].{key} must be one of {choices}; got {value!r}",
-        )
-    return value
-
-
-def _optional_bool(raw: dict[str, Any], key: str, *, index: int) -> bool:
-    value = raw.get(key, False)
-    if not isinstance(value, bool):
-        raise CliError("invalid_spec", f"milestones[{index}].{key} must be a boolean")
-    return value
-
-
-@dataclass
-class MilestoneSpec:
-    label: str
-    idea: str
-    branch: str | None = None
-    profile: str | None = None
-    robustness: str | None = None
-    vendor: str | None = None
-    depth: str | None = None
-    critic: str | None = None
-    deepseek_provider: str | None = None
-    with_prep: bool = False
-    with_feedback: bool = False
-    prep_clarify: bool = True
-    prep_direction: str | None = None
-    phase_model: list[str] = field(default_factory=list)
-    bakeoff: dict[str, Any] | None = None
-    notes: str | None = None
-    # Validation-only dependency edges (labels of milestones that MUST appear
-    # earlier in the list). The chain runs strictly serial-in-listed-order — a
-    # single cursor — so ``depends_on`` does NOT reorder or parallelize
-    # execution. It is a topological-sort ASSERTION: ``ChainSpec.from_dict``
-    # fails loud if a milestone declares a dependency that is not listed before
-    # it, so the non-negotiable edges (e.g. m5-eval → m5-cal) cannot silently
-    # drift out of order in a hand-edited chain.yaml. ``∥`` parallel tracks stay
-    # prose — concurrency is never introduced here.
-    depends_on: list[str] = field(default_factory=list)
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any], index: int) -> "MilestoneSpec":
-        if not isinstance(raw, dict):
-            raise CliError("invalid_spec", f"milestones[{index}] must be a mapping")
-        label = raw.get("label")
-        idea = raw.get("idea")
-        if not isinstance(label, str) or not label.strip():
-            raise CliError("invalid_spec", f"milestones[{index}].label is required")
-        if not isinstance(idea, str) or not idea.strip():
-            raise CliError("invalid_spec", f"milestones[{index}].idea is required")
-        branch = raw.get("branch")
-        if branch is not None and not isinstance(branch, str):
-            raise CliError("invalid_spec", f"milestones[{index}].branch must be a string")
-        profile = raw.get("profile")
-        if profile is not None and not isinstance(profile, str):
-            raise CliError("invalid_spec", f"milestones[{index}].profile must be a string")
-        robustness = raw.get("robustness")
-        if robustness is not None and not isinstance(robustness, str):
-            raise CliError("invalid_spec", f"milestones[{index}].robustness must be a string")
-        vendor = _optional_choice(
-            raw,
-            "vendor",
-            VALID_VENDORS,
-            index=index,
-        )
-        depth = _optional_choice(
-            raw,
-            "depth",
-            VALID_DEPTH_CHOICES,
-            index=index,
-        )
-        critic = _optional_choice(
-            raw,
-            "critic",
-            VALID_CRITIC_CHOICES,
-            index=index,
-        )
-        deepseek_provider = _optional_choice(
-            raw,
-            "deepseek_provider",
-            VALID_DEEPSEEK_PROVIDER_CHOICES,
-            index=index,
-        )
-        with_prep = _optional_bool(raw, "with_prep", index=index)
-        with_feedback = _optional_bool(raw, "with_feedback", index=index)
-        prep_clarify_raw = raw.get("prep_clarify")
-        if prep_clarify_raw is None:
-            prep_clarify = True
-        elif isinstance(prep_clarify_raw, bool):
-            prep_clarify = prep_clarify_raw
-        else:
-            raise CliError("invalid_spec", f"milestones[{index}].prep_clarify must be a boolean")
-        prep_direction_raw = raw.get("prep_direction")
-        if prep_direction_raw is None:
-            prep_direction = None
-        elif isinstance(prep_direction_raw, str):
-            stripped = prep_direction_raw.strip()
-            if not stripped:
-                raise CliError(
-                    "invalid_spec",
-                    f"milestones[{index}].prep_direction must be non-empty when provided",
-                )
-            prep_direction = stripped
-        else:
-            raise CliError(
-                "invalid_spec",
-                f"milestones[{index}].prep_direction must be a string",
-            )
-        phase_model_raw = raw.get("phase_model") or []
-        if isinstance(phase_model_raw, str):
-            phase_model = [phase_model_raw]
-        elif isinstance(phase_model_raw, list) and all(isinstance(item, str) for item in phase_model_raw):
-            phase_model = list(phase_model_raw)
-        else:
-            raise CliError("invalid_spec", f"milestones[{index}].phase_model must be a string or list of strings")
-        bakeoff = raw.get("bakeoff")
-        if bakeoff is not None and not isinstance(bakeoff, dict):
-            raise CliError("invalid_spec", f"milestones[{index}].bakeoff must be a mapping")
-        notes = raw.get("notes")
-        if notes is not None and not isinstance(notes, str):
-            raise CliError("invalid_spec", f"milestones[{index}].notes must be a string")
-        depends_on_raw = raw.get("depends_on") or []
-        if isinstance(depends_on_raw, str):
-            depends_on = [depends_on_raw]
-        elif isinstance(depends_on_raw, list) and all(
-            isinstance(item, str) and item.strip() for item in depends_on_raw
-        ):
-            depends_on = [item.strip() for item in depends_on_raw]
-        else:
-            raise CliError(
-                "invalid_spec",
-                f"milestones[{index}].depends_on must be a label or list of non-empty labels",
-            )
-        return cls(
-            label=label,
-            idea=idea,
-            branch=branch,
-            profile=profile,
-            robustness=robustness,
-            vendor=vendor,
-            depth=depth,
-            critic=critic,
-            deepseek_provider=deepseek_provider,
-            with_prep=with_prep,
-            with_feedback=with_feedback,
-            prep_clarify=prep_clarify,
-            prep_direction=prep_direction,
-            phase_model=phase_model,
-            bakeoff=bakeoff,
-            notes=notes,
-            depends_on=depends_on,
-        )
-
-
-@dataclass
-class ChainSpec:
-    milestones: list[MilestoneSpec]
-    seed_plan: str | None = None
-    base_branch: str = "main"
-    on_failure: str = "stop_chain"
-    on_escalate: str = "stop_chain"
-    # Structured autonomy ladders. ``on_failure``/``on_escalate`` above remain
-    # the abort-only string for back-compat; these carry the full ladder.
-    on_failure_policy: FailurePolicy = field(default_factory=FailurePolicy)
-    on_escalate_policy: FailurePolicy = field(default_factory=FailurePolicy)
-    merge_policy: str = "auto"
-    # When true, assert each milestone's working base is a clean fork off the
-    # base branch before plan init (auto-clean or fail-loud).
-    require_clean_base: bool = False
-    # Chain-level policies — conservative defaults (see VALID_* tuples above).
-    prerequisite_policy: str = "none"
-    validation_policy: str = "none"
-    review_policy: dict[str, str] = field(default_factory=lambda: {"clean_milestone_pr": "auto"})
-    # Driver knobs propagated into auto.drive for each plan.
-    stall_threshold: int = DEFAULT_STALL_THRESHOLD
-    max_iterations: int = DEFAULT_MAX_ITERATIONS
-    poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS
-    phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS
-    status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS
-    escalate_action: str = "force-proceed"  # passed to auto.drive on_escalate
-    robustness: str = "standard"
-    auto_approve: bool = True
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
-        if not isinstance(raw, dict):
-            raise CliError("invalid_spec", "chain spec must be a YAML mapping")
-        base_branch = raw.get("base_branch", "main")
-        if not isinstance(base_branch, str) or not base_branch.strip():
-            raise CliError("invalid_spec", "`base_branch` must be a non-empty string")
-        base_branch = base_branch.strip()
-        milestones_raw = raw.get("milestones") or []
-        if not isinstance(milestones_raw, list):
-            raise CliError("invalid_spec", "`milestones` must be a list")
-        milestones = [MilestoneSpec.from_dict(m, i) for i, m in enumerate(milestones_raw)]
-        # Validation-only topological-order assertion: a milestone's declared
-        # ``depends_on`` labels must each be a real milestone listed BEFORE it.
-        # The chain executes strictly serial-in-listed-order; this only proves
-        # the hand-authored list order respects the declared edges (e.g. the
-        # non-negotiable m5-eval → m5-cal edge). It introduces no concurrency.
-        seen_labels: set[str] = set()
-        all_labels = {m.label for m in milestones}
-        for i, m in enumerate(milestones):
-            for dep in m.depends_on:
-                if dep == m.label:
-                    raise CliError(
-                        "invalid_spec",
-                        f"milestones[{i}] ({m.label!r}) cannot depend on itself",
-                    )
-                if dep not in all_labels:
-                    raise CliError(
-                        "invalid_spec",
-                        f"milestones[{i}] ({m.label!r}) depends_on unknown milestone {dep!r}",
-                    )
-                if dep not in seen_labels:
-                    raise CliError(
-                        "invalid_spec",
-                        f"milestones[{i}] ({m.label!r}) depends_on {dep!r} which is not "
-                        f"listed before it; the chain runs serial-in-listed-order, so a "
-                        f"dependency must appear earlier in `milestones`",
-                    )
-            seen_labels.add(m.label)
-        seed_raw = raw.get("seed") or {}
-        seed_plan: str | None = None
-        if seed_raw:
-            if not isinstance(seed_raw, dict):
-                raise CliError("invalid_spec", "`seed` must be a mapping")
-            seed_plan = seed_raw.get("plan")
-            if seed_plan is not None and not isinstance(seed_plan, str):
-                raise CliError("invalid_spec", "`seed.plan` must be a string")
-            if isinstance(seed_plan, str) and not seed_plan.strip():
-                seed_plan = None
-
-        # Parse the failure/escalate sections as STRUCTURED ladders. A plain
-        # string (or absence) is back-compat abort-only; a mapping reads
-        # retry:/escalate:/abort: into a FailurePolicy.
-        on_failure_policy = FailurePolicy.from_yaml(
-            raw.get("on_failure"), "on_failure", "stop_chain"
-        )
-        on_escalate_policy = FailurePolicy.from_yaml(
-            raw.get("on_escalate"), "on_escalate", "stop_chain"
-        )
-        # Back-compat scalar mirrors (the terminal abort action).
-        on_failure = on_failure_policy.abort
-        on_escalate = on_escalate_policy.abort
-        merge_policy = raw.get("merge_policy", "auto")
-        if merge_policy not in VALID_MERGE_POLICIES:
-            raise CliError(
-                "invalid_spec",
-                f"merge_policy must be one of {VALID_MERGE_POLICIES}; got {merge_policy!r}",
-            )
-
-        # -- chain-level policies ---------------------------------------------------
-        prerequisite_policy = raw.get("prerequisite_policy", "none")
-        if prerequisite_policy not in VALID_PREREQUISITE_POLICIES:
-            raise CliError(
-                "invalid_spec",
-                f"prerequisite_policy must be one of {VALID_PREREQUISITE_POLICIES}; got {prerequisite_policy!r}",
-            )
-        validation_policy = raw.get("validation_policy", "none")
-        if validation_policy not in VALID_VALIDATION_POLICIES:
-            raise CliError(
-                "invalid_spec",
-                f"validation_policy must be one of {VALID_VALIDATION_POLICIES}; got {validation_policy!r}",
-            )
-        # review_policy is a nested mapping: {clean_milestone_pr: auto|manual}
-        review_raw = raw.get("review_policy") or {}
-        if not isinstance(review_raw, dict):
-            raise CliError(
-                "invalid_spec",
-                "`review_policy` must be a mapping",
-            )
-        clean_milestone_pr = review_raw.get("clean_milestone_pr", "auto")
-        if clean_milestone_pr not in VALID_CLEAN_MILESTONE_PR_POLICIES:
-            raise CliError(
-                "invalid_spec",
-                f"review_policy.clean_milestone_pr must be one of {VALID_CLEAN_MILESTONE_PR_POLICIES}; got {clean_milestone_pr!r}",
-            )
-        review_policy = {"clean_milestone_pr": clean_milestone_pr}
-
-        driver_raw = raw.get("driver") or {}
-        if not isinstance(driver_raw, dict):
-            raise CliError("invalid_spec", "`driver` must be a mapping")
-        stall = int(driver_raw.get("stall_threshold", DEFAULT_STALL_THRESHOLD))
-        max_iter = int(driver_raw.get("max_iterations", DEFAULT_MAX_ITERATIONS))
-        poll = float(driver_raw.get("poll_sleep", DEFAULT_POLL_SLEEP_SECONDS))
-        phase_to = float(driver_raw.get("phase_timeout", DEFAULT_PHASE_TIMEOUT_SECONDS))
-        status_to = float(driver_raw.get("status_timeout", DEFAULT_STATUS_TIMEOUT_SECONDS))
-        esc = driver_raw.get("on_escalate", "force-proceed")
-        if esc not in ESCALATE_ACTIONS:
-            raise CliError(
-                "invalid_spec",
-                f"driver.on_escalate must be one of {ESCALATE_ACTIONS}; got {esc!r}",
-            )
-        robustness = driver_raw.get("robustness", "standard")
-        if not isinstance(robustness, str):
-            raise CliError("invalid_spec", "driver.robustness must be a string")
-        auto_approve = bool(driver_raw.get("auto_approve", True))
-        require_clean_base_raw = driver_raw.get("require_clean_base", False)
-        if not isinstance(require_clean_base_raw, bool):
-            raise CliError(
-                "invalid_spec", "driver.require_clean_base must be a boolean"
-            )
-        require_clean_base = require_clean_base_raw
-
-        return cls(
-            milestones=milestones,
-            seed_plan=seed_plan,
-            base_branch=base_branch,
-            on_failure=on_failure,
-            on_escalate=on_escalate,
-            on_failure_policy=on_failure_policy,
-            on_escalate_policy=on_escalate_policy,
-            require_clean_base=require_clean_base,
-            merge_policy=merge_policy,
-            prerequisite_policy=prerequisite_policy,
-            validation_policy=validation_policy,
-            review_policy=review_policy,
-            stall_threshold=stall,
-            max_iterations=max_iter,
-            poll_sleep=poll,
-            phase_timeout=phase_to,
-            status_timeout=status_to,
-            escalate_action=esc,
-            robustness=robustness,
-            auto_approve=auto_approve,
-        )
-
-
-@dataclass
-class ChainState:
-    """Persisted progress for a chain run.
-
-    ``current_milestone_index`` is -1 before any milestone starts (seed phase),
-    0 for the first milestone, etc. ``current_plan_name`` is the plan currently
-    being driven. ``last_state`` is the terminal driver status string from the
-    most recently completed plan.
-    """
-
-    current_milestone_index: int = -1
-    current_plan_name: str | None = None
-    last_state: str | None = None
-    pr_number: int | None = None
-    pr_state: str | None = None
-    completed: list[dict[str, Any]] = field(default_factory=list)
-    # PR/branch sync fields (see megaplan.types SYNC_CLEAN / SYNC_STALE / SYNC_DIRTY).
-    branch_head: str | None = None
-    pr_head: str | None = None
-    last_pushed_commit: str | None = None
-    dirty_flag: bool = False
-    sync_state: str | None = None
-    # Slot-first watchdog fields.
-    extra_repos: list[str] = field(default_factory=list)
-    chain_session: str | None = None
-    resolved_workspace: str | None = None
-    extra_repo_sync: list[dict[str, Any]] = field(default_factory=list)
-    # Completion-verification contract mode pinned for the whole chain
-    # (off | shadow | warn | enforce). Default "shadow" = compute + persist +
-    # log a milestone verdict, never block, never run the suite.
-    completion_contract_mode: str = "shadow"
-    # Autonomy-ladder bookkeeping, keyed by milestone label so it survives
-    # resume regardless of index drift. ``retry_counts`` is the number of FRESH
-    # re-inits already spent on a milestone; ``ladder_stage`` records how far up
-    # the bump ladder a milestone has climbed ("retry" → "bump" → terminal);
-    # ``profile_bumps`` / ``robustness_bumps`` / ``depth_bumps`` persist the
-    # escalated tier overrides applied for the next re-init.
-    retry_counts: dict[str, int] = field(default_factory=dict)
-    reground_decisions: dict[str, Any] = field(default_factory=dict)
-    ladder_stage: dict[str, str] = field(default_factory=dict)
-    profile_bumps: dict[str, str] = field(default_factory=dict)
-    robustness_bumps: dict[str, str] = field(default_factory=dict)
-    depth_bumps: dict[str, str] = field(default_factory=dict)
-    # Enforce-block retry counts keyed by milestone label; tracks how many
-    # times enforce mode has blocked a milestone and routed it back for retry.
-    enforce_revise_counts: dict[str, int] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "current_milestone_index": self.current_milestone_index,
-            "current_plan_name": self.current_plan_name,
-            "last_state": self.last_state,
-            "pr_number": self.pr_number,
-            "pr_state": self.pr_state,
-            "completed": list(self.completed),
-            "branch_head": self.branch_head,
-            "pr_head": self.pr_head,
-            "last_pushed_commit": self.last_pushed_commit,
-            "dirty_flag": self.dirty_flag,
-            "sync_state": self.sync_state,
-            "extra_repos": list(self.extra_repos),
-            "chain_session": self.chain_session,
-            "resolved_workspace": self.resolved_workspace,
-            "extra_repo_sync": list(self.extra_repo_sync),
-            "completion_contract_mode": self.completion_contract_mode,
-            "retry_counts": dict(self.retry_counts),
-            "reground_decisions": dict(self.reground_decisions),
-            "ladder_stage": dict(self.ladder_stage),
-            "profile_bumps": dict(self.profile_bumps),
-            "robustness_bumps": dict(self.robustness_bumps),
-            "depth_bumps": dict(self.depth_bumps),
-            "enforce_revise_counts": dict(self.enforce_revise_counts),
-        }
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "ChainState":
-        # Shape-validate optional new fields with fallback defaults for
-        # backward compatibility with old state JSON.
-        extra_repos = raw.get("extra_repos")
-        if not isinstance(extra_repos, list) or any(
-            not isinstance(item, str) or not item for item in extra_repos
-        ):
-            extra_repos = []
-
-        chain_session = raw.get("chain_session")
-        if chain_session is not None and (
-            not isinstance(chain_session, str) or not chain_session.strip()
-        ):
-            chain_session = None
-
-        resolved_workspace = raw.get("resolved_workspace")
-        if resolved_workspace is not None and (
-            not isinstance(resolved_workspace, str) or not resolved_workspace.strip()
-        ):
-            resolved_workspace = None
-
-        extra_repo_sync = raw.get("extra_repo_sync")
-        if not isinstance(extra_repo_sync, list):
-            extra_repo_sync = []
-
-        from megaplan.orchestration.completion_contract import (
-            normalize_contract_mode,
-        )
-
-        completion_contract_mode = normalize_contract_mode(
-            raw.get("completion_contract_mode")
-        )
-
-        def _str_int_map(value: Any) -> dict[str, int]:
-            if not isinstance(value, dict):
-                return {}
-            out: dict[str, int] = {}
-            for key, val in value.items():
-                if isinstance(key, str):
-                    try:
-                        out[key] = int(val)
-                    except (TypeError, ValueError):
-                        continue
-            return out
-
-        def _str_str_map(value: Any) -> dict[str, str]:
-            if not isinstance(value, dict):
-                return {}
-            return {
-                key: val
-                for key, val in value.items()
-                if isinstance(key, str) and isinstance(val, str)
-            }
-
-        def _str_any_map(value: Any) -> dict[str, Any]:
-            if not isinstance(value, dict):
-                return {}
-            return {key: val for key, val in value.items() if isinstance(key, str)}
-
-        return cls(
-            current_milestone_index=int(raw.get("current_milestone_index", -1)),
-            current_plan_name=raw.get("current_plan_name"),
-            last_state=raw.get("last_state"),
-            pr_number=int(raw["pr_number"]) if raw.get("pr_number") is not None else None,
-            pr_state=raw.get("pr_state"),
-            completed=list(raw.get("completed") or []),
-            branch_head=raw.get("branch_head"),
-            pr_head=raw.get("pr_head"),
-            last_pushed_commit=raw.get("last_pushed_commit"),
-            dirty_flag=bool(raw.get("dirty_flag", False)),
-            sync_state=raw.get("sync_state"),
-            extra_repos=extra_repos,
-            chain_session=chain_session,
-            resolved_workspace=resolved_workspace,
-            extra_repo_sync=extra_repo_sync,
-            completion_contract_mode=completion_contract_mode,
-            retry_counts=_str_int_map(raw.get("retry_counts")),
-            reground_decisions=_str_any_map(raw.get("reground_decisions")),
-            ladder_stage=_str_str_map(raw.get("ladder_stage")),
-            profile_bumps=_str_str_map(raw.get("profile_bumps")),
-            robustness_bumps=_str_str_map(raw.get("robustness_bumps")),
-            depth_bumps=_str_str_map(raw.get("depth_bumps")),
-            enforce_revise_counts=_str_int_map(raw.get("enforce_revise_counts")),
-        )
-
-
-def _chain_runtime_dir_for(spec_path: Path) -> Path:
-    spec_resolved = spec_path.resolve()
-    parts = spec_resolved.parts
-    for index, part in enumerate(parts):
-        if part == ".megaplan" and index + 1 < len(parts) and parts[index + 1] == "briefs":
-            repo_root = Path(*parts[:index])
-            return repo_root / ".megaplan" / "plans" / ".chains"
-    return spec_resolved.parent / ".megaplan" / "plans" / ".chains"
-
-
-def _state_path_for(spec_path: Path) -> Path:
-    spec_resolved = spec_path.resolve()
-    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
-    return _chain_runtime_dir_for(spec_path) / f"{spec_resolved.stem}-{digest}.json"
-
-
-def _legacy_state_path_for(spec_path: Path) -> Path:
-    return spec_path.with_name("chain_state.json")
-
-
-def load_spec(spec_path: Path) -> ChainSpec:
-    if not spec_path.exists():
-        raise CliError("invalid_spec", f"spec file not found: {spec_path}")
-    try:
-        raw = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise CliError("invalid_spec", f"YAML parse error: {exc}") from exc
-    return ChainSpec.from_dict(raw or {})
-
-
-def load_chain_state(spec_path: Path) -> ChainState:
-    state_path = _state_path_for(spec_path)
-    if not state_path.exists():
-        legacy_path = _legacy_state_path_for(spec_path)
-        if legacy_path.exists():
-            state_path = legacy_path
-    if not state_path.exists():
-        return ChainState()
-    try:
-        raw = json.loads(state_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise CliError("invalid_chain_state", f"chain_state.json is invalid JSON: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise CliError("invalid_chain_state", "chain_state.json must be an object")
-    return ChainState.from_dict(raw)
-
-
-def save_chain_state(spec_path: Path, state: ChainState) -> None:
-    state_path = _state_path_for(spec_path)
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = state_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
-    tmp.replace(state_path)
-
-
-def _completed_records_by_label(state: ChainState) -> dict[str, dict[str, Any]]:
-    records: dict[str, dict[str, Any]] = {}
-    for entry in state.completed:
-        if not isinstance(entry, dict):
-            continue
-        label = entry.get("label")
-        if isinstance(label, str) and label:
-            records[label] = entry
-    return records
-
-
-def _upsert_completed_record(state: ChainState, record: dict[str, Any]) -> None:
-    label = record.get("label")
-    if not isinstance(label, str) or not label:
-        state.completed.append(record)
-        return
-    for index in range(len(state.completed) - 1, -1, -1):
-        entry = state.completed[index]
-        if isinstance(entry, dict) and entry.get("label") == label:
-            state.completed[index] = record
-            return
-    state.completed.append(record)
-
-
-def _completed_record_for_label(state: ChainState, label: str) -> dict[str, Any] | None:
-    return _completed_records_by_label(state).get(label)
-
-
-def _load_contract_for_completed_record(root: Path, record: dict[str, Any]) -> dict[str, Any] | None:
-    """Load the plan contract for a completed record.
-
-    Prefers the current ``contract.json`` in the plan directory. When that
-    file is missing, falls back to reading it from the git commit stored in
-    ``artifact_commit_sha`` via ``read_plan_artifact_from_commit``.  The
-    loaded payload is normalized through ``normalize_contract_payload``.
-
-    Returns ``None`` when the record has no usable plan name or the contract
-    cannot be found through either path.
-    """
-    from megaplan.chain.git_ops import read_plan_artifact_from_commit
-    from megaplan.orchestration.plan_contracts import normalize_contract_payload
-
-    plan_name = record.get("plan")
-    if not isinstance(plan_name, str) or not plan_name.strip():
-        return None
-
-    plan_dir = root / ".megaplan" / "plans" / plan_name
-    contract_path = plan_dir / "contract.json"
-
-    # Prefer the current artifact on disk.
-    if contract_path.exists():
-        try:
-            payload = json.loads(contract_path.read_text(encoding="utf-8"))
-            return normalize_contract_payload(payload)
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    # Fall back to the commit artifact.
-    commit_sha = record.get("artifact_commit_sha")
-    if isinstance(commit_sha, str) and commit_sha.strip():
-        rel_path = f".megaplan/plans/{plan_name}/contract.json"
-        try:
-            content = read_plan_artifact_from_commit(root, commit_sha.strip(), rel_path)
-            if content is not None:
-                payload = json.loads(content)
-                return normalize_contract_payload(payload)
-        except (json.JSONDecodeError, CliError):
-            pass
-
-    return None
-
-
-def _contract_context_for_plan_only_milestone(
-    root: Path,
-    milestone: MilestoneSpec,
-    state: ChainState,
-) -> dict[str, Any]:
-    from megaplan.orchestration.plan_contracts import provided_paths_by_milestone
-
-    records = _completed_records_by_label(state)
-    upstream_contracts: list[dict[str, Any]] = []
-    dependency_labels: list[str] = []
-    for label in milestone.depends_on:
-        record = records.get(label)
-        if not isinstance(record, dict) or record.get("status") not in {"finalized", "done"}:
-            continue
-        contract = _load_contract_for_completed_record(root, record)
-        if contract is None:
-            continue
-        dependency_labels.append(label)
-        upstream_contracts.append(
-            {
-                "milestone_label": label,
-                "provides": list(contract.get("provides", [])),
-                "assumes": list(contract.get("assumes", [])),
-            }
-        )
-    return {
-        "plan_only": True,
-        "milestone_label": milestone.label,
-        "dependency_labels": dependency_labels,
-        "upstream_contracts": upstream_contracts,
-        "provided_paths": provided_paths_by_milestone(upstream_contracts),
-    }
-
-
-def _chain_review_path(spec_path: Path) -> Path:
-    return _chain_runtime_dir_for(spec_path) / f"{spec_path.stem}.review.md"
-
-
-def _markdown_cell(value: Any) -> str:
-    text = "" if value is None else str(value)
-    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
-
-
-def _write_chain_review(
-    root: Path,
-    spec_path: Path,
-    spec: ChainSpec,
-    state: ChainState,
-    *,
-    partial_reason: str | None = None,
-) -> Path:
-    from megaplan.orchestration.plan_contracts import diff_assumes_against_provides
-
-    records = _completed_records_by_label(state)
-    loaded_contracts: dict[str, dict[str, Any]] = {}
-    for label, record in records.items():
-        if not isinstance(record, dict) or record.get("status") not in {"finalized", "done"}:
-            continue
-        contract = _load_contract_for_completed_record(root, record)
-        if contract is not None:
-            loaded_contracts[label] = contract
-
-    rows: list[dict[str, str]] = []
-    for milestone in spec.milestones:
-        downstream_contract = loaded_contracts.get(milestone.label)
-        if downstream_contract is None or not downstream_contract.get("assumes"):
-            continue
-        upstream_contracts = [
-            {
-                "milestone_label": label,
-                "provides": list(loaded_contracts[label].get("provides", [])),
-                "assumes": list(loaded_contracts[label].get("assumes", [])),
-            }
-            for label in milestone.depends_on
-            if label in loaded_contracts
-        ]
-        rows.extend(
-            diff_assumes_against_provides(
-                downstream_contract,
-                upstream_contracts,
-                downstream_label=milestone.label,
-            )
-        )
-
-    status_counts = {status: 0 for status in ("OK", "MISSING_UPSTREAM", "MISMATCH")}
-    for row in rows:
-        status = row.get("status")
-        if status in status_counts:
-            status_counts[status] += 1
-
-    lines = [
-        f"# Chain Review: {spec_path.stem}",
-        "",
-        f"- Status: {'partial' if partial_reason else 'complete'}",
-        f"- Partial reason: {partial_reason or ''}",
-        f"- Completed records considered: {len(records)}",
-        f"- Contracts loaded: {len(loaded_contracts)}",
-        f"- OK: {status_counts['OK']}",
-        f"- MISSING_UPSTREAM: {status_counts['MISSING_UPSTREAM']}",
-        f"- MISMATCH: {status_counts['MISMATCH']}",
-        "",
-        "| Downstream | Upstream | Symbol | Expected Path | Actual Path | Expected Signature | Actual Signature | Status | Note |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-    ]
-    if rows:
-        for row in rows:
-            lines.append(
-                "| "
-                + " | ".join(
-                    _markdown_cell(row.get(key, ""))
-                    for key in (
-                        "downstream_label",
-                        "upstream_label",
-                        "symbol",
-                        "expected_path",
-                        "actual_path",
-                        "expected_signature",
-                        "actual_signature",
-                        "status",
-                        "note",
-                    )
-                )
-                + " |"
-            )
-    else:
-        lines.append("|  |  |  |  |  |  |  | OK | No Provides-to-Assumes rows. |")
-
-    path = _chain_review_path(spec_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    return path
-
-
-def _read_plan_state_payload(root: Path, plan_name: str) -> dict[str, Any] | None:
-    try:
-        plan_dir = resolve_plan_dir(root, plan_name)
-    except CliError:
-        plan_dir = root / ".megaplan" / "plans" / plan_name
-    state_path = plan_dir / "state.json"
-    try:
-        raw = json.loads(state_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
-        return None
-    return raw if isinstance(raw, dict) else None
-
-
-def _plan_current_state_from_payload(root: Path, plan_name: str) -> str | None:
-    raw = _read_plan_state_payload(root, plan_name)
-    current = raw.get("current_state") if isinstance(raw, dict) else None
-    return current if isinstance(current, str) else None
-
-
-def _apply_reground_replan(
-    root: Path,
-    plan_name: str,
-    decision: dict[str, Any],
-) -> None:
-    from megaplan.handlers.override import apply_override_replan
-
-    try:
-        plan_dir = resolve_plan_dir(root, plan_name)
-    except CliError:
-        plan_dir = root / ".megaplan" / "plans" / plan_name
-    raw_state = _read_plan_state_payload(root, plan_name)
-    if not isinstance(raw_state, dict):
-        raise CliError(
-            "missing_reground_plan_state",
-            f"cannot apply reground replan: plan {plan_name!r} has no readable state.json",
-        )
-    summary = _reground_diff_summary(decision)
-    apply_override_replan(
-        root,
-        plan_dir,
-        raw_state,
-        reason=f"Contract drift detected before execute. {summary}",
-        note=summary,
-    )
-
-
-def _reground_skip_decision(milestone: MilestoneSpec, reason: str) -> dict[str, Any]:
-    return {
-        "status": "skipped",
-        "milestone_label": milestone.label,
-        "reason": reason,
-        "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-    }
-
-
-def _record_execute_reground_decision(
-    root: Path,
-    state: ChainState,
-    milestone: MilestoneSpec,
-    plan_name: str,
-    downstream_record: dict[str, Any] | None,
-) -> dict[str, Any]:
-    from megaplan.orchestration.plan_contracts import (
-        MATERIAL_CONTRACT_STATUSES,
-        contract_diff_fingerprint,
-        diff_assumes_against_provides,
-    )
-
-    if not milestone.depends_on:
-        decision = _reground_skip_decision(milestone, "no_dependencies")
-        state.reground_decisions[milestone.label] = decision
-        return decision
-    if not isinstance(downstream_record, dict) or downstream_record.get("status") != "finalized":
-        decision = _reground_skip_decision(milestone, "downstream_not_finalized")
-        state.reground_decisions[milestone.label] = decision
-        return decision
-
-    plan_state = _read_plan_state_payload(root, plan_name)
-    meta = (plan_state or {}).get("meta")
-    chain_policy = meta.get("chain_policy") if isinstance(meta, dict) else None
-    contract_context = chain_policy.get("contract_context") if isinstance(chain_policy, dict) else None
-    if not isinstance(contract_context, dict) or contract_context.get("plan_only") is not True:
-        decision = _reground_skip_decision(milestone, "not_plan_only")
-        state.reground_decisions[milestone.label] = decision
-        return decision
-
-    downstream_contract = _load_contract_for_completed_record(root, downstream_record)
-    if downstream_contract is None:
-        decision = _reground_skip_decision(milestone, "downstream_contract_unavailable")
-        state.reground_decisions[milestone.label] = decision
-        return decision
-    if not downstream_contract.get("assumes"):
-        decision = _reground_skip_decision(milestone, "downstream_assumes_empty")
-        state.reground_decisions[milestone.label] = decision
-        return decision
-
-    records = _completed_records_by_label(state)
-    upstream_contracts: list[dict[str, Any]] = []
-    unavailable: list[str] = []
-    for label in milestone.depends_on:
-        record = records.get(label)
-        contract = _load_contract_for_completed_record(root, record) if isinstance(record, dict) else None
-        if contract is None:
-            unavailable.append(label)
-            continue
-        upstream_contracts.append(
-            {
-                "milestone_label": label,
-                "provides": list(contract.get("provides", [])),
-                "assumes": list(contract.get("assumes", [])),
-            }
-        )
-    if unavailable:
-        decision = _reground_skip_decision(
-            milestone,
-            "upstream_contract_unavailable:" + ",".join(sorted(unavailable)),
-        )
-        state.reground_decisions[milestone.label] = decision
-        return decision
-    if not any(contract.get("provides") for contract in upstream_contracts):
-        decision = _reground_skip_decision(milestone, "upstream_provides_empty")
-        state.reground_decisions[milestone.label] = decision
-        return decision
-
-    diff_rows = diff_assumes_against_provides(
-        downstream_contract,
-        upstream_contracts,
-        downstream_label=milestone.label,
-    )
-    material_rows = [
-        row for row in diff_rows if row.get("status") in MATERIAL_CONTRACT_STATUSES
-    ]
-    decision = {
-        "status": "drift" if material_rows else "pass",
-        "milestone_label": milestone.label,
-        "dependency_labels": list(milestone.depends_on),
-        "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "diff_row_count": len(diff_rows),
-        "material_diff_count": len(material_rows),
-        "material_fingerprint": contract_diff_fingerprint(material_rows),
-        "material_diffs": material_rows,
-    }
-    state.reground_decisions[milestone.label] = decision
-    return decision
-
-
-def _reground_diff_summary(decision: dict[str, Any]) -> str:
-    rows = decision.get("material_diffs")
-    if not isinstance(rows, list) or not rows:
-        return "No material contract drift rows."
-    parts: list[str] = []
-    for row in rows[:5]:
-        if not isinstance(row, dict):
-            continue
-        upstream = row.get("upstream_label") or "<unknown>"
-        symbol = row.get("symbol") or "<unknown>"
-        status = row.get("status") or "MISMATCH"
-        note = row.get("note") or ""
-        parts.append(f"{status} {upstream}:{symbol}" + (f" ({note})" if note else ""))
-    suffix = ""
-    if len(rows) > len(parts):
-        suffix = f"; +{len(rows) - len(parts)} more"
-    return "; ".join(parts) + suffix
-
-
-def _load_finalized_record_state(
-    root: Path,
-    label: str,
-    record: dict[str, Any],
-) -> tuple[str, Path, dict[str, Any]]:
-    plan_name = record.get("plan")
-    if not isinstance(plan_name, str) or not plan_name.strip():
-        raise CliError(
-            "missing_finalized_plan",
-            f"execute mode cannot resume milestone {label!r}: finalized record has no plan name",
-        )
-    fallback_plan_dir = root / ".megaplan" / "plans" / plan_name
-    try:
-        plan_dir = resolve_plan_dir(root, plan_name)
-    except CliError as exc:
-        if fallback_plan_dir.exists() and fallback_plan_dir.is_dir():
-            plan_dir = fallback_plan_dir
-        else:
-            raise CliError(
-                "missing_finalized_plan_dir",
-                f"execute mode cannot resume milestone {label!r}: plan {plan_name!r} is missing",
-            ) from exc
-    state_path = plan_dir / "state.json"
-    if not state_path.exists():
-        raise CliError(
-            "missing_finalized_state",
-            f"execute mode cannot resume milestone {label!r}: {state_path} is missing",
-        )
-    try:
-        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise CliError(
-            "invalid_finalized_state",
-            f"execute mode cannot resume milestone {label!r}: {state_path} is invalid JSON",
-        ) from exc
-    if not isinstance(raw_state, dict) or raw_state.get("current_state") != STATE_FINALIZED:
-        raise CliError(
-            "non_resumable_finalized_state",
-            f"execute mode cannot resume milestone {label!r}: plan {plan_name!r} is not finalized",
-        )
-    return plan_name, state_path, raw_state
-
-
-def _reset_execute_plan_state_for_fresh_approval(
-    state_path: Path,
-    raw_state: dict[str, Any],
-) -> None:
-    meta = raw_state.get("meta")
-    if not isinstance(meta, dict):
-        meta = {}
-        raw_state["meta"] = meta
-    meta.pop("user_approved_gate", None)
-
-    config = raw_state.get("config")
-    if not isinstance(config, dict):
-        config = {}
-        raw_state["config"] = config
-    config["auto_approve"] = False
-
-    state_path.write_text(json.dumps(raw_state, indent=2) + "\n", encoding="utf-8")
-
-
-def _completed_record_for_status(
-    state: ChainState,
-    milestone: MilestoneSpec,
-) -> dict[str, Any] | None:
-    return _completed_record_for_label(state, milestone.label)
-
-
-def _completed_record_branch(record: dict[str, Any] | None) -> str | None:
-    if not isinstance(record, dict):
-        return None
-    branch = record.get("plan_branch")
-    return branch if isinstance(branch, str) and branch else None
-
-
-def _prepare_execute_mode_state(root: Path, spec: ChainSpec, state: ChainState) -> bool:
-    records = _completed_records_by_label(state)
-    if spec.seed_plan:
-        seed_record = records.get("seed")
-        if seed_record is None:
-            raise CliError(
-                "missing_finalized_record",
-                "execute mode cannot start seed plan: no finalized or done record found",
-            )
-        seed_status = seed_record.get("status")
-        if seed_status == "finalized":
-            plan_name, state_path, raw_state = _load_finalized_record_state(
-                root,
-                "seed",
-                seed_record,
-            )
-            _reset_execute_plan_state_for_fresh_approval(state_path, raw_state)
-            state.current_milestone_index = -1
-            state.current_plan_name = plan_name
-            state.last_state = STATE_FINALIZED
-            state.pr_number = None
-            state.pr_state = None
-            return False
-        if seed_status != "done":
-            raise CliError(
-                "missing_finalized_record",
-                f"execute mode cannot start seed plan: record status is {seed_status!r}, expected finalized or done",
-            )
-    for idx, milestone in enumerate(spec.milestones):
-        record = records.get(milestone.label)
-        if record is None:
-            raise CliError(
-                "missing_finalized_record",
-                f"execute mode cannot start milestone {milestone.label!r}: no finalized or done record found",
-            )
-        status = record.get("status")
-        if status == "done":
-            continue
-        if status != "finalized":
-            raise CliError(
-                "missing_finalized_record",
-                f"execute mode cannot start milestone {milestone.label!r}: record status is {status!r}, expected finalized or done",
-            )
-        if (
-            state.last_state == STATE_AWAITING_PR_MERGE
-            and state.current_milestone_index == idx
-        ):
-            plan_name, _state_path, _raw_state = _load_finalized_record_state(
-                root,
-                milestone.label,
-                record,
-            )
-            state.current_milestone_index = idx
-            state.current_plan_name = plan_name
-            return False
-        plan_name, state_path, raw_state = _load_finalized_record_state(
-            root,
-            milestone.label,
-            record,
-        )
-        _reset_execute_plan_state_for_fresh_approval(state_path, raw_state)
-        state.current_milestone_index = idx
-        state.current_plan_name = plan_name
-        state.last_state = STATE_FINALIZED
-        state.pr_number = None
-        state.pr_state = None
-        return False
-    state.current_milestone_index = len(spec.milestones)
-    state.current_plan_name = None
-    state.pr_number = None
-    state.pr_state = None
-    return True
-
-
-def _plan_artifact_paths_for_milestone(
-    root: Path,
-    plan_name: str,
-    milestone: MilestoneSpec,
-) -> list[Path]:
-    plan_dir = root / ".megaplan" / "plans" / plan_name
-    artifacts = [
-        plan_dir / "final.md",
-        plan_dir / "finalize.json",
-        plan_dir / "state.json",
-        plan_dir / "contract.json",
-    ]
-    idea_path = _resolve_idea_path(root, milestone.idea)
-    if idea_path.exists():
-        # The idea brief is an immutable artifact. If it lives outside the
-        # project repo (e.g. an absolute path to a brief authored elsewhere),
-        # git cannot add it. Copy it into the plan dir so the in-repo copy is
-        # what gets persisted. When the idea is already inside the repo we add
-        # it in place, preserving prior behavior.
-        resolved_idea = idea_path.resolve()
-        root_resolved = root.resolve()
-        if resolved_idea.is_relative_to(root_resolved):
-            artifacts.append(idea_path)
-        else:
-            idea_copy = plan_dir / "idea.md"
-            idea_copy.parent.mkdir(parents=True, exist_ok=True)
-            # Only copy when content differs to avoid redundant churn.
-            new_content = resolved_idea.read_bytes()
-            if not idea_copy.exists() or idea_copy.read_bytes() != new_content:
-                idea_copy.write_bytes(new_content)
-            artifacts.append(idea_copy)
-    return artifacts
-
-
-def _resolve_idea_path(root: Path, idea: str) -> Path:
-    idea_path = Path(idea).expanduser()
-    if idea_path.is_absolute():
-        return idea_path
-    return root / idea_path
-
-
-# ---------------------------------------------------------------------------
-# Runtime policy artifact helpers
-# ---------------------------------------------------------------------------
-
-
-def _runtime_policy_path_for(spec_path: Path) -> Path:
-    """Return the path for the runtime policy override artifact.
-
-    Placed alongside the chain state file in ``.megaplan/plans/.chains/``
-    using the same stem+digest naming convention.
-    """
-    spec_resolved = spec_path.resolve()
-    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
-    return (
-        spec_resolved.parent
-        / ".megaplan"
-        / "plans"
-        / ".chains"
-        / f"{spec_resolved.stem}-{digest}.runtime_policy.json"
-    )
-
-
-def load_runtime_policy(spec_path: Path) -> dict[str, Any]:
-    """Load the runtime policy override artifact for *spec_path*.
-
-    Returns an empty dict when no artifact exists so callers never need to
-    guard against ``None``.
-    """
-    path = _runtime_policy_path_for(spec_path)
-    if not path.exists():
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        _warn_chain_fallback(
-            "M3A_WARN_CHAIN_POLICY_READ",
-            reason="corrupt_json",
-            path=path,
-        )
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    return raw
-
-
-def save_runtime_policy(spec_path: Path, overrides: dict[str, Any]) -> None:
-    """Persist *overrides* as the runtime policy override artifact.
-
-    The caller is responsible for validating keys/values before calling this.
-    This writes only the override artifact — never touches chain.yaml.
-    """
-    path = _runtime_policy_path_for(spec_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(overrides, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
-
-
-def effective_chain_policy(
-    spec: ChainSpec,
-    overrides: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Merge runtime overrides with spec-level policy defaults.
-
-    Returns a plain dict suitable for serialization in status payloads,
-    plan metadata, and cloud preflight output.  Runtime overrides always
-    win over the static YAML values.
-    """
-    overrides = overrides or {}
-    prerequisite_policy = overrides.get("prerequisite_policy", spec.prerequisite_policy)
-    validation_policy = overrides.get("validation_policy", spec.validation_policy)
-    # review_policy is stored as a dict on the spec; keep it as a dict here.
-    review_from_spec = spec.review_policy or {}
-    review_from_override = overrides.get("review_policy") or {}
-    clean_milestone_pr = review_from_override.get(
-        "clean_milestone_pr",
-        review_from_spec.get("clean_milestone_pr", "auto"),
-    )
-    return {
-        "prerequisite_policy": prerequisite_policy,
-        "validation_policy": validation_policy,
-        "review_policy": {"clean_milestone_pr": clean_milestone_pr},
-        # Record whether any override was active so consumers can trace provenance.
-        "source": "runtime_override" if overrides else "chain_yaml",
-    }
-
-
 def _write_chain_policy_into_plan_meta(
     root: Path,
     plan_name: str,
     spec: ChainSpec,
     spec_path: Path,
     milestone_label: str,
-    *,
-    plan_only: bool = False,
-    contract_context: dict[str, Any] | None = None,
 ) -> None:
     """Record effective chain policy in the plan's ``state.json`` metadata.
 
@@ -1496,21 +182,15 @@ def _write_chain_policy_into_plan_meta(
         return
     if not isinstance(state, dict):
         return
-    runtime_overrides = load_runtime_policy(spec_path)
-    effective = effective_chain_policy(spec, runtime_overrides)
+    runtime_overrides = chain_spec.load_runtime_policy(spec_path)
+    effective = chain_spec.effective_chain_policy(spec, runtime_overrides)
     chain_policy = {
         "prerequisite_policy": effective["prerequisite_policy"],
         "validation_policy": effective["validation_policy"],
         "review_policy": effective["review_policy"],
         "source": effective["source"],
         "milestone_label": milestone_label,
-        "plan_only": plan_only,
     }
-    if contract_context is not None:
-        chain_policy["dependency_labels"] = list(contract_context.get("dependency_labels", []))
-        chain_policy["upstream_contracts"] = list(contract_context.get("upstream_contracts", []))
-        chain_policy["provided_paths"] = dict(contract_context.get("provided_paths", {}))
-        chain_policy["contract_context"] = contract_context
 
     def _patch_chain_policy(current: dict[str, Any]) -> bool:
         meta = current.setdefault("meta", {})
@@ -1520,37 +200,6 @@ def _write_chain_policy_into_plan_meta(
         return True
 
     write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_patch_chain_policy)
-
-
-def validate_paths(spec: ChainSpec, root: Path, state: ChainState | None = None) -> None:
-    """Check that idea files needed by this invocation exist on disk.
-
-    On resume, completed milestones and an already-adopted current plan do not
-    need their source idea files. Validating them again makes a durable chain
-    fragile when a spec uses absolute paths into a checkout that moved or was
-    cleaned after those milestones had already landed.
-    """
-    current_index = state.current_milestone_index if state is not None else -1
-    current_plan_name = state.current_plan_name if state is not None else None
-    for index, m in enumerate(spec.milestones):
-        if state is not None and index < current_index:
-            continue
-        if state is not None and index == current_index and current_plan_name:
-            continue
-        idea_path = _resolve_idea_path(root, m.idea)
-        if not idea_path.exists():
-            raise CliError(
-                "missing_idea_file",
-                f"milestone {m.label!r} idea file not found: {m.idea}",
-            )
-    if spec.seed_plan:
-        try:
-            resolve_plan_dir(root, spec.seed_plan)
-        except CliError as exc:
-            raise CliError(
-                "missing_seed_plan",
-                f"seed plan {spec.seed_plan!r} not found under {root}: {exc.message}",
-            ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1583,26 +232,6 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
         return "unknown"
 
 
-def _resumable_retry_state(root: Path, plan: str | None) -> str | None:
-    """Return the plan's current_state when retry should resume it in place."""
-    if not plan:
-        return None
-    try:
-        plan_dir = resolve_plan_dir(root, plan)
-    except CliError:
-        return None
-    try:
-        raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
-        return None
-    if not isinstance(raw, dict):
-        return None
-    current_state = raw.get("current_state")
-    if isinstance(current_state, str) and current_state in RESUMABLE_RETRY_STATES:
-        return current_state
-    return None
-
-
 from .git_ops import (
     _branch_head,
     _capture_sync_state,
@@ -1613,7 +242,6 @@ from .git_ops import (
     _claimed_root_paths,
     _classify_sync_state,
     _command_env,
-    commit_plan_artifacts_to_base,
     _commit_and_push_phase,
     _dirty_nested_repos_from_claimed_paths,
     _dirty_worktree_paths,
@@ -1753,7 +381,6 @@ def _drive_plan(
     plan: str,
     spec: ChainSpec,
     *,
-    stop_at_finalized: bool = False,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     writer,
 ) -> DriverOutcome:
@@ -1767,7 +394,6 @@ def _drive_plan(
         poll_sleep=spec.poll_sleep,
         phase_timeout=spec.phase_timeout,
         status_timeout=spec.status_timeout,
-        stop_at_finalized=stop_at_finalized,
         on_phase_complete=on_phase_complete,
         writer=writer,
     )
@@ -1786,14 +412,14 @@ def _latest_execute_result(plan_dir: Path) -> str | None:
     except FileNotFoundError:
         return None
     except json.JSONDecodeError:
-        _warn_chain_fallback(
+        chain_spec._warn_chain_fallback(
             "M3A_WARN_EXECUTE_RESULT_READ",
             reason="corrupt_json",
             path=plan_dir / "state.json",
         )
         return None
     except (OSError, UnicodeDecodeError):
-        _warn_chain_fallback(
+        chain_spec._warn_chain_fallback(
             "M3A_WARN_EXECUTE_RESULT_READ",
             reason="unreadable",
             path=plan_dir / "state.json",
@@ -1820,16 +446,7 @@ def _shadow_milestone_completion_verdict(
 ) -> bool:
     """Compute + persist + log a milestone-level completion verdict.
 
-    Returns ``True`` when enforce mode blocks this milestone (caller must NOT
-    append to ``state.completed`` and must handle the retry/halt logic).
-    Returns ``False`` in all other cases (shadow/warn/off/fail-open).
-
-    FAIL-OPEN. Mirrors the exact mode-gated logic of
-    ``auto._shadow_completion_verdict``: off → no-op; shadow → measure+log;
-    warn → advisory WARNING; enforce → block on newly_failing/deleted_tests,
-    pass-through on runner_error/timeout/not_applicable/non-computable delta.
-    Reads ``completion_contract_mode`` from ``ChainState`` (already
-    snapshot-aligned at chain init from CLI > get_effective).
+    FAIL-OPEN. Returns True only when enforce mode should block the milestone.
     """
     try:
         from megaplan.orchestration.completion_contract import (
@@ -1854,7 +471,7 @@ def _shadow_milestone_completion_verdict(
 
         plan_dir = resolve_plan_dir(root, plan_name)
         if plan_dir is None:
-            return False
+                return False
 
         state: dict[str, Any] = {}
         try:
@@ -1894,10 +511,10 @@ def _shadow_milestone_completion_verdict(
             log_fn(verdict.one_line())
         except Exception:
             pass
-
+        if mode in ("warn", "enforce") and verdict.would_block:
+            pass
         if mode == CONTRACT_MODE_SHADOW:
             return False
-
         if mode == CONTRACT_MODE_WARN:
             if verdict.would_block:
                 delta_dict, _ = extract_green_suite_info(verdict)
@@ -1910,11 +527,8 @@ def _shadow_milestone_completion_verdict(
                     list(verdict.failures),
                 )
             return False
-
         if mode == CONTRACT_MODE_ENFORCE:
             delta_dict, result_status = extract_green_suite_info(verdict)
-
-            # Non-blocking: runner errors — record warning, don't block.
             if result_status in {"runner_error", "timeout", "not_applicable"}:
                 log.warning(
                     "completion_contract_mode=enforce: milestone %r verification "
@@ -1924,8 +538,6 @@ def _shadow_milestone_completion_verdict(
                     verdict.would_block,
                 )
                 return False
-
-            # Non-blocking: delta not computable — record warning, don't block.
             if delta_dict is None or not delta_dict.get("computable", False):
                 log.warning(
                     "completion_contract_mode=enforce: milestone %r delta not "
@@ -1934,14 +546,10 @@ def _shadow_milestone_completion_verdict(
                     verdict.would_block,
                 )
                 return False
-
             newly_failing = delta_dict.get("newly_failing") or []
             deleted_tests = delta_dict.get("deleted_tests") or []
-
             if not newly_failing and not deleted_tests:
                 return False
-
-            # Blocking: newly_failing or deleted_tests present.
             log.warning(
                 "completion_contract_mode=enforce: blocking milestone %r; "
                 "newly_failing=%r deleted_tests=%r",
@@ -1950,7 +558,6 @@ def _shadow_milestone_completion_verdict(
                 list(deleted_tests),
             )
             return True
-
         return False
     except Exception as exc:  # fail-open: never break a chain
         log.debug(
@@ -2040,7 +647,7 @@ def _recover_blocked_execute_if_tasks_done(
     try:
         plan_dir = resolve_plan_dir(root, outcome.plan)
     except CliError:
-        _warn_chain_fallback(
+        chain_spec._warn_chain_fallback(
             "M3A_WARN_BLOCKED_EXECUTE_RECOVERY",
             reason="plan_dir_unavailable",
             context={"plan": outcome.plan},
@@ -2069,7 +676,6 @@ def _drive_plan_with_blocked_execute_recovery(
     plan: str,
     spec: ChainSpec,
     *,
-    stop_at_finalized: bool = False,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     writer,
 ) -> DriverOutcome:
@@ -2077,7 +683,6 @@ def _drive_plan_with_blocked_execute_recovery(
         root,
         plan,
         spec,
-        stop_at_finalized=stop_at_finalized,
         on_phase_complete=on_phase_complete,
         writer=writer,
     )
@@ -2087,14 +692,13 @@ def _drive_plan_with_blocked_execute_recovery(
         root,
         plan,
         spec,
-        stop_at_finalized=stop_at_finalized,
         on_phase_complete=on_phase_complete,
         writer=writer,
     )
 
 
 def _milestone_retry_cap(milestone: "MilestoneSpec | None", spec: ChainSpec) -> int:
-    """Per-milestone retry cap.
+    """Per-milestone FRESH-reinit cap.
 
     Default ``DEFAULT_MILESTONE_RETRY_CAP`` (2); CAPPED at
     ``APEX_EXTREME_RETRY_CAP`` (1) for apex profile or extreme robustness
@@ -2108,6 +712,92 @@ def _milestone_retry_cap(milestone: "MilestoneSpec | None", spec: ChainSpec) -> 
     if profile == "apex" or robustness == "extreme":
         return APEX_EXTREME_RETRY_CAP
     return DEFAULT_MILESTONE_RETRY_CAP
+
+
+def _resumable_retry_state(root: Path, plan: str | None) -> str | None:
+    """Return a current_state that is safe to resume during a milestone retry."""
+
+    if not plan:
+        return None
+    try:
+        plan_dir = resolve_plan_dir(root, plan)
+        raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (CliError, FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    current_state = raw.get("current_state")
+    if isinstance(current_state, str) and current_state in RESUMABLE_RETRY_STATES:
+        return current_state
+    return None
+
+
+def _resolve_idea_path(root: Path, idea: str) -> Path:
+    idea_path = Path(idea).expanduser()
+    if idea_path.is_absolute():
+        return idea_path
+    return root / idea_path
+
+
+def _plan_artifact_paths_for_milestone(
+    root: Path,
+    plan_name: str,
+    milestone: MilestoneSpec,
+) -> list[Path]:
+    plan_dir = root / ".megaplan" / "plans" / plan_name
+    artifacts = [
+        plan_dir / "final.md",
+        plan_dir / "finalize.json",
+        plan_dir / "state.json",
+        plan_dir / "contract.json",
+    ]
+    idea_path = _resolve_idea_path(root, milestone.idea)
+    if idea_path.exists():
+        resolved_idea = idea_path.resolve()
+        root_resolved = root.resolve()
+        if resolved_idea.is_relative_to(root_resolved):
+            artifacts.append(idea_path)
+        else:
+            idea_copy = plan_dir / "idea.md"
+            idea_copy.parent.mkdir(parents=True, exist_ok=True)
+            new_content = resolved_idea.read_bytes()
+            if not idea_copy.exists() or idea_copy.read_bytes() != new_content:
+                idea_copy.write_bytes(new_content)
+            artifacts.append(idea_copy)
+    return artifacts
+
+
+def _milestone_uses_hermes_backend(milestone: "MilestoneSpec") -> str | None:
+    for entry in milestone.phase_model or []:
+        if "=" not in entry:
+            continue
+        phase_step, spec = entry.split("=", 1)
+        if spec.strip().startswith("hermes:") or spec.strip() == "hermes":
+            return phase_step
+    if milestone.with_prep:
+        return "prep"
+    return None
+
+
+def _preflight_agent_backends(spec: "ChainSpec", *, writer) -> None:
+    offenders: list[tuple[str, str]] = []
+    for milestone in spec.milestones:
+        phase = _milestone_uses_hermes_backend(milestone)
+        if phase is not None:
+            offenders.append((milestone.label, phase))
+    if not offenders:
+        return
+
+    from megaplan.workers import _is_agent_available
+
+    if _is_agent_available("hermes"):
+        return
+    names = ", ".join(f"{label}:{phase}" for label, phase in offenders)
+    raise CliError(
+        "agent_deps_missing",
+        "Chain requires the hermes/agent backend for "
+        f"{names}, but it is not importable. Install with `uv pip install -e '.[agent]'`.",
+    )
 
 
 def _apply_ladder_action(
@@ -2135,7 +825,7 @@ def _apply_ladder_action(
         return "retry"
     if action == "bump_profile":
         current = state.profile_bumps.get(label) or (milestone.profile if milestone else None)
-        nxt, bumped = _bump_one_tier(current, PROFILE_BUMP_ORDER)
+        nxt, bumped = chain_spec._bump_one_tier(current, PROFILE_BUMP_ORDER)
         if not bumped:
             writer(
                 f"[chain] {label}: bump_profile requested but already at top tier "
@@ -2145,7 +835,7 @@ def _apply_ladder_action(
         state.profile_bumps[label] = nxt or ""
         # Couple a depth bump so a harder retry also thinks deeper.
         cur_depth = state.depth_bumps.get(label) or (milestone.depth if milestone else None)
-        d_next, d_bumped = _bump_one_tier(cur_depth, DEPTH_BUMP_ORDER)
+        d_next, d_bumped = chain_spec._bump_one_tier(cur_depth, DEPTH_BUMP_ORDER)
         if d_bumped and d_next:
             state.depth_bumps[label] = d_next
         writer(f"[chain] {label}: bumping profile → {nxt}; retrying once\n")
@@ -2154,7 +844,7 @@ def _apply_ladder_action(
         current = state.robustness_bumps.get(label) or (
             (milestone.robustness if milestone and milestone.robustness else spec.robustness)
         )
-        nxt, bumped = _bump_one_tier(current, ROBUSTNESS_BUMP_ORDER)
+        nxt, bumped = chain_spec._bump_one_tier(current, ROBUSTNESS_BUMP_ORDER)
         if not bumped:
             writer(
                 f"[chain] {label}: bump_robustness requested but already at top tier "
@@ -2178,12 +868,12 @@ def _handle_outcome(
     """Decide the next action given a DriverOutcome, walking the ladder.
 
     Returns one of: "advance" (move to next milestone), "stop" (chain halts),
-    "retry" (retry the same milestone), "skip" (advance without waiting).
+    "retry" (re-run the same milestone FRESH), "skip" (advance without waiting).
 
     On a failure/escalate outcome the structured ladder is walked with a
     BOUNDED, persisted per-milestone retry counter:
 
-      retry_milestone / resume_milestone (up to cap; 1 for apex/extreme) →
+      retry_milestone (up to cap; 1 for apex/extreme) →
       bump_profile / bump_robustness (once) →
       abort (stop_chain by default).
 
@@ -2194,12 +884,6 @@ def _handle_outcome(
     if status in {"done", "finalized"}:
         return "advance"
     if status == "awaiting_human":
-        # A human-only block (e.g. a task blocked on an unresolved
-        # manual_required / rejected user action). Retrying re-runs execute and
-        # re-hits the identical block — its input cannot change without human
-        # action — so this must STOP the chain immediately rather than burn the
-        # retry/bump ladder on a deterministically-unresolvable state. The plan
-        # resumes normally on the next chain run once the action is resolved.
         writer(
             f"[chain] plan {outcome.plan} paused awaiting human action: "
             f"{outcome.reason}\n"
@@ -2302,14 +986,6 @@ def _assert_clean_base(
     sample = ", ".join(p.name for p in carried[:5])
     if no_push:
         # Local/no-network: auto-clean by stashing the carried WIP.
-        print(
-            "[chain] WARNING: require_clean_base is STASHING non-.megaplan WIP "
-            f"for milestone {milestone.label} ({sample}).\n"
-            "[chain] WARNING: this stashed work will NOT be in this milestone's "
-            "base. If this is a prior milestone's uncommitted output (e.g. under "
-            "--no-push), milestones are NOT building on each other.",
-            file=sys.stderr,
-        )
         writer(
             f"[chain] require_clean_base: {milestone.label} base has carried WIP "
             f"({sample}); auto-stashing before init\n"
@@ -2372,7 +1048,7 @@ def _maybe_file_ladder_ticket(
             "robustness_bump": state.robustness_bumps.get(milestone.label),
             "needs": "human attention — milestone halted after retry+bump ladder",
         }
-        ticket_dir = _state_path_for(spec_path).parent / "tickets"
+        ticket_dir = chain_spec._state_path_for(spec_path).parent / "tickets"
         ticket_dir.mkdir(parents=True, exist_ok=True)
         ticket_path = ticket_dir / f"{milestone.label}-ladder-exhaustion.json"
         ticket_path.write_text(json.dumps(ticket, indent=2) + "\n", encoding="utf-8")
@@ -2387,69 +1063,6 @@ def _maybe_file_ladder_ticket(
         )
 
 
-def _milestone_uses_hermes_backend(milestone: "MilestoneSpec") -> str | None:
-    """Return a phase name if *milestone* will exercise the hermes/agent backend.
-
-    The canonical prep models (triage/fanout/distill) all route to
-    ``hermes:deepseek:...`` (see ``CANONICAL_PREP_MODELS``), so any milestone
-    that runs prep WILL import the hermes runtime. Explicit per-phase
-    ``hermes:...`` routes (via ``phase_model``) also need the backend. Returns
-    the most representative phase name for the error message, or ``None`` if the
-    milestone does not need the hermes backend.
-    """
-    for entry in milestone.phase_model or []:
-        if "=" not in entry:
-            continue
-        phase_step, spec = entry.split("=", 1)
-        if spec.strip().startswith("hermes:") or spec.strip() == "hermes":
-            return phase_step
-    if milestone.with_prep:
-        return "prep"
-    return None
-
-
-def _preflight_agent_backends(spec: "ChainSpec", *, writer) -> None:
-    """Fail fast (cold path) if a milestone needs the hermes/agent backend but
-    it is not importable.
-
-    Without this, a misconfigured install only surfaces the failure deep inside
-    the prep phase (e.g. prep research iteration 3) as a confusing
-    ``phase 'prep' internal_error`` whose stdout is the raw
-    ``agent_deps_missing`` payload. This preflight names the offending
-    milestone + phase and the exact remediation BEFORE any milestone is driven.
-    """
-    offenders: list[tuple[str, str]] = []
-    for milestone in spec.milestones:
-        phase = _milestone_uses_hermes_backend(milestone)
-        if phase is not None:
-            offenders.append((milestone.label, phase))
-    if not offenders:
-        return
-
-    # Probe via the same import check the hot path uses, so a partial install
-    # (e.g. hermes_state present but run_agent's deps missing) also fails here.
-    from megaplan.workers import _is_agent_available
-
-    if _is_agent_available("hermes"):
-        return
-
-    first_label, first_phase = offenders[0]
-    detail = ", ".join(f"{label} ({phase})" for label, phase in offenders)
-    raise CliError(
-        "agent_deps_missing",
-        "The hermes/agent backend is required for this chain but is not "
-        f"installed. Milestone {first_label!r} phase {first_phase!r} (and: "
-        f"{detail}) will route to the hermes runtime. Reinstall the engine so "
-        "the agent backend is present, e.g. `uv pip install -e .` (its packages "
-        "are core dependencies) or `pip install megaplan-harness` from PyPI. "
-        "The legacy `[agent]` extra is only a no-op compatibility alias on "
-        "current builds. "
-        "Verify with: python -c \"import megaplan.agent; "
-        "import sys; sys.path.insert(0, megaplan.agent.__path__[0]); "
-        "from run_agent import AIAgent\".",
-    )
-
-
 def run_chain(
     spec_path: Path,
     root: Path,
@@ -2458,62 +1071,14 @@ def run_chain(
     no_git_refresh: bool = False,
     no_push: bool = False,
     one: bool = False,
-    stop_at_finalized: bool = False,
-    mode: Literal["start", "plan", "execute"] = "start",
 ) -> dict[str, Any]:
     """Drive the full chain. Returns a structured JSON-serializable result."""
-    if mode not in {"start", "plan", "execute"}:
-        raise CliError("invalid_args", f"chain mode must be start, plan, or execute; got {mode!r}")
-    planning_pass = mode == "plan"
-    execution_pass = mode == "execute"
-    effective_stop_at_finalized = planning_pass or (stop_at_finalized and not execution_pass)
-    spec = load_spec(spec_path)
-    state = load_chain_state(spec_path)
-    validate_paths(spec, root, state)
+    spec = chain_spec.load_spec(spec_path)
+    chain_spec.validate_paths(spec, root)
     _preflight_agent_backends(spec, writer=writer)
-    # Snapshot completion_contract_mode at chain init from the same resolved
-    # source as plan-level (CLI flag > get_effective) so the two never diverge.
-    if state.current_milestone_index < 0 and not state.completed:
-        from megaplan._core.io import get_effective
-        from megaplan.orchestration.completion_contract import normalize_contract_mode
-
-        state.completion_contract_mode = normalize_contract_mode(
-            get_effective("execution", "completion_contract_mode")
-        )
+    state = chain_spec.load_chain_state(spec_path)
     preexisting_dirty_paths = _dirty_worktree_paths(root)
     push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
-
-    # ---- Preflight: data-loss guard for --no-push + require_clean_base ----
-    # With pushing disabled, milestones never commit, so each milestone's output
-    # stays as uncommitted WIP. With require_clean_base, that WIP is stashed away
-    # before the next milestone inits — so HEAD never advances and every
-    # milestone silently builds on the same base, prior work siloed in stashes.
-    if not push_enabled and spec.require_clean_base and len(spec.milestones) > 1:
-        print(
-            "\n"
-            "============================================================\n"
-            "[chain] PREFLIGHT WARNING: --no-push + require_clean_base: true\n"
-            "============================================================\n"
-            f"This chain has {len(spec.milestones)} milestones, pushing is "
-            "disabled, and require_clean_base is true.\n"
-            "\n"
-            "With --no-push, milestones NEVER commit — their output stays as\n"
-            "uncommitted WIP. require_clean_base will then STASH each milestone's\n"
-            "output before the next one inits. Result: HEAD never advances and\n"
-            "milestones do NOT build on each other — every milestone forks the\n"
-            "same base while prior work is siloed in git stashes. This can run\n"
-            "undetected for a long time because the stash is silent.\n"
-            "\n"
-            "To fix, pick ONE of:\n"
-            "  - DROP --no-push so milestones commit+push and each builds on the\n"
-            "    last (set a merge_policy as needed), OR\n"
-            "  - SET require_clean_base: false so uncommitted work ACCUMULATES in\n"
-            "    the worktree across milestones.\n"
-            "\n"
-            "--no-push is only safe for a single-milestone throwaway local test.\n"
-            "============================================================\n",
-            file=sys.stderr,
-        )
 
     events: list[dict[str, Any]] = []
 
@@ -2521,39 +1086,23 @@ def run_chain(
         events.append({"msg": msg, **fields})
         writer(f"[chain] {msg}\n")
 
-    if execution_pass:
-        all_done = _prepare_execute_mode_state(root, spec, state)
-        save_chain_state(spec_path, state)
-        if all_done:
-            log("all milestones already executed")
-            return _result("done", state, events, spec=spec)
-
     # ---- Seed phase ----
     if spec.seed_plan and state.current_milestone_index < 0:
         seed_state = _plan_state(root, spec.seed_plan, timeout=spec.status_timeout)
         log(f"seed plan {spec.seed_plan} state={seed_state}")
         if seed_state not in TERMINAL_SKIP_STATES:
             state.current_plan_name = spec.seed_plan
-            save_chain_state(spec_path, state)
+            chain_spec.save_chain_state(spec_path, state)
             outcome = _drive_plan_with_blocked_execute_recovery(
                 root,
                 spec.seed_plan,
                 spec,
-                stop_at_finalized=effective_stop_at_finalized,
                 writer=writer,
             )
             state.last_state = outcome.status
-            save_chain_state(spec_path, state)
+            chain_spec.save_chain_state(spec_path, state)
             decision = _handle_outcome(outcome, spec=spec, writer=writer)
             if decision == "stop":
-                if planning_pass:
-                    _write_chain_review(
-                        root,
-                        spec_path,
-                        spec,
-                        state,
-                        partial_reason=f"seed plan {outcome.status}",
-                    )
                 return _result("stopped", state, events, spec=spec, reason=f"seed plan {outcome.status}")
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
@@ -2561,41 +1110,27 @@ def run_chain(
                     root,
                     spec.seed_plan,
                     spec,
-                    stop_at_finalized=effective_stop_at_finalized,
                     writer=writer,
                 )
                 state.last_state = outcome.status
-                save_chain_state(spec_path, state)
+                chain_spec.save_chain_state(spec_path, state)
                 if outcome.status != "done":
-                    if planning_pass:
-                        _write_chain_review(
-                            root,
-                            spec_path,
-                            spec,
-                            state,
-                            partial_reason="seed retry failed",
-                        )
                     return _result("stopped", state, events, spec=spec, reason="seed retry failed")
             # skip / advance both proceed to milestones
-        _upsert_completed_record(
-            state,
-            {
-                "label": "seed",
-                "plan": spec.seed_plan,
-                "status": state.last_state or seed_state,
-            },
+        state.completed.append(
+            {"label": "seed", "plan": spec.seed_plan, "status": state.last_state or seed_state}
         )
         state.current_milestone_index = 0
         state.current_plan_name = None
-        save_chain_state(spec_path, state)
+        chain_spec.save_chain_state(spec_path, state)
 
     elif state.current_milestone_index < 0:
         state.current_milestone_index = 0
-        save_chain_state(spec_path, state)
+        chain_spec.save_chain_state(spec_path, state)
 
     # ---- Milestones ----
     idx = max(state.current_milestone_index, 0)
-    if idx >= len(spec.milestones) and not planning_pass:
+    if idx >= len(spec.milestones):
         try:
             state = _reconcile_terminal_pr_state(
                 root,
@@ -2609,21 +1144,15 @@ def run_chain(
         milestone = spec.milestones[idx]
         log(f"milestone {milestone.label} starting")
         use_pr = push_enabled and bool(milestone.branch)
-        effective_use_pr = use_pr and not planning_pass
-        if planning_pass and (state.pr_number is not None or state.pr_state is not None):
-            state.pr_number = None
-            state.pr_state = None
-            save_chain_state(spec_path, state)
 
         if state.last_state == STATE_AWAITING_PR_MERGE and state.current_milestone_index == idx:
-            if not effective_use_pr or state.pr_number is None:
+            if not use_pr or state.pr_number is None:
                 log(f"review merge wait for {milestone.label} has no PR context; advancing")
-                state.pr_number = None
                 state.pr_state = None
             else:
                 pr_state = _pr_state(root, state.pr_number, writer=writer)
                 state.pr_state = "merged" if pr_state == "merged" else "awaiting_merge"
-                save_chain_state(spec_path, state)
+                chain_spec.save_chain_state(spec_path, state)
                 if pr_state != "merged":
                     log(f"PR #{state.pr_number} state={pr_state}; awaiting merge")
                     return _result(
@@ -2634,17 +1163,14 @@ def run_chain(
                         reason=f"milestone {milestone.label} PR #{state.pr_number} is {pr_state}",
                     )
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
-            existing_record = _completed_record_for_status(state, milestone) or {}
-            _upsert_completed_record(
-                state,
+            state.completed.append(
                 {
                     "label": milestone.label,
                     "plan": state.current_plan_name,
                     "status": "done",
-                    "plan_branch": _completed_record_branch(existing_record),
                     "pr_number": state.pr_number,
                     "pr_state": "merged" if state.pr_number is not None else None,
-                },
+                }
             )
             idx += 1
             state.current_milestone_index = idx
@@ -2652,39 +1178,19 @@ def run_chain(
             state.last_state = "done"
             state.pr_number = None
             state.pr_state = None
-            save_chain_state(spec_path, state)
+            chain_spec.save_chain_state(spec_path, state)
             continue
-
-        if (
-            execution_pass
-            and state.current_milestone_index == idx
-            and not state.current_plan_name
-        ):
-            existing_record = _completed_record_for_status(state, milestone)
-            if existing_record and existing_record.get("status") == "finalized":
-                plan_name, state_path, raw_state = _load_finalized_record_state(
-                    root,
-                    milestone.label,
-                    existing_record,
-                )
-                _reset_execute_plan_state_for_fresh_approval(state_path, raw_state)
-                state.current_plan_name = plan_name
-                state.last_state = STATE_FINALIZED
-                save_chain_state(spec_path, state)
 
         # Resume mid-milestone if we already have a plan name recorded.
         if (
             state.current_plan_name
             and state.current_milestone_index == idx
-            and (
-                execution_pass
-                or _plan_state(root, state.current_plan_name, timeout=spec.status_timeout)
-                not in ("missing",)
-            )
+            and _plan_state(root, state.current_plan_name, timeout=spec.status_timeout)
+            not in ("missing",)
         ):
             plan_name = state.current_plan_name
             log(f"resuming existing plan {plan_name} for {milestone.label}")
-            if effective_use_pr and state.pr_number is None:
+            if use_pr and state.pr_number is None:
                 _checkout_milestone_branch(
                     root,
                     milestone.branch or "",
@@ -2701,7 +1207,7 @@ def run_chain(
                     writer=writer,
                 )
                 state.pr_state = "open"
-                save_chain_state(spec_path, state)
+                chain_spec.save_chain_state(spec_path, state)
         else:
             _refresh_base_branch(
                 root,
@@ -2716,7 +1222,7 @@ def run_chain(
                     no_push=not push_enabled,
                     writer=writer,
                 )
-            if effective_use_pr:
+            if use_pr:
                 _checkout_milestone_branch(
                     root,
                     milestone.branch or "",
@@ -2757,26 +1263,15 @@ def run_chain(
                 phase_model=milestone.phase_model,
                 writer=writer,
             )
-            contract_context = (
-                _contract_context_for_plan_only_milestone(root, milestone, state)
-                if planning_pass
-                else None
-            )
             # Record effective chain policy in the newly initialized plan's
             # state.json metadata so downstream consumers can introspect it.
             _write_chain_policy_into_plan_meta(
-                root,
-                plan_name,
-                spec,
-                spec_path,
-                milestone.label,
-                plan_only=planning_pass,
-                contract_context=contract_context,
+                root, plan_name, spec, spec_path, milestone.label
             )
             state.current_milestone_index = idx
             state.current_plan_name = plan_name
-            save_chain_state(spec_path, state)
-            if effective_use_pr:
+            chain_spec.save_chain_state(spec_path, state)
+            if use_pr:
                 _commit_and_push_phase(
                     root,
                     milestone.branch or "",
@@ -2795,10 +1290,10 @@ def run_chain(
                     writer=writer,
                 )
                 state.pr_state = "open"
-                save_chain_state(spec_path, state)
+                chain_spec.save_chain_state(spec_path, state)
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
-            if effective_use_pr and milestone.branch:
+            if use_pr and milestone.branch:
                 _commit_and_push_phase(
                     root,
                     milestone.branch,
@@ -2811,71 +1306,15 @@ def run_chain(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
 
-        if execution_pass:
-            previous_reground_decision = state.reground_decisions.get(milestone.label)
-            current_plan_state = _plan_current_state_from_payload(root, plan_name)
-            if current_plan_state != STATE_FINALIZED:
-                reground_decision = _reground_skip_decision(milestone, "plan_not_finalized")
-                if not (
-                    isinstance(previous_reground_decision, dict)
-                    and previous_reground_decision.get("status") == "replanned"
-                ):
-                    state.reground_decisions[milestone.label] = reground_decision
-                    save_chain_state(spec_path, state)
-            else:
-                reground_decision = _record_execute_reground_decision(
-                    root,
-                    state,
-                    milestone,
-                    plan_name,
-                    _completed_record_for_status(state, milestone),
-                )
-                if reground_decision.get("status") == "drift":
-                    fingerprint = reground_decision.get("material_fingerprint")
-                    if (
-                        isinstance(previous_reground_decision, dict)
-                        and previous_reground_decision.get("material_fingerprint") == fingerprint
-                        and previous_reground_decision.get("status") in {"drift", "replanned"}
-                    ):
-                        save_chain_state(spec_path, state)
-                        summary = _reground_diff_summary(reground_decision)
-                        log(f"reground {milestone.label}: repeated drift; stopping")
-                        return _result(
-                            "stopped",
-                            state,
-                            events,
-                            spec=spec,
-                            reason=f"repeated contract drift for {milestone.label}: {summary}",
-                        )
-                    _apply_reground_replan(root, plan_name, reground_decision)
-                    replanned_decision = dict(reground_decision)
-                    replanned_decision["status"] = "replanned"
-                    replanned_decision["replan_reason"] = _reground_diff_summary(reground_decision)
-                    replanned_decision["replanned_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-                    state.reground_decisions[milestone.label] = replanned_decision
-                    save_chain_state(spec_path, state)
-                    log(f"reground {milestone.label}: drift; replanning same milestone")
-                    continue
-                save_chain_state(spec_path, state)
-            log(
-                f"reground {milestone.label}: {reground_decision['status']}"
-                + (
-                    f" ({reground_decision['reason']})"
-                    if reground_decision.get("reason")
-                    else ""
-                )
-            )
-
         outcome = _drive_plan_with_blocked_execute_recovery(
             root,
             plan_name,
             spec,
-            stop_at_finalized=effective_stop_at_finalized,
-            on_phase_complete=phase_callback if effective_use_pr else None,
+            on_phase_complete=phase_callback if use_pr else None,
             writer=writer,
         )
         state.last_state = outcome.status
-        save_chain_state(spec_path, state)
+        chain_spec.save_chain_state(spec_path, state)
         decision = _handle_outcome(
             outcome, spec=spec, writer=writer, milestone=milestone, state=state
         )
@@ -2884,15 +1323,7 @@ def run_chain(
             _maybe_file_ladder_ticket(
                 root, spec_path, milestone, outcome, state, writer=writer
             )
-            save_chain_state(spec_path, state)
-            if planning_pass:
-                _write_chain_review(
-                    root,
-                    spec_path,
-                    spec,
-                    state,
-                    partial_reason=f"milestone {milestone.label} ended {outcome.status}",
-                )
+            chain_spec.save_chain_state(spec_path, state)
             return _result(
                 "stopped",
                 state,
@@ -2902,19 +1333,19 @@ def run_chain(
             )
         if decision == "retry":
             resumable_state = _resumable_retry_state(root, state.current_plan_name)
-            if resumable_state:
+            if resumable_state is not None:
                 log(
                     f"retrying milestone {milestone.label} by resuming plan "
                     f"{state.current_plan_name} from {resumable_state}"
                 )
             else:
-                log(f"retrying milestone {milestone.label} with a new plan")
+                log(f"retrying milestone {milestone.label}")
                 state.current_plan_name = None  # force re-init next loop
             state.pr_number = None
             state.pr_state = None
-            save_chain_state(spec_path, state)
+            chain_spec.save_chain_state(spec_path, state)
             continue
-        if decision == "advance" and effective_use_pr and state.pr_number is not None:
+        if decision == "advance" and use_pr and state.pr_number is not None:
             _commit_and_push_phase(
                 root,
                 milestone.branch or "",
@@ -2929,13 +1360,13 @@ def run_chain(
             current_pr_state = _pr_state(root, state.pr_number, writer=writer)
             if current_pr_state == "merged":
                 state.pr_state = "merged"
-                save_chain_state(spec_path, state)
+                chain_spec.save_chain_state(spec_path, state)
             else:
                 _mark_pr_ready(root, state.pr_number, writer=writer)
                 if spec.merge_policy == "review":
                     state.last_state = STATE_AWAITING_PR_MERGE
                     state.pr_state = "awaiting_merge"
-                    save_chain_state(spec_path, state)
+                    chain_spec.save_chain_state(spec_path, state)
                     log(f"PR #{state.pr_number} ready; awaiting manual merge")
                     _capture_sync_state(
                         root,
@@ -2951,10 +1382,11 @@ def run_chain(
                         reason=f"milestone {milestone.label} PR #{state.pr_number} awaiting merge",
                     )
                 state.pr_state = _enable_auto_merge(root, state.pr_number, writer=writer)
-                save_chain_state(spec_path, state)
-        # Completion-verification contract: compute + persist + log a milestone
-        # verdict. Shadow/warn: fail-open, never blocks. Enforce: may block the
-        # milestone and route it back for retry (newly_failing/deleted_tests).
+                chain_spec.save_chain_state(spec_path, state)
+        # Completion-verification contract (SHADOW-MODE, fail-open): compute +
+        # persist + log a milestone-level verdict. NEVER alters the append,
+        # NEVER blocks the chain, NEVER runs the suite. See
+        # megaplan/orchestration/completion_contract.py.
         enforce_blocked = _shadow_milestone_completion_verdict(
             root,
             plan_name,
@@ -2964,14 +1396,13 @@ def run_chain(
             log_fn=log,
         )
         if enforce_blocked:
-            # Read retry cap from the plan's state.json config (default 2).
             max_retries = 2
             try:
-                _plan_dir = resolve_plan_dir(root, plan_name)
-                if _plan_dir is not None:
-                    _st = json.loads((_plan_dir / "state.json").read_text(encoding="utf-8"))
-                    _cfg = _st.get("config", {}) if isinstance(_st, dict) else {}
-                    max_retries = int(_cfg.get("enforce_revise_max_retries", 2))
+                plan_dir = resolve_plan_dir(root, plan_name)
+                raw_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+                if isinstance(raw_state, dict):
+                    cfg = raw_state.get("config", {}) if isinstance(raw_state.get("config"), dict) else {}
+                    max_retries = int(cfg.get("enforce_revise_max_retries", 2))
             except Exception:
                 pass
 
@@ -2981,7 +1412,7 @@ def run_chain(
                     f"completion_contract_mode=enforce: milestone {milestone.label!r} "
                     f"blocked; retry cap {max_retries} exhausted — operator action required"
                 )
-                save_chain_state(spec_path, state)
+                chain_spec.save_chain_state(spec_path, state)
                 return _result(
                     "blocked",
                     state,
@@ -2998,59 +1429,29 @@ def run_chain(
                 f"completion_contract_mode=enforce: milestone {milestone.label!r} blocked — "
                 f"retry {milestone_retry_count + 1}/{max_retries}"
             )
-            state.current_plan_name = None  # force re-init on next loop
+            state.current_plan_name = None
             state.pr_number = None
             state.pr_state = None
-            save_chain_state(spec_path, state)
+            chain_spec.save_chain_state(spec_path, state)
             continue
-
         # advance or skip
-        completed_record = _completed_record_for_status(state, milestone) or {}
-        if planning_pass and outcome.status == "finalized":
-            artifact_result = commit_plan_artifacts_to_base(
-                root,
-                spec.base_branch,
-                plan_name,
-                _plan_artifact_paths_for_milestone(root, plan_name, milestone),
-                push_enabled,
-            )
-            completed_record = {
-                "label": milestone.label,
-                "plan": plan_name,
-                "status": "finalized",
-                "plan_branch": spec.base_branch,
-                "artifact_commit_sha": artifact_result.commit_sha,
-                "artifact_pushed": artifact_result.pushed,
-                "artifact_audit_notes": list(artifact_result.audit_notes),
-                "pr_number": None,
-                "pr_state": None,
-            }
-        else:
-            completed_record = {
+        state.completed.append(
+            {
                 "label": milestone.label,
                 "plan": plan_name,
                 "status": outcome.status,
-                "plan_branch": _completed_record_branch(completed_record),
                 "pr_number": state.pr_number,
                 "pr_state": state.pr_state,
             }
-        _upsert_completed_record(state, completed_record)
+        )
         idx += 1
         state.current_milestone_index = idx
         state.current_plan_name = None
         state.pr_number = None
         state.pr_state = None
-        save_chain_state(spec_path, state)
+        chain_spec.save_chain_state(spec_path, state)
         if one:
             log(f"paused after milestone {milestone.label}")
-            if planning_pass:
-                _write_chain_review(
-                    root,
-                    spec_path,
-                    spec,
-                    state,
-                    partial_reason=f"completed one milestone: {milestone.label}",
-                )
             return _result(
                 "paused",
                 state,
@@ -3060,8 +1461,6 @@ def run_chain(
             )
 
     log("all milestones complete")
-    if planning_pass:
-        _write_chain_review(root, spec_path, spec, state)
     return _result("done", state, events, spec=spec)
 
 
@@ -3080,7 +1479,11 @@ def _result(
 
 
 def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
-    completed_records = _completed_records_by_label(state)
+    completed_labels = {
+        entry.get("label")
+        for entry in state.completed
+        if isinstance(entry, dict) and isinstance(entry.get("label"), str)
+    }
     current_milestone: dict[str, Any] | None = None
     if 0 <= state.current_milestone_index < len(spec.milestones):
         milestone = spec.milestones[state.current_milestone_index]
@@ -3095,27 +1498,13 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
     completed: list[dict[str, Any]] = []
     remaining: list[dict[str, Any]] = []
     for index, milestone in enumerate(spec.milestones):
-        record = completed_records.get(milestone.label)
-        plan_status = record.get("status") if isinstance(record, dict) else None
-        planned = plan_status in {"finalized", "done"}
-        executed = plan_status == "done"
-        if executed:
+        if milestone.label in completed_labels:
             status = "completed"
-        elif planned:
-            status = "planned"
         elif index == state.current_milestone_index and state.current_plan_name:
             status = "in_progress"
         else:
             status = "pending"
-        entry = {
-            "label": milestone.label,
-            "index": index,
-            "status": status,
-            "planned": planned,
-            "executed": executed,
-            "plan_status": plan_status,
-            "plan_branch": _completed_record_branch(record),
-        }
+        entry = {"label": milestone.label, "index": index, "status": status}
         per_milestone.append(entry)
         if status == "completed":
             completed.append({"label": milestone.label, "index": index})
@@ -3158,16 +1547,11 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
         current_label = f"{current['label']} (index {current['index']})"
     completed = summary.get("completed") or []
     remaining = summary.get("remaining") or []
-    per_milestone = summary.get("per_milestone") or []
     completed_labels = ", ".join(item["label"] for item in completed) if completed else "none"
     remaining_labels = ", ".join(item["label"] for item in remaining) if remaining else "none"
-    planned_count = sum(1 for item in per_milestone if item.get("planned"))
-    executed_count = sum(1 for item in per_milestone if item.get("executed"))
     writer(f"Current milestone: {current_label}\n")
     writer(f"Completed: {completed_labels}\n")
     writer(f"Remaining: {remaining_labels}\n")
-    writer(f"Planned: {planned_count}/{len(per_milestone)}\n")
-    writer(f"Executed: {executed_count}/{len(per_milestone)}\n")
     if summary.get("seed_plan"):
         writer(f"Seed plan: {summary['seed_plan']}\n")
     writer(f"Base branch: {summary.get('base_branch') or 'main'}\n")
@@ -3200,15 +1584,8 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
         review_policy = policy.get("review_policy") or {}
         writer(f"  Review (clean_milestone_pr): {review_policy.get('clean_milestone_pr', 'auto')}\n")
     writer("Per-milestone:\n")
-    for item in per_milestone:
-        branch_suffix = ""
-        if item.get("plan_branch"):
-            branch_suffix = f", artifact branch {item['plan_branch']}"
-        writer(
-            f"  - [{item['status']}] {item['label']} "
-            f"(index {item['index']}, planned={int(bool(item.get('planned')))}, "
-            f"executed={int(bool(item.get('executed')))}{branch_suffix})\n"
-        )
+    for item in summary.get("per_milestone") or []:
+        writer(f"  - [{item['status']}] {item['label']} (index {item['index']})\n")
 
 
 # ---------------------------------------------------------------------------
@@ -3261,11 +1638,31 @@ def build_chain_parser(subparsers: Any) -> None:
     )
 
     start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
-    _add_chain_run_args(start_parser)
-    plan_parser = chain_sub.add_parser("plan", help="Drive the planning pass until plans finalize")
-    _add_chain_run_args(plan_parser)
-    execute_parser = chain_sub.add_parser("execute", help="Drive finalized milestone plans through execute")
-    _add_chain_run_args(execute_parser)
+    start_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    start_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Run the chain against this project directory instead of discovering from CWD.",
+    )
+    _add_chain_worktree_args(start_parser)
+    start_parser.add_argument(
+        "--no-git-refresh",
+        action="store_true",
+        help=(
+            "Skip the automatic base-branch checkout and pull that runs "
+            "before each milestone."
+        ),
+    )
+    start_parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help="Disable branch/PR/push lifecycle for no-network runs.",
+    )
+    start_parser.add_argument(
+        "--one",
+        action="store_true",
+        help="Drive at most one pending milestone, persist progress, then stop cleanly.",
+    )
 
     status_parser = chain_sub.add_parser(
         "status", help="Show persisted chain progress without driving"
@@ -3303,34 +1700,6 @@ def build_chain_parser(subparsers: Any) -> None:
         choices=VALID_CLEAN_MILESTONE_PR_POLICIES,
         default=None,
         help="Set review clean_milestone_pr policy at runtime (e.g. auto, manual)",
-    )
-
-
-def _add_chain_run_args(parser: Any) -> None:
-    parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
-    parser.add_argument(
-        "--project-dir",
-        required=False,
-        help="Run the chain against this project directory instead of discovering from CWD.",
-    )
-    _add_chain_worktree_args(parser)
-    parser.add_argument(
-        "--no-git-refresh",
-        action="store_true",
-        help=(
-            "Skip the automatic base-branch checkout and pull that runs "
-            "before each milestone."
-        ),
-    )
-    parser.add_argument(
-        "--no-push",
-        action="store_true",
-        help="Disable branch/PR/push lifecycle for no-network runs.",
-    )
-    parser.add_argument(
-        "--one",
-        action="store_true",
-        help="Drive at most one pending milestone, persist progress, then stop cleanly.",
     )
 
 
@@ -3397,10 +1766,10 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
                 )
             )
         try:
-            spec = load_spec(spec_path)
+            spec = chain_spec.load_spec(spec_path)
         except CliError as exc:
             return _emit_error(exc)
-        overrides: dict[str, Any] = load_runtime_policy(spec_path)
+        overrides: dict[str, Any] = chain_spec.load_runtime_policy(spec_path)
         if set_prereq is not None:
             overrides["prerequisite_policy"] = set_prereq
         if set_valid is not None:
@@ -3409,8 +1778,8 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
             review_from_overrides = overrides.get("review_policy") or {}
             review_from_overrides["clean_milestone_pr"] = set_clean
             overrides["review_policy"] = review_from_overrides
-        save_runtime_policy(spec_path, overrides)
-        effective = effective_chain_policy(spec, overrides)
+        chain_spec.save_runtime_policy(spec_path, overrides)
+        effective = chain_spec.effective_chain_policy(spec, overrides)
         payload = {
             "success": True,
             "spec": str(spec_path),
@@ -3422,12 +1791,12 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
 
     if action == "status":
         try:
-            spec = load_spec(spec_path)
-            chain_state = load_chain_state(spec_path)
+            spec = chain_spec.load_spec(spec_path)
+            chain_state = chain_spec.load_chain_state(spec_path)
         except CliError as exc:
             return _emit_error(exc)
-        runtime_overrides = load_runtime_policy(spec_path)
-        effective_policy = effective_chain_policy(spec, runtime_overrides)
+        runtime_overrides = chain_spec.load_runtime_policy(spec_path)
+        effective_policy = chain_spec.effective_chain_policy(spec, runtime_overrides)
         summary = format_chain_status(spec, chain_state)
         _write_chain_status_pretty(summary, writer=writer)
         payload = {
@@ -3443,25 +1812,34 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0
 
-    if action not in (None, "start", "plan", "execute"):
+    if action not in (None, "start"):
         return _emit_error(CliError("invalid_args", f"Unknown chain action: {action}"))
 
     no_git_refresh = bool(getattr(args, "no_git_refresh", False))
     no_push = bool(getattr(args, "no_push", False))
     one = bool(getattr(args, "one", False))
     try:
-        result = run_chain(
-            spec_path,
-            root,
-            no_git_refresh=no_git_refresh,
-            no_push=no_push,
-            one=one,
-            mode=action or "start",
-        )
+        if supervisor_tier_routing_on():
+            from megaplan.supervisor.chain_runner import run_chain as supervisor_run_chain
+
+            result = supervisor_run_chain(
+                spec_path,
+                root,
+                writer=writer,
+                one=one,
+            )
+        else:
+            result = run_chain(
+                spec_path,
+                root,
+                no_git_refresh=no_git_refresh,
+                no_push=no_push,
+                one=one,
+            )
     except CliError as exc:
         return _emit_error(exc)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
-    if result["status"] in {"done", "paused", "finalized"}:
+    if result["status"] in {"done", "paused"}:
         return 0
     return 1
 
