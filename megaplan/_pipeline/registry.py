@@ -170,6 +170,29 @@ class PipelineRegistry:
 _GLOBAL_REGISTRY = PipelineRegistry()
 
 
+def _planning_builder() -> Pipeline:
+    from megaplan._pipeline.planning import compile_planning_pipeline
+    return compile_planning_pipeline()
+
+
+def _ensure_builtin_pipelines_registered() -> None:
+    """Reassert built-in pipelines after tests or long-lived workers mutate state.
+
+    The chain driver can run for hours in one Python process while discovery
+    and test helpers exercise the same global registry. The production
+    planning pipeline is not file-discovered, so it must be restored
+    idempotently if the registry was reset to discovered-only entries.
+    """
+
+    if "planning" not in _GLOBAL_REGISTRY.builders:
+        _GLOBAL_REGISTRY.register(
+            "planning",
+            _planning_builder,
+            description="Production planning — runnable shape "
+                        "(prep→plan→critique→gate→…→review).",
+        )
+
+
 def register_pipeline(
     name: str,
     builder: PipelineBuilder,
@@ -183,22 +206,27 @@ def register_pipeline(
 
 
 def get_pipeline(name: str) -> Pipeline:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.get(name)
 
 
 def registered_pipelines() -> tuple[str, ...]:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.names()
 
 
 def describe_pipeline(name: str) -> str:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.describe(name)
 
 
 def pipeline_metadata(name: str) -> dict[str, Any]:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.metadata_for(name)
 
 
 def read_pipeline_skill_md(name: str) -> str | None:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.read_skill_md(name)
 
 
@@ -407,18 +435,4 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
     return out
 
 
-# ---------------------------------------------------------------------------
-# Built-in pipeline registered at import time.
-# ---------------------------------------------------------------------------
-
-
-def _planning_builder() -> Pipeline:
-    from megaplan._pipeline.planning import compile_planning_pipeline
-    return compile_planning_pipeline()
-
-
-register_pipeline(
-    "planning", _planning_builder,
-    description="Production planning — runnable shape "
-                "(prep→plan→critique→gate→…→review).",
-)
+_ensure_builtin_pipelines_registered()
