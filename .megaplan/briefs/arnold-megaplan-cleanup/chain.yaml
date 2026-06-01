@@ -1,0 +1,167 @@
+base_branch: arnold-epic
+
+# Epic: Arnold package + Megaplan as a clean built-in plugin.
+# Primary plan: docs/arnold/arnold-megaplan-cleanup-plan.md
+# This chain uses the Opus 4.8 sizing pass:
+# - split genuine design work
+# - keep behavior-preserving moves cheap
+# - do not physically move the production plugin until dispatch/discovery can support it
+
+milestones:
+  - label: m-1-disposition
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m-1-disposition.md
+    branch: epic/arnold-cleanup-m-1-disposition
+    profile: partnered
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: "Trace Pipeline.run_phase, auto.py planning dispatch, _core/workflow.py resume defaults, control_interface.py, profiles/__init__.py, and the listed hybrid zones. Produce a mechanically enforceable disposition manifest and parity-gate list. Do not move code."
+    notes: "partnered//high @codex +prep. Keystone classification sprint; no code moves."
+
+  - label: m0-boundary-skeleton
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m0-boundary-skeleton.md
+    branch: epic/arnold-cleanup-m0-boundary-skeleton
+    depends_on: [m-1-disposition]
+    profile: solo
+    robustness: full
+    notes: "solo/full. Additive Arnold primitive skeleton and boundary tests only."
+
+  - label: m1-dispatch-safe-identity
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m1-dispatch-safe-identity.md
+    branch: epic/arnold-cleanup-m1-dispatch-safe-identity
+    depends_on: [m0-boundary-skeleton]
+    profile: directed
+    vendor: codex
+    robustness: full
+    notes: "directed/full @codex. Canonical identity becomes megaplan without physically moving outside current discovery root."
+
+  - label: m2a-capability-contract
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m2a-capability-contract.md
+    branch: epic/arnold-cleanup-m2a-capability-contract
+    depends_on: [m1-dispatch-safe-identity]
+    profile: apex
+    robustness: thorough
+    depth: high
+    notes: "apex/thorough/high. Freeze plugin operation carriers, run envelope, and stepwise driver seam."
+
+  - label: m2b-dispatch-rewire
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m2b-dispatch-rewire.md
+    branch: epic/arnold-cleanup-m2b-dispatch-rewire
+    depends_on: [m2a-capability-contract]
+    profile: partnered
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered//high @codex. Rewire auto/resume/control/CLI dispatch onto the M2a seam."
+
+  - label: m3a-neutral-runtime-relocation
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m3a-neutral-runtime-relocation.md
+    branch: epic/arnold-cleanup-m3a-neutral-runtime-relocation
+    depends_on: [m2b-dispatch-rewire]
+    profile: solo
+    robustness: full
+    notes: "solo/full. Move classified neutral mechanics into arnold.pipeline."
+
+  - label: m3b-decision-routing
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m3b-decision-routing.md
+    branch: epic/arnold-cleanup-m3b-decision-routing
+    depends_on: [m3a-neutral-runtime-relocation]
+    profile: partnered
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered//high @codex. Generalize decision routing and remove Megaplan literals from generic runtime."
+
+  - label: m3c-dataflow-fanout-subpipeline
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m3c-dataflow-fanout-subpipeline.md
+    branch: epic/arnold-cleanup-m3c-dataflow-fanout-subpipeline
+    depends_on: [m3b-decision-routing]
+    profile: partnered
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered//high @codex. Dataflow validation, dynamic fanout contract, subpipeline promotion."
+
+  - label: m3d-batch-recovery-contracts
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m3d-batch-recovery-contracts.md
+    branch: epic/arnold-cleanup-m3d-batch-recovery-contracts
+    depends_on: [m3c-dataflow-fanout-subpipeline]
+    profile: partnered
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered//high @codex. Batch runtime split and recovery classifier contract."
+
+  - label: m4-megaplan-stages-handlers
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m4-megaplan-stages-handlers.md
+    branch: epic/arnold-cleanup-m4-megaplan-stages-handlers
+    depends_on: [m3d-batch-recovery-contracts]
+    profile: solo
+    robustness: full
+    notes: "solo/full. Move Megaplan stages and handler placement into the plugin."
+
+  - label: m5a-megaplan-prompts-state-profiles-control
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m5a-megaplan-prompts-state-profiles-control.md
+    branch: epic/arnold-cleanup-m5a-megaplan-prompts-state-profiles-control
+    depends_on: [m4-megaplan-stages-handlers]
+    profile: solo
+    robustness: full
+    notes: "solo/full. Move prompts, state, schemas, profiles, and control into the plugin."
+
+  - label: m5b-execute-review-orchestration-policy
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m5b-execute-review-orchestration-policy.md
+    branch: epic/arnold-cleanup-m5b-execute-review-orchestration-policy
+    depends_on: [m5a-megaplan-prompts-state-profiles-control]
+    profile: solo
+    robustness: full
+    notes: "solo/full. Move execute/review/orchestration policy according to M-1 classification."
+
+  - label: m6-package-cli-rename
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m6-package-cli-rename.md
+    branch: epic/arnold-cleanup-m6-package-cli-rename
+    depends_on: [m5b-execute-review-orchestration-policy]
+    profile: solo
+    robustness: full
+    notes: "solo/full. Mechanical package and CLI rename after boundaries are established."
+
+  - label: m7-delete-old-paths
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m7-delete-old-paths.md
+    branch: epic/arnold-cleanup-m7-delete-old-paths
+    depends_on: [m6-package-cli-rename]
+    profile: solo
+    robustness: light
+    notes: "solo/light. Delete old privileged paths; verify static and string-level gates pass."
+
+  - label: m8a-authoring-api
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m8a-authoring-api.md
+    branch: epic/arnold-cleanup-m8a-authoring-api
+    depends_on: [m7-delete-old-paths]
+    profile: partnered
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered//high @codex. Public handle/flow API and validation UX."
+
+  - label: m8b-scaffold-docs
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m8b-scaffold-docs.md
+    branch: epic/arnold-cleanup-m8b-scaffold-docs
+    depends_on: [m8a-authoring-api]
+    profile: directed
+    vendor: codex
+    robustness: full
+    depth: medium
+    notes: "directed//medium @codex. Scaffolder, check/dry-run/explain CLI, docs, examples."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 80
+  poll_sleep: 8.0
+  require_clean_base: false
