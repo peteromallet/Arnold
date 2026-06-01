@@ -30,6 +30,22 @@ def test_scope_drift_benign_only_is_none() -> None:
     assert report.severity == "none"
 
 
+def test_scope_drift_benign_missing_claims_are_none() -> None:
+    report = compute_scope_drift(
+        files_claimed={
+            ".megaplan/plans/demo/execution_batch_1.json",
+            ".megaplan/plans/demo/execution_batch_2.json",
+            ".megaplan/plans/demo/execution_batch_3.json",
+            ".megaplan/plans/demo/execution_batch_4.json",
+        },
+        files_in_diff=set(),
+        loc_by_file={},
+    )
+
+    assert report.files_missing == []
+    assert report.severity == "none"
+
+
 def test_scope_drift_low_for_small_unclaimed_file() -> None:
     report = compute_scope_drift(
         files_claimed={"a.py"},
