@@ -66,6 +66,7 @@ from megaplan.receipts.writer import write_receipt
 from megaplan.types import (
     CliError,
     PlanState,
+    STATE_BLOCKED,
     STATE_EXECUTED,
     STATE_FINALIZED,
     StepResponse,
@@ -76,6 +77,8 @@ from megaplan.workers import WorkerResult
 log = logging.getLogger(__name__)
 
 _BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
+_UNROUTABLE_REWORK_ATTEMPTS_KEY = "unroutable_rework_attempts"
+_MAX_UNROUTABLE_REWORK_RERUNS = 2
 
 def _resolve_tier_spec(
     args: argparse.Namespace,
@@ -1007,6 +1010,104 @@ def _block_no_runnable_rework(
     return response
 
 
+def _handle_unroutable_review_rework(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    auto_approve: bool,
+    unrunnable_task_ids: list[str],
+) -> StepResponse:
+    meta = state.setdefault("meta", {})
+    prior_attempts = meta.get(_UNROUTABLE_REWORK_ATTEMPTS_KEY, 0)
+    attempts = prior_attempts + 1 if isinstance(prior_attempts, int) else 1
+    unmatched = ", ".join(sorted(set(unrunnable_task_ids)))
+    reason = (
+        "review requested rework but no runnable finalize task IDs could be derived. "
+        f"Unmatched rework task_id(s): {unmatched}. "
+        "Re-run review so rework_items reference concrete finalize task IDs."
+    )
+    meta[_UNROUTABLE_REWORK_ATTEMPTS_KEY] = attempts
+
+    if attempts <= _MAX_UNROUTABLE_REWORK_RERUNS:
+        state["current_state"] = STATE_EXECUTED
+        summary = (
+            "Review requested rework with only unroutable task IDs "
+            f"({unmatched}); re-running review "
+            f"({attempts}/{_MAX_UNROUTABLE_REWORK_RERUNS}) instead of blocking execute."
+        )
+        append_history(
+            state,
+            make_history_entry(
+                "execute",
+                duration_ms=0,
+                cost_usd=0.0,
+                result="rerun_review",
+                message=summary,
+            ),
+        )
+        save_state_merge_meta(plan_dir, state)
+        from megaplan.observability.events import EventKind, emit
+
+        emit(
+            EventKind.PHASE_RETRY,
+            plan_dir=plan_dir,
+            phase="review",
+            payload={
+                "reason": "unroutable_review_rework",
+                "attempt": attempts,
+                "max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS,
+                "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
+            },
+        )
+        response: StepResponse = {
+            "success": True,
+            "step": "execute",
+            "summary": summary,
+            "artifacts": ["review.json", "finalize.json", "final.md"],
+            "monitor_hint": build_monitor_hint(plan_dir),
+            "next_step": "review",
+            "state": STATE_EXECUTED,
+            "files_changed": [],
+            "deviations": [],
+            "warnings": [summary],
+            "auto_approve": auto_approve,
+            "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
+            "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
+            "_phase_outcome": "success",
+        }
+        _attach_next_step_runtime(response)
+        return response
+
+    from megaplan.observability.events import EventKind, emit
+
+    emit(
+        EventKind.STATE_TRANSITION,
+        plan_dir=plan_dir,
+        phase="execute",
+        payload={
+            "reason": "unroutable_review_rework",
+            "from": STATE_FINALIZED,
+            "to": STATE_BLOCKED,
+            "attempt": attempts,
+            "max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS,
+            "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
+        },
+    )
+    response = _block_no_runnable_rework(
+        plan_dir=plan_dir,
+        state=state,
+        auto_approve=auto_approve,
+        reason=(
+            f"{reason} Review re-run attempts exhausted "
+            f"({attempts - 1}/{_MAX_UNROUTABLE_REWORK_RERUNS}); "
+            "resolve the quality blocker or recover-blocked after operator review."
+        ),
+        unrunnable_task_ids=unrunnable_task_ids,
+    )
+    response["result"] = "blocked"
+    return response
+
+
 def handle_execute_auto_loop(
     *,
     root: Path,
@@ -1089,6 +1190,13 @@ def handle_execute_auto_loop(
                     finalize_data,
                 )
                 if not review_rework_task_ids:
+                    if unrunnable_rework_task_ids:
+                        return _handle_unroutable_review_rework(
+                            plan_dir=plan_dir,
+                            state=state,
+                            auto_approve=auto_approve,
+                            unrunnable_task_ids=unrunnable_rework_task_ids,
+                        )
                     extra = ""
                     if unrunnable_rework_task_ids:
                         extra = (
@@ -1106,6 +1214,7 @@ def handle_execute_auto_loop(
                         ),
                         unrunnable_task_ids=unrunnable_rework_task_ids,
                     )
+                state.setdefault("meta", {}).pop(_UNROUTABLE_REWORK_ATTEMPTS_KEY, None)
                 rework_mode = True
                 pending_tasks = [
                     task
