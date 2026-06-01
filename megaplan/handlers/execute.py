@@ -34,12 +34,24 @@ from megaplan._core import (
     set_active_step,
     workflow_includes_step,
 )
-from megaplan._core.io import read_plan_state_cached
 from megaplan.workers import validate_payload, warn_if_work_dir_differs_from_project_dir
 
 from .shared import _agent_mode_parts, _emit_phase_notice, attach_agent_fallback, worker_module
 from megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
 
+
+def _resolve_execute_tier_spec(
+    base_args: argparse.Namespace,
+    tier_spec: str,
+) -> tuple[str, str, str | None]:
+    """Thin alias over ``_resolve_tier_spec`` with ``phase=\"execute\"``.
+
+    Kept for backward compatibility; new callers should use
+    ``_resolve_tier_spec(args, spec, phase=\"execute\")`` directly.
+    """
+    from megaplan.execute.batch import _resolve_tier_spec
+
+    return _resolve_tier_spec(base_args, tier_spec, phase="execute")
 
 def _is_rework_reexecution(state: PlanState) -> bool:
     """Check if the last completed step was a review with needs_rework."""
@@ -73,27 +85,6 @@ def _record_execute_blocked(plan_dir: Path, response: StepResponse) -> None:
         suggested_action="Review blocking deviations and resume execute with a fresh worker session.",
         metadata={"response": dict(response)},
     )
-
-
-def _extract_execute_tier_map(tier_models: object) -> dict[int, str] | None:
-    """Return the execute tier map in the legacy int-keyed routing shape."""
-    if not isinstance(tier_models, dict):
-        return None
-    execute_tiers = tier_models.get("execute")
-    if not isinstance(execute_tiers, dict) or not execute_tiers:
-        return None
-    normalized: dict[int, str] = {}
-    for raw_tier, raw_spec in execute_tiers.items():
-        if not isinstance(raw_spec, str) or not raw_spec.strip():
-            continue
-        if isinstance(raw_tier, bool):
-            continue
-        if isinstance(raw_tier, int):
-            normalized[raw_tier] = raw_spec
-            continue
-        if isinstance(raw_tier, str) and raw_tier.isdigit():
-            normalized[int(raw_tier)] = raw_spec
-    return normalized or None
 
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
@@ -148,7 +139,12 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # per-batch by task complexity.  apply_profile_expansion already
         # strips tier_models.execute when a CLI --phase-model execute=...
         # override is present, so no double-check is needed here.
-        tier_map = _extract_execute_tier_map(getattr(args, "tier_models", None))
+        tier_models = getattr(args, "tier_models", None)
+        tier_map: dict[int, str] | None = None
+        if isinstance(tier_models, dict):
+            execute_tiers = tier_models.get("execute")
+            if isinstance(execute_tiers, dict) and execute_tiers:
+                tier_map = execute_tiers
         run_id = set_active_step(state, step="execute", agent=agent, mode=mode, model=model)
         _emit_phase_notice("execute")
         save_state_merge_meta(plan_dir, state)
@@ -194,7 +190,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         if response.get("result") == "blocked":
             save_state_merge_meta(plan_dir, state)
             _record_execute_blocked(plan_dir, response)
-            state = read_plan_state_cached(plan_dir, mode="authority")
+            state = read_json(plan_dir / "state.json")
             response["state"] = STATE_BLOCKED
             response["next_step"] = None
             response.pop("next_step_runtime", None)

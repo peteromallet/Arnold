@@ -64,36 +64,14 @@ class CostTracker:
 
     cap_usd: Optional[float] = None
 
-    def _authority_total(self) -> Optional[float]:
-        """Return the installed BudgetAuthority's live total when
-        ``UNIFIED_BUDGET=1``, else ``None`` (legacy path)."""
-
-        try:
-            from megaplan._pipeline.flags import unified_budget_on
-            from megaplan.runtime.budget_authority import current_authority
-        except Exception:
-            return None
-        if not unified_budget_on():
-            return None
-        auth = current_authority()
-        if auth is None:
-            return None
-        return float(auth.current_total())
-
     def should_abort(self, state: Mapping[str, Any]) -> bool:
         if self.cap_usd is None:
             return False
-        auth_total = self._authority_total()
-        if auth_total is not None:
-            return auth_total > self.cap_usd
         meta = state.get("meta", {})
         cost = float(meta.get("total_cost_usd", 0.0) or 0.0)
         return cost > self.cap_usd
 
     def current_cost(self, state: Mapping[str, Any]) -> float:
-        auth_total = self._authority_total()
-        if auth_total is not None:
-            return auth_total
         meta = state.get("meta", {})
         return float(meta.get("total_cost_usd", 0.0) or 0.0)
 

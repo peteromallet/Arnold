@@ -12,6 +12,8 @@ parallel sources, no parity-drift risk.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -181,77 +183,6 @@ def _resolve_overrides(robustness: str, *, creative: bool) -> dict[str, list[Tra
     return _ROBUSTNESS_OVERRIDES.get(robustness, {})
 
 
-class BuildBindingError(Exception):
-    """Raised by :func:`build_with_binding` when contracts.bind() fails."""
-
-    def __init__(self, gradient: Any) -> None:
-        self.gradient = gradient
-        super().__init__(str(gradient))
-
-
-def build_with_binding(
-    pipeline: Any,
-    *,
-    robustness: str = "thorough",
-    creative: bool = False,
-    with_prep: bool = False,
-    with_feedback: bool = False,
-) -> Any:
-    """Build the pipeline for ``robustness`` and, when typed_ports_on(),
-    bind it.
-
-    Deviation (M2 / T5): the M2 brief sketched a ``(robustness, ...)``-only
-    signature deriving a ``Pipeline`` from the workflow data here, but
-    ``_workflow_for_robustness`` returns the legacy ``dict[state, list[
-    Transition]]`` state-machine — not a ``Pipeline`` object — so this
-    function takes a pre-built :class:`Pipeline` as a positional argument
-    instead. Flag-OFF behavior returns ``pipeline`` unchanged.
-
-    Flag-ON: calls :func:`megaplan._pipeline.contracts.bind` and either
-    raises :class:`BuildBindingError` on a :class:`RepairGradient`, or
-    returns the same pipeline with ``binding_map`` attached via
-    :func:`dataclasses.replace`.
-    """
-    # Touch resolution helpers so the call participates in workflow
-    # normalization (even if the result isn't used today).
-    _ = _resolve_overrides(robustness, creative=creative)
-    _ = _workflow_for_robustness(
-        robustness, creative=creative, with_prep=with_prep, with_feedback=with_feedback
-    )
-
-    from megaplan._pipeline.flags import typed_ports_on
-
-    if not typed_ports_on():
-        return pipeline
-
-    import dataclasses
-
-    from megaplan._pipeline import contracts
-    from megaplan._pipeline.types import Pipeline
-
-    stages = pipeline.stages
-    edges = []
-    for src, stage in stages.items():
-        for edge in getattr(stage, "edges", ()):
-            if edge.target != "halt":
-                edges.append((src, edge.target))
-
-    result = contracts.bind(list(stages.values()) and dict(stages), edges)
-    # contracts.bind expects a Mapping; pass the stages mapping directly.
-    result = contracts.bind(dict(stages), edges)
-    if isinstance(result, contracts.RepairGradient):
-        raise BuildBindingError(result)
-
-    if isinstance(pipeline, Pipeline):
-        return dataclasses.replace(pipeline, binding_map=result.binding_map)
-    # Fallback: best-effort attribute set for non-Pipeline objects.
-    try:
-        object.__setattr__(pipeline, "binding_map", result.binding_map)
-    except Exception:
-        pass
-    return pipeline
-
-
 def _workflow_for_robustness(
     robustness: str,
     *,
@@ -322,36 +253,31 @@ def workflow_includes_step(
 ) -> bool:
     if step == "step":
         return True
-    from megaplan._core.topology import RunTopologyConfig, build_topology
-
-    graph = build_topology(
-        RunTopologyConfig(
-            robustness=normalize_robustness(robustness),
-            creative=False,
-            with_prep=with_prep,
-            with_feedback=with_feedback,
-        )
+    workflow = _workflow_for_robustness(
+        normalize_robustness(robustness),
+        with_prep=with_prep,
+        with_feedback=with_feedback,
     )
-    return any(edge.step == step for edge in graph.edges)
+    return any(
+        transition.next_step == step
+        for transitions in workflow.values()
+        for transition in transitions
+    )
 
 
 def workflow_transition(state: PlanState, step: str) -> Transition | None:
     current = state.get("current_state")
     if not isinstance(current, str):
         return None
-    from megaplan._core.topology import RunTopologyConfig, build_topology
-
-    graph = build_topology(
-        RunTopologyConfig(
-            robustness=_workflow_robustness_from_state(state),
-            creative=is_creative_mode(state),
-            with_prep=_with_prep_from_state(state),
-            with_feedback=_with_feedback_from_state(state),
-        )
+    workflow = _workflow_for_robustness(
+        _workflow_robustness_from_state(state),
+        creative=is_creative_mode(state),
+        with_prep=_with_prep_from_state(state),
+        with_feedback=_with_feedback_from_state(state),
     )
-    for edge in graph.successors(current):
-        if edge.step == step and _transition_matches(state, edge.condition):
-            return Transition(edge.step, edge.dst, edge.condition)
+    for transition in workflow.get(current, []):
+        if transition.next_step == step and _transition_matches(state, transition.condition):
+            return transition
     return None
 
 
@@ -359,20 +285,16 @@ def workflow_next(state: PlanState) -> list[str]:
     current = state.get("current_state")
     if not isinstance(current, str):
         return []
-    from megaplan._core.topology import RunTopologyConfig, build_topology
-
-    graph = build_topology(
-        RunTopologyConfig(
-            robustness=_workflow_robustness_from_state(state),
-            creative=is_creative_mode(state),
-            with_prep=_with_prep_from_state(state),
-            with_feedback=_with_feedback_from_state(state),
-        )
+    workflow = _workflow_for_robustness(
+        _workflow_robustness_from_state(state),
+        creative=is_creative_mode(state),
+        with_prep=_with_prep_from_state(state),
+        with_feedback=_with_feedback_from_state(state),
     )
     next_steps = [
-        edge.step
-        for edge in graph.successors(current)
-        if _transition_matches(state, edge.condition)
+        transition.next_step
+        for transition in workflow.get(current, [])
+        if _transition_matches(state, transition.condition)
     ]
     if current in _STEP_CONTEXT_STATES:
         next_steps.append("step")
@@ -392,8 +314,28 @@ def _resume_phase_args(phase: str, cursor: dict[str, Any], plan: str) -> list[st
     return args
 
 
-# `_RESUME_ACTIVE_STATES` is now derived on demand from the realized graph
-# via `topology.predecessors(phase, policy='resume')` — see M3 Step 7.
+def _default_resume_runner(args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
+    proc = subprocess.run(
+        [sys.executable, "-m", "megaplan", *args],
+        cwd=str(cwd) if cwd else None,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+_RESUME_ACTIVE_STATES: dict[str, str] = {
+    "prep": "initialized",
+    "plan": "initialized",
+    "critique": "planned",
+    "gate": "critiqued",
+    "revise": "critiqued",
+    "finalize": "gated",
+    "execute": "finalized",
+    "review": "executed",
+    "feedback": "reviewed",
+}
 
 
 def resume_plan(
@@ -419,61 +361,15 @@ def resume_plan(
     if not isinstance(phase, str) or not phase:
         raise CliError("invalid_resume_cursor", f"Plan '{plan}' has an invalid resume cursor", extra={"resume_cursor": cursor})
     args = _resume_phase_args(phase, cursor, plan)
+    runner_fn = runner or _default_resume_runner
     previous_state = repo.load_state()
-    pipeline_name = (
-        cursor.get("pipeline")
-        if isinstance(cursor.get("pipeline"), str) and cursor.get("pipeline")
-        else previous_state.get("_pipeline_name")
-    )
-    if not isinstance(pipeline_name, str) or not pipeline_name:
-        pipeline_name = "planning"
-    from megaplan._pipeline.registry import canonical_pipeline_name, pipeline_metadata
-
-    pipeline_name = canonical_pipeline_name(pipeline_name)
-    stored_manifest_hash = cursor.get("pipeline_manifest_hash")
-    if not isinstance(stored_manifest_hash, str) or not stored_manifest_hash:
-        stored_manifest_hash = previous_state.get("_pipeline_manifest_hash")
-    if isinstance(stored_manifest_hash, str) and stored_manifest_hash:
-        current_manifest_hash = pipeline_metadata(pipeline_name).get("manifest_hash")
-        if not isinstance(current_manifest_hash, str) or not current_manifest_hash:
-            raise CliError(
-                "pipeline_manifest_unavailable",
-                f"Cannot verify pipeline identity for '{pipeline_name}' during resume",
-                extra={"pipeline": pipeline_name, "stored_manifest_hash": stored_manifest_hash},
-            )
-        if current_manifest_hash != stored_manifest_hash:
-            raise CliError(
-                "pipeline_manifest_mismatch",
-                f"Refusing to resume '{plan}' with changed pipeline manifest for '{pipeline_name}'",
-                extra={
-                    "pipeline": pipeline_name,
-                    "stored_manifest_hash": stored_manifest_hash,
-                    "current_manifest_hash": current_manifest_hash,
-                },
-            )
-    from megaplan._core import topology as _topology
-    active_state = _topology.predecessors(phase, policy="resume")
+    active_state = _RESUME_ACTIVE_STATES.get(phase)
     if active_state and previous_state.get("current_state") in {"failed", "blocked"}:
         state = dict(previous_state)
         state["current_state"] = active_state
         repo.save_state(state)
     try:
-        if runner is None:
-            from megaplan._pipeline.registry import PipelineRegistry
-
-            pipeline = PipelineRegistry().get(pipeline_name)
-            if pipeline is None:
-                code, stdout, stderr = 1, "", "planning pipeline unavailable"
-            else:
-                code, stdout, stderr = pipeline.run_phase(
-                    phase,
-                    plan=plan,
-                    cwd=root,
-                    plan_dir=plan_dir,
-                    argv=args,
-                )
-        else:
-            code, stdout, stderr = runner(args, cwd=root)
+        code, stdout, stderr = runner_fn(args, cwd=root)
     except RevisionConflict as error:
         repo.save_state(previous_state)
         state = repo.load_state()

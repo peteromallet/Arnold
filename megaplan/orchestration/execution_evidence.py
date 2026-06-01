@@ -8,7 +8,6 @@ from typing import Any
 from megaplan.types import PlanState
 from megaplan._core import is_prose_mode
 from megaplan.loop.git import _collect_git_status_paths_with_nested_repos, _normalize_repo_path
-from megaplan.receipts.drift import _is_benign
 
 from .rubber_stamp import _is_perfunctory_ack, is_rubber_stamp
 
@@ -103,12 +102,10 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
     findings: list[str] = []
     files_claimed = sorted(
         {
-            normalized
+            _normalize_repo_path(path, project_dir)
             for task in finalize_data.get("tasks", [])
             for path in task.get("files_changed", [])
             if isinstance(path, str) and path.strip()
-            for normalized in [_normalize_repo_path(path, project_dir)]
-            if not _is_benign(normalized)
         }
     )
 
@@ -200,8 +197,6 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
             files = task.get("files_changed") or []
             commands = task.get("commands_run") or []
             if not files and not commands:
-                if notes_text and not is_rubber_stamp(notes, strict=True):
-                    continue
                 hollow_done_tasks.append(task_id)
                 continue
             if notes_text and is_rubber_stamp(notes, strict=True):

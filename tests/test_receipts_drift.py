@@ -70,19 +70,6 @@ def test_scope_drift_high_for_unclaimed_tracked_modification() -> None:
     assert report.severity == "high"
 
 
-def test_scope_drift_missing_uses_current_call_baseline() -> None:
-    report = compute_scope_drift(
-        files_claimed={"a.py", "old_batch.py", ".megaplan/plans/demo/execution_batch_1.json"},
-        files_claimed_for_missing={"a.py"},
-        files_in_diff={"a.py"},
-        loc_by_file={"a.py": 1},
-    )
-
-    assert report.files_added == []
-    assert report.files_missing == []
-    assert report.severity == "none"
-
-
 def test_collect_loc_by_file_counts_untracked_file_for_high_drift(tmp_path: Path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, stdout=subprocess.DEVNULL)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)

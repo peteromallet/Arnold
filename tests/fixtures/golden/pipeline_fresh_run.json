@@ -2,16 +2,6 @@
   "artifact_filenames": [
     ".events.seq",
     ".plan.lock",
-    "contract.json",
-    "critique_check_all_locations.json",
-    "critique_check_callers.json",
-    "critique_check_conventions.json",
-    "critique_check_correctness.json",
-    "critique_check_criteria_quality.json",
-    "critique_check_issue_hints.json",
-    "critique_check_prerequisite_ordering.json",
-    "critique_check_scope.json",
-    "critique_check_verification.json",
     "critique_v1.json",
     "critique_v2.json",
     "events.ndjson",
@@ -108,6 +98,18 @@
       ],
       "disputed_flag_ids": [],
       "flags": [
+        {
+          "category": "completeness",
+          "id": "FLAG-001",
+          "severity_hint": "likely-significant",
+          "status": null
+        },
+        {
+          "category": "correctness",
+          "id": "FLAG-002",
+          "severity_hint": "likely-significant",
+          "status": null
+        },
         {
           "category": "verifiability",
           "id": "verifiability-0",
@@ -244,7 +246,7 @@
       ]
     },
     "finalize.json": {
-      "baseline_test_command": "pytest --tb=no -q --no-header -rA",
+      "baseline_test_command": "pytest --tb=no -q --no-header",
       "baseline_test_failures": [],
       "sense_checks": [
         {
@@ -311,6 +313,8 @@
       "signals": {
         "iteration": 2,
         "resolved_flag_ids": [
+          "FLAG-001",
+          "FLAG-002",
           "issue_hints",
           "correctness",
           "scope",
@@ -444,7 +448,7 @@
         "step": "init"
       },
       {
-        "agent": "hermes",
+        "agent": "claude",
         "output_file": "prep.json",
         "result": "success",
         "session_mode": "persistent",
@@ -459,7 +463,7 @@
       },
       {
         "agent": "codex",
-        "flags_count": 10,
+        "flags_count": 12,
         "output_file": "critique_v1.json",
         "result": "success",
         "session_mode": "persistent",
@@ -580,15 +584,19 @@
         "mode": "persistent",
         "refreshed": true
       },
+      "claude_prep": {
+        "mode": "persistent",
+        "refreshed": true
+      },
+      "codex_critic": {
+        "mode": "persistent",
+        "refreshed": true
+      },
       "codex_executor": {
         "mode": "persistent",
         "refreshed": false
       },
       "codex_reviewer": {
-        "mode": "persistent",
-        "refreshed": true
-      },
-      "hermes_prep": {
         "mode": "persistent",
         "refreshed": true
       }

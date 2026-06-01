@@ -15,83 +15,13 @@ Usage::
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import os
 import threading
 import time
-import warnings
-from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Generator, Iterator, Optional, Sequence, Set
-
-if TYPE_CHECKING:
-    from megaplan._pipeline.envelope import RunEnvelope
-    from megaplan.store import Store
-
-
-# ---------------------------------------------------------------------------
-# M4 T9 — observability-side envelope ContextVar (run_id carrier).
-#
-# install_runtime_governor seats the active RunEnvelope here on enter and
-# clears it on exit (via the token returned by ContextVar.set).  Event emits
-# read this ContextVar to resolve the current run_id; when the ContextVar is
-# unset, the emit proceeds WITHOUT a run_id and WARN_ONCE is fired exactly
-# once for the lifetime of the process so the missing-carrier case is loud
-# without spamming the log on every emit.
-#
-# EventWriter.emit's signature is intentionally unchanged at this step — the
-# run_id is injected into the emitted event dict as a sibling key when an
-# envelope is in scope.
-# ---------------------------------------------------------------------------
-
-_envelope_ctx: ContextVar[Optional["RunEnvelope"]] = ContextVar(
-    "_envelope_ctx_events", default=None
-)
-
-_missing_envelope_ctx_warned: bool = False
-_missing_envelope_ctx_warn_lock = threading.Lock()
-
-
-def _warn_missing_envelope_ctx_once() -> None:
-    global _missing_envelope_ctx_warned
-    with _missing_envelope_ctx_warn_lock:
-        if _missing_envelope_ctx_warned:
-            return
-        _missing_envelope_ctx_warned = True
-    warnings.warn(
-        "observability.events: emit() invoked with no RunEnvelope in "
-        "_envelope_ctx; emitting without run_id (M4 T9 WARN_ONCE).",
-        RuntimeWarning,
-        stacklevel=3,
-    )
-
-
-def _reset_missing_envelope_ctx_warned_for_tests() -> None:
-    """Test hook — re-arms the WARN_ONCE latch."""
-    global _missing_envelope_ctx_warned
-    with _missing_envelope_ctx_warn_lock:
-        _missing_envelope_ctx_warned = False
-
-
-def _resolve_run_id() -> Optional[str]:
-    """Return the run_id derived from the active RunEnvelope, or None.
-
-    When the ContextVar is unset, fires WARN_ONCE and returns None so the
-    caller emits the envelope WITHOUT a run_id field.
-    """
-    env = _envelope_ctx.get()
-    if env is None:
-        _warn_missing_envelope_ctx_once()
-        return None
-    rid = getattr(env, "run_id", None)
-    if rid:
-        return str(rid)
-    lineage = getattr(env, "lineage", ()) or ()
-    if lineage:
-        return str(lineage[0])
-    return None
+from typing import Any, Dict, Generator, Iterator, Optional, Sequence, Set
 
 
 # ---------------------------------------------------------------------------
@@ -99,19 +29,18 @@ def _resolve_run_id() -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 class EventKind:
-    """String-literal constants for all 30 event kinds.
+    """String-literal constants for all 26 event kinds.
 
     Use these instead of bare strings so typos are caught at import time.
     """
 
-    # ── Lifecycle (10) ─────────────────────────────────────────────────
+    # ── Lifecycle (9) ──────────────────────────────────────────────────
     INIT: str = "init"
     PHASE_START: str = "phase_start"
     PHASE_END: str = "phase_end"
     PHASE_RETRY: str = "phase_retry"
     TIER_DROP: str = "tier_drop"
     STATE_TRANSITION: str = "state_transition"
-    STATE_WRITTEN: str = "state_written"
     LOCK_ACQUIRED: str = "lock_acquired"
     LOCK_RELEASED: str = "lock_released"
     PLAN_ABORTED: str = "plan_aborted"
@@ -132,7 +61,7 @@ class EventKind:
     ARTIFACT_WRITTEN: str = "artifact_written"
     ARTIFACT_INVALIDATED: str = "artifact_invalidated"
 
-    # ── Decisions (5) ──────────────────────────────────────────────────
+    # ── Decisions (4) ──────────────────────────────────────────────────
     OVERRIDE_APPLIED: str = "override_applied"
     FLAG_RAISED: str = "flag_raised"
     FLAG_RESOLVED: str = "flag_resolved"
@@ -144,31 +73,9 @@ class EventKind:
     # ── Cost (1) ───────────────────────────────────────────────────────
     COST_RECORDED: str = "cost_recorded"
 
-    # ── Evaluation (1) ─────────────────────────────────────────────────
-    EVALUAND_RECORDED: str = "evaluand_recorded"
-
     # ── Diagnostics (2) ────────────────────────────────────────────────
     HEALTH_CHECK_FAILED: str = "health_check_failed"
     DRIFT_DETECTED: str = "drift_detected"
-
-    # ── Activation (1) ─────────────────────────────────────────────────
-    ACTIVATION_TRANSITIONED: str = "activation_transitioned"
-
-    # ── R1 authority (1) ───────────────────────────────────────────────
-    # WAL-fold rebuild disagreed with on-disk state.json cache; cache was
-    # rewritten with the WAL-derived truth.
-    STATE_CACHE_DRIFT: str = "state_cache_drift"
-
-    # ── M5 Calibration (2) ────────────────────────────────────────────
-    # Capability claim recorded in the calibration ledger (M5-cal).
-    # Payload carries a full CapabilityClaim dict with an EvaluandRef
-    # outcome — never a bare numeric score.
-    CAPABILITY_CLAIM: str = "capability_claim"
-
-    # Calibration experiment finding (M5-cal T14).
-    # Payload carries a deterministic CalibrationExperimentFinding value
-    # object.  Always governs_live_policy=False, write-only.
-    CALIBRATION_EXPERIMENT: str = "calibration_experiment"
 
 
 # Convenience set for fast membership checks.
@@ -180,7 +87,6 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.PHASE_RETRY,
         EventKind.TIER_DROP,
         EventKind.STATE_TRANSITION,
-        EventKind.STATE_WRITTEN,
         EventKind.LOCK_ACQUIRED,
         EventKind.LOCK_RELEASED,
         EventKind.PLAN_ABORTED,
@@ -200,13 +106,8 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.NOTE_ADDED,
         EventKind.TIER_ESCALATED,
         EventKind.COST_RECORDED,
-        EventKind.EVALUAND_RECORDED,
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,
-        EventKind.ACTIVATION_TRANSITIONED,
-        EventKind.STATE_CACHE_DRIFT,
-        EventKind.CAPABILITY_CLAIM,
-        EventKind.CALIBRATION_EXPERIMENT,
     }
 )
 
@@ -218,35 +119,6 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
 _SEQ_FILE = ".events.seq"
 _INIT_TS_FILE = ".events.init_ts"
 _NDJSON_FILE = "events.ndjson"
-_TELEMETRY_NDJSON_FILE = "telemetry.ndjson"
-
-_TELEMETRY_EVENT_KINDS: Set[str] = frozenset(
-    {
-        EventKind.SUBPROCESS_SPAWNED,
-        EventKind.SUBPROCESS_EXITED,
-        EventKind.SUBPROCESS_SIGNALED,
-        EventKind.LLM_CALL_START,
-        EventKind.LLM_TOKEN_HEARTBEAT,
-        EventKind.LLM_CALL_END,
-        EventKind.LLM_CALL_ERROR,
-        EventKind.COST_RECORDED,
-    }
-)
-
-_SYSTEM_EVENT_KINDS: Set[str] = frozenset(
-    {
-        EventKind.LOCK_ACQUIRED,
-        EventKind.LOCK_RELEASED,
-        EventKind.HEALTH_CHECK_FAILED,
-        EventKind.DRIFT_DETECTED,
-    }
-)
-
-
-def _transaction_id(plan_id: str, phase: Optional[str], seq: int) -> str:
-    phase_key = phase or "cli"
-    raw = f"{plan_id}::{phase_key}::{seq}".encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
@@ -269,12 +141,12 @@ class EventWriter:
         writer.emit("init", payload={"plan_name": "my-plan"})
     """
 
-    def __init__(self, plan_dir: Path, *, store: "Store | None" = None) -> None:
+    def __init__(self, plan_dir: Path) -> None:
         self._plan_dir = Path(plan_dir)
         self._plan_dir.mkdir(parents=True, exist_ok=True)
+        self._ndjson_path = self._plan_dir / _NDJSON_FILE
         self._seq_path = self._plan_dir / _SEQ_FILE
         self._init_ts_path = self._plan_dir / _INIT_TS_FILE
-        self._store = store or _default_store_for_plan_dir(self._plan_dir)
 
         # Per-instance lock for thread safety within the same process.
         self._thread_lock = threading.Lock()
@@ -298,32 +170,35 @@ class EventWriter:
         sidecar ``.events.seq`` file, guaranteeing monotonic seq *and*
         strict file order even across multiple OS processes.
         """
+        ts_utc = datetime.now(timezone.utc)
+
         with self._thread_lock:
             init_ts = self._load_init_ts()
 
             # Build the event dict first so we know the line to write.
-            # M4 T10: schema_version=1 pinned in the NDJSON envelope; run_id
-            # added below from the active _envelope_ctx.
             event: dict = {
                 "seq": -1,  # placeholder — assigned under flock
-                "schema_version": 1,
-                "ts_utc": "",
+                "ts_utc": ts_utc.isoformat(),
                 "ts_rel_init_s": None,
                 "kind": kind,
                 "phase": phase,
                 "payload": payload if payload is not None else {},
             }
-            # M4 T9: inject run_id resolved from the active RunEnvelope when
-            # one is in scope.  Missing context omits the field and fires
-            # WARN_ONCE on the first miss (no signature change to emit()).
-            _rid = _resolve_run_id()
-            if _rid is not None:
-                event["run_id"] = _rid
+            if init_ts is not None:
+                event["ts_rel_init_s"] = (ts_utc - init_ts).total_seconds()
+            if kind == EventKind.INIT and init_ts is None:
+                event["ts_rel_init_s"] = 0.0
+
+            line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+
             # ── FULL critical section under flock ─────────────────────
-            # Open or create the seq counter. The durable event write goes
-            # through Store while this per-plan-dir flock is held, preserving
-            # legacy ordering without writing events.ndjson directly.
+            # Open or create both the seq counter and the ndjson file.
             seq_fd = os.open(str(self._seq_path), os.O_RDWR | os.O_CREAT, 0o644)
+            ndjson_fd = os.open(
+                str(self._ndjson_path),
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+                0o644,
+            )
             try:
                 fcntl.flock(seq_fd, fcntl.LOCK_EX)
 
@@ -339,42 +214,23 @@ class EventWriter:
                 os.ftruncate(seq_fd, os.lseek(seq_fd, 0, os.SEEK_CUR))
                 os.fsync(seq_fd)
 
-                # (2) Patch the real seq/timestamp into the event line and append.
-                ts_utc = datetime.now(timezone.utc)
+                # (2) Patch the real seq into the event line and append.
                 event["seq"] = new_seq
-                event["ts_utc"] = ts_utc.isoformat()
-                if init_ts is not None:
-                    event["ts_rel_init_s"] = (ts_utc - init_ts).total_seconds()
-                if kind == EventKind.INIT and init_ts is None:
-                    event["ts_rel_init_s"] = 0.0
-                event["transaction_id"] = _transaction_id(
-                    self._plan_dir.name,
-                    phase,
-                    new_seq,
-                )
-                if kind in _TELEMETRY_EVENT_KINDS:
-                    event["store_method"] = "append_telemetry_event"
-                elif kind in _SYSTEM_EVENT_KINDS:
-                    event["store_method"] = "log_system_event"
-                else:
-                    event["store_method"] = "record_epic_event"
-                _store_event(self._store, self._plan_dir.name, event)
-                from megaplan.observability.events_projection import write_projection
+                final_line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+                os.write(ndjson_fd, (final_line + "\n").encode("utf-8"))
+                os.fsync(ndjson_fd)
 
-                write_projection(
-                    self._plan_dir,
-                    self._store,
-                    plan_id=self._plan_dir.name,
-                    force=True,
-                )
-
-                # (3) Release flock AFTER Store write + projection complete.
+                # (3) Release flock AFTER both writes are complete.
                 fcntl.flock(seq_fd, fcntl.LOCK_UN)
             finally:
                 # Close regardless of lock state (already unlocked if we
                 # reached the explicit unlock above; still safe to call).
                 try:
                     os.close(seq_fd)
+                except OSError:
+                    pass
+                try:
+                    os.close(ndjson_fd)
                 except OSError:
                     pass
 
@@ -409,53 +265,16 @@ _WRITERS: Dict[str, EventWriter] = {}
 _WRITERS_LOCK = threading.Lock()
 
 
-def _writer_key(plan_dir: Path, store: "Store | None" = None) -> str:
-    return f"{plan_dir.resolve()}::{id(store) if store is not None else 'default'}"
+def _writer_key(plan_dir: Path) -> str:
+    return str(plan_dir.resolve())
 
 
-def _default_store_root(plan_dir: Path) -> Path:
-    parts = plan_dir.parts
-    if len(parts) >= 3 and parts[-3:-1] == (".megaplan", "plans"):
-        return Path(*parts[:-2])
-    return plan_dir.parent / ".megaplan-event-store"
-
-
-def _default_store_for_plan_dir(plan_dir: Path) -> "Store":
-    from megaplan.store.file import FileStore
-
-    return FileStore(_default_store_root(Path(plan_dir)))
-
-
-def _store_event(store: "Store", plan_id: str, event: dict[str, Any]) -> None:
-    kind = str(event.get("kind") or "")
-    if kind in _TELEMETRY_EVENT_KINDS:
-        store.append_telemetry_event(kind, {"event": dict(event)}, scope=plan_id)
-    elif kind in _SYSTEM_EVENT_KINDS:
-        store.log_system_event(
-            level="debug",
-            category="system",
-            event_type=kind,
-            message=f"{kind} emitted",
-            details={"event": dict(event)},
-            epic_id=plan_id,
-        )
-    else:
-        store.record_epic_event(
-            epic_id=plan_id,
-            transaction_id=str(event.get("transaction_id") or ""),
-            event_type="state_change",
-            summary=f"{kind} emitted",
-            prior_state=None,
-            post_state={"event": dict(event)},
-        )
-
-
-def _get_writer(plan_dir: Path, *, store: "Store | None" = None) -> EventWriter:
-    key = _writer_key(plan_dir, store)
+def _get_writer(plan_dir: Path) -> EventWriter:
+    key = _writer_key(plan_dir)
     with _WRITERS_LOCK:
         writer = _WRITERS.get(key)
         if writer is None:
-            writer = EventWriter(plan_dir, store=store)
+            writer = EventWriter(plan_dir)
             _WRITERS[key] = writer
         return writer
 
@@ -466,88 +285,12 @@ def emit(
     *,
     phase: Optional[str] = None,
     payload: Optional[Dict[str, Any]] = None,
-    store: "Store | None" = None,
 ) -> dict:
     """Module-level convenience: write one event to *plan_dir*/events.ndjson.
 
     Returns the full event dict.
     """
-    return _get_writer(plan_dir, store=store).emit(kind, phase=phase, payload=payload)
-
-
-def append_telemetry_event(
-    plan_dir: Path,
-    kind: str,
-    payload: Optional[Dict[str, Any]] = None,
-    *,
-    scope: Optional[str] = None,
-    phase: Optional[str] = None,
-    store: "Store | None" = None,
-) -> dict:
-    """Append one telemetry event through the plan-scoped event store."""
-
-    body = dict(payload or {})
-    if scope is not None:
-        body.setdefault("scope", scope)
-    return _get_writer(plan_dir, store=store).emit(kind, phase=phase, payload=body)
-
-
-def compute_model_identity(
-    model_name: str | None, reported_version: str | None = None
-) -> str:
-    """Return a deterministic sha256 hex digest identifying a model.
-
-    The digest is built from ``f"{model_name}\\x00{reported_version}".encode()``.
-    Uses ``hashlib.sha256`` (NOT Python's salted ``hash()``) so the value is
-    stable across processes and runs — required for R7 monoculture telemetry.
-    """
-    name = model_name or ""
-    version = reported_version or ""
-    return hashlib.sha256(f"{name}\x00{version}".encode("utf-8")).hexdigest()
-
-
-def emit_state_wal(
-    plan_dir: Path,
-    snapshot: Dict[str, Any],
-    *,
-    taint: str = "trusted",
-    schema_version: Optional[int] = None,
-    effect: Optional[Any] = None,
-) -> dict:
-    """Emit a STATE_WRITTEN shadow-WAL event carrying the full post-validation state.
-
-    The full snapshot is recorded under ``state``; ``effect_class`` is the coarse
-    literal ``"state_write"``; ``taint`` defaults to ``"trusted"``; ``schema_version``
-    is pulled from the snapshot when not explicitly provided.
-
-    ``effect`` is an optional :class:`megaplan.observability.effect_ledger.Effect`
-    instance (W11a typed Effect skeleton).  It is stored in the payload under the
-    key ``"effect"`` but is NEVER read for control flow in M1 — enforcement is M4.
-    """
-    if schema_version is None:
-        sv = snapshot.get("schema_version", 0) if isinstance(snapshot, dict) else 0
-        try:
-            schema_version = int(sv)
-        except (TypeError, ValueError):
-            schema_version = 0
-    payload: Dict[str, Any] = {
-        "state": snapshot,
-        "effect_class": "state_write",
-        "taint": taint,
-        "schema_version": schema_version,
-        "effect": None,
-    }
-    if effect is not None:
-        from megaplan.observability.effect_ledger import Effect
-        if isinstance(effect, Effect):
-            payload["effect"] = {
-                "replay_class": effect.replay_class.value,
-                "idempotency_key": effect.idempotency_key,
-                "compensation": effect.compensation,
-                "provenance": dict(effect.provenance),
-                "effect_taint": effect.effect_taint,
-            }
-    return _get_writer(Path(plan_dir)).emit(EventKind.STATE_WRITTEN, payload=payload)
+    return _get_writer(plan_dir).emit(kind, phase=phase, payload=payload)
 
 
 # ---------------------------------------------------------------------------
@@ -570,10 +313,6 @@ def read_events(
     Yields:
         Parsed event dicts in file order.
     """
-    from megaplan.observability.events_projection import ensure_events_projection
-
-    writer = _get_writer(Path(plan_dir))
-    ensure_events_projection(Path(plan_dir), store=writer._store, plan_id=Path(plan_dir).name)
     ndjson_path = Path(plan_dir) / _NDJSON_FILE
     if not ndjson_path.exists():
         return
@@ -587,20 +326,7 @@ def read_events(
                 continue
             try:
                 event = json.loads(line)
-            except json.JSONDecodeError as exc:
-                # M4 T10: under UNIFIED_EMIT=1 (or master flag), a journal
-                # decode error is a LOUD catalogued failure — silent
-                # continue used to swallow corruption.  Flag-off path
-                # remains byte-identical (silent skip).
-                try:
-                    from megaplan._pipeline.flags import unified_emit_on
-                    if unified_emit_on():
-                        raise RuntimeError(
-                            "EVENTS_NDJSON_DECODE_ERROR: "
-                            f"plan_dir={plan_dir} line={line!r} err={exc}"
-                        ) from exc
-                except ImportError:
-                    pass
+            except json.JSONDecodeError:
                 continue
 
             # seq filter

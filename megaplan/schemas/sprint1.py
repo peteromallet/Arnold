@@ -6,7 +6,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any, Literal, cast
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import Field, field_validator
 
 from megaplan.types import (
     ActivePhase,
@@ -214,14 +214,11 @@ class AutomationActor(StorageModel):
 
 
 class Plan(StorageModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True, validate_assignment=True)
-
     id: str
     name: str
     epic_id: str | None = None
     sprint_id: str | None = None
     revision: int
-    schema_version: int = 0
     idea: str
     current_state: str
     iteration: int
@@ -314,7 +311,6 @@ class Plan(StorageModel):
             "history": cast(list[HistoryEntry], deepcopy(self.history)),
             "meta": cast(PlanMeta, deepcopy(self.meta)),
             "last_gate": cast(LastGateRecord, deepcopy(self.last_gate)),
-            "schema_version": self.schema_version,
         }
         if self.active_step is not None:
             state["active_step"] = cast(ActivePhase, deepcopy(self.active_step))

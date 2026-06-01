@@ -119,7 +119,7 @@ def test_finalize_snapshot_status(plan_fixture: PlanFixture) -> None:
     )
 
 
-def test_strict_finalize_validation_accepts_missing_final_test_task(
+def test_strict_finalize_validation_rejects_missing_final_test_task(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -134,4 +134,5 @@ def test_strict_finalize_validation_accepts_missing_final_test_task(
     )
     monkeypatch.setenv("MEGAPLAN_FINALIZE_STRICT_VALIDATION", "1")
 
-    _validate_finalize_payload(plan_fixture.plan_dir, state, worker)
+    with pytest.raises(megaplan.CliError, match="final task must run tests"):
+        _validate_finalize_payload(plan_fixture.plan_dir, state, worker)

@@ -13,30 +13,8 @@ patterns highlighted in the brief:
   in reviewer-list order.
 * ``subpipeline_call`` — round-trips a child :class:`Pipeline` via
   :class:`SubloopStep`, with the ``promote`` callable mapping child
-  state via the planning binding onto the parent's
+  state to a :data:`GateRecommendation` on the parent's
   :class:`PipelineVerdict`.
-
-Post-M2 GateRecommendation policy (T14): flag-ON parametrize branches
-assert on ``verdict.payload['reduce_result']`` (ReduceResult); flag-OFF
-branches retain ``verdict.recommendation`` assertions for byte-identical
-edge dispatch. Remaining GateRecommendation references in this file are
-each enumerated and justified below:
-
-* ``GateRecommendation`` import (line ~40) — used as the literal type
-  alias for ``_VerdictStep.recommendation`` field (assertion-shape
-  scaffold; not a planning-binding consumer).
-* ``_VerdictStep.recommendation: GateRecommendation`` field — the
-  literal-string type narrows the test-double's constructor; kept
-  because the field is exercised by both flag-ON and flag-OFF tests as
-  a fixed input recommendation.
-* ``def _promote(state) -> GateRecommendation`` (subpipeline_call) — the
-  promote callable's literal return-type narrows what the test-double
-  returns; SubloopStep then wraps it byte-identically flag-ON via
-  planning_bindings.planning_promote, flag-OFF via the legacy typed
-  assignment. The literal-return-type is what allows the flag-OFF path
-  to assert ``verdict.recommendation == 'iterate'`` and the flag-ON
-  path to also assert the same recommendation (planning_promote preserves
-  the 4-verdict literal semantics).
 """
 
 from __future__ import annotations
@@ -56,15 +34,12 @@ from megaplan._pipeline.patterns import (
     phase_zero_gate,
     subpipeline_call,
 )
-import pytest
-
 from megaplan._pipeline.subloop import SubloopStep
 from megaplan._pipeline.types import (
     Edge,
     GateRecommendation,
     ParallelStage,
     Pipeline,
-    ReduceResult,
     Stage,
     StepContext,
     StepResult,
@@ -462,12 +437,8 @@ class TestEscalateIf:
 # ── majority_vote ──────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("typed_ports", [False, True])
 class TestMajorityVote:
-    def test_strict_majority_wins(
-        self, tmp_path: Path, typed_ports: bool, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1" if typed_ports else "")
+    def test_strict_majority_wins(self, tmp_path: Path) -> None:
         join = majority_vote()
         results = [
             StepResult(verdict=PipelineVerdict(score=1.0, recommendation="proceed")),
@@ -477,22 +448,10 @@ class TestMajorityVote:
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="test")
         merged = join(results, ctx)
         assert merged.verdict is not None
-        if typed_ports:
-            payload = merged.verdict.payload
-            assert isinstance(payload, dict)
-            reduce_result = payload["reduce_result"]
-            assert isinstance(reduce_result, ReduceResult)
-            assert reduce_result.value == "proceed"
-            assert reduce_result.label == "proceed"
-            assert merged.verdict.recommendation is None
-        else:
-            assert merged.verdict.recommendation == "proceed"
+        assert merged.verdict.recommendation == "proceed"
         assert merged.next == "proceed"
 
-    def test_tie_routes_to_tiebreaker(
-        self, tmp_path: Path, typed_ports: bool, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1" if typed_ports else "")
+    def test_tie_routes_to_tiebreaker(self, tmp_path: Path) -> None:
         join = majority_vote()
         results = [
             StepResult(verdict=PipelineVerdict(score=1.0, recommendation="proceed")),
@@ -501,34 +460,14 @@ class TestMajorityVote:
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="test")
         merged = join(results, ctx)
         assert merged.verdict is not None
-        if typed_ports:
-            payload = merged.verdict.payload
-            assert isinstance(payload, dict)
-            reduce_result = payload["reduce_result"]
-            assert isinstance(reduce_result, ReduceResult)
-            assert reduce_result.value is None
-            assert reduce_result.label is None
-            assert merged.next == "tiebreaker"
-        else:
-            assert merged.verdict.recommendation == "tiebreaker"
+        assert merged.verdict.recommendation == "tiebreaker"
 
-    def test_empty_panel_routes_to_tiebreaker(
-        self, tmp_path: Path, typed_ports: bool, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1" if typed_ports else "")
+    def test_empty_panel_routes_to_tiebreaker(self, tmp_path: Path) -> None:
         join = majority_vote()
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="test")
         merged = join([StepResult()], ctx)
         assert merged.verdict is not None
-        if typed_ports:
-            payload = merged.verdict.payload
-            assert isinstance(payload, dict)
-            reduce_result = payload["reduce_result"]
-            assert isinstance(reduce_result, ReduceResult)
-            assert reduce_result.value is None
-            assert merged.next == "tiebreaker"
-        else:
-            assert merged.verdict.recommendation == "tiebreaker"
+        assert merged.verdict.recommendation == "tiebreaker"
 
 
 # ── phase_zero_gate ────────────────────────────────────────────────────

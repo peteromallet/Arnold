@@ -1,150 +1,16 @@
 from __future__ import annotations
 
-import fcntl
-import json
-import os
 from pathlib import Path
 from typing import Any, Sequence
 
 from megaplan._core.io import read_committed_framed_json_records
 from megaplan.schemas import EpicEvent
 from megaplan.schemas.base import utc_now
-from megaplan.store.base import StoredEvent
 
 from .common import _new_id, _parse_datetime
 
 
 class FileEventMixin:
-    def events_for_plan(self, plan_id: str):
-        events: list[StoredEvent] = []
-        for event in self.list_epic_events_for_replay(plan_id):
-            payload = event.post_state or event.pre_state or event.prior_state or {}
-            phase = None
-            kind = str(event.event_type or "epic_event")
-            if isinstance(payload, dict):
-                envelope = payload.get("event")
-                if isinstance(envelope, dict):
-                    events.append(_stored_from_envelope(envelope, event.occurred_at, event.id, "record_epic_event"))
-                    continue
-                else:
-                    raw_phase = payload.get("phase")
-                    phase = str(raw_phase) if raw_phase is not None else None
-            events.append(
-                StoredEvent(
-                    kind=kind,
-                    phase=phase,
-                    payload=payload if isinstance(payload, dict) else {},
-                    occurred_at=event.occurred_at,
-                    id=event.id,
-                    source="record_epic_event",
-                )
-            )
-
-        telemetry_path = self.root / "telemetry" / f"{_safe_scope_name(plan_id)}.ndjson"
-        if telemetry_path.exists():
-            with telemetry_path.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        raw = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    payload = raw.get("payload") if isinstance(raw, dict) else {}
-                    if isinstance(payload, dict) and isinstance(payload.get("event"), dict):
-                        events.append(
-                            _stored_from_envelope(
-                                payload["event"],
-                                raw.get("occurred_at"),
-                                raw.get("id") if isinstance(raw.get("id"), str) else None,
-                                "append_telemetry_event",
-                            )
-                        )
-                        continue
-                    payload = dict(payload) if isinstance(payload, dict) else {}
-                    raw_phase = raw.get("phase") if isinstance(raw, dict) else None
-                    if raw_phase is None:
-                        raw_phase = payload.pop("phase", None)
-                    events.append(
-                        StoredEvent(
-                            kind=str(raw.get("kind") or "telemetry"),
-                            phase=raw_phase if isinstance(raw_phase, str) else None,
-                            payload=payload,
-                            occurred_at=raw.get("occurred_at"),
-                            id=raw.get("id") if isinstance(raw.get("id"), str) else None,
-                            seq=raw.get("seq") if isinstance(raw.get("seq"), int) else None,
-                            run_id=raw.get("run_id") if isinstance(raw.get("run_id"), str) else None,
-                            source="append_telemetry_event",
-                        )
-                    )
-
-        for log in self._system_logs():
-            if getattr(log, "epic_id", None) != plan_id:
-                continue
-            details = getattr(log, "details", None) or {}
-            if isinstance(details, dict) and isinstance(details.get("event"), dict):
-                events.append(
-                    _stored_from_envelope(
-                        details["event"],
-                        getattr(log, "occurred_at", None),
-                        getattr(log, "id", None),
-                        "log_system_event",
-                    )
-                )
-
-        events.sort(key=_stored_event_sort_key)
-        return iter(events)
-
-    def append_telemetry_event(
-        self,
-        kind: str,
-        payload: dict[str, Any],
-        *,
-        scope: str | None = None,
-    ) -> dict[str, Any]:
-        telemetry_dir = self.root / "telemetry"
-        telemetry_dir.mkdir(parents=True, exist_ok=True)
-        safe_scope = scope or "global"
-        safe_name = _safe_scope_name(safe_scope)
-        seq_path = telemetry_dir / f"{safe_name}.seq"
-        ndjson_path = telemetry_dir / f"{safe_name}.ndjson"
-        seq_fd = os.open(str(seq_path), os.O_RDWR | os.O_CREAT, 0o644)
-        ndjson_fd = os.open(str(ndjson_path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-        try:
-            fcntl.flock(seq_fd, fcntl.LOCK_EX)
-            raw = os.read(seq_fd, 128)
-            try:
-                current = int(raw.strip()) if raw.strip() else -1
-            except ValueError:
-                current = -1
-            seq = current + 1
-            os.lseek(seq_fd, 0, os.SEEK_SET)
-            os.write(seq_fd, str(seq).encode("ascii"))
-            os.ftruncate(seq_fd, os.lseek(seq_fd, 0, os.SEEK_CUR))
-            event = {
-                "seq": seq,
-                "kind": kind,
-                "payload": dict(payload),
-                "scope": scope,
-                "occurred_at": utc_now().isoformat(),
-            }
-            line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-            os.write(ndjson_fd, (line + "\n").encode("utf-8"))
-            os.fsync(seq_fd)
-            os.fsync(ndjson_fd)
-            fcntl.flock(seq_fd, fcntl.LOCK_UN)
-            return event
-        finally:
-            try:
-                os.close(seq_fd)
-            except OSError:
-                pass
-            try:
-                os.close(ndjson_fd)
-            except OSError:
-                pass
-
     def record_epic_event(
         self,
         *,
@@ -261,37 +127,3 @@ class FileEventMixin:
             )
         results.sort(key=lambda event: (event.occurred_at, event.id))
         return results
-
-
-def _safe_scope_name(scope: str) -> str:
-    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in scope)
-
-
-def _stored_from_envelope(
-    envelope: dict[str, Any],
-    occurred_at: Any,
-    event_id: str | None,
-    source: str,
-) -> StoredEvent:
-    raw_phase = envelope.get("phase")
-    raw_payload = envelope.get("payload")
-    return StoredEvent(
-        kind=str(envelope.get("kind") or source),
-        phase=raw_phase if isinstance(raw_phase, str) else None,
-        payload=raw_payload if isinstance(raw_payload, dict) else {},
-        occurred_at=envelope.get("ts_utc") or occurred_at,
-        id=event_id,
-        seq=envelope.get("seq") if isinstance(envelope.get("seq"), int) else None,
-        run_id=envelope.get("run_id") if isinstance(envelope.get("run_id"), str) else None,
-        source=str(envelope.get("store_method") or source),
-    )
-
-
-def _stored_event_sort_key(event: StoredEvent) -> tuple[str, int, str, str]:
-    occurred = event.occurred_at
-    if hasattr(occurred, "isoformat"):
-        occurred_key = occurred.isoformat()  # type: ignore[union-attr]
-    else:
-        occurred_key = str(occurred or "")
-    seq = event.seq if event.seq is not None else 10**12
-    return (occurred_key, seq, event.source or "", event.id or "")

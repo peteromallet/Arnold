@@ -22,7 +22,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import difflib
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
@@ -55,7 +54,6 @@ FIXTURE_FRESH = FIXTURE_DIR / "pipeline_fresh_run.json"
 FIXTURE_RESUME = FIXTURE_DIR / "pipeline_resume_after_finalize.json"
 
 _TEXT_ARTIFACTS = ("plan_v1.md", "plan_v2.md", "final.md")
-_TRANSIENT_ARTIFACTS = {"critique_output.json"}
 
 
 def _make_mock_plan(
@@ -206,9 +204,7 @@ def _run_resume_pipeline(fixture: PlanFixture) -> dict[str, Any]:
             "halt_visits": halted["visits"],
             "resume_visits": resumed["visits"],
             "halt_state": _snapshot_state(halted_state),
-            "artifact_filenames_at_halt": sorted(
-                p.name for p in fixture.plan_dir.iterdir() if p.name not in _TRANSIENT_ARTIFACTS
-            ),
+            "artifact_filenames_at_halt": sorted(p.name for p in fixture.plan_dir.iterdir()),
         },
     )
     assert snapshot["state"]["current_state"] == "done"
@@ -536,9 +532,7 @@ def _build_snapshot(
     snapshot = {
         "scenario": scenario,
         "state": _snapshot_state(raw_state),
-        "artifact_filenames": sorted(
-            p.name for p in plan_dir.iterdir() if p.name not in _TRANSIENT_ARTIFACTS
-        ),
+        "artifact_filenames": sorted(p.name for p in plan_dir.iterdir()),
         "json_artifacts": _selected_json_artifacts(plan_dir),
         "text_artifacts": _text_artifact_summaries(plan_dir),
     }
@@ -570,22 +564,12 @@ def _assert_matches_fixture(current: dict[str, Any], fixture_path: Path) -> None
     current_str = json.dumps(current, indent=2, sort_keys=True)
     expected_str = json.dumps(expected, indent=2, sort_keys=True)
     if current_str != expected_str:
-        diff = "\n".join(
-            difflib.unified_diff(
-                expected_str.splitlines(),
-                current_str.splitlines(),
-                fromfile="fixture",
-                tofile="current",
-                n=3,
-            )
-        )
         pytest.fail(
             "Pipeline golden fixture diverged.\n\n"
             f"Fixture: {fixture_path}\n"
             "If the change is intentional, regenerate with:\n"
             f"  python -m pytest {Path(__file__).name} "
-            "-k test_generate_fixtures --write-fixture\n\n"
-            f"{diff}\n"
+            "-k test_generate_fixtures --write-fixture\n"
         )
 
 

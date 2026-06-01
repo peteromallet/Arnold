@@ -83,8 +83,6 @@ class JudgeClarity:
     kind = "judge"
     prompt_key = None
     slot = None
-    produces: tuple = ()
-    consumes: tuple = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         sentences = _split_sentences(_read_doc(ctx))
@@ -115,8 +113,6 @@ class JudgeConcreteness:
     kind = "judge"
     prompt_key = None
     slot = None
-    produces: tuple = ()
-    consumes: tuple = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         text = _read_doc(ctx)
@@ -144,8 +140,6 @@ class JudgeBrevity:
     kind = "judge"
     prompt_key = None
     slot = None
-    produces: tuple = ()
-    consumes: tuple = ()
 
     target_words: int = _BREVITY_TARGET_WORDS
 
@@ -203,8 +197,6 @@ class Synthesize:
     kind = "produce"
     prompt_key = None
     slot = None
-    produces: tuple = ()
-    consumes: tuple = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         raw_paths = ctx.state.get("judge_verdict_paths", [])

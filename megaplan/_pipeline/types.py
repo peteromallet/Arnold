@@ -54,8 +54,6 @@ Contract notes (load-bearing for executor authors and Step authors):
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
@@ -65,11 +63,8 @@ from typing import (
     Literal,
     Mapping,
     Protocol,
-    TypeAlias,
     runtime_checkable,
 )
-
-from megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only aliases
     BudgetRef = Any
@@ -150,7 +145,6 @@ class StepContext:
     mode: str
     inputs: Mapping[str, Path] = field(default_factory=dict)
     budget: Any = None
-    envelope: RunEnvelope = field(default_factory=lambda: EMPTY_ENVELOPE)
 
 
 @dataclass(frozen=True)
@@ -168,7 +162,6 @@ class StepResult:
     verdict: "PipelineVerdict | None" = None
     next: NextEdge = "halt"
     state_patch: Mapping[str, Any] = field(default_factory=dict)
-    envelope: RunEnvelope = field(default_factory=lambda: EMPTY_ENVELOPE)
 
 
 @runtime_checkable
@@ -180,66 +173,23 @@ class Step(Protocol):
     ``StepResult``. ``@runtime_checkable`` enables ``isinstance(obj, Step)``
     sanity checks; a missing attribute surfaces at instantiation/check
     time rather than as a silent miss.
-
-    ``produces`` and ``consumes`` are INSTANCE-level typed-port
-    declarations (no ``ClassVar``) read by the binder only when
-    :func:`megaplan._pipeline.flags.typed_ports_on` returns true.
-    Implementations may inherit defaults from :class:`StepMixin`.
     """
 
     name: str
     kind: Literal["produce", "judge", "decide", "subloop", "override"]
     prompt_key: str | None
     slot: str | None
-    produces: tuple["Port", ...]
-    consumes: tuple["PortRef", ...]
 
     def run(self, ctx: StepContext) -> StepResult: ...
 
 
-@dataclass
-class StepMixin:
-    """Default typed-port declarations for ``@dataclass`` Step classes.
-
-    Provides empty ``produces``/``consumes`` tuples via
-    ``field(default_factory=tuple)`` so dataclass Step subclasses satisfy
-    the :class:`Step` Protocol's instance-level attribute contract without
-    boilerplate. Non-dataclass Step implementations can subclass
-    :class:`StepMixinProperty` instead (returns ``()`` via ``@property``).
-    """
-
-    produces: tuple["Port", ...] = field(default_factory=tuple)
-    consumes: tuple["PortRef", ...] = field(default_factory=tuple)
-
-
-class StepMixinProperty:
-    """Property-based default typed-port declarations for non-dataclass Steps."""
-
-    @property
-    def produces(self) -> tuple["Port", ...]:  # pragma: no cover - trivial
-        return ()
-
-    @property
-    def consumes(self) -> tuple["PortRef", ...]:  # pragma: no cover - trivial
-        return ()
-
-
 @dataclass(frozen=True)
 class Stage:
-    """A single-Step stage with labelled outgoing edges.
-
-    ``produces`` / ``consumes`` (M2 / T1b) optionally override the wrapped
-    Step's typed-port declarations. When empty, the binder falls back to
-    the Step's own ``produces`` / ``consumes`` tuples. Read by the binder
-    only when :func:`megaplan._pipeline.flags.typed_ports_on` is true.
-    """
+    """A single-Step stage with labelled outgoing edges."""
 
     name: str
     step: Step
     edges: tuple[Edge, ...] = ()
-    produces: tuple["Port", ...] = field(default_factory=tuple)
-    consumes: tuple["PortRef", ...] = field(default_factory=tuple)
-    loop_condition: Callable[[Any], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -269,8 +219,6 @@ class ParallelStage:
     join: Callable[[list[StepResult], StepContext], StepResult]
     edges: tuple[Edge, ...] = ()
     max_workers: int | None = None
-    produces: tuple["Port", ...] = field(default_factory=tuple)
-    consumes: tuple["PortRef", ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -292,7 +240,6 @@ class Pipeline:
     stages: Mapping[str, "Stage | ParallelStage"]
     entry: str
     overlays: tuple[Overlay, ...] = ()
-    binding_map: dict | None = None
 
     @classmethod
     def builder(
@@ -328,458 +275,3 @@ class Pipeline:
             prompt_registry=prompt_registry,
             pipeline_version=pipeline_version,
         )
-
-    def run_phase(
-        self,
-        phase: str,
-        *,
-        plan: str,
-        cwd: Path | None = None,
-        plan_dir: Path | None = None,
-        argv: list[str] | tuple[str, ...] | None = None,
-        progress_env: dict[str, str] | None = None,
-    ) -> tuple[int, str, str]:
-        """Run one planning phase in-process and return a CLI-like tuple.
-
-        The auto-driver used to shell out for each phase and then inspect the
-        phase_result.json written by the handler. This keeps that contract but
-        dispatches the selected stage directly, so only one phase runs.
-        """
-
-        import argparse
-        import contextlib
-        import dataclasses
-        import io
-
-        from megaplan._core import find_plan_dir
-        from megaplan._core.io import json_dump
-        from megaplan.types import CliError
-
-        root = Path(cwd or Path.cwd())
-        resolved_plan_dir = Path(plan_dir) if plan_dir is not None else find_plan_dir(root, plan)
-        if resolved_plan_dir is None:
-            return 1, "", f"Plan {plan!r} does not exist"
-
-        stdout = io.StringIO()
-        stderr = io.StringIO()
-
-        try:
-            if phase == "feedback" and phase not in self.stages:
-                from megaplan.cli.feedback import handle_feedback
-
-                args = _phase_namespace(
-                    phase,
-                    plan=plan,
-                    argv=argv,
-                    progress_env=progress_env,
-                )
-                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                    response = handle_feedback(root, args)
-                return 0, stdout.getvalue() or json_dump(response), stderr.getvalue()
-
-            if phase not in self.stages:
-                return 1, "", f"phase {phase!r} is not in pipeline; available: {sorted(self.stages)}"
-
-            node = self.stages[phase]
-            if not isinstance(node, Stage):
-                return 1, "", f"phase {phase!r} is not a single-stage phase"
-
-            state = _read_phase_state(resolved_plan_dir)
-            overrides = _phase_arg_overrides(phase, argv=argv)
-            step = node.step
-            if overrides and hasattr(step, "arg_overrides"):
-                current = getattr(step, "arg_overrides", {}) or {}
-                step = dataclasses.replace(step, arg_overrides={**dict(current), **overrides})
-            ctx = StepContext(
-                plan_dir=resolved_plan_dir,
-                state=state,
-                profile={
-                    "root": root,
-                    "project_dir": (state.get("config") or {}).get("project_dir", str(root)),
-                },
-                mode=(state.get("config") or {}).get("mode", "code"),
-                inputs={"_pipeline": "planning", "_progress_env": progress_env or {}},
-            )
-            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                result = step.run(ctx)
-            payload = {
-                "success": True,
-                "step": phase,
-                "next": result.next,
-                "outputs": {key: str(value) for key, value in result.outputs.items()},
-            }
-            return 0, stdout.getvalue() or json_dump(payload), stderr.getvalue()
-        except CliError as error:
-            payload: dict[str, Any] = {
-                "success": False,
-                "error": error.code,
-                "message": error.message,
-            }
-            if error.extra:
-                payload["details"] = dict(error.extra)
-            return error.exit_code, stdout.getvalue(), stderr.getvalue() + json_dump(payload)
-        except Exception as error:  # noqa: BLE001 - preserve CLI-like failure surface.
-            return 1, stdout.getvalue(), stderr.getvalue() + f"{type(error).__name__}: {error}"
-
-
-def _read_phase_state(plan_dir: Path) -> dict[str, Any]:
-    path = Path(plan_dir) / "state.json"
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _phase_arg_overrides(
-    phase: str,
-    *,
-    argv: list[str] | tuple[str, ...] | None,
-) -> dict[str, Any]:
-    args = list(argv or [phase])
-    if args and args[0] == phase:
-        args = args[1:]
-    if phase == "feedback" and args and args[0] == "workflow":
-        args = args[1:]
-    overrides: dict[str, Any] = {}
-    phase_models: list[str] = []
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token == "--fresh":
-            overrides["fresh"] = True
-        elif token == "--persist":
-            overrides["persist"] = True
-        elif token == "--ephemeral":
-            overrides["ephemeral"] = True
-        elif token == "--confirm-destructive":
-            overrides["confirm_destructive"] = True
-        elif token == "--user-approved":
-            overrides["user_approved"] = True
-        elif token == "--retry-blocked-tasks":
-            overrides["retry_blocked_tasks"] = True
-        elif token == "--confirm-self-review":
-            overrides["confirm_self_review"] = True
-        elif token in {"--batch", "--profile", "--agent", "--work-dir"} and index + 1 < len(args):
-            key = token[2:].replace("-", "_")
-            value: Any = args[index + 1]
-            if key == "batch":
-                try:
-                    value = int(value)
-                except ValueError:
-                    pass
-            overrides[key] = value
-            index += 1
-        elif token == "--phase-model" and index + 1 < len(args):
-            phase_models.append(args[index + 1])
-            index += 1
-        elif token == "--plan" and index + 1 < len(args):
-            index += 1
-        index += 1
-    if phase_models:
-        overrides["phase_model"] = phase_models
-        overrides["_live_phase_model_steps"] = {
-            item.split("=", 1)[0] for item in phase_models if "=" in item
-        }
-    return overrides
-
-
-def _phase_namespace(
-    phase: str,
-    *,
-    plan: str,
-    argv: list[str] | tuple[str, ...] | None,
-    progress_env: dict[str, str] | None,
-) -> Any:
-    import argparse
-
-    from megaplan.orchestration.progress import ProgressEmitter
-
-    overrides = _phase_arg_overrides(phase, argv=argv)
-    operation = "edit"
-    raw = list(argv or [phase])
-    if phase == "feedback" and len(raw) > 1:
-        operation = raw[1]
-    defaults: dict[str, Any] = {
-        "plan": plan,
-        "operation": operation,
-        "force": False,
-        "actor": None,
-        "all": False,
-        "emit_json": False,
-        "agent": None,
-        "hermes": None,
-        "phase_model": [],
-        "profile": None,
-        "fresh": False,
-        "persist": False,
-        "ephemeral": False,
-        "work_dir": None,
-        "confirm_destructive": False,
-        "user_approved": False,
-        "retry_blocked_tasks": False,
-        "batch": None,
-        "confirm_self_review": False,
-        "progress_emitter": ProgressEmitter.from_env(progress_env),
-    }
-    defaults.update(overrides)
-    return argparse.Namespace(**defaults)
-
-
-# ── Typed Port primitives (M2 / T1) ─────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class Port:
-    """A named typed port that declares its content type.
-
-    Every pipeline Step declares zero-or-more ports via ``produces`` and
-    ``consumes``.  The executor uses these declarations for
-    contract-level validation and routing-key construction when
-    ``MEGAPLAN_TYPED_PORTS`` is on.
-    """
-
-    name: str
-    content_type: str
-    taint: frozenset[str] = field(default_factory=frozenset)
-
-
-@dataclass(frozen=True)
-class PortRef:
-    """A reference to a named port with its declared content type."""
-
-    port_name: str
-    content_type: str
-
-
-@dataclass(frozen=True)
-class RoutingKey:
-    """A content-type–qualified routing key for fan-out dispatch.
-
-    Concretely::
-
-        RoutingKey(key="text/markdown")
-
-    The executor constructs routing keys formed from the
-    content type declared on a producing port.
-    """
-
-    key: str
-
-
-# ── Content type registry ───────────────────────────────────────────────
-
-
-def _canonical_json_dumps(value: Any) -> str:
-    """Serialize *value* deterministically with sorted keys.
-
-    Mirrors :func:`megaplan.store.snapshot.canonical_json_dumps` but kept
-    local so the ``_pipeline`` package has zero dependency on the store
-    layer.
-    """
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-
-
-def register_schema(schema_obj: Any) -> str:
-    """Return the deterministic SHA-256 hex digest of *schema_obj*'s
-    canonical JSON representation.
-
-    ``schema_obj`` may be any JSON-serialisable value (typically a
-    ``dict``, ``list``, or Pydantic ``BaseModel``).  The returned string
-    is the raw hex digest (no ``sha256:`` prefix) so callers can format
-    the prefix as they wish.
-    """
-    raw = _canonical_json_dumps(schema_obj)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-@dataclass
-class ContentTypeRegistry:
-    """Map content-type names → schema SHA-256 digests.
-
-    Mirrors :class:`PipelineRegistry` (``registry.py:88``) but for
-    content-type schemas instead of pipeline builders.  Duplicate
-    registration raises ``ValueError``.
-    """
-
-    _schemas: dict[str, str] = field(default_factory=dict)
-
-    def register(self, name: str, schema_obj: Any) -> str:
-        if name in self._schemas:
-            raise ValueError(f"content type {name!r} already registered")
-        digest = register_schema(schema_obj)
-        self._schemas[name] = digest
-        return digest
-
-    def get(self, name: str) -> str:
-        """Return the SHA-256 digest registered for *name*.
-
-        Raises ``KeyError`` when *name* is not registered.
-        """
-        if name not in self._schemas:
-            raise KeyError(
-                f"no content type named {name!r}; "
-                f"available: {sorted(self._schemas)}"
-            )
-        return self._schemas[name]
-
-    def __contains__(self, name: str) -> bool:
-        return name in self._schemas
-
-    def names(self) -> tuple[str, ...]:
-        return tuple(sorted(self._schemas))
-
-
-# ── Module-level builtins ───────────────────────────────────────────────
-
-_BUILTIN_CONTENT_TYPES: frozenset[str] = frozenset(
-    {
-        "text/markdown",
-        "image/png",
-        "application/x-git-diff",
-        "application/x-verdict+json",
-        "application/x-routing-key+json",
-        "application/x-fanout-results+json",
-        "application/x-evaluand-record+json",
-    }
-)
-
-CONTENT_TYPES = ContentTypeRegistry()
-for _ct in sorted(_BUILTIN_CONTENT_TYPES):
-    CONTENT_TYPES.register(_ct, {"content_type": _ct})
-
-
-# ── Reduce / Selection result primitives (M2 / T2a) ────────────────────
-
-
-@dataclass(frozen=True)
-class ReduceResult:
-    """Structured output of a reduce-kind step.
-
-    ``value`` is the reduced value; ``scores`` is a per-input ordered
-    tuple of floats; ``tally`` is a mapping of label → count; ``provenance``
-    records source step / port identifiers; ``label`` optionally names
-    the chosen variant (e.g. ``"winner"``).
-    """
-
-    value: Any
-    scores: tuple[float, ...] = ()
-    tally: Mapping[str, int] = field(default_factory=dict)
-    provenance: tuple[str, ...] = ()
-    label: str | None = None
-
-
-@dataclass(frozen=True)
-class SelectionResult:
-    """Structured output of a selection / tournament reduce.
-
-    ``winner`` is the selected index; ``subset`` are the candidates
-    that survived an earlier filter; ``losers`` are the eliminated
-    candidates; ``scores`` is per-candidate; ``cleared`` is true when the
-    decision unambiguously cleared the tiebreaker threshold.
-    """
-
-    winner: int
-    subset: tuple[int, ...] = ()
-    losers: tuple[int, ...] = ()
-    scores: tuple[float, ...] = ()
-    cleared: bool = False
-
-
-Reduce: TypeAlias = Callable[[list[StepResult], StepContext], ReduceResult]
-
-
-# ── State delta (CAS) primitives (M2 / T2b) ────────────────────────────
-
-
-class StateDeltaConflict(Exception):
-    """Raised by :func:`apply_delta` when the delta's ``version`` does not
-    match the current version recorded in ``state['_state_meta']['versions']``.
-
-    Carries the offending ``key``, the ``expected`` version that the delta
-    claimed, and the ``actual`` version observed in state at apply time.
-    """
-
-    def __init__(self, key: str, expected: int, actual: int) -> None:
-        super().__init__(
-            f"state delta for key {key!r} expected version {expected}, "
-            f"found {actual}"
-        )
-        self.key = key
-        self.expected = expected
-        self.actual = actual
-
-
-@dataclass(frozen=True)
-class StateDelta:
-    """Compare-and-swap state mutation.
-
-    ``op`` is one of:
-
-    * ``'replace'`` — last-writer-wins assignment of ``value`` at ``key``.
-    * ``'accumulate'`` — append ``value`` to an existing list at ``key``
-      (creating ``[]`` if missing); retains all prior entries.
-    * ``'deep_merge'`` — recursively merge ``value`` (a mapping) into the
-      mapping at ``key``; non-mapping leaves are overwritten.
-
-    ``version`` is the version the writer last observed for ``key``.
-    :func:`apply_delta` raises :class:`StateDeltaConflict` when the
-    actual version in ``state['_state_meta']['versions']`` differs.
-    """
-
-    op: Literal["replace", "accumulate", "deep_merge"]
-    key: str
-    value: Any
-    version: int
-
-
-def _deep_merge(base: Any, overlay: Any) -> Any:
-    if isinstance(base, dict) and isinstance(overlay, Mapping):
-        out = dict(base)
-        for k, v in overlay.items():
-            out[k] = _deep_merge(out.get(k), v) if k in out else v
-        return out
-    return overlay
-
-
-def apply_delta(
-    state: Mapping[str, Any], delta: StateDelta
-) -> tuple[dict[str, Any], int]:
-    """Apply *delta* to *state* under CAS semantics.
-
-    Returns ``(new_state, new_version)``. Raises
-    :class:`StateDeltaConflict` when ``delta.version`` does not match the
-    version recorded at ``state['_state_meta']['versions'][delta.key]``
-    (absent ⇒ ``0``).
-    """
-    new_state: dict[str, Any] = dict(state)
-    meta = dict(new_state.get("_state_meta", {}))
-    versions = dict(meta.get("versions", {}))
-    actual = int(versions.get(delta.key, 0))
-    if actual != delta.version:
-        raise StateDeltaConflict(delta.key, delta.version, actual)
-
-    if delta.op == "replace":
-        new_state[delta.key] = delta.value
-    elif delta.op == "accumulate":
-        existing = list(new_state.get(delta.key, []))
-        existing.append(delta.value)
-        new_state[delta.key] = existing
-    elif delta.op == "deep_merge":
-        existing = new_state.get(delta.key, {})
-        new_state[delta.key] = _deep_merge(existing, delta.value)
-    else:  # pragma: no cover - exhaustive Literal
-        raise ValueError(f"unknown StateDelta op: {delta.op!r}")
-
-    new_version = actual + 1
-    versions[delta.key] = new_version
-    meta["versions"] = versions
-    new_state["_state_meta"] = meta
-    return new_state, new_version

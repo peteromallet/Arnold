@@ -8,7 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from megaplan.resident import (
-    EmitProtocol,
     FakeAgentRunner,
     FakeAgentStep,
     MegaplanResidentProfile,
@@ -133,24 +132,6 @@ def test_resident_runtime_denies_unauthorized_inbound_before_persistence(tmp_pat
     assert store.get_resident_conversation_by_key(transport="discord", conversation_key="discord:guild:g1:channel:c1") is None
     assert store.search_messages(query="", limit=20) == []
     assert store.list_recent_turns() == []
-
-
-def test_resident_runtime_emit_sites_are_bound_to_emit_protocol(tmp_path: Path) -> None:
-    store = FileStore(tmp_path / "store")
-    runtime = ResidentRuntime(
-        config=ResidentConfig(),
-        authorizer=ResidentAuthorizer(ResidentConfig()),
-        store=store,
-        profile=MegaplanResidentProfile(),
-        runner=FakeAgentRunner([FakeAgentStep.final("done")]),
-        outbound=MemoryOutbound(),
-    )
-
-    emitter: EmitProtocol = runtime.emitter
-
-    assert emitter is store
-    assert callable(getattr(emitter, "log_system_event"))
-    assert callable(getattr(emitter, "append_progress_event"))
 
 
 def test_discord_adapter_normalizes_guild_thread_and_dm_targets() -> None:

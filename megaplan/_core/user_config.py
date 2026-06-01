@@ -24,13 +24,9 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from . import io
+from .io import config_dir
 
 VALID_VENDORS = ("claude", "codex")
-
-
-def config_dir(home: Path | None = None) -> Path:
-    return io.config_dir(home)
 
 
 def _load_toml(path: Path) -> dict[str, Any]:

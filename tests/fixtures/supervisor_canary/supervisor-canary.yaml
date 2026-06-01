@@ -1,9 +1,0 @@
-milestones:
-  - label: alpha
-    idea: tests/fixtures/supervisor_canary/alpha.md
-  - label: beta
-    idea: tests/fixtures/supervisor_canary/beta.md
-    depends_on: [alpha]
-driver:
-  max_iterations: 5
-  poll_sleep: 0.0

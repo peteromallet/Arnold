@@ -5,55 +5,18 @@ from __future__ import annotations
 import dataclasses
 import json
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Sequence, cast
+from typing import Any, Mapping, Sequence, cast
 
-from megaplan._pipeline.envelope import (
-    EMPTY_ENVELOPE,
-    RunEnvelope,
-    _envelope_ctx,
-    _fanout_active_ctx,
-)
 from megaplan._pipeline.pattern_types import JoinFn
 from megaplan._pipeline.subloop import SubloopStep
-from megaplan._pipeline.flags import typed_ports_on
 from megaplan._pipeline.types import (
     PipelineVerdict,
-    Port,
     Stage,
     Step,
     StepContext,
     StepResult,
-)
-
-def _governor_check_fanout(envelope, width: int) -> None:
-    """Consult the tree-scoped Governor before spawning ``width`` fan-out specs.
-
-    Raises :class:`megaplan.runtime.governor.BudgetExceeded` when a cap would
-    be crossed.  No-op when no Governor is attached.  ``RestorableBoundaryViolation``
-    raised by ``restorable_boundary.__enter__`` always precedes this check
-    because the boundary fires before any protected body runs.
-    """
-
-    from megaplan.runtime.governor import (
-        BudgetExceeded,
-        current_governor,
-    )
-
-    gov = current_governor()
-    if gov is None:
-        return
-    reason = gov.would_exceed(envelope, fanout_width=width)
-    if reason is not None:
-        raise BudgetExceeded(reason, f"fanout width={width}")
-    gov.note_fanout(width)
-
-
-#: Typed value-kind Port emitted by the fan-out join when typed-ports is on.
-LAST_FANOUT_RESULTS_PORT: Port = Port(
-    name="last_fanout_results",
-    content_type="application/x-fanout-results+json",
 )
 
 
@@ -87,33 +50,14 @@ def _read_specs_from_path(path: Path) -> list[Any]:
 
 
 def _extract_specs_from_result(result: StepResult) -> list[Any]:
-    """Pull a list of reviewer specs from a generator's StepResult.
-
-    Flag-ON (``typed_ports_on()``): read the typed Port channel
-    ``last_fanout_results`` from ``state_patch`` or ``outputs``;
-    flag-OFF: preserve the untyped ``specs`` channel.
-    """
+    """Pull a list of reviewer specs from a generator's StepResult."""
 
     state_patch = result.state_patch
-    outputs = result.outputs
-    if typed_ports_on():
-        port_name = LAST_FANOUT_RESULTS_PORT.name
-        if isinstance(state_patch, Mapping):
-            value = state_patch.get(port_name)
-            if isinstance(value, list):
-                return list(value)
-        if isinstance(outputs, Mapping):
-            out_path = outputs.get(port_name)
-            if out_path is not None:
-                return _read_specs_from_path(Path(out_path))
-        raise LookupError(
-            f"dynamic_fanout: generator emitted no typed Port "
-            f"{port_name!r} (neither in state_patch nor outputs)"
-        )
     if isinstance(state_patch, Mapping):
         value = state_patch.get("specs")
         if isinstance(value, list):
             return list(value)
+    outputs = result.outputs
     if isinstance(outputs, Mapping):
         out_path = outputs.get("specs")
         if out_path is not None:
@@ -157,15 +101,7 @@ class _PanelFromArtifactStep(SubloopStep):
 
         specs = _read_specs_from_path(path)
         steps = [_specialize_step(self.base_template, spec) for spec in specs]
-        envelope = getattr(ctx, "envelope", None) or EMPTY_ENVELOPE
-        _governor_check_fanout(envelope, len(steps))
-        fanout_token = _fanout_active_ctx.set(True)
-        env_token = _envelope_ctx.set(envelope)
-        try:
-            results = [step.run(ctx) for step in steps]
-        finally:
-            _envelope_ctx.reset(env_token)
-            _fanout_active_ctx.reset(fanout_token)
+        results = [step.run(ctx) for step in steps]
         return self.join_fn(results, ctx)
 
 
@@ -176,7 +112,6 @@ class _DynamicFanoutStep(SubloopStep):
     generator: Step | None = None
     base_prompt: Step | None = None
     join_fn: JoinFn | None = None
-    produces: tuple = field(default_factory=lambda: (LAST_FANOUT_RESULTS_PORT,))
 
     def run(self, ctx: StepContext) -> StepResult:
         if self.generator is None:
@@ -189,24 +124,8 @@ class _DynamicFanoutStep(SubloopStep):
         gen_result = self.generator.run(ctx)
         specs = _extract_specs_from_result(gen_result)
         steps = [_specialize_step(self.base_prompt, spec) for spec in specs]
-        envelope = getattr(ctx, "envelope", None) or EMPTY_ENVELOPE
-        _governor_check_fanout(envelope, len(steps))
-        fanout_token = _fanout_active_ctx.set(True)
-        env_token = _envelope_ctx.set(envelope)
-        try:
-            results = [step.run(ctx) for step in steps]
-        finally:
-            _envelope_ctx.reset(env_token)
-            _fanout_active_ctx.reset(fanout_token)
-        joined = self.join_fn(results, ctx)
-        if typed_ports_on():
-            # Emit the typed Port last_fanout_results carrying the per-spec
-            # StepResults; do NOT touch the untyped state_patch['specs'] channel.
-            patch = dict(joined.state_patch) if isinstance(joined.state_patch, Mapping) else {}
-            patch[LAST_FANOUT_RESULTS_PORT.name] = list(results)
-            patch.pop("specs", None)
-            joined = dataclasses.replace(joined, state_patch=patch)
-        return joined
+        results = [step.run(ctx) for step in steps]
+        return self.join_fn(results, ctx)
 
 
 def panel_from_artifact(
@@ -268,7 +187,6 @@ class _ConsensusStep(SubloopStep):
     panel: Any = None  # Step | Stage
     min_agreement: float = 0.8
     max_iters: int = 3
-    condition: Optional[Callable[[Any], bool]] = None
 
     def run(self, ctx: StepContext) -> StepResult:
         if self.panel is None:
@@ -288,27 +206,6 @@ class _ConsensusStep(SubloopStep):
             result = panel_step.run(ctx)
             last_result = result
             last_ratio = _agreement_ratio(result)
-            if self.condition is not None:
-                loop_state = type("LoopState", (), {
-                    "state": ctx.state,
-                    "last_fanout_results": dict(result.outputs),
-                    "iteration": iteration + 1,
-                })()
-                if self.condition(loop_state):
-                    merged = (
-                        dict(result.state_patch)
-                        if isinstance(result.state_patch, Mapping)
-                        else {}
-                    )
-                    merged[f"consensus:{self.name}:agreement"] = last_ratio
-                    merged[f"consensus:{self.name}:iterations"] = iteration + 1
-                    return StepResult(
-                        outputs=result.outputs,
-                        verdict=result.verdict,
-                        next="halt",
-                        state_patch=merged,
-                    )
-                continue
             if last_ratio >= self.min_agreement:
                 merged = (
                     dict(result.state_patch)
@@ -367,9 +264,6 @@ class _PairedRoundStep:
     slot: str | None = None
     advocates: tuple[Step, ...] = ()
     sees_other: bool = True
-
-    produces: tuple = field(default_factory=tuple)
-    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         if not self.advocates:

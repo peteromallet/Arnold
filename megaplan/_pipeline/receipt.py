@@ -34,11 +34,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from megaplan._pipeline.types import Step, StepContext, StepMixinProperty, StepResult
+from megaplan._pipeline.types import Step, StepContext, StepResult
 
 
 @dataclass
-class ReceiptDecorator(StepMixinProperty):
+class ReceiptDecorator:
     """A Step that wraps another Step and writes a JSON receipt.
 
     The wrapped Step's protocol attributes are exposed verbatim so

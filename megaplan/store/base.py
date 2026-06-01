@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import re
 from pathlib import PurePosixPath
 from types import TracebackType
-from typing import Any, Iterator, Mapping, Protocol, Sequence, TypeAlias, runtime_checkable
+from typing import Any, Mapping, Protocol, Sequence, TypeAlias, runtime_checkable
 
 from pydantic import Field
 
@@ -160,20 +159,6 @@ class ArtifactStat(StorageModel):
     size_bytes: int
     sha256: str | None = None
     updated_at: datetime = Field(default_factory=utc_now)
-
-
-@dataclass(frozen=True)
-class StoredEvent:
-    """Store-neutral event record used by observability projections."""
-
-    kind: str
-    phase: str | None
-    payload: Mapping[str, Any]
-    occurred_at: datetime | str | None = None
-    id: str | None = None
-    seq: int | None = None
-    run_id: str | None = None
-    source: str | None = None
 
 
 def validate_plan_artifact_name(name: str) -> str:
@@ -492,18 +477,6 @@ class Store(Protocol):
         ...
 
     def events_by_transaction(self, transaction_id: str) -> list[EpicEvent]:
-        ...
-
-    def append_telemetry_event(
-        self,
-        kind: str,
-        payload: Mapping[str, Any],
-        *,
-        scope: str | None = None,
-    ) -> JSONDict:
-        ...
-
-    def events_for_plan(self, plan_id: str) -> Iterator[StoredEvent]:
         ...
 
     # ---------- Messages / turns ----------
@@ -1374,7 +1347,6 @@ __all__ = [
     "RevisionConflict",
     "SprintItemInput",
     "SprintWithItems",
-    "StoredEvent",
     "Store",
     "StoreError",
     "Transaction",

@@ -6,7 +6,7 @@ Covers:
     (c) Persistence — ``config.with_feedback`` written during init
     (d) Handler — ``handle_feedback`` workflow-mode no-editor invariant
     (e) Light/tiny + with-feedback — short-circuit suppression
-    (f) resume predecessors via topology
+    (f) ``_RESUME_ACTIVE_STATES`` entry
 """
 
 from __future__ import annotations
@@ -29,8 +29,7 @@ from megaplan._core import (
     workflow_includes_step,
     workflow_transition,
 )
-from megaplan._core.workflow import _with_feedback_from_state, _workflow_for_robustness
-from megaplan._core.topology import predecessors as _topology_predecessors
+from megaplan._core.workflow import _RESUME_ACTIVE_STATES, _with_feedback_from_state, _workflow_for_robustness
 from megaplan.types import STATE_INITIALIZED, STATE_PLANNED, STATE_GATED, STATE_FINALIZED, STATE_PREPPED, STATE_CRITIQUED, CliError, normalize_robustness
 
 # ---------------------------------------------------------------------------
@@ -490,17 +489,18 @@ def test_light_tiny_without_feedback_still_short_circuits(
 
 
 # ---------------------------------------------------------------------------
-# (f) resume predecessors via topology
+# (f) ``_RESUME_ACTIVE_STATES`` entry
 # ---------------------------------------------------------------------------
 
 
 def test_resume_active_states_contains_feedback() -> None:
-    """Topology predecessors(policy='resume') must return 'reviewed' for 'feedback'."""
-    assert _topology_predecessors("feedback", policy="resume") == "reviewed"
+    """``_RESUME_ACTIVE_STATES`` must map 'feedback' to 'reviewed'."""
+    assert "feedback" in _RESUME_ACTIVE_STATES
+    assert _RESUME_ACTIVE_STATES["feedback"] == "reviewed"
 
 
 def test_resume_active_states_all_known_phases() -> None:
-    """Sanity-check all known active states via topology predecessors(policy='resume')."""
+    """Sanity-check all known active states for completeness."""
     expected = {
         "prep": "initialized",
         "plan": "initialized",
@@ -513,9 +513,8 @@ def test_resume_active_states_all_known_phases() -> None:
         "feedback": "reviewed",
     }
     for phase, state in expected.items():
-        got = _topology_predecessors(phase, policy="resume")
-        assert got == state, (
-            f"Expected predecessors({phase!r}, policy='resume') == {state!r}, got {got!r}"
+        assert _RESUME_ACTIVE_STATES.get(phase) == state, (
+            f"Expected _RESUME_ACTIVE_STATES[{phase!r}] == {state!r}"
         )
 
 

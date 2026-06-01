@@ -279,9 +279,6 @@ def _run_pipeline(args: argparse.Namespace) -> int:
 
     if not resume_choice:
         state["_pipeline_name"] = pipeline_name
-        manifest_hash = metadata.get("manifest_hash")
-        if isinstance(manifest_hash, str) and manifest_hash:
-            state["_pipeline_manifest_hash"] = manifest_hash
 
     # Continue-loop input swap: repoint the primary input to the latest
     # version of the artifact the human edited. The "primary input" is

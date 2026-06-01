@@ -50,7 +50,6 @@ def _collect_feedback_rows(
             if fb is None or fb.is_empty():
                 continue
             try:
-                # cache-tolerant: feedback CLI scan.
                 state = read_json(plan_dir / "state.json")
             except (FileNotFoundError, OSError):
                 continue

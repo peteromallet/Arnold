@@ -22,7 +22,7 @@ Relationships:
 State-flow contract: the child runs with a *copy* of ``ctx.state``
 (``state=dict(ctx.state)``). Child state mutations therefore do not
 propagate back to the parent state map directly — only the
-``promote`` callable's :class:`RoutingKey` flows up via
+``promote`` callable's :class:`GateRecommendation` flows up via
 :class:`PipelineVerdict`, plus the two ``subloop:<name>:recommendation`` /
 ``subloop:<name>:state`` keys emitted as ``state_patch`` on the
 parent. Downstream handlers that need to observe child results
@@ -34,22 +34,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
-from megaplan._pipeline._forward_m2_m3 import RoutingKey  # TODO(M2/M3)
 from megaplan._pipeline.types import (
+    GateRecommendation,
     Pipeline,
-    Port,
-    PortRef,
     StepContext,
     StepResult,
     PipelineVerdict,
 )
 
-from megaplan._pipeline.pattern_types import PromoteFn
 
-
-_DEFAULT_PROMOTE: PromoteFn = lambda state: RoutingKey(name="proceed", kind="advance")
+_DEFAULT_PROMOTE: Callable[[dict[str, Any]], GateRecommendation] = lambda state: "proceed"
 
 
 @dataclass(frozen=True)
@@ -58,7 +54,7 @@ class SubloopStep:
 
     ``child_pipeline``: the inner pipeline to run.
     ``promote``: callable that maps the child's final state dict to a
-    :class:`RoutingKey` for the parent's PipelineVerdict.
+    :class:`GateRecommendation` for the parent's PipelineVerdict.
     ``artifact_subdir``: subdir under ``ctx.plan_dir`` where the child
     pipeline's state.json + per-stage artifacts land. Defaults to the
     Step's name.
@@ -69,10 +65,8 @@ class SubloopStep:
     prompt_key: str | None = None
     slot: str | None = None
     child_pipeline: Pipeline | None = None
-    promote: PromoteFn = field(default=_DEFAULT_PROMOTE)
+    promote: Callable[[dict[str, Any]], GateRecommendation] = field(default=_DEFAULT_PROMOTE)
     artifact_subdir: str | None = None
-    produces: tuple[Port, ...] = field(default_factory=tuple)
-    consumes: tuple[PortRef, ...] = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         from megaplan._pipeline.executor import run_pipeline
@@ -91,10 +85,9 @@ class SubloopStep:
         child_state: dict[str, Any] = result.get("state", {})
 
         recommendation = self.promote(child_state)
-        _name = getattr(recommendation, 'name', recommendation)
         verdict = PipelineVerdict(
             score=float(child_state.get("score", 1.0)),
-            recommendation=_name,
+            recommendation=recommendation,
             payload={
                 "subloop_final_stage": result.get("final_stage"),
                 "subloop_state": child_state,
@@ -104,9 +97,9 @@ class SubloopStep:
         return StepResult(
             outputs={},
             verdict=verdict,
-            next=_name,  # textual fallback if no kind="gate" edge matches
+            next=recommendation,  # textual fallback if no kind="gate" edge matches
             state_patch={
-                f"subloop:{self.name}:recommendation": _name,
+                f"subloop:{self.name}:recommendation": recommendation,
                 f"subloop:{self.name}:state": child_state,
             },
         )

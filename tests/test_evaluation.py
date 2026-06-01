@@ -812,56 +812,6 @@ def test_validate_execution_evidence_flags_diff_mismatches_and_weak_notes(
     assert any("SC1" in finding and "perfunctory" in finding for finding in result["findings"])
 
 
-def test_validate_execution_evidence_ignores_plan_artifacts_and_substantive_noop(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_dir = tmp_path / "project"
-    (project_dir / ".git").mkdir(parents=True)
-
-    finalize_data = {
-        "tasks": [
-            {
-                "id": "T1",
-                "status": "done",
-                "files_changed": [
-                    "src/feature.py",
-                    ".megaplan/plans/demo/execution_batch_1.json",
-                ],
-                "commands_run": [],
-                "executor_notes": "Updated the feature implementation.",
-            },
-            {
-                "id": "T2",
-                "status": "done",
-                "files_changed": [],
-                "commands_run": [],
-                "executor_notes": (
-                    "Verified the boundary docstring was already added by T1; "
-                    "no additional file edit was required for this inspection task."
-                ),
-            },
-        ],
-        "sense_checks": [],
-    }
-
-    monkeypatch.setattr(
-        "megaplan.orchestration.evaluation.subprocess.run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args=["git", "status", "--short"],
-            returncode=0,
-            stdout=" M src/feature.py\n",
-            stderr="",
-        ),
-    )
-
-    result = validate_execution_evidence(finalize_data, project_dir)
-
-    assert result["files_claimed"] == ["src/feature.py"]
-    assert not any("execution_batch_1.json" in finding for finding in result["findings"])
-    assert not any("T2" in finding for finding in result["findings"])
-
-
 def test_build_gate_artifact_passes_through_settled_decisions(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     gate_payload = _build_mock_payload(
@@ -1286,10 +1236,9 @@ def test_build_gate_signals_fixture_shape_is_stable(tmp_path: Path) -> None:
     expected_signal_keys = {
         "iteration",
         "idea",
-            "significant_flags",
-            "unresolved_flags",
-            "addressed_flags",
-            "resolved_flags",
+        "significant_flags",
+        "unresolved_flags",
+        "resolved_flags",
         "weighted_score",
         "weighted_history",
         "plan_delta_from_previous",

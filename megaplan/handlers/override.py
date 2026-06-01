@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan._pipeline.flags import control_interface_routing_on
 from megaplan.types import (
     AgentSpec,
     CliError,
@@ -20,6 +19,7 @@ from megaplan.types import (
     STATE_GATED,
     STATE_PLANNED,
     STATE_PREPPED,
+    STATE_REVIEWED,
     StepResponse,
     DEFAULT_AGENT_ROUTING,
     _PREMIUM_EFFORT_TOKENS,
@@ -29,6 +29,7 @@ from megaplan.types import (
 )
 from megaplan._core import (
     add_or_increment_debt,
+    atomic_write_json,
     extract_subsystem_tag,
     find_command,
     infer_next_steps,
@@ -43,9 +44,6 @@ from megaplan._core import (
     unresolved_significant_flags,
     workflow_next,
 )
-from megaplan._core import topology as _topology
-from megaplan.control_interface import ControlTransition, RunStateView, apply_transition
-from megaplan.planning import planning_control_binding
 from megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
 from megaplan.orchestration.evaluation import (
     build_gate_artifact,
@@ -60,418 +58,6 @@ from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effor
 
 
 _REVISE_STRUCTURAL_OVERRIDE_ACTIONS = {"step-add", "step-remove", "step-move", "replan"}
-_ROUTED_OVERRIDE_ACTIONS = frozenset(
-    {
-        "add-note",
-        "abort",
-        "force-proceed",
-        "recover-blocked",
-        "replan",
-        "resume-clarify",
-        "set-robustness",
-        "set-profile",
-        "set-model",
-        "set-vendor",
-    }
-)
-
-
-def _routed_override_response(
-    action: str,
-    *,
-    plan_dir: Path,
-    state: PlanState,
-    args: argparse.Namespace,
-    artifacts: dict[str, Any] | None = None,
-) -> StepResponse:
-    next_steps = infer_next_steps(state)
-    if action == "add-note":
-        response: StepResponse = {
-            "success": True,
-            "step": "override",
-            "summary": "Attached note to the plan.",
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-        }
-        _attach_next_step_runtime(response)
-        return response
-    if action == "abort":
-        return {
-            "success": True,
-            "step": "override",
-            "summary": "Plan aborted.",
-            "next_step": None,
-            "state": STATE_ABORTED,
-        }
-    if action == "force-proceed":
-        meta = state.get("meta")
-        overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-        latest_override = next(
-            (
-                entry
-                for entry in reversed(overrides)
-                if isinstance(entry, dict) and entry.get("action") == "force-proceed"
-            ),
-            {},
-        )
-        if state["current_state"] == STATE_DONE:
-            return {
-                "success": True,
-                "step": "override",
-                "summary": "Force-proceeded past review into done state.",
-                "next_step": None,
-                "state": STATE_DONE,
-            }
-        response: StepResponse = {
-            "success": True,
-            "step": "override",
-            "summary": "Force-proceeded past gate judgment into gated state.",
-            "next_step": "finalize",
-            "state": STATE_GATED,
-            "orchestrator_guidance": (
-                artifacts or {}
-            ).get("orchestrator_guidance", "Force-proceed override applied. Proceed to finalize."),
-            "debt_entries_added": (artifacts or {}).get(
-                "debt_entries_added",
-                latest_override.get("debt_entries_added", 0),
-            ),
-        }
-        _attach_next_step_runtime(response)
-        return response
-    if action == "set-robustness":
-        previous_level = "standard"
-        meta = state.get("meta")
-        overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-        for entry in reversed(overrides):
-            if isinstance(entry, dict) and entry.get("action") == "set-robustness":
-                previous_level = entry.get("from", "standard")
-                break
-        new_level = state["config"].get("robustness", "standard")
-        summary = (
-            f"Robustness unchanged at '{new_level}'."
-            if previous_level == new_level
-            else f"Robustness changed from '{previous_level}' to '{new_level}'. Takes effect on the next phase."
-        )
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": summary,
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-            "previous_robustness": previous_level,
-            "robustness": new_level,
-        }
-        _attach_next_step_runtime(response)
-        return response
-    if action == "recover-blocked":
-        meta = state.get("meta")
-        overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-        latest_override = next(
-            entry
-            for entry in reversed(overrides)
-            if isinstance(entry, dict) and entry.get("action") == "recover-blocked"
-        )
-        resume_cursor = latest_override.get("resume_cursor")
-        phase = (
-            resume_cursor.get("phase")
-            if isinstance(resume_cursor, dict)
-            else latest_override.get("phase")
-        )
-        recovered_state = state["current_state"]
-        response: StepResponse = {
-            "success": True,
-            "step": "override",
-            "action": "recover-blocked",
-            "summary": (
-                f"Recovered blocked plan to state '{recovered_state}' for phase "
-                f"{phase!r}. Reason: {latest_override.get('reason')}"
-            ),
-            "state": recovered_state,
-            "previous_state": latest_override.get("from_state"),
-            "phase": phase,
-            "next_step": next_steps[0] if next_steps else None,
-            "resume_cursor": resume_cursor,
-            "blockers": (artifacts or {}).get("blockers", []),
-        }
-        _attach_next_step_runtime(response)
-        return response
-    if action == "resume-clarify":
-        warnings = (artifacts or {}).get("warnings", [])
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": "Prep clarification resolved; plan phase is now ready to run.",
-            "next_step": next_steps[0] if next_steps else None,
-            "state": STATE_PREPPED,
-        }
-        if warnings:
-            response["warnings"] = warnings
-        _attach_next_step_runtime(response)
-        return response
-    if action == "replan":
-        reason = getattr(args, "reason", None) or getattr(args, "note", None) or "Re-entering planning loop"
-        plan_file_raw = (artifacts or {}).get("plan_file")
-        plan_file = Path(plan_file_raw) if isinstance(plan_file_raw, str) and plan_file_raw else latest_plan_path(plan_dir, state)
-        next_steps = workflow_next(state)
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": f"Re-entered planning loop at iteration {state['iteration']}. Reason: {reason}",
-            "next_step": next_steps[0] if next_steps else None,
-            "state": STATE_PLANNED,
-            "plan_file": str(plan_file),
-            "message": f"Edit {plan_file.name} to incorporate your changes, then run the next step.",
-        }
-        _attach_next_step_runtime(response)
-        return response
-    if action == "set-profile":
-        previous_profile = None
-        meta = state.get("meta")
-        overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-        for entry in reversed(overrides):
-            if isinstance(entry, dict) and entry.get("action") == "set-profile":
-                previous_profile = entry.get("from")
-                break
-        new_profile = state["config"].get("profile")
-        summary = (
-            f"Profile unchanged at '{new_profile}'."
-            if previous_profile == new_profile
-            else f"Profile changed from '{previous_profile}' to '{new_profile}'. Takes effect on the next phase."
-        )
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": summary,
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-            "previous_profile": previous_profile,
-            "profile": new_profile,
-        }
-        _attach_next_step_runtime(response)
-        return response
-    if action in {"set-model", "set-vendor"}:
-        meta = state.get("meta")
-        overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-        latest_override = next(
-            entry
-            for entry in reversed(overrides)
-            if isinstance(entry, dict) and entry.get("action") == action
-        )
-        phase = latest_override.get("phase")
-        previous_spec = latest_override.get("previous_spec")
-        new_spec = latest_override.get("new_spec")
-        summary = (
-            f"{'Model' if action == 'set-model' else 'Vendor'} for phase '{phase}' "
-            f"changed from '{previous_spec}' to '{new_spec}'. Takes effect on the next phase."
-        )
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": summary,
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-            "phase": phase,
-            "previous_spec": previous_spec,
-            "new_spec": new_spec,
-        }
-        _attach_next_step_runtime(response)
-        return response
-    raise CliError("invalid_override", f"Unknown routed override action: {action}")
-
-
-def _emit_routed_override_events(
-    action: str,
-    *,
-    plan_dir: Path,
-    state: PlanState,
-    args: argparse.Namespace,
-) -> None:
-    try:
-        from megaplan.observability.events import EventKind, emit
-
-        if action == "add-note":
-            note = getattr(args, "note", None)
-            source = getattr(args, "source", None) or "user"
-            emit(
-                EventKind.OVERRIDE_APPLIED,
-                plan_dir=plan_dir,
-                payload={"action": "add-note", "reason": note, "source": source},
-            )
-            emit(
-                EventKind.NOTE_ADDED,
-                plan_dir=plan_dir,
-                payload={"note": note, "source": source},
-            )
-            return
-        if action == "abort":
-            emit(
-                EventKind.OVERRIDE_APPLIED,
-                plan_dir=plan_dir,
-                payload={"action": "abort", "reason": args.reason},
-            )
-            return
-        if action == "force-proceed":
-            emit(
-                EventKind.OVERRIDE_APPLIED,
-                plan_dir=plan_dir,
-                payload={"action": "force-proceed", "reason": args.reason},
-            )
-            return
-        if action == "set-robustness":
-            meta = state.get("meta")
-            overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-            latest_override = next(
-                entry
-                for entry in reversed(overrides)
-                if isinstance(entry, dict) and entry.get("action") == "set-robustness"
-            )
-            emit(
-                EventKind.OVERRIDE_APPLIED,
-                plan_dir=plan_dir,
-                payload={
-                    "action": "set-robustness",
-                    "from": latest_override.get("from"),
-                    "to": latest_override.get("to"),
-                    "reason": latest_override.get("reason"),
-                },
-            )
-            return
-        if action == "set-profile":
-            meta = state.get("meta")
-            overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
-            latest_override = next(
-                entry
-                for entry in reversed(overrides)
-                if isinstance(entry, dict) and entry.get("action") == "set-profile"
-            )
-            emit(
-                EventKind.OVERRIDE_APPLIED,
-                plan_dir=plan_dir,
-                payload={
-                    "action": "set-profile",
-                    "from": latest_override.get("from"),
-                    "to": latest_override.get("to"),
-                    "reason": latest_override.get("reason"),
-                },
-            )
-            return
-        if action == "recover-blocked":
-            return
-        if action == "resume-clarify":
-            emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "resume-clarify"})
-            return
-        if action == "replan":
-            reason = getattr(args, "reason", None) or getattr(args, "note", None) or "Re-entering planning loop"
-            emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "replan", "reason": reason})
-            return
-        if action in {"set-model", "set-vendor"}:
-            return
-    except StopIteration:
-        pass
-    except Exception:
-        if action == "add-note":
-            _warn_best_effort_emit_failure(
-                "M3A_WARN_EMIT_OVERRIDE_ADD_NOTE",
-                action="override-add-note",
-                plan_dir=plan_dir,
-                event_kind="override_applied,note_added",
-                context={"source": getattr(args, "source", None) or "user"},
-            )
-            return
-        if action == "abort":
-            _warn_best_effort_emit_failure(
-                "M3A_WARN_EMIT_OVERRIDE_ABORT",
-                action="override-abort",
-                plan_dir=plan_dir,
-                event_kind="override_applied",
-            )
-            return
-        if action == "force-proceed":
-            _warn_best_effort_emit_failure(
-                "M3A_WARN_EMIT_OVERRIDE_FORCE_PROCEED",
-                action="override-force-proceed",
-                plan_dir=plan_dir,
-                event_kind="override_applied",
-            )
-            return
-        if action == "set-robustness":
-            _warn_best_effort_emit_failure(
-                "M3A_WARN_EMIT_OVERRIDE_ROBUSTNESS",
-                action="override-set-robustness",
-                plan_dir=plan_dir,
-                event_kind="override_applied",
-            )
-            return
-        if action == "set-profile":
-            _warn_best_effort_emit_failure(
-                "M3A_WARN_EMIT_OVERRIDE_PROFILE",
-                action="override-set-profile",
-                plan_dir=plan_dir,
-                event_kind="override_applied",
-            )
-            return
-        if action == "replan":
-            _warn_best_effort_emit_failure(
-                "M3A_WARN_EMIT_OVERRIDE_REPLAN",
-                action="override-replan",
-                plan_dir=plan_dir,
-                event_kind="override_applied",
-            )
-            return
-
-
-def _handle_routed_override(
-    root: Path,
-    plan_dir: Path,
-    state: PlanState,
-    args: argparse.Namespace,
-) -> StepResponse:
-    transition = ControlTransition(
-        op="override",
-        target_id=args.override_action,
-        payload={
-            "note": getattr(args, "note", None),
-            "reason": getattr(args, "reason", None),
-            "source": getattr(args, "source", None),
-            "robustness": getattr(args, "robustness", None),
-            "profile": getattr(args, "profile", None),
-            "phase": getattr(args, "phase", None),
-            "model": getattr(args, "model", None),
-            "effort": getattr(args, "effort", None),
-            "vendor": getattr(args, "vendor", None),
-            "user_approved": getattr(args, "user_approved", False),
-            "root": str(root),
-            "plan_dir": str(plan_dir),
-        },
-    )
-    run_state = RunStateView(
-        run_id=state.get("name", plan_dir.name),
-        cursor=state.get("current_state"),
-        raw_state=state,
-    )
-    result = apply_transition(
-        run_state,
-        transition,
-        planning_control_binding(),
-        plan_dir=plan_dir,
-    )
-    if not result.accepted:
-        if result.reason == "control_transition_conflict":
-            raise CliError(
-                "invalid_transition",
-                result.reason,
-                extra={"conflict": result.artifacts.get("conflict")},
-            )
-        raise CliError("invalid_transition", result.reason or "routed override rejected")
-    persisted_state = load_plan(root, args.plan)[1]
-    _emit_routed_override_events(args.override_action, plan_dir=plan_dir, state=persisted_state, args=args)
-    return _routed_override_response(
-        args.override_action,
-        plan_dir=plan_dir,
-        state=persisted_state,
-        args=args,
-        artifacts=dict(result.artifacts),
-    )
 
 
 def _last_gate_is_agent_availability_preflight_block(state: PlanState) -> bool:
@@ -764,8 +350,13 @@ def _override_force_proceed(
     return response
 
 
-def _override_replan(
-    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+def apply_override_replan(
+    root: Path,
+    plan_dir: Path,
+    state: PlanState,
+    *,
+    reason: str,
+    note: str | None = None,
 ) -> StepResponse:
     allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
     if state["current_state"] not in allowed:
@@ -774,7 +365,7 @@ def _override_replan(
             f"replan requires state {', '.join(sorted(allowed))}, got '{state['current_state']}'",
             valid_next=infer_next_steps(state),
         )
-    reason = args.reason or args.note or "Re-entering planning loop"
+    reason = reason or note or "Re-entering planning loop"
     plan_file = latest_plan_path(plan_dir, state)
     state["current_state"] = STATE_PLANNED
     state["last_gate"] = {}
@@ -783,8 +374,8 @@ def _override_replan(
         "overrides",
         {"action": "replan", "timestamp": now_utc(), "reason": reason},
     )
-    if args.note:
-        _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": args.note})
+    if note:
+        _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": note})
     save_state_merge_meta(plan_dir, state)
     try:
         from megaplan.observability.events import emit, EventKind
@@ -808,6 +399,31 @@ def _override_replan(
     }
     _attach_next_step_runtime(response)
     return response
+
+
+def _override_replan(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    return apply_override_replan(
+        root,
+        plan_dir,
+        state,
+        reason=args.reason or args.note or "Re-entering planning loop",
+        note=args.note,
+    )
+
+
+_BLOCKED_RECOVERY_STATES: dict[str, str] = {
+    "prep": "initialized",
+    "plan": "initialized",
+    "critique": STATE_PLANNED,
+    "gate": STATE_CRITIQUED,
+    "revise": STATE_CRITIQUED,
+    "finalize": STATE_GATED,
+    "execute": STATE_FINALIZED,
+    "review": STATE_EXECUTED,
+    "feedback": STATE_REVIEWED,
+}
 
 
 _EXTERNAL_ERROR_RETRY_STRATEGIES = {"wait_and_retry", "check_provider_and_retry"}
@@ -854,7 +470,7 @@ def _override_recover_blocked(
             "recover-blocked requires resume_cursor.phase",
             extra={"resume_cursor": resume_cursor},
         )
-    recovered_state = _topology.predecessors(phase, policy="recovery")
+    recovered_state = _BLOCKED_RECOVERY_STATES.get(phase)
     if recovered_state is None:
         raise CliError(
             "invalid_resume_cursor",
@@ -1137,23 +753,14 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
             "Use --phase-model on the phase command for hermes/shannon routing.",
         )
     else:
-        # Bare model strings normally keep the phase's current premium vendor.
-        # If the current phase is non-premium, allow an unambiguous vendor-prefixed
-        # premium model name to move the phase onto that vendor.
-        inferred_agent = None
-        if str(model_arg).startswith("claude-"):
-            inferred_agent = "claude"
-        elif str(model_arg).startswith(("gpt-", "o1", "o3", "o4")):
-            inferred_agent = "codex"
-        if agent == "shannon":
-            inferred_agent = None
-        if agent not in _PREMIUM_VENDORS and inferred_agent is None:
+        # set-model only allowed for claude/codex
+        if agent not in _PREMIUM_VENDORS:
             raise CliError(
                 "invalid_args",
                 f"set-model is only supported for claude/codex phases. "
                 f"Phase '{phase}' resolves to agent '{agent}'.",
             )
-        target_agent = agent if agent in _PREMIUM_VENDORS else inferred_agent
+        target_agent = agent
         target_model = model_arg
         target_effort = effort
 
@@ -1445,8 +1052,6 @@ _OVERRIDE_ACTIONS: dict[
 def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
     plan_dir, state = load_plan(root, args.plan)
     action = args.override_action
-    if control_interface_routing_on() and action in _ROUTED_OVERRIDE_ACTIONS:
-        return _handle_routed_override(root, plan_dir, state, args)
     handler = _OVERRIDE_ACTIONS.get(action)
     if handler is None:
         raise CliError("invalid_override", f"Unknown override action: {action}")

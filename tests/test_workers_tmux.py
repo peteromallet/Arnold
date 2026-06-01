@@ -15,36 +15,11 @@ from megaplan.workers import WorkerResult
 from tests._workers_helpers import _mock_state
 
 
-def _require_tmux_session_support() -> None:
-    """Skip when tmux is installed but unusable in the current sandbox."""
-    if shutil.which("tmux") is None:
-        pytest.skip("tmux not installed")
-
-    probe_name = "megaplan-test-probe"
-    result = subprocess.run(
-        ["tmux", "new-session", "-d", "-s", probe_name, "true"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        pytest.skip(f"tmux sessions unavailable in this environment: {stderr or 'unknown error'}")
-    subprocess.run(
-        ["tmux", "kill-session", "-t", probe_name],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
 def test_tmux_session_create_exists_teardown_idempotent() -> None:
     """TmuxSession exists() → teardown() → exists() → second teardown() safe."""
     import uuid
     from megaplan.runtime.process import TmuxSession
-
-    _require_tmux_session_support()
 
     name = f"megaplan-test-tmuxsession-{uuid.uuid4().hex[:8]}"
     session = TmuxSession(name)
@@ -93,8 +68,6 @@ def test_wedge_regression_teardown_reaps_orphaned_session_pids_dead() -> None:
     teardown reaps the now-orphaned session by name and captured PIDs are dead."""
     import uuid
     from megaplan.runtime.process import TmuxSession, pane_pids
-
-    _require_tmux_session_support()
 
     name = f"megaplan-wedge-{uuid.uuid4().hex[:8]}"
     session = TmuxSession(name)

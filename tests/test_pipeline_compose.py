@@ -25,14 +25,6 @@ class _BaseStep:
     prompt_key: str | None = None
     slot: str | None = None
 
-    @property
-    def produces(self) -> tuple:
-        return ()
-
-    @property
-    def consumes(self) -> tuple:
-        return ()
-
     def _write(self, ctx: StepContext, name: str, body: str) -> Path:
         out = Path(ctx.plan_dir) / name
         out.parent.mkdir(parents=True, exist_ok=True)

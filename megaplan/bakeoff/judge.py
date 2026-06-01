@@ -205,7 +205,6 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 def _artifact_bundle(worktree: Path, plan_id: str) -> dict[str, str | None]:
     plan_dir = worktree / ".megaplan" / "plans" / plan_id
     artifacts: dict[str, str | None] = {
-        # cache-tolerant: judge bundle view.
         "state.json": _read_text(plan_dir / "state.json"),
         "plan_v1.md": _read_text(plan_dir / "plan_v1.md"),
         "execution.json": _read_text(plan_dir / "execution.json"),

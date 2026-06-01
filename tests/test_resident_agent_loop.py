@@ -8,8 +8,6 @@ import megaplan.resident.agent_loop as agent_loop
 from megaplan.resident import (
     AgentLoopError,
     AgentRequest,
-    AgentRunner,
-    DispatchProtocol,
     FakeAgentRunner,
     FakeAgentStep,
     OpenAICompatibleAgentRunner,
@@ -35,11 +33,6 @@ def _request() -> AgentRequest:
         system_prompt="system",
         hot_context={"ok": True},
     )
-
-
-def test_resident_agent_runner_is_bound_to_dispatch_protocol() -> None:
-    assert DispatchProtocol in AgentRunner.__mro__
-    assert DispatchProtocol in OpenAICompatibleAgentRunner.__mro__
 
 
 def test_fake_agent_runner_executes_bounded_tool_loop_and_returns_audit_records() -> None:

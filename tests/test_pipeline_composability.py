@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import ClassVar
 from pathlib import Path
 from typing import Any
 
@@ -376,8 +375,6 @@ def test_safe_hermetic_parallel_steps_run_concurrently_and_return_in_declaration
         slot: str | None = None
         sleep_s: float = 0.0
         output_label: str = "out"
-        produces: ClassVar[tuple] = ()
-        consumes: ClassVar[tuple] = ()
 
         def run(self, ctx: StepContext) -> StepResult:
             _time.sleep(self.sleep_s)

@@ -35,7 +35,6 @@ _PROMPTS: Path = _PIPELINE_DIR / "prompts"
 
 # ── Module-level metadata surfaced via PipelineRegistry (T9) ──────────
 
-name: str = "epic-blitz"
 description: str = (
     "Three-round adversarial critique of epic drafts (high / mid / low "
     "abstraction) with revision after each round. Produces a "
@@ -46,10 +45,6 @@ supported_modes: tuple[str, ...] = ()
 recommended_profiles: tuple[str, ...] = (
     "@epic-blitz:standard",
 )
-driver: tuple[str, str] = ("graph", "dispatch+emit")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("epic", "critique", "revise")
 
 # ── Prompt paths ──────────────────────────────────────────────────────
 
@@ -196,8 +191,4 @@ __all__ = [
     "default_profile",
     "supported_modes",
     "recommended_profiles",
-    "driver",
-    "entrypoint",
-    "arnold_api_version",
-    "capabilities",
 ]
