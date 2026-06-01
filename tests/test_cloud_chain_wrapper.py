@@ -16,6 +16,7 @@ from megaplan.cloud.cli import (
     _chain_state_reset_command,
     _ensure_repo_command,
     _marker_dir,
+    _normalized_chain_upload_spec,
     _persistent_deploy_dir,
     _tmux_chain_launch_command,
     _tmux_chain_restart_command,
@@ -61,6 +62,36 @@ def _cloud_spec(provider: str) -> CloudSpec:
     if provider == "local":
         kwargs["local"] = LocalSpec(compose_project="local-wrapper", workdir="workspace")
     return CloudSpec(**kwargs)
+
+
+def test_normalized_chain_upload_spec_overlays_cloud_driver_stall_threshold(
+    tmp_path: Path,
+) -> None:
+    local_spec = tmp_path / "chain.yaml"
+    local_spec.write_text(
+        yaml.safe_dump(
+            {
+                "driver": {"max_iterations": 20},
+                "milestones": [{"label": "m1", "idea": "/workspace/app/m1.md"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    upload_spec = _normalized_chain_upload_spec(
+        local_spec,
+        base_branch="main",
+        driver_overrides={"max_stall_iterations": 17},
+    )
+
+    try:
+        payload = yaml.safe_load(upload_spec.read_text(encoding="utf-8"))
+    finally:
+        if upload_spec != local_spec:
+            upload_spec.unlink(missing_ok=True)
+
+    assert payload["driver"]["max_iterations"] == 20
+    assert payload["driver"]["max_stall_iterations"] == 17
 
 
 def _write_chain_spec(path: Path, milestones: list[dict[str, str]], *, base_branch: str | None = None) -> None:

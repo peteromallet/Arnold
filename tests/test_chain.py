@@ -290,6 +290,32 @@ def test_load_spec_parses_review_merge_policy(tmp_path: Path) -> None:
     assert load_spec(spec_path).merge_policy == "review"
 
 
+def test_load_spec_parses_max_stall_iterations_driver_knob(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "driver": {"max_stall_iterations": 12},
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+        },
+    )
+
+    assert load_spec(spec_path).stall_threshold == 12
+
+
+def test_load_spec_keeps_stall_threshold_as_compat_driver_knob(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "driver": {"stall_threshold": 9},
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+        },
+    )
+
+    assert load_spec(spec_path).stall_threshold == 9
+
+
 def test_load_spec_rejects_bad_merge_policy(tmp_path: Path) -> None:
     spec_path = _write_spec(tmp_path, {"merge_policy": "later", "milestones": []})
     with pytest.raises(CliError) as excinfo:

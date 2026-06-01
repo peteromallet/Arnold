@@ -831,6 +831,113 @@ def test_stall_counter_still_trips_when_no_task_progress(tmp_path: Path) -> None
     )
 
 
+def test_stall_counter_resets_when_event_journal_progress_advances(
+    tmp_path: Path,
+) -> None:
+    """Same state plus new non-driver events is progress, not a stall."""
+    plan = "event-progress-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        status = _phase_status(plan_name, state="critiquing", next_step="critique")
+        status["progress"] = {
+            "tasks_done": 0,
+            "tasks_skipped": 0,
+            "tasks_pending": 0,
+            "tasks_blocked": 0,
+        }
+        return status
+
+    def fake_run(args, **kwargs):
+        auto.emit_event(
+            auto.EventKind.LLM_TOKEN_HEARTBEAT,
+            plan_dir=plan_dir,
+            phase="critique",
+            payload={"request_id": "req-progress"},
+        )
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=1,
+            max_iterations=4,
+            max_review_rework_cycles=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "cap", (
+        f"expected cap with event progress, got {outcome.status}: {outcome.reason}"
+    )
+
+
+def test_stall_counter_still_trips_without_event_journal_progress(
+    tmp_path: Path,
+) -> None:
+    """Same state and no progress events still hits the wedge backstop."""
+    plan = "event-wedge-plan"
+    _make_plan_dir(tmp_path, plan)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        status = _phase_status(plan_name, state="critiquing", next_step="critique")
+        status["progress"] = {
+            "tasks_done": 0,
+            "tasks_skipped": 0,
+            "tasks_pending": 0,
+            "tasks_blocked": 0,
+        }
+        return status
+
+    def fake_run(args, **kwargs):
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=2,
+            max_iterations=10,
+            max_review_rework_cycles=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "stalled"
+    assert "stalled at 'critiquing' for 2 iterations" in outcome.reason
+
+
+def test_stall_counter_respects_configured_iteration_threshold(
+    tmp_path: Path,
+) -> None:
+    plan = "threshold-plan"
+    _make_plan_dir(tmp_path, plan)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _phase_status(plan_name, state="critiquing", next_step="critique")
+
+    def fake_run(args, **kwargs):
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=4,
+            max_iterations=10,
+            max_review_rework_cycles=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "stalled"
+    assert "for 4 iterations" in outcome.reason
+
+
 def test_rework_cap_bails_after_exceeding_max_review_rework_cycles(
     tmp_path: Path,
 ) -> None:
