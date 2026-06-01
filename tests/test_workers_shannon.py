@@ -425,8 +425,9 @@ def test_parse_shannon_output_empty_transcript_uses_last_dict() -> None:
 # stream-json (NDJSON) parsing — the liveness output format
 #
 # Sample events mirror @dexh/shannon's stream-json emission shape (one JSON
-# object per line): system/init after session discovery, per-turn
-# assistant + result, and a trailing shannon_session metadata row on cleanup.
+# object per line): system/init after session discovery, then per-turn
+# assistant + result. Wrapper-only shannon_session metadata is hidden by
+# default so the stream is closer to native Claude output.
 # The final structured-output payload lives in the type=result event's
 # `result` field, identical to the legacy buffered json-array path.
 # ---------------------------------------------------------------------------
@@ -460,9 +461,6 @@ def test_parse_shannon_stream_json_prefers_result_event() -> None:
             "total_cost_usd": 0.05,
             "usage": {"input_tokens": 20, "output_tokens": 10},
         },
-        # Trailing cleanup metadata row, last line — must be skipped in favour
-        # of the result event above.
-        {"type": "shannon_session", "subtype": "metadata", "session_id": "sess-stream"},
     ])
     envelope, parsed = _parse_shannon_output(raw)
     assert parsed == payload
@@ -655,13 +653,17 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
         )
 
     command = run_command.call_args.args[0]
-    # Shannon is launched as ``bun <vendored-index.ts> ... -p <launcher-prompt> ...``
-    # post-cutover (no ``shannon`` shim on PATH).
+    # Shannon is launched as ``bun <vendored-index.ts> ...`` and the main
+    # megaplan prompt is handed to the wrapper over stream-json stdin. The
+    # vendored wrapper then starts native Claude in tmux and pastes it after
+    # readiness.
     from megaplan.workers.shannon import VENDORED_SHANNON_PATH
     assert command[0:2] == ["bun", str(VENDORED_SHANNON_PATH)]
-    assert "-p" in command
-    p_idx = command.index("-p")
-    assert "Read the full megaplan phase prompt from this file" in command[p_idx + 1]
+    assert "-p" not in command
+    assert "--input-format=stream-json" in command
+    stdin_msg = json.loads(run_command.call_args.kwargs["stdin_text"])
+    assert stdin_msg["type"] == "user"
+    assert "return json" in stdin_msg["message"]["content"]
     # Shannon is launched with stream-json so it emits incremental NDJSON
     # events that reset the _impl.py idle-output watchdog (real liveness),
     # instead of the fully buffered single-array --output-format=json.
@@ -675,7 +677,6 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     assert "--allow-dangerously-skip-permissions" in command
     # Readiness probe may trigger probabilistically; accept either flag.
     assert ("--session-id" in command) or ("--resume" in command)
-    assert run_command.call_args.kwargs["stdin_text"] is None
     assert run_command.call_args.kwargs["env"]["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
     # Output ceiling is raised above the inherited ~64k default so opus is not
     # cut off mid-run before emitting the structured envelope.
@@ -797,7 +798,8 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     from megaplan.workers.shannon import VENDORED_SHANNON_PATH
     # bun-invoked vendored fork, not a PATH-resolved ``shannon`` shim.
     assert f"bun {VENDORED_SHANNON_PATH}" in command[6]
-    assert " -p " in command[6]
+    assert " -p " not in command[6]
+    assert "--input-format=stream-json" in command[6]
     assert "claude -p" not in command[6]
     assert "--bare" in command[6]
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-test"
@@ -841,9 +843,11 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
         }
     ])
     calls: list[list[str]] = []
+    stdins: list[object] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         calls.append(command)
+        stdins.append(kwargs.get("stdin_text"))
         if len(calls) == 1:
             assert kwargs["timeout"] == 120
             return CommandResult(
@@ -883,8 +887,10 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     # Second turn is the main work turn resuming the same session.
     assert "--resume" in calls[1]
     assert calls[1][calls[1].index("--resume") + 1] == session_id
-    p1 = calls[1].index("-p")
-    assert "Read the full megaplan phase prompt from this file" in calls[1][p1 + 1]
+    assert "-p" not in calls[1]
+    assert "--input-format=stream-json" in calls[1]
+    stdin_msg = json.loads(stdins[1])
+    assert "return json" in stdin_msg["message"]["content"]
     assert result.payload == payload
 
 def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
@@ -941,8 +947,10 @@ def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
     command = run_command.call_args.args[0]
     assert "--session-id" in command
     assert "--resume" not in command
-    p_idx = command.index("-p")
-    assert "Read the full megaplan phase prompt from this file" in command[p_idx + 1]
+    assert "-p" not in command
+    assert "--input-format=stream-json" in command
+    stdin_msg = json.loads(run_command.call_args.kwargs["stdin_text"])
+    assert "return json" in stdin_msg["message"]["content"]
     sleep.assert_not_called()
     assert result.payload == payload
 
@@ -1381,9 +1389,11 @@ def test_session_strategy_never_plain_resumes_reused_session(
     plan_dir, state = _mock_state(tmp_path)
     _seed_shannon_session(state, "execute", "sess-keep")
     calls: list[list[str]] = []
+    stdins: list[object] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         calls.append(command)
+        stdins.append(kwargs.get("stdin_text"))
         if len(calls) == 1:
             return CommandResult(
                 command=command, cwd=tmp_path, returncode=0,
@@ -1417,9 +1427,11 @@ def test_session_strategy_compact_injects_slash_compact(
     plan_dir, state = _mock_state(tmp_path)
     _seed_shannon_session(state, "execute", "sess-keep")
     calls: list[list[str]] = []
+    stdins: list[object] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         calls.append(command)
+        stdins.append(kwargs.get("stdin_text"))
         if len(calls) == 1:
             return CommandResult(
                 command=command, cwd=tmp_path, returncode=0,
@@ -1436,13 +1448,15 @@ def test_session_strategy_compact_injects_slash_compact(
             prompt_override="batch",
         )
     # Turn 1 is the injected /compact against the resumed session; turn 2 is the
-    # real work turn resuming the same id with the launcher prompt.
+    # real work turn resuming the same id with the full prompt over stdin.
     assert len(calls) == 2
     assert calls[0][calls[0].index("-p") + 1] == "/compact"
     assert calls[0][calls[0].index("--resume") + 1] == "sess-keep"
     assert calls[1][calls[1].index("--resume") + 1] == "sess-keep"
-    p1 = calls[1].index("-p")
-    assert "Read the full megaplan phase prompt from this file" in calls[1][p1 + 1]
+    assert "-p" not in calls[1]
+    assert "--input-format=stream-json" in calls[1]
+    stdin_msg = json.loads(stdins[1])
+    assert "batch" in stdin_msg["message"]["content"]
 
 
 def test_session_strategy_clear_injects_slash_clear(
@@ -1670,6 +1684,66 @@ def test_vendored_shannon_contains_slash_completion_helpers() -> None:
     assert "isCompactSummary === true" in src
 
 
+def test_vendored_shannon_launches_native_claude_and_sends_after_ready() -> None:
+    """Vendored Shannon must launch plain interactive Claude, then paste turns.
+
+    The outer Shannon process may receive text via argv or stdin, but the inner
+    Claude process should look like a native tmux launch: no prompt argv, no
+    ``claude -p`` fallback, and each message sent only after prompt readiness
+    plus a randomized delay.
+    """
+    from megaplan.workers.shannon import VENDORED_SHANNON_PATH
+
+    src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
+    assert '"claude",' in src
+    assert '"-p"' not in src[src.index("const claudeLaunchArgs"):src.index("await runCommand([", src.index("const claudeLaunchArgs"))]
+    assert "...options.claudeArgs, prompt" not in src
+    assert "...rootSafeClaudeArgs(options.claudeArgs), prompt" not in src
+    assert "let launchedWithPrompt" not in src
+    assert "await waitUntilReadyToSend(tmuxSession);" in src
+    assert "const promptSentAt = Date.now();" in src
+    assert "classifyClaudeStartupBlocker(pane.stdout)" in src
+    assert "paneLooksReadyForUserMessage(pane.stdout)" in src
+    assert "function randomSendDelayMs()" in src
+    assert "Math.random()" in src
+    assert "SHANNON_START_TIMEOUT_MS" in src
+    assert 'Bun.env.SHANNON_EMIT_METADATA !== "1"' in src
+    assert "type: \"shannon_session\"" in src  # still available when explicitly opted in
+
+
+def test_vendored_shannon_readiness_classifier_handles_blockers() -> None:
+    """The TypeScript pane classifier must not treat blocker screens as ready."""
+    from megaplan.workers.shannon import VENDORED_SHANNON_PATH
+    import subprocess
+
+    script = f"""
+      import {{
+        classifyClaudeStartupBlocker,
+        paneLooksReadyForUserMessage,
+      }} from {json.dumps(str(VENDORED_SHANNON_PATH))};
+
+      const cases = [
+        ["trust", "Is this a project you trust? >"],
+        ["auth", "Not logged in. Run /login first. >"],
+        ["approval", "Do you want to proceed? Yes, and don't ask again >"],
+        ["onboarding", "Press Enter to continue >"],
+      ];
+      for (const [kind, pane] of cases) {{
+        const blocker = classifyClaudeStartupBlocker(pane);
+        if (!blocker || blocker.kind !== kind) {{
+          throw new Error(`expected ${{kind}} blocker, got ${{JSON.stringify(blocker)}}`);
+        }}
+      }}
+      if (!paneLooksReadyForUserMessage("\\n│ ❯ ")) {{
+        throw new Error("expected composer prompt to be ready");
+      }}
+      if (paneLooksReadyForUserMessage("normal output > with more text")) {{
+        throw new Error("non-terminal greater-than sign should not be ready");
+      }}
+    """
+    subprocess.run(["bun", "-e", script], check=True)
+
+
 def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every historical env-var must map to its ShannonConfig field correctly."""
     from megaplan.workers.shannon import ShannonConfig
@@ -1730,7 +1804,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert cfg2.readiness_probe_forced is False
     assert cfg2.trusted_container is False
     assert cfg2.session_roulette_enabled is True
-    assert cfg2.paste_first_turn is False
+    assert cfg2.paste_first_turn is True
     assert cfg2.drop_root is False
     assert cfg2.chmod_workspace is True
     assert cfg2.env_scrub is True
@@ -1750,26 +1824,25 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert default_cfg.session_compact_probability == pytest.approx(0.25)
     assert default_cfg.context_op_delay_min_seconds == pytest.approx(1.0)
     assert default_cfg.context_op_delay_max_seconds == pytest.approx(15.0)
-    assert default_cfg.paste_first_turn is False
+    assert default_cfg.paste_first_turn is True
     assert default_cfg.max_output_tokens == 128000
     assert default_cfg.chmod_workspace is True
     assert default_cfg.env_scrub is True
     assert default_cfg.voice == "announced"
 
 
-def test_paste_first_turn_delivers_prompt_via_stdin(
+def test_native_prompt_handoff_delivers_prompt_via_stdin_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # With paste-first-turn on, the main turn carries the REAL prompt over stdin
-    # (a stream-json user message), uses --input-format=stream-json, drops the
-    # argv -p launcher entirely, and sets the env flag that activates the Shannon
-    # patch. No "read this file" pointer reaches Claude.
+    # By default, the main turn carries the REAL prompt over stdin (a stream-json
+    # user message), uses --input-format=stream-json, drops the argv -p launcher
+    # entirely, and avoids sending the "read this file" pointer as the task.
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
-    monkeypatch.setenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", "1")
+    monkeypatch.delenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", raising=False)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")  # legacy -> fresh, no op turn
     monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 1000, raising=False)
@@ -1809,16 +1882,19 @@ def test_paste_first_turn_delivers_prompt_via_stdin(
     assert captured["env"]["MEGAPLAN_SHANNON_PASTE_FIRST_TURN"] == "1"
 
 
-def test_paste_first_turn_off_keeps_argv_launcher(
+def test_native_prompt_handoff_can_be_disabled_for_legacy_launcher(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Default (flag off): unchanged -p launcher in argv, no stdin, no env flag.
+    # Explicit opt-out keeps the legacy outer-Shannon argv launcher. The vendored
+    # launcher still starts native Claude in tmux and pastes this text after
+    # readiness; this only changes whether megaplan sends the full prompt or the
+    # prompt-file pointer to Shannon.
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
-    monkeypatch.delenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", raising=False)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
     plan_dir, state = _mock_state(tmp_path)
@@ -1847,7 +1923,7 @@ def test_paste_first_turn_off_keeps_argv_launcher(
     assert "-p" in command
     assert "--input-format=stream-json" not in command
     assert captured["stdin"] is None
-    assert "MEGAPLAN_SHANNON_PASTE_FIRST_TURN" not in (captured["env"] or {})
+    assert (captured["env"] or {}).get("MEGAPLAN_SHANNON_PASTE_FIRST_TURN") != "1"
 
 
 def test_plan_session_seeded_reproducibility() -> None:

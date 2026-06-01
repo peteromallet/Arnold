@@ -20,7 +20,7 @@ Env-var → ShannonConfig field mapping (all read by :meth:`ShannonConfig.load`)
   MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY → session_compact_probability (default 0.25)
   MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MIN_SECONDS → context_op_delay_min_seconds (default 1.0)
   MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS → context_op_delay_max_seconds (default 15.0)
-  MEGAPLAN_SHANNON_PASTE_FIRST_TURN          → paste_first_turn            (default False)
+  MEGAPLAN_SHANNON_PASTE_FIRST_TURN          → paste_first_turn            (default True)
   MEGAPLAN_SHANNON_MAX_OUTPUT_TOKENS         → max_output_tokens           (default 128000)
   MEGAPLAN_SHANNON_BASH_TIMEOUT_MS           → launched Claude Bash timeout (default 7200000)
   MEGAPLAN_SHANNON_DROP_ROOT                 → drop_root  (default: auto from root+trusted_container)
@@ -194,7 +194,7 @@ class ShannonConfig:
     context_op_delay_max_seconds: float  # MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS
 
     # ── delivery ─────────────────────────────────────────────────────────
-    paste_first_turn: bool  # MEGAPLAN_SHANNON_PASTE_FIRST_TURN
+    paste_first_turn: bool  # MEGAPLAN_SHANNON_PASTE_FIRST_TURN; default native-style stdin handoff
 
     # ── output budget ────────────────────────────────────────────────────
     max_output_tokens: int  # MEGAPLAN_SHANNON_MAX_OUTPUT_TOKENS
@@ -295,7 +295,7 @@ class ShannonConfig:
             session_compact_probability=_float_unit("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", 0.25),
             context_op_delay_min_seconds=_float_pos("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MIN_SECONDS", 1.0),
             context_op_delay_max_seconds=_float_pos("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", 15.0),
-            paste_first_turn=(_truthy("MEGAPLAN_SHANNON_PASTE_FIRST_TURN") is True),
+            paste_first_turn=(_truthy("MEGAPLAN_SHANNON_PASTE_FIRST_TURN") is not False),
             max_output_tokens=_int_pos("MEGAPLAN_SHANNON_MAX_OUTPUT_TOKENS", 128000),
             drop_root=drop_root,
             chmod_workspace=(_truthy("MEGAPLAN_SHANNON_CHMOD_WORKSPACE") is not False),
@@ -559,7 +559,7 @@ class Turn:
     ``body`` is the user content for this turn (``/clear``, ``/compact``, a
     readiness prompt, or "" for the main turn whose body is the caller's
     real phase prompt). ``delivery`` is ``"argv"`` for ``-p`` launchers or
-    ``"stdin"`` for the paste-first-turn stream-json path. ``expect``
+    ``"stdin"`` for the native-style stream-json prompt handoff. ``expect``
     annotates what the consumer should look for in the response — currently
     "envelope", "non_empty", "completion", or "rotation". ``pre_sleep_s`` is
     pre-computed by the injected rng (e.g. ``rng.uniform(lo, hi)``) so the
@@ -773,7 +773,7 @@ def plan_session(
         session_id=main_session_id,
         resume=main_resume,
         body="",  # the caller substitutes the real phase prompt
-        delivery="argv",  # caller overrides to "stdin" when paste_mode is on
+        delivery="argv",  # caller overrides to "stdin" for the native-style main turn
         expect="envelope",
         timeout=cfg.execute_timeout_seconds,
         pre_sleep_s=main_pre_sleep,
@@ -2009,9 +2009,9 @@ def run_shannon_step(
             ]
         )
 
-    # ── (e) env, ONCE: timeouts, output ceiling, paste-mode, nonroot prefix ─
+    # ── (e) env, ONCE: timeouts, output ceiling, native prompt handoff, nonroot prefix ─
     _is_root = hasattr(os, "geteuid") and os.geteuid() == 0
-    paste_mode = cfg.paste_first_turn and not _is_root
+    paste_mode = cfg.paste_first_turn
     env = _external_worker_env(turn_id=f'plan_worker_{state["name"]}')
     env["SHANNON_TMUX_SESSION_NAME"] = session_name
     # Route Claude's ~/.claude/ writes to the per-run artifact dir so
@@ -2020,16 +2020,17 @@ def run_shannon_step(
     # grandchild env but CLAUDE_CONFIG_DIR passes through to Claude.
     env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
     if paste_mode:
-        # Activate the Shannon paste-first-turn patch so the bare-launched
-        # Claude receives the main turn's prompt as a pasted turn 1. Pre/repair
-        # turns ride small ``-p`` prompts under the same env (paste only the
-        # delivery="stdin" turn).
+        # Keep the historical env flag for older vendored launchers and for
+        # operator diagnostics. The current vendored launcher always starts
+        # native interactive Claude in tmux, waits for a ready prompt, then
+        # sends every turn through tmux paste-buffer with a small random delay.
         env["MEGAPLAN_SHANNON_PASTE_FIRST_TURN"] = "1"
-        # Bare-launch startup race: Claude's welcome banner paints "❯" before
-        # the input box is live, so a turn-1 paste can land before Claude
-        # accepts input. Nudge delayed Enters past the banner.
-        env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT", "2")
-        env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_DELAY_MS", "2500")
+        # Startup race: Claude's welcome banner can paint "❯" before the input
+        # box is genuinely live. Nudge delayed Enters past the banner; the
+        # TypeScript wrapper still waits for prompt readiness before sending.
+        if not cfg.drop_root:
+            env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT", "2")
+            env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_DELAY_MS", "2500")
     if not _is_root:
         # Setting to empty (not popping) defeats Bun's dotenv auto-load in
         # shannon's launcher: Bun skips vars already set, so an empty value

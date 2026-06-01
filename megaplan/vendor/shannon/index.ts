@@ -69,9 +69,11 @@ type AssistantDiscovery = {
 };
 
 const POLL_MS = 100;
-const START_TIMEOUT_MS = 20_000;
+const START_TIMEOUT_MS = Number(Bun.env.SHANNON_START_TIMEOUT_MS ?? 20_000);
 const TURN_TIMEOUT_MS = Number(Bun.env.SHANNON_TURN_TIMEOUT_MS ?? 900_000);
 const WEB_SEARCH_COST_USD = 0.01;
+const SEND_DELAY_MIN_MS = Number(Bun.env.SHANNON_SEND_DELAY_MIN_MS ?? 350);
+const SEND_DELAY_MAX_MS = Number(Bun.env.SHANNON_SEND_DELAY_MAX_MS ?? 2500);
 
 type ModelPricing = {
   inputPerMTok: number;
@@ -496,13 +498,27 @@ export function toSdkHookStarted(row: TranscriptRow): JsonRecord | undefined {
   };
 }
 
-export function toSdkInit(meta: SessionMetadata, rows: TranscriptRow[]): JsonRecord {
+export function toSdkInit(meta: SessionMetadata, rows: TranscriptRow[], claudeArgs: string[] = []): JsonRecord {
+  const nativeInit = rows.find((row) => row.type === "system" && row.subtype === "init");
+  if (nativeInit) {
+    return {
+      ...nativeInit,
+      cwd: typeof nativeInit.cwd === "string" ? nativeInit.cwd : meta.cwd,
+      session_id: nativeInit.session_id ?? nativeInit.sessionId ?? meta.sessionId,
+      uuid: nativeInit.uuid ?? randomUUID(),
+    };
+  }
+
   const userRow = rows.find((row) => row.type === "user");
   const versionedRow = rows.find((row) => typeof row.version === "string");
   const assistantRow = rows.find((row) => typeof row.message?.model === "string");
   const skillNames = skillNamesFromRows(rows);
-  const mcpServers = mcpServersFromRows(rows);
-  const tools = toolsFromMcpServers(mcpServers);
+  const rowMcpServers = firstArrayField(rows, "mcp_servers");
+  const mcpServers = rowMcpServers ?? mcpServersFromRows(rows);
+  const rowTools = firstArrayField(rows, "tools");
+  const tools = rowTools ?? toolsFromMcpServers(mcpServers as Array<{ name: string }>);
+  const rowAgents = firstArrayField(rows, "agents");
+  const rowPlugins = firstArrayField(rows, "plugins");
 
   return {
     type: "system",
@@ -511,17 +527,34 @@ export function toSdkInit(meta: SessionMetadata, rows: TranscriptRow[]): JsonRec
     session_id: meta.sessionId,
     tools,
     mcp_servers: mcpServers,
-    model: assistantRow?.message?.model ?? "unknown",
-    permissionMode: typeof userRow?.permissionMode === "string" ? userRow.permissionMode : "unknown",
+    model: assistantRow?.message?.model ?? stringArgValue(claudeArgs, "--model") ?? "unknown",
+    permissionMode: typeof userRow?.permissionMode === "string"
+      ? userRow.permissionMode
+      : stringArgValue(claudeArgs, "--permission-mode") ?? "unknown",
     apiKeySource: "none",
     claude_code_version: typeof versionedRow?.version === "string" ? versionedRow.version : undefined,
     output_style: "default",
-    agents: [],
+    agents: rowAgents ?? [],
     slash_commands: skillNames,
     skills: skillNames,
-    plugins: [],
+    plugins: rowPlugins ?? [],
     uuid: randomUUID(),
   };
+}
+
+function firstArrayField(rows: TranscriptRow[], field: string): unknown[] | undefined {
+  for (const row of rows) {
+    const value = row[field];
+    if (Array.isArray(value)) return value;
+  }
+  return undefined;
+}
+
+function stringArgValue(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  return typeof value === "string" && !value.startsWith("--") ? value : undefined;
 }
 
 export function toolsFromMcpServers(mcpServers: Array<{ name: string }>): string[] {
@@ -755,7 +788,12 @@ export async function runShannon(options: CliOptions) {
   };
 
   const emitMetadataOnce = () => {
-    if (!meta || metadataEmitted || options.outputFormat !== "stream-json") return;
+    if (
+      !meta
+      || metadataEmitted
+      || options.outputFormat !== "stream-json"
+      || Bun.env.SHANNON_EMIT_METADATA !== "1"
+    ) return;
     metadataEmitted = true;
     emitJson(toShannonMetadata(meta, cleanup));
   };
@@ -771,14 +809,13 @@ export async function runShannon(options: CliOptions) {
       throw new Error("Expected at least one user message on stdin for --input-format=stream-json");
     }
 
-    const firstPromptSentAt = Date.now();
     const _mpScrubKeys = Object.keys(Bun.env).filter((k) => /^(MEGAPLAN_|SHANNON_)/.test(k));
     const _mpEnvPrefix = _mpScrubKeys.length > 0 ? ["env", ..._mpScrubKeys.flatMap((k) => ["-u", k])] : [];
-    const claudeLaunchArgs = isRootProcess()
-      ? [..._mpEnvPrefix, "claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]
-      : (Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN
-          ? [..._mpEnvPrefix, "claude", ...options.claudeArgs]
-          : [..._mpEnvPrefix, "claude", ...options.claudeArgs, prompt]);
+    const claudeLaunchArgs = [
+      ..._mpEnvPrefix,
+      "claude",
+      ...(isRootProcess() ? rootSafeClaudeArgs(options.claudeArgs) : options.claudeArgs),
+    ];
     await runCommand([
       "tmux",
       "new-session",
@@ -792,15 +829,12 @@ export async function runShannon(options: CliOptions) {
 
     void maybeSendStartupEnterKeys(tmuxSession);
 
-    let launchedWithPrompt = !(Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN && !isRootProcess());
     while (prompt) {
       promptCount += 1;
 
-      const promptSentAt = launchedWithPrompt ? firstPromptSentAt : Date.now();
-      if (!launchedWithPrompt) {
-        await waitForPrompt(tmuxSession);
-        await sendPrompt(tmuxSession, prompt);
-      }
+      await waitUntilReadyToSend(tmuxSession);
+      const promptSentAt = Date.now();
+      await sendPrompt(tmuxSession, prompt);
 
       if (options.replayUserMessages && options.outputFormat === "stream-json") {
         emitJson(toUserReplay(prompt));
@@ -837,7 +871,7 @@ export async function runShannon(options: CliOptions) {
           }
         }
 
-        const init = toSdkInit(meta, discovery.rows);
+        const init = toSdkInit(meta, discovery.rows, options.claudeArgs);
         if (options.outputFormat === "stream-json") {
           emitJson(init);
         } else if (options.outputFormat === "json") {
@@ -860,7 +894,6 @@ export async function runShannon(options: CliOptions) {
         emitOutput(options.outputFormat, turnMessages);
       }
 
-      launchedWithPrompt = false;
       prompt = await nextPrompt(promptIterator);
     }
 
@@ -1032,12 +1065,89 @@ async function waitForPrompt(tmuxSession: string) {
 
   while (Date.now() - startedAt < START_TIMEOUT_MS) {
     const pane = await runCommand(["tmux", "capture-pane", "-pt", tmuxSession, "-S", "-40"]);
-    if (pane.stdout.includes("❯") || pane.stdout.includes(">")) return;
+    const blocker = classifyClaudeStartupBlocker(pane.stdout);
+    if (blocker) {
+      throw new Error(
+        `Claude is waiting at a ${blocker.kind} prompt before Shannon can send a message: ${blocker.detail}\n\nCaptured tmux pane:\n${pane.stdout}`,
+      );
+    }
+    if (paneLooksReadyForUserMessage(pane.stdout)) return;
     await sleep(POLL_MS);
   }
 
   const pane = await capturePane(tmuxSession);
   throw new Error(`Timed out waiting for Claude prompt\n\nCaptured tmux pane:\n${pane}`);
+}
+
+type StartupBlocker = {
+  kind: "approval" | "auth" | "trust" | "onboarding";
+  detail: string;
+};
+
+export function classifyClaudeStartupBlocker(pane: string): StartupBlocker | undefined {
+  const normalized = pane.toLowerCase().replace(/\s+/g, " ");
+
+  if (
+    normalized.includes("do you trust")
+    || normalized.includes("project you trust")
+    || normalized.includes("trust this folder")
+    || normalized.includes("trust this workspace")
+  ) {
+    return { kind: "trust", detail: "workspace trust confirmation is blocking startup" };
+  }
+
+  if (
+    normalized.includes("not logged in")
+    || normalized.includes("run /login")
+    || normalized.includes("please log in")
+    || normalized.includes("please login")
+    || normalized.includes("login required")
+    || normalized.includes("authentication required")
+  ) {
+    return { kind: "auth", detail: "Claude authentication is required" };
+  }
+
+  if (
+    normalized.includes("do you want to proceed")
+    || normalized.includes("allow this command")
+    || normalized.includes("approve this")
+    || normalized.includes("approval required")
+    || normalized.includes("permission required")
+    || normalized.includes("yes, and don't ask again")
+    || normalized.includes("yes, and don’t ask again")
+    || normalized.includes("no, and tell")
+  ) {
+    return { kind: "approval", detail: "Claude is waiting for an approval decision" };
+  }
+
+  if (
+    normalized.includes("press enter to continue")
+    || normalized.includes("accept the terms")
+    || normalized.includes("cost threshold")
+    || normalized.includes("onboarding")
+  ) {
+    return { kind: "onboarding", detail: "Claude onboarding or acknowledgement is blocking startup" };
+  }
+
+  return undefined;
+}
+
+export function paneLooksReadyForUserMessage(pane: string) {
+  const lines = pane.split(/\r?\n/).map((line) => line.trimEnd());
+  const recent = lines.slice(-8);
+  return recent.some((line) => /(^|\s)[❯>]\s*$/.test(line));
+}
+
+async function waitUntilReadyToSend(tmuxSession: string) {
+  await waitForPrompt(tmuxSession);
+  await sleep(randomSendDelayMs());
+}
+
+function randomSendDelayMs() {
+  const min = Number.isFinite(SEND_DELAY_MIN_MS) ? Math.max(0, SEND_DELAY_MIN_MS) : 350;
+  const maxRaw = Number.isFinite(SEND_DELAY_MAX_MS) ? Math.max(0, SEND_DELAY_MAX_MS) : 2500;
+  const max = Math.max(min, maxRaw);
+  return Math.floor(min + Math.random() * (max - min + 1));
 }
 
 async function sendPrompt(tmuxSession: string, prompt: string) {
