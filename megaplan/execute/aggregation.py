@@ -234,10 +234,34 @@ def _append_scope_drift_blocker(
     drift: Any,
 ) -> None:
     robustness = configured_robustness(state)
-    if drift.severity == "high" and robustness in {"thorough", "extreme"}:
+    if drift.severity != "high":
+        # Low/none severity (benign artifacts, directory markers, sub-threshold
+        # churn) stays quiet at every robustness level — unchanged behaviour.
+        return
+    if robustness in {"thorough", "extreme"}:
         blocking_reasons.append(
             f"scope_drift_severity=high: unclaimed files {sorted(drift.files_added)} "
             f"with {drift.loc_added_outside_claimed} LOC outside the claimed set"
+        )
+        return
+    # DEFECT 3: on the common `full` robustness level, surface high-severity
+    # unclaimed / no-task files as a RECOVERABLE blocking reason so the operator
+    # sees which files changed without being attributed to any task (e.g. a
+    # discovery side-effect rewriting production manifests). We only SURFACE —
+    # never auto-revert / git restore — because that is too dangerous for the
+    # concurrent live chains sharing this tree. `light`/`bare` stay quiet to
+    # avoid noise on trivial runs; auto-attributed files never reach here
+    # because attribution folds them into the claimed set before drift is
+    # computed (so `files_added` excludes them). The severity bar matches the
+    # hardened gate above; only the robustness scope is widened to include
+    # `full`.
+    if robustness == "full" and drift.files_added:
+        blocking_reasons.append(
+            f"scope_drift_unclaimed_files: files changed not claimed by any task: "
+            f"{sorted(drift.files_added)} "
+            f"({drift.loc_added_outside_claimed} LOC outside the claimed set). "
+            "Review these and attribute them to a task or recover-blocked after "
+            "operator review (no files were reverted)."
         )
 
 

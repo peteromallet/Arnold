@@ -3097,6 +3097,146 @@ def test_execute_unroutable_review_rework_reruns_review_then_blocks_recoverably(
     assert pr.deviations
 
 
+def test_execute_mixed_routable_unroutable_rework_escalates_recoverably_after_cap(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEFECT 1: when review rework mixes a runnable task with an unroutable
+    REVIEW item, the unroutable cap must still trip (instead of being reset and
+    the unroutable findings silently dropped every cycle). After the cap, the
+    plan escalates to recoverable STATE_BLOCKED even though a runnable item also
+    exists.
+    """
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    runnable_task_id = finalize_data["tasks"][0]["id"]
+    for task in finalize_data["tasks"]:
+        task["status"] = "done"
+        task["executor_notes"] = "done"
+        task["commands_run"] = ["true"]
+        task["files_changed"] = ["a.py"]
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    # MIXED rework: one runnable finalize task + one unroutable REVIEW item.
+    review_payload = {
+        "review_verdict": "needs_rework",
+        "rework_items": [
+            {
+                "task_id": runnable_task_id,
+                "issue": "Tighten the implementation for the runnable task.",
+                "expected": "Runnable task addressed.",
+                "actual": "Needs another pass.",
+            },
+            {
+                "task_id": "REVIEW",
+                "issue": "Discovery rewrote a production manifest out of scope.",
+                "expected": "Reference a concrete finalize task.",
+                "actual": "No concrete finalize task was referenced.",
+            },
+        ],
+    }
+    (plan_fixture.plan_dir / "review.json").write_text(
+        json.dumps(review_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    def rework_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        del step, state, plan_dir, args, root, resolved, prompt_override
+        payload = {
+            "output": "Re-ran the runnable rework task.",
+            "files_changed": ["a.py"],
+            "commands_run": ["true"],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "task_id": runnable_task_id,
+                    "status": "done",
+                    "executor_notes": "Re-addressed the runnable rework item with evidence.",
+                    "files_changed": ["a.py"],
+                    "commands_run": ["true"],
+                }
+            ],
+            "sense_check_acknowledgments": [],
+        }
+        return (
+            WorkerResult(
+                payload=payload,
+                raw_output="rework",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="rework",
+            ),
+            "codex",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", rework_worker)
+
+    def rerun_execute_with_same_mixed_review() -> dict:
+        state = load_state(plan_fixture.plan_dir)
+        state["current_state"] = megaplan.STATE_FINALIZED
+        # Re-mark every task done so the only pending work is the rework reroute.
+        fd = read_json(plan_fixture.plan_dir / "finalize.json")
+        for task in fd["tasks"]:
+            task["status"] = "done"
+            task["executor_notes"] = "done"
+            task["commands_run"] = ["true"]
+            task["files_changed"] = ["a.py"]
+        (plan_fixture.plan_dir / "finalize.json").write_text(
+            json.dumps(fd, indent=2) + "\n", encoding="utf-8"
+        )
+        (plan_fixture.plan_dir / "state.json").write_text(
+            json.dumps(state, indent=2) + "\n", encoding="utf-8"
+        )
+        (plan_fixture.plan_dir / "review.json").write_text(
+            json.dumps(review_payload, indent=2) + "\n", encoding="utf-8"
+        )
+        return megaplan.handle_execute(
+            plan_fixture.root,
+            make_args(
+                plan=plan_fixture.plan_name,
+                confirm_destructive=True,
+                user_approved=True,
+            ),
+        )
+
+    # Cycles 1-3: unroutable attempts increment (1,2,3 <= cap of 3); the
+    # runnable rework re-runs execute each time (healthy path preserved).
+    rerun_execute_with_same_mixed_review()
+    rerun_execute_with_same_mixed_review()
+    rerun_execute_with_same_mixed_review()
+    state_after_three = load_state(plan_fixture.plan_dir)
+    assert state_after_three["meta"]["unroutable_rework_attempts"] == 3
+
+    # Cycle 4: attempts (4) > cap (3) with the unroutable item still present →
+    # escalate to recoverable blocked even though a runnable item also exists.
+    fourth = rerun_execute_with_same_mixed_review()
+    state = load_state(plan_fixture.plan_dir)
+
+    assert fourth["state"] == megaplan.STATE_BLOCKED
+    assert state["current_state"] == megaplan.STATE_BLOCKED
+    assert fourth["success"] is False
+    assert "REVIEW" in fourth["unrunnable_rework_task_ids"]
+    assert "unroutable item" in fourth["summary"]
+
+    from megaplan.orchestration.phase_result import read_phase_result
+
+    pr = read_phase_result(plan_fixture.plan_dir)
+    assert pr is not None
+    assert pr.exit_kind == "blocked_by_quality"
+
+
 def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
