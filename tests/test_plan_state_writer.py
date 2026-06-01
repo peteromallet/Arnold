@@ -43,6 +43,20 @@ def _read(plan_dir: Path) -> dict:
     return json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
 
 
+def _state_written_events(plan_dir: Path) -> list[dict]:
+    ndjson_path = plan_dir / "events.ndjson"
+    if not ndjson_path.exists():
+        return []
+    events = []
+    for line in ndjson_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if event.get("kind") == "state_written":
+            events.append(event)
+    return events
+
+
 def test_write_plan_state_rejects_invalid_current_state(tmp_path: Path) -> None:
     with pytest.raises(CliError, match="invalid current_state"):
         write_plan_state(
@@ -207,6 +221,85 @@ def test_write_plan_state_active_step_heartbeat_only_updates_matching_run(tmp_pa
     assert active["last_activity_kind"] == "token"
     assert active["last_activity_detail"] == "x" * 500
     assert active["last_activity_at"] != "2026-01-01T00:00:00Z"
+
+
+def test_active_step_heartbeat_coalesces_full_writes_and_wal_snapshots(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import megaplan._core.state as state_mod
+
+    monkeypatch.setattr(state_mod, "_last_heartbeat_persist_at", {}, raising=True)
+    monkeypatch.setenv("MEGAPLAN_HEARTBEAT_PERSIST_INTERVAL_S", "10000")
+    monotonic_now = {"value": 100.0}
+    monkeypatch.setattr(
+        state_mod.time,
+        "monotonic",
+        lambda: monotonic_now["value"],
+        raising=True,
+    )
+
+    save_state(
+        tmp_path,
+        _state(
+            active_step={
+                "phase": "execute",
+                "agent": "codex",
+                "mode": "fresh",
+                "run_id": "r1",
+                "last_activity_at": "2026-01-01T00:00:00Z",
+                "last_activity_kind": "started",
+            }
+        ),
+    )
+    state_path = tmp_path / "state.json"
+    baseline_events = len(_state_written_events(tmp_path))
+
+    calls = {"n": 0}
+    real_atomic_write_json = state_mod.atomic_write_json
+
+    def _counting_atomic_write_json(path, data, **kwargs):
+        if Path(path) == state_path:
+            calls["n"] += 1
+        return real_atomic_write_json(path, data, **kwargs)
+
+    monkeypatch.setattr(
+        state_mod,
+        "atomic_write_json",
+        _counting_atomic_write_json,
+        raising=True,
+    )
+
+    touch_active_step(tmp_path, run_id="r1", kind="token", detail="first")
+
+    assert calls["n"] == 1
+    assert len(_state_written_events(tmp_path)) == baseline_events + 1
+    first_persisted = _read(tmp_path)["active_step"]
+    assert first_persisted["last_activity_kind"] == "token"
+    assert first_persisted["last_activity_detail"] == "first"
+    assert first_persisted["last_activity_at"] != "2026-01-01T00:00:00Z"
+
+    state_mod.os.utime(state_path, (1_000_000_000, 1_000_000_000))
+    mtime_before = state_path.stat().st_mtime
+    events_after_first = len(_state_written_events(tmp_path))
+
+    for index in range(5):
+        monotonic_now["value"] = 101.0 + index
+        touch_active_step(tmp_path, run_id="r1", kind="token", detail=f"skip-{index}")
+
+    assert calls["n"] == 1
+    assert len(_state_written_events(tmp_path)) == events_after_first
+    assert state_path.stat().st_mtime > mtime_before
+    coalesced_persisted = _read(tmp_path)["active_step"]
+    assert coalesced_persisted["last_activity_at"] == first_persisted["last_activity_at"]
+    assert coalesced_persisted["last_activity_detail"] == "first"
+
+    monkeypatch.setenv("MEGAPLAN_HEARTBEAT_PERSIST_INTERVAL_S", "0")
+    monotonic_now["value"] = 106.0
+    touch_active_step(tmp_path, run_id="r1", kind="token", detail="forced")
+
+    assert calls["n"] == 2
+    assert len(_state_written_events(tmp_path)) == events_after_first + 1
+    assert _read(tmp_path)["active_step"]["last_activity_detail"] == "forced"
 
 
 def test_write_plan_state_legacy_migration_persists_normalized_state(tmp_path: Path) -> None:
