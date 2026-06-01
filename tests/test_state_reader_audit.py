@@ -47,6 +47,7 @@ CACHE_TOLERANT_FILES = {
     "megaplan/observability/cost.py",
     "megaplan/observability/introspect.py",
     "megaplan/bakeoff/judge.py",
+    "megaplan/store/warrant_sources.py",
 }
 
 DORMANT_FILES = {
@@ -70,6 +71,7 @@ INFRA_ALLOWED_FILES = {
     "megaplan/_pipeline/types.py",  # in-process phase dispatch reads live state
     "megaplan/_pipeline/stages/inprocess_step.py",  # in-process driver
     "megaplan/chain/__init__.py",  # chain runner state probes
+    "megaplan/supervisor/chain_runner.py",  # supervisor chain state probes
     # write paths / fixture/manifest references / non-reader callers
     "megaplan/observability/fold.py",  # WAL fold authority itself
     "megaplan/bakeoff/merge.py",  # rewrite helper

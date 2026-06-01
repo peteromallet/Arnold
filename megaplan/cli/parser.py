@@ -374,6 +374,40 @@ def build_parser() -> argparse.ArgumentParser:
     epic_export_parser.add_argument("--gzip", action="store_true")
     epic_export_parser.add_argument("--allow-missing-blobs", action="store_true")
     epic_export_parser.add_argument("--project-dir", default=None)
+    epic_capsule_parser = epic_subparsers.add_parser(
+        "capsule", help="Build, inspect, fork, or list M7 Capsule projections"
+    )
+    epic_capsule_parser.add_argument("--project-dir", default=None)
+    epic_capsule_sub = epic_capsule_parser.add_subparsers(
+        dest="capsule_action", required=True
+    )
+    epic_capsule_build_parser = epic_capsule_sub.add_parser(
+        "build", help="Build a Capsule projection for an epic"
+    )
+    epic_capsule_build_parser.add_argument("epic_id")
+    epic_capsule_build_parser.add_argument("--allow-degraded", action="store_true")
+    epic_capsule_build_parser.add_argument("--created-by", default=None)
+    epic_capsule_build_parser.add_argument("--project-dir", default=None)
+    epic_capsule_inspect_parser = epic_capsule_sub.add_parser(
+        "inspect", help="Inspect a Capsule by hash"
+    )
+    epic_capsule_inspect_parser.add_argument("capsule_hash")
+    epic_capsule_inspect_parser.add_argument("--project-dir", default=None)
+    epic_capsule_fork_parser = epic_capsule_sub.add_parser(
+        "fork", help="Fork a Capsule and add one parent edge"
+    )
+    epic_capsule_fork_parser.add_argument("capsule_hash")
+    epic_capsule_fork_parser.add_argument(
+        "--definition-overrides-json",
+        default=None,
+        help="JSON object merged into the child Capsule Definition",
+    )
+    epic_capsule_fork_parser.add_argument("--created-by", default=None)
+    epic_capsule_fork_parser.add_argument("--project-dir", default=None)
+    epic_capsule_list_parser = epic_capsule_sub.add_parser(
+        "list", help="List local Capsule hashes"
+    )
+    epic_capsule_list_parser.add_argument("--project-dir", default=None)
 
     # --- ticket subcommand group ---
     ticket_parser = subparsers.add_parser(
@@ -1228,6 +1262,12 @@ def build_parser() -> argparse.ArgumentParser:
     pipelines_new_parser.add_argument(
         "pipeline_name",
         help="Pipeline name to scaffold (e.g. my-pipeline)",
+    )
+    pipelines_new_parser.add_argument(
+        "--driver",
+        choices=["graph"],
+        default="graph",
+        help="Scaffold driver shape. Only 'graph' is supported today.",
     )
 
     return parser

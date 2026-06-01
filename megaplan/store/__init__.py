@@ -27,12 +27,32 @@ from .base import (
 )
 from megaplan.schemas import CloudRun, ResidentConversation, ScheduledJob
 from .blob import BlobMissingError, BlobRef, BlobStat, BlobStore, LocalDirBlobStore, SupabaseStorageBlobStore
+from .capsule import (
+    CapsuleBuildResult,
+    CapsuleContractCheck,
+    CapsuleContractError,
+    CapsuleIntegrityError,
+    CapsuleInspection,
+    CapsuleListingUnsupportedError,
+    CapsuleRecordRef,
+    CapsuleStorageError,
+    CapsuleWriteResult,
+    build_capsule,
+    check_capsule_contract,
+    fork_capsule,
+    get_capsule,
+    inspect_capsule,
+    list_capsules,
+    put_capsule_record,
+    write_capsule,
+)
 from .compat import ArnoldBlobAdapter, ArnoldStoreAdapter
 from .db import DBStore
 from .file import FileStore
 from .identity import require_actor_id, resolve_actor_id, validate_actor_exists
 from .multi import MultiStore
 from .plan_repository import PlanRepository
+from .warrant import WarrantBuildResult, WarrantError, build_warrant, verify_warrant, warrant_signed_envelope
 
 __all__ = [
     "ArnoldBlobAdapter",
@@ -44,6 +64,18 @@ __all__ = [
     "BlobRef",
     "BlobStat",
     "BlobStore",
+    "build_capsule",
+    "build_warrant",
+    "CapsuleBuildResult",
+    "CapsuleContractCheck",
+    "CapsuleContractError",
+    "CapsuleIntegrityError",
+    "CapsuleInspection",
+    "CapsuleListingUnsupportedError",
+    "CapsuleRecordRef",
+    "CapsuleStorageError",
+    "CapsuleWriteResult",
+    "check_capsule_contract",
     "ChecklistItemInput",
     "CloudRun",
     "CloudRunInput",
@@ -52,15 +84,20 @@ __all__ = [
     "deterministic_idempotency_key",
     "EpicSummary",
     "FileStore",
+    "fork_capsule",
+    "get_capsule",
     "HotContext",
     "Lease",
     "LeaseConflict",
     "LockConflict",
     "LocalDirBlobStore",
+    "list_capsules",
+    "inspect_capsule",
     "MessageSearchHit",
     "MultiStore",
     "PlanRepository",
     "ProgressEventInput",
+    "put_capsule_record",
     "require_actor_id",
     "ResidentConversation",
     "ResidentConversationInput",
@@ -76,4 +113,9 @@ __all__ = [
     "SupabaseStorageBlobStore",
     "Transaction",
     "validate_actor_exists",
+    "verify_warrant",
+    "WarrantBuildResult",
+    "WarrantError",
+    "warrant_signed_envelope",
+    "write_capsule",
 ]

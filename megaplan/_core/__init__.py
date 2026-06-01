@@ -73,6 +73,19 @@ from .io import (
     write_journal_commit_marker,
 )
 
+# -- canonical.py: byte-stable projection hashing/signing -------------------
+from .canonical import (
+    WARRANT_HMAC_ALGORITHM,
+    canonical_projection_bytes,
+    canonical_projection_sha256,
+    canonical_projection_sha256_uri,
+    hmac_sha256_hex,
+    sha256_hex,
+    sha256_uri,
+    sign_canonical_projection,
+    verify_canonical_projection_signature,
+)
+
 # -- phase_runtime.py: centralized runtime policy ----------------------------
 from .phase_runtime import (
     DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
@@ -256,6 +269,16 @@ __all__ = [
     "split_oversized_batches",
     "slugify",
     "write_journal_commit_marker",
+    # canonical
+    "WARRANT_HMAC_ALGORITHM",
+    "canonical_projection_bytes",
+    "canonical_projection_sha256",
+    "canonical_projection_sha256_uri",
+    "hmac_sha256_hex",
+    "sha256_hex",
+    "sha256_uri",
+    "sign_canonical_projection",
+    "verify_canonical_projection_signature",
     # phase_runtime
     "DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS",
     "PHASE_RUNTIME_POLICY",

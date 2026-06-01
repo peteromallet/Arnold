@@ -55,7 +55,9 @@ def compute_scope_drift(
     missing_baseline = (
         files_claimed if files_claimed_for_missing is None else files_claimed_for_missing
     )
-    files_missing = sorted(missing_baseline - files_in_diff)
+    files_missing = sorted(
+        path for path in missing_baseline - files_in_diff if not _is_benign(path)
+    )
     loc_added = sum(loc_by_file.values())
     loc_added_outside_claimed = sum(loc_by_file.get(path, 0) for path in files_added)
     # ``files_missing`` means the executor claimed it changed a file that

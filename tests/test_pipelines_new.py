@@ -29,6 +29,16 @@ def _run_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _run_arnold_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run ``python -m megaplan.cli.arnold pipelines ...`` and return the result."""
+    return subprocess.run(
+        [sys.executable, "-m", "megaplan.cli.arnold", "pipelines", *args],
+        capture_output=True,
+        text=True,
+        env={**__import__("os").environ, "MEGAPLAN_MOCK_WORKERS": "1"},
+    )
+
+
 @pytest.fixture
 def clean_scaffold():
     """Remove any leftover scaffold artifacts from prior runs."""
@@ -90,6 +100,38 @@ def test_pipelines_new_emitted_package_passes_check(clean_scaffold: list[Path]):
     assert result.returncode == 0, f"new failed: {result.stderr}"
 
     # Check — must pass (GREEN).
+    check_result = _run_pipelines("check", name)
+    assert check_result.returncode == 0, (
+        f"check failed (exit {check_result.returncode}):\n"
+        f"stdout: {check_result.stdout}\n"
+        f"stderr: {check_result.stderr}"
+    )
+    assert name in check_result.stdout
+
+
+def test_arnold_pipelines_new_driver_graph_emits_checkable_module(
+    clean_scaffold: list[Path],
+):
+    """The documented Arnold scaffold command exists and emits a checkable module."""
+    name = "t14-arnold-scaffold-check"
+    module_stem = name.replace("-", "_")
+    module_path = _PIPELINES_DIR / f"{module_stem}.py"
+    skill_dir = _PIPELINES_DIR / name
+
+    clean_scaffold.extend([module_path, skill_dir])
+
+    if module_path.exists():
+        module_path.unlink()
+    if skill_dir.exists():
+        shutil.rmtree(skill_dir)
+
+    result = _run_arnold_pipelines("new", name, "--driver", "graph")
+    assert result.returncode == 0, f"new failed: {result.stderr}"
+    assert module_path.exists(), f"module not created at {module_path}"
+    assert 'driver: tuple[str, str] = (\'graph\', "dispatch+emit")' in module_path.read_text(
+        encoding="utf-8"
+    )
+
     check_result = _run_pipelines("check", name)
     assert check_result.returncode == 0, (
         f"check failed (exit {check_result.returncode}):\n"
