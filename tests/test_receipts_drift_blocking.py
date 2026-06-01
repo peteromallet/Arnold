@@ -87,10 +87,14 @@ def _assert_audit_line(audit_dir: Path, plan_id: str) -> None:
     assert matching[-1]["scope_drift_severity"] == "high"
 
 
+# standard(=full) now ALSO surfaces unclaimed files as a recoverable blocker
+# (DEFECT 3), but via the distinct ``scope_drift_unclaimed_files`` reason
+# rather than the hardened-only ``scope_drift_severity=high`` reason. robust
+# (=thorough) keeps the high-severity gate.
 @pytest.mark.parametrize("execute_mode", ["auto", "batch"])
 @pytest.mark.parametrize(
     ("robustness", "should_block"),
-    [("standard", False), ("robust", True)],
+    [("standard", True), ("robust", True)],
 )
 def test_high_scope_drift_blocks_only_hardened_robustness(
     tmp_path: Path,
@@ -159,14 +163,75 @@ def test_high_scope_drift_blocks_only_hardened_robustness(
     _assert_audit_line(audit_dir, fixture.plan_name)
 
     assert "[scope_drift=high]" in response["summary"]
-    drift_blocker = "scope_drift_severity=high"
-    if should_block:
-        assert response["success"] is False
-        assert response["state"] == megaplan.STATE_FINALIZED
-        assert drift_blocker in response["summary"]
-        assert "b.py" in response["summary"]
-        assert "30 LOC" in response["summary"]
+    # robust(=thorough) blocks via the hardened high-severity reason; standard
+    # (=full) blocks via the unclaimed-files surfacing reason (DEFECT 3).
+    drift_blocker = (
+        "scope_drift_severity=high"
+        if robustness == "robust"
+        else "scope_drift_unclaimed_files"
+    )
+    assert should_block
+    assert response["success"] is False
+    assert response["state"] == megaplan.STATE_FINALIZED
+    assert drift_blocker in response["summary"]
+    assert "b.py" in response["summary"]
+
+
+def _drift(severity: str, files_added: list[str], loc: int):
+    from megaplan.receipts.drift import ScopeDriftReport
+
+    return ScopeDriftReport(
+        files_added=files_added,
+        files_missing=[],
+        loc_added=loc,
+        loc_removed=0,
+        loc_added_outside_claimed=loc,
+        severity=severity,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.parametrize(
+    ("robustness", "expect_blocker"),
+    [
+        ("bare", False),
+        ("light", False),
+        ("full", True),       # DEFECT 3: surface unclaimed files on full
+        ("thorough", True),   # unchanged hardened gate
+        ("extreme", True),    # unchanged hardened gate
+    ],
+)
+def test_append_scope_drift_blocker_surfaces_unclaimed_files_on_full(
+    robustness: str,
+    expect_blocker: bool,
+) -> None:
+    """DEFECT 3: high-severity unclaimed files surface a recoverable blocker on
+    `full` (and the hardened levels), but stay quiet on `light`/`bare`."""
+    state = {"config": {"robustness": robustness}}
+    blocking_reasons: list[str] = []
+    megaplan.execute.aggregation._append_scope_drift_blocker(
+        blocking_reasons,
+        state,  # type: ignore[arg-type]
+        _drift("high", ["pack.yaml"], 42),
+    )
+    if expect_blocker:
+        assert len(blocking_reasons) == 1
+        assert "pack.yaml" in blocking_reasons[0]
+        if robustness == "full":
+            assert "scope_drift_unclaimed_files" in blocking_reasons[0]
+            assert "not claimed by any task" in blocking_reasons[0]
+        else:
+            assert "scope_drift_severity=high" in blocking_reasons[0]
     else:
-        assert response["success"] is True
-        assert drift_blocker not in response["summary"]
-        assert not any(drift_blocker in warning for warning in response["warnings"])
+        assert blocking_reasons == []
+
+
+def test_append_scope_drift_blocker_quiet_on_full_for_low_severity() -> None:
+    """Benign low-severity churn (e.g. a directory marker) stays quiet on full."""
+    state = {"config": {"robustness": "full"}}
+    blocking_reasons: list[str] = []
+    megaplan.execute.aggregation._append_scope_drift_blocker(
+        blocking_reasons,
+        state,  # type: ignore[arg-type]
+        _drift("low", ["newpkg/"], 0),
+    )
+    assert blocking_reasons == []
