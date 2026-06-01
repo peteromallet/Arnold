@@ -1801,8 +1801,64 @@ def test_refresh_base_branch_default_invokes_git(tmp_path: Path) -> None:
     assert cmds[2] == ["git", "pull", "--ff-only", "origin", "setup/cloud"]
 
 
-def test_refresh_base_branch_aborts_on_git_failure(tmp_path: Path) -> None:
-    """A failed checkout/pull must stop the chain before stale work executes."""
+def test_refresh_base_branch_continues_on_non_fast_forward_pull(tmp_path: Path) -> None:
+    """A diverged local base is expected for in-flight chains and must continue."""
+    from megaplan.chain import _refresh_base_branch
+
+    calls = [
+        subprocess.CompletedProcess(
+            args=["git", "fetch", "origin", "setup/cloud"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "checkout", "setup/cloud"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "pull", "--ff-only", "origin", "setup/cloud"],
+            returncode=128,
+            stdout="",
+            stderr="fatal: Not possible to fast-forward, aborting.",
+        ),
+    ]
+    msgs: list[str] = []
+
+    with patch("megaplan.chain.subprocess.run", side_effect=calls):
+        _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append)
+
+    assert any("Not possible to fast-forward" in msg for msg in msgs)
+    assert any("continuing on local setup/cloud" in msg for msg in msgs)
+
+
+def test_refresh_base_branch_aborts_on_fetch_failure(tmp_path: Path) -> None:
+    """A failed fetch still surfaces as a refresh error."""
+    from megaplan.chain import _refresh_base_branch
+
+    calls = [
+        subprocess.CompletedProcess(
+            args=["git", "fetch", "origin", "setup/cloud"],
+            returncode=128,
+            stdout="",
+            stderr="fatal: unable to access origin",
+        ),
+    ]
+    msgs: list[str] = []
+
+    with patch("megaplan.chain.subprocess.run", side_effect=calls):
+        with pytest.raises(CliError) as excinfo:
+            _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append)
+
+    assert excinfo.value.code == "git_refresh_failed"
+    assert "git fetch origin setup/cloud exited 128" in excinfo.value.message
+    assert any("unable to access origin" in msg for msg in msgs)
+
+
+def test_refresh_base_branch_aborts_on_checkout_failure(tmp_path: Path) -> None:
+    """A failed checkout must stop the chain before stale work executes."""
     from megaplan.chain import _refresh_base_branch
 
     calls = [

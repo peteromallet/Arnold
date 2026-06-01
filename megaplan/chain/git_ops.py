@@ -39,21 +39,27 @@ def _refresh_base_branch(
     writer,
     no_git_refresh: bool = False,
 ) -> None:
-    """Run `git fetch + checkout <base_branch> + pull`, aborting on refresh failures.
+    """Run a best-effort refresh of ``base_branch`` before milestone work.
 
     When ``no_git_refresh`` is True, this is a no-op (still logs that it was
     skipped). This guard exists so developer checkouts running ``megaplan
     chain`` do not get their currently checked-out branch stomped by an
     automatic base-branch checkout.
+
+    ``git pull --ff-only`` divergence is intentionally non-fatal. In-flight
+    chains commit milestone output to the local base branch, so a local branch
+    that is ahead of or diverged from ``origin/<base_branch>`` is expected and
+    must remain the source of truth until the epic is resolved.
     """
     if no_git_refresh:
         writer("[chain] skipping git refresh (--no-git-refresh)\n")
         return
-    for cmd in (
-        ["git", "fetch", "origin", base_branch],
-        ["git", "checkout", base_branch],
-        ["git", "pull", "--ff-only", "origin", base_branch],
-    ):
+    refresh_commands = (
+        (["git", "fetch", "origin", base_branch], True),
+        (["git", "checkout", base_branch], True),
+        (["git", "pull", "--ff-only", "origin", base_branch], False),
+    )
+    for cmd, fatal_on_failure in refresh_commands:
         try:
             proc = _compat().subprocess.run(
                 cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
@@ -63,12 +69,20 @@ def _refresh_base_branch(
                 detail = (proc.stderr or proc.stdout or "").strip()
                 if detail:
                     writer(f"[chain] {' '.join(cmd)} output:\n{detail}\n")
+                if not fatal_on_failure:
+                    writer(
+                        "[chain] warning: fast-forward refresh failed; "
+                        f"continuing on local {base_branch}. "
+                        "This is expected when an in-flight chain has local "
+                        "milestone commits or origin moved independently.\n"
+                    )
+                    continue
                 raise CliError(
                     "git_refresh_failed",
                     (
                         "Chain git refresh failed before milestone initialization: "
                         f"{' '.join(cmd)} exited {proc.returncode}. "
-                        "Resolve the checkout or rerun with --no-git-refresh for a developer workspace."
+                        "Resolve the checkout or rerun with --no-git-refresh."
                     ),
                     extra={
                         "command": cmd,
@@ -79,12 +93,20 @@ def _refresh_base_branch(
                 )
         except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
             writer(f"[chain] {' '.join(cmd)} failed: {exc}\n")
+            if not fatal_on_failure:
+                writer(
+                    "[chain] warning: fast-forward refresh failed; "
+                    f"continuing on local {base_branch}. "
+                    "This is expected when an in-flight chain has local "
+                    "milestone commits or origin moved independently.\n"
+                )
+                continue
             raise CliError(
                 "git_refresh_failed",
                 (
                     "Chain git refresh failed before milestone initialization: "
                     f"{' '.join(cmd)} failed with {exc}. "
-                    "Resolve the checkout or rerun with --no-git-refresh for a developer workspace."
+                    "Resolve the checkout or rerun with --no-git-refresh."
                 ),
                 extra={"command": cmd, "error": str(exc)},
             ) from exc
