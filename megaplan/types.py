@@ -842,7 +842,6 @@ DEFAULTS = {
     # behind those vars. Default [] = no isolation (env built as before). See
     # _apply_worker_state_isolation in megaplan/workers/_impl.py.
     "execution.worker_isolated_env_vars": [],
-    "signing.warrant_key": "",
 }
 
 # Valid pin values for execution.critic_model. Mirrors CRITIC_MODEL_ROSTER in

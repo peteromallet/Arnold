@@ -6,7 +6,6 @@ import argparse
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan._pipeline.flags import supervisor_tier_routing_on
 from megaplan.types import CliError, ROBUSTNESS_LEVELS
 
 
@@ -119,13 +118,7 @@ def run_bakeoff_cli(root: Path, args: argparse.Namespace) -> int:
             )
         args.mode = mode
         args.output = output
-
-        if supervisor_tier_routing_on():
-            from megaplan.supervisor.bakeoff_runner import run_bakeoff_run_handler as _supervisor_bakeoff_handler
-
-            return _supervisor_bakeoff_handler(root, args)
-
-        from megaplan.bakeoff.orchestrator import run_bakeoff_run_handler  # noqa: E402
+        from megaplan.bakeoff.orchestrator import run_bakeoff_run_handler
 
         return run_bakeoff_run_handler(root, args)
 

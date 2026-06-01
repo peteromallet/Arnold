@@ -23,61 +23,6 @@ from megaplan.orchestration.phase_result import (
 )
 from megaplan.workers import WorkerResult
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _prepend_pythonpath(path: Path) -> None:
-    existing = os.environ.get("PYTHONPATH")
-    parts = [str(path)]
-    if existing:
-        parts.extend(part for part in existing.split(os.pathsep) if part and part != str(path))
-    os.environ["PYTHONPATH"] = os.pathsep.join(parts)
-
-
-_prepend_pythonpath(REPO_ROOT)
-
-
-@pytest.fixture(autouse=True)
-def isolate_worker_unit_tests_from_global_mock_env(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Worker subprocess unit tests own their mocks even under broad mock runs.
-
-    The integration suite is often invoked with ``MEGAPLAN_MOCK_WORKERS=1`` so
-    high-level phases use synthetic workers. Low-level worker tests patch the
-    command runners directly and must still exercise that code path; otherwise
-    the global env var bypasses the behavior they are asserting.
-    """
-    rel = request.node.path.relative_to(Path(__file__).resolve().parents[1]).as_posix()
-    if (
-        rel.startswith("tests/test_workers_")
-        or rel.startswith("tests/workers/")
-        or rel == "tests/test_prep.py"
-        or rel in {
-            "tests/test_sandbox.py",
-            "tests/test_shannon_wall_clock_timeout.py",
-        }
-    ):
-        monkeypatch.delenv(megaplan.MOCK_ENV_VAR, raising=False)
-
-
-@pytest.fixture(autouse=True)
-def isolate_pipeline_contextvars() -> None:
-    """Prevent tree-scoped runtime ContextVars from leaking across tests."""
-    from megaplan._pipeline.envelope import _envelope_ctx, _fanout_active_ctx
-    from megaplan.runtime.governor import _governor_ctx
-
-    env_token = _envelope_ctx.set(None)
-    fanout_token = _fanout_active_ctx.set(False)
-    governor_token = _governor_ctx.set(None)
-    try:
-        yield
-    finally:
-        _governor_ctx.reset(governor_token)
-        _fanout_active_ctx.reset(fanout_token)
-        _envelope_ctx.reset(env_token)
-
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
@@ -412,7 +357,7 @@ def fake_run_with_phase_result(
     stderr: str = "",
     **kwargs: object,
 ):
-    """Return a callable matching ``_run_planning_phase(cmd, ...) → (int, str, str)``.
+    """Return a callable matching ``_run_megaplan(cmd, ...) → (int, str, str)``.
 
     The callable also writes a synthetic ``phase_result.json`` alongside so
     that ``_run_phase`` can pick it up.  Returns ``(code, stdout, stderr)``

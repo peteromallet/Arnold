@@ -118,8 +118,6 @@ def test_run_judges_by_name_writes_fan_out_artifacts(tmp_path: Path) -> None:
         "judges/judge_brevity/verdict.json",
         "synthesis/synthesis.md",
         "state.json",
-        "events.ndjson",
-        ".events.seq",
     }
 
 

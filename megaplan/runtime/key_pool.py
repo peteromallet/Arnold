@@ -70,16 +70,6 @@ class KeyPool:
         self._next_reload = 0.0
         self._hermes_env: dict[str, str] = {}
         self._entries: dict[str, list[KeyEntry]] = {provider: [] for provider in _PROVIDER_KEY_VARS}
-
-    def current_envelope(self):  # type: ignore[no-untyped-def]
-        """Return the envelope visible to this task via ContextVar, or ``None``.
-
-        KeyPool consults this to read taint/budget/lineage without callers
-        threading the envelope through every dispatch signature.
-        """
-        from megaplan._pipeline.envelope import _envelope_ctx
-
-        return _envelope_ctx.get()
     def _api_keys_path(self) -> Path:
         override = os.environ.get("MEGAPLAN_API_KEYS_PATH")
         if override:
@@ -177,17 +167,7 @@ class KeyPool:
                 return ""
             entry = min(eligible, key=lambda item: item.last_used)
             entry.last_used = now
-        # Hook the Governor outside the KeyPool lock so a BudgetExceeded
-        # raised here does not strand the pool lock.  charge() is a no-op
-        # when no governor is attached to this execution tree.
-        envelope = self.current_envelope()
-        if envelope is not None:
-            from megaplan.runtime.governor import current_governor
-
-            gov = current_governor()
-            if gov is not None:
-                gov.charge(envelope)
-        return entry.key
+            return entry.key
     def report_429(self, provider: str, key: str, cooldown_secs: float = 60) -> None:
         if not key:
             return

@@ -12,8 +12,8 @@ themselves live elsewhere (e.g. ``_pipeline/stages/``,
 Sprint conventions encoded here:
 
 * Gate stages produced by :func:`critique_revise_gate_loop` carry the
-  four required ``kind="gate"`` recommendation edges (one per literal
-  of the planning binding) ahead of any caller-supplied
+  four required ``kind="gate"`` recommendation edges (one per
+  :data:`GateRecommendation` literal) ahead of any caller-supplied
   ``gate_extra_edges``. The executor's typed-verdict dispatch resolves
   them in preference to label-string matching.
 * Panel fan-out stages produced by :func:`panel_parallel` collate per-
@@ -30,7 +30,6 @@ import dataclasses
 from pathlib import Path
 from typing import Any, Callable, Mapping, cast
 
-from megaplan._pipeline._forward_m2_m3 import restore_and_diverge  # TODO(M3): sentinel → RoutingKey
 from megaplan._pipeline.pattern_types import PromoteFn
 from megaplan._pipeline.subloop import SubloopStep
 from megaplan._pipeline.types import (
@@ -172,7 +171,7 @@ def alternating_turns(
     on top.
     """
 
-    del history_strategy, max_rounds  # consumed by Step.run, not topology
+    del history_strategy, max_rounds, until_condition  # consumed by Step.run, not topology
 
     if not roles:
         raise ValueError("alternating_turns: roles must be non-empty")
@@ -181,14 +180,12 @@ def alternating_turns(
     target_for_loop: str = loop_target if loop_target is not None else names[0]
 
     stages: dict[str, Stage] = {}
-    terminal_name = names[-1]
     for idx, (role_name, role_step) in enumerate(roles):
         next_name: str = names[idx + 1] if idx + 1 < len(names) else target_for_loop
         stages[role_name] = Stage(
             name=role_name,
             step=role_step,
             edges=(Edge(label=next_name, target=next_name),),
-            loop_condition=until_condition if role_name == terminal_name else None,
         )
     return stages
 
@@ -206,8 +203,7 @@ def subpipeline_call(
     Documentation-first primitive for future user pipelines. The
     executor's ``kind="subloop"`` dispatch runs the child as a nested
     pipeline; *promote* maps the child's terminal state ``dict`` to a
-    literal of the planning binding on the parent's
-    :class:`PipelineVerdict`.
+    :data:`GateRecommendation` on the parent's :class:`PipelineVerdict`.
 
     Note: :class:`SubloopStep` copies the parent ``StepContext.state``
     into the child via ``dict(ctx.state)`` — the child's state patches
@@ -273,7 +269,7 @@ def mode_prompts(
 def iterate_until(
     stage: Stage,
     *,
-    condition: Callable[[Any], bool] | None = None,
+    condition: Callable[[Mapping[str, Any]], bool],
     max_iterations: int = 10,
     iterate_label: str = "iterate",
     halt_label: str = "halt",
@@ -289,25 +285,7 @@ def iterate_until(
     ``Edge(label=halt_label, target="halt")``.
     """
 
-    from megaplan._pipeline.pattern_stops import LoopState
-    from megaplan._pipeline.loop_node import LoopNode
-
-    _max = int(max_iterations)
-
-    if condition is None:
-        # Default predicate: caller relies entirely on the cap.
-        def _default_pred(_ls: Any) -> bool:
-            return False
-
-        pred: Callable[[Any], bool] = _default_pred
-    else:
-        pred = condition
-
-    node = LoopNode(predicate=pred, max_iterations=_max)
-    # Stage.loop_condition is consulted per-iteration; route it through the
-    # LoopNode so the cap + budget + predicate composition is enforced in
-    # one place.  Existing legacy callers continue to see a plain callable.
-    stored: Callable[[LoopState], bool] = node.should_halt
+    del condition, max_iterations  # consumed by Step.run, not topology
 
     return Stage(
         name=stage.name,
@@ -317,7 +295,6 @@ def iterate_until(
             Edge(label=iterate_label, target=stage.name),
             Edge(label=halt_label, target="halt"),
         ),
-        loop_condition=stored,
     )
 
 
@@ -345,73 +322,6 @@ def escalate_if(
     )
     return escalation_handler, escape_edge
 
-
-
-def escalate_via_subpipeline(
-    condition: Callable[[Mapping[str, Any]], bool],
-    deadlock_pipeline: Pipeline,
-    promote: PromoteFn,
-    *,
-    name: str = "escalate",
-    artifact_subdir: str | None = None,
-) -> tuple[SubloopStep, Edge]:
-    """Return the ``(subloop, escape_edge)`` pair for divergent escalation.
-
-    Composes :func:`subpipeline_call` with an escape :class:`Edge` whose
-    ``recommendation`` is :attr:`restore_and_diverge.name`
-    (``"escalate"`` — with :func:`# TODO(M3) <megaplan._pipeline._forward_m2_m3.restore_and_diverge>`
-    marker).  Callers wire the returned *subloop* into the host pipeline
-    as a :class:`SubloopStep` and append the *escape_edge* as an outgoing
-    :class:`Edge` on the preceding stage, exactly as :func:`escalate_if`
-    does for an inline escalation handler.
-
-    *condition* documents when the host Step should trigger this path;
-    the host Step's ``run()`` consults it against
-    :attr:`StepContext.state`.  *deadlock_pipeline* is the child
-    :class:`Pipeline` that attempts resolution; if it deadlocks the
-    *promote* callable returns the :data:`RoutingKey` that feeds into the
-    escape edge.  *artifact_subdir* isolates the child pipeline's
-    artifacts under ``<plan_dir>/<artifact_subdir>/``.
-
-    Ports
-    -----
-    * **consumes** — ``gated@artifact``: the artifact (and surrounding
-      state) produced by the preceding gate stage that triggered the
-      escalation.
-    * **produces** — ``resolved@artifact``: the artifact (and state)
-      after the subpipeline resolves (or fails to resolve) the deadlock.
-
-    Keep-alive invariants
-    ---------------------
-    * :func:`escalate_if` and :func:`subpipeline_call`
-      are left intact and remain exported through
-      :mod:`megaplan._pipeline.patterns`.
-    * The escape edge's ``recommendation`` is
-      :attr:`restore_and_diverge.name` (``"escalate"``) so the
-      gate-dispatch path can route it alongside the existing
-      ``kind="gate"`` edges produced by :func:`escalate_if` and
-      :func:`critique_revise_gate_loop`.
-    """
-    del condition  # consumed by the host Step that invokes this path
-
-    subloop = subpipeline_call(
-        deadlock_pipeline,
-        promote=promote,
-        artifact_subdir=artifact_subdir,
-        name=name,
-    )
-
-    # TODO(M3): when M3 maps restore_and_diverge as a RoutingKey, the
-    # recommendation below will be RoutingKey(name='restore_and_diverge',
-    # kind='restore').  For M5a it is the literal 'escalate' so the
-    # existing gate-dispatch validator and executor handle it.
-    escape_edge = Edge(
-        label=restore_and_diverge.name,
-        target=subloop.name,
-        kind="gate",
-        recommendation=restore_and_diverge.name,
-    )
-    return subloop, escape_edge
 
 def phase_zero_gate(
     step: Step,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,9 +29,6 @@ from megaplan.orchestration.phase_result import (
     BlockedTask,
     read_phase_result,
 )
-from megaplan.control_interface import read_valid_targets
-from megaplan.planning.control_binding import planning_control_binding, planning_run_state_view
-from megaplan.run_outcome import RunOutcome
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
     if not isinstance(timestamp, str) or not timestamp:
@@ -271,41 +267,8 @@ def _unique_strings(values: list[str]) -> list[str]:
     return sorted({value for value in values if value})
 
 
-def _projected_target_ids(
-    state: dict[str, Any],
-    *,
-    recovery: bool,
-) -> list[str]:
-    run_state = planning_run_state_view(state)
-    targets = read_valid_targets(
-        run_state,
-        planning_control_binding(),
-        recovery=recovery,
-    )
-    return [
-        target.id
-        for target in targets
-        if isinstance(target.id, str)
-        and target.id
-        and target.metadata.get("actionable", True)
-    ]
-
-
-def _projected_valid_next(state: dict[str, Any]) -> list[str]:
-    run_state = planning_run_state_view(state)
-    use_recovery = run_state.outcome in {
-        RunOutcome.BLOCKED,
-        RunOutcome.AWAITING_HUMAN,
-        RunOutcome.FAILED,
-    }
-    projected = _projected_target_ids(state, recovery=use_recovery)
-    if projected or use_recovery:
-        return projected
-    return infer_next_steps(state)
-
-
 def _external_error_resume_command(state: dict[str, Any]) -> str | None:
-    if planning_run_state_view(state).outcome != RunOutcome.BLOCKED:
+    if state.get("current_state") != STATE_BLOCKED:
         return None
     latest_failure = state.get("latest_failure")
     resume_cursor = state.get("resume_cursor")
@@ -348,7 +311,7 @@ def _build_blocker_recovery_context(
             if isinstance(command, str)
         ]
     )
-    if planning_run_state_view(state).outcome == RunOutcome.BLOCKED and blockers:
+    if state.get("current_state") == "blocked" and blockers:
         plan_name = state.get("name")
         if isinstance(plan_name, str) and plan_name:
             suggested_commands.append(
@@ -782,7 +745,7 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
 
 
 def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse:
-    next_steps = _projected_valid_next(state) or infer_next_steps(state)
+    next_steps = infer_next_steps(state)
     if state.get("current_state") == STATE_BLOCKED:
         last_gate = state.get("last_gate") or {}
         preflight = last_gate.get("preflight_results") if isinstance(last_gate, dict) else None
@@ -925,9 +888,8 @@ def handle_status(root: Path, args: argparse.Namespace) -> StepResponse:
     if getattr(args, "pending_human", False):
         items = []
         for pd in cli_mod.active_plan_dirs(root):
-            # cache-tolerant: status-view read.
             st = cli_mod.read_json(pd / "state.json")
-            if planning_run_state_view(st).outcome == RunOutcome.AWAITING_HUMAN:
+            if st.get("current_state") == "awaiting_human_verify":
                 items.append({"name": st["name"], "state": st["current_state"]})
         return {
             "success": True,

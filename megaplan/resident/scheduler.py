@@ -21,7 +21,7 @@ from .cloud import (
     progress_kind_for_classification,
 )
 from .config import ResidentConfig
-from .runtime import EmitProtocol, OutboundMessage, OutboundSink
+from .runtime import OutboundMessage, OutboundSink
 
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
 TERMINAL_OR_INPUT_NEEDED: frozenset[CloudClassification] = frozenset(
@@ -207,7 +207,7 @@ class ResidentJobHandlers:
         job = _job_from_payload(job_payload)
         if self.runtime_flush is not None:
             await self.runtime_flush()
-        self._emit_sink().log_system_event(
+        self.store.log_system_event(
             level="info",
             category="system",
             event_type="resident_deferred_turn",
@@ -218,7 +218,7 @@ class ResidentJobHandlers:
 
     async def handle_heartbeat(self, job_payload: dict[str, Any]) -> None:
         job = _job_from_payload(job_payload)
-        self._emit_sink().log_system_event(
+        self.store.log_system_event(
             level="info",
             category="system",
             event_type="resident_scheduler_heartbeat",
@@ -230,7 +230,7 @@ class ResidentJobHandlers:
     async def handle_confirmation_expiry(self, job_payload: dict[str, Any]) -> None:
         job = _job_from_payload(job_payload)
         expired = self.confirmation_manager.expire_due() if self.confirmation_manager is not None else []
-        self._emit_sink().log_system_event(
+        self.store.log_system_event(
             level="info",
             category="system",
             event_type="resident_confirmation_expiry",
@@ -272,7 +272,7 @@ class ResidentJobHandlers:
         )
         should_append_progress = run.status != updated.status or not run.last_status
         if should_append_progress and updated.epic_id:
-            self._emit_sink().append_progress_event(
+            self.store.append_progress_event(
                 ProgressEventInput(
                     epic_id=updated.epic_id,
                     plan_id=updated.plan_id,
@@ -378,7 +378,7 @@ class ResidentJobHandlers:
         *,
         previous_status: str,
     ) -> None:
-        self._emit_sink().log_system_event(
+        self.store.log_system_event(
             level="info",
             category="system",
             event_type="resident_cloud_check",
@@ -397,9 +397,6 @@ class ResidentJobHandlers:
                 result.classification,
             ),
         )
-
-    def _emit_sink(self) -> EmitProtocol:
-        return self.store
 
 
 def make_store_scheduler(

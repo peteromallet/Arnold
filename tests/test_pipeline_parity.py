@@ -42,6 +42,7 @@ _PARITY_ARTIFACTS = (
     "plan_v1.md",
     "plan_v2.md",
     "prep.json",
+    "critique_output.json",
     "critique_v1.json",
     "critique_v2.json",
     "gate.json",

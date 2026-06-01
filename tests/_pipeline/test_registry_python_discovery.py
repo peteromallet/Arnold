@@ -10,10 +10,10 @@ Covers the six contract points laid out in the brief:
       megaplan/pipelines/writing-panel-strict/SKILL.md.
   (e) read_skill_md for a user pipeline WITHOUT a co-located SKILL.md
       returns None and does not raise.
-  (f) discover_python_pipelines() rejects/skips a planted user sibling whose
-      CLI name duplicates the in-tree discovered ``planning`` module.
-      The duplicate check is root-agnostic; planting under the user-scan root
-      proves the semantic.
+  (f) discover_python_pipelines() rejects/skips a planted sibling whose
+      CLI name would collide with a hardcoded built-in (``planning``).
+      The collision check is root-agnostic;
+      planting under the user-scan root proves the semantic.
       Demo pipelines (doc-critique, judges) are no longer built-ins
       and are importable directly from their demo modules.
 """
@@ -192,15 +192,18 @@ def test_user_pipeline_is_discovered_and_runnable(
     assert registry.read_skill_md("foo") is None
 
 
-# ── (f) Duplicate detection: planted user planning is skipped
+# ── (f) Collision detection: planted name shadowing a built-in is skipped
 
 
-def test_discover_python_pipelines_skips_user_duplicate_of_planning(
+def test_discover_python_pipelines_skips_built_in_collision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Plant a sibling file whose CLI name == 'planning' under the user
-    scan root and assert discovery keeps the in-tree module, not the user
-    duplicate.
+    scan root and assert discovery refuses to register it (warning
+    emitted + skipped). The same code path serves both the in-tree
+    megaplan/pipelines/ root and the user ~/.megaplan/pipelines/ root,
+    so this proves the collision semantic without requiring us to write
+    into the real source tree.
     """
 
     user_dir = tmp_path / ".megaplan" / "pipelines"
@@ -211,7 +214,7 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
         "StepContext, StepResult, Step\n"
         "from dataclasses import dataclass\n"
         "\n"
-        "description = 'BOGUS override of the in-tree planning pipeline.'\n"
+        "description = 'BOGUS override of the built-in planning pipeline.'\n"
         "\n"
         "@dataclass\n"
         "class _BogusStep(Step):\n"
@@ -235,11 +238,19 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
         warnings.simplefilter("always")
         discovered = discover_python_pipelines()
 
-    planning_entries = [entry for entry in discovered if entry[0] == "planning"]
-    assert len(planning_entries) == 1
-    assert Path(planning_entries[0][3]) != planted
+    discovered_names = {entry[0] for entry in discovered}
+    # The planted 'planning' module must NOT appear among discovered
+    # entries — collision detection short-circuits before it is loaded.
+    planted_entries = [
+        entry for entry in discovered if entry[0] == "planning"
+    ]
+    assert planted_entries == [], (
+        f"collision skipped; expected no discovered 'planning', "
+        f"got {planted_entries!r}"
+    )
 
-    # A UserWarning naming the planted duplicate must have been emitted.
+    # A UserWarning naming the planted path + the colliding built-in
+    # must have been emitted.
     matching = [
         w for w in captured
         if issubclass(w.category, UserWarning)
@@ -251,8 +262,9 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
         f"{[str(w.message) for w in captured]!r}"
     )
 
-    # And the registry still resolves the in-tree planning pipeline via
-    # the module-level API.
+    # And the registry still resolves the built-in planning pipeline
+    # via the module-level API (which is backed by the global registry
+    # where the built-in was registered at import time).
     from megaplan._pipeline.registry import (
         get_pipeline,
         pipeline_metadata,
@@ -260,13 +272,13 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
 
     pipeline = get_pipeline("planning")
     assert "bogus" not in pipeline.stages, (
-        "in-tree planning pipeline was clobbered by the planted sibling"
+        "built-in planning pipeline was clobbered by the planted sibling"
     )
 
-    # The in-tree metadata never carries the planted bogus description.
+    # The built-in metadata never carries the planted bogus description.
     builtin_meta = pipeline_metadata("planning")
     assert builtin_meta.get("description") != (
-        "BOGUS override of the in-tree planning pipeline."
+        "BOGUS override of the built-in planning pipeline."
     )
 
 

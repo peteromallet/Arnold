@@ -23,16 +23,12 @@ def _docker_skip_reason() -> str | None:
     """Return a skip reason when Docker is unavailable, else ``None``."""
     if shutil.which("docker") is None:  # pragma: no cover - environment-dependent
         return "docker not available"
-    try:
-        docker_info = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5,
-        )
-    except subprocess.TimeoutExpired:  # pragma: no cover - environment-dependent
-        return "docker daemon unavailable: docker info timed out"
+    docker_info = subprocess.run(
+        ["docker", "info"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if docker_info.returncode != 0:  # pragma: no cover - environment-dependent
         return f"docker daemon unavailable: {docker_info.stderr.strip()}"
     return None
