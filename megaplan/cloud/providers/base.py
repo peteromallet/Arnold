@@ -10,11 +10,40 @@ from __future__ import annotations
 import abc
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from megaplan.cloud.spec import CloudSpec
 from megaplan.types import CliError
+
+
+@dataclass
+class DeployStepReport:
+    name: str
+    status: str
+    detail: str = ""
+    stdout: str = ""
+    stderr: str = ""
+    log_ref: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DeployReport:
+    success: bool
+    provider: str
+    service: str | None
+    deploy_dir: str
+    steps: list[DeployStepReport] = field(default_factory=list)
+    image_rebuild: str = "unknown"
+    image_ref: str | None = None
+    no_op: bool = False
+    vars_updated: int = 0
+    logs: dict[str, Any] = field(default_factory=dict)
+    verdict: str = ""
+    warnings: list[str] = field(default_factory=list)
+    exit_code: int = 0
 
 
 def _missing_cli_error(binary: str, install_url: str) -> None:
@@ -75,7 +104,7 @@ class Provider(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def deploy(self, deploy_dir: Path, *, secrets: dict[str, str]) -> int:
+    def deploy(self, deploy_dir: Path, *, secrets: dict[str, str]) -> int | DeployReport:
         raise NotImplementedError
 
     @abc.abstractmethod
