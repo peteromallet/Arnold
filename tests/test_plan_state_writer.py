@@ -209,6 +209,81 @@ def test_write_plan_state_active_step_heartbeat_only_updates_matching_run(tmp_pa
     assert active["last_activity_at"] != "2026-01-01T00:00:00Z"
 
 
+def test_active_step_heartbeat_coalesces_full_writes_but_keeps_liveness(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A throttled heartbeat must NOT re-serialize the whole ~24KB state, yet
+    must still signal liveness (in-memory timestamp + file mtime bump) so the
+    auto-driver's stall monitor (which reads ``active_step.last_activity_at``
+    content) and any mtime-based watchdog both see the worker as alive."""
+    import os as _os
+    import megaplan._core.state as state_mod
+    from megaplan._core import io as io_mod
+
+    # Isolate the in-process throttle ledger from any other test/run.
+    monkeypatch.setattr(state_mod, "_last_heartbeat_persist_at", {}, raising=True)
+    # Force a long persist interval so every beat after the first is coalesced.
+    monkeypatch.setenv("MEGAPLAN_HEARTBEAT_PERSIST_INTERVAL_S", "10000")
+
+    save_state(
+        tmp_path,
+        _state(
+            active_step={
+                "phase": "execute",
+                "agent": "deepseek",
+                "mode": "fresh",
+                "run_id": "r1",
+                "last_activity_at": "2026-01-01T00:00:00Z",
+                "last_activity_kind": "started",
+            }
+        ),
+    )
+    state_path = tmp_path / "state.json"
+
+    # Beat 1 (first matching run) is always "due": it persists the content
+    # field so the stall monitor sees fresh liveness from the off.
+    touch_active_step(tmp_path, run_id="r1", kind="token", detail="b1")
+    persisted_at_1 = _read(tmp_path)["active_step"]["last_activity_at"]
+    assert _read(tmp_path)["active_step"]["last_activity_kind"] == "token"
+    assert persisted_at_1 != "2026-01-01T00:00:00Z"
+
+    # Count full re-serializes from here on; coalesced beats must not call it.
+    calls = {"n": 0}
+    real_atomic = io_mod.atomic_write_json
+
+    def _counting_atomic(path, data, **kwargs):
+        if str(path) == str(state_path):
+            calls["n"] += 1
+        return real_atomic(path, data, **kwargs)
+
+    monkeypatch.setattr(state_mod, "atomic_write_json", _counting_atomic, raising=True)
+
+    # Drive the mtime back so we can prove the coalesced beat bumps it.
+    old_mtime = persisted_at_1
+    _os.utime(state_path, (1000000000, 1000000000))
+    mtime_before = state_path.stat().st_mtime
+
+    # Beats 2..6 fall inside the 10000s interval → coalesced.
+    for i in range(5):
+        touch_active_step(tmp_path, run_id="r1", kind="token", detail=f"b{i+2}")
+
+    # No full re-serialize happened on the coalesced beats...
+    assert calls["n"] == 0, f"expected 0 full state writes, got {calls['n']}"
+    # ...the persisted content field stayed at the last full write (cheap,
+    # stale-by-at-most-one-interval — the monitor's threshold tolerates it)...
+    assert _read(tmp_path)["active_step"]["last_activity_at"] == persisted_at_1
+    # ...but the file mtime was bumped, so an mtime-keyed watchdog still sees
+    # the worker as alive.
+    assert state_path.stat().st_mtime > mtime_before
+
+    # When the interval is effectively zero, every beat persists again
+    # (genuine state transitions / non-heartbeat writes are unaffected).
+    monkeypatch.setenv("MEGAPLAN_HEARTBEAT_PERSIST_INTERVAL_S", "0")
+    touch_active_step(tmp_path, run_id="r1", kind="token", detail="forced")
+    assert calls["n"] == 1
+    assert _read(tmp_path)["active_step"]["last_activity_detail"] == "forced"
+
+
 def test_write_plan_state_legacy_migration_persists_normalized_state(tmp_path: Path) -> None:
     save_state(tmp_path, _state(current_state="initialized"))
     raw = _read(tmp_path)
