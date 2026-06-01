@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -42,6 +43,38 @@ if TYPE_CHECKING:
 
 
 DEFAULT_ACTIVE_STEP_STALE_SECONDS = DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS
+
+
+def _heartbeat_persist_interval_seconds() -> float:
+    """How often an ``active-step-heartbeat`` write may re-serialize the full
+    ``state.json`` content (refreshing ``active_step.last_activity_at``).
+
+    The phase-idle/stall monitor (``megaplan auto``) reads the *content* field
+    ``active_step.last_activity_at`` out of ``state.json`` — not the file mtime
+    — to decide liveness, so the persisted timestamp must stay fresher than the
+    smallest realistic idle threshold (chains tune this as low as ~40s). We
+    coalesce the costly full-state serialize to at most once per this interval
+    (default 30s, comfortably under 40s) while every beat still bumps the file
+    mtime cheaply via ``os.utime`` for any mtime-based watchdog. This collapses
+    a ~24KB ``json.dumps`` from roughly once-per-2s to once-per-interval on a
+    long stream without weakening either liveness signal.
+    """
+    raw = os.environ.get("MEGAPLAN_HEARTBEAT_PERSIST_INTERVAL_S")
+    if raw:
+        try:
+            value = float(raw)
+            if value >= 0:
+                return value
+        except ValueError:
+            pass
+    return 30.0
+
+
+# Last wall-clock time we performed a *full* heartbeat content write, keyed by
+# resolved state.json path. In-process per worker; the worker is the only
+# heartbeat writer for its own run (run_id-guarded), so no cross-process lock
+# is needed and a stale entry only ever costs one extra write.
+_last_heartbeat_persist_at: dict[str, float] = {}
 
 # ---------------------------------------------------------------------------
 # Plan resolution
@@ -548,6 +581,37 @@ def write_plan_state(
                     if detail:
                         active_step["last_activity_detail"] = detail[-500:]
                     next_state["active_step"] = active_step
+                    # Liveness fast-path: a heartbeat only refreshes the
+                    # ephemeral ``active_step.last_activity_*`` fields — never
+                    # anything the resume/recovery point depends on. Re-
+                    # serializing the entire (~24KB) state on every ~2s beat
+                    # burned most of a core in json.dumps on long streams.
+                    # Coalesce the full content write to at most once per
+                    # ``_heartbeat_persist_interval_seconds`` (keeps the
+                    # content field — which the auto-driver's stall monitor
+                    # reads — fresh enough), and on the skipped beats just bump
+                    # the file mtime cheaply for any mtime-based watchdog.
+                    interval = _heartbeat_persist_interval_seconds()
+                    key = str(state_path)
+                    now_mono = time.monotonic()
+                    last = _last_heartbeat_persist_at.get(key)
+                    due = (
+                        interval <= 0
+                        or last is None
+                        or (now_mono - last) >= interval
+                    )
+                    if due:
+                        _last_heartbeat_persist_at[key] = now_mono
+                    else:
+                        # Skip the costly full re-serialize; still signal
+                        # liveness via mtime so an mtime-keyed monitor (and the
+                        # io.py staging/idle checks) see the process as alive.
+                        should_write = False
+                        try:
+                            if state_path.exists():
+                                os.utime(state_path, None)
+                        except OSError:
+                            pass
             elif mode == "merge-meta-list":
                 if state is None:
                     raise TypeError("state is required for merge-meta-list mode")
