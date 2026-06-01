@@ -4352,6 +4352,26 @@ def test_resolve_tier_spec_critique_no_side_effect_on_execute_default(
     )
 
 
+def test_models_match_same_codex_gpt5_family_is_not_a_degradation() -> None:
+    """A provider serving a newer same-family codex model (e.g. gpt-5.4 -> gpt-5.5)
+    must NOT count as a routing-audit degradation that blocks execute. Codex aliases
+    point releases within the gpt-5.x family; that substitution is acceptable.
+    Regression: the unconditional model-mismatch degradation halted a completed
+    milestone in ``blocked`` on every cycle (selected gpt-5.4, provider reported gpt-5.5)."""
+    from megaplan.execute.batch import _models_match
+
+    # Same codex gpt-5.x family — acceptable substitution, no degradation.
+    assert _models_match("codex:gpt-5.4", "gpt-5.5") is True
+    assert _models_match("gpt-5.4", "gpt-5.5") is True
+    assert _models_match("codex:gpt-5.5", "codex:gpt-5.3-codex") is True
+    # Identical / provider-prefix-only differences still match (unchanged behavior).
+    assert _models_match("codex:gpt-5.5", "gpt-5.5") is True
+    assert _models_match(None, "gpt-5.5") is True
+    # Cross-family substitutions are still flagged (a real downgrade/wrong model).
+    assert _models_match("codex:gpt-5.5", "claude-sonnet-4-6") is False
+    assert _models_match("deepseek-v4-pro", "gpt-5.5") is False
+
+
 # ---------------------------------------------------------------------------
 # CLI override test — handler-level guard
 # ---------------------------------------------------------------------------
