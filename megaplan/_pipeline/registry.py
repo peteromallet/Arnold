@@ -1,11 +1,10 @@
 """Pipeline registry — feed in pipelines by name.
 
-Asymmetric registration policy: the single built-in (``planning``) is
-registered programmatically from its hardcoded ``_planning_builder``
-callable at module import time; every other pipeline is discovered as
-a Python module via :func:`discover_python_pipelines`.  Demo pipelines
-(``doc-critique``, ``judges``) are not registered as built-ins; they
-remain directly importable from their demo modules.
+Symmetric registration policy: first-class pipelines, including
+``planning``, are discovered as Python modules via
+:func:`discover_python_pipelines`. Demo pipelines (``doc-critique``,
+``judges``) are not registered as production pipelines; they remain
+directly importable from their demo modules.
 
 Discovery scans (T9 / Step 8):
 
@@ -22,35 +21,142 @@ Discovery scans (T9 / Step 8):
 
 Discovered modules may expose module-level constants ``description``,
 ``default_profile``, ``supported_modes``, ``recommended_profiles`` —
-the registry surfaces them via :attr:`PipelineRegistry.metadata`. Any
-attempt to discover a module whose CLI-visible name collides with a
-hardcoded built-in is skipped with a warning (no override).
+the registry surfaces them via :attr:`PipelineRegistry.metadata`. If
+multiple scan roots expose the same CLI-visible name, the earlier root
+wins and later duplicates are skipped.
 
-A new built-in is still three lines::
+A programmatic registration is still available for tests and local extensions::
 
     from megaplan._pipeline.registry import register_pipeline
-    register_pipeline("my-pipeline", build_my_pipeline,
-                      description="…")
+    register_pipeline("my-pipeline", build_my_pipeline, description="…")
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.util
+import os
 import sys
+import traceback
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
 
+from megaplan._pipeline.discovery.manifest import (
+    Manifest,
+    ManifestError,
+    read_manifest,
+)
+from megaplan._pipeline.discovery.trust import (
+    BLESSED_ALLOWLIST,
+    TrustTier,
+    classify,
+    derive_tenant_id,
+)
 from megaplan._pipeline.types import Pipeline
 
 
 PipelineBuilder = Callable[[], Pipeline]
+_OUT_OF_TREE_SUB_BUDGET_USD = 1.0
 
 
-# Built-in pipeline names that discovery must never override.
-_BUILTIN_NAMES: frozenset[str] = frozenset({"planning"})
+@dataclass
+class Disposition:
+    """Per-path result from :func:`scan_python_pipelines`.
+
+    Fields
+    ------
+    path:
+        Absolute path to the module file that was examined.
+    origin:
+        ``"in_tree"`` when the package_prefix is ``"megaplan.pipelines"``;
+        ``"user"`` otherwise.
+    status:
+        One of ``"discovered"``, ``"rejected"``, or ``"skipped"``.
+    reason:
+        Human-readable explanation for the status.
+    traceback:
+        Full traceback string when the module raised during import; ``None``
+        otherwise.
+    cli_name:
+        The CLI-visible name derived from the module path.  ``None`` when
+        the path was skipped before a name could be derived.
+    """
+
+    path: Path
+    origin: str
+    status: str
+    reason: str
+    traceback: Optional[str] = None
+    cli_name: Optional[str] = None
+    manifest: Optional[Manifest] = None
+
+
+def _manifest_discovery_enabled() -> bool:
+    """Is manifest-first discovery turned on?
+
+    Default OFF (M6 strangler). Mirrors the inline-env-read pattern
+    used at ``_pipeline/runtime.py:191`` for ``MEGAPLAN_PIPELINE_AUTO``.
+    """
+
+    return os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY", "0") == "1"
+
+
+# Registry-maintained compatibility aliases for names persisted by older plans.
+_NAME_ALIASES: dict[str, str] = {"planning": "planning"}
+
+def canonical_pipeline_name(name: str) -> str:
+    """Return the registry-canonical pipeline name for *name*."""
+
+    return _NAME_ALIASES.get(name, name)
+
+
+def _manifest_metadata(name: str, disposition: Disposition) -> dict[str, Any]:
+    manifest = disposition.manifest
+    if manifest is None:
+        return {}
+    meta: dict[str, Any] = {}
+    if manifest.description:
+        meta["description"] = manifest.description
+    if manifest.default_profile:
+        meta["default_profile"] = manifest.default_profile
+    if manifest.supported_modes:
+        meta["supported_modes"] = tuple(manifest.supported_modes)
+    meta["arnold_api_version"] = manifest.arnold_api_version
+    meta["capabilities"] = tuple(manifest.capabilities)
+    manifest_hash = getattr(manifest, "manifest_hash", None)
+    if isinstance(manifest_hash, str) and manifest_hash:
+        meta["manifest_hash"] = manifest_hash
+    meta["source_path"] = str(disposition.path)
+    meta["manifest_origin"] = disposition.origin
+    tier = classify(disposition.path, blessed_allowlist=BLESSED_ALLOWLIST)
+    meta["trust_tier"] = tier.value
+    if disposition.origin == "user":
+        tenant_id = derive_tenant_id(name, disposition.path)
+        meta["tenant_id"] = tenant_id
+        meta["sub_budget_usd"] = _OUT_OF_TREE_SUB_BUDGET_USD
+        meta["quota_reserved"] = False
+    return meta
+
+
+def _reserve_out_of_tree_quota(name: str, module_file: Path, meta: dict[str, Any]) -> None:
+    tenant_id = meta.get("tenant_id")
+    sub_budget_usd = meta.get("sub_budget_usd")
+    if not isinstance(tenant_id, str) or not isinstance(sub_budget_usd, (int, float)):
+        return
+    from megaplan.runtime.budget_authority import reserve_tenant_quota
+
+    ledger_dir = os.environ.get("MEGAPLAN_BUDGET_AUTHORITY_DIR")
+    reserved = reserve_tenant_quota(
+        tenant_id,
+        float(sub_budget_usd),
+        base_dir=Path(ledger_dir) if ledger_dir else None,
+        flock=True,
+        metadata={"pipeline": name, "source_path": str(module_file)},
+    )
+    meta["quota_reserved"] = True
+    meta["sub_budget_usd"] = reserved.get("sub_budget_usd", sub_budget_usd)
 
 
 @dataclass
@@ -81,6 +187,7 @@ class PipelineRegistry:
         description: str = "",
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
+        name = canonical_pipeline_name(name)
         if name in self.builders:
             raise ValueError(f"pipeline {name!r} already registered")
         self.builders[name] = builder
@@ -100,10 +207,38 @@ class PipelineRegistry:
         # Set flag first to avoid recursive discovery if a build_pipeline
         # callable transitively imports the registry.
         self._discovered = True
+
+        if _manifest_discovery_enabled():
+            # Manifest-first path: consume Dispositions WITHOUT re-importing.
+            # Register deferred-import builders so exec_module is gated to
+            # PipelineRegistry.get(name) and to the trust-tier check there.
+            for d in scan_python_pipelines():
+                if d.status != "discovered" or d.cli_name is None or d.manifest is None:
+                    continue
+                name = d.cli_name
+                if name in self.builders:
+                    continue
+                # Resolve package_prefix for deferred import (same logic as
+                # _get_scan_roots): in_tree → "megaplan.pipelines", else None.
+                package_prefix = "megaplan.pipelines" if d.origin == "in_tree" else None
+                self.builders[name] = _make_deferred_builder(
+                    d.path, package_prefix=package_prefix, cli_name=name,
+                )
+                meta = _manifest_metadata(name, d)
+                if d.origin == "user":
+                    _reserve_out_of_tree_quota(name, d.path, meta)
+                description = str(meta.get("description", "") or "")
+                if description:
+                    self.descriptions[name] = description
+                self.metadata[name] = meta
+                self._module_files[name] = d.path
+            return
+
+        # Flag-OFF: legacy quad-list path (re-imports modules eagerly).
         for name, builder, meta, source_path in discover_python_pipelines():
             if name in self.builders:
-                # Either a built-in collision (caught and skipped at
-                # discovery time too) or a programmatic re-register.
+                # Either a duplicate discovered earlier or a programmatic
+                # re-register.
                 continue
             self.builders[name] = builder
             description = str(meta.get("description", "") or "")
@@ -113,24 +248,55 @@ class PipelineRegistry:
             self.metadata[name].setdefault("source_path", str(source_path))
             self._module_files[name] = source_path
 
-    def get(self, name: str) -> Pipeline:
+    def get(self, name: str) -> Pipeline | None:
+        """Return a built Pipeline for *name*.
+
+        Under manifest-first discovery (M6 flag-ON), exec_module is gated
+        on the path-derived trust tier: AUTO_EXEC or BLESSED proceed;
+        QUARANTINED returns ``None`` and emits a UserWarning rather than
+        executing arbitrary out-of-tree code. Built-ins and programmatically
+        registered builders are unaffected (they bypass _ensure_discovered's
+        deferred-builder path).
+        """
+        name = canonical_pipeline_name(name)
         self._ensure_discovered()
         if name not in self.builders:
             raise KeyError(
                 f"no pipeline named {name!r}; available: {sorted(self.builders)}"
             )
-        return self.builders[name]()
+        builder = self.builders[name]
+        # Trust-gate only when manifest discovery is on AND this builder
+        # came from manifest-first discovery (deferred). Built-ins and
+        # programmatic registrations bypass.
+        if _manifest_discovery_enabled() and getattr(builder, "_m6_deferred", False):
+            module_file = self._module_files.get(name)
+            if module_file is not None:
+                tier = classify(module_file, blessed_allowlist=BLESSED_ALLOWLIST)
+                if tier not in (TrustTier.AUTO_EXEC, TrustTier.BLESSED):
+                    warnings.warn(
+                        f"pipeline {name!r} at {module_file!s} is QUARANTINED "
+                        f"(trust_tier={tier.value}); refusing to exec_module. "
+                        f"Promote via BLESSED_ALLOWLIST to enable execution.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    return None
+                if self.metadata.get(name, {}).get("manifest_origin") == "user":
+                    _reserve_out_of_tree_quota(name, module_file, self.metadata[name])
+        return builder()
 
     def names(self) -> tuple[str, ...]:
         self._ensure_discovered()
         return tuple(sorted(self.builders))
 
     def describe(self, name: str) -> str:
+        name = canonical_pipeline_name(name)
         self._ensure_discovered()
         return self.descriptions.get(name, "")
 
     def metadata_for(self, name: str) -> dict[str, Any]:
         """Return the per-pipeline metadata dict (empty if unknown)."""
+        name = canonical_pipeline_name(name)
         self._ensure_discovered()
         return dict(self.metadata.get(name, {}))
 
@@ -147,12 +313,10 @@ class PipelineRegistry:
           (e.g. ``megaplan/pipelines/writing-panel-strict/SKILL.md``
           for ``writing_panel_strict.py``).
         * Package modules → ``<module-parent>/SKILL.md``.
-        * Built-ins → ``None``.
         """
 
+        name = canonical_pipeline_name(name)
         self._ensure_discovered()
-        if name in _BUILTIN_NAMES:
-            return None
         module_file = self._module_files.get(name)
         if module_file is None:
             return None
@@ -182,7 +346,7 @@ def register_pipeline(
     )
 
 
-def get_pipeline(name: str) -> Pipeline:
+def get_pipeline(name: str) -> Pipeline | None:
     return _GLOBAL_REGISTRY.get(name)
 
 
@@ -298,6 +462,36 @@ def _scan_dir_for_pipeline_modules(
     return out
 
 
+def _make_deferred_builder(
+    module_file: Path,
+    *,
+    package_prefix: str | None,
+    cli_name: str,
+) -> PipelineBuilder:
+    """Build a deferred-import callable for a manifest-discovered pipeline.
+
+    The returned callable defers ``exec_module`` until invoked. Calls into
+    it are gated by :meth:`PipelineRegistry.get` on the path-derived trust
+    tier — this closure trusts its caller to have already classified.
+    """
+
+    def _deferred() -> Pipeline:
+        module = _load_module_from_path(module_file, package_prefix=package_prefix)
+        if module is None:
+            raise RuntimeError(
+                f"pipeline {cli_name!r} at {module_file!s} failed to load",
+            )
+        build = getattr(module, "build_pipeline", None)
+        if not callable(build):
+            raise RuntimeError(
+                f"pipeline {cli_name!r} at {module_file!s} has no callable build_pipeline",
+            )
+        return build()
+
+    _deferred._m6_deferred = True  # type: ignore[attr-defined]
+    return _deferred
+
+
 def _load_module_from_path(
     module_file: Path,
     *,
@@ -357,68 +551,217 @@ def _module_metadata(module: Any) -> dict[str, Any]:
     return meta
 
 
+_SCAN_ROOTS: list[tuple[Path, str | None]] = [
+    (Path(__file__).resolve().parent.parent / "pipelines", "megaplan.pipelines"),
+]
+
+def _get_scan_roots() -> list[tuple[Path, str | None]]:
+    """Return scan roots including the user home dir (evaluated at call time)."""
+    return _SCAN_ROOTS + [(Path.home() / ".megaplan" / "pipelines", None)]
+
+
+def scan_python_pipelines() -> list[Disposition]:
+    """Walk all scan roots and return a :class:`Disposition` for EVERY path.
+
+    This function NEVER raises and ALWAYS completes the full scan.  Every
+    module file encountered — discovered, rejected, or skipped — is
+    represented in the returned list.
+
+    Origins:
+    * ``"in_tree"``  — the path came from the ``megaplan.pipelines`` scan
+      root (``package_prefix == "megaplan.pipelines"``).
+    * ``"user"``     — the path came from a user scan root (``package_prefix
+      is None``).
+
+    Statuses:
+    * ``"discovered"``  — the module loaded successfully and exposes a
+      callable ``build_pipeline``.
+    * ``"rejected"``    — the module could not be loaded OR does not expose a
+      callable ``build_pipeline``.
+    * ``"skipped"``     — the module was excluded before loading (duplicate
+      in seen-set, etc.).
+    """
+    dispositions: list[Disposition] = []
+    seen: set[str] = set()
+
+    try:
+        roots = _get_scan_roots()
+    except Exception:
+        return dispositions
+
+    for pipelines_dir, package_prefix in roots:
+        origin = "in_tree" if package_prefix == "megaplan.pipelines" else "user"
+
+        try:
+            dir_entries = list(_scan_dir_for_pipeline_modules(
+                pipelines_dir, package_prefix=package_prefix,
+            ))
+        except Exception:
+            continue
+
+        for cli_name, module_file in dir_entries:
+            # --- duplicate (earlier scan root wins) ---
+            if cli_name in seen:
+                dispositions.append(Disposition(
+                    path=module_file,
+                    origin=origin,
+                    status="skipped",
+                    reason=f"cli_name {cli_name!r} already discovered from an earlier scan root",
+                    cli_name=cli_name,
+                ))
+                continue
+
+            # --- manifest-first discovery (flag-gated, default OFF) ---
+            if _manifest_discovery_enabled():
+                manifest_result = read_manifest(module_file)
+                if isinstance(manifest_result, ManifestError):
+                    dispositions.append(Disposition(
+                        path=module_file,
+                        origin=origin,
+                        status="rejected",
+                        reason=f"manifest rejected: {manifest_result.reason}",
+                        traceback=manifest_result.traceback,
+                        cli_name=cli_name,
+                        manifest=None,
+                    ))
+                    continue
+                seen.add(cli_name)
+                dispositions.append(Disposition(
+                    path=module_file,
+                    origin=origin,
+                    status="discovered",
+                    reason="ok (manifest)",
+                    cli_name=cli_name,
+                    manifest=manifest_result,
+                ))
+                continue
+
+            # --- attempt to load ---
+            tb_str: Optional[str] = None
+            module: Any = None
+            try:
+                module = _load_module_from_path(module_file, package_prefix=package_prefix)
+            except Exception:
+                tb_str = traceback.format_exc()
+
+            if module is None:
+                if tb_str is None:
+                    tb_str = "(module returned None — no callable build_pipeline or import failed silently)"
+                dispositions.append(Disposition(
+                    path=module_file,
+                    origin=origin,
+                    status="rejected",
+                    reason="module could not be imported",
+                    traceback=tb_str,
+                    cli_name=cli_name,
+                ))
+                continue
+
+            build = getattr(module, "build_pipeline", None)
+            if not callable(build):
+                dispositions.append(Disposition(
+                    path=module_file,
+                    origin=origin,
+                    status="rejected",
+                    reason=f"module loaded but build_pipeline is {type(build).__name__!r}, not callable",
+                    cli_name=cli_name,
+                ))
+                continue
+
+            seen.add(cli_name)
+            dispositions.append(Disposition(
+                path=module_file,
+                origin=origin,
+                status="discovered",
+                reason="ok",
+                cli_name=cli_name,
+            ))
+
+    return dispositions
+
+
 def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, Any], Path]]:
     """Walk the in-tree + user pipeline directories and yield discovered pipelines.
 
     Returns a list of ``(cli_name, build_callable, metadata, source_path)``
-    quads. Collisions with the hardcoded built-in name
-    ``{'planning'}`` are skipped with a
-    :class:`UserWarning`. Modules that do not expose a callable
-    ``build_pipeline`` attribute are skipped silently.
+    quads. Duplicate CLI names from later scan roots are skipped; modules
+    that do not expose a callable ``build_pipeline`` attribute are skipped
+    silently.
+
+    Implementation delegates to :func:`scan_python_pipelines` for the full
+    scan, then raises an aggregate error if any **in-tree** module was
+    rejected (collect-then-raise, NOT fail-on-first).  Rejected **user**
+    modules emit a :class:`UserWarning` and do NOT raise.
+
+    The return shape is back-compat: list of
+    ``(cli_name, build_callable, metadata, source_path)`` quads.
     """
+    dispositions = scan_python_pipelines()
 
+    # Collect rejected in-tree modules for aggregate error.
+    rejected_in_tree = [d for d in dispositions if d.status == "rejected" and d.origin == "in_tree"]
+
+    # Warn (but do not raise) for rejected user modules.
+    for d in dispositions:
+        if d.status == "rejected" and d.origin == "user":
+            warnings.warn(
+                f"user pipeline {d.path!s} could not be loaded: {d.reason}",
+                UserWarning,
+                stacklevel=2,
+            )
+        if d.status == "skipped" and d.origin == "user":
+            warnings.warn(
+                f"user pipeline {d.path!s} skipped: {d.reason}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    # Aggregate raise for rejected in-tree modules (after full scan).
+    if rejected_in_tree:
+        lines = [f"  {d.path}: {d.reason}" for d in rejected_in_tree]
+        raise RuntimeError(
+            "In-tree pipeline discovery failed for the following modules "
+            "(aggregate, collect-then-raise):\n" + "\n".join(lines)
+        )
+
+    # Build back-compat quad list from discovered dispositions only.
     out: list[tuple[str, PipelineBuilder, dict[str, Any], Path]] = []
+
+    # Flag-ON: honour manifest-first discipline — return deferred-import
+    # builders sourced from Disposition.manifest rather than re-importing.
+    # The :568 secondary loop is REPLACED under flag-ON so exec_module is
+    # never invoked from this path.
+    if _manifest_discovery_enabled():
+        for d in dispositions:
+            if d.status != "discovered" or d.cli_name is None or d.manifest is None:
+                continue
+            package_prefix = "megaplan.pipelines" if d.origin == "in_tree" else None
+            builder = _make_deferred_builder(
+                d.path, package_prefix=package_prefix, cli_name=d.cli_name,
+            )
+            meta = _manifest_metadata(d.cli_name, d)
+            out.append((d.cli_name, builder, meta, d.path))
+        return out
+
+    # Flag-OFF: legacy re-import loop (preserves prior behaviour).
+    # Re-derive builders and metadata from discovered paths.
+    # We need the actual module objects — re-import the discovered ones.
+    # To avoid double-importing, we track the scan_roots mapping.
     seen: set[str] = set()
-
-    scan_roots: list[tuple[Path, str | None]] = [
-        (Path(__file__).resolve().parent.parent / "pipelines", "megaplan.pipelines"),
-        (Path.home() / ".megaplan" / "pipelines", None),
-    ]
-
-    for pipelines_dir, package_prefix in scan_roots:
+    for pipelines_dir, package_prefix in _get_scan_roots():
         for cli_name, module_file in _scan_dir_for_pipeline_modules(
             pipelines_dir, package_prefix=package_prefix,
         ):
-            if cli_name in _BUILTIN_NAMES:
-                warnings.warn(
-                    f"discovered pipeline module {module_file!s} would "
-                    f"override built-in {cli_name!r}; skipping",
-                    UserWarning,
-                    stacklevel=2,
-                )
-                continue
             if cli_name in seen:
-                # Earlier scan root takes precedence (in-tree over user).
                 continue
-
-            module = _load_module_from_path(
-                module_file, package_prefix=package_prefix,
-            )
+            module = _load_module_from_path(module_file, package_prefix=package_prefix)
             if module is None:
                 continue
             build = getattr(module, "build_pipeline", None)
             if not callable(build):
                 continue
-
             seen.add(cli_name)
             metadata = _module_metadata(module)
             out.append((cli_name, build, metadata, module_file))
 
     return out
-
-
-# ---------------------------------------------------------------------------
-# Built-in pipeline registered at import time.
-# ---------------------------------------------------------------------------
-
-
-def _planning_builder() -> Pipeline:
-    from megaplan._pipeline.planning import compile_planning_pipeline
-    return compile_planning_pipeline()
-
-
-register_pipeline(
-    "planning", _planning_builder,
-    description="Production planning — runnable shape "
-                "(prep→plan→critique→gate→…→review).",
-)

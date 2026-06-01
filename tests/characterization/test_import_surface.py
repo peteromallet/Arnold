@@ -188,6 +188,17 @@ CHAIN_SYMBOLS = [
     "_capture_sync_state",
 ]
 
+# Named contract block: the 4 chain symbols referenced by the remote SSH
+# one-liner in megaplan.cloud.supervise.  Breaking any of these silently
+# kills remote chain runs.  Contract is separate from CHAIN_SYMBOLS so it
+# can be tightened independently (type-checked, not just name-checked).
+CHAIN_SSH_CONTRACT = [
+    "_capture_sync_state",
+    "ChainState",
+    "save_chain_state",
+    "load_chain_state",
+]
+
 EVALUATION_SYMBOLS = [
     # test_evaluation.py (top-level)
     "PLAN_STRUCTURE_REQUIRED_STEP_ISSUE",
@@ -355,6 +366,96 @@ class TestChainImportSurface:
         assert "spec_path" in sig.parameters, (
             "load_chain_state must accept 'spec_path' parameter"
         )
+
+    def test_chain_ssh_contract_names_resolve(self) -> None:
+        """The 4 SSH contract names (CHAIN_SSH_CONTRACT) must all resolve in
+        megaplan.chain — independent of the broader surveyed surface."""
+        _assert_resolves("megaplan.chain", CHAIN_SSH_CONTRACT)
+
+
+# ---------------------------------------------------------------------------
+# Status payload mandatory-key contract (T9 / W4)
+# ---------------------------------------------------------------------------
+
+# Mandatory keys: always present in _build_status_payload output regardless
+# of plan state (no finalize.json, no external-resume).  Pinned here so a
+# removal/rename fails the test immediately.
+#
+# Conditional keys intentionally NOT pinned in M1 (state-dependent):
+#   blocked_tasks, blocker_recovery, quality_blockers,
+#   suggested_recovery_commands, external_error_recovery, next_step_runtime
+STATUS_PAYLOAD_MANDATORY_KEYS = frozenset({
+    "success",
+    "step",
+    "plan",
+    "state",
+    "iteration",
+    "summary",
+    "next_step",
+    "valid_next",
+    "artifacts",
+    "lock_file_present",
+    "lock_held",
+    "active_step",
+    "last_step",
+    "total_cost_usd",
+    "mode",
+    "output_path",
+    "notes_count",
+    "notes",
+    "session_summaries",
+})
+
+
+class TestStatusPayloadMandatoryKeys:
+    """Pin the mandatory keys of _build_status_payload.
+
+    Tested against a quiescent fixture state (no finalize.json, no
+    external-resume).  If any mandatory key is removed or renamed this test
+    fails immediately.  Conditional keys are documented in
+    STATUS_PAYLOAD_MANDATORY_KEYS's comment block; they are NOT pinned here.
+    """
+
+    def _quiescent_state(self) -> dict:
+        return {
+            "name": "test-plan",
+            "current_state": "done",
+            "iteration": 0,
+            "config": {"mode": "code"},
+            "sessions": {},
+            "meta": {"notes": [], "total_cost_usd": 0.0},
+            "last_gate": {},
+            "history": [],
+            "active_step": None,
+        }
+
+    def test_mandatory_keys_present(self, tmp_path) -> None:
+        """_build_status_payload includes all mandatory keys for a quiescent state."""
+        from megaplan.cli.status_view import _build_status_payload
+
+        state = self._quiescent_state()
+        payload = _build_status_payload(tmp_path, state)
+
+        missing = STATUS_PAYLOAD_MANDATORY_KEYS - set(payload)
+        assert not missing, (
+            f"_build_status_payload is missing mandatory key(s): {sorted(missing)}"
+        )
+
+    def test_mandatory_keys_are_not_conditional(self, tmp_path) -> None:
+        """None of the mandatory keys should be absent in a quiescent state.
+
+        This guards against a key migrating from 'always-present' to
+        'conditional' without a corresponding M1 contract update.
+        """
+        from megaplan.cli.status_view import _build_status_payload
+
+        state = self._quiescent_state()
+        payload = _build_status_payload(tmp_path, state)
+
+        for key in STATUS_PAYLOAD_MANDATORY_KEYS:
+            assert key in payload, (
+                f"Mandatory key '{key}' absent from quiescent _build_status_payload output"
+            )
 
 
 class TestStoreDeepImportPaths:

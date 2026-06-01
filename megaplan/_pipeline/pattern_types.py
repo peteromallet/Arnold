@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from megaplan._pipeline.types import GateRecommendation, StepContext, StepResult
+from megaplan._pipeline.types import StepContext, StepResult
 
-PromoteFn = Callable[[dict[str, Any]], GateRecommendation]
-"""Map a child pipeline's terminal state dict to a :data:`GateRecommendation`."""
+PromoteFn = Callable[[dict[str, Any]], Any]
+"""Map a child pipeline's terminal state dict to a planning recommendation."""
 
 JoinFn = Callable[[list[StepResult], StepContext], StepResult]
 """Collate a list of :class:`StepResult` instances into a single result."""

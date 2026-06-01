@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from typing import ClassVar
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ from megaplan._pipeline import (
 )
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.planning import compile_planning_pipeline
+from megaplan._core.topology import RealizedGraph, RunTopologyConfig
 
 
 def test_verdict_has_typed_recommendation_and_override() -> None:
@@ -99,6 +101,8 @@ class _SyntheticJudge:
     prompt_key = None
     slot = None
     recommendation: str = "iterate"
+    produces: ClassVar[tuple] = ()
+    consumes: ClassVar[tuple] = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(
@@ -115,6 +119,8 @@ class _LabelStep:
     prompt_key = None
     slot = None
     next_label: str = "forward"
+    produces: ClassVar[tuple] = ()
+    consumes: ClassVar[tuple] = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(next=self.next_label)
@@ -146,13 +152,26 @@ def test_executor_dispatches_by_verdict_recommendation(tmp_path: Path) -> None:
 
 
 def test_executor_falls_back_to_label_for_normal_edges(tmp_path: Path) -> None:
-    step = _LabelStep(next_label="forward")
+    class _TopologyLabelStep(_LabelStep):
+        def run(self, ctx: StepContext) -> StepResult:
+            before = {
+                "current_state": "prepped",
+                "config": {"robustness": "full"},
+            }
+            after = {
+                "current_state": "planned",
+                "config": {"robustness": "full"},
+            }
+            graph = RealizedGraph(RunTopologyConfig(robustness="full"))
+            return StepResult(next=graph.next_label("plan", before, after))
+
+    step = _TopologyLabelStep(next_label="unused")
     pipeline = Pipeline(
         stages={
             "labelled": Stage(
                 name="labelled", step=step,
                 edges=(
-                    Edge(label="forward", target="next"),
+                    Edge(label="critique", target="next"),
                     Edge(label="iterate", target="never", kind="gate",
                          recommendation="iterate"),
                 ),

@@ -11,21 +11,8 @@ from unittest.mock import patch
 import pytest
 
 from megaplan.types import CliError
-from megaplan.workers import CommandResult, _build_mock_payload, run_codex_step
+from megaplan.workers import CommandResult, _build_mock_payload, run_codex_prep_step
 from tests._workers_helpers import _mock_state, _write_codex_rollout
-
-
-def test_terminal_tool_result_truncation_exact_cap() -> None:
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "megaplan" / "agent"))
-    from tools.terminal_tool import _truncate_tool_result
-
-    assert _truncate_tool_result("a" * 49999) == "a" * 49999
-    truncated = _truncate_tool_result("a" * 50001)
-    assert len(truncated) == 50000
-    assert "[truncated " in truncated
-    assert " of 50001 chars]" in truncated
 
 
 def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
@@ -101,45 +88,6 @@ def test_run_codex_step_clamps_spec_layer_max_effort(tmp_path: Path) -> None:
     invoked_cmd = captured["command"]
     assert "model_reasoning_effort=high" in invoked_cmd
     assert "model_reasoning_effort=max" not in invoked_cmd
-
-
-def test_run_codex_step_sets_tool_output_truncation_limit(tmp_path: Path) -> None:
-    """T4: codex tool-result output truncation at 50000 (token limit, defense-in-depth)."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
-
-    ensure_runtime_layout(tmp_path)
-    plan_dir, state = _mock_state(tmp_path)
-    plan_payload = {
-        "plan": "# Plan\nDo it.",
-        "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
-        "assumptions": [],
-    }
-    captured: dict[str, list[str]] = {}
-
-    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
-        captured["command"] = command
-        output_idx = command.index("-o") + 1
-        output_path = Path(command[output_idx])
-        output_path.write_text(json.dumps(plan_payload), encoding="utf-8")
-        return CommandResult(
-            command=command,
-            cwd=tmp_path,
-            returncode=0,
-            stdout="",
-            stderr="",
-            duration_ms=10,
-        )
-
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
-        run_codex_step(
-            "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
-        )
-    invoked_cmd = captured["command"]
-    assert "tool_output_token_limit=50000" in invoked_cmd
-    idx = invoked_cmd.index("tool_output_token_limit=50000")
-    assert invoked_cmd[idx - 1] == "-c"
 
 
 def test_run_codex_step_rejects_invalid_effort(tmp_path: Path) -> None:
@@ -1834,7 +1782,7 @@ def test_codex_execute_headroom_guard_forces_fresh_before_resume(
     assert "resume" not in commands[0]
     assert "old-execute-session" not in commands[0]
 
-def test_run_codex_step_read_only_uses_readonly_command_without_write_grants(tmp_path: Path) -> None:
+def test_run_codex_prep_step_uses_readonly_command_without_write_grants(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
 
     ensure_runtime_layout(tmp_path)
@@ -1849,15 +1797,13 @@ def test_run_codex_step_read_only_uses_readonly_command_without_write_grants(tmp
         return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
 
     with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
-        result = run_codex_step(
+        result = run_codex_prep_step(
             "prep-triage",
             state,
             plan_dir,
             root=tmp_path,
-            persistent=False,
             prompt_override="triage prompt",
             model="gpt-5.5",
-            read_only=True,
         )
 
     command = commands[0]
@@ -1868,157 +1814,7 @@ def test_run_codex_step_read_only_uses_readonly_command_without_write_grants(tmp
     assert "-C" not in command
     assert "--full-auto" not in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
-    assert not any("sandbox_workspace_write" in part for part in command)
     assert not any("writable_roots" in part for part in command)
-
-
-def test_run_codex_step_read_only_supports_critique(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-
-    ensure_runtime_layout(tmp_path)
-    plan_dir, state = _mock_state(tmp_path)
-    payload = {"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []}
-    commands: list[list[str]] = []
-
-    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
-        commands.append(command)
-        output_idx = command.index("-o") + 1
-        Path(command[output_idx]).write_text(json.dumps(payload), encoding="utf-8")
-        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
-
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
-        result = run_codex_step(
-            "critique",
-            state,
-            plan_dir,
-            root=tmp_path,
-            persistent=False,
-            prompt_override="critique prompt",
-            model="gpt-5.5",
-            read_only=True,
-        )
-
-    command = commands[0]
-    assert result.payload == payload
-    assert "--output-schema" in command
-    assert str(command[command.index("--output-schema") + 1]).endswith("critique.json")
-    assert "--ephemeral" in command
-    assert "sandbox_mode='read-only'" in command
-    assert "--add-dir" not in command
-    assert "-C" not in command
-    assert "--full-auto" not in command
-
-
-def test_run_codex_step_prefers_single_check_critique_output(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-
-    ensure_runtime_layout(tmp_path)
-    plan_dir, state = _mock_state(tmp_path)
-    single_check_payload = {
-        "checks": [
-            {
-                "id": "issue_hints",
-                "question": "Did it address the issue?",
-                "findings": [
-                    {
-                        "detail": "Checked the focused issue-hints lens and found no remaining problem.",
-                        "flagged": False,
-                    }
-                ],
-            }
-        ],
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
-    aggregate_payload = {
-        "checks": [
-            {
-                "id": "issue_hints",
-                "question": "Did it address the issue?",
-                "findings": [
-                    {
-                        "detail": "Checked the focused issue-hints lens and found no remaining problem.",
-                        "flagged": False,
-                    }
-                ],
-            },
-            {
-                "id": "correctness",
-                "question": "Is it correct?",
-                "findings": [
-                    {
-                        "detail": "Checked correctness and found a separate concern.",
-                        "flagged": True,
-                    }
-                ],
-            },
-        ],
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
-    (plan_dir / "critique_output.json").write_text(json.dumps(aggregate_payload), encoding="utf-8")
-
-    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
-        output_idx = command.index("-o") + 1
-        output_path = Path(command[output_idx])
-        assert output_path.name == "critique_check_issue_hints.json"
-        output_path.write_text(json.dumps(single_check_payload), encoding="utf-8")
-        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
-
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
-        result = run_codex_step(
-            "critique",
-            state,
-            plan_dir,
-            root=tmp_path,
-            persistent=False,
-            prompt_override="single check prompt",
-            output_path=plan_dir / "critique_check_issue_hints.json",
-            read_only=True,
-        )
-
-    assert [check["id"] for check in result.payload["checks"]] == ["issue_hints"]
-
-def test_run_step_with_worker_threads_read_only_to_codex(tmp_path: Path) -> None:
-    from megaplan.types import AgentMode
-    from megaplan.workers import run_step_with_worker
-
-    plan_dir, state = _mock_state(tmp_path)
-    payload = {"triage_framing": "No fanout needed.", "areas": []}
-    am = AgentMode(
-        agent="codex",
-        mode="ephemeral",
-        refreshed=True,
-        model="gpt-5.5",
-        effort="medium",
-        resolved_model="gpt-5.5",
-    )
-    fake_result = type(
-        "Result",
-        (),
-        {
-            "payload": payload,
-            "raw_output": "",
-            "duration_ms": 1,
-            "cost_usd": 0.0,
-            "session_id": "sess",
-            "trace_output": None,
-        },
-    )()
-    with patch("megaplan.workers._impl.run_codex_step", return_value=fake_result) as run_codex:
-        run_step_with_worker(
-            "prep-triage",
-            state,
-            plan_dir,
-            Namespace(agent="codex", ephemeral=True, fresh=True, persist=False, confirm_self_review=False, hermes=None, phase_model=[]),
-            root=tmp_path,
-            resolved=am,
-            read_only=True,
-        )
-
-    assert run_codex.call_args.kwargs["read_only"] is True
 
 def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

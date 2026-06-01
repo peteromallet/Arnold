@@ -33,6 +33,10 @@ _SYMBOL_EXPORTS = {
     "report_429": "megaplan.runtime.key_pool",
     "report_failure": "megaplan.runtime.key_pool",
     "resolve_model": "megaplan.runtime.key_pool",
+    "CapacityLease": "megaplan.runtime.capacity_lease",
+    "Governor": "megaplan.runtime.governor",
+    "current_governor": "megaplan.runtime.governor",
+    "set_governor": "megaplan.runtime.governor",
     "SANDBOXED_EXEC_TOOLS": "megaplan.runtime.sandbox",
     "SANDBOXED_WRITE_TOOLS": "megaplan.runtime.sandbox",
     "SandboxViolation": "megaplan.runtime.sandbox",
@@ -42,7 +46,44 @@ _SYMBOL_EXPORTS = {
     "validate_write_path": "megaplan.runtime.sandbox",
 }
 
-__all__ = [*_MODULE_EXPORTS, *_SYMBOL_EXPORTS]
+__all__ = [
+    *_MODULE_EXPORTS,
+    *_SYMBOL_EXPORTS,
+    "install_runtime_governor",
+    "uninstall_runtime_governor",
+]
+
+
+def uninstall_runtime_governor(gov: Any) -> None:
+    """Reset ContextVar tokens installed by ``install_runtime_governor``."""
+
+    if gov is None:
+        return
+    tokens = getattr(gov, "_install_tokens", None) or []
+    setattr(gov, "_install_tokens", [])
+    for reset_fn, token in tokens:
+        try:
+            reset_fn(token)
+        except Exception:
+            pass
+
+
+def install_runtime_governor(envelope: Any, *, ledger_path: Any = None) -> Any:
+    """Install a tree-scoped Governor and seat the envelope in runtime contexts."""
+
+    del ledger_path
+    from megaplan._pipeline.envelope import _envelope_ctx as _pipeline_env_ctx
+    from megaplan.observability.events import _envelope_ctx as _events_env_ctx
+    from megaplan.runtime.governor import Governor, set_governor
+
+    gov = Governor()
+    set_governor(gov)
+    tokens: list[Any] = []
+    if envelope is not None:
+        tokens.append((_pipeline_env_ctx.reset, _pipeline_env_ctx.set(envelope)))
+        tokens.append((_events_env_ctx.reset, _events_env_ctx.set(envelope)))
+    setattr(gov, "_install_tokens", tokens)
+    return gov
 
 
 def __getattr__(name: str) -> Any:

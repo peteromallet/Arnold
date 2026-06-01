@@ -292,6 +292,7 @@ def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
         resolved_search = search_root.resolve()
         is_local = resolved_search == resolved_root
         for plan_dir in active_plan_dirs(search_root):
+            # cache-tolerant: CLI status aggregation.
             state = read_json(plan_dir / "state.json")
             current_state = state["current_state"]
             state_counts[current_state] = state_counts.get(current_state, 0) + 1
@@ -703,6 +704,136 @@ def _snapshot_dir(epic_id: str) -> Path:
     return Path.home() / ".megaplan" / "snapshots" / f"{epic_id}-{timestamp}"
 
 
+def _capsule_blob_store(store: Any, *, epic_id: str | None = None) -> Any:
+    backend = None
+    if epic_id is not None and hasattr(store, "_route_for_epic"):
+        backend = store._route_for_epic(epic_id)
+    elif hasattr(store, "file"):
+        backend = store.file
+    else:
+        backend = store
+    blob_store = getattr(backend, "blobs", None)
+    if blob_store is None:
+        raise CliError(
+            "capsule_blob_store_unavailable",
+            "Capsule operations require a BlobStore-backed epic backend",
+        )
+    return blob_store
+
+
+def _parse_json_object_arg(value: str | None, *, arg_name: str) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise CliError("invalid_args", f"{arg_name} must be valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise CliError("invalid_args", f"{arg_name} must be a JSON object")
+    return parsed
+
+
+def _handle_epic_capsule(root: Path, args: argparse.Namespace) -> StepResponse:
+    from megaplan._pipeline.flags import m7_sinks_on
+    from megaplan.store.capsule import (
+        CapsuleStorageError,
+        build_capsule,
+        fork_capsule,
+        inspect_capsule,
+        list_capsules,
+    )
+
+    if not m7_sinks_on():
+        raise CliError(
+            "feature_disabled",
+            "M7 Capsule commands are disabled; set MEGAPLAN_M7_SINKS=1 to enable them.",
+        )
+
+    store = build_epic_store(root)
+    try:
+        action = args.capsule_action
+        try:
+            if action == "build":
+                blob_store = _capsule_blob_store(store, epic_id=args.epic_id)
+                result = build_capsule(
+                    store,
+                    args.epic_id,
+                    blob_store,
+                    allow_degraded=bool(args.allow_degraded),
+                    created_by=args.created_by,
+                )
+                return {
+                    "success": True,
+                    "step": "epic",
+                    "action": "capsule-build",
+                    "epic_id": args.epic_id,
+                    "capsule_hash": result.capsule.capsule_hash,
+                    "capsule_record_blob_id": result.write_result.capsule_ref.blob_id,
+                    "index_blob_id": result.write_result.index_blob_id,
+                    "completeness": result.capsule.completeness,
+                    "replay_ready": result.capsule.replay_ready,
+                    "record_count": len(result.record_refs),
+                }
+            if action == "inspect":
+                blob_store = _capsule_blob_store(store)
+                inspection = inspect_capsule(blob_store, args.capsule_hash)
+                if not inspection.contract_check.ok or inspection.capsule.completeness != "complete":
+                    raise CliError(
+                        "capsule_contract_failed",
+                        "Capsule inspect found degraded or unmet Contract requirements",
+                        extra={
+                            "summary": dict(inspection.summary),
+                            "failures": list(inspection.contract_check.failures),
+                            "adaptations": list(inspection.contract_check.adaptations),
+                        },
+                    )
+                return {
+                    "success": True,
+                    "step": "epic",
+                    "action": "capsule-inspect",
+                    "capsule": dict(inspection.summary),
+                    "failures": [],
+                    "adaptations": list(inspection.contract_check.adaptations),
+                }
+            if action == "fork":
+                blob_store = _capsule_blob_store(store)
+                overrides = _parse_json_object_arg(
+                    args.definition_overrides_json,
+                    arg_name="--definition-overrides-json",
+                )
+                result = fork_capsule(
+                    blob_store,
+                    args.capsule_hash,
+                    definition_overrides=overrides,
+                    created_by=args.created_by,
+                )
+                return {
+                    "success": True,
+                    "step": "epic",
+                    "action": "capsule-fork",
+                    "source_capsule_hash": args.capsule_hash,
+                    "capsule_hash": result.capsule.capsule_hash,
+                    "parent_edges": result.capsule.lineage.parent_edges,
+                    "parent_edge_count": len(result.capsule.lineage.parent_edges),
+                    "index_blob_id": result.write_result.index_blob_id,
+                }
+            if action == "list":
+                blob_store = _capsule_blob_store(store)
+                return {
+                    "success": True,
+                    "step": "epic",
+                    "action": "capsule-list",
+                    "capsules": list_capsules(blob_store),
+                }
+        except CapsuleStorageError as exc:
+            raise CliError(exc.error_kind, str(exc), extra=exc.details) from exc
+    finally:
+        close = getattr(store, "close", None)
+        if callable(close):
+            close()
+    raise CliError("invalid_args", f"Unknown epic capsule action: {args.capsule_action}")
+
+
 def handle_ticket(args: argparse.Namespace) -> int:
     """Dispatch ``megaplan ticket ...`` subcommands."""
     from megaplan.handlers.tickets import TICKET_DISPATCH
@@ -861,6 +992,8 @@ def _brief_cli_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
     action = args.epic_action
+    if action == "capsule":
+        return _handle_epic_capsule(root, args)
     if action == "snapshot":
         store = build_epic_store(root)
         try:
@@ -1148,6 +1281,213 @@ def _handle_record_tag(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
+    """W7 — pipelines command group: check + doctor subcommands."""
+    action = getattr(args, "pipelines_action", None)
+    if action == "check":
+        name = getattr(args, "pipeline_name", None)
+        if not name:
+            print("(no pipeline name provided)")
+            return 0
+        from megaplan._pipeline.judge_manifest_discovery import (
+            find_judge_manifest,
+            validate_judge_manifest,
+        )
+
+        try:
+            judge_match = find_judge_manifest(name)
+        except Exception as exc:
+            print(
+                f"pipelines check: failed to load judge manifest for {name!r}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        if judge_match is not None:
+            diag = validate_judge_manifest(
+                judge_match.manifest,
+                path=judge_match.path,
+            )
+            if diag.ok:
+                print(name)
+                return 0
+            print(
+                f"pipelines check: judge manifest {name!r} has "
+                f"{len(diag.defects)} defect(s):",
+                file=sys.stderr,
+            )
+            for defect in diag.defects:
+                print(f"  - {defect}", file=sys.stderr)
+            return 1
+
+        from megaplan._pipeline.registry import (
+            canonical_pipeline_name,
+            get_pipeline,
+            scan_python_pipelines,
+        )
+        from megaplan._pipeline.validator import validate
+
+        canonical_name = canonical_pipeline_name(name)
+        original_manifest_discovery = os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")
+        os.environ["MEGAPLAN_M6_MANIFEST_DISCOVERY"] = "1"
+        try:
+            dispositions = scan_python_pipelines()
+        finally:
+            if original_manifest_discovery is None:
+                os.environ.pop("MEGAPLAN_M6_MANIFEST_DISCOVERY", None)
+            else:
+                os.environ["MEGAPLAN_M6_MANIFEST_DISCOVERY"] = original_manifest_discovery
+        for disposition in dispositions:
+            if disposition.cli_name == canonical_name and disposition.status == "rejected":
+                print(
+                    f"pipelines check: {canonical_name!r} rejected: {disposition.reason}",
+                    file=sys.stderr,
+                )
+                return 1
+        try:
+            pipeline = get_pipeline(canonical_name)
+        except Exception as exc:  # discovery / build failure
+            print(f"pipelines check: failed to load {name!r}: {exc}", file=sys.stderr)
+            return 1
+        if pipeline is None:
+            print(f"pipelines check: {canonical_name!r} is not executable", file=sys.stderr)
+            return 1
+        diag = validate(pipeline)
+        if diag.ok:
+            print(name)
+            return 0
+        print(f"pipelines check: {name!r} has {len(diag.defects)} defect(s):", file=sys.stderr)
+        for defect in diag.defects:
+            print(f"  - {defect}", file=sys.stderr)
+        return 1
+    if action == "doctor":
+        from megaplan._pipeline.registry import scan_python_pipelines
+
+        dispositions = scan_python_pipelines()
+        for disp in dispositions:
+            line = f"{disp.status}\t{disp.origin}\t{disp.path}"
+            if disp.cli_name:
+                line += f"\t(name={disp.cli_name})"
+            if disp.reason:
+                line += f"\treason={disp.reason}"
+            print(line)
+            if disp.traceback:
+                for tb_line in disp.traceback.rstrip("\n").splitlines():
+                    print(f"    {tb_line}")
+        return 0
+    if action == "new":
+        from megaplan._pipeline.registry import _SCAN_ROOTS, _cli_name
+
+        name = getattr(args, "pipeline_name", None)
+        if not name:
+            print("pipelines new: missing pipeline name", file=sys.stderr)
+            return 1
+        driver = getattr(args, "driver", "graph")
+        if driver != "graph":
+            print(
+                f"pipelines new: unsupported driver {driver!r}; only 'graph' is supported",
+                file=sys.stderr,
+            )
+            return 1
+
+        # Derive the module stem (hyphens → underscores) and directory name.
+        module_stem = name.replace("-", "_")
+        cli_name = _cli_name(module_stem)  # normalise underscores→hyphens
+
+        # Locate the in-tree pipelines directory (first scan root).
+        pipelines_dir = None
+        for dir_path, pkg_prefix in _SCAN_ROOTS:
+            if pkg_prefix == "megaplan.pipelines":
+                pipelines_dir = dir_path
+                break
+        if pipelines_dir is None or not pipelines_dir.is_dir():
+            print("pipelines new: cannot locate in-tree pipelines directory", file=sys.stderr)
+            return 1
+
+        module_path = pipelines_dir / f"{module_stem}.py"
+        skill_dir = pipelines_dir / cli_name
+        skill_path = skill_dir / "SKILL.md"
+
+        if module_path.exists():
+            print(f"pipelines new: {module_path} already exists", file=sys.stderr)
+            return 1
+        if skill_path.exists():
+            print(f"pipelines new: {skill_path} already exists", file=sys.stderr)
+            return 1
+
+        # ── Scaffold the Python module ────────────────────────────
+        module_content = (
+            f'"""Python composition of the ``{cli_name}`` pipeline."""\n'
+            f"\n"
+            f"from __future__ import annotations\n"
+            f"\n"
+            f"from pathlib import Path\n"
+            f"\n"
+            f"from megaplan._pipeline.types import Pipeline\n"
+            f"\n"
+            f"\n"
+            f'_PIPELINE_DIR: Path = Path(__file__).parent / "{cli_name}"\n'
+            f"\n"
+            f'\n'
+            f'name: str = "{cli_name}"\n'
+            f'description: str = "TODO: add a description"\n'
+            f"default_profile: str | None = None\n"
+            f"supported_modes: tuple[str, ...] = ()\n"
+            f'driver: tuple[str, str] = ({driver!r}, "dispatch+emit")\n'
+            f'entrypoint: str = "build_pipeline"\n'
+            f'arnold_api_version: str = "1.0"\n'
+            f"capabilities: tuple[str, ...] = ()\n"
+            f"\n"
+            f"\n"
+            f"def build_pipeline() -> Pipeline:\n"
+            f'    """Return the canonical ``{cli_name}`` :class:`Pipeline`."""\n'
+            f"    return (\n"
+            f"        Pipeline.builder(\n"
+            f'            "{cli_name}",\n'
+            f"            description=description,\n"
+            f"            pipeline_dir=_PIPELINE_DIR,\n"
+            f"        )\n"
+            f'        .agent("run", prompt="TODO: add your prompt file path")\n'
+            f"        .build()\n"
+            f"    )\n"
+            f"\n"
+            f"\n"
+            f"__all__ = [\n"
+            f'    "build_pipeline",\n'
+            f'    "name",\n'
+            f'    "description",\n'
+            f'    "default_profile",\n'
+            f'    "supported_modes",\n'
+            f'    "driver",\n'
+            f'    "entrypoint",\n'
+            f'    "arnold_api_version",\n'
+            f'    "capabilities",\n'
+            f"]\n"
+        )
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        module_path.write_text(module_content, encoding="utf-8")
+
+        # ── Scaffold the SKILL.md stub ────────────────────────────
+        skill_content = (
+            f"---\n"
+            f"name: {cli_name}\n"
+            f"description: TODO: add a description\n"
+            f"---\n"
+            f"\n"
+            f"# {cli_name}\n"
+            f"\n"
+            f"TODO: add pipeline documentation\n"
+        )
+        skill_path.write_text(skill_content, encoding="utf-8")
+
+        print(f"Scaffolded pipeline {cli_name!r}:")
+        print(f"  module: {module_path}")
+        print(f"  skill:  {skill_path}")
+        return 0
+
+    print(f"pipelines: unknown action {action!r}", file=sys.stderr)
+    return 1
+
+
 COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "init": handle_init,
     "plan": handle_plan,
@@ -1185,6 +1525,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "trace": _handle_trace,
     "doctor": _handle_doctor,
     "record-tag": _handle_record_tag,
+    "pipelines": _handle_pipelines,
     "quality-gate": handle_quality_gate,
 }
 
@@ -1695,7 +2036,7 @@ def main(argv: list[str] | None = None) -> int:
         except CliError as error:
             return error_response(error, root=root)
 
-    if args.command in {"introspect", "trace", "doctor", "record-tag"}:
+    if args.command in {"introspect", "trace", "doctor", "record-tag", "pipelines"}:
         handler = COMMAND_HANDLERS.get(args.command)
         if handler is not None:
             return handler(root, args)

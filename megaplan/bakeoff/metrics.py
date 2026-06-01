@@ -29,6 +29,7 @@ def collect_profile_metrics(
     worktree = Path(profile_record["worktree"])
     plan_id = profile_record["plan_id"]
     plan_dir = worktree / ".megaplan" / "plans" / plan_id
+    # cache-tolerant: read-only metrics emit, tolerates between-write skew.
     plan_state = _read_json(plan_dir / "state.json")
     outcome = profile_record.get("outcome") or {}
     mode = bakeoff_state.get("mode") or "code"

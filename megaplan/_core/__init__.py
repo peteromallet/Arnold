@@ -73,6 +73,19 @@ from .io import (
     write_journal_commit_marker,
 )
 
+# -- canonical.py: byte-stable projection hashing/signing -------------------
+from .canonical import (
+    WARRANT_HMAC_ALGORITHM,
+    canonical_projection_bytes,
+    canonical_projection_sha256,
+    canonical_projection_sha256_uri,
+    hmac_sha256_hex,
+    sha256_hex,
+    sha256_uri,
+    sign_canonical_projection,
+    verify_canonical_projection_signature,
+)
+
 # -- phase_runtime.py: centralized runtime policy ----------------------------
 from .phase_runtime import (
     DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
@@ -160,6 +173,17 @@ from .worker_fanout import (
     scatter_worker_units,
 )
 
+# -- dispatch.py: tier->spec and tier->agent resolution ----------------------
+from .dispatch import (
+    resolve_dispatch_agent,
+    resolve_dispatch_spec,
+)
+
+# -- scheduler: generic fan-out/reduce scheduling ----------------------------
+from .scheduler.run import run_scheduler
+from .scheduler.topo import schedule_batches
+from .scheduler.types import Reduce
+
 # -- workflow.py: state machine, transitions ---------------------------------
 from megaplan.types import ROBUSTNESS_LEVELS, STATE_EXECUTED, STATE_REVIEWED, STATE_DONE  # noqa: F401 — accessed by tests via megaplan._core
 
@@ -245,6 +269,16 @@ __all__ = [
     "split_oversized_batches",
     "slugify",
     "write_journal_commit_marker",
+    # canonical
+    "WARRANT_HMAC_ALGORITHM",
+    "canonical_projection_bytes",
+    "canonical_projection_sha256",
+    "canonical_projection_sha256_uri",
+    "hmac_sha256_hex",
+    "sha256_hex",
+    "sha256_uri",
+    "sign_canonical_projection",
+    "verify_canonical_projection_signature",
     # phase_runtime
     "DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS",
     "PHASE_RUNTIME_POLICY",
@@ -333,4 +367,11 @@ __all__ = [
     "WorkerUnit",
     "scatter_worker_unit",
     "scatter_worker_units",
+    # dispatch
+    "resolve_dispatch_agent",
+    "resolve_dispatch_spec",
+    # scheduler
+    "Reduce",
+    "schedule_batches",
+    "run_scheduler",
 ]

@@ -10,6 +10,7 @@ from .agent_loop import (
     AgentRequest,
     AgentResponse,
     AgentRunner,
+    DispatchProtocol,
     FakeAgentRunner,
     FakeAgentStep,
     FakeToolCall,
@@ -29,7 +30,7 @@ from .coalescing import AsyncBurstCoalescer, BurstBatch
 from .config import ResidentConfig
 from .discord import DiscordDeliveryTarget, DiscordInboundMessage, DiscordOutboundSink, ResidentDiscordService
 from .profile import MegaplanResidentProfile
-from .runtime import InboundEvent, OutboundMessage, ResidentRuntime
+from .runtime import EmitProtocol, InboundEvent, OutboundMessage, ResidentRuntime
 from .scheduler import (
     ResidentJobHandlers,
     SchedulerRunResult,
@@ -55,6 +56,8 @@ __all__ = [
     "DiscordDeliveryTarget",
     "DiscordInboundMessage",
     "DiscordOutboundSink",
+    "DispatchProtocol",
+    "EmitProtocol",
     "FakeAgentRunner",
     "FakeAgentStep",
     "FakeToolCall",

@@ -59,6 +59,7 @@ db = [
 agent = []
 [project.scripts]
 megaplan = "megaplan.cli:cli_entry"
+arnold = "megaplan.cli.arnold:cli_entry"
 
 [tool.uv]
 # The hermes/agent backend's packages are now core [project].dependencies, so a
@@ -87,4 +88,9 @@ markers = [
     "asyncio: async tests, primarily for the vendored agent runtime",
     "integration: integration tests that may exercise external process boundaries",
     "slow: tests that require Docker or other external runtime dependencies",
+    "crash_isolation: tests verifying crash isolation between subprocess drivers",
+    "version_skew: tests verifying compatibility across version skew scenarios",
+    "hinge_gate: gate test for the M3 hinge (R1 authority flip)",
+    "substrate_swap: M4 oracle tests that must remain green under substrate substitution (lease/budget/journal swap)",
+    "replay_oracle: M5c replay tests that capture legacy control outputs and opt into routed parity action by action",
 ]

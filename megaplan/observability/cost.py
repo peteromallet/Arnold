@@ -20,6 +20,24 @@ from megaplan.observability.events import EventKind, read_events
 # ---------------------------------------------------------------------------
 
 
+def _vendor_for_cost_event(payload: dict, model: str | None) -> str:
+    """T27 — R5-aware vendor lookup. When UNIFIED_EMIT=1 or R5_UNIFIED=1 and
+    the payload carries a provenance dict with 'vendor', return it directly
+    (no _classify_vendor call). Otherwise fall through to the legacy path.
+    """
+    try:
+        from megaplan._pipeline.flags import unified_emit_on, unified_evaluand_on
+        if unified_emit_on() or unified_evaluand_on():
+            provenance = payload.get("provenance") if isinstance(payload, dict) else None
+            if isinstance(provenance, dict):
+                vendor = provenance.get("vendor")
+                if isinstance(vendor, str) and vendor:
+                    return vendor
+    except Exception:
+        pass
+    return _classify_vendor(model)
+
+
 def _classify_vendor(model: str | None) -> str:
     """Classify a model string into one of four vendor buckets.
 
@@ -54,6 +72,7 @@ def _classify_vendor(model: str | None) -> str:
 
 def _load_state(plan_dir: Path) -> dict | None:
     """Load state.json from *plan_dir*, returning None if missing/unreadable."""
+    # cache-tolerant: cost rollup view.
     state_file = plan_dir / "state.json"
     if not state_file.exists():
         return None
@@ -91,6 +110,12 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
     phase_cost: dict[str, float] = defaultdict(float)
     phase_tokens: dict[str, int] = defaultdict(int)
 
+    # ── R7 monoculture / cache sensors (output-only) ──────────────────
+    phase_cache_read: dict[str, int] = defaultdict(int)
+    phase_cache_input: dict[str, int] = defaultdict(int)
+    distinct_models: set[str] = set()
+    cost_records_total = 0
+
     # ── single pass over events ────────────────────────────────────────
     for ev in events:
         kind = ev.get("kind")
@@ -106,7 +131,11 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
             cost_by_model[model_key] += cost
 
             # per-vendor cost
-            vendor = _classify_vendor(model)
+            # T27: R5 read branch — gated UNIFIED_EMIT=1 or R5_UNIFIED=1.
+            # When the event payload carries RunEnvelope.provenance with a
+            # vendor (Step 10a field), read it directly instead of calling
+            # _classify_vendor. Old branch stays live and authoritative.
+            vendor = _vendor_for_cost_event(payload, model)
             cost_by_vendor[vendor] += cost
 
             # running events_cost sum (before reconciliation)
@@ -121,6 +150,11 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
             if phase:
                 phase_cost[phase] += cost
 
+            # R7 monoculture sensor — count cost records and distinct models.
+            cost_records_total += 1
+            if model:
+                distinct_models.add(str(model))
+
         elif kind == EventKind.LLM_CALL_END:
             tokens_in = int(payload.get("tokens_in", 0) or 0)
             tokens_out = int(payload.get("tokens_out", 0) or 0)
@@ -132,6 +166,10 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
             # phase
             if phase:
                 phase_tokens[phase] += tokens
+                # Prefix-cache-hit-rate sensor (output-only): accumulate
+                # cache_read_tokens vs total input tokens per phase.
+                phase_cache_read[phase] += int(payload.get("cache_read_tokens", 0) or 0)
+                phase_cache_input[phase] += tokens_in
 
             if payload_model and isinstance(payload_model, str) and payload_model.strip():
                 # ── exact path: model is present and truthy ────────────
@@ -201,6 +239,16 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
         "exact_tokens": exact_tokens,
         "phase_cost": dict(phase_cost),
         "phase_tokens": dict(phase_tokens),
+        # R7 output-only sensors — recorded only, no consumer (M5-cal owns routing).
+        "phase_prefix_cache_hit_rate": {
+            p: (phase_cache_read[p] / phase_cache_input[p])
+            if phase_cache_input.get(p)
+            else 0.0
+            for p in set(phase_cache_input) | set(phase_cache_read)
+        },
+        "monoculture_index": (
+            (len(distinct_models) / cost_records_total) if cost_records_total else 0.0
+        ),
     }
 
 

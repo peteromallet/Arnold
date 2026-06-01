@@ -81,6 +81,8 @@ class DocCritic:
     kind = "judge"
     prompt_key = "critique"
     slot = "critique"
+    produces: tuple = ()
+    consumes: tuple = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         state = dict(ctx.state) if isinstance(ctx.state, dict) else {}
@@ -149,6 +151,8 @@ class DocReviser:
     kind = "produce"
     prompt_key = "revise"
     slot = "revise"
+    produces: tuple = ()
+    consumes: tuple = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         state = dict(ctx.state) if isinstance(ctx.state, dict) else {}

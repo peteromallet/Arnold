@@ -31,9 +31,13 @@ class AgentResponse:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class AgentRunner(Protocol):
+class DispatchProtocol(Protocol):
     async def run(self, request: AgentRequest, tools: ToolRegistry) -> AgentResponse:
-        """Run one resident bot turn."""
+        """Dispatch one resident bot turn through the resident model/tool loop."""
+
+
+class AgentRunner(DispatchProtocol, Protocol):
+    """Resident runner alias for the shared dispatch-shaped Protocol."""
 
 
 @dataclass(frozen=True)
@@ -148,7 +152,7 @@ class FakeAgentRunner:
         )
 
 
-class OpenAICompatibleAgentRunner:
+class OpenAICompatibleAgentRunner(DispatchProtocol):
     """OpenAI-compatible chat/tool-call runner for live resident operation."""
 
     def __init__(

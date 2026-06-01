@@ -19,7 +19,6 @@ import argparse
 import json
 import logging
 import os
-import re
 import shlex
 import signal
 import subprocess
@@ -30,11 +29,17 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from megaplan.drivers import Substrate
 
 from megaplan._core import active_phase_name, find_plan_dir
-from megaplan._core.io import atomic_write_json, read_json
-from megaplan._core.state import append_history, write_plan_state
+from megaplan._pipeline.envelope import (
+    _envelope_ctx,
+    write_envelope_in,
+)
+from megaplan._core.state import write_plan_state
 from megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
 from megaplan.runtime.process import kill_group, spawn
 from megaplan.observability.events import emit as emit_event, EventKind
@@ -43,11 +48,11 @@ from megaplan.orchestration.phase_result import (
     PhaseResult,
     read_phase_result,
 )
+from megaplan.orchestration.recovery_policy import RecoveryPolicy
 from megaplan.store import PlanRepository
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
     CliError,
-    DriverOutcomeStatus,
     STATE_ABORTED,
     STATE_AWAITING_HUMAN,
     STATE_AWAITING_HUMAN_VERIFY,
@@ -59,7 +64,6 @@ from megaplan.types import (
     STATE_FAILED,
     STATE_FINALIZED,
     STATE_PAUSED,
-    STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 )
@@ -77,9 +81,6 @@ DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
 # the resume_cursor instead of terminal-failing). The accurate per-stream
 # heartbeat (workers/hermes.py) is the primary signal; this is the net.
 DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS = 1800
-# Idle timeout applied during timeout remediation: a one-shot more-generous
-# window for the single-batch retry that attempts to isolate the stall.
-TIMEOUT_REMEDIATION_IDLE_SECONDS = 3600
 DEFAULT_STATUS_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_CONTEXT_RETRIES = 2
 CONTEXT_EXHAUSTION_FRAGMENT = "ran out of room in the model's context"
@@ -105,7 +106,6 @@ EXTERNAL_PERMANENT_ERROR_KINDS = frozenset(
 EXTERNAL_RETRYABLE_LAYERS = frozenset(
     {
         "stream_content_stall",
-        "stream_progress_stall",
         "stream_first_content_timeout",
         "stream_read_timeout",
         "transport_timeout",
@@ -116,7 +116,7 @@ EXTERNAL_RETRYABLE_LAYERS = frozenset(
 # the executor reported success-with-evidence-gaps (e.g. done tasks missing
 # files_changed/commands_run). Retrying the same execute is structurally pointless
 # — the model returned that shape — so we cap retries low and fail fast.
-DEFAULT_MAX_BLOCKED_RETRIES = 5
+DEFAULT_MAX_BLOCKED_RETRIES = 1
 # Cap on review→rework cycles before the driver bails. This mirrors the
 # `execution.max_review_rework_cycles` config the review handler enforces
 # internally (default 3); the auto-driver applies its own cap so that an
@@ -143,11 +143,6 @@ DEFAULT_MAX_ADD_NOTE_ATTEMPTS = 2
 # separately by stall detection and is not, on its own, evidence the model is
 # too weak.
 DEFAULT_ESCALATE_AFTER_FAILS = 2
-# Auto-ESCALATE-down: repeated execute worker stream stalls are latency/liveness
-# failures, not proof that the model is too weak. Drop execute routing one tier
-# before the generic state-stall halt gets the final word.
-DEFAULT_TIER_DROP_AFTER_STALLS = 2
-DEFAULT_MAX_TIER_DROPS = 2
 DEFAULT_PHASE_HEARTBEAT_SECONDS = 60.0
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
@@ -160,7 +155,7 @@ PHASE_NAMES = frozenset(
 class DriverOutcome:
     """Terminal outcome reported when the loop exits."""
 
-    status: DriverOutcomeStatus
+    status: str  # "done" | "paused" | "stalled" | "escalated" | "failed" | "aborted" | "cancelled" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required"
     plan: str
     final_state: str
     iterations: int
@@ -178,8 +173,6 @@ class DriverOutcome:
     blocking_reasons: list[str] = field(default_factory=list)
     tier_escalations_used: int = 0
     escalation_tier_pin: int | None = None
-    tier_drops_used: int = 0
-    max_tier_drops: int | None = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -202,8 +195,6 @@ class DriverOutcome:
                 "blocking_reasons": self.blocking_reasons,
                 "tier_escalations_used": self.tier_escalations_used,
                 "escalation_tier_pin": self.escalation_tier_pin,
-                "tier_drops_used": self.tier_drops_used,
-                "max_tier_drops": self.max_tier_drops,
             },
             indent=2,
         )
@@ -271,15 +262,145 @@ def _is_retryable_external_error(phase: str, external_error: object | None) -> b
     return False
 
 
-def _is_execute_worker_stream_stall(result: object | None) -> bool:
-    if result is None or getattr(result, "exit_kind", None) != ExitKind.external_error.value:
-        return False
-    external_error = getattr(result, "external_error", None)
-    error_layer = str(getattr(external_error, "error_layer", "") or "").lower()
-    return error_layer == "worker_stream_stall"
+def _apply_envelope_handshake(
+    run_kwargs: dict[str, Any], plan_dir: Path | None
+) -> None:
+    """Symmetric subprocess handshake: write fresh ``.envelope-in.json`` per
+    spawn and add a per-process ``MEGAPLAN_ENVELOPE_IN`` env var.
+
+    The child consumes via :func:`consume_envelope_in` which pops the env var
+    so grandchildren do not inherit it — every nested spawn must call this
+    helper again to get its own fresh sidecar + env override.
+    """
+    envelope = _envelope_ctx.get()
+    if envelope is None or plan_dir is None:
+        return
+    overrides = write_envelope_in(Path(plan_dir), envelope)
+    existing = run_kwargs.get("progress_env") or {}
+    merged = dict(existing)
+    merged.update(overrides)
+    run_kwargs["progress_env"] = merged
 
 
-def _run_megaplan(
+@dataclass
+class WatcherState:
+    """Explicit state for `_supervise_subprocess`, replacing nonlocal closures.
+
+    Captures the timing/byte-buffer state the watcher loop mutates so the
+    extracted helper does not need closure variables. Returned to the caller
+    so tests can assert on watcher behavior beyond the (exit, out, err) tuple.
+    """
+
+    stdout_parts: list[bytes] = field(default_factory=list)
+    stderr_parts: list[bytes] = field(default_factory=list)
+    last_activity: float = 0.0
+    last_hard_progress: float = 0.0
+    last_liveness_mtime: float | None = None
+    last_heartbeat: float = 0.0
+    liveness_changed_since_heartbeat: bool = False
+    started: float = 0.0
+    timed_out_reason: str | None = None
+    kill_monotonic: float | None = None
+
+
+def _supervise_subprocess(
+    proc: Any,
+    plan_dir: Path | None,
+    idle_cap: float | None,
+    wall_cap: float | None,
+    *,
+    args: list[str] | None = None,
+) -> tuple[int, str, str, WatcherState]:
+    """Extracted watcher loop (verbatim semantics of auto.py L310-392).
+
+    Drains ``proc.stdout``/``proc.stderr`` on background threads, monitors
+    plan-artifact mtime for liveness, emits heartbeats, and applies wall +
+    idle timeouts with ``kill_group`` reaping. Returns the final
+    ``(exit_code, stdout, stderr, WatcherState)``.
+    """
+
+    args = args if args is not None else []
+    state = WatcherState()
+    state.last_activity = time.monotonic()
+    state.last_hard_progress = state.last_activity
+    state.last_liveness_mtime = _plan_liveness_mtime(plan_dir)
+    heartbeat_interval = _phase_heartbeat_interval_seconds()
+    state.last_heartbeat = state.last_activity
+
+    def _reader(stream: Any, parts: list[bytes]) -> None:
+        if stream is None:
+            return
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                break
+            parts.append(chunk)
+            state.last_activity = time.monotonic()
+            state.last_hard_progress = state.last_activity
+
+    threads = [
+        threading.Thread(target=_reader, args=(proc.stdout, state.stdout_parts), daemon=True),
+        threading.Thread(target=_reader, args=(proc.stderr, state.stderr_parts), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    state.started = time.monotonic()
+    while proc.poll() is None:
+        now = time.monotonic()
+        current_liveness_mtime = _plan_liveness_mtime(plan_dir)
+        if (
+            current_liveness_mtime is not None
+            and (
+                state.last_liveness_mtime is None
+                or current_liveness_mtime > state.last_liveness_mtime
+            )
+        ):
+            state.last_liveness_mtime = current_liveness_mtime
+            state.last_activity = now
+            state.last_hard_progress = now
+            state.liveness_changed_since_heartbeat = True
+        if heartbeat_interval is not None and now - state.last_heartbeat >= heartbeat_interval:
+            logging.getLogger("megaplan").info(
+                "%s",
+                _format_phase_heartbeat(
+                    args,
+                    elapsed_s=now - state.started,
+                    plan_dir=plan_dir,
+                    progress_changed=state.liveness_changed_since_heartbeat,
+                ),
+            )
+            state.last_heartbeat = now
+            state.liveness_changed_since_heartbeat = False
+        timeout_base = state.last_hard_progress if idle_cap is not None else state.started
+        if wall_cap is not None and now - timeout_base >= wall_cap:
+            state.timed_out_reason = f"subprocess timed out after {wall_cap}s"
+            break
+        if idle_cap is not None and now - state.last_activity >= idle_cap:
+            state.timed_out_reason = (
+                f"subprocess idle timed out after {idle_cap}s without output"
+            )
+            break
+        time.sleep(0.2)
+
+    if state.timed_out_reason is not None:
+        state.kill_monotonic = time.monotonic()
+        kill_group(proc, label="megaplan auto idle/timeout")
+        for thread in threads:
+            thread.join(timeout=1)
+        stdout = b"".join(state.stdout_parts).decode("utf-8", errors="replace")
+        stderr = b"".join(state.stderr_parts).decode("utf-8", errors="replace")
+        marker = f"\n[megaplan auto] {state.timed_out_reason}"
+        return PHASE_TIMEOUT_EXIT_CODE, stdout, (stderr + marker).strip(), state
+
+    for thread in threads:
+        thread.join(timeout=1)
+    stdout = b"".join(state.stdout_parts).decode("utf-8", errors="replace")
+    stderr = b"".join(state.stderr_parts).decode("utf-8", errors="replace")
+    return int(proc.returncode or 0), stdout, stderr, state
+
+
+def _run_planning_phase(
     args: list[str],
     *,
     cwd: Path | None = None,
@@ -288,134 +409,187 @@ def _run_megaplan(
     progress_env: dict[str, str] | None = None,
     liveness_plan_dir: Path | None = None,
 ) -> tuple[int, str, str]:
-    """Run a megaplan sub-command in its own process.
+    """Run one auto-dispatched command in-process.
 
-    We shell out rather than importing the handlers directly so each phase gets
-    a fresh argparse/handler lifecycle. This matches how external orchestrators
-    drive the CLI and avoids subtle state leakage between phases.
-
-    ``timeout`` is seconds to wait before killing the subprocess. On timeout we
-    return exit code ``PHASE_TIMEOUT_EXIT_CODE`` and append a marker to stderr
-    so the driver can surface it as a phase failure without crashing the loop.
-    The subprocess is killed; any grandchildren it spawned (e.g. codex) may
-    need a moment to settle but will exit when their parent's pipes close.
+    Kept as the test seam replacing the retired subprocess helper.
     """
-    env = None
-    if progress_env:
-        env = os.environ.copy()
-        env.update(progress_env)
-    if idle_timeout is None:
-        try:
-            proc = subprocess.run(
-                [sys.executable, "-m", "megaplan", *args],
-                cwd=str(cwd) if cwd else None,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=env,
-            )
-            return proc.returncode, proc.stdout, proc.stderr
-        except subprocess.TimeoutExpired as error:
-            out = error.output or ""
-            err = error.stderr or ""
-            if isinstance(out, bytes):
-                out = out.decode("utf-8", errors="replace")
-            if isinstance(err, bytes):
-                err = err.decode("utf-8", errors="replace")
-            marker = f"\n[megaplan auto] subprocess timed out after {timeout}s"
-            return PHASE_TIMEOUT_EXIT_CODE, out, (err + marker).strip()
-        except FileNotFoundError as error:
-            return 127, "", str(error)
+
+    del timeout, idle_timeout
+    if not args:
+        return 1, "", "missing command"
+    if args[0] == "override":
+        return _run_override_command(args, cwd=cwd)
+    plan = _plan_arg(args)
+    if plan is None:
+        return 1, "", "missing --plan"
+    from megaplan._pipeline.registry import PipelineRegistry
+
+    pipeline = PipelineRegistry().get("planning")
+    if pipeline is None:
+        return 1, "", "planning pipeline unavailable"
+    return pipeline.run_phase(
+        args[0],
+        plan=plan,
+        cwd=cwd,
+        plan_dir=liveness_plan_dir,
+        argv=args,
+        progress_env=progress_env,
+    )
+
+
+def _plan_arg(args: list[str]) -> str | None:
     try:
-        proc = spawn(
-            [sys.executable, "-m", "megaplan", *args],
-            cwd=str(cwd) if cwd else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
+        index = args.index("--plan")
+    except ValueError:
+        return None
+    if index + 1 >= len(args):
+        return None
+    return args[index + 1]
+
+
+def _run_override_command(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+) -> tuple[int, str, str]:
+    plan = _plan_arg(args)
+    if plan is None:
+        return 1, "", "missing --plan"
+    action = args[1] if len(args) > 1 else ""
+    root = Path(cwd or Path.cwd())
+    try:
+        from megaplan.cli import load_plan
+        from megaplan.handlers.override import (
+            _override_abort,
+            _override_force_proceed,
+            handle_override,
         )
-    except FileNotFoundError as error:
-        return 127, "", str(error)
+        from megaplan._core.io import json_dump
 
-    stdout_parts: list[bytes] = []
-    stderr_parts: list[bytes] = []
-    last_activity = time.monotonic()
-    last_hard_progress = last_activity
-    last_liveness_mtime = _plan_liveness_mtime(liveness_plan_dir)
-    heartbeat_interval = _phase_heartbeat_interval_seconds()
-    last_heartbeat = last_activity
-    liveness_changed_since_heartbeat = False
+        plan_dir, state = load_plan(root, plan)
+        namespace = _override_namespace(args, plan=plan)
+        if action == "force-proceed":
+            response = _override_force_proceed(root, plan_dir, state, namespace)
+        elif action == "abort":
+            response = _override_abort(root, plan_dir, state, namespace)
+        else:
+            response = handle_override(root, namespace)
+        return 0, json_dump(response), ""
+    except CliError as error:
+        payload: dict[str, Any] = {
+            "success": False,
+            "error": error.code,
+            "message": error.message,
+        }
+        if error.extra:
+            payload["details"] = dict(error.extra)
+        return error.exit_code, "", json.dumps(payload)
+    except Exception as error:  # noqa: BLE001 - match CLI failure surface.
+        return 1, "", f"{type(error).__name__}: {error}"
 
-    def _reader(stream: Any, parts: list[bytes]) -> None:
-        nonlocal last_activity, last_hard_progress
-        if stream is None:
-            return
-        while True:
-            chunk = stream.read(4096)
-            if not chunk:
-                break
-            parts.append(chunk)
-            last_activity = time.monotonic()
-            last_hard_progress = last_activity
 
-    threads = [
-        threading.Thread(target=_reader, args=(proc.stdout, stdout_parts), daemon=True),
-        threading.Thread(target=_reader, args=(proc.stderr, stderr_parts), daemon=True),
-    ]
-    for thread in threads:
-        thread.start()
+def _override_namespace(args: list[str], *, plan: str) -> argparse.Namespace:
+    action = args[1] if len(args) > 1 else ""
+    values: dict[str, Any] = {
+        "plan": plan,
+        "override_action": action,
+        "note": None,
+        "reason": "",
+        "source": "user",
+        "user_approved": False,
+        "robustness": None,
+        "profile": None,
+        "phase": None,
+        "model": None,
+        "vendor": None,
+        "strict_notes": None,
+    }
+    index = 2
+    while index < len(args):
+        token = args[index]
+        if token in {
+            "--plan",
+            "--note",
+            "--reason",
+            "--source",
+            "--robustness",
+            "--profile",
+            "--phase",
+            "--model",
+            "--vendor",
+        } and index + 1 < len(args):
+            values[token[2:].replace("-", "_")] = args[index + 1]
+            index += 1
+        elif token == "--user-approved":
+            values["user_approved"] = True
+        index += 1
+    return argparse.Namespace(**values)
 
-    started = time.monotonic()
-    timed_out_reason: str | None = None
-    while proc.poll() is None:
-        now = time.monotonic()
-        current_liveness_mtime = _plan_liveness_mtime(liveness_plan_dir)
-        if (
-            current_liveness_mtime is not None
-            and (
-                last_liveness_mtime is None
-                or current_liveness_mtime > last_liveness_mtime
-            )
-        ):
-            last_liveness_mtime = current_liveness_mtime
-            last_activity = now
-            last_hard_progress = now
-            liveness_changed_since_heartbeat = True
-        if heartbeat_interval is not None and now - last_heartbeat >= heartbeat_interval:
-            logging.getLogger("megaplan").info(
-                "%s",
-                _format_phase_heartbeat(
-                    args,
-                    elapsed_s=now - started,
-                    plan_dir=liveness_plan_dir,
-                    progress_changed=liveness_changed_since_heartbeat,
-                ),
-            )
-            last_heartbeat = now
-            liveness_changed_since_heartbeat = False
-        timeout_base = last_hard_progress if idle_timeout is not None else started
-        if timeout is not None and now - timeout_base >= timeout:
-            timed_out_reason = f"subprocess timed out after {timeout}s"
-            break
-        if idle_timeout is not None and now - last_activity >= idle_timeout:
-            timed_out_reason = f"subprocess idle timed out after {idle_timeout}s without output"
-            break
-        time.sleep(0.2)
 
-    if timed_out_reason is not None:
-        kill_group(proc, label="megaplan auto idle/timeout")
-        for thread in threads:
-            thread.join(timeout=1)
-        stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")
-        stderr = b"".join(stderr_parts).decode("utf-8", errors="replace")
-        marker = f"\n[megaplan auto] {timed_out_reason}"
-        return PHASE_TIMEOUT_EXIT_CODE, stdout, (stderr + marker).strip()
+def _override_force_proceed_in_process(
+    *,
+    root: Path,
+    plan: str,
+    reason: str,
+    user_approved: bool = False,
+) -> tuple[int, str, str]:
+    from megaplan.cli import load_plan
+    from megaplan.handlers.override import _override_force_proceed
+    from megaplan._core.io import json_dump
 
-    for thread in threads:
-        thread.join(timeout=1)
-    stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")
-    stderr = b"".join(stderr_parts).decode("utf-8", errors="replace")
-    return int(proc.returncode or 0), stdout, stderr
+    try:
+        plan_dir, state = load_plan(root, plan)
+        args = argparse.Namespace(
+            plan=plan,
+            override_action="force-proceed",
+            reason=reason,
+            user_approved=user_approved,
+            strict_notes=None,
+        )
+        return 0, json_dump(_override_force_proceed(root, plan_dir, state, args)), ""
+    except CliError as error:
+        payload: dict[str, Any] = {
+            "success": False,
+            "error": error.code,
+            "message": error.message,
+        }
+        if error.extra:
+            payload["details"] = dict(error.extra)
+        return error.exit_code, "", json.dumps(payload)
+    except Exception as error:  # noqa: BLE001
+        return 1, "", f"{type(error).__name__}: {error}"
+
+
+def _override_abort_in_process(
+    *,
+    root: Path,
+    plan: str,
+    reason: str,
+) -> tuple[int, str, str]:
+    from megaplan.cli import load_plan
+    from megaplan.handlers.override import _override_abort
+    from megaplan._core.io import json_dump
+
+    try:
+        plan_dir, state = load_plan(root, plan)
+        args = argparse.Namespace(
+            plan=plan,
+            override_action="abort",
+            reason=reason,
+            strict_notes=None,
+        )
+        return 0, json_dump(_override_abort(root, plan_dir, state, args)), ""
+    except CliError as error:
+        payload: dict[str, Any] = {
+            "success": False,
+            "error": error.code,
+            "message": error.message,
+        }
+        if error.extra:
+            payload["details"] = dict(error.extra)
+        return error.exit_code, "", json.dumps(payload)
+    except Exception as error:  # noqa: BLE001
+        return 1, "", f"{type(error).__name__}: {error}"
 
 
 def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
@@ -423,6 +597,7 @@ def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
 
     if plan_dir is None:
         return None
+    # dormant-path: subprocess seam, retired at M6
     candidates = [plan_dir / "state.json"]
     try:
         candidates.extend(plan_dir.glob("execution_batch_*.json"))
@@ -465,6 +640,7 @@ def _format_phase_heartbeat(
         f"elapsed={int(elapsed_s)}s",
         f"progress_mtime_changed={'yes' if progress_changed else 'no'}",
     ]
+    # dormant-path: subprocess seam, retired at M6
     state_path = plan_dir / "state.json" if plan_dir is not None else None
     if state_path is not None:
         try:
@@ -514,20 +690,22 @@ def _status(
     timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
     progress_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {"cwd": cwd, "timeout": timeout}
-    if progress_env:
-        kwargs["progress_env"] = progress_env
-    code, out, err = _run_megaplan(["status", "--plan", plan], **kwargs)
-    if code != 0:
-        raise RuntimeError(f"megaplan status failed (exit {code}): {err.strip() or out.strip()}")
-    return json.loads(out)
+    del timeout, progress_env
+    from megaplan.cli.status_view import handle_status
+
+    root = Path(cwd or Path.cwd())
+    response = handle_status(root, argparse.Namespace(plan=plan, pending_human=False))
+    return dict(response)
 
 
 def _has_valid_next(status: dict[str, Any], action: str) -> bool:
     return action in (status.get("valid_next") or [])
 
 
-def _phase_command(next_step: str) -> list[str]:
+def _phase_command(
+    next_step: str,
+    substrate: "Substrate" = "subprocess_isolated",
+) -> list[str]:
     """Translate a `next_step` from status into the CLI args that run it.
 
     Most phases are one-to-one: next_step == command. Execute adds the
@@ -537,6 +715,13 @@ def _phase_command(next_step: str) -> list[str]:
     ``["override", "add-note"]`` so argparse sees the sub-subcommand —
     otherwise the whole string is passed as a single positional and
     argparse rejects it with `invalid choice`.
+
+    The *substrate* parameter is a forward-looking shim (M3 Step 12):
+    ``"subprocess_isolated"`` (default) preserves the legacy CLI-args
+    contract; ``"in_process"`` is accepted but currently returns the
+    same args.  Callers in the unified-dispatch path should pass the
+    active substrate explicitly so the contract is unambiguous when the
+    in-process path gains its own translation.
     """
     if next_step == "execute":
         # --retry-blocked-tasks is safe to pass on every iteration. Within a
@@ -566,40 +751,6 @@ def _phase_command(next_step: str) -> list[str]:
             "megaplan auto: recover blocked plan after blocker resolution",
         ]
     return shlex.split(next_step)
-
-
-def _post_revise_gate_ready(plan_dir: Path | None, status: dict[str, Any]) -> bool:
-    if plan_dir is None:
-        return False
-    if status.get("state") != STATE_PLANNED or status.get("next_step") != "critique":
-        return False
-    try:
-        iteration = int(status.get("iteration", 0) or 0)
-    except (TypeError, ValueError):
-        return False
-    if iteration < 2:
-        return False
-    try:
-        latest_meta = read_json(plan_dir / f"plan_v{iteration}.meta.json")
-        state_data = read_json(plan_dir / "state.json")
-    except (FileNotFoundError, OSError, ValueError):
-        return False
-    flags_addressed = latest_meta.get("flags_addressed")
-    if not isinstance(flags_addressed, list) or not flags_addressed:
-        return False
-    history = state_data.get("history", [])
-    if not (history and isinstance(history[-1], dict) and history[-1].get("step") == "revise"):
-        return False
-    try:
-        faults = read_json(plan_dir / "faults.json")
-    except (FileNotFoundError, OSError, ValueError):
-        return True
-    return any(
-        isinstance(flag, dict)
-        and flag.get("status") == "addressed"
-        and flag.get("severity") in {"significant", "likely-significant"}
-        for flag in faults.get("flags", [])
-    )
 
 
 def _resolve_plan_dir(plan: str, cwd: Path | None) -> Path | None:
@@ -737,6 +888,7 @@ def _sum_history_cost_usd(plan_dir: Path | None) -> float:
         return 0.0
 
     try:
+        # dormant-path: subprocess seam, retired at M6
         with (plan_dir / "state.json").open(encoding="utf-8") as handle:
             state_data = json.load(handle)
     except FileNotFoundError:
@@ -781,6 +933,7 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
     try:
+        # dormant-path: subprocess seam, retired at M6
         with (plan_dir / "state.json").open(encoding="utf-8") as handle:
             data = json.load(handle)
     except FileNotFoundError:
@@ -819,186 +972,6 @@ def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
         if isinstance(spec, str) and spec.strip():
             ladder[tier_num] = spec
     return ladder
-
-
-def _pin_tasks_to_tier(
-    plan_dir: Path | None, task_ids: list[str], new_tier: int,
-) -> list[str]:
-    """Pin every task in *task_ids* to at least *new_tier* in ``finalize.json``.
-
-    Reads ``plan_dir/finalize.json``, sets ``tier_override`` on each matching
-    task monotonically (``max(existing, new_tier)``), and persists atomically.
-    Missing/unreadable file → single warning + return ``[]``.
-    Missing/non-list ``tasks`` → ``[]``.
-    Unknown *task_ids* are logged and skipped.
-    Returns the list of task ids that were actually mutated.
-    """
-    if plan_dir is None:
-        logging.warning(
-            "_pin_tasks_to_tier: plan_dir is None; skipping tier pin for %s",
-            task_ids,
-        )
-        return []
-    finalize_path = plan_dir / "finalize.json"
-    try:
-        data = read_json(finalize_path)
-    except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        logging.warning(
-            "_pin_tasks_to_tier: cannot read %s; skipping tier pin for %s",
-            finalize_path,
-            task_ids,
-        )
-        return []
-    if not isinstance(data, dict):
-        logging.warning(
-            "_pin_tasks_to_tier: %s is not a dict; skipping tier pin",
-            finalize_path,
-        )
-        return []
-    tasks = data.get("tasks")
-    if not isinstance(tasks, list):
-        return []
-    # Build id→index lookup
-    task_index: dict[str, int] = {}
-    for i, task in enumerate(tasks):
-        if isinstance(task, dict) and isinstance(task.get("id"), str):
-            task_index[task["id"]] = i
-    mutated: list[str] = []
-    for tid in task_ids:
-        idx = task_index.get(tid)
-        if idx is None:
-            logging.info(
-                "_pin_tasks_to_tier: unknown task id %r; skipping", tid,
-            )
-            continue
-        task = tasks[idx]
-        existing = task.get("tier_override")
-        if isinstance(existing, int):
-            pinned = max(existing, new_tier)
-        else:
-            pinned = new_tier
-        task["tier_override"] = pinned
-        mutated.append(tid)
-    if mutated:
-        try:
-            atomic_write_json(finalize_path, data)
-        except OSError as exc:
-            logging.warning(
-                "_pin_tasks_to_tier: atomic write to %s failed: %s",
-                finalize_path,
-                exc,
-            )
-            return []
-    return mutated
-
-
-def _current_task_override(plan_dir: Path | None, task_id: str) -> int | None:
-    """Return the ``tier_override`` for *task_id* in ``finalize.json``, if any.
-
-    Returns ``None`` when the plan dir is ``None``, the file is missing or
-    unreadable, the task is not found, or ``tier_override`` is not an int in
-    1..5.
-    """
-    if plan_dir is None:
-        return None
-    finalize_path = plan_dir / "finalize.json"
-    try:
-        data = read_json(finalize_path)
-    except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    tasks = data.get("tasks")
-    if not isinstance(tasks, list):
-        return None
-    for task in tasks:
-        if isinstance(task, dict) and task.get("id") == task_id:
-            override = task.get("tier_override")
-            if isinstance(override, int) and 1 <= override <= 5:
-                return override
-            return None
-    return None
-
-
-def _clear_task_overrides(plan_dir: Path | None) -> int:
-    """Remove every ``tier_override`` from tasks in ``finalize.json``.
-
-    Called from the init entry path so every rerun starts with a clean
-    escalation slate.  Persists atomically.  Returns the count of overrides
-    that were cleared (0 when the file is missing/unreadable — nothing to
-    clear from a fresh or pre-finalize plan).
-    """
-    if plan_dir is None:
-        return 0
-    finalize_path = plan_dir / "finalize.json"
-    try:
-        data = read_json(finalize_path)
-    except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        return 0
-    if not isinstance(data, dict):
-        return 0
-    tasks = data.get("tasks")
-    if not isinstance(tasks, list):
-        return 0
-    cleared = 0
-    for task in tasks:
-        if isinstance(task, dict) and "tier_override" in task:
-            task.pop("tier_override", None)
-            cleared += 1
-    if cleared:
-        try:
-            atomic_write_json(finalize_path, data)
-        except OSError:
-            # Best-effort — the write failing is not a hard error at init
-            # time, but we still return the count of what *would* be cleared
-            # so callers can log it.
-            pass
-    return cleared
-
-
-def _pin_all_pending_tasks_to_tier(
-    plan_dir: Path | None, new_tier: int,
-) -> list[str]:
-    """Pin ALL not-yet-done tasks in ``finalize.json`` to *new_tier*.
-
-    A "not-yet-done" task is one whose ``status`` is not ``done`` (or whose
-    status key is missing entirely — conservative).  Returns the list of
-    mutated task ids (empty when the file is missing/unreadable).
-    """
-    if plan_dir is None:
-        return []
-    finalize_path = plan_dir / "finalize.json"
-    try:
-        data = read_json(finalize_path)
-    except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        return []
-    if not isinstance(data, dict):
-        return []
-    tasks = data.get("tasks")
-    if not isinstance(tasks, list):
-        return []
-    mutated: list[str] = []
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        tid = task.get("id")
-        if not isinstance(tid, str):
-            continue
-        if task.get("status") == "done":
-            continue
-        existing = task.get("tier_override")
-        if isinstance(existing, int):
-            pinned = max(existing, new_tier)
-        else:
-            pinned = new_tier
-        task["tier_override"] = pinned
-        mutated.append(tid)
-    if mutated:
-        try:
-            atomic_write_json(finalize_path, data)
-        except OSError:
-            return []
-    return mutated
 
 
 def _latest_execute_max_tier(plan_dir: Path | None) -> int | None:
@@ -1118,53 +1091,6 @@ def _phase_result_signature(plan_dir: Path | None) -> tuple[int, int] | None:
     return (stat.st_mtime_ns, stat.st_size)
 
 
-def _phase_result_invocation_id(plan_dir: Path | None) -> str | None:
-    """Return the ``invocation_id`` stamped in the current phase_result.json.
-
-    This is the robust freshness signal: every phase launch mints a new
-    ``current_invocation_id`` (see ``_core.state``) and stamps it onto the
-    phase_result it writes. Two consecutive *identical* blocks (e.g. the same
-    task blocked on the same unresolved ``manual_required`` user action) have
-    byte-identical content and therefore an identical ``(mtime_ns, size)``
-    signature, but always carry distinct invocation ids. Comparing the
-    invocation id detects a freshly-written result that ``(mtime, size)`` can
-    silently miss — which previously dropped the ``blocked_by_prereq`` decision
-    on the floor and let the driver re-run the same blocked phase forever.
-    """
-    if plan_dir is None:
-        return None
-    candidate = read_phase_result(plan_dir)
-    if candidate is None:
-        return None
-    inv = getattr(candidate, "invocation_id", None)
-    return inv if isinstance(inv, str) and inv else None
-
-
-# User-action id token, e.g. ``U1`` / ``U12`` — used to surface a precise,
-# actionable resolve hint when a phase is blocked solely on human input.
-_USER_ACTION_ID_RE = re.compile(r"\bU\d+\b")
-
-
-def _extract_blocking_user_action_ids(blocked_tasks: tuple[Any, ...]) -> list[str]:
-    """Best-effort extraction of the user-action ids a block is waiting on.
-
-    Prefers the structured ``blocking_action_ids`` field on each BlockedTask;
-    falls back to scanning the free-text ``notes`` for ``U<n>`` tokens (the
-    executor records e.g. "U1 state = 'manual_required'"). De-duplicated,
-    order-preserving.
-    """
-    seen: dict[str, None] = {}
-    for bt in blocked_tasks:
-        for aid in getattr(bt, "blocking_action_ids", ()) or ():
-            if isinstance(aid, str) and aid:
-                seen.setdefault(aid, None)
-        notes = getattr(bt, "notes", "") or ""
-        if isinstance(notes, str):
-            for aid in _USER_ACTION_ID_RE.findall(notes):
-                seen.setdefault(aid, None)
-    return list(seen)
-
-
 def _record_lifecycle_failure(
     *,
     plan_dir: Path | None,
@@ -1185,6 +1111,7 @@ def _record_lifecycle_failure(
         # the failure event for audit + resume_cursor, but preserve the plan's
         # actual current_state — the driver giving up doesn't terminate the plan.
         try:
+            # dormant-path: subprocess seam, retired at M6
             state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
             if isinstance(state_data, dict):
                 current_state = state_data.get("current_state") or STATE_BLOCKED
@@ -1231,6 +1158,7 @@ def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] |
     if plan_dir is None:
         return None
     try:
+        # dormant-path: subprocess seam, retired at M6
         with (plan_dir / "state.json").open(encoding="utf-8") as handle:
             state_data = json.load(handle)
         if not isinstance(state_data, dict):
@@ -1251,15 +1179,9 @@ def _shadow_completion_verdict(
 ) -> str:
     """Compute + persist + log a completion verdict for a done plan.
 
-    Returns one of:
-    - ``"done"`` — proceed normally (shadow/warn/off modes, or enforce with no block).
-    - ``"routed"`` — enforce blocked; state.json patched to revise-routing state; caller
-      must ``continue`` the driver loop.
-    - ``"operator_required"`` — enforce blocked; retry cap exhausted; caller must halt.
-
-    FAIL-OPEN. Any exception is caught so a verdict bug can never break a run.
-    Sticky-flag invariant: reads ``completion_contract_mode`` exclusively from
-    ``state['config']`` (snapshotted at init) — never from ``os.getenv``.
+    Returns ``done`` when the driver should proceed normally, ``routed`` when
+    enforce mode patched state back to revise routing, and ``operator_required``
+    when enforcement exhausted its retry cap.
     """
     if plan_dir is None:
         return "done"
@@ -1278,6 +1200,7 @@ def _shadow_completion_verdict(
 
         state: dict[str, Any] = {}
         try:
+            # dormant-path: subprocess seam, retired at M6
             raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 state = raw
@@ -1285,7 +1208,6 @@ def _shadow_completion_verdict(
             state = {}
 
         config = state.get("config") if isinstance(state.get("config"), dict) else {}
-        # Sticky-flag: read only from state['config'], never os.getenv.
         mode = normalize_contract_mode(config.get("completion_contract_mode"))
 
         project_dir_str = config.get("project_dir") if isinstance(config, dict) else None
@@ -1332,8 +1254,6 @@ def _shadow_completion_verdict(
 
         if mode == CONTRACT_MODE_ENFORCE:
             delta_dict, result_status = extract_green_suite_info(verdict)
-
-            # Non-blocking: runner error / timeout / not_applicable — record warning, don't block.
             if result_status in {"runner_error", "timeout", "not_applicable"}:
                 _log.warning(
                     "completion_contract_mode=enforce: verification run status=%r for plan %r — "
@@ -1343,8 +1263,6 @@ def _shadow_completion_verdict(
                     verdict.would_block,
                 )
                 return "done"
-
-            # Non-blocking: delta not computable — record warning, don't block.
             if delta_dict is None or not delta_dict.get("computable", False):
                 _log.warning(
                     "completion_contract_mode=enforce: delta not computable for plan %r — "
@@ -1356,15 +1274,11 @@ def _shadow_completion_verdict(
 
             newly_failing = delta_dict.get("newly_failing") or []
             deleted_tests = delta_dict.get("deleted_tests") or []
-
             if not newly_failing and not deleted_tests:
-                # No regressions: proceed.
                 return "done"
 
-            # Blocking: newly_failing or deleted_tests present.
             max_retries = int(config.get("enforce_revise_max_retries", 2))
             retry_count = int(state.get("enforce_revise_count", 0))
-
             if retry_count >= max_retries:
                 _log.warning(
                     "completion_contract_mode=enforce: plan %r blocked; revise retry cap %d "
@@ -1419,6 +1333,7 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
     """Restore a successfully executed plan after an external callback failure."""
     if plan_dir is None:
         return False
+    # dormant-path: subprocess seam, retired at M6
     state_path = plan_dir / "state.json"
     try:
         with state_path.open(encoding="utf-8") as handle:
@@ -1556,6 +1471,7 @@ def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bo
     """
     if plan_dir is None:
         return False
+    # dormant-path: subprocess seam, retired at M6
     state_path = plan_dir / "state.json"
     try:
         with state_path.open(encoding="utf-8") as handle:
@@ -1628,6 +1544,7 @@ def _plan_clarification(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
     try:
+        # dormant-path: subprocess seam, retired at M6
         state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
         return None
@@ -1675,14 +1592,11 @@ def drive(
     max_blocked_retries: int = DEFAULT_MAX_BLOCKED_RETRIES,
     max_add_note_attempts: int = DEFAULT_MAX_ADD_NOTE_ATTEMPTS,
     escalate_after_fails: int = DEFAULT_ESCALATE_AFTER_FAILS,
-    tier_drop_after_stalls: int = DEFAULT_TIER_DROP_AFTER_STALLS,
-    max_tier_drops: int = DEFAULT_MAX_TIER_DROPS,
     on_escalate: str = "force-proceed",
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
     phase_idle_timeout: float = DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
     status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
-    stop_at_finalized: bool = False,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     progress_env: dict[str, str] | None = None,
     writer=sys.stdout.write,
@@ -1699,15 +1613,6 @@ def drive(
     events: list[dict[str, Any]] = []
     last_state: str | None = None
     stall_count = 0
-    # Productivity-aware stall detection. `state` legitimately stays unchanged
-    # (e.g. `finalized`/`execute`) for many iterations while a large execute
-    # phase is PRODUCTIVELY draining tasks, so a same-state-name counter alone
-    # false-kills a healthy, progressing run. We track the task-completion
-    # signature (tasks_done + tasks_skipped) — the same forward-progress signal
-    # already computed for escalate-up routing, reusing status["progress"] with
-    # no extra IO — and reset stall_count whenever it advances. A genuinely
-    # stuck run (state unchanged AND no task progress) still trips the threshold.
-    last_progress_sig: int | None = None
     last_phase: str | None = None
     context_retry_count = 0
     external_retry_count = 0
@@ -1717,11 +1622,6 @@ def drive(
     # Reset on any successful add-note OR when the next_step changes — only a
     # repeating add-note→fail loop should trip the escalation.
     add_note_failures = 0
-    # Consecutive execute worker_stream_stall outcomes. A tier drop sticks for
-    # the run once applied; the streak only controls when the next drop fires.
-    execute_stall_streak = 0
-    tier_drop_level = 0
-    tier_drops_used = 0
 
     # ── Auto-ESCALATE-up state ─────────────────────────────────────────
     # Consecutive execute failures (timeout / internal_error / quality-block)
@@ -1735,26 +1635,11 @@ def drive(
     # current one is still making progress.
     last_execute_progress: int | None = None
     # The tier we have climbed the execute pin to (None = not yet escalated).
-    # Only set on the legacy `category is None` path; per-task escalation
-    # uses _pin_tasks_to_tier instead.
     escalation_tier_pin: int | None = None
     # The spec we are currently pinning execute to (None = configured routing).
-    # Only set on the legacy `category is None` path.
     escalation_pin_spec: str | None = None
     # Total escalations performed, surfaced in the run summary.
     tier_escalations_used = 0
-    # Per-exit-kind inline retry counters for timeout / internal_error.
-    # Keyed by exit_kind string, consumes CATEGORY_POLICY[].retries_first.
-    # Reset on any success.
-    inline_retry_count: dict[str, int] = {}
-    # Whether any escalation (per-task or phase_pin) fired in the previous
-    # iteration — drives the --fresh flag on the next execute dispatch.
-    escalation_fired = False
-    # One-shot timeout remediation gate: True after the first timeout in a
-    # streak window triggers the --batch 1 + --phase-idle-timeout remediation
-    # retry.  Reset on any success.  Only the NEXT consecutive timeout after
-    # remediation fires escalates.
-    last_timeout_remediated = False
 
     # Rework-cycle tracking. When review returns `needs_rework`, the plan
     # ping-pongs `finalized ↔ executed ↔ finalized` while execute re-runs
@@ -1765,9 +1650,6 @@ def drive(
     plan_dir = _resolve_plan_dir(plan, cwd)
     if plan_dir is not None:
         emit_event(EventKind.INIT, plan_dir=plan_dir, payload={"plan_name": plan})
-        # Clear any tier overrides left by a prior run so escalations start
-        # fresh — escalation is a per-run mechanism, not a persistent mark.
-        _clear_task_overrides(plan_dir)
     from megaplan.orchestration.progress import ProgressEmitter
     progress_emitter = ProgressEmitter.from_env(progress_env)
     last_review_marker = _get_review_marker(plan_dir)
@@ -1782,7 +1664,6 @@ def drive(
 
     def _run_phase(cmd: list[str], next_step: str) -> tuple[int, str, str, object | None]:
         before_phase_result = _phase_result_signature(plan_dir)
-        before_invocation_id = _phase_result_invocation_id(plan_dir)
         run_kwargs: dict[str, Any] = {
             "cwd": cwd,
             "timeout": phase_timeout,
@@ -1791,45 +1672,31 @@ def drive(
         }
         if progress_env:
             run_kwargs["progress_env"] = progress_env
+        _apply_envelope_handshake(run_kwargs, plan_dir)
         try:
-            code, out, err = _run_megaplan(cmd, **run_kwargs)
+            code, out, err = _run_planning_phase(cmd, **run_kwargs)
         except TypeError as error:
-            # Several unit tests monkeypatch _run_megaplan with the pre-idle-timeout
+            # Several unit tests monkeypatch _run_planning_phase with the pre-idle-timeout
             # signature. Keep that surface compatible without weakening the real path.
-            if "idle_timeout" not in str(error) and "liveness_plan_dir" not in str(error):
+            if (
+                "idle_timeout" not in str(error)
+                and "liveness_plan_dir" not in str(error)
+                and "progress_env" not in str(error)
+            ):
                 raise
             run_kwargs.pop("idle_timeout", None)
             run_kwargs.pop("liveness_plan_dir", None)
-            code, out, err = _run_megaplan(cmd, **run_kwargs)
+            run_kwargs.pop("progress_env", None)
+            code, out, err = _run_planning_phase(cmd, **run_kwargs)
 
         # Read the structured phase_result.json only when this command actually
         # produced it. A stale result from the previous phase must not mask a
         # current phase failure or the driver can loop on the same state forever.
-        #
-        # Freshness is detected primarily by the stamped ``invocation_id``: a
-        # mtime/size signature is fragile because a re-run that hits the *same*
-        # block (e.g. a task blocked on the same unresolved ``manual_required``
-        # user action) writes byte-identical content — identical size, and a
-        # mtime that can collide — so ``(mtime, size) != before`` can be False
-        # for a genuinely-new result. That dropped the blocked_by_prereq
-        # decision and re-looped the phase forever. A new invocation_id (or the
-        # changed mtime/size signature as a fallback) means the just-run command
-        # produced this file.
         result: object | None = None
-        candidate = read_phase_result(plan_dir)
         after_phase_result = _phase_result_signature(plan_dir)
-        after_invocation_id = (
-            getattr(candidate, "invocation_id", None) if candidate is not None else None
-        )
-        is_fresh = (
-            after_invocation_id is not None
-            and after_invocation_id != before_invocation_id
-        ) or (
-            after_phase_result is not None
-            and after_phase_result != before_phase_result
-        )
-        if candidate is not None and is_fresh:
-            if getattr(candidate, "phase", None) == next_step:
+        if after_phase_result is not None and after_phase_result != before_phase_result:
+            candidate = read_phase_result(plan_dir)
+            if candidate is not None and getattr(candidate, "phase", None) == next_step:
                 result = candidate
 
         if result is not None:
@@ -1876,7 +1743,7 @@ def drive(
         return code, out, err, result
 
     def _outcome(
-        status: DriverOutcomeStatus,
+        status: str,
         *,
         final_state: str,
         iterations: int,
@@ -1903,8 +1770,6 @@ def drive(
             blocking_reasons=list(blocking_reasons or []),
             tier_escalations_used=tier_escalations_used,
             escalation_tier_pin=escalation_tier_pin,
-            tier_drops_used=tier_drops_used,
-            max_tier_drops=max_tier_drops,
         )
 
     iteration = 0
@@ -1977,15 +1842,6 @@ def drive(
             next_step=next_step,
             valid_next=valid_next,
         )
-        if _post_revise_gate_ready(plan_dir, status):
-            log(
-                "post-revise gate ready — routing revised plan to gate before another critique",
-                iteration=status.get("iteration"),
-                previous_next_step=next_step,
-            )
-            next_step = "gate"
-            if "gate" not in valid_next:
-                valid_next = [*valid_next, "gate"]
 
         if state == STATE_FAILED and _recover_execute_callback_failure_state(plan_dir):
             log("recovered execute state after phase-complete callback failure; resuming")
@@ -2056,14 +1912,9 @@ def drive(
                 STATE_CANCELLED: "cancelled",
             }.get(state, state)
             log(f"terminal state reached: {state}")
-            # Completion-verification contract: on a done plan, compute + persist
-            # + log a verdict. Shadow/warn: fail-open, never alters outcome.
-            # Enforce: may route back to revise (newly_failing/deleted_tests) or
-            # halt with operator_required (retry cap exhausted).
             if terminal_status == "done":
                 enforce_result = _shadow_completion_verdict(plan, plan_dir, cwd, log=log)
                 if enforce_result == "routed":
-                    # State patched to revise-routing; continue the driver loop.
                     continue
                 if enforce_result == "operator_required":
                     gate_details = ""
@@ -2128,15 +1979,6 @@ def drive(
             )
 
         active_step = status.get("active_step")
-        if stop_at_finalized and state == STATE_FINALIZED and next_step == "execute":
-            log("state finalized and stop_at_finalized=True — stopping before execute dispatch")
-            return _outcome(
-                "finalized",
-                final_state=state,
-                iterations=iteration,
-                reason="plan reached finalized and stop_at_finalized=True",
-                last_phase=last_phase,
-            )
         orphan_actions = {
             "resume_or_recover",
             "rerun_same_step",
@@ -2244,39 +2086,8 @@ def drive(
                     last_phase=last_phase,
                 )
 
-        # Stall detection: same state for stall_threshold+ iterations with no
-        # measurable progress. "Stalled" means "no PROGRESS", not "same state
-        # name" — a large execute phase keeps `state` pinned at finalized/
-        # execute for many iterations while it productively drains tasks, so
-        # gate the counter on the task-completion signature, not the name.
-        progress_now = status.get("progress") or {}
-        try:
-            progress_sig_now = int(progress_now.get("tasks_done", 0) or 0) + int(
-                progress_now.get("tasks_skipped", 0) or 0
-            )
-        except (TypeError, ValueError):
-            progress_sig_now = last_progress_sig
-        made_task_progress = (
-            progress_sig_now is not None
-            and last_progress_sig is not None
-            and progress_sig_now > last_progress_sig
-        )
-        if state == last_state and made_task_progress:
-            # Tasks completed since the last iteration: the run is making real
-            # forward progress even though `state` is unchanged. Reset the stall
-            # counter so a healthy, draining execute phase is never killed. The
-            # genuine backstops (stall_threshold on a truly stuck run,
-            # max_iterations, cost cap) are untouched.
-            if stall_count:
-                log(
-                    f"task progress advanced "
-                    f"({last_progress_sig}->{progress_sig_now}) at "
-                    f"state={state} — resetting stall counter",
-                    stall_count=stall_count,
-                    progress_sig=progress_sig_now,
-                )
-            stall_count = 0
-        elif state == last_state:
+        # Stall detection: same state for stall_threshold+ iterations.
+        if state == last_state:
             stall_count += 1
             if stall_count >= stall_threshold:
                 # Distinguish an all-blocked outcome from a generic stall.
@@ -2354,13 +2165,6 @@ def drive(
                     )
             last_state = state
 
-        # Remember this iteration's task-completion signature so the next
-        # iteration can tell whether real progress occurred. Updated on every
-        # path (stalled, progressing, or state-changed) so the comparison is
-        # always against the immediately preceding observation.
-        if progress_sig_now is not None:
-            last_progress_sig = progress_sig_now
-
         # Escalation: no phase to run but overrides are available.
         if not next_step:
             if _has_valid_next(status, "override force-proceed"):
@@ -2369,16 +2173,11 @@ def drive(
                     run_kwargs: dict[str, Any] = {"cwd": cwd, "timeout": status_timeout}
                     if progress_env:
                         run_kwargs["progress_env"] = progress_env
-                    code, out, err = _run_megaplan(
-                        [
-                            "override",
-                            "force-proceed",
-                            "--plan",
-                            plan,
-                            "--reason",
-                            "megaplan auto: escalate → force-proceed",
-                        ],
-                        **run_kwargs,
+                    _apply_envelope_handshake(run_kwargs, plan_dir)
+                    code, out, err = _override_force_proceed_in_process(
+                        root=Path(cwd or Path.cwd()),
+                        plan=plan,
+                        reason="megaplan auto: escalate → force-proceed",
                     )
                     if code != 0:
                         log(f"force-proceed failed (exit {code}): {err.strip() or out.strip()}")
@@ -2435,16 +2234,11 @@ def drive(
                     run_kwargs = {"cwd": cwd, "timeout": status_timeout}
                     if progress_env:
                         run_kwargs["progress_env"] = progress_env
-                    _run_megaplan(
-                        [
-                            "override",
-                            "abort",
-                            "--plan",
-                            plan,
-                            "--reason",
-                            "megaplan auto: escalate → abort",
-                        ],
-                        **run_kwargs,
+                    _apply_envelope_handshake(run_kwargs, plan_dir)
+                    _override_abort_in_process(
+                        root=Path(cwd or Path.cwd()),
+                        plan=plan,
+                        reason="megaplan auto: escalate → abort",
                     )
                     return _outcome(
                         "aborted",
@@ -2537,50 +2331,18 @@ def drive(
             add_note_failures = 0
             cmd = _phase_command(next_step) + ["--plan", plan]
             last_phase = next_step
-            # Apply an active execute-tier escalation pin.
-            # --fresh: appended whenever ANY escalation just fired (legacy
-            # spec set OR per-task/phase_pin applied in the previous
-            # iteration) — the stronger model must start a new session.
-            # --phase-model execute=<spec>: appended ONLY when the legacy
-            # escalation_pin_spec is set (category-is-None path).
-            if next_step == "execute":
-                # ── Timeout remediation flags ──────────────────────
-                # One-shot: when a timeout just triggered remediation,
-                # append --batch 1 + --phase-idle-timeout <seconds> to
-                # isolate the stall to a single batch with a generous
-                # idle window.
-                if last_timeout_remediated:
-                    if "--batch" not in cmd:
-                        cmd = [*cmd, "--batch", "1"]
-                    if "--phase-idle-timeout" not in cmd:
-                        cmd = [
-                            *cmd,
-                            "--phase-idle-timeout",
-                            str(TIMEOUT_REMEDIATION_IDLE_SECONDS),
-                        ]
-                    # Keep last_timeout_remediated=True so the NEXT
-                    # consecutive timeout skips remediation and falls
-                    # through to escalation.  Only reset on success.
-                if escalation_pin_spec is not None or escalation_fired:
-                    if "--fresh" not in cmd:
-                        cmd = [*cmd, "--fresh"]
-                    escalation_fired = False
-                if escalation_pin_spec is not None:
-                    cmd = [
-                        *cmd,
-                        "--phase-model",
-                        f"execute={escalation_pin_spec}",
-                    ]
-                if tier_drop_level > 0:
-                    cmd = [*cmd, "--tier-drop", str(tier_drop_level)]
-                    log(
-                        f"auto-escalate: dispatching execute with --tier-drop "
-                        f"{tier_drop_level} after {execute_stall_streak} "
-                        "consecutive worker stalls",
-                        phase=next_step,
-                        tier_drop_level=tier_drop_level,
-                        execute_stall_streak=execute_stall_streak,
-                    )
+            # Apply an active execute-tier escalation pin. The pin overrides
+            # tier_models.execute via --phase-model and forces a *fresh*
+            # session: the failed worker's session must not be resumed, or the
+            # stronger model would never actually run (a tier change is a no-op
+            # if the batch --resume's the old session on the old model).
+            if next_step == "execute" and escalation_pin_spec is not None:
+                cmd = [
+                    *cmd,
+                    "--phase-model",
+                    f"execute={escalation_pin_spec}",
+                    "--fresh",
+                ]
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
         if plan_dir is not None:
             try:
@@ -2599,45 +2361,62 @@ def drive(
                 add_note_failures += 1
             else:
                 add_note_failures = 0
-        # Context-exhaustion retry loop: consume
-        # CATEGORY_POLICY[context_exhausted].retries_first as the cap.
-        # When cap is 0 the body never runs and the post-loop path falls
-        # through to the escalate block (no immediate bail).
-        from megaplan.auto_escalation import CATEGORY_POLICY, FailureCategory  # noqa: E402
-        _ctx_cap = CATEGORY_POLICY[FailureCategory.context_exhausted].retries_first
-        if _ctx_cap > 0:
+        # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
+        # not by string-matching captured stdout.
+        #
+        # M4 T17: classification is delegated to RecoveryPolicy.classify
+        # (action ∈ {retry_fresh, halt}); auto.py retains every side
+        # effect verbatim — counter bumps, log lines, _record_failure
+        # call, and the returned _outcome.  Byte-stability of the trace
+        # is guarded by tests/characterization/test_context_retry_byte_stability.py.
+        if max_context_retries > 0:
+            _ctx_policy = RecoveryPolicy(max_context_retries=max_context_retries)
             while (
                 next_step == "execute"
                 and result is not None
                 and getattr(result, "exit_kind", None) == ExitKind.context_exhausted.value
             ):
-                if context_retry_count >= _ctx_cap:
+                _ctx_decision = _ctx_policy.classify(
+                    result,
+                    layer="phase",
+                    context_retries_used=context_retry_count,
+                    phase=next_step,
+                )
+                if _ctx_decision.action == "halt":
                     log(
-                        f"context exhaustion retry cap reached ({_ctx_cap}) — "
-                        "falling through to escalate",
+                        f"context exhaustion retry cap reached ({max_context_retries}) — bailing",
                         context_retries_used=context_retry_count,
-                        context_retry_cap=_ctx_cap,
+                        max_context_retries=max_context_retries,
                     )
                     _record_failure(
                         plan_dir=plan_dir,
                         kind="context_retry_exhausted",
-                        message=f"context exhaustion retry cap reached ({context_retry_count}/{_ctx_cap})",
+                        message=f"context exhaustion retry cap reached ({context_retry_count}/{max_context_retries})",
                         current_state=None,
                         phase=next_step,
                         resume_cursor={"phase": next_step, "retry_strategy": "fresh_session"},
                         last_artifact=_latest_artifact_name(plan_dir),
                         suggested_action="Resume execute with a fresh worker context.",
-                        metadata={"context_retries_used": context_retry_count, "max_context_retries": _ctx_cap},
+                        metadata={"context_retries_used": context_retry_count, "max_context_retries": max_context_retries},
                     )
-                    break
+                    return _outcome(
+                        "context_retry_exhausted",
+                        final_state=state,
+                        iterations=iteration,
+                        reason=(
+                            f"context exhaustion retry cap reached "
+                            f"({context_retry_count}/{max_context_retries})"
+                        ),
+                        last_phase=last_phase,
+                    )
                 log(
                     "context exhaustion detected — retrying execute with "
-                    f"--fresh (retry {context_retry_count + 1}/{_ctx_cap})",
+                    f"--fresh (retry {context_retry_count + 1}/{max_context_retries})",
                     context_retries_used=context_retry_count,
-                    max_context_retries=_ctx_cap,
+                    max_context_retries=max_context_retries,
                     next_context_retry=context_retry_count + 1,
                 )
-                context_retry_count += 1
+                context_retry_count += _ctx_decision.budget_delta
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
                 code, out, err, result = _run_phase(cmd, next_step)
@@ -2654,10 +2433,21 @@ def drive(
         ):
             external_error = getattr(result, "external_error", None)
             phase_retry_count = external_retry_counts_by_phase.get(next_step, 0)
-            if (
-                phase_retry_count >= max_external_retries
-                or not _is_retryable_external_error(next_step, external_error)
-            ):
+            # M4 T18: bind classification to RecoveryPolicy.classify while
+            # preserving every side effect verbatim. classify returns a pure
+            # decision; counter bumps + event emits stay below.
+            _ext_decision = RecoveryPolicy(
+                max_external_retries=max_external_retries
+            ).classify(
+                result,
+                layer="phase",
+                external_retries_used=phase_retry_count,
+                phase=next_step,
+            )
+            if _ext_decision.action != "retry_transient":
+                break
+            # Retain the legacy retryability gate verbatim (identity guard).
+            if not _is_retryable_external_error(next_step, external_error):
                 break
             provider = getattr(external_error, "provider", "unknown")
             error_kind = getattr(external_error, "error_kind", "unknown")
@@ -2839,55 +2629,6 @@ def drive(
                 metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
             )
 
-        if next_step == "execute":
-            if _is_execute_worker_stream_stall(result):
-                execute_stall_streak += 1
-                if (
-                    tier_drop_after_stalls > 0
-                    and execute_stall_streak >= tier_drop_after_stalls
-                    and tier_drop_level < max_tier_drops
-                ):
-                    tier_drop_level += 1
-                    tier_drops_used += 1
-                    log(
-                        f"auto-escalate: {execute_stall_streak} consecutive "
-                        "execute worker stalls — dropping execute routing to "
-                        f"tier-drop level {tier_drop_level}/{max_tier_drops}",
-                        execute_stall_streak=execute_stall_streak,
-                        tier_drop_level=tier_drop_level,
-                        max_tier_drops=max_tier_drops,
-                        tier_drops_used=tier_drops_used,
-                    )
-                    if plan_dir is not None:
-                        try:
-                            emit_event(
-                                EventKind.TIER_DROP,
-                                plan_dir=plan_dir,
-                                phase=next_step,
-                                payload={
-                                    "phase": next_step,
-                                    "reason": "worker_stream_stall",
-                                    "consecutive_stalls": execute_stall_streak,
-                                    "tier_drop_level": tier_drop_level,
-                                    "max_tier_drops": max_tier_drops,
-                                    "tier_drops_used": tier_drops_used,
-                                },
-                            )
-                        except Exception:
-                            _warn_best_effort_emit_failure(
-                                "M3A_WARN_EMIT_AUTO_TIER_DROP",
-                                action="auto-tier-drop",
-                                plan_dir=plan_dir,
-                                phase=next_step,
-                                event_kind="tier_drop",
-                                context={
-                                    "consecutive_stalls": execute_stall_streak,
-                                    "tier_drop_level": tier_drop_level,
-                                },
-                            )
-            else:
-                execute_stall_streak = 0
-
         if (
             code in (0, None)
             and on_phase_complete
@@ -2926,14 +2667,8 @@ def drive(
         # execution_batch_*.json, captured stdout tails, and deviation
         # prefix-matching tables. Those surfaces still exist for user-visible
         # logging, but the driver no longer consults them for decisions.
-        execute_effective_exit_kind = (
-            getattr(result, "exit_kind", None)
-            if next_step == "execute" and result is not None
-            else None
-        )
-        execute_empty_block_treated_as_success = False
         if next_step == "execute" and result is not None and max_blocked_retries >= 0:
-            ek = execute_effective_exit_kind
+            ek = getattr(result, "exit_kind", None)
             if ek == ExitKind.success.value:
                 # Executor succeeded — continue to next phase without retry.
                 pass
@@ -2952,60 +2687,17 @@ def drive(
                         )
                         for bt in blocked_tasks
                     ]
-                    action_ids = _extract_blocking_user_action_ids(blocked_tasks)
-                    resolve_hint = ""
-                    if action_ids:
-                        ids_str = ", ".join(action_ids)
-                        first = action_ids[0]
-                        resolve_hint = (
-                            f" Resolve user action(s) {ids_str} then re-run, e.g. "
-                            f"`megaplan user-action resolve --plan {plan} "
-                            f"--action-id {first} --resolution satisfied "
-                            f"--rationale '<why>'`. Until then this block cannot "
-                            f"clear on retry (its input is human-only)."
-                        )
                     reason = (
                         "execute reported blocked tasks awaiting user action: "
                         + "; ".join(blocked_summaries)
-                        + resolve_hint
                     )
                     log(
                         "execute reported task(s) blocked awaiting user action — "
-                        "exiting as awaiting_human without consuming a retry"
-                        + (
-                            f"; resolve user action(s): {', '.join(action_ids)}"
-                            if action_ids
-                            else ""
-                        ),
+                        "exiting as awaiting_human without consuming a retry",
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
                         blocked_task_ids=[getattr(bt, "task_id", "?") for bt in blocked_tasks],
-                        blocking_user_action_ids=action_ids,
                     )
-                    # Append escalation-history entry before returning
-                    if plan_dir is not None:
-                        try:
-                            state_data = read_json(plan_dir / "state.json")
-                            if isinstance(state_data, dict):
-                                append_history(
-                                    state_data,
-                                    {
-                                        "step": "escalation",
-                                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                                        "duration_ms": 0,
-                                        "cost_usd": 0.0,
-                                        "result": "blocked_by_prereq",
-                                        "category": "blocked_by_prereq",
-                                        "scope": "manual_review_handoff",
-                                        "failing_task_ids": [
-                                            getattr(bt, "task_id", "?")
-                                            for bt in blocked_tasks
-                                        ],
-                                    },
-                                )
-                                atomic_write_json(plan_dir / "state.json", state_data)
-                        except Exception:
-                            pass
                     return _outcome(
                         "awaiting_human",
                         final_state=STATE_FINALIZED,
@@ -3023,27 +2715,15 @@ def drive(
                         ],
                     )
                 # No blocked tasks but still blocked_by_prereq — treat as
-                # quality blocking via deviations.  Exhaustion now falls
-                # through to the escalate block instead of bailing.
+                # quality blocking via deviations.
                 deviations_list: list[str] = [
                     getattr(dv, "message", str(dv))
                     for dv in getattr(result, "deviations", ())
                 ]
-                if not deviations_list:
-                    execute_effective_exit_kind = ExitKind.success.value
-                    execute_empty_block_treated_as_success = True
+                if blocked_retry_count >= max_blocked_retries:
                     log(
-                        "execute reported blocked_by_prereq with no blocked tasks "
-                        "and no deviations — treating as success",
-                        blocked_retries_used=blocked_retry_count,
-                        max_blocked_retries=max_blocked_retries,
-                        blocking_reasons=[],
-                    )
-                elif blocked_retry_count >= max_blocked_retries:
-                    log(
-                        f"execute blocked by quality gates — retry cap "
-                        f"reached ({max_blocked_retries}), falling through "
-                        "to escalate",
+                        f"execute blocked by quality gates and retry cap reached "
+                        f"({max_blocked_retries}) — bailing",
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
                         blocking_reasons=deviations_list,
@@ -3067,147 +2747,80 @@ def drive(
                             "blocking_reasons": deviations_list,
                         },
                     )
-                    # Append escalation-history entry for exhaustion
-                    if plan_dir is not None:
-                        try:
-                            state_data = read_json(plan_dir / "state.json")
-                            if isinstance(state_data, dict):
-                                state_data.setdefault("history", [])
-                                state_data.setdefault("meta", {})
-                                append_history(
-                                    state_data,
-                                    {
-                                        "step": "escalation",
-                                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                                        "duration_ms": 0,
-                                        "cost_usd": 0.0,
-                                        "result": "blocked_by_prereq",
-                                        "category": "blocked_by_prereq",
-                                        "scope": "manual_review_handoff",
-                                        "failing_task_ids": [],
-                                    },
-                                )
-                                atomic_write_json(plan_dir / "state.json", state_data)
-                        except Exception:
-                            pass
-                    # Do NOT return — fall through to escalate block.
-                else:
-                    blocked_retry_count += 1
+                    return _outcome(
+                        "worker_blocked",
+                        final_state=state,
+                        iterations=iteration,
+                        reason=(
+                            "execute blocked by quality gates "
+                            f"after {blocked_retry_count + 1} attempt(s); "
+                            f"retry cap {max_blocked_retries} reached"
+                        ),
+                        last_phase=last_phase,
+                        blocking_reasons=deviations_list,
+                    )
+                blocked_retry_count += 1
+                log(
+                    f"execute blocked by quality gates — retrying "
+                    f"({blocked_retry_count}/{max_blocked_retries})",
+                    blocked_retries_used=blocked_retry_count,
+                    max_blocked_retries=max_blocked_retries,
+                    blocking_reasons=deviations_list,
+                )
+            elif ek == ExitKind.blocked_by_quality.value:
+                # Quality-gate block — retry with cap, using result.deviations
+                # directly (no string prefix matching).
+                deviations_list = [
+                    getattr(dv, "message", str(dv))
+                    for dv in getattr(result, "deviations", ())
+                ]
+                if blocked_retry_count >= max_blocked_retries:
                     log(
-                        f"execute blocked by quality gates — retrying "
-                        f"({blocked_retry_count}/{max_blocked_retries})",
+                        f"execute blocked by quality gates and retry cap reached "
+                        f"({max_blocked_retries}) — bailing",
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
                         blocking_reasons=deviations_list,
                     )
-            elif ek == ExitKind.blocked_by_quality.value:
-                # Quality-gate block — check for scope-drift false positive
-                # before incrementing any counter (do NOT retry/escalate/bail).
-                deviations_seq = getattr(result, "deviations", ())
-                from megaplan.auto_escalation import _is_drift  # noqa: E402
-                if _is_drift(deviations_seq):
-                    log(
-                        "blocked_by_quality_drift: scope drift false positive "
-                        "— skipping (no retry / no escalate)",
+                    _record_failure(
+                        plan_dir=plan_dir,
+                        kind="execution_blocked",
+                        message="execute blocked by quality gates",
+                        current_state=STATE_BLOCKED,
+                        phase=next_step,
+                        resume_cursor={
+                            "phase": next_step,
+                            "batch_index": None,
+                            "retry_strategy": "fresh_session",
+                        },
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action="Review blocking deviations and resume execute with a fresh session.",
+                        metadata={
+                            "blocked_retries_used": blocked_retry_count,
+                            "max_blocked_retries": max_blocked_retries,
+                            "blocking_reasons": deviations_list,
+                        },
                     )
-                    if plan_dir is not None:
-                        try:
-                            state_data = read_json(plan_dir / "state.json")
-                            if isinstance(state_data, dict):
-                                state_data.setdefault("history", [])
-                                state_data.setdefault("meta", {})
-                                append_history(
-                                    state_data,
-                                    {
-                                        "step": "escalation",
-                                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                                        "duration_ms": 0,
-                                        "cost_usd": 0.0,
-                                        "result": "blocked_by_quality_drift",
-                                        "category": "blocked_by_quality_drift",
-                                        "scope": "drift_skip",
-                                    },
-                                )
-                                atomic_write_json(plan_dir / "state.json", state_data)
-                        except Exception:
-                            pass
-                    # Fall through — do NOT retry/escalate/bail, just
-                    # continue to the next iteration.
-                else:
-                    deviations_list = [
-                        getattr(dv, "message", str(dv))
-                        for dv in deviations_seq
-                    ]
-                    if not deviations_list:
-                        execute_effective_exit_kind = ExitKind.success.value
-                        execute_empty_block_treated_as_success = True
-                        log(
-                            "execute reported blocked_by_quality with no deviations "
-                            "— treating as success",
-                            blocked_retries_used=blocked_retry_count,
-                            max_blocked_retries=max_blocked_retries,
-                            blocking_reasons=[],
-                        )
-                    elif blocked_retry_count >= max_blocked_retries:
-                        log(
-                            f"execute blocked by quality gates — retry cap "
-                            f"reached ({max_blocked_retries}), falling through "
-                            "to escalate",
-                            blocked_retries_used=blocked_retry_count,
-                            max_blocked_retries=max_blocked_retries,
-                            blocking_reasons=deviations_list,
-                        )
-                        _record_failure(
-                            plan_dir=plan_dir,
-                            kind="execution_blocked",
-                            message="execute blocked by quality gates",
-                            current_state=STATE_BLOCKED,
-                            phase=next_step,
-                            resume_cursor={
-                                "phase": next_step,
-                                "batch_index": None,
-                                "retry_strategy": "fresh_session",
-                            },
-                            last_artifact=_latest_artifact_name(plan_dir),
-                            suggested_action="Review blocking deviations and resume execute with a fresh session.",
-                            metadata={
-                                "blocked_retries_used": blocked_retry_count,
-                                "max_blocked_retries": max_blocked_retries,
-                                "blocking_reasons": deviations_list,
-                            },
-                        )
-                        # Append escalation-history entry for exhaustion
-                        if plan_dir is not None:
-                            try:
-                                state_data = read_json(plan_dir / "state.json")
-                                if isinstance(state_data, dict):
-                                    state_data.setdefault("history", [])
-                                    state_data.setdefault("meta", {})
-                                    append_history(
-                                        state_data,
-                                        {
-                                            "step": "escalation",
-                                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                                            "duration_ms": 0,
-                                            "cost_usd": 0.0,
-                                            "result": "blocked_by_quality_semantic",
-                                            "category": "blocked_by_quality_semantic",
-                                            "scope": "retries_exhausted",
-                                        },
-                                    )
-                                    atomic_write_json(plan_dir / "state.json", state_data)
-                            except Exception:
-                                pass
-                        # Do NOT return — fall through to escalate block.
-                    else:
-                        blocked_retry_count += 1
-                        log(
-                            f"execute blocked by quality gates — retrying "
-                            f"({blocked_retry_count}/{max_blocked_retries})",
-                            blocked_retries_used=blocked_retry_count,
-                            max_blocked_retries=max_blocked_retries,
-                            blocking_reasons=deviations_list,
-                        )
+                    return _outcome(
+                        "worker_blocked",
+                        final_state=state,
+                        iterations=iteration,
+                        reason=(
+                            "execute blocked by quality gates "
+                            f"after {blocked_retry_count + 1} attempt(s); "
+                            f"retry cap {max_blocked_retries} reached"
+                        ),
+                        last_phase=last_phase,
+                        blocking_reasons=deviations_list,
+                    )
+                blocked_retry_count += 1
+                log(
+                    f"execute blocked by quality gates — retrying "
+                    f"({blocked_retry_count}/{max_blocked_retries})",
+                    blocked_retries_used=blocked_retry_count,
+                    max_blocked_retries=max_blocked_retries,
+                    blocking_reasons=deviations_list,
+                )
             # timeout, context_exhausted, internal_error already handled above.
 
         # ── Auto-ESCALATE-up: respond to repeated execute failures ───────
@@ -3218,8 +2831,6 @@ def drive(
         # blocks. Forward progress or moving off execute resets the streak so
         # the counter is per-execute, never a global accumulator.
         if next_step == "execute":
-            from megaplan.auto_escalation import CATEGORY_POLICY, FailureCategory, classify_failure  # noqa: E402
-
             progress = status.get("progress") or {}
             try:
                 progress_sig = int(progress.get("tasks_done", 0) or 0) + int(
@@ -3228,33 +2839,23 @@ def drive(
             except (TypeError, ValueError):
                 progress_sig = last_execute_progress or 0
             ek = getattr(result, "exit_kind", None) if result is not None else None
-            # Extract PhaseResult fields for failure classification
-            result_exit_kind = ek if isinstance(ek, str) else None
-            deviations_seq = getattr(result, "deviations", ()) if result is not None else ()
-            blocked_seq = getattr(result, "blocked_tasks", ()) if result is not None else ()
-            category, failing_task_ids = classify_failure(
-                result_exit_kind, deviations_seq, blocked_seq
-            )
-            # observed_failure: drives existing failure-observation logic
-            # (a meaningful exit code or a recognised non-success exit kind).
-            # Legacy backward-compat: when exit_kind is None (uncategorised)
-            # but the process exited non-zero, treat it as a failure so the
-            # legacy streak-based phase-pin path can fire.
-            observed_failure = result_exit_kind not in (
-                None, ExitKind.success.value
-            ) or (result_exit_kind is None and code != 0)
-            # should_advance_streak: gates whether the streak increments and
-            # tier escalation fires (per CATEGORY_POLICY escalate flag).
-            should_advance_streak = (
-                category is not None and CATEGORY_POLICY[category].escalate
+            execute_failed = (
+                code not in (0, None)
+                or ek
+                in {
+                    ExitKind.timeout.value,
+                    ExitKind.internal_error.value,
+                    ExitKind.blocked_by_quality.value,
+                    ExitKind.blocked_by_prereq.value,
+                }
             )
             made_progress = (
                 last_execute_progress is not None
                 and progress_sig > last_execute_progress
             )
-            if made_progress or not observed_failure:
+            if made_progress or not execute_failed:
                 # Forward progress (or a clean execute) — the current model is
-                # working; reset the streak and inline retry counters.
+                # working; reset the streak so we don't escalate prematurely.
                 if execute_fail_streak:
                     log(
                         "execute made progress — resetting escalate-up failure "
@@ -3262,149 +2863,16 @@ def drive(
                         execute_fail_streak=execute_fail_streak,
                     )
                 execute_fail_streak = 0
-                inline_retry_count.clear()
-                last_timeout_remediated = False
             else:
-                # ── Timeout remediation: one-shot --batch 1 retry ──────
-                # First timeout in a streak window triggers a single-batch
-                # retry with a more generous idle timeout.  Only the NEXT
-                # consecutive timeout after remediation fires escalates.
+                execute_fail_streak += 1
+                log(
+                    f"execute failed — escalate-up streak {execute_fail_streak}"
+                    f"/{escalate_after_fails}",
+                    execute_fail_streak=execute_fail_streak,
+                    escalate_after_fails=escalate_after_fails,
+                )
                 if (
-                    category == FailureCategory.timeout
-                    and not last_timeout_remediated
-                ):
-                    last_timeout_remediated = True
-                    log(
-                        "execute timeout — applying one-shot remediation: "
-                        "--batch 1 + --phase-idle-timeout "
-                        f"{TIMEOUT_REMEDIATION_IDLE_SECONDS}s "
-                        "(not advancing streak)",
-                        category=str(category),
-                    )
-                    if plan_dir is not None:
-                        try:
-                            state_data = read_json(plan_dir / "state.json")
-                            if isinstance(state_data, dict):
-                                state_data.setdefault("history", [])
-                                state_data.setdefault("meta", {})
-                                append_history(
-                                    state_data,
-                                    {
-                                        "step": "escalation",
-                                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                                        "duration_ms": 0,
-                                        "cost_usd": 0.0,
-                                        "result": "timeout_remediation",
-                                        "category": "timeout",
-                                        "scope": "timeout_remediation",
-                                    },
-                                )
-                                atomic_write_json(plan_dir / "state.json", state_data)
-                        except Exception:
-                            pass
-                    _allow_streak = False
-                else:
-                    # ── Inline retry counters for timeout / internal_error ──
-                    # Consume CATEGORY_POLICY[].retries_first before allowing the
-                    # failure to contribute to the escalate streak.
-                    _allow_streak = True
-                    if category in (
-                        FailureCategory.timeout,
-                        FailureCategory.internal_error,
-                    ):
-                        policy = CATEGORY_POLICY[category]
-                        _key = result_exit_kind or ""
-                        _used = inline_retry_count.get(_key, 0)
-                        if _used < policy.retries_first:
-                            inline_retry_count[_key] = _used + 1
-                            log(
-                                f"execute {category.value} — retry "
-                                f"{_used + 1}/{policy.retries_first} "
-                                "(inline counter, not advancing streak)",
-                                inline_retry_count=inline_retry_count,
-                            )
-                            _allow_streak = False
-                        else:
-                            log(
-                                f"execute {category.value} — inline retries "
-                                f"exhausted ({policy.retries_first}), advancing "
-                                "streak",
-                            )
-                # ── End inline retry counters ──
-                # ── External error lateral defer ────────────────────
-                # external_error is a provider-side issue (auth, quota,
-                # rate_limit, etc.) — not a model capability problem.
-                # Log the observation and emit a lateral_deferred history
-                # entry with no tier change, no streak increment.
-                if category == FailureCategory.external_error:
-                    log(
-                        f"execute external_error — lateral defer (no tier "
-                        f"change, provider problem outside our control)",
-                        category=str(category),
-                    )
-                    if plan_dir is not None:
-                        try:
-                            # Dual-channel recording
-                            emit_event(
-                                EventKind.TIER_ESCALATED,
-                                plan_dir=plan_dir,
-                                phase="execute",
-                                payload={
-                                    "category": "external_error",
-                                    "scope": "lateral_deferred",
-                                    "from_tier": None,
-                                    "to_tier": None,
-                                    "from_model": None,
-                                    "to_model": None,
-                                    "failure_count": execute_fail_streak,
-                                    "escalations_used": tier_escalations_used,
-                                },
-                            )
-                        except Exception:
-                            _warn_best_effort_emit_failure(
-                                "M3A_WARN_EMIT_AUTO_LATERAL_DEFERRED",
-                                action="auto-lateral-deferred",
-                                plan_dir=plan_dir,
-                                phase="execute",
-                                event_kind="tier_escalated",
-                                context={"category": "external_error"},
-                            )
-                        try:
-                            state_data = read_json(plan_dir / "state.json")
-                            if isinstance(state_data, dict):
-                                state_data.setdefault("history", [])
-                                state_data.setdefault("meta", {})
-                                append_history(
-                                    state_data,
-                                    {
-                                        "step": "escalation",
-                                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                                        "duration_ms": 0,
-                                        "cost_usd": 0.0,
-                                        "result": "external_error",
-                                        "category": "external_error",
-                                        "scope": "lateral_deferred",
-                                    },
-                                )
-                                atomic_write_json(plan_dir / "state.json", state_data)
-                        except Exception:
-                            pass
-                    # Do NOT advance streak, do NOT escalate.
-                    _allow_streak = False
-                # category is None → backward-compat: legacy path (increment
-                # streak and follow the existing escalation logic unchanged).
-                if _allow_streak and (should_advance_streak or category is None):
-                    execute_fail_streak += 1
-                    log(
-                        f"execute failed — escalate-up streak {execute_fail_streak}"
-                        f"/{escalate_after_fails}",
-                        execute_fail_streak=execute_fail_streak,
-                        escalate_after_fails=escalate_after_fails,
-                        category=str(category) if category is not None else None,
-                    )
-                if (
-                    _allow_streak
-                    and escalate_after_fails > 0
+                    escalate_after_fails > 0
                     and execute_fail_streak >= escalate_after_fails
                 ):
                     ladder = _read_execute_tier_ladder(plan_dir)
@@ -3412,62 +2880,24 @@ def drive(
                     # failing execute actually routed to, unless we have
                     # already climbed higher via a prior escalation.
                     observed_tier = _latest_execute_max_tier(plan_dir)
-                    prior_baseline = escalation_tier_pin
-                    baseline_tier: int | None = None
-                    if prior_baseline is not None:
-                        baseline_tier = prior_baseline
-                    if observed_tier is not None:
-                        baseline_tier = (
-                            max(baseline_tier, observed_tier)
-                            if baseline_tier is not None
-                            else observed_tier
-                        )
+                    baseline_tier = escalation_tier_pin
+                    if baseline_tier is None:
+                        baseline_tier = observed_tier
+                    elif observed_tier is not None:
+                        baseline_tier = max(baseline_tier, observed_tier)
                     nxt = _next_escalation_tier(ladder, current_tier=baseline_tier)
                     if nxt is None:
                         # At the ceiling / no distinct stronger model / not
-                        # tier-routed — manual_review handoff with history.
+                        # tier-routed — nothing to escalate to. Leave the streak
+                        # to feed the existing state-stall manual_review halt
+                        # (the genuine last resort).
                         log(
                             "execute at escalation ceiling (no more-capable "
-                            "distinct tier model) — manual_review handoff",
+                            "distinct tier model) — deferring to state-stall "
+                            "manual_review halt",
                             escalation_tier_pin=escalation_tier_pin,
                             baseline_tier=baseline_tier,
                         )
-                        if plan_dir is not None:
-                            try:
-                                state_data = read_json(plan_dir / "state.json")
-                                if isinstance(state_data, dict):
-                                    state_data.setdefault("history", [])
-                                    state_data.setdefault("meta", {})
-                                    append_history(
-                                        state_data,
-                                        {
-                                            "step": "escalation",
-                                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                                            "duration_ms": 0,
-                                            "cost_usd": 0.0,
-                                            "result": "ceiling_reached",
-                                            "category": str(category) if category is not None else None,
-                                            "scope": "ceiling_handoff",
-                                            "from_tier": baseline_tier,
-                                            "to_tier": None,
-                                            "from_model": (
-                                                ladder.get(baseline_tier)
-                                                if baseline_tier is not None and ladder
-                                                else None
-                                            ),
-                                            "to_model": None,
-                                            "from_tier_resolved": (
-                                                baseline_tier is not None
-                                                and bool(ladder)
-                                                and ladder.get(baseline_tier) is not None
-                                            ),
-                                            "retries_before_escalation": execute_fail_streak,
-                                            "failing_task_ids": failing_task_ids,
-                                        },
-                                    )
-                                    atomic_write_json(plan_dir / "state.json", state_data)
-                            except Exception:
-                                pass
                     else:
                         new_tier, new_spec = nxt
                         from_spec = (
@@ -3480,82 +2910,18 @@ def drive(
                             )
                         )
                         tier_escalations_used += 1
-                        # ── Escalate routing ──────────────────────────
-                        # Per-task path (failing_task_ids non-empty) vs
-                        # phase_pin path (categories without per-task signal).
-                        if category is None:
-                            # Legacy no-category fallback: set
-                            # escalation_pin_spec/escalation_tier_pin for
-                            # the --phase-model execute=<spec> append.
-                            escalation_tier_pin = new_tier
-                            escalation_pin_spec = new_spec
-                            event_scope = "legacy_phase_pin"
-                        elif failing_task_ids:
-                            # Per-task escalate: pin only the failing tasks.
-                            _pin_tasks_to_tier(
-                                plan_dir, failing_task_ids, new_tier
-                            )
-                            event_scope = "per_task"
-                            escalation_fired = True
-                        else:
-                            # Phase-wide pin: pin ALL not-yet-done tasks
-                            # visible in finalize.json.
-                            _pinned = _pin_all_pending_tasks_to_tier(
-                                plan_dir, new_tier
-                            )
-                            event_scope = "phase_pin"
-                            escalation_fired = True
                         log(
                             f"escalating execute UP: tier {baseline_tier}→{new_tier} "
                             f"({from_spec}→{new_spec}) after "
                             f"{execute_fail_streak} consecutive failures — "
-                            f"scope={event_scope}",
+                            "next execute will run fresh on the stronger model",
                             from_tier=baseline_tier,
                             to_tier=new_tier,
                             from_spec=from_spec,
                             to_spec=new_spec,
                             execute_fail_streak=execute_fail_streak,
                             tier_escalations_used=tier_escalations_used,
-                            scope=event_scope,
                         )
-                        # ── Dual-channel escalation recording ────────────
-                        # Resolve from_model: look up the model spec that was
-                        # used at the baseline tier (the tier we're
-                        # escalating *from*).  On lookup failure record
-                        # from_model=null and set from_tier_resolved=False.
-                        _from_model: str | None = None
-                        _from_tier_resolved: bool = True
-                        if baseline_tier is not None and ladder:
-                            _from_model = ladder.get(baseline_tier)
-                            if _from_model is None:
-                                _from_tier_resolved = False
-                        elif baseline_tier is not None:
-                            _from_tier_resolved = False
-                        _retries_before = execute_fail_streak
-                        _history_entry: dict[str, Any] = {
-                            "step": "escalation",
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "duration_ms": 0,
-                            "cost_usd": 0.0,
-                            "result": (
-                                str(category)
-                                if category is not None
-                                else "escalated"
-                            ),
-                            "category": (
-                                str(category)
-                                if category is not None
-                                else None
-                            ),
-                            "scope": event_scope,
-                            "from_tier": baseline_tier,
-                            "to_tier": new_tier,
-                            "from_model": _from_model,
-                            "to_model": new_spec,
-                            "from_tier_resolved": _from_tier_resolved,
-                            "retries_before_escalation": _retries_before,
-                            "failing_task_ids": failing_task_ids,
-                        }
                         if plan_dir is not None:
                             try:
                                 emit_event(
@@ -3565,14 +2931,10 @@ def drive(
                                     payload={
                                         "from_tier": baseline_tier,
                                         "to_tier": new_tier,
-                                        "from_model": _from_model,
+                                        "from_model": from_spec,
                                         "to_model": new_spec,
                                         "failure_count": execute_fail_streak,
                                         "escalations_used": tier_escalations_used,
-                                        "scope": event_scope,
-                                        "category": str(category) if category is not None else None,
-                                        "retries_before_escalation": _retries_before,
-                                        "failing_task_ids": failing_task_ids,
                                     },
                                 )
                             except Exception:
@@ -3587,25 +2949,16 @@ def drive(
                                         "to_tier": new_tier,
                                     },
                                 )
-                            try:
-                                state_data = read_json(plan_dir / "state.json")
-                                if isinstance(state_data, dict):
-                                    state_data.setdefault("history", [])
-                                    state_data.setdefault("meta", {})
-                                    append_history(state_data, _history_entry)
-                                    atomic_write_json(plan_dir / "state.json", state_data)
-                            except Exception:
-                                pass
-                        # Reset the streak and inline counters: the next
-                        # execute gets a fresh budget on the stronger model.
+                        escalation_tier_pin = new_tier
+                        escalation_pin_spec = new_spec
+                        # Reset the streak: the next execute gets a fresh budget
+                        # on the stronger model before we consider climbing more.
                         execute_fail_streak = 0
-                        inline_retry_count.clear()
             last_execute_progress = progress_sig
         elif next_step in PHASE_NAMES:
             # Moving off execute to another phase — the execute failure streak
             # is per-execute and must not leak across phases.
             execute_fail_streak = 0
-            inline_retry_count.clear()
 
         if poll_sleep > 0:
             time.sleep(poll_sleep)
@@ -3745,28 +3098,6 @@ def build_auto_parser(subparsers: Any) -> None:
         ),
     )
     auto_parser.add_argument(
-        "--tier-drop-after-stalls",
-        type=_non_negative_int,
-        default=DEFAULT_TIER_DROP_AFTER_STALLS,
-        help=(
-            f"Consecutive execute worker stalls (worker_stream_stall) to "
-            f"tolerate before dropping one execution tier and retrying (default "
-            f"{DEFAULT_TIER_DROP_AFTER_STALLS}; 0 disables). Only affects "
-            "tier-routed runs with tier_models.execute."
-        ),
-    )
-    auto_parser.add_argument(
-        "--max-tier-drops",
-        type=_non_negative_int,
-        default=DEFAULT_MAX_TIER_DROPS,
-        help=(
-            f"Maximum number of execution tiers the worker-stall fallback will "
-            f"drop before deferring to the manual_review halt (default "
-            f"{DEFAULT_MAX_TIER_DROPS}). Execute also clamps at the premium "
-            "floor."
-        ),
-    )
-    auto_parser.add_argument(
         "--on-escalate",
         choices=ESCALATE_ACTIONS,
         default="force-proceed",
@@ -3850,31 +3181,6 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         "phase_idle_timeout",
         DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
     )
-
-    # ── Single-driver guard ──────────────────────────────────────────────
-    # Acquire a per-plan, driver-lifetime advisory lock so two `megaplan auto`
-    # processes can't drive the same plan at once. Two drivers contend over
-    # plan state and pin the run at a fixed file count for hours — a
-    # zero-progress plateau that masquerades as a stall (observed live). A
-    # stale lock from a crashed driver is reclaimed automatically (the kernel
-    # drops the flock on process exit). When the plan can't be resolved yet we
-    # skip the lock and let `drive` surface the not-found error.
-    from contextlib import nullcontext
-    from megaplan._core import driver_lock
-
-    plan_dir = _resolve_plan_dir(args.plan, root)
-    lock_ctx = driver_lock(plan_dir) if plan_dir is not None else nullcontext()
-    with lock_ctx:
-        return _run_auto_locked(root, args, progress_env, raw_phase_idle_timeout)
-
-
-def _run_auto_locked(
-    root: Path,
-    args: argparse.Namespace,
-    progress_env: dict[str, str] | None,
-    raw_phase_idle_timeout: float,
-) -> int:
-    """Run the driver once the per-plan single-driver lock is held."""
     outcome = drive(
         args.plan,
         cwd=root,
@@ -3895,12 +3201,6 @@ def _run_auto_locked(
             "escalate_after_fails",
             DEFAULT_ESCALATE_AFTER_FAILS,
         ),
-        tier_drop_after_stalls=getattr(
-            args,
-            "tier_drop_after_stalls",
-            DEFAULT_TIER_DROP_AFTER_STALLS,
-        ),
-        max_tier_drops=getattr(args, "max_tier_drops", DEFAULT_MAX_TIER_DROPS),
         on_escalate=args.on_escalate,
         poll_sleep=args.poll_sleep,
         phase_timeout=args.phase_timeout,
@@ -3912,10 +3212,10 @@ def _run_auto_locked(
     if args.outcome_file:
         _atomic_write_text(Path(args.outcome_file), outcome_json)
     sys.stdout.write(outcome_json + "\n")
-    # Exit codes: 0 done/finalized/aborted/cancelled/paused, 1 failed/unknown,
+    # Exit codes: 0 done/aborted/cancelled/paused, 1 failed/unknown,
     # 2 stalled, 3 escalated, 4 iteration cap, 5 blocked, 6 cost cap exceeded,
     # 7 context retry exhausted, 8 worker_blocked.
-    if outcome.status in {"done", "finalized"}:
+    if outcome.status == "done":
         return 0
     if outcome.status in {"aborted", "cancelled", "paused"}:
         return 0  # user-requested/non-running stops are not phase failures

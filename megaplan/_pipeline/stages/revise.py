@@ -16,6 +16,8 @@ class ReviseStep:
     prompt_key: str | None = "revise"
     slot: str | None = "revise"
     arg_overrides: Mapping[str, Any] = field(default_factory=dict)
+    produces: tuple = field(default_factory=tuple)
+    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         import megaplan

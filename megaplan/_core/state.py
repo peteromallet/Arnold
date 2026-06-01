@@ -1,7 +1,23 @@
-"""Plan state management — load, save, history, sessions, failure recording."""
+"""Plan state management — load, save, history, sessions, failure recording.
+
+Reserved top-level key (M2 / T2b)
+---------------------------------
+
+``'_state_meta'`` is a reserved top-level key on ``PlanState`` owned by
+the :mod:`megaplan._pipeline` typed-port substrate. Its shape is::
+
+    {'versions': {<key>: <int>, ...}}
+
+Each entry in ``versions`` is the monotonically-increasing CAS version
+for the like-named top-level state key, used by
+:func:`megaplan._pipeline.types.apply_delta` to detect stale writes and
+raise :class:`megaplan._pipeline.types.StateDeltaConflict`. Callers
+outside the typed-port substrate MUST NOT mutate ``_state_meta`` directly.
+"""
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -70,7 +86,8 @@ def resolve_plan_dir(root: Path, requested_name: str | None) -> Path:
         raise CliError("missing_plan", "No plans found. Run init first.")
     active = []
     for plan_dir in plan_dirs:
-        state = read_json(plan_dir / "state.json")
+        from megaplan._core.io import read_plan_state_cached
+        state = read_plan_state_cached(plan_dir, mode="authority")
         if state.get("current_state") not in TERMINAL_STATES:
             active.append(plan_dir)
     if len(active) == 1:
@@ -125,7 +142,8 @@ def _validate_persisted_phase_models(plan_dir: Path, state: Any) -> None:
 
 
 def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
-    state = read_json(plan_dir / "state.json")
+    from megaplan._core.io import read_plan_state_cached
+    state = read_plan_state_cached(plan_dir, mode="authority")
     if isinstance(state, dict) and (
         state.get("current_state") in {"clarified", "evaluated"}
         or "last_evaluation" in state
@@ -372,6 +390,7 @@ PlanStateWriteMode = Literal[
     "merge-meta-list",
     "legacy-migration",
     "copy-time-rewrite",
+    "reversible",
 ]
 
 PlanStateMutation = Callable[[dict[str, Any]], bool | None]
@@ -397,7 +416,17 @@ def plan_state_lock(plan_dir: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+#: Reserved top-level keys that are passed through ``write_plan_state`` without
+#: schema validation. ``_state_meta`` holds the CAS version map
+#: (``{"versions": {key: int}}``) maintained by ``apply_delta``.
+_PERSIST_RESERVED_KEYS: frozenset[str] = frozenset({"_state_meta"})
+
+
 def _validate_plan_state_for_persist(state: dict[str, Any], *, plan_dir: Path) -> None:
+    # Reserved keys (e.g. ``_state_meta``) round-trip transparently — they are
+    # not subject to schema-level validation.
+    for _reserved in _PERSIST_RESERVED_KEYS:
+        state.get(_reserved)  # touch only; allow-listed for persist
     current_state = state.get("current_state")
     if current_state is None:
         return
@@ -478,6 +507,121 @@ def _apply_copy_time_rewrite(
     return changed
 
 
+_STATE_VERSIONS_DIRNAME = ".state-versions"
+
+
+class RestorableBoundaryViolation(RuntimeError):
+    """Raised when a ``restorable_boundary`` is entered from a composition
+    context where snapshot-then-replace cannot be reversed cheaply: under the
+    ``subprocess_isolated`` driver (the child owns its own state.json copy and
+    a parent-side restore would race the child) or under an active fan-out
+    spec (``_fanout_active_ctx`` is True; siblings would observe a torn
+    rollback).
+
+    This error precedes any Governor ``BudgetExceeded`` raised by the same
+    operation — the boundary is checked at ``__enter__`` time, before the
+    work begins.
+    """
+
+
+def _state_versions_dir(plan_dir: Path) -> Path:
+    return plan_dir / _STATE_VERSIONS_DIRNAME
+
+
+def _snapshot_unlocked(plan_dir: Path) -> str | None:
+    """Whole-blob copy of ``state.json`` to ``.state-versions/<id>.json``.
+
+    Assumes the caller already holds ``plan_state_lock(plan_dir)``. Returns
+    the snapshot id, or ``None`` when there is no on-disk state to capture.
+
+    The directory name ``.state-versions`` is distinct from the executor's
+    sibling forensic-backup path (``state.json.corrupt-executor-backup``);
+    the two namespaces do not collide.
+    """
+
+    state_path = plan_dir / "state.json"
+    if not state_path.exists():
+        return None
+    snapshot_id = uuid.uuid4().hex
+    versions_dir = _state_versions_dir(plan_dir)
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    dest = versions_dir / f"{snapshot_id}.json"
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    tmp.write_bytes(state_path.read_bytes())
+    os.replace(tmp, dest)
+    return snapshot_id
+
+
+def snapshot(plan_dir: Path) -> str | None:
+    """Capture ``state.json`` under ``plan_state_lock``.
+
+    Returns the snapshot id (a hex uuid) or ``None`` when no state file
+    exists. The blob lives at ``<plan_dir>/.state-versions/<id>.json``.
+    """
+
+    with plan_state_lock(plan_dir):
+        return _snapshot_unlocked(plan_dir)
+
+
+def restore(plan_dir: Path, snapshot_id: str) -> dict[str, Any]:
+    """Atomically restore ``state.json`` from the recorded snapshot.
+
+    Raises ``CliError('missing_snapshot', ...)`` when the snapshot file is
+    absent. Returns the restored state dict.
+    """
+
+    versions_dir = _state_versions_dir(plan_dir)
+    src = versions_dir / f"{snapshot_id}.json"
+    with plan_state_lock(plan_dir):
+        if not src.exists():
+            raise CliError(
+                "missing_snapshot",
+                f"reversible restore: snapshot {snapshot_id} not found at {src}",
+                extra={"plan": plan_dir.name, "snapshot_id": snapshot_id},
+            )
+        restored = read_json(src)
+        if not isinstance(restored, dict):
+            raise CliError(
+                "invalid_state_shape",
+                f"reversible restore: snapshot {snapshot_id} is not a JSON object",
+                extra={"path": str(src), "root_type": type(restored).__name__},
+            )
+        atomic_write_json(plan_dir / "state.json", restored)
+    return restored
+
+
+@contextmanager
+def restorable_boundary(operation: str) -> Iterator[None]:
+    """Boundary that refuses to enter under composition contexts where a
+    snapshot/restore round-trip would race or tear other observers.
+
+    Raises :class:`RestorableBoundaryViolation` (loud, NOT silent) when
+    either:
+      * ``current_substrate() == 'subprocess_isolated'`` — the child owns its
+        own ``state.json`` copy and a parent-side restore would race it.
+      * ``_fanout_active_ctx.get(False)`` is ``True`` — sibling spec replicas
+        would observe a torn rollback.
+
+    The check fires at ``__enter__``, *before* any Governor budget check the
+    same operation might perform, so the boundary error precedes
+    ``BudgetExceeded``.
+    """
+
+    # Lazy imports avoid a state.py -> drivers / pipeline import cycle at
+    # module-load time (state.py is imported very early in the stack).
+    from megaplan.drivers import current_substrate
+    from megaplan._pipeline.envelope import _fanout_active_ctx
+
+    substrate = current_substrate()
+    fanout_active = _fanout_active_ctx.get(False)
+    if substrate == "subprocess_isolated" or fanout_active:
+        raise RestorableBoundaryViolation(
+            f"restorable_boundary({operation!r}) refused: "
+            f"substrate={substrate!r}, fanout_active={fanout_active!r}"
+        )
+    yield
+
+
 def write_plan_state(
     plan_dir: Path,
     *,
@@ -514,10 +658,34 @@ def write_plan_state(
                 if state is None:
                     raise TypeError("state is required for executor-key-merge mode")
                 if state_path.exists() and executor_owned_keys is not None:
-                    next_state = dict(existing)
-                    for owned_key in executor_owned_keys:
-                        if owned_key in state:
-                            next_state[owned_key] = state[owned_key]
+                    try:
+                        from megaplan._pipeline.flags import typed_ports_on
+                        from megaplan._pipeline.types import StateDelta, apply_delta
+                        _flag_on = typed_ports_on()
+                    except Exception:
+                        _flag_on = False
+                    if _flag_on:
+                        next_state = dict(existing)
+                        for owned_key in executor_owned_keys:
+                            if owned_key in state:
+                                _versions = (
+                                    next_state.get("_state_meta", {}).get("versions", {})
+                                )
+                                _current = int(_versions.get(owned_key, 0))
+                                next_state, _ = apply_delta(
+                                    next_state,
+                                    StateDelta(
+                                        op="replace",
+                                        key=owned_key,
+                                        value=state[owned_key],
+                                        version=_current,
+                                    ),
+                                )
+                    else:
+                        next_state = dict(existing)
+                        for owned_key in executor_owned_keys:
+                            if owned_key in state:
+                                next_state[owned_key] = state[owned_key]
                 elif state_path.exists():
                     next_state = {**dict(state), **existing}
                 else:
@@ -575,6 +743,24 @@ def write_plan_state(
             elif mode == "copy-time-rewrite":
                 next_state = dict(existing)
                 should_write = _apply_copy_time_rewrite(next_state, project_dir=project_dir)
+            elif mode == "reversible":
+                if state is None:
+                    raise TypeError("state is required for reversible mode")
+                # Snapshot-then-replace: capture current on-disk blob (if any)
+                # under the held lock, then atomically replace. The snapshot id
+                # is recorded under ``next_state['_state_meta']['last_snapshot']``
+                # so callers can restore() it explicitly. A missing prior
+                # state.json yields snapshot_id=None — the anti-silent-no-op
+                # invariant requires the meta key to be present either way.
+                snapshot_id = _snapshot_unlocked(plan_dir)
+                next_state = dict(state)
+                meta = next_state.get("_state_meta")
+                if not isinstance(meta, dict):
+                    meta = {}
+                else:
+                    meta = dict(meta)
+                meta["last_snapshot"] = snapshot_id
+                next_state["_state_meta"] = meta
             else:
                 raise ValueError(f"unknown plan state write mode: {mode}")
 
@@ -582,11 +768,19 @@ def write_plan_state(
             mutation_changed = mutation(next_state)
             if mutation_changed is False:
                 should_write = False
+        next_state.setdefault("schema_version", 0)
         if validate_current_state:
             _validate_plan_state_for_persist(next_state, plan_dir=plan_dir)
         if should_write:
             atomic_write_json(state_path, next_state)
-        return next_state
+            snapshot = copy.deepcopy(next_state)
+        else:
+            snapshot = None
+    # Lock released — emit shadow-WAL only when an on-disk write actually happened.
+    if snapshot is not None:
+        from megaplan.observability.events import emit_state_wal
+        emit_state_wal(plan_dir, snapshot)
+    return next_state
 
 
 # ---------------------------------------------------------------------------
@@ -914,12 +1108,37 @@ def clear_active_step(state: PlanState, *, run_id: str | None = None) -> None:
 
 
 def append_history(state: PlanState, entry: HistoryEntry) -> None:
-    state["history"].append(entry)
-    state["meta"].setdefault("total_cost_usd", 0.0)
-    state["meta"]["total_cost_usd"] = round(
-        float(state["meta"]["total_cost_usd"]) + float(entry.get("cost_usd", 0.0)),
-        6,
+    # M4 T15 — first journaled model-spend seam.  Under EFFECT_LEDGER=1, route
+    # the cost-attribution write through journal_then_execute so the intent is
+    # durably journaled BEFORE the in-memory accumulation; off-path is
+    # byte-identical.
+    def _accumulate() -> None:
+        state["history"].append(entry)
+        state["meta"].setdefault("total_cost_usd", 0.0)
+        state["meta"]["total_cost_usd"] = round(
+            float(state["meta"]["total_cost_usd"]) + float(entry.get("cost_usd", 0.0)),
+            6,
+        )
+
+    try:
+        from megaplan._pipeline.flags import effect_ledger_on
+        from megaplan.observability.effect_enforcement import journal_then_execute
+        from megaplan.observability.effect_ledger import Effect, ReplayClass
+    except Exception:
+        _accumulate()
+        return
+    if not effect_ledger_on():
+        _accumulate()
+        return
+    cost = float(entry.get("cost_usd", 0.0) or 0.0)
+    step = str(entry.get("step", "") or "")
+    key = f"model_spend:{step}:{cost}:{len(state.get('history', []))}"
+    eff = Effect(
+        replay_class=ReplayClass.idempotent_keyed,
+        idempotency_key=key,
+        provenance={"module": "megaplan._core.state", "fn": "append_history"},
     )
+    journal_then_execute(eff, _accumulate, phase="execute")
 
 
 def make_history_entry(
@@ -948,6 +1167,11 @@ def make_history_entry(
     batch_complexity: int | None = None,
     tier_model_spec: str | None = None,
     tier_model_resolved: str | None = None,
+    # T14: route metadata (omitted for flat profiles / pre-calibration paths).
+    tier_routing_source: str | None = None,
+    tier_projected: int | None = None,
+    tier_counterfactual_tag: str | None = None,
+    tier_low_confidence: bool = False,
 ) -> HistoryEntry:
     entry: HistoryEntry = {
         "step": step,
@@ -991,6 +1215,15 @@ def make_history_entry(
         entry["tier_model_spec"] = tier_model_spec
     if tier_model_resolved is not None:
         entry["tier_model_resolved"] = tier_model_resolved
+    # T14: route metadata — only present when tier routing is active.
+    if tier_routing_source is not None:
+        entry["tier_routing_source"] = tier_routing_source
+    if tier_projected is not None:
+        entry["tier_projected"] = tier_projected
+    if tier_counterfactual_tag is not None:
+        entry["tier_counterfactual_tag"] = tier_counterfactual_tag
+    if tier_low_confidence:
+        entry["tier_low_confidence"] = tier_low_confidence
     return entry
 
 

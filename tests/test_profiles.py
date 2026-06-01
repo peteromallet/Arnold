@@ -2509,6 +2509,27 @@ def test_extract_tier_models_non_dict_list_with_path_raises() -> None:
         _extract_tier_models([1, 2, 3], path="test.toml", profile_name="test")
 
 
+def test_validate_projected_tier_models_reuses_existing_grammar() -> None:
+    """Projected tier-model views validate through the same TOML grammar."""
+    from megaplan.profiles import _validate_projected_tier_models
+
+    result = _validate_projected_tier_models(
+        {"execute": {"1": "hermes:deepseek-flash", 5: "codex:high"}}
+    )
+    assert result == {
+        "execute": {1: "hermes:deepseek-flash", 5: "codex:high"}
+    }
+
+
+def test_canonicalize_tier_models_for_json_stringifies_tier_keys() -> None:
+    """Canonical JSON parity uses string tier keys."""
+    from megaplan.profiles import _canonicalize_tier_models_for_json
+
+    assert _canonicalize_tier_models_for_json(
+        {"execute": {1: "hermes:deepseek-flash", 5: "codex:high"}}
+    ) == {"execute": {"1": "hermes:deepseek-flash", "5": "codex:high"}}
+
+
 def test_split_profile_dict_rejects_two_part_tier_key() -> None:
     """Flattened key 'tier_models.execute' (2 parts, missing tier) raises CliError."""
     from megaplan.profiles import _split_profile_dict

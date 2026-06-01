@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from .arnold import (
     BotTurn,
+    Capsule,
+    CapsuleContract,
+    CapsuleDefinition,
+    CapsuleEvidence,
+    CapsuleLineage,
     ChecklistItem,
     CodeArtifact,
     Codebase,
@@ -25,6 +30,13 @@ from .arnold import (
     Ticket,
     TicketEpicLink,
     ToolCall,
+    Warrant,
+    WarrantAccount,
+    WarrantAuthority,
+    WarrantRationaleAnchor,
+    WarrantSignature,
+    WarrantSourceCompleteness,
+    WarrantSourceProjection,
 )
 from .base import Backend, HomeBackend, StorageModel, utc_now
 from .sprint1 import (
@@ -43,6 +55,11 @@ __all__ = [
     "AutomationActor",
     "BotTurn",
     "Backend",
+    "Capsule",
+    "CapsuleContract",
+    "CapsuleDefinition",
+    "CapsuleEvidence",
+    "CapsuleLineage",
     "ChecklistItem",
     "CodeArtifact",
     "Codebase",
@@ -74,5 +91,12 @@ __all__ = [
     "Ticket",
     "TicketEpicLink",
     "ToolCall",
+    "Warrant",
+    "WarrantAccount",
+    "WarrantAuthority",
+    "WarrantRationaleAnchor",
+    "WarrantSignature",
+    "WarrantSourceCompleteness",
+    "WarrantSourceProjection",
     "utc_now",
 ]

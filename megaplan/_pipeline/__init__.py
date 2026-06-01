@@ -16,6 +16,27 @@ from megaplan._pipeline.types import (
     StepResult,
     PipelineVerdict,
 )
+from megaplan._pipeline.judge_manifest import (
+    EVALUAND_RECORD_CONTENT_TYPE,
+    JUDGE_MANIFEST_SCHEMA,
+    JudgeManifestPort,
+    JudgePieceManifest,
+    compute_judge_version,
+    compute_piece_version,
+    compute_rubric_hash,
+    dump_judge_manifest,
+    load_judge_manifest,
+    make_judge_manifest,
+)
+from megaplan._pipeline.judge_manifest_discovery import (
+    JudgeManifestDiagnostics,
+    JudgeManifestMatch,
+    discover_judge_manifests,
+    find_judge_manifest,
+    manifest_to_binder_ports,
+    validate_manifest_bindings,
+    validate_judge_manifest,
+)
 
 __all__ = [
     "Pipeline",
@@ -27,4 +48,21 @@ __all__ = [
     "Overlay",
     "PipelineVerdict",
     "ParallelStage",
+    "EVALUAND_RECORD_CONTENT_TYPE",
+    "JUDGE_MANIFEST_SCHEMA",
+    "JudgeManifestPort",
+    "JudgePieceManifest",
+    "compute_judge_version",
+    "compute_piece_version",
+    "compute_rubric_hash",
+    "dump_judge_manifest",
+    "load_judge_manifest",
+    "make_judge_manifest",
+    "JudgeManifestDiagnostics",
+    "JudgeManifestMatch",
+    "discover_judge_manifests",
+    "find_judge_manifest",
+    "manifest_to_binder_ports",
+    "validate_manifest_bindings",
+    "validate_judge_manifest",
 ]

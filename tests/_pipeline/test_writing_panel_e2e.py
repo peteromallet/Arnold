@@ -187,7 +187,12 @@ class TestWritingPanelStrictE2E:
         # First pass: pause at human_decide.
         result1 = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
         assert result1["halt_reason"] == "awaiting_user"
+        assert result1["state"].get("_pipeline_paused_stage") == "human_decide"
         assert (plan_dir / "revise" / "v1.md").exists()
+        state_data1 = json.loads((plan_dir / "state.json").read_text())
+        assert state_data1.get("_pipeline_paused_stage") == "human_decide"
+        awaiting1 = json.loads((plan_dir / "awaiting_user.json").read_text())
+        assert awaiting1["stage"] == "human_decide"
 
         # Resume with "continue" — the human_gate emits next="continue",
         # which dispatches the Edge('continue','panel_review') loop edge
@@ -216,11 +221,16 @@ class TestWritingPanelStrictE2E:
         # then human_decide paused again.
         assert result2["halt_reason"] == "awaiting_user"
         assert result2["final_stage"] == "human_decide"
+        assert result2["state"].get("_pipeline_paused_stage") == "human_decide"
         assert (plan_dir / "panel_review" / "pessimist" / "v2.md").exists()
         assert (plan_dir / "panel_review" / "optimist" / "v2.md").exists()
         assert (plan_dir / "panel_review" / "structuralist" / "v2.md").exists()
         assert (plan_dir / "synth" / "v2.md").exists()
         assert (plan_dir / "revise" / "v2.md").exists()
+        state_data2 = json.loads((plan_dir / "state.json").read_text())
+        assert state_data2.get("_pipeline_paused_stage") == "human_decide"
+        awaiting2 = json.loads((plan_dir / "awaiting_user.json").read_text())
+        assert awaiting2["stage"] == "human_decide"
 
     def test_resume_stop_reaches_halt_terminator(self, tmp_path: Path) -> None:
         """The stop edge reaches the executor's "halt" terminator."""
@@ -234,6 +244,7 @@ class TestWritingPanelStrictE2E:
         # First pass: pause at human_decide.
         result1 = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
         assert result1["halt_reason"] == "awaiting_user"
+        assert result1["state"].get("_pipeline_paused_stage") == "human_decide"
 
         # Resume with "stop" — dispatches Edge('stop','halt') and the
         # executor returns without setting halt_reason="awaiting_user".

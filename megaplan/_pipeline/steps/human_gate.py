@@ -42,6 +42,9 @@ class HumanDecisionStep:
     _pipeline_version: int = 1
     _resume_choice: str | None = None
 
+    produces: tuple = field(default_factory=tuple)
+    consumes: tuple = field(default_factory=tuple)
+
     def run(self, ctx: StepContext) -> StepResult:
         # Check if a resume choice was provided (resume path)
         choice = self._resume_choice

@@ -293,7 +293,8 @@ def run_tiebreaker_cli(root: Path, args: argparse.Namespace) -> int:
         return _run_tiebreaker_audit(root, plan_name)
 
     plan_dir = resolve_plan_dir(root, plan_name)
-    state: PlanState = read_json(plan_dir / "state.json")
+    from megaplan._core.io import read_plan_state_cached
+    state: PlanState = read_plan_state_cached(plan_dir, mode="authority")
 
     if action == "status":
         return _run_tiebreaker_status(root, plan_dir, state)
