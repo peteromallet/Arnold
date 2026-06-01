@@ -76,6 +76,7 @@ class EventKind:
     # ── Diagnostics (2) ────────────────────────────────────────────────
     HEALTH_CHECK_FAILED: str = "health_check_failed"
     DRIFT_DETECTED: str = "drift_detected"
+    ROUTING_DEGRADATION: str = "routing_degradation"
 
 
 # Convenience set for fast membership checks.
@@ -108,6 +109,7 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.COST_RECORDED,
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,
+        EventKind.ROUTING_DEGRADATION,
     }
 )
 

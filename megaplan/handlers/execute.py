@@ -7,6 +7,7 @@ from typing import Any
 from megaplan.execute.batch import (
     handle_execute_auto_loop,
     handle_execute_one_batch,
+    normalize_tier_map,
 )
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
@@ -144,7 +145,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         if isinstance(tier_models, dict):
             execute_tiers = tier_models.get("execute")
             if isinstance(execute_tiers, dict) and execute_tiers:
-                tier_map = execute_tiers
+                tier_map = normalize_tier_map(execute_tiers)
         run_id = set_active_step(state, step="execute", agent=agent, mode=mode, model=model)
         _emit_phase_notice("execute")
         save_state_merge_meta(plan_dir, state)
