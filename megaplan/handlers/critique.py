@@ -130,6 +130,9 @@ def _apply_adaptive_critique_routing(
                 resolved_model=_t_model,
             )
         _check["_resolved_agent_mode"] = _complexity_cache[_cx]
+        _check["_routing_selected_spec"] = _spec
+        _check["_routing_tier"] = _cx
+        _check["_routing_tier_active"] = True
 
     return None
 

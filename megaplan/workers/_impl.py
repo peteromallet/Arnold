@@ -25,6 +25,11 @@ from megaplan.audits.robustness import build_empty_template
 from megaplan.forms.provocations import select_active_checks
 from megaplan.schemas import SCHEMAS, get_execution_schema_key
 from megaplan.orchestration.progress import strip_progress_env
+from megaplan.observability.routing_ledger import (
+    format_selected_spec,
+    normalize_routing_phase,
+    record_step_routing,
+)
 from megaplan.types import (
     AgentMode,
     CliError,
@@ -2718,6 +2723,13 @@ def run_step_with_worker(
     read_only: bool = False,
     output_path: Path | None = None,
     worker_options: dict[str, Any] | None = None,
+    record_routing: bool = True,
+    ledger_phase: str | None = None,
+    ledger_step_label: str | None = None,
+    ledger_selected_spec: str | None = None,
+    ledger_tier: int | None = None,
+    ledger_complexity: int | None = None,
+    ledger_tier_routing_active: bool = False,
 ) -> tuple[WorkerResult, str, str, bool]:
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
@@ -2864,6 +2876,20 @@ def run_step_with_worker(
                             )
                             effective_refreshed = step not in _CROSS_CALL_PERSISTENT_STEPS
                         continue
+            if record_routing and (step != "execute" or ledger_step_label is not None):
+                record_step_routing(
+                    plan_dir,
+                    phase=ledger_phase or normalize_routing_phase(step),
+                    step_label=ledger_step_label or step,
+                    agent=agent,
+                    selected_spec=ledger_selected_spec
+                    or format_selected_spec(agent, model, effort),
+                    resolved_model=resolved_model,
+                    actual_model=getattr(worker, "model_actual", None),
+                    tier=ledger_tier,
+                    complexity=ledger_complexity,
+                    tier_routing_active=ledger_tier_routing_active,
+                )
             return worker, agent, mode, effective_refreshed
         except CliError as error:
             if explicit_agent or error.code not in {"auth_error", "connection_error"}:
