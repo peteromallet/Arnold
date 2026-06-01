@@ -10,7 +10,14 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from megaplan.cloud.providers.base import Provider, _logs_follow, _missing_cli_error, _write_redacted_output
+from megaplan.cloud.providers.base import (
+    DeployReport,
+    DeployStepReport,
+    Provider,
+    _logs_follow,
+    _missing_cli_error,
+    _write_redacted_output,
+)
 from megaplan.cloud.spec import CloudSpec, RailwaySpec
 from megaplan.types import CliError
 
@@ -97,21 +104,38 @@ class RailwayProvider(Provider):
         self._run(["docker", "build", "-t", self.image_tag, str(deploy_dir)])
         return 0
 
-    def deploy(self, deploy_dir: Path, *, secrets: dict[str, str]) -> int:
+    def deploy(self, deploy_dir: Path, *, secrets: dict[str, str]) -> DeployReport:
         missing = [name for name in self._spec.secrets if not secrets.get(name)]
         if missing:
             raise CliError("missing_secrets", f"Missing required secrets: {', '.join(missing)}")
 
+        steps: list[DeployStepReport] = []
         if self._railway.project:
-            self._run(
+            link_result = self._run(
                 self._railway_cmd("link", "--project", self._railway.project),
                 cwd=deploy_dir,
             )
-            self._ensure_configured_service(deploy_dir)
+            steps.append(
+                _step_from_result(
+                    "railway link",
+                    link_result,
+                    detail=f"linked project {self._railway.project}",
+                )
+            )
+            status_result = self._ensure_configured_service(deploy_dir)
+            steps.append(
+                _step_from_result(
+                    "verify Railway service",
+                    status_result,
+                    detail=f"service {self._railway.service} is configured",
+                )
+            )
 
+        variable_stdout: list[str] = []
+        variable_stderr: list[str] = []
         for name in self._spec.secrets:
             value = secrets[name]
-            self._run(
+            result = self._run(
                 self._railway_cmd(
                     "variables",
                     "--service",
@@ -121,8 +145,20 @@ class RailwayProvider(Provider):
                 ),
                 cwd=deploy_dir,
             )
+            variable_stdout.append(result.stdout or "")
+            variable_stderr.append(result.stderr or "")
+        steps.append(
+            DeployStepReport(
+                name="set Railway service variables",
+                status="ok",
+                detail=f"set {len(self._spec.secrets)} service var(s)",
+                stdout="".join(variable_stdout),
+                stderr="".join(variable_stderr),
+                metadata={"count": len(self._spec.secrets)},
+            )
+        )
 
-        self._run(
+        up_result = self._run(
             self._railway_cmd(
                 "up",
                 "--service",
@@ -132,15 +168,59 @@ class RailwayProvider(Provider):
             ),
             cwd=deploy_dir,
         )
-        return 0
+        up_classification = _classify_railway_up(up_result)
+        up_detail = "ran railway up --detach --ci"
+        if up_classification == "not_triggered":
+            up_detail = "railway reported no image rebuild"
+        elif not (up_result.stdout or up_result.stderr):
+            up_detail = "ran railway up --detach --ci; provider returned no stdout/stderr"
+        steps.append(
+            _step_from_result(
+                "railway up",
+                up_result,
+                detail=up_detail,
+                metadata={"image_rebuild": up_classification},
+            )
+        )
 
-    def _ensure_configured_service(self, deploy_dir: Path) -> None:
+        no_op = up_classification == "not_triggered" and not self._spec.secrets
+        if no_op:
+            verdict = "deploy: no-op (nothing changed)"
+        elif up_classification == "not_triggered":
+            verdict = "deploy: vars updated, no image rebuild"
+        else:
+            verdict = f"deploy: triggered Railway build/deploy for service {self._railway.service}"
+        warnings = []
+        if up_classification == "triggered" and not (up_result.stdout or up_result.stderr):
+            warnings.append(
+                "railway up returned no stdout/stderr; verify the Railway deployment logs for build outcome"
+            )
+        return DeployReport(
+            success=True,
+            provider="railway",
+            service=self._railway.service,
+            deploy_dir=str(deploy_dir),
+            steps=steps,
+            image_rebuild=up_classification,
+            no_op=no_op,
+            vars_updated=len(self._spec.secrets),
+            logs={
+                "command": "megaplan cloud logs --no-follow",
+                "service": self._railway.service,
+                "provider": "railway",
+            },
+            verdict=verdict,
+            warnings=warnings,
+            exit_code=0,
+        )
+
+    def _ensure_configured_service(self, deploy_dir: Path) -> subprocess.CompletedProcess[str]:
         result = self._run(
             self._railway_cmd("service", "status", "--all", "--json"),
             cwd=deploy_dir,
         )
         if _service_output_contains(result.stdout or "", self._railway.service):
-            return
+            return result
         command = f"railway add --service {shlex.quote(self._railway.service)}"
         raise CliError(
             "railway_service_missing",
@@ -261,3 +341,34 @@ def _service_output_contains(output: str, service: str) -> bool:
         if stripped == service or stripped.startswith(f"{service} ") or f" {service} " in stripped:
             return True
     return False
+
+
+def _step_from_result(
+    name: str,
+    result: subprocess.CompletedProcess[str],
+    *,
+    detail: str = "",
+    metadata: dict[str, object] | None = None,
+) -> DeployStepReport:
+    return DeployStepReport(
+        name=name,
+        status="ok",
+        detail=detail,
+        stdout=result.stdout or "",
+        stderr=result.stderr or "",
+        metadata=metadata or {},
+    )
+
+
+def _classify_railway_up(result: subprocess.CompletedProcess[str]) -> str:
+    output = f"{result.stdout or ''}\n{result.stderr or ''}".lower()
+    no_change_markers = (
+        "no changes",
+        "nothing to deploy",
+        "already up to date",
+        "unchanged",
+        "skipping build",
+    )
+    if any(marker in output for marker in no_change_markers):
+        return "not_triggered"
+    return "triggered"
