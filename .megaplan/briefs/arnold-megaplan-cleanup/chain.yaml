@@ -153,6 +153,18 @@ milestones:
     depth: medium
     notes: "directed//medium @codex. Scaffolder, check/dry-run/explain CLI, docs, examples."
 
+  - label: m9-liveness-persistence-decoupling
+    idea: .megaplan/briefs/arnold-megaplan-cleanup/m9-liveness-persistence-decoupling.md
+    branch: epic/arnold-cleanup-m9-liveness-persistence-decoupling
+    depends_on: [m8b-scaffold-docs]
+    profile: partnered
+    vendor: codex
+    robustness: full
+    depth: high
+    with_prep: true
+    prep_direction: "Re-locate the post-relocation runtime: the plan-state writer's active-step-heartbeat path (was _core/state.py write_plan_state/touch_active_step), the stall monitor that reads active_step.last_activity_at (was auto.py _active_step_last_activity_stale), the hermes _start_heartbeat, and the WAL emit/replay (was observability/events.py emit_state_wal + fold.py). Map the liveness contract end-to-end and the WAL fold invariant before planning. Do not move unrelated code."
+    notes: "partnered//high @codex +prep. ROOT fix: decouple liveness from full-state persistence + WAL diffs; supersedes the interim coalescing band-aid (70a95f63 / 8d320115)."
+
 on_failure:
   abort: stop_chain
 on_escalate:
