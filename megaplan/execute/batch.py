@@ -204,10 +204,30 @@ def _strip_provider_prefix(model: str | None) -> str | None:
     return value
 
 
+def _is_codex_gpt5_family(model: str | None) -> bool:
+    """Whether ``model`` is a codex GPT-5.x model (gpt-5.4, gpt-5.5, gpt-5.3-codex, ...).
+
+    Codex differentiates work by reasoning effort rather than the exact gpt-5.x point
+    release, and the provider routinely serves a newer same-family model than the one
+    pinned (e.g. gpt-5.4 -> gpt-5.5) as upstream aliases or deprecates versions.
+    """
+    bare = _strip_provider_prefix(model)
+    return isinstance(bare, str) and bare.lower().startswith("gpt-5")
+
+
 def _models_match(selected: str | None, actual: str | None) -> bool:
     if not selected or not actual:
         return True
-    return selected == actual or _strip_provider_prefix(selected) == _strip_provider_prefix(actual)
+    if selected == actual or _strip_provider_prefix(selected) == _strip_provider_prefix(actual):
+        return True
+    # A provider serving a different model WITHIN the same codex gpt-5.x family is an
+    # acceptable substitution (upstream aliasing/deprecation), not a routing failure that
+    # should block execution. Cross-vendor mismatches (codex<->claude) are caught
+    # separately by the agent-level audit, so this only relaxes same-family gpt-5.x
+    # point-release differences.
+    if _is_codex_gpt5_family(selected) and _is_codex_gpt5_family(actual):
+        return True
+    return False
 
 
 def _build_routing_record(
