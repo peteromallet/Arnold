@@ -3773,10 +3773,10 @@ class AIAgent:
     def _create_request_openai_client(self, *, reason: str) -> Any:
         from unittest.mock import Mock
 
-        primary_client = self._ensure_primary_openai_client(reason=reason)
-        if isinstance(primary_client, Mock):
-            return primary_client
         with self._openai_client_lock():
+            primary_client = getattr(self, "client", None)
+            if isinstance(primary_client, Mock):
+                return primary_client
             request_kwargs = dict(self._client_kwargs)
         return self._create_openai_client(request_kwargs, reason=reason, shared=False)
 
