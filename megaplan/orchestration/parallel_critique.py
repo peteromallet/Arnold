@@ -298,6 +298,11 @@ def run_parallel_critique(
                     "check_id": _check["id"],
                     "question": _check.get("question", ""),
                     "index": _idx,
+                    "ledger_step_label": _check["id"],
+                    "ledger_selected_spec": _check.get("_routing_selected_spec"),
+                    "ledger_tier": _check.get("_routing_tier"),
+                    "ledger_complexity": _check.get("complexity"),
+                    "ledger_tier_routing_active": bool(_check.get("_routing_tier_active", False)),
                 },
             )
         )

@@ -33,6 +33,10 @@ from megaplan._core import (
     store_raw_worker_output,
 )
 from megaplan.audits.quality_gates import capture_before_line_counts
+from megaplan.observability.routing_ledger import (
+    format_selected_spec,
+    record_step_routing,
+)
 from megaplan.execute.aggregation import (
     _append_scope_drift_blocker,
     _build_aggregate_execution_payload,
@@ -531,6 +535,20 @@ def _run_and_merge_batch(
         plan_dir=plan_dir,
         batch_number=batch_number,
     )
+    if routing_record is not None:
+        record_step_routing(
+            plan_dir,
+            phase="execute",
+            step_label=f"batch_{batch_number}",
+            agent=agent,
+            selected_spec=routing_record.get("selected_spec")
+            or format_selected_spec(agent, model, effort),
+            resolved_model=routing_record.get("resolved_model"),
+            actual_model=worker.model_actual,
+            tier=routing_record.get("selected_tier"),
+            complexity=routing_record.get("batch_complexity"),
+            tier_routing_active=bool(routing_record.get("tier_routing_active")),
+        )
     if routing_record is not None:
         payload["routing"] = routing_record
     deviations = list(payload.get("deviations", []))

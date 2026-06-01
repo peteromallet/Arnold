@@ -917,6 +917,9 @@ def run_research_fanout(
                 extra={
                     "index": index,
                     "area": dict(area),
+                    "ledger_step_label": str(
+                        area.get("id") or area.get("name") or area.get("label") or f"research_{index}"
+                    ),
                 },
             )
         )
