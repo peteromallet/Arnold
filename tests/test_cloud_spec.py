@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from megaplan.cloud.spec import LocalSpec, MegaplanSpec, RailwaySpec, SshSpec, ToolchainSpec, load_spec
+from megaplan.cloud.spec import DriverSpec, LocalSpec, MegaplanSpec, RailwaySpec, SshSpec, ToolchainSpec, load_spec
 from megaplan.types import CliError, DEFAULT_AGENT_ROUTING
 
 
@@ -58,6 +58,32 @@ def test_load_spec_happy_path_for_each_mode(tmp_path: Path, mode: str) -> None:
         assert spec.chain.spec == "/workspace/chain.yaml"
     else:
         assert spec.chain is None
+
+
+def test_load_spec_parses_driver_max_stall_iterations(tmp_path: Path) -> None:
+    payload = _base_spec(mode="chain")
+    payload["driver"] = {"max_stall_iterations": 14}
+
+    spec = load_spec(_write_spec(tmp_path, payload))
+
+    assert spec.driver == DriverSpec(max_stall_iterations=14)
+
+
+def test_load_spec_accepts_driver_stall_threshold_alias(tmp_path: Path) -> None:
+    payload = _base_spec(mode="chain")
+    payload["driver"] = {"stall_threshold": 11}
+
+    spec = load_spec(_write_spec(tmp_path, payload))
+
+    assert spec.driver == DriverSpec(max_stall_iterations=11)
+
+
+def test_load_spec_rejects_invalid_driver_max_stall_iterations(tmp_path: Path) -> None:
+    payload = _base_spec(mode="chain")
+    payload["driver"] = {"max_stall_iterations": 0}
+
+    with pytest.raises(CliError, match="driver.max_stall_iterations"):
+        load_spec(_write_spec(tmp_path, payload))
 
 
 def test_load_spec_rejects_missing_repo_url(tmp_path: Path) -> None:

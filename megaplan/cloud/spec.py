@@ -53,6 +53,11 @@ class ChainSubSpec:
 
 
 @dataclass(frozen=True)
+class DriverSpec:
+    max_stall_iterations: int | None = None
+
+
+@dataclass(frozen=True)
 class ResourcesSpec:
     volume: str | None = None
     port: int = 8080
@@ -109,6 +114,7 @@ class CloudSpec:
     secrets: list[str]
     auto: AutoSpec | None = None
     chain: ChainSubSpec | None = None
+    driver: DriverSpec | None = None
     railway: RailwaySpec | None = None
     local: LocalSpec | None = None
     ssh: SshSpec | None = None
@@ -205,6 +211,14 @@ def _port(raw: Any) -> int:
 def _positive_port(raw: Any, label: str, *, default: int) -> int:
     if raw is None:
         return default
+    if not isinstance(raw, int) or raw <= 0:
+        raise _invalid(f"`{label}` must be a positive integer")
+    return raw
+
+
+def _optional_positive_int(raw: Any, label: str) -> int | None:
+    if raw is None:
+        return None
     if not isinstance(raw, int) or raw <= 0:
         raise _invalid(f"`{label}` must be a positive integer")
     return raw
@@ -406,6 +420,22 @@ def load_spec(path: Path) -> CloudSpec:
             ),
         )
 
+    driver_raw = _mapping(raw.get("driver"), "driver")
+    max_stall_iterations = driver_raw.get(
+        "max_stall_iterations",
+        driver_raw.get("stall_threshold"),
+    )
+    driver = (
+        DriverSpec(
+            max_stall_iterations=_optional_positive_int(
+                max_stall_iterations,
+                "driver.max_stall_iterations",
+            )
+        )
+        if driver_raw
+        else None
+    )
+
     chain_session_explicit = "chain_session" in raw or (
         chain_spec is not None and chain_spec.chain_session is not None
     )
@@ -426,6 +456,7 @@ def load_spec(path: Path) -> CloudSpec:
         secrets=_secrets(raw.get("secrets")),
         auto=auto_spec,
         chain=chain_spec,
+        driver=driver,
         railway=railway,
         local=local,
         ssh=ssh,
