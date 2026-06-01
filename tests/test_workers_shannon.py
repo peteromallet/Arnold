@@ -262,6 +262,22 @@ def test_parse_shannon_output_result_string() -> None:
     }))
     assert payload == {"output": "done"}
 
+
+def test_extract_actual_model_from_shannon_envelope() -> None:
+    from megaplan.workers.shannon import _extract_actual_model_from_envelope
+
+    assert (
+        _extract_actual_model_from_envelope({"model": "claude-opus-4-7"})
+        == "claude-opus-4-7"
+    )
+    assert (
+        _extract_actual_model_from_envelope(
+            {"message": {"model": "claude-sonnet-4-6"}}
+        )
+        == "claude-sonnet-4-6"
+    )
+
+
 def test_parse_shannon_output_transcript_array() -> None:
     from megaplan.workers.shannon import _parse_shannon_output
 

@@ -1499,6 +1499,14 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
     )
 
 
+def _extract_actual_model_from_envelope(envelope: dict[str, Any]) -> str | None:
+    model_actual = envelope.get("model")
+    message = envelope.get("message")
+    if not model_actual and isinstance(message, dict):
+        model_actual = message.get("model")
+    return str(model_actual) if model_actual else None
+
+
 def _apply_file_fallback(
     step: str,
     payload: dict[str, Any],
@@ -2261,6 +2269,7 @@ def run_shannon_step(
         cost_usd=float(envelope.get("total_cost_usd", 0.0) or 0.0),
         session_id=str(envelope.get("session_id") or session_id),
         rendered_prompt=prompt,
+        model_actual=_extract_actual_model_from_envelope(envelope),
         prompt_tokens=_extract_claude_usage(envelope)[0],
         completion_tokens=_extract_claude_usage(envelope)[1],
         total_tokens=sum(_extract_claude_usage(envelope)),

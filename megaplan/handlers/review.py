@@ -400,6 +400,7 @@ def _resolve_review_outcome(
                 "Force-proceeding to done despite unresolved review issues "
                 "(all remaining items are non-blocking/cosmetic)."
             )
+            return "force_proceeded", STATE_DONE, None
         else:
             return "needs_rework", STATE_FINALIZED, "execute"
 
@@ -556,8 +557,6 @@ def _finalize_review_outcome(
         total_tasks=total_tasks,
         total_checks=total_checks,
     )
-    atomic_write_json(plan_dir / "review.json", worker.payload)
-    atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
     finalize_hash = sha256_file(plan_dir / "finalize.json")
 
     result, next_state, next_step = _resolve_review_outcome(
@@ -570,14 +569,22 @@ def _finalize_review_outcome(
         infrastructure_failure=infrastructure_failure,
         rework_items=worker.payload.get("rework_items", []),
     )
+    worker.payload["issues"] = issues
+    worker.payload["outcome"] = {
+        "result": result,
+        "review_verdict": review_verdict,
+        "state": next_state,
+        "next_step": next_step,
+    }
+    atomic_write_json(plan_dir / "review.json", worker.payload)
+    atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
     # DEFECT 2: the force-proceed-cap escalation surfaces a *recoverable* blocked
     # state (distinct from the infra-blocked re-review path, which stays at
     # STATE_EXECUTED). Record a resume_cursor so `override recover-blocked`/
     # `force-proceed` can clear it after operator review.
     force_proceed_blocked = result == "blocked" and next_state == STATE_BLOCKED
     if force_proceed_blocked:
-        meta = state.setdefault("meta", {})
-        meta["resume_cursor"] = {
+        state["resume_cursor"] = {
             "phase": "review",
             "retry_strategy": "manual_review",
         }
@@ -611,7 +618,7 @@ def _finalize_review_outcome(
         phase="review",
         output_file="review.json",
         artifact_hash=sha256_file(plan_dir / "review.json"),
-        verdict=review_verdict,
+        verdict=result if result == "force_proceeded" else review_verdict,
     )
     save_state_merge_meta(plan_dir, state)
 
@@ -636,11 +643,13 @@ def _finalize_review_outcome(
         )
     elif result == "needs_rework":
         summary = "Review requested another execute pass. Re-run execute using the review findings as context."
+    elif result == "force_proceeded":
+        summary = "Review force-proceeded after the rework cap with only non-blocking review issues unresolved."
     else:
         summary = _format_review_success_summary(criteria if isinstance(criteria, list) else [])
 
     response: StepResponse = {
-        "success": result == "success",
+        "success": result in {"success", "force_proceeded"},
         "step": "review",
         "summary": summary,
         "artifacts": ["review.json", "finalize.json", "final.md"],
@@ -660,6 +669,17 @@ def _finalize_review_outcome(
             plan_dir=plan_dir,
             exit_kind="blocked_by_quality",
             deviations=(_PhaseDeviation.from_string(summary),),
+        )
+    elif result == "force_proceeded":
+        force_deviations = [issue for issue in issues if "Force-proceeding" in issue]
+        response["deviations"] = force_deviations
+        response["warnings"] = force_deviations
+        _emit_phase_result(
+            phase="review",
+            state=state,
+            plan_dir=plan_dir,
+            exit_kind="success",
+            deviations=tuple(_PhaseDeviation.from_string(d) for d in force_deviations),
         )
     else:
         _emit_phase_result(
