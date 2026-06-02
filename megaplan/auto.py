@@ -1109,13 +1109,8 @@ def _issue_signature(item: dict[str, Any]) -> str:
     flag_id = item.get("flag_id")
     if isinstance(flag_id, str) and flag_id.strip():
         return f"flag:{flag_id.strip()}"
-    source = item.get("source")
     issue = item.get("issue")
-    evidence_file = item.get("evidence_file")
-    text = "|".join(
-        str(value or "").strip().lower()
-        for value in (source, issue, evidence_file)
-    )
+    text = re.sub(r"\s+", " ", (issue or "").strip().lower())
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
     return f"issue:{digest}"
 
@@ -1161,9 +1156,7 @@ def _nonconverging_rework_tasks(
         if current_signatures < prior_signatures:
             streaks[task_id] = 1
             continue
-        repeated_issue = bool(prior_signatures & current_signatures)
-        non_shrinking = prior_signatures <= current_signatures
-        if repeated_issue or non_shrinking:
+        if prior_signatures & current_signatures:
             streaks[task_id] = streaks.get(task_id, 1) + 1
         else:
             streaks[task_id] = 1
