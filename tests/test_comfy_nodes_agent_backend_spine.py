@@ -11,6 +11,7 @@ import pytest
 from vibecomfy.comfy_nodes.agent_audit import (
     REDACTED,
     artifact_entry,
+    normalize_agent_edit_v2_metadata,
     redact_closed_set,
     write_allocation_failure_audit,
     write_audit,
@@ -737,6 +738,83 @@ def test_accept_reject_fail_closed_when_submit_hash_missing_before_action_writes
     assert state["baseline_graph_hash"] is None
 
 
+def test_v2_accept_requires_same_live_canvas_token_and_updates_baseline_on_success(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "sessions"
+    request = _request_graph("v2-same-canvas")
+    request["client_live_canvas_token"] = "live:rev:1:client-v2-same-canvas"
+    allocation = allocate_turn(session_root=root, session_id="s1", request_payload=request)
+    turn_id = str(allocation.context.turn_id)
+    candidate_graph = {"nodes": [{"id": 2, "type": "PreviewImage"}], "links": []}
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key=None,
+        request_hash=allocation.request_hash,
+        response={
+            "ok": True,
+            "turn_id": turn_id,
+            "graph": candidate_graph,
+            "delta_ops": [{"op": "set_mode", "target": {"scope_path": [], "uid": "2"}, "mode": 4}],
+        },
+        response_path=allocation.turn_dir / "response.json",
+        operation="edit",
+        turn_id=turn_id,
+    )
+    submit_graph_hash = payload_hash(request["graph"])
+    candidate_graph_hash = payload_hash(candidate_graph)
+
+    stale = accept_turn(
+        session_root=root,
+        session_id="s1",
+        turn_id=turn_id,
+        client_graph_hash=request["client_graph_hash"],
+        request_payload={
+            "turn_id": turn_id,
+            "action": "accept",
+            "submit_graph_hash": submit_graph_hash,
+            "candidate_graph_hash": candidate_graph_hash,
+            "client_live_canvas_token": "live:rev:2:client-v2-same-canvas",
+        },
+    )
+
+    assert not isinstance(stale, dict)
+    assert stale.kind is FailureKind.STALE_STATE_MISMATCH
+    assert "live-canvas token" in stale.agent_failure_context["explanation"]
+    state = read_state(root / "s1")
+    turn_record = state["turns"][turn_id]
+    assert turn_record["state"] == "candidate"
+    assert state["baseline_turn_id"] is None
+    assert state["baseline_graph_hash"] is None
+
+    accepted = accept_turn(
+        session_root=root,
+        session_id="s1",
+        turn_id=turn_id,
+        client_graph_hash=request["client_graph_hash"],
+        request_payload={
+            "turn_id": turn_id,
+            "action": "accept",
+            "submit_graph_hash": submit_graph_hash,
+            "candidate_graph_hash": candidate_graph_hash,
+            "client_live_canvas_token": request["client_live_canvas_token"],
+        },
+    )
+
+    assert isinstance(accepted, dict)
+    assert accepted["ok"] is True
+    assert accepted["baseline_turn_id"] == turn_id
+    assert accepted["baseline_graph_hash"] == candidate_graph_hash
+    assert accepted["candidate_graph_hash"] == candidate_graph_hash
+    assert accepted["submitted_client_live_canvas_token"] == request["client_live_canvas_token"]
+    state = read_state(root / "s1")
+    assert state["baseline_turn_id"] == turn_id
+    assert state["baseline_graph_hash"] == candidate_graph_hash
+    assert state["turns"][turn_id]["state"] == "accepted"
+
+
 def test_new_submit_marks_prior_candidates_unknown_and_accept_updates_baseline_graph_hash(
     tmp_path: Path,
 ) -> None:
@@ -1205,6 +1283,35 @@ def test_audit_failure_envelope_carries_warning_or_failure_without_audit_ref() -
     assert failure_payload["kind"] == FailureKind.AUDIT_WRITE_FAILURE.value
     assert failure_payload["audit_ref"] is None
     assert failure_payload["audit_error"] == "disk full"
+
+
+def test_normalize_agent_edit_v2_metadata_fills_delta_defaults_without_v1_artifacts() -> None:
+    payload = normalize_agent_edit_v2_metadata(
+        {
+            "enabled": True,
+            "delta_ops": {
+                "ops": [{"op": "set_mode", "target": ["", "u1"], "mode": 2}],
+                "diagnostics": [{"code": "automatic_link_removal", "severity": "info"}],
+                "automatic_link_removals": [{"scope_path": "", "uid": "u1", "link_id": 7}],
+                "re_stitches": [{"scope_path": "", "uid": "u2", "class_type": "Reroute"}],
+                "guard_result": {"ok": True, "diagnostics": []},
+                "normalize": {"fallback_used": True},
+            },
+        }
+    )
+
+    assert payload == {
+        "enabled": True,
+        "op_count": 1,
+        "delta_ops": {
+            "ops": [{"op": "set_mode", "target": ["", "u1"], "mode": 2}],
+            "diagnostics": [{"code": "automatic_link_removal", "severity": "info"}],
+            "automatic_link_removals": [{"scope_path": "", "uid": "u1", "link_id": 7}],
+            "re_stitches": [{"scope_path": "", "uid": "u2", "class_type": "Reroute"}],
+            "guard_result": {"ok": True, "diagnostics": []},
+            "normalize": {"fallback_used": True, "allow_list_used": False},
+        },
+    }
 
 
 def test_redaction_closed_set_values_are_exact() -> None:
@@ -2342,6 +2449,56 @@ def test_agent_provider_lazy_loads_arnold_and_normalizes_response(monkeypatch) -
     assert result.audit_metadata["legacy_deepseek_fallback_enabled"] is False
 
 
+def test_agent_provider_delta_path_uses_separate_v2_prompt_and_normalizer(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    class Runtime:
+        @staticmethod
+        def run_agent_turn_delta(**kwargs):
+            calls.append(kwargs)
+            return {
+                "delta": [
+                    {
+                        "op": "set_node_field",
+                        "target": ["", "seed-node", "inputs.seed"],
+                        "value": 123,
+                    }
+                ],
+                "message": "Changed the seed.",
+            }
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: Runtime)
+
+    result = agent_provider.run_agent_turn_delta(
+        "change the seed",
+        "node [, seed-node] KSampler fields: inputs.seed=1",
+        op_schema={"type": "object", "required": ["delta", "message"]},
+        route="deepseek",
+        model="m2",
+    )
+
+    assert result.message == "Changed the seed."
+    assert result.route == "deepseek"
+    assert result.model == "m2"
+    assert len(result.delta) == 1
+    assert calls[0]["route"] == "deepseek"
+    assert calls[0]["projection"] == "node [, seed-node] KSampler fields: inputs.seed=1"
+    assert calls[0]["op_schema"] == {"type": "object", "required": ["delta", "message"]}
+    assert "Return only JSON with keys `delta` and `message`." in calls[0]["messages"][0]["content"]
+    assert "Return only JSON with keys `python` and `message`." not in calls[0]["messages"][0]["content"]
+    assert "Address-preserving UI projection" in calls[0]["messages"][1]["content"]
+    assert result.audit_metadata["response_contract"] == "delta"
+
+
+def test_agent_provider_v1_normalizer_still_rejects_delta_only_response() -> None:
+    with pytest.raises(agent_provider.MissingRequiredField, match=r"key `python`"):
+        agent_provider._normalize_agent_response(  # type: ignore[attr-defined]
+            {"delta": [], "message": "Changed nothing."},
+            route="arnold",
+            model="agent-edit",
+        )
+
+
 def test_agent_provider_run_agent_turn_surfaces_unavailable_runtime_as_provider_error(monkeypatch) -> None:
     def _missing():
         raise agent_provider.ProviderError("not installed")
@@ -2404,6 +2561,38 @@ def test_agent_provider_maps_malformed_and_missing_fields(monkeypatch) -> None:
         pass
     else:
         raise AssertionError("expected missing required field")
+
+
+def test_agent_provider_delta_maps_malformed_missing_and_bad_ops(monkeypatch) -> None:
+    class RuntimeMalformed:
+        @staticmethod
+        def run_agent_turn_delta(**_kwargs):
+            return "not-json"
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: RuntimeMalformed)
+    with pytest.raises(
+        agent_provider.MalformedModelJSON,
+        match=r"keys `delta` and `message`|valid JSON",
+    ):
+        agent_provider.run_agent_turn_delta("task", "projection")
+
+    class RuntimeMissing:
+        @staticmethod
+        def run_agent_turn_delta(**_kwargs):
+            return {"delta": []}
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: RuntimeMissing)
+    with pytest.raises(agent_provider.MissingRequiredField, match=r"key `message`"):
+        agent_provider.run_agent_turn_delta("task", "projection")
+
+    class RuntimeBadDelta:
+        @staticmethod
+        def run_agent_turn_delta(**_kwargs):
+            return {"delta": [{"op": "bogus"}], "message": "bad delta"}
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: RuntimeBadDelta)
+    with pytest.raises(agent_provider.MalformedModelJSON, match=r"Unsupported edit op 'bogus'\."):
+        agent_provider.run_agent_turn_delta("task", "projection")
 
 
 def test_agent_provider_status_uses_runtime_status_without_leaking_secrets(monkeypatch) -> None:

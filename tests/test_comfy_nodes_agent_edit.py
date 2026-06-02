@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -156,6 +157,7 @@ def test_agent_edit_state_exposes_explicit_lowering_fields(tmp_path: Path) -> No
         original_ui_path=tmp_path / "original.ui.json",
         before_py_path=tmp_path / "before.py",
         after_py_path=tmp_path / "after.py",
+        projection_path=tmp_path / "projection.txt",
         model_request_path=tmp_path / "model_request.json",
         model_response_path=tmp_path / "model_response.json",
         candidate_ui_path=tmp_path / "candidate.ui.json",
@@ -245,6 +247,183 @@ def test_handle_agent_edit_round_trips_deepseek_python(tmp_path: Path) -> None:
         "candidate_ui",
         "messages",
     } <= set(audit["artifacts"])
+
+
+def test_handle_agent_edit_v2_uses_delta_stage_sequence_without_authoring_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": _schema("SaveImage"),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_V2", "1")
+
+    def _fake_delta(messages):
+        prompt = messages[-1]["content"]
+        match = re.search(r'target=\["",\s*"([^"]+)"\].*class="SaveImage"', prompt)
+        assert match is not None
+        return {
+            "delta": [
+                {
+                    "op": "set_node_field",
+                    "target": ["", match.group(1), "filename_prefix"],
+                    "value": "after",
+                }
+            ],
+            "message": "Changed the save prefix.",
+        }
+
+    from vibecomfy.comfy_nodes import agent_edit as agent_edit_module
+    from vibecomfy.comfy_nodes.agent_audit import write_audit as real_write_audit
+
+    stage_order: list[str] = []
+
+    def _capture_audit(audit_dir, **kwargs):
+        stage_order[:] = list((kwargs.get("stage_results") or {}).keys())
+        return real_write_audit(audit_dir, **kwargs)
+
+    monkeypatch.setattr(agent_edit_module, "write_audit", _capture_audit)
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "change the save prefix to after",
+            "session_id": "v2-delta-success",
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_delta,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["message"] == "Changed the save prefix."
+    assert "python" not in result["artifacts"]
+    assert "before_python" not in result["artifacts"]
+    assert "after_python" not in result["artifacts"]
+    assert result["delta_ops"] == [
+        {
+            "op": "set_node_field",
+            "target": ["", result["delta_ops"][0]["target"][1], "filename_prefix"],
+            "value": "after",
+        }
+    ]
+    assert Path(result["artifacts"]["projection"]).name == "projection.txt"
+    assert result["graph"]["nodes"][1]["widgets_values"] == ["after"]
+    assert stage_order == [
+        "ingest",
+        "project",
+        "agent_delta",
+        "apply_delta",
+        "queue_validate",
+        "summarize",
+        "audit",
+    ]
+    assert {"convert", "agent", "load_python", "lower", "validate", "emit"}.isdisjoint(stage_order)
+
+    request = json.loads(Path(result["artifacts"]["model_request"]).read_text(encoding="utf-8"))
+    assert request["response_contract"] == "delta"
+    assert "Return only JSON with keys `delta` and `message`." in request["messages"][0]["content"]
+    audit = json.loads(Path(result["audit_ref"]["path"]).read_text(encoding="utf-8"))
+    assert set(audit["artifacts"]) == {
+        "request",
+        "original_ui",
+        "projection",
+        "model_request",
+        "model_response",
+        "candidate_ui",
+        "messages",
+    }
+    assert audit["metadata"]["agent_edit_v2"]["enabled"] is True
+    assert audit["metadata"]["agent_edit_v2"]["op_count"] == 1
+    assert audit["metadata"]["agent_edit_v2"]["delta_ops"]["ops"] == result["delta_ops"]
+    assert audit["metadata"]["agent_edit_v2"]["delta_ops"]["automatic_link_removals"] == []
+    assert audit["metadata"]["agent_edit_v2"]["delta_ops"]["re_stitches"] == []
+    assert audit["metadata"]["agent_edit_v2"]["delta_ops"]["guard_result"]["ok"] is True
+    # normalize availability depends on the environment (e.g. ComfyUI/litegraph
+    # may not be importable in dev/test), so only assert the important invariant:
+    # the allow-list must never be used for a simple set_node_field edit.
+    assert audit["metadata"]["agent_edit_v2"]["delta_ops"]["normalize"]["allow_list_used"] is False
+    assert isinstance(audit["metadata"]["agent_edit_v2"]["delta_ops"]["normalize"]["fallback_used"], bool)
+
+
+def test_handle_agent_edit_v2_classifies_malformed_delta_as_closed_failure_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": _schema("SaveImage"),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_V2", "1")
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "change the save prefix to after",
+            "session_id": "v2-delta-malformed",
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: {
+            "delta": [{"op": "bogus"}],
+            "message": "bad delta",
+        },
+        session_root=tmp_path,
+    )
+
+    _assert_failure_defaults(
+        result,
+        kind=FailureKind.MALFORMED_MODEL_JSON.value,
+        stage="agent_response",
+        audit_ref_expected=True,
+    )
+    dumped = json.dumps(result, sort_keys=True)
+    assert "EditOpParseError" not in dumped
+    assert "ValueError" not in dumped
+    assert "Unsupported edit op 'bogus'." == result["agent_failure_context"]["explanation"]
+
+
+def test_handle_agent_edit_v2_classifies_provider_error_as_closed_failure_envelope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": _schema("SaveImage"),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_V2", "1")
+
+    from vibecomfy.comfy_nodes import agent_provider as provider_mod
+
+    monkeypatch.setattr(
+        "vibecomfy.comfy_nodes.agent_edit.run_agent_turn_delta",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(provider_mod.ProviderError("not installed")),
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "change the save prefix to after",
+            "session_id": "v2-delta-provider-error",
+        },
+        schema_provider=provider,
+        session_root=tmp_path,
+    )
+
+    _assert_failure_defaults(
+        result,
+        kind=FailureKind.PROVIDER_ERROR.value,
+        stage="agent_response",
+        audit_ref_expected=True,
+    )
+    assert "temporarily unavailable" in result["message"]
+    assert "ProviderError(" not in json.dumps(result, sort_keys=True)
 
 
 def test_handle_agent_edit_validates_lowered_copy_after_load_python(
@@ -1656,6 +1835,182 @@ def test_agent_edit_action_routes_accept_reject_idempotency_and_audit(
     audit_payload = json.loads(downloaded["body"].decode("utf-8"))
     assert audit_payload["metadata"]["action"] == "accept"
     assert audit_payload["turn_state"] == "accepted"
+
+
+def test_agent_edit_accept_matches_browser_client_graph_hash(tmp_path: Path) -> None:
+    """Regression: the browser hashes the graph with a different serialization
+    than the backend's canonical ``submit_graph_hash``. Accept must match the
+    client's own submit-time hash (``submitted_client_graph_hash``), otherwise a
+    user can never apply a candidate from the panel (StaleStateMismatch)."""
+    from vibecomfy.comfy_nodes.agent_session import (
+        allocate_turn,
+        record_idempotent_response,
+    )
+    from vibecomfy.comfy_nodes.routes import _handle_agent_edit_accept
+
+    graph = {"nodes": [{"id": 1, "type": "SaveImage", "widgets_values": ["browser"]}], "links": []}
+    candidate_graph = {
+        "nodes": [{"id": 2, "type": "SaveImage", "widgets_values": ["browser-candidate"]}],
+        "links": [],
+    }
+    # A frontend-style hash that deliberately differs from the canonical one.
+    browser_hash = "frontend-style-hash-0123456789abcdef"
+    assert browser_hash != payload_hash(graph)
+
+    allocation = allocate_turn(
+        session_root=tmp_path,
+        session_id="s-browser",
+        request_payload={"graph": graph, "task": "edit", "client_graph_hash": browser_hash},
+    )
+    turn_id = str(allocation.context.turn_id)
+    record_idempotent_response(
+        session_root=tmp_path,
+        session_id="s-browser",
+        scope="edit",
+        idempotency_key=None,
+        request_hash=allocation.request_hash,
+        response={"ok": True, "turn_id": turn_id, "graph": candidate_graph},
+        response_path=allocation.turn_dir / "response.json",
+        operation="edit",
+        turn_id=turn_id,
+    )
+
+    # A hash matching neither the canonical nor the client submit hash is stale.
+    # Run this first while the turn is still in the `candidate` state so it
+    # exercises the hash gate rather than a state transition.
+    stale = _handle_agent_edit_accept(
+        {
+            "session_id": "s-browser",
+            "turn_id": turn_id,
+            "client_graph_hash": "totally-different-hash",
+            "idempotency_key": "accept-stale",
+        },
+        session_root=tmp_path,
+    )
+    assert stale["ok"] is False
+    assert stale["kind"] == FailureKind.STALE_STATE_MISMATCH.value
+
+    accepted = _handle_agent_edit_accept(
+        {
+            "session_id": "s-browser",
+            "turn_id": turn_id,
+            "client_graph_hash": browser_hash,
+            "idempotency_key": "accept-browser",
+        },
+        session_root=tmp_path,
+    )
+    assert accepted["ok"] is True, accepted
+    assert accepted["action"] == "accept"
+
+
+def test_agent_edit_v2_accept_requires_server_hash_candidate_hash_and_live_token(
+    tmp_path: Path,
+) -> None:
+    from vibecomfy.comfy_nodes.agent_session import (
+        allocate_turn,
+        record_idempotent_response,
+    )
+    from vibecomfy.comfy_nodes.routes import _handle_agent_edit_accept
+
+    graph = {"nodes": [{"id": 1, "type": "SaveImage", "widgets_values": ["v2"]}], "links": []}
+    candidate_graph = {
+        "nodes": [{"id": 2, "type": "SaveImage", "widgets_values": ["v2-candidate"]}],
+        "links": [],
+    }
+    client_hash = "browser-hash-v2"
+    live_token = "live:rev:1:browser-hash-v2"
+    allocation = allocate_turn(
+        session_root=tmp_path,
+        session_id="s-v2-lock",
+        request_payload={
+            "graph": graph,
+            "task": "edit v2",
+            "client_graph_hash": client_hash,
+            "client_live_canvas_token": live_token,
+        },
+    )
+    turn_id = str(allocation.context.turn_id)
+    record_idempotent_response(
+        session_root=tmp_path,
+        session_id="s-v2-lock",
+        scope="edit",
+        idempotency_key=None,
+        request_hash=allocation.request_hash,
+        response={
+            "ok": True,
+            "turn_id": turn_id,
+            "graph": candidate_graph,
+            "delta_ops": [{"op": "set_mode", "target": {"scope_path": [], "uid": "2"}, "mode": 4}],
+        },
+        response_path=allocation.turn_dir / "response.json",
+        operation="edit",
+        turn_id=turn_id,
+    )
+    submit_hash = payload_hash(graph)
+    candidate_hash = payload_hash(candidate_graph)
+
+    stale_token = _handle_agent_edit_accept(
+        {
+            "session_id": "s-v2-lock",
+            "turn_id": turn_id,
+            "client_graph_hash": client_hash,
+            "client_live_canvas_token": "live:rev:2:browser-hash-v2",
+            "submit_graph_hash": submit_hash,
+            "candidate_graph_hash": candidate_hash,
+            "idempotency_key": "accept-v2-stale-token",
+        },
+        session_root=tmp_path,
+    )
+    assert stale_token["ok"] is False
+    assert stale_token["kind"] == FailureKind.STALE_STATE_MISMATCH.value
+    assert "live-canvas token" in stale_token["agent_failure_context"]["explanation"]
+
+    wrong_candidate = _handle_agent_edit_accept(
+        {
+            "session_id": "s-v2-lock",
+            "turn_id": turn_id,
+            "client_graph_hash": client_hash,
+            "client_live_canvas_token": live_token,
+            "submit_graph_hash": submit_hash,
+            "candidate_graph_hash": "wrong-candidate-hash",
+            "idempotency_key": "accept-v2-wrong-candidate",
+        },
+        session_root=tmp_path,
+    )
+    assert wrong_candidate["ok"] is False
+    assert wrong_candidate["kind"] == FailureKind.STALE_STATE_MISMATCH.value
+    assert "persisted candidate graph hash" in wrong_candidate["agent_failure_context"]["explanation"]
+
+    wrong_submit = _handle_agent_edit_accept(
+        {
+            "session_id": "s-v2-lock",
+            "turn_id": turn_id,
+            "client_graph_hash": client_hash,
+            "client_live_canvas_token": live_token,
+            "submit_graph_hash": "wrong-submit-hash",
+            "candidate_graph_hash": candidate_hash,
+            "idempotency_key": "accept-v2-wrong-submit",
+        },
+        session_root=tmp_path,
+    )
+    assert wrong_submit["ok"] is False
+    assert wrong_submit["kind"] == FailureKind.STALE_STATE_MISMATCH.value
+    assert "server-side submit graph hash" in wrong_submit["agent_failure_context"]["explanation"]
+
+    accepted = _handle_agent_edit_accept(
+        {
+            "session_id": "s-v2-lock",
+            "turn_id": turn_id,
+            "client_graph_hash": client_hash,
+            "client_live_canvas_token": live_token,
+            "submit_graph_hash": submit_hash,
+            "candidate_graph_hash": candidate_hash,
+            "idempotency_key": "accept-v2-ok",
+        },
+        session_root=tmp_path,
+    )
+    assert accepted["ok"] is True, accepted
+    assert accepted["baseline_graph_hash"] == candidate_hash
 
 
 def test_agent_edit_action_routes_reject_candidates_without_baseline_update(

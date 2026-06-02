@@ -223,6 +223,44 @@ def _gates_to_dict(context: TurnContext | None) -> dict[str, bool]:
     return context.gate_snapshot() if context is not None else {}
 
 
+def normalize_agent_edit_v2_metadata(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    payload = dict(value or {})
+    delta_ops = payload.get("delta_ops")
+    delta_ops_mapping = dict(delta_ops) if isinstance(delta_ops, Mapping) else {}
+    diagnostics = delta_ops_mapping.get("diagnostics")
+    automatic_link_removals = delta_ops_mapping.get("automatic_link_removals")
+    re_stitches = delta_ops_mapping.get("re_stitches")
+    guard_result = delta_ops_mapping.get("guard_result")
+    normalize = delta_ops_mapping.get("normalize")
+    ops = delta_ops_mapping.get("ops")
+
+    normalized_delta_ops = {
+        "ops": list(ops) if isinstance(ops, list) else [],
+        "diagnostics": list(diagnostics) if isinstance(diagnostics, list) else [],
+        "automatic_link_removals": (
+            list(automatic_link_removals) if isinstance(automatic_link_removals, list) else []
+        ),
+        "re_stitches": list(re_stitches) if isinstance(re_stitches, list) else [],
+        "guard_result": dict(guard_result) if isinstance(guard_result, Mapping) else {"ok": True, "diagnostics": []},
+        "normalize": (
+            {
+                "fallback_used": bool(normalize.get("fallback_used")),
+                "allow_list_used": bool(normalize.get("allow_list_used")),
+            }
+            if isinstance(normalize, Mapping)
+            else {"fallback_used": False, "allow_list_used": False}
+        ),
+    }
+    op_count = payload.get("op_count")
+    if not isinstance(op_count, int):
+        op_count = len(normalized_delta_ops["ops"])
+    return {
+        "enabled": bool(payload.get("enabled")),
+        "op_count": op_count,
+        "delta_ops": normalized_delta_ops,
+    }
+
+
 def write_audit(
     audit_dir: Path,
     *,
@@ -268,6 +306,10 @@ def write_audit(
 
     redacted_metadata = redact_audit_metadata(dict(metadata or {}))
     redactions.update(redacted_metadata.categories)
+    if isinstance(redacted_metadata.value, dict):
+        agent_edit_v2 = redacted_metadata.value.get("agent_edit_v2")
+        if isinstance(agent_edit_v2, Mapping):
+            redacted_metadata.value["agent_edit_v2"] = normalize_agent_edit_v2_metadata(agent_edit_v2)
     audit_payload = {
         "schema_version": 1,
         "session_id": context.session_id if context is not None else None,
@@ -319,6 +361,7 @@ __all__ = [
     "RedactionResult",
     "artifact_entry",
     "artifact_ref_for_path",
+    "normalize_agent_edit_v2_metadata",
     "redact_closed_set",
     "redact_audit_metadata",
     "runtime_intent_metadata_from_api",

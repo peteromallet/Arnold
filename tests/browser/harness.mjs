@@ -27,6 +27,7 @@ class FakeElement {
     this.onclick = null;
     this.textContent = "";
     this.id = "";
+    this.eventListeners = {};
   }
 
   appendChild(child) {
@@ -50,9 +51,25 @@ class FakeElement {
     }
   }
 
+  addEventListener(type, listener) {
+    if (!this.eventListeners[type]) {
+      this.eventListeners[type] = [];
+    }
+    this.eventListeners[type].push(listener);
+  }
+
+  removeEventListener(type, listener) {
+    const listeners = this.eventListeners[type] || [];
+    this.eventListeners[type] = listeners.filter((entry) => entry !== listener);
+  }
+
   click() {
     if (this.disabled) {
       return undefined;
+    }
+    const listeners = this.eventListeners.click || [];
+    for (const listener of listeners) {
+      listener.call(this, { type: "click", target: this });
     }
     if (typeof this.onclick === "function") {
       return this.onclick();
@@ -113,10 +130,13 @@ export async function createBrowserHarness({
   const operationLog = [];
   const consoleCapture = { log: [], warn: [], error: [] };
   const loadGraphDataCalls = [];
+  const graphClearCalls = [];
+  const graphConfigureCalls = [];
   const queuePromptCalls = [];
   const serializeCalls = [];
   const toasts = [];
   const registeredExtensions = [];
+  let liveCanvasRevision = 1;
   let currentGraph = clone(
     graph || {
       nodes: [{ id: 1, type: "Input", properties: { vibecomfy_uid: "uid-1" } }],
@@ -125,13 +145,13 @@ export async function createBrowserHarness({
   );
 
   function syncLiveGraphNodes() {
+    app.canvas.graph._vibecomfyLiveCanvasToken = `rev:${liveCanvasRevision}`;
     app.canvas.graph._nodes = (currentGraph?.nodes || []).map((node) => ({
       id: node.id,
       type: node.type,
       properties: clone(node.properties || {}),
-      color: node.color,
-      bgcolor: node.bgcolor,
-      boxcolor: node.boxcolor,
+      inputs: clone(node.inputs || []),
+      outputs: clone(node.outputs || []),
     }));
   }
 
@@ -144,6 +164,21 @@ export async function createBrowserHarness({
           return snapshot;
         },
         _nodes: [],
+        clear() {
+          graphClearCalls.push(clone(currentGraph));
+          operationLog.push({ kind: "graph.clear" });
+          liveCanvasRevision += 1;
+          currentGraph = { nodes: [], links: [] };
+          syncLiveGraphNodes();
+        },
+        configure(nextGraph) {
+          const snapshot = clone(nextGraph);
+          graphConfigureCalls.push(snapshot);
+          operationLog.push({ kind: "graph.configure", graph: snapshot });
+          liveCanvasRevision += 1;
+          currentGraph = snapshot;
+          syncLiveGraphNodes();
+        },
       },
     },
     extensionManager: {
@@ -160,6 +195,7 @@ export async function createBrowserHarness({
       const snapshot = clone(nextGraph);
       loadGraphDataCalls.push(snapshot);
       operationLog.push({ kind: "loadGraphData", graph: snapshot });
+      liveCanvasRevision += 1;
       currentGraph = snapshot;
       syncLiveGraphNodes();
     },
@@ -280,6 +316,8 @@ export async function createBrowserHarness({
     operationLog,
     consoleCapture,
     loadGraphDataCalls,
+    graphClearCalls,
+    graphConfigureCalls,
     queuePromptCalls,
     serializeCalls,
     toasts,
@@ -324,7 +362,12 @@ export async function createBrowserHarness({
       return document.body.querySelectorAll(() => true).map((node) => node.textContent).join("\n");
     },
     setCurrentGraph(nextGraph) {
+      liveCanvasRevision += 1;
       currentGraph = clone(nextGraph);
+      syncLiveGraphNodes();
+    },
+    bumpLiveCanvasToken() {
+      liveCanvasRevision += 1;
       syncLiveGraphNodes();
     },
     getCurrentGraph() {

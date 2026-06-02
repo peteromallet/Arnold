@@ -73,6 +73,14 @@ jobs:
             tests/test_porting_convert.py \
             tests/test_plugin_discovery.py \
             tests/test_agent_acceptance.py \
+            tests/test_comfy_nodes_agent_edit.py \
+            tests/test_comfy_nodes_agent_backend_spine.py \
+            tests/test_porting_edit_apply.py \
+            tests/test_porting_edit_ops.py \
+            tests/test_porting_edit_projection.py \
+            tests/test_porting_edit_ledger.py \
+            tests/test_porting_edit_corpus.py \
+            tests/test_porting_ui_materialize.py \
             --cov=vibecomfy \
             --cov-report=term-missing \
             --cov-report=xml \

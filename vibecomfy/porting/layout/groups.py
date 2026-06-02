@@ -9,6 +9,7 @@ are skipped.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Dict, List
 
@@ -69,8 +70,11 @@ def _role_color_for_subgraph(name: str) -> str:
     for role_key, colour in _ROLE_COLOR_MAP.items():
         if role_key in name_lower:
             return colour
-    # Deterministic hash fallback.
-    h = hash(name) & 0x7FFFFFFF
+    # Deterministic hash fallback. Use a stable digest, NOT builtin hash() —
+    # hash() is PYTHONHASHSEED-randomized per process, so it would pick a different
+    # colour for the same name across runs (despite the docstring's promise), which
+    # also defeats the byte-identical agent-edit guard. blake2b is process-stable.
+    h = int.from_bytes(hashlib.blake2b(name.encode("utf-8"), digest_size=4).digest(), "big")
     return _FALLBACK_PALETTE[h % len(_FALLBACK_PALETTE)]
 
 

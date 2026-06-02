@@ -210,6 +210,7 @@ def port_convert_workflow(
     validate: bool = True,
     raw_workflow: dict[str, Any] | None = None,
     keep_virtual_wires: bool = False,
+    prune_dead_branches: bool = True,
 ) -> PortConvertResult:
     emission_diagnostics: list[EmissionDiagnostic] = []
 
@@ -313,6 +314,7 @@ def port_convert_workflow(
             registered_inputs=registered_inputs,
             diagnostics=emission_diagnostics,
             keep_virtual_wires=keep_virtual_wires,
+            prune_dead_branches=prune_dead_branches,
         )
         mode: PortConvertMode = "scratchpad"
     else:

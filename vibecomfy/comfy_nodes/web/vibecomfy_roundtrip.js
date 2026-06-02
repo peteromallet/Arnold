@@ -9,7 +9,7 @@ import { app } from "../../scripts/app.js";
 //   IDLE            — shell open, ready for prompt entry
 //   SUBMITTING      — POST /vibecomfy/agent-edit in-flight
 //   AWAITING_REVIEW — candidate received; Apply / Reject available
-//   APPLYING        — local proof-only app.loadGraphData() in progress
+//   APPLYING        — local proof-only in-place graph apply in progress
 //   ERROR           — request failed; failure region becomes primary
 
 // ── Turn Metadata ─────────────────────────────────────────────────────────
@@ -30,11 +30,15 @@ import { app } from "../../scripts/app.js";
 //   session_id        (string, optional) — reuse existing session
 //   idempotency_key   (string, optional) — client dedup key
 //   client_graph_hash (string, optional) — SHA-256 of `graph` for state checks
+//   client_live_canvas_token (string, optional) — live canvas lock token
 
 // ── Accept Fields (POST /vibecomfy/agent-edit/accept) ─────────────────────
 //   session_id        (string, required)
 //   turn_id           (string, required)
 //   client_graph_hash (string, optional) — hash of current canvas
+//   client_live_canvas_token (string, optional) — current live canvas lock token
+//   submit_graph_hash (string, optional) — v2 server-side submit hash echo
+//   candidate_graph_hash (string, optional) — v2 accepted candidate hash
 //   idempotency_key   (string, optional)
 
 // ── Reject Fields (POST /vibecomfy/agent-edit/reject) ─────────────────────
@@ -417,6 +421,21 @@ function decorateLiveIntentNodes() {
   }
 }
 
+function applyGraphInPlaceWithIntentDecoration(candidate) {
+  const graph = getLiveGraph();
+  if (!graph || typeof graph.clear !== "function" || typeof graph.configure !== "function") {
+    throw agentPanelFailure("CanvasApplyError", "The live LiteGraph instance does not support in-place graph application.", {
+      retryable: true,
+      graph_unchanged: true,
+      next_action: "Retry after the ComfyUI frontend finishes loading, or use the legacy round-trip command.",
+    });
+  }
+  decorateIntentGraphPayload(candidate);
+  graph.clear();
+  graph.configure(candidate);
+  decorateLiveIntentNodes();
+}
+
 function installIntentNodeFallback() {
   if (app.__vibecomfyIntentFallbackInstalled) {
     return;
@@ -684,6 +703,16 @@ function canonicalJsonString(value) {
 async function sha256HexUtf8(text) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function captureLiveCanvasToken(graphHash) {
+  const graph = app?.canvas?.graph;
+  const revision = graph?._vibecomfyLiveCanvasToken
+    ?? graph?._vibecomfy_live_canvas_token
+    ?? graph?._version
+    ?? graph?._revision
+    ?? null;
+  return revision == null ? `hash:${graphHash}` : `live:${String(revision)}:${graphHash}`;
 }
 
 function normalizeRoutePreference(value) {
@@ -992,6 +1021,7 @@ async function buildSubmitSnapshot(panel) {
   const graph = app.canvas.graph.serialize();
   const graphJson = canonicalJsonString(graph);
   const graphHash = await sha256HexUtf8(graphJson);
+  const liveCanvasToken = captureLiveCanvasToken(graphHash);
   const route = normalizeRoutePreference(panel.fields.route.value);
   const model = normalizeModelPreference(panel.fields.model.value);
   const idempotencyKey = buildSubmitIdempotencyKey({
@@ -1000,14 +1030,15 @@ async function buildSubmitSnapshot(panel) {
     route,
     model,
   });
-  return { graph, graphJson, graphHash, route, model, idempotencyKey };
+  return { graph, graphJson, graphHash, liveCanvasToken, route, model, idempotencyKey };
 }
 
 async function buildCanvasSnapshot() {
   const graph = app.canvas.graph.serialize();
   const graphJson = canonicalJsonString(graph);
   const graphHash = await sha256HexUtf8(graphJson);
-  return { graph, graphJson, graphHash };
+  const liveCanvasToken = captureLiveCanvasToken(graphHash);
+  return { graph, graphJson, graphHash, liveCanvasToken };
 }
 
 function createAgentPanel() {
@@ -1275,7 +1306,9 @@ function createAgentPanel() {
       turnId: null,
       baselineTurnId: null,
       candidateGraph: null,
+      candidateGraphHash: null,
       candidateReport: null,
+      serverSubmitGraphHash: null,
       message: null,
       failure: null,
       applyAllowed: false,
@@ -2088,6 +2121,7 @@ async function submitAgentEdit(panel) {
       route: snapshot.route,
       model: snapshot.model,
       client_graph_hash: snapshot.graphHash,
+      client_live_canvas_token: snapshot.liveCanvasToken,
       idempotency_key: snapshot.idempotencyKey,
     };
     pushHistory(panel, "pending", `Submitting: ${task.slice(0, 80)}${task.length > 80 ? "..." : ""}`);
@@ -2100,6 +2134,7 @@ async function submitAgentEdit(panel) {
       route: snapshot.route,
       model: snapshot.model,
       client_graph_hash: snapshot.graphHash,
+      client_live_canvas_token: snapshot.liveCanvasToken,
       idempotency_key: snapshot.idempotencyKey,
     };
     renderAgentPanel(panel);
@@ -2113,6 +2148,7 @@ async function submitAgentEdit(panel) {
         model: snapshot.model || undefined,
         session_id: panel.state.sessionId || undefined,
         client_graph_hash: snapshot.graphHash,
+        client_live_canvas_token: snapshot.liveCanvasToken,
         idempotency_key: snapshot.idempotencyKey,
       };
       const res = await fetch("/vibecomfy/agent-edit", {
@@ -2229,12 +2265,17 @@ async function submitAgentEdit(panel) {
       return;
     }
 
+    const candidateGraphHash = typeof result.candidate_graph_hash === "string"
+      ? result.candidate_graph_hash
+      : await sha256HexUtf8(canonicalJsonString(result.graph));
     panel.state.phase = PANEL_STATE.AWAITING_REVIEW;
     panel.state.sessionId = result.session_id || panel.state.sessionId;
     panel.state.turnId = result.turn_id || null;
     panel.state.baselineTurnId = result.baseline_turn_id || null;
     panel.state.candidateGraph = result.graph || null;
+    panel.state.candidateGraphHash = candidateGraphHash;
     panel.state.candidateReport = result.report || null;
+    panel.state.serverSubmitGraphHash = typeof result.submit_graph_hash === "string" ? result.submit_graph_hash : null;
     panel.state.message = result.message || null;
     panel.state.failure = null;
     panel.state.applyAllowed = result.apply_allowed !== false && result.canvas_apply_allowed !== false;
@@ -2321,6 +2362,9 @@ async function applyAgentCandidate(panel) {
       session_id: panel.state.sessionId,
       turn_id: panel.state.turnId,
       client_graph_hash: beforeApply.graphHash,
+      client_live_canvas_token: beforeApply.liveCanvasToken,
+      submit_graph_hash: panel.state.serverSubmitGraphHash || undefined,
+      candidate_graph_hash: panel.state.candidateGraphHash || undefined,
       idempotency_key: acceptKey,
     };
 
@@ -2397,6 +2441,24 @@ async function applyAgentCandidate(panel) {
       renderAgentPanel(panel);
       return;
     }
+    const expectedLiveCanvasToken = panel.state.lastSubmit?.client_live_canvas_token;
+    if (
+      expectedLiveCanvasToken
+      && currentBeforeLoad.liveCanvasToken !== expectedLiveCanvasToken
+    ) {
+      panel.state.phase = PANEL_STATE.ERROR;
+      panel.state.failure = agentPanelFailure("StaleStateMismatch", "The live canvas token changed before candidate loading. Candidate loading is blocked.", {
+        retryable: true,
+        graph_unchanged: true,
+        next_action: "Submit a new edit from the current canvas.",
+        client_live_canvas_token: currentBeforeLoad.liveCanvasToken,
+        expected_live_canvas_token: expectedLiveCanvasToken,
+        accept_response: accepted,
+      });
+      panel.state.debugPayload = panel.state.failure;
+      renderAgentPanel(panel);
+      return;
+    }
 
     panel.state.undoStack.push({
       session_id: panel.state.sessionId,
@@ -2407,7 +2469,39 @@ async function applyAgentCandidate(panel) {
     });
     panel.state.undoStack = panel.state.undoStack.slice(-16);
 
-    app.loadGraphData(panel.state.candidateGraph);
+    try {
+      applyGraphInPlaceWithIntentDecoration(panel.state.candidateGraph);
+    } catch (e) {
+      const failure = e?.ok === false
+        ? e
+        : agentPanelFailure("CanvasApplyError", String(e), {
+            retryable: true,
+            graph_unchanged: false,
+            next_action: "Retry Apply or inspect the raw response in the debug panel.",
+            accept_response: accepted,
+          });
+      panel.state.phase = PANEL_STATE.ERROR;
+      panel.state.failure = failure;
+      panel.state.auditRef = failure.audit_ref || panel.state.auditRef;
+      panel.state.debugPayload = {
+        ...failure,
+        accepted,
+        undo_stack_depth: panel.state.undoStack.length,
+      };
+      pushHistory(panel, "failure", failure.kind || "CanvasApplyError");
+      pushTurnStatus(panel, "failed", {
+        session_id: failure.session_id || panel.state.sessionId,
+        turn_id: failure.turn_id || panel.state.turnId,
+        baseline_turn_id: failure.baseline_turn_id || panel.state.baselineTurnId,
+        failure_kind: failure.kind || "CanvasApplyError",
+        failure_stage: failure.stage || "canvas_apply",
+        message: failure.user_facing_message || failure.message || failure.error,
+        audit_ref: failure.audit_ref,
+        raw_payload: failure,
+      });
+      renderAgentPanel(panel);
+      return;
+    }
     announceChangedNodes(panel, extractChangedNodeFeedback(panel.state.candidateReport));
     pushHistory(panel, "applied", panel.state.turnId ? `turn ${panel.state.turnId}` : "candidate");
     pushTurnStatus(panel, "applied", {
@@ -2421,7 +2515,9 @@ async function applyAgentCandidate(panel) {
     panel.state.baselineTurnId = accepted.baseline_turn_id || panel.state.turnId || panel.state.baselineTurnId;
     panel.state.auditRef = accepted.audit_ref || panel.state.auditRef;
     panel.state.candidateGraph = null;
+    panel.state.candidateGraphHash = null;
     panel.state.candidateReport = null;
+    panel.state.serverSubmitGraphHash = null;
     panel.state.message = "Candidate accepted and applied locally.";
     setQueueGuardContext({
       sessionId: panel.state.sessionId,
@@ -2536,7 +2632,9 @@ async function rejectAgentCandidate(panel) {
   });
   panel.state.phase = PANEL_STATE.IDLE;
   panel.state.candidateGraph = null;
+  panel.state.candidateGraphHash = null;
   panel.state.candidateReport = null;
+  panel.state.serverSubmitGraphHash = null;
   panel.state.message = "Candidate rejected and cleared from the panel.";
   panel.state.failure = null;
   panel.state.auditRef = rejected.audit_ref || panel.state.auditRef;
@@ -2601,6 +2699,45 @@ function openAgentEdit() {
   const panel = openAgentPanel();
   panel.root.dataset.lastCommand = "agent-edit";
   renderAgentPanel(panel);
+}
+
+// Always-visible edge tab so the agent panel is discoverable without hunting
+// through the right-click / Extensions menu. Toggles the panel open/closed.
+function ensureAgentLauncher() {
+  if (document.getElementById("vibecomfy-agent-launcher")) {
+    return;
+  }
+  const btn = document.createElement("button");
+  btn.id = "vibecomfy-agent-launcher";
+  btn.type = "button";
+  btn.textContent = "✨ VibeComfy Agent";
+  btn.title = "Open the VibeComfy agent edit panel";
+  Object.assign(btn.style, {
+    position: "fixed",
+    right: "0px",
+    top: "45%",
+    zIndex: "100000",
+    writingMode: "vertical-rl",
+    padding: "12px 7px",
+    background: "#7c3aed",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "8px 0 0 8px",
+    cursor: "pointer",
+    fontSize: "12px",
+    fontWeight: "600",
+    letterSpacing: "0.04em",
+    boxShadow: "0 2px 12px rgba(0,0,0,0.45)",
+  });
+  btn.addEventListener("click", () => {
+    const panel = ensureAgentPanel();
+    if (panel.root.dataset.open === "1") {
+      closeAgentPanel(panel);
+    } else {
+      openAgentEdit();
+    }
+  });
+  document.body.appendChild(btn);
 }
 
 // ── DOM helpers ───────────────────────────────────────────────────────────
@@ -2748,5 +2885,6 @@ app.registerExtension({
       };
     }
     ensureAgentPanel();
+    ensureAgentLauncher();
   },
 });

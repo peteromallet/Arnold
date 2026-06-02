@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 import time
 import uuid
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from .agent_audit import (
     artifact_ref_for_path,
+    normalize_agent_edit_v2_metadata,
     write_allocation_failure_audit,
     write_audit,
     write_json_artifact,
@@ -31,7 +33,13 @@ from .agent_gates import (
     initialize_gates,
     update_state_match_gate,
 )
-from .agent_provider import AgentTurnResult, build_messages, run_agent_turn
+from .agent_provider import (
+    AgentTurnResult,
+    build_delta_messages,
+    build_messages,
+    run_agent_turn,
+    run_agent_turn_delta,
+)
 from .agent_diagnostics import lower_stage_result, queue_stage_result
 from .agent_session import allocate_turn, payload_hash, record_idempotent_response, turn_dir_for
 
@@ -58,6 +66,7 @@ class AgentEditState:
     original_ui_path: Path
     before_py_path: Path
     after_py_path: Path
+    projection_path: Path
     model_request_path: Path
     model_response_path: Path
     candidate_ui_path: Path
@@ -66,6 +75,7 @@ class AgentEditState:
     edited_workflow: Any = None
     original_intent_workflow: VibeWorkflow | None = None
     prior_store: Any = None
+    guard_original_ui: dict[str, Any] | None = None
     python_before: str = ""
     python_after: str = ""
     user_message: str = ""
@@ -75,6 +85,11 @@ class AgentEditState:
     ui_payload: dict[str, Any] | None = None
     report: dict[str, Any] | None = None
     artifacts: dict[str, str] | None = None
+    projection_text: str = ""
+    delta_ops: tuple[Any, ...] = ()
+    delta_diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    delta_audit: dict[str, Any] | None = None
+    guard_result: dict[str, Any] | None = None
 
 
 class _StageBlocked(Exception):
@@ -199,10 +214,56 @@ def _normalize_test_client_response(response: dict[str, str]) -> AgentTurnResult
     )
 
 
+def _port_issue_to_dict(issue: Any) -> dict[str, Any]:
+    to_json = getattr(issue, "to_json", None)
+    if callable(to_json):
+        rendered = to_json()
+        if isinstance(rendered, dict):
+            return rendered
+    if isinstance(issue, Mapping):
+        return dict(issue)
+    return {"code": type(issue).__name__, "message": str(issue), "severity": "error"}
+
+
+def _agent_edit_v2_enabled() -> bool:
+    return os.getenv("VIBECOMFY_AGENT_EDIT_V2") == "1"
+
+
 def _record(context: TurnContext, result: StageResult) -> StageResult:
     context.stage_results[result.stage] = result
     apply_stage_gate_updates(context, result)
     return result
+
+
+def _stamp_identity_on_original(graph: dict[str, Any], workflow: Any) -> int:
+    """Phase 1 (concrete-tree migration): stamp the IR's stable uid onto the
+    *original* UI nodes so the delta-scope guard (`guard_emit`) and pin-opaque
+    can match on a user's FIRST edit. A hand-authored ComfyUI canvas carries no
+    `properties.vibecomfy_uid`, so `guard_emit`'s scope (uids shared between the
+    original and the candidate) is otherwise empty and the whole preserve/guard
+    layer no-ops (blockers.md B12). The candidate inherits these same uids from
+    the IR, so stamping the original makes the scope non-empty.
+
+    See docs/agent_edit_concrete_tree.md. Match is by litegraph node id, which is
+    stable across the round-trip.
+    """
+    by_id = {str(nid): node for nid, node in getattr(workflow, "nodes", {}).items()}
+    stamped = 0
+    for ui_node in graph.get("nodes") or []:
+        if not isinstance(ui_node, dict):
+            continue
+        ir = by_id.get(str(ui_node.get("id")))
+        uid = getattr(ir, "uid", "") if ir is not None else ""
+        if not uid:
+            continue
+        props = ui_node.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            ui_node["properties"] = props
+        if not props.get("vibecomfy_uid"):
+            props["vibecomfy_uid"] = uid
+            stamped += 1
+    return stamped
 
 
 def _stage_ingest(state: AgentEditState, context: TurnContext) -> StageResult:
@@ -214,6 +275,23 @@ def _stage_ingest(state: AgentEditState, context: TurnContext) -> StageResult:
     original_ui_ref = write_json_artifact(state.original_ui_path, state.graph)
     state.workflow = convert_to_vibe_format(state.graph, schema_provider=state.schema_provider)
     state.prior_store = store_from_ui_json(state.graph)
+    # Phase 1 (concrete-tree migration, docs/agent_edit_concrete_tree.md): give the
+    # user's original graph stable identity so the delta-scope guard (guard_emit)
+    # engages on the FIRST edit. Stamp a COPY — never mutate state.graph, which is
+    # hashed/echoed/audited. The candidate inherits the same uids (verified: uid ==
+    # node id, preserved across the scratchpad round-trip), so the guard scope
+    # becomes non-empty.
+    #
+    # Gated OFF by default: with the guard engaged but the candidate still produced
+    # by the LOSSY regeneration path (Phase 2 not yet landed), guard_emit correctly
+    # refuses candidates that diverge from the original outside the intended delta.
+    # Enabling identity is therefore only safe once Phase 2 (verbatim-preserve)
+    # makes the candidate faithful. Toggle with VIBECOMFY_AGENT_EDIT_IDENTITY=1.
+    if os.getenv("VIBECOMFY_AGENT_EDIT_IDENTITY") == "1":
+        from copy import deepcopy as _deepcopy
+        guard_original = _deepcopy(state.graph)
+        _stamp_identity_on_original(guard_original, state.workflow)
+        state.guard_original_ui = guard_original
     update_state_match_gate(
         context,
         baseline_graph_hash=state.baseline_graph_hash,
@@ -248,6 +326,54 @@ def _stage_ingest(state: AgentEditState, context: TurnContext) -> StageResult:
     )
 
 
+def _stage_ingest_v2(state: AgentEditState, context: TurnContext) -> StageResult:
+    from vibecomfy.porting.edit_ledger import EditLedger
+
+    start = time.monotonic()
+    request_ref = write_json_artifact(state.request_path, state.request_payload)
+    ledger = EditLedger.ingest(state.graph)
+    state.guard_original_ui = ledger.stamped_copy()
+    original_ui_ref = write_json_artifact(state.original_ui_path, state.guard_original_ui)
+    update_state_match_gate(
+        context,
+        baseline_graph_hash=state.baseline_graph_hash,
+        client_graph_hash=state.submit_graph_hash,
+        client_graph_hash_label="submit_graph_hash",
+    )
+    state_match_gate = context.gate_results["state_match_ok"]
+    if not state_match_gate.ok:
+        return StageResult(
+            stage="ingest",
+            ok=False,
+            blocking=True,
+            duration_ms=_duration_ms(start),
+            artifacts=(request_ref, original_ui_ref),
+            issues=(
+                {
+                    "code": "stale_state_mismatch",
+                    "severity": "error",
+                    "failure_kind": FailureKind.STALE_STATE_MISMATCH.value,
+                    "message": "Submitted graph no longer matches the current baseline.",
+                    "detail": dict(state_match_gate.evidence),
+                },
+            ),
+            value={"failure_kind": FailureKind.STALE_STATE_MISMATCH.value},
+        )
+    return StageResult(
+        stage="ingest",
+        ok=True,
+        blocking=False,
+        duration_ms=_duration_ms(start),
+        artifacts=(request_ref, original_ui_ref),
+        issues=tuple(issue.to_dict() for issue in ledger.diagnostics),
+        value={
+            "mode": "agent_edit_v2_delta",
+            "node_count": len(ledger.node_index),
+            "scope_count": len(ledger.scopes),
+        },
+    )
+
+
 def _stage_convert(state: AgentEditState, _context: TurnContext) -> StageResult:
     from vibecomfy.porting.convert import port_convert_and_write, port_convert_workflow
 
@@ -257,7 +383,16 @@ def _stage_convert(state: AgentEditState, _context: TurnContext) -> StageResult:
         source_path=str(state.original_ui_path),
         schema_provider=state.schema_provider,
         raw_workflow=state.graph,
+        # Editing a user's live canvas must preserve every node. Dead-branch
+        # pruning is for authoring minimal templates; here it would silently
+        # drop nodes that don't feed a recognized output (e.g. a GeminiNode
+        # feeding only a PreviewAny passthrough) and corrupt the round-trip.
+        prune_dead_branches=False,
     )
+    # Keep the strict parity gate: with prune disabled + UI-only passthrough
+    # preservation (emitter), a faithful user canvas round-trips and passes here,
+    # while a genuinely-lossy conversion still fails honestly rather than applying
+    # a corrupted candidate.
     port_convert_and_write(conversion, state.before_py_path)
     state.python_before = state.before_py_path.read_text(encoding="utf-8")
     return StageResult(
@@ -266,6 +401,41 @@ def _stage_convert(state: AgentEditState, _context: TurnContext) -> StageResult:
         blocking=False,
         duration_ms=_duration_ms(start),
         artifacts=(_artifact(state.before_py_path),),
+    )
+
+
+def _stage_project_v2(state: AgentEditState, _context: TurnContext) -> StageResult:
+    from vibecomfy.porting.edit_projection import render_edit_projection, ProjectionOptions
+
+    start = time.monotonic()
+    # The 8000-token default forces sparse mode on every real ComfyUI graph (140-200+
+    # nodes), collapsing all nodes to summaries and starving the model of the field
+    # names / slot types it needs to target edits and wire links correctly. Modern
+    # models have 64K+ context, so render real graphs in FULL detail. Env-overridable.
+    try:
+        _proj_budget = int(os.getenv("VIBECOMFY_EDIT_PROJECTION_MAX_TOKENS", "256000"))
+    except (TypeError, ValueError):
+        _proj_budget = 256000
+    projection = render_edit_projection(
+        state.guard_original_ui or state.graph,
+        task=state.task,
+        schema_provider=state.schema_provider,
+        options=ProjectionOptions(max_tokens=_proj_budget),
+    )
+    state.projection_text = projection.text
+    state.projection_path.write_text(projection.text, encoding="utf-8")
+    return StageResult(
+        stage="project",
+        ok=True,
+        blocking=False,
+        duration_ms=_duration_ms(start),
+        artifacts=(_artifact(state.projection_path),),
+        value={
+            "token_estimate": projection.token_estimate,
+            "node_count": projection.node_count,
+            "detailed_node_count": projection.detailed_node_count,
+            "truncated": projection.truncated,
+        },
     )
 
 
@@ -307,6 +477,61 @@ def _stage_agent(
         value={
             "route": agent_result.route,
             "model": agent_result.model,
+            "provider_metadata": state.provider_metadata,
+        },
+    )
+
+
+def _stage_agent_delta(
+    state: AgentEditState,
+    _context: TurnContext,
+    *,
+    deepseek_client: DeepSeekClient | None = None,
+    route: str | None = None,
+    model: str | None = None,
+) -> StageResult:
+    from vibecomfy.porting.edit_ops import (
+        EDIT_OP_RESPONSE_SCHEMA_V2,
+        normalize_delta_test_client_response,
+    )
+
+    start = time.monotonic()
+    messages = build_delta_messages(
+        task=state.task,
+        projection=state.projection_text,
+        op_schema=EDIT_OP_RESPONSE_SCHEMA_V2,
+    )
+    write_json_artifact(
+        state.model_request_path,
+        {"messages": messages, "response_contract": "delta"},
+    )
+    if deepseek_client is not None:
+        agent_result = normalize_delta_test_client_response(deepseek_client(messages))
+    else:
+        agent_result = run_agent_turn_delta(
+            state.task,
+            state.projection_text,
+            op_schema=EDIT_OP_RESPONSE_SCHEMA_V2,
+            route=route,
+            model=model,
+        )
+    state.delta_ops = agent_result.delta
+    state.user_message = agent_result.message
+    state.provider_metadata = dict(agent_result.audit_metadata or {})
+    model_response_ref = write_json_artifact(
+        state.model_response_path,
+        agent_result.to_dict(),
+    )
+    return StageResult(
+        stage="agent_delta",
+        ok=True,
+        blocking=False,
+        duration_ms=_duration_ms(start),
+        artifacts=(_artifact(state.model_request_path), model_response_ref),
+        value={
+            "route": agent_result.route,
+            "model": agent_result.model,
+            "op_count": len(agent_result.delta),
             "provider_metadata": state.provider_metadata,
         },
     )
@@ -368,7 +593,7 @@ def _stage_emit(state: AgentEditState, _context: TurnContext) -> StageResult:
         prior_store=state.prior_store,
         recovery_report=recovery_report,
         change_report_out=change_report_out,
-        guard_original_ui=state.graph,
+        guard_original_ui=state.guard_original_ui or state.graph,
     )
     state.candidate_ui_path.write_text(
         json.dumps(ui_payload, indent=2, sort_keys=True),
@@ -405,6 +630,139 @@ def _stage_emit(state: AgentEditState, _context: TurnContext) -> StageResult:
         duration_ms=_duration_ms(start),
         artifacts=(_artifact(state.candidate_ui_path),),
         gate_updates={
+            "ui_emit_ok": True,
+            "ui_fidelity_ok": True,
+            "ui_load_safe_ok": True,
+        },
+    )
+
+
+def _stage_apply_delta(state: AgentEditState, _context: TurnContext) -> StageResult:
+    from vibecomfy.porting.edit_apply import apply_delta
+    from vibecomfy.porting.edit_apply import (
+        AppliedAddNodeSpec,
+        ResolvedFieldRef,
+        ResolvedRemoveNodePlan,
+    )
+    from vibecomfy.porting.edit_ops import op_to_dict
+
+    def _build_delta_audit(result: Any) -> dict[str, Any]:
+        automatic_link_removals: list[dict[str, Any]] = []
+        re_stitches: list[dict[str, Any]] = []
+        for op, resolved_op in result.resolved_ops:
+            if isinstance(resolved_op, ResolvedFieldRef) and resolved_op.automatic_link_removal is not None:
+                automatic_link_removals.append(
+                    {
+                        "scope_path": resolved_op.target.scope_path,
+                        "uid": resolved_op.target.uid,
+                        "field_path": resolved_op.target.field_path,
+                        "link_id": resolved_op.automatic_link_removal,
+                    }
+                )
+            elif isinstance(resolved_op, ResolvedRemoveNodePlan) and resolved_op.link_rewires:
+                re_stitches.append(
+                    {
+                        "scope_path": resolved_op.node_ref.target.scope_path,
+                        "uid": resolved_op.node_ref.target.uid,
+                        "class_type": resolved_op.node_ref.class_type,
+                        "link_rewrites": [
+                            {
+                                "scope_path": rewire.scope_path,
+                                "link_id": rewire.link_id,
+                                "old_origin_id": rewire.old_origin_id,
+                                "new_origin_id": rewire.new_origin_id,
+                                "new_origin_slot": rewire.new_origin_slot,
+                            }
+                            for rewire in resolved_op.link_rewires
+                        ],
+                    }
+                )
+            elif isinstance(resolved_op, AppliedAddNodeSpec):
+                continue
+        guard = result.guard_result
+        guard_payload = {
+            "ok": bool(guard.ok) if guard is not None else True,
+            "diagnostics": [
+                _port_issue_to_dict(issue) for issue in (guard.diagnostics if guard is not None else ())
+            ],
+        }
+        normalize_payload = {
+            "fallback_used": bool(getattr(guard, "normalize_fallback_used", False)),
+            "allow_list_used": bool(getattr(guard, "normalize_allow_list_used", False)),
+        }
+        return {
+            "ops": [op_to_dict(op) for op in state.delta_ops],
+            "diagnostics": [_port_issue_to_dict(issue) for issue in result.diagnostics],
+            "automatic_link_removals": automatic_link_removals,
+            "re_stitches": re_stitches,
+            "guard_result": guard_payload,
+            "normalize": normalize_payload,
+        }
+
+    start = time.monotonic()
+    result = apply_delta(
+        state.guard_original_ui or state.graph,
+        state.delta_ops,
+        schema_provider=state.schema_provider,
+    )
+    issues = tuple(_port_issue_to_dict(issue) for issue in result.diagnostics)
+    if not result.ok or result.candidate is None:
+        return StageResult(
+            stage="apply_delta",
+            ok=False,
+            blocking=True,
+            duration_ms=_duration_ms(start),
+            issues=issues,
+            value={
+                "failure_kind": FailureKind.VALIDATION_ERROR.value,
+                "mutation_started": result.mutation_started,
+                "op_count": len(state.delta_ops),
+            },
+        )
+
+    state.ui_payload = result.candidate
+    candidate_ui_ref = write_json_artifact(state.candidate_ui_path, state.ui_payload)
+    ops = [op_to_dict(op) for op in state.delta_ops]
+    state.delta_diagnostics = [_port_issue_to_dict(issue) for issue in result.diagnostics]
+    state.guard_result = {
+        "ok": bool(result.guard_result.ok) if result.guard_result is not None else True,
+        "diagnostics": [
+            _port_issue_to_dict(issue)
+            for issue in (result.guard_result.diagnostics if result.guard_result is not None else ())
+        ],
+        "normalize": {
+            "fallback_used": bool(getattr(result.guard_result, "normalize_fallback_used", False)),
+            "allow_list_used": bool(getattr(result.guard_result, "normalize_allow_list_used", False)),
+        },
+    }
+    state.delta_audit = _build_delta_audit(result)
+    state.report = {
+        "change": {
+            "mode": "agent_edit_v2_delta",
+            "op_count": len(ops),
+            "ops": ops,
+            "mutation_started": result.mutation_started,
+        },
+        "recovery": [],
+        "felt": {},
+        "diagnostics": [issue for issue in issues if issue.get("severity") != "info"],
+    }
+    return StageResult(
+        stage="apply_delta",
+        ok=True,
+        blocking=False,
+        duration_ms=_duration_ms(start),
+        artifacts=(candidate_ui_ref,),
+        issues=issues,
+        value={
+            "mode": "agent_edit_v2_delta",
+            "op_count": len(ops),
+            "mutation_started": result.mutation_started,
+        },
+        gate_updates={
+            "python_load_ok": True,
+            "lower_ok": True,
+            "ir_validate_ok": True,
             "ui_emit_ok": True,
             "ui_fidelity_ok": True,
             "ui_load_safe_ok": True,
@@ -450,6 +808,43 @@ def _stage_summarize(state: AgentEditState, context: TurnContext) -> StageResult
     )
 
 
+def _stage_summarize_v2(state: AgentEditState, context: TurnContext) -> StageResult:
+    start = time.monotonic()
+    queue_result = queue_stage_result(
+        recovery_report=(state.report or {}).get("recovery"),
+        change_report=(state.report or {}).get("change"),
+    )
+    _record(context, queue_result)
+    derive_gates(context, queue_blockers=queue_result.issues)
+    if state.report is None:
+        state.report = {}
+    state.report["queue_blockers"] = [dict(issue) for issue in queue_result.issues]
+    state.messages_path.open("a", encoding="utf-8").write(
+        json.dumps({"task": state.task, "message": state.user_message}, sort_keys=True) + "\n"
+    )
+    state.artifacts = {
+        "request": str(state.request_path),
+        "original_ui": str(state.original_ui_path),
+        "projection": str(state.projection_path),
+        "model_request": str(state.model_request_path),
+        "model_response": str(state.model_response_path),
+        "candidate_ui": str(state.candidate_ui_path),
+        "messages": str(state.messages_path),
+    }
+    return StageResult(
+        stage="summarize",
+        ok=True,
+        blocking=False,
+        duration_ms=_duration_ms(start),
+        artifacts=(_artifact(state.messages_path),),
+        value={
+            "mode": "agent_edit_v2_delta",
+            "queue_validate_ok": queue_result.ok,
+            "queue_blockers": [dict(issue) for issue in queue_result.issues],
+        },
+    )
+
+
 def _stage_audit(
     state: AgentEditState,
     context: TurnContext,
@@ -457,6 +852,18 @@ def _stage_audit(
     response: dict[str, Any] | None = None,
     failure: FailureEnvelope | None = None,
 ) -> ArtifactRef:
+    metadata: dict[str, Any] = {
+        "provider": state.provider_metadata or {},
+        "lowering": _build_lowering_audit_entries(state.lowering_evidence),
+    }
+    if _agent_edit_v2_enabled():
+        metadata["agent_edit_v2"] = normalize_agent_edit_v2_metadata(
+            {
+                "enabled": True,
+                "op_count": len(state.delta_ops),
+                "delta_ops": state.delta_audit or {},
+            }
+        )
     return write_audit(
         state.turn_dir / "audit",
         context=context,
@@ -479,10 +886,7 @@ def _stage_audit(
             }).items()
             if Path(path).exists()
         },
-        metadata={
-            "provider": state.provider_metadata or {},
-            "lowering": _build_lowering_audit_entries(state.lowering_evidence),
-        },
+        metadata=metadata,
     )
 
 
@@ -548,7 +952,7 @@ def _run_stage(
     try:
         result = fn(state, context, *args, **kwargs)
     except Exception as exc:
-        failure_stage = "agent_response" if name == "agent" else name
+        failure_stage = "agent_response" if name in {"agent", "agent_delta"} else name
         failure = classify_failure(failure_stage, exc, context)
         result = StageResult(
             stage=name,
@@ -574,6 +978,85 @@ def _run_stage(
         )
         raise _StageBlocked(result, failure)
     return result
+
+
+_RUNTIME_OBJECT_INFO_PATH: list[str] = []
+
+
+def _build_object_info_in_process() -> dict[str, Any] | None:
+    """Build ComfyUI /object_info IN-PROCESS from the live node registry.
+
+    Mirrors ComfyUI server.py's ``node_info`` builder. We must NOT fetch /object_info
+    over HTTP here: the agent-edit turn runs inside ComfyUI's event loop, so a blocking
+    self-request deadlocks (the server can't answer while the loop is blocked) and times
+    out, silently degrading to an empty schema provider. Reading the in-memory mappings
+    avoids the loop entirely.
+    """
+    try:
+        import nodes as comfy_nodes_registry  # ComfyUI global registry
+    except Exception:
+        return None
+    mappings = getattr(comfy_nodes_registry, "NODE_CLASS_MAPPINGS", None)
+    if not isinstance(mappings, dict) or not mappings:
+        return None
+    display = getattr(comfy_nodes_registry, "NODE_DISPLAY_NAME_MAPPINGS", {}) or {}
+    out: dict[str, Any] = {}
+    for name, cls in mappings.items():
+        try:
+            getv1 = getattr(cls, "GET_NODE_INFO_V1", None)
+            if callable(getv1) and getattr(cls, "GET_NODE_INFO_V1", None) is not None:
+                try:
+                    out[name] = getv1()
+                    continue
+                except Exception:
+                    pass
+            info: dict[str, Any] = {}
+            info["input"] = cls.INPUT_TYPES()
+            rt = list(getattr(cls, "RETURN_TYPES", []) or [])
+            info["output"] = rt
+            info["output_name"] = list(getattr(cls, "RETURN_NAMES", rt) or rt)
+            info["output_is_list"] = list(getattr(cls, "OUTPUT_IS_LIST", [False] * len(rt)) or [])
+            info["name"] = name
+            info["display_name"] = display.get(name, name)
+            info["output_node"] = bool(getattr(cls, "OUTPUT_NODE", False))
+            out[name] = info
+        except Exception:
+            # Some INPUT_TYPES() raise (missing models, etc.); skip those classes.
+            continue
+    return out or None
+
+
+def _default_runtime_schema_provider() -> Any:
+    """Schema provider for live edit turns: the LIVE in-process ComfyUI registry.
+
+    The offline ``local`` provider reads an out/cache snapshot that is empty in a bare
+    ComfyUI checkout, so it knows ZERO classes — which makes ``add_node`` reject every
+    class as ``unknown_add_node_class_type`` (even a perfectly-installed ``PreviewImage``).
+    ``RuntimeSchemaProvider`` (HTTP) can't be used here: it's either blocked inside the
+    event loop, or a self-request deadlocks. So we build object_info IN-PROCESS from
+    ``nodes.NODE_CLASS_MAPPINGS`` once, cache it to a temp file, and return the synchronous
+    file-backed ``ObjectInfoSchemaProvider``. Falls back to ``local`` only if the registry
+    is unavailable (i.e. not running inside ComfyUI).
+    """
+    from vibecomfy.schema import get_schema_provider
+
+    try:
+        if not (_RUNTIME_OBJECT_INFO_PATH and Path(_RUNTIME_OBJECT_INFO_PATH[0]).is_file()):
+            data = _build_object_info_in_process()
+            if data:
+                import tempfile
+
+                fd, path = tempfile.mkstemp(prefix="vibecomfy_object_info_", suffix=".json")
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh)
+                _RUNTIME_OBJECT_INFO_PATH[:] = [path]
+        if _RUNTIME_OBJECT_INFO_PATH:
+            from vibecomfy.schema.provider import ObjectInfoSchemaProvider
+
+            return ObjectInfoSchemaProvider(_RUNTIME_OBJECT_INFO_PATH[0])
+    except Exception:
+        pass
+    return get_schema_provider("local")
 
 
 def handle_agent_edit(
@@ -611,7 +1094,7 @@ def handle_agent_edit(
         ).to_dict()
 
     if schema_provider is None:
-        schema_provider = get_schema_provider("local")
+        schema_provider = _default_runtime_schema_provider()
     root = session_root or _SESSION_ROOT
     session_id = _safe_session_id(payload.get("session_id"))
     allocation = allocate_turn(
@@ -681,26 +1164,42 @@ def handle_agent_edit(
         model_request_path=turn_dir / "model_request.json",
         model_response_path=turn_dir / "model_response.json",
         candidate_ui_path=turn_dir / "candidate.ui.json",
+        projection_path=turn_dir / "projection.txt",
         messages_path=turn_dir / "messages.jsonl",
     )
 
     try:
-        _run_stage("ingest", state, context, _stage_ingest)
-        _run_stage("convert", state, context, _stage_convert)
-        _run_stage(
-            "agent",
-            state,
-            context,
-            _stage_agent,
-            deepseek_client=deepseek_client,
-            route=payload.get("route") if isinstance(payload.get("route"), str) else None,
-            model=payload.get("model") if isinstance(payload.get("model"), str) else None,
-        )
-        _run_stage("load_python", state, context, _stage_load_python)
-        _run_stage("lower", state, context, _stage_lower)
-        _run_stage("validate", state, context, _stage_validate)
-        _run_stage("emit", state, context, _stage_emit)
-        _run_stage("summarize", state, context, _stage_summarize)
+        if _agent_edit_v2_enabled():
+            _run_stage("ingest", state, context, _stage_ingest_v2)
+            _run_stage("project", state, context, _stage_project_v2)
+            _run_stage(
+                "agent_delta",
+                state,
+                context,
+                _stage_agent_delta,
+                deepseek_client=deepseek_client,
+                route=payload.get("route") if isinstance(payload.get("route"), str) else None,
+                model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+            )
+            _run_stage("apply_delta", state, context, _stage_apply_delta)
+            _run_stage("summarize", state, context, _stage_summarize_v2)
+        else:
+            _run_stage("ingest", state, context, _stage_ingest)
+            _run_stage("convert", state, context, _stage_convert)
+            _run_stage(
+                "agent",
+                state,
+                context,
+                _stage_agent,
+                deepseek_client=deepseek_client,
+                route=payload.get("route") if isinstance(payload.get("route"), str) else None,
+                model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+            )
+            _run_stage("load_python", state, context, _stage_load_python)
+            _run_stage("lower", state, context, _stage_lower)
+            _run_stage("validate", state, context, _stage_validate)
+            _run_stage("emit", state, context, _stage_emit)
+            _run_stage("summarize", state, context, _stage_summarize)
     except _StageBlocked as blocked:
         response = _failure_response(state, context, blocked.failure or classify_failure(blocked.result.stage, blocked, context))
         record_idempotent_response(
@@ -733,7 +1232,21 @@ def handle_agent_edit(
             "client_graph_hash": context.client_graph_hash,
         }
     )
+    if _agent_edit_v2_enabled():
+        from vibecomfy.porting.edit_ops import op_to_dict
+
+        response["delta_ops"] = [op_to_dict(op) for op in state.delta_ops]
     try:
+        if _agent_edit_v2_enabled():
+            _record(
+                context,
+                StageResult(
+                    stage="audit",
+                    ok=True,
+                    blocking=False,
+                    value={"mode": "agent_edit_v2_delta"},
+                ),
+            )
         audit_ref = _stage_audit(state, context, response=response)
         response["audit_ref"] = audit_ref.to_dict()
     except Exception as exc:

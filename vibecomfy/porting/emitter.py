@@ -1620,10 +1620,14 @@ def emit_scratchpad_python(
     apply_overrides: dict[str, Any] | None = None,
     diagnostics: list[EmissionDiagnostic] | None = None,
     keep_virtual_wires: bool = False,
+    prune_dead_branches: bool = True,
 ) -> str:
     workflow_id = workflow_id or getattr(workflow, "id", "scratchpad")
     prepared = _prepare_workflow_for_emit(
-        workflow, apply_overrides=apply_overrides, keep_virtual_wires=keep_virtual_wires
+        workflow,
+        apply_overrides=apply_overrides,
+        keep_virtual_wires=keep_virtual_wires,
+        prune_dead_branches=prune_dead_branches,
     )
     source_path_expr = repr(source_path) if source_path is not None else "__file__"
 
@@ -1662,6 +1666,7 @@ def _prepare_workflow_for_emit(
     apply_overrides: dict[str, Any] | None,
     template_id: str | None = None,
     keep_virtual_wires: bool = False,
+    prune_dead_branches: bool = True,
 ) -> dict[str, Any]:
     # Defensive assertion: resolver MUST have eliminated all helper nodes before emission.
     # If any RESOLVABLE_HELPER_CLASS_TYPES node survives, the resolver has a bug.
@@ -1678,10 +1683,28 @@ def _prepare_workflow_for_emit(
                 f"The resolver must eliminate all RESOLVABLE_HELPER_CLASS_TYPES nodes "
                 f"before _prepare_workflow_for_emit is called."
             )
+    # UI-only classes (Note/MarkdownNote/PreviewAny/…) are normally decorative and
+    # stripped. But some — notably PreviewAny — are wired as live PASSTHROUGHS
+    # (their output feeds a real node). In fidelity mode (agent-edit,
+    # prune_dead_branches=False) stripping such a node severs that edge and drops
+    # the data it carried (e.g. GeminiNode → PreviewAny → ByteDance.model.prompt).
+    # Keep a UI-only node when it has an output edge into a non-UI-only node.
+    ui_only_passthroughs: set[str] = set()
+    if not prune_dead_branches:
+        for edge in workflow.edges:
+            src = workflow.nodes.get(str(edge.from_node))
+            dst = workflow.nodes.get(str(edge.to_node))
+            if (
+                src is not None
+                and dst is not None
+                and src.class_type in UI_ONLY_CLASS_TYPES
+                and dst.class_type not in UI_ONLY_CLASS_TYPES
+            ):
+                ui_only_passthroughs.add(str(edge.from_node))
     workflow_nodes = {
         nid: node
         for nid, node in workflow.nodes.items()
-        if node.class_type not in UI_ONLY_CLASS_TYPES
+        if node.class_type not in UI_ONLY_CLASS_TYPES or str(nid) in ui_only_passthroughs
     }
     edges_in: dict[str, list[Any]] = {}
     for edge in workflow.edges:
@@ -1692,11 +1715,16 @@ def _prepare_workflow_for_emit(
     if apply_overrides:
         _apply_overrides(workflow_nodes, edges_in, apply_overrides.get("patches") or [])
 
-    workflow_nodes, edges_in = _prune_dead_branches_for_emit(
-        workflow_nodes,
-        edges_in,
-        template_id=template_id,
-    )
+    # Dead-branch pruning produces minimal templates for authoring, but it drops
+    # nodes that don't feed a recognized output (e.g. a GeminiNode whose only
+    # consumer is a PreviewAny). When emitting a faithful scratchpad of a user's
+    # live canvas (agent-edit), pruning must be disabled so every node survives.
+    if prune_dead_branches:
+        workflow_nodes, edges_in = _prune_dead_branches_for_emit(
+            workflow_nodes,
+            edges_in,
+            template_id=template_id,
+        )
 
     from vibecomfy.workflow import VibeEdge as _Edge
 

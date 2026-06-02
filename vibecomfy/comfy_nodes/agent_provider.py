@@ -135,11 +135,66 @@ def build_messages(*, task: str, python_source: str) -> list[dict[str, str]]:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def build_delta_messages(
+    *,
+    task: str,
+    projection: str,
+    op_schema: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    system = (
+        "You edit a VibeComfy browser UI graph by returning typed delta operations.\n"
+        "Return only JSON with keys `delta` and `message`.\n"
+        "`delta` must be a list of operations that exactly follow this schema:\n"
+        f"{json.dumps(op_schema, sort_keys=True)}\n"
+        "Address formats — copy these shapes EXACTLY (scope_path is \"\" for root-level nodes; "
+        "use the uid shown as target=[...] in the projection):\n"
+        "- Node target: [scope_path, uid]            e.g. [\"\", \"352\"]\n"
+        "- Field target: [scope_path, uid, field_path]  (a list of LENGTH 3)  e.g. [\"\", \"352\", \"value\"]\n"
+        "- Link endpoint: [scope_path, uid, slot_or_field]  e.g. from [\"\", \"115\", \"NOISE\"] to [\"\", \"113\", \"noise\"]\n"
+        "Worked example — set a node's text field (note the length-3 target):\n"
+        "{\"delta\": [{\"op\": \"set_node_field\", \"target\": [\"\", \"352\", \"value\"], "
+        "\"value\": \"a serene mountain lake\"}], \"message\": \"Set the prompt text.\"}\n"
+        "Use only addresses that appear in the provided projection. Do not emit raw "
+        "LiteGraph node or link payloads. Do not rewrite the whole workflow. If the "
+        "request cannot be represented with the allowed operations, return an empty "
+        "`delta` and explain the limitation in `message`."
+    )
+    user = (
+        f"User request:\n{task}\n\n"
+        "Address-preserving UI projection:\n"
+        f"{projection}"
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
 def _supported_browser_route_options() -> dict[str, dict[str, Any]]:
     return {
         route: _resolve_agent_route(route).to_dict()
         for route in SUPPORTED_BROWSER_ROUTES
     }
+
+
+def _deepseek_key_present() -> bool:
+    """True if a DeepSeek API key is available (env or ~/.hermes/.env)."""
+    if os.getenv("DEEPSEEK_API_KEY"):
+        return True
+    try:
+        env_path = Path("~/.hermes/.env").expanduser()
+        if env_path.is_file():
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                if line.startswith("DEEPSEEK_API_KEY=") and line.split("=", 1)[1].strip():
+                    return True
+    except OSError:
+        pass
+    return False
+
+
+def _arnold_creds_present() -> bool:
+    """True if any arnold-family (Claude/OpenRouter) credential is configured."""
+    return any(
+        os.getenv(var)
+        for var in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "ARNOLD_API_KEY", "HERMES_API_KEY")
+    )
 
 
 def _resolve_agent_route(route: str | None) -> AgentRouteDescriptor:
@@ -150,6 +205,18 @@ def _resolve_agent_route(route: str | None) -> AgentRouteDescriptor:
         requested = "openai-codex"
 
     if requested == "auto":
+        # "auto" must pick a provider that actually has credentials in THIS
+        # environment. arnold (Claude via OpenRouter/Anthropic/local OAuth) is the
+        # historical target, but when no arnold-family key is configured and a
+        # DeepSeek key IS present, prefer DeepSeek — otherwise a fresh panel fails
+        # with a ProviderError on the keyless arnold path on every submit.
+        if _deepseek_key_present() and not _arnold_creds_present():
+            return AgentRouteDescriptor(
+                requested_route=requested,
+                normalized_route="deepseek",
+                browser_api_key_allowed=True,
+                guidance="DeepSeek browser key submission is supported and stored locally.",
+            )
         return AgentRouteDescriptor(
             requested_route=requested,
             normalized_route="arnold",
@@ -281,6 +348,47 @@ def _call_runtime(runtime: Any, *, task: str, python_source: str, route: str, mo
     raise ProviderError("Arnold/Hermes runtime does not expose run_agent_turn or run.")
 
 
+def _call_delta_runtime(
+    runtime: Any,
+    *,
+    task: str,
+    projection: str,
+    op_schema: Mapping[str, Any],
+    route: str,
+    model: str | None,
+) -> Any:
+    messages = build_delta_messages(task=task, projection=projection, op_schema=op_schema)
+    if hasattr(runtime, "run_agent_turn_delta"):
+        return runtime.run_agent_turn_delta(
+            task=task,
+            projection=projection,
+            op_schema=op_schema,
+            route=route,
+            model=model,
+            messages=messages,
+        )
+    if hasattr(runtime, "run_delta_agent_turn"):
+        return runtime.run_delta_agent_turn(
+            task=task,
+            projection=projection,
+            op_schema=op_schema,
+            route=route,
+            model=model,
+            messages=messages,
+        )
+    if hasattr(runtime, "run"):
+        return runtime.run(
+            task=task,
+            projection=projection,
+            op_schema=op_schema,
+            route=route,
+            model=model,
+            messages=messages,
+            response_contract="delta",
+        )
+    raise ProviderError("Arnold/Hermes runtime does not expose run_agent_turn_delta or run.")
+
+
 def run_agent_turn(
     task: str,
     python_source: str,
@@ -320,6 +428,60 @@ def run_agent_turn(
             "credential_presence": _credential_presence(),
         },
     )
+
+
+def run_agent_turn_delta(
+    task: str,
+    projection: str,
+    *,
+    op_schema: Mapping[str, Any] | None = None,
+    route: str | None = None,
+    model: str | None = None,
+):
+    from vibecomfy.porting.edit_ops import (
+        EDIT_OP_RESPONSE_SCHEMA_V2,
+        EditOpParseError,
+        normalize_delta_agent_response,
+    )
+
+    route_descriptor = _resolve_agent_route(route)
+    selected_route = route_descriptor.normalized_route
+    selected_model = model or os.getenv("VIBECOMFY_AGENT_MODEL", DEFAULT_MODEL)
+    schema = op_schema or EDIT_OP_RESPONSE_SCHEMA_V2
+    runtime = _load_arnold_runtime()
+    try:
+        response = _call_delta_runtime(
+            runtime,
+            task=task,
+            projection=projection,
+            op_schema=schema,
+            route=selected_route,
+            model=selected_model,
+        )
+    except PermissionError as exc:
+        raise AuthError(str(exc)) from exc
+    except TimeoutError:
+        raise
+    except (ProviderError, MalformedModelJSON, MissingRequiredField):
+        raise
+    except Exception as exc:
+        raise ProviderError(str(exc)) from exc
+    try:
+        return normalize_delta_agent_response(
+            response,
+            route=selected_route,
+            model=selected_model,
+            audit_metadata={
+                "provider": "arnold",
+                "requested_route": route_descriptor.requested_route,
+                "route_metadata": route_descriptor.to_dict(),
+                "legacy_deepseek_fallback_enabled": False,
+                "credential_presence": _credential_presence(),
+                "response_contract": "delta",
+            },
+        )
+    except EditOpParseError as exc:
+        raise MalformedModelJSON(str(exc)) from exc
 
 
 def get_agent_status(*, route: str | None = None, model: str | None = None) -> dict[str, Any]:
@@ -453,9 +615,11 @@ __all__ = [
     "MissingRequiredField",
     "ProviderError",
     "_load_arnold_runtime",
+    "build_delta_messages",
     "build_messages",
     "get_agent_status",
     "handle_credential_submission",
+    "run_agent_turn_delta",
     "run_agent_turn",
     "save_deepseek_api_key",
 ]

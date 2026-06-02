@@ -194,6 +194,13 @@ def _client_graph_hash(payload: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _client_live_canvas_token(payload: Any) -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    value = payload.get("client_live_canvas_token")
+    return value if isinstance(value, str) else None
+
+
 def allocate_turn(
     *,
     session_root: Path,
@@ -206,6 +213,7 @@ def allocate_turn(
     request_digest = payload_hash(request_payload)
     submit_graph_hash = _mapping_graph_hash(request_payload)
     submitted_client_graph_hash = _client_graph_hash(request_payload)
+    submitted_client_live_canvas_token = _client_live_canvas_token(request_payload)
     key = _record_key("edit", idempotency_key)
 
     with SessionStateLock(session_dir, timeout_seconds=lock_timeout_seconds):
@@ -259,7 +267,9 @@ def allocate_turn(
             "state": "candidate",
             "submit_graph_hash": submit_graph_hash,
             "submitted_client_graph_hash": submitted_client_graph_hash,
+            "submitted_client_live_canvas_token": submitted_client_live_canvas_token,
             "candidate_graph_hash": None,
+            "agent_edit_protocol": None,
             "client_graph_hash": None,
             "accepted_at": None,
             "rejected_at": None,
@@ -325,6 +335,7 @@ def record_idempotent_response(
 ) -> dict[str, Any] | None:
     key = _record_key(scope, idempotency_key)
     candidate_graph_hash = _mapping_graph_hash(response)
+    agent_edit_protocol = "v2_delta" if isinstance(response.get("delta_ops"), list) else "v1"
     if key is None:
         if scope == "edit" and turn_id is not None:
             session_dir = session_dir_for(session_root, session_id)
@@ -333,6 +344,7 @@ def record_idempotent_response(
                 turn_record = state["turns"].get(turn_id)
                 if isinstance(turn_record, dict):
                     turn_record["candidate_graph_hash"] = candidate_graph_hash
+                    turn_record["agent_edit_protocol"] = agent_edit_protocol
                     write_state_atomic(session_dir, state)
         return None
     response_path.parent.mkdir(parents=True, exist_ok=True)
@@ -353,6 +365,7 @@ def record_idempotent_response(
             turn_record = state["turns"].get(turn_id)
             if isinstance(turn_record, dict):
                 turn_record["candidate_graph_hash"] = candidate_graph_hash
+                turn_record["agent_edit_protocol"] = agent_edit_protocol
         state["idempotency_records"][key] = record
         write_state_atomic(session_dir, state)
     return record
@@ -446,18 +459,6 @@ def _mutate_turn_state(
                     "submit_graph_hash_present": False,
                 },
             )
-        if client_graph_hash != submit_graph_hash:
-            return failure_envelope(
-                FailureKind.STALE_STATE_MISMATCH,
-                scope,
-                context,
-                agent_failure_context={
-                    "explanation": "Client graph hash does not match the graph submitted for this turn.",
-                    "turn_id": turn_id,
-                    "client_graph_hash": client_graph_hash,
-                    "submit_graph_hash": submit_graph_hash,
-                },
-            )
         candidate_graph_hash = turn_record.get("candidate_graph_hash")
         if not isinstance(candidate_graph_hash, str):
             return failure_envelope(
@@ -470,6 +471,80 @@ def _mutate_turn_state(
                     "candidate_graph_hash_present": False,
                 },
             )
+        agent_edit_protocol = turn_record.get("agent_edit_protocol")
+        submitted_client_graph_hash = turn_record.get("submitted_client_graph_hash")
+        if scope == "accept" and agent_edit_protocol == "v2_delta":
+            if not isinstance(request_payload, Mapping):
+                return failure_envelope(
+                    FailureKind.STALE_STATE_MISMATCH,
+                    scope,
+                    context,
+                    agent_failure_context={"explanation": "Accept request body must be a JSON object."},
+                )
+            request_submit_graph_hash = request_payload.get("submit_graph_hash")
+            request_candidate_graph_hash = request_payload.get("candidate_graph_hash")
+            request_live_canvas_token = request_payload.get("client_live_canvas_token")
+            submitted_live_canvas_token = turn_record.get("submitted_client_live_canvas_token")
+            if request_submit_graph_hash != submit_graph_hash:
+                return failure_envelope(
+                    FailureKind.STALE_STATE_MISMATCH,
+                    scope,
+                    context,
+                    agent_failure_context={
+                        "explanation": "Accepted v2 turn did not echo the server-side submit graph hash.",
+                        "turn_id": turn_id,
+                        "submit_graph_hash": submit_graph_hash,
+                        "request_submit_graph_hash": request_submit_graph_hash,
+                    },
+                )
+            if request_candidate_graph_hash != candidate_graph_hash:
+                return failure_envelope(
+                    FailureKind.STALE_STATE_MISMATCH,
+                    scope,
+                    context,
+                    agent_failure_context={
+                        "explanation": "Accepted v2 turn did not match the persisted candidate graph hash.",
+                        "turn_id": turn_id,
+                        "candidate_graph_hash": candidate_graph_hash,
+                        "request_candidate_graph_hash": request_candidate_graph_hash,
+                    },
+                )
+            if (
+                not isinstance(submitted_live_canvas_token, str)
+                or not submitted_live_canvas_token
+                or request_live_canvas_token != submitted_live_canvas_token
+            ):
+                return failure_envelope(
+                    FailureKind.STALE_STATE_MISMATCH,
+                    scope,
+                    context,
+                    agent_failure_context={
+                        "explanation": "Client live-canvas token does not match the token captured at v2 submit time.",
+                        "turn_id": turn_id,
+                        "client_live_canvas_token": request_live_canvas_token,
+                        "submitted_client_live_canvas_token": submitted_live_canvas_token,
+                    },
+                )
+        else:
+            # V1 compatibility: the backend's `submit_graph_hash` is canonical,
+            # while older browser clients send their own hash. Accept either
+            # submit-time fingerprint only for non-v2 turns.
+            accepted_submit_hashes = {submit_graph_hash}
+            if isinstance(submitted_client_graph_hash, str) and submitted_client_graph_hash:
+                accepted_submit_hashes.add(submitted_client_graph_hash)
+            if client_graph_hash not in accepted_submit_hashes:
+                return failure_envelope(
+                    FailureKind.STALE_STATE_MISMATCH,
+                    scope,
+                    context,
+                    agent_failure_context={
+                        "explanation": "Client graph hash does not match the graph submitted for this turn.",
+                        "turn_id": turn_id,
+                        "client_graph_hash": client_graph_hash,
+                        "submit_graph_hash": submit_graph_hash,
+                        "submitted_client_graph_hash": submitted_client_graph_hash,
+                    },
+                )
 
         timestamp_key = "accepted_at" if scope == "accept" else "rejected_at"
         turn_record["state"] = target_state
@@ -516,6 +591,9 @@ def _mutate_turn_state(
             "accepted_state": target_state,
             "client_graph_hash": client_graph_hash,
             "submit_graph_hash": submit_graph_hash,
+            "submitted_client_live_canvas_token": turn_record.get(
+                "submitted_client_live_canvas_token"
+            ),
             "candidate_graph_hash": turn_record.get("candidate_graph_hash"),
             "unknown_transitions": unknown_transitions,
             "idempotency_key": idempotency_key,

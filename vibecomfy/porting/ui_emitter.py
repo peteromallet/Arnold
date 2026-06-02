@@ -80,7 +80,7 @@ from vibecomfy.contracts.intent_nodes import (
 )
 from vibecomfy.porting.uid import mint_local_uid
 from vibecomfy.porting.widget_aliases import widget_names_for_class, widget_names_from_schema
-from vibecomfy.workflow import VibeEdge
+from vibecomfy.workflow import VibeEdge, VibeNode
 
 # Documented default control_after_generate mode when none is retained in metadata.
 _CONTROL_AFTER_GENERATE_DEFAULT = "fixed"
@@ -868,6 +868,136 @@ def _build_widget_values(node: Any, widget_names: list[str | None]) -> list[Any]
     while values and values[-1] is None:
         values.pop()
     return values
+
+
+def _schema_outputs_for_unwired_node(schema: Any | None) -> list[dict[str, Any]]:
+    schema_outputs = list(getattr(schema, "outputs", None) or []) if schema else []
+    return [
+        {
+            "name": out_spec.name or f"output_{slot_idx}",
+            "type": out_spec.type or "",
+            "links": None,
+            "slot_index": slot_idx,
+        }
+        for slot_idx, out_spec in enumerate(schema_outputs)
+    ]
+
+
+def _emit_litegraph_node_dict(
+    node: Any,
+    *,
+    litegraph_node_id: int,
+    order: int,
+    geometry: Mapping[str, Any],
+    furniture: Mapping[str, Any],
+    inputs: list[dict[str, Any]],
+    outputs: list[dict[str, Any]],
+    schema: Any | None,
+    include_main_positions: bool,
+) -> dict[str, Any]:
+    widget_names = _widget_names_for_emission(node.class_type, schema)
+
+    # Step 6 (T8): re-stamp the verbatim captured properties blob as the base,
+    # then overlay the IR identity keys.  When no captured blob exists (e.g.
+    # programmatic workflows), fall back to fresh-construction — no regression.
+    captured_blob = furniture.get("properties")
+    if isinstance(captured_blob, dict) and captured_blob:
+        properties = dict(captured_blob)
+    else:
+        properties = {}
+
+    # ── IR identity keys ALWAYS win (merged ON TOP of any captured value) ──
+    # Scrub stale ir_node_id from captured blobs (demoted in M5).
+    properties.pop("ir_node_id", None)
+    properties["vibecomfy_id"] = f"{node.class_type}_{order}"
+    properties["Node name for S&R"] = node.class_type
+
+    if schema is not None:
+        properties["_vibecomfy_schema_provider"] = getattr(schema, "source_provider", "unknown")
+
+    if node.uid:
+        properties["vibecomfy_uid"] = node.uid
+
+    node_dict: dict[str, Any] = {
+        "id": litegraph_node_id,
+        "type": node.class_type,
+        "pos": geometry["pos"],
+        "size": geometry["size"],
+        "flags": furniture["flags"],
+        "order": order,
+        "mode": furniture["mode"],
+        "inputs": inputs,
+        "outputs": outputs,
+        "properties": properties,
+        "widgets_values": _build_widget_values(node, widget_names),
+    }
+    # Emit color / bgcolor only when non-None (litegraph convention: absent = default)
+    if furniture["color"] is not None:
+        node_dict["color"] = furniture["color"]
+    if furniture["bgcolor"] is not None:
+        node_dict["bgcolor"] = furniture["bgcolor"]
+    # Node title: emit only when include_main_positions=True and non-None,
+    # so the lean default (include_main_positions=False) omits it entirely.
+    if include_main_positions and furniture["title"] is not None:
+        node_dict["title"] = furniture["title"]
+    return node_dict
+
+
+def materialize_litegraph_node(
+    class_type: str,
+    fields: Mapping[str, Any],
+    schema: Any | None,
+    node_id: int,
+    uid: str,
+    pos: list[float] | tuple[float, float],
+) -> dict[str, Any]:
+    """Materialize one unlinked LiteGraph node using emitter-equivalent defaults.
+
+    This is the creation-path substrate helper for agent-edit v2. It deliberately
+    reuses the same widget ordering, property stamping, size defaults, and output
+    slot construction that :func:`emit_ui_json` uses for a single node.
+    """
+    merged_fields: dict[str, Any] = {}
+    schema_inputs = getattr(schema, "inputs", None)
+    if isinstance(schema_inputs, dict):
+        for name, spec in schema_inputs.items():
+            default = getattr(spec, "default", None)
+            if default is not None:
+                merged_fields[name] = deepcopy(default)
+    merged_fields.update(dict(fields))
+
+    metadata: dict[str, Any] = {}
+    retained_control = merged_fields.pop("control_after_generate", None)
+    if isinstance(retained_control, str):
+        metadata["control_after_generate"] = retained_control
+
+    node = VibeNode(
+        id=str(node_id),
+        class_type=class_type,
+        inputs=merged_fields,
+        metadata=metadata,
+        uid=uid,
+    )
+    geometry = {
+        "pos": [
+            _canonicalize_coord(float(pos[0])),
+            _canonicalize_coord(float(pos[1])),
+        ],
+        "size": [_canonicalize_coord(s) for s in _STUB_NODE_SIZE],
+    }
+    furniture = _resolve_furniture(node, None)
+    outputs = _schema_outputs_for_unwired_node(schema)
+    return _emit_litegraph_node_dict(
+        node,
+        litegraph_node_id=int(node_id),
+        order=0,
+        geometry=geometry,
+        furniture=furniture,
+        inputs=[],
+        outputs=outputs,
+        schema=schema,
+        include_main_positions=False,
+    )
 
 
 def _schema_for_provider(schema_provider: Any | None, class_type: str) -> Any | None:
@@ -1856,66 +1986,19 @@ def emit_ui_json(
                 slot["widget"] = {"name": edge.to_input}
             inputs.append(slot)
 
-        # --- properties ---
-        # Step 6 (T8): re-stamp the verbatim captured properties blob as the base,
-        # then overlay the IR identity keys.  When no captured blob exists (e.g.
-        # programmatic workflows), fall back to fresh-construction — no regression.
-        prov = node_prov[node_id]
-        captured_blob: dict[str, Any] | None = furniture.get("properties") if furniture else None
-        if captured_blob:
-            # Verbatim captured blob (cnr_id / ver / mask-data / etc.) from the
-            # layout-store entry (``_build_entry``) or ``node.metadata['_ui']``.
-            properties = dict(captured_blob)
-        else:
-            # No captured blob → fresh construction (programmatic / scratchpad path).
-            properties = {}
-
-        # ── IR identity keys ALWAYS win (merged ON TOP of any captured value) ──
-        # Scrub stale ir_node_id from captured blobs (demoted in M5).
-        properties.pop("ir_node_id", None)
-        properties["vibecomfy_id"] = f"{node.class_type}_{order}"
-        properties["Node name for S&R"] = node.class_type
-
-        # Optional debug stamp (provider tier)
-        if not prov["schema_less"]:
-            properties["_vibecomfy_schema_provider"] = prov.get("provider", "unknown")
-
-        # ── uid stamp (M1.5): every node with a non-empty uid carries its frozen identity ──
-        if node.uid:
-            properties["vibecomfy_uid"] = node.uid
-
-        # --- widgets_values (verified raw ComfyUI ordering; see module docstring) ---
-        widget_values = _build_widget_values(node, widget_names)
-
-        # Properties are now built by re-stamping the verbatim captured blob
-        # (or fresh-construction fallback) with IR identity keys overlaid
-        # — see the properties-construction block above.  No separate merge needed.
-
-
-        node_dict: dict[str, Any] = {
-            "id": id_remap[node_id],
-            "type": node.class_type,
-            "pos": geometry["pos"],
-            "size": geometry["size"],
-            "flags": furniture["flags"],
-            "order": order,
-            "mode": furniture["mode"],
-            "inputs": inputs,
-            "outputs": outputs,
-            "properties": properties,
-            "widgets_values": widget_values,
-        }
-        # Emit color / bgcolor only when non-None (litegraph convention: absent = default)
-        if furniture["color"] is not None:
-            node_dict["color"] = furniture["color"]
-        if furniture["bgcolor"] is not None:
-            node_dict["bgcolor"] = furniture["bgcolor"]
-        # Node title: emit only when include_main_positions=True and non-None,
-        # so the lean default (include_main_positions=False) omits it entirely.
-        if include_main_positions and furniture["title"] is not None:
-            node_dict["title"] = furniture["title"]
-
-        nodes.append(node_dict)
+        nodes.append(
+            _emit_litegraph_node_dict(
+                node,
+                litegraph_node_id=id_remap[node_id],
+                order=order,
+                geometry=geometry,
+                furniture=furniture,
+                inputs=inputs,
+                outputs=outputs,
+                schema=schema,
+                include_main_positions=include_main_positions,
+            )
+        )
 
     # Build global links array: [link_id, from_node, from_slot, to_node, to_slot, type]
     links: list[list[Any]] = []
@@ -2202,6 +2285,7 @@ __all__ = [
     "WidgetShapeEvidence",
     "derive_widget_shape_evidence",
     "extract_raw_ui_node_map",
+    "materialize_litegraph_node",
     "_normalize_pinned_node_link_refs",
     "_raw_ui_payload_for_pin",
     "emit_ui_json",
