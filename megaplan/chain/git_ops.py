@@ -233,8 +233,31 @@ def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
     )
 
 
-def _checkout_milestone_branch(root: Path, branch: str, *, base_branch: str, writer) -> None:
-    """Create or resume the milestone branch and push it to origin."""
+def _checkout_milestone_branch(
+    root: Path,
+    branch: str,
+    *,
+    base_branch: str,
+    writer,
+    from_origin: bool = False,
+) -> None:
+    """Create or resume the milestone branch and push it to origin.
+
+    When ``from_origin`` is True (the chain is pushing milestones and managing
+    ``origin`` via PRs), a NEW milestone branch forks from
+    ``origin/<base_branch>`` — the authoritative cumulative state where prior
+    milestones' squash-merged PRs land. The local ``<base_branch>`` is NOT a
+    reliable fork point in that workflow: squash-merging a milestone PR creates
+    a fresh commit on ``origin/<base_branch>`` that the local branch never
+    receives, so the local branch diverges and the next milestone, if forked
+    from it, is built on a stale tree missing every previously-merged milestone.
+    Forking from ``origin/<base_branch>`` keeps each milestone stacked on the
+    real merged history.
+
+    When ``from_origin`` is False (``--no-git-refresh`` developer checkouts, or
+    ``--no-push`` runs where origin never receives the merges) the local base
+    branch is used, preserving local-only milestone accumulation.
+    """
     if _compat()._remote_branch_exists(root, branch, writer=writer):
         _compat()._run_command(root, ["git", "fetch", "origin", branch], writer=writer, error_code="git_branch_failed")
         _compat()._run_command(
@@ -244,7 +267,33 @@ def _checkout_milestone_branch(root: Path, branch: str, *, base_branch: str, wri
             error_code="git_branch_failed",
         )
         return
-    _compat()._run_command(root, ["git", "checkout", "-B", branch, base_branch], writer=writer, error_code="git_branch_failed")
+    fork_point = base_branch
+    if from_origin:
+        # Refresh origin/<base_branch> and fork from it so the milestone
+        # includes all prior merged milestones. A failed fetch (offline, no
+        # remote) is non-fatal: fall back to the local base branch.
+        fetch = _compat().subprocess.run(
+            ["git", "fetch", "origin", base_branch],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        writer(f"[chain] git fetch origin {base_branch} -> rc={fetch.returncode}\n")
+        if fetch.returncode == 0:
+            fork_point = f"origin/{base_branch}"
+            writer(
+                f"[chain] forking {branch} from {fork_point} "
+                "(authoritative merged history)\n"
+            )
+        else:
+            detail = (fetch.stderr or fetch.stdout or "").strip()
+            writer(
+                f"[chain] fetch failed; forking {branch} from local "
+                f"{base_branch}{(': ' + detail) if detail else ''}\n"
+            )
+    _compat()._run_command(root, ["git", "checkout", "-B", branch, fork_point], writer=writer, error_code="git_branch_failed")
     _compat()._run_command(root, ["git", "push", "-u", "origin", branch], writer=writer, error_code="git_push_failed")
 
 

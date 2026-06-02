@@ -2326,6 +2326,72 @@ def test_checkout_milestone_branch_starts_from_configured_base_branch(tmp_path: 
     ]
 
 
+def test_checkout_milestone_branch_forks_from_origin_when_from_origin(tmp_path: Path) -> None:
+    """from_origin=True forks the new milestone from ``origin/<base>`` — the
+    authoritative merged history where squash-merged prior milestones land —
+    instead of the local base branch, which diverges under squash-merge and
+    would base the milestone on a stale tree missing prior milestones."""
+    from megaplan.chain import _checkout_milestone_branch
+
+    commands: list[list[str]] = []
+
+    def fake_run_command(root, cmd, *, writer, timeout=120, error_code="command_failed"):
+        del root, writer, timeout, error_code
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    def fake_subprocess_run(cmd, **kwargs):  # the origin fetch (non-fatal)
+        del kwargs
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with patch("megaplan.chain._remote_branch_exists", return_value=False), \
+         patch("megaplan.chain._run_command", side_effect=fake_run_command), \
+         patch("megaplan.chain.subprocess.run", side_effect=fake_subprocess_run):
+        _checkout_milestone_branch(
+            tmp_path,
+            "mp/m2",
+            base_branch="main",
+            writer=lambda _m: None,
+            from_origin=True,
+        )
+
+    # Forks from origin/main, NOT local main.
+    assert ["git", "checkout", "-B", "mp/m2", "origin/main"] in commands
+    assert ["git", "checkout", "-B", "mp/m2", "main"] not in commands
+    assert ["git", "push", "-u", "origin", "mp/m2"] in commands
+
+
+def test_checkout_milestone_branch_falls_back_to_local_base_when_fetch_fails(tmp_path: Path) -> None:
+    """If the origin fetch fails (offline / no remote) with from_origin=True,
+    fall back to the local base branch rather than erroring."""
+    from megaplan.chain import _checkout_milestone_branch
+
+    commands: list[list[str]] = []
+
+    def fake_run_command(root, cmd, *, writer, timeout=120, error_code="command_failed"):
+        del root, writer, timeout, error_code
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    def fake_subprocess_run(cmd, **kwargs):  # fetch fails
+        del kwargs
+        return subprocess.CompletedProcess(cmd, 1, "", "no upstream")
+
+    with patch("megaplan.chain._remote_branch_exists", return_value=False), \
+         patch("megaplan.chain._run_command", side_effect=fake_run_command), \
+         patch("megaplan.chain.subprocess.run", side_effect=fake_subprocess_run):
+        _checkout_milestone_branch(
+            tmp_path,
+            "mp/m2",
+            base_branch="main",
+            writer=lambda _m: None,
+            from_origin=True,
+        )
+
+    assert ["git", "checkout", "-B", "mp/m2", "main"] in commands
+    assert ["git", "checkout", "-B", "mp/m2", "origin/main"] not in commands
+
+
 def test_ensure_milestone_pr_uses_configured_base_branch(tmp_path: Path) -> None:
     from megaplan.chain import _ensure_milestone_pr
 
@@ -2387,6 +2453,7 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
         "mp/m1",
         base_branch="setup/cloud",
         writer=ANY,
+        from_origin=ANY,
     )
     ensure_pr.assert_called_once_with(
         tmp_path,
@@ -2987,6 +3054,7 @@ def test_run_chain_resume_milestone_pr_uses_base_branch(tmp_path: Path) -> None:
         "mp/m1",
         base_branch="setup/cloud",
         writer=ANY,
+        from_origin=ANY,
     )
     ensure_pr.assert_called_once_with(
         tmp_path,

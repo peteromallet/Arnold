@@ -121,6 +121,11 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
     files_in_diff_set, status_error = _collect_git_status_paths_with_nested_repos(
         project_dir,
         claimed_paths=set(files_claimed),
+        # Chain milestones commit their work before review, leaving a clean
+        # working tree; a status-only check would falsely report every committed
+        # file as a phantom claim ("implementation not present in the diff").
+        # Include the committed milestone range so committed work counts.
+        include_committed=True,
     )
     if status_error is not None:
         return {
