@@ -205,6 +205,40 @@ def _execute_rerun_guidance(plan_dir: Path, finalize_data: dict[str, Any]) -> st
     return ""
 
 
+def _execute_rework_targeting_block(rework_context: dict[str, Any] | None) -> str:
+    if not isinstance(rework_context, dict):
+        return ""
+    items = rework_context.get("rework_items", [])
+    if not isinstance(items, list) or not items:
+        return ""
+    milestone_files = rework_context.get("milestone_changed_files", [])
+    if not isinstance(milestone_files, list):
+        milestone_files = []
+    scope_files = rework_context.get("scope_files", [])
+    if not isinstance(scope_files, list):
+        scope_files = []
+    return textwrap.dedent(
+        f"""
+        Review rework targeting:
+        The reviewer requested a focused rework pass. Fix the named issues below using read/grep tools and focused commands; do not broadly re-run unrelated execution work.
+
+        Failing rework_items for this batch:
+        {json_dump(items).strip()}
+
+        Bounded search scope:
+        {json_dump(scope_files).strip()}
+
+        Milestone changed-file set:
+        {json_dump(milestone_files).strip()}
+
+        Rework requirements:
+        - Start with each item's `evidence_file` when present.
+        - If an item lacks `evidence_file`, search within the milestone changed-file set above.
+        - Address each item's `issue`, `expected`, and `actual` directly in the named files or explain with line-level evidence why no code change is needed.
+        """
+    ).strip()
+
+
 def _execute_approval_note(state: PlanState) -> str:
     if state["config"].get("auto_approve"):
         return (
@@ -454,6 +488,7 @@ def _execute_batch_prompt(
     batch_task_ids: list[str],
     completed_task_ids: set[str] | None = None,
     root: Path | None = None,
+    rework_context: dict[str, Any] | None = None,
 ) -> str:
     completed = set(completed_task_ids or set())
     finalize_data = read_json(plan_dir / "finalize.json")
@@ -545,6 +580,9 @@ def _execute_batch_prompt(
         {meta_commentary[:1500]}
         """
     ).strip()
+    rework_targeting_block = _execute_rework_targeting_block(rework_context)
+    if rework_targeting_block:
+        rework_targeting_block = f"\n\n{rework_targeting_block}"
     return textwrap.dedent(
         f"""
         Execute the approved plan in the repository.
@@ -574,6 +612,7 @@ def _execute_batch_prompt(
 
         Batch-scoped sense checks:
         {json_dump(batch_sense_checks).strip()}
+        {rework_targeting_block}
 
         {execution_context}
 

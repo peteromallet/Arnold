@@ -122,6 +122,7 @@ def _resolve_effective_tier_complexity(
     tier_drop: int,
     *,
     floor: int = DEFAULT_TIER_DROP_FLOOR,
+    tier_override_floor: int | None = None,
 ) -> int:
     """Apply an auto-driver tier-drop to a batch's resolved complexity.
 
@@ -130,9 +131,27 @@ def _resolve_effective_tier_complexity(
     clamped at ``floor`` so the fallback never routes below the lowest
     premium tier.  ``tier_drop <= 0`` is a no-op (normal routing).
     """
+    effective_floor = floor
+    if isinstance(tier_override_floor, int) and 1 <= tier_override_floor <= 5:
+        effective_floor = max(effective_floor, tier_override_floor)
     if tier_drop <= 0:
-        return batch_complexity
-    return max(floor, batch_complexity - tier_drop)
+        return max(effective_floor, batch_complexity) if tier_override_floor else batch_complexity
+    return max(effective_floor, batch_complexity - tier_drop)
+
+
+def _batch_tier_override_floor(
+    finalize_data: dict[str, Any],
+    batch_task_ids: list[str],
+) -> int | None:
+    wanted = set(batch_task_ids)
+    floors: list[int] = []
+    for task in finalize_data.get("tasks", []) or []:
+        if not isinstance(task, dict) or task.get("id") not in wanted:
+            continue
+        override = task.get("tier_override")
+        if isinstance(override, int) and 1 <= override <= 5:
+            floors.append(override)
+    return max(floors) if floors else None
 
 
 # Private marker set: dispatcher return paths stamp one of these four values.
@@ -770,7 +789,9 @@ def handle_execute_one_batch(
         # lower, clamped at the premium floor. tier_drop=0 is normal routing.
         tier_drop = int(getattr(args, "tier_drop", 0) or 0)
         effective_complexity = _resolve_effective_tier_complexity(
-            batch_complexity, tier_drop
+            batch_complexity,
+            tier_drop,
+            tier_override_floor=_batch_tier_override_floor(finalize_data, batch_task_ids),
         )
         tier_complexity = effective_complexity
         tier_spec = tier_map.get(effective_complexity)
@@ -1177,6 +1198,66 @@ def _review_rework_task_ids(
         seen.add(task_id)
         runnable.append(task_id)
     return runnable, unrunnable
+
+
+def _stable_string_list(values: Iterable[Any]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        stripped = value.strip()
+        if not stripped or stripped in seen:
+            continue
+        seen.add(stripped)
+        result.append(stripped)
+    return result
+
+
+def _milestone_changed_files(finalize_data: dict[str, Any]) -> list[str]:
+    files: list[Any] = []
+    for task in finalize_data.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        for key in ("files_changed", "evidence_files"):
+            values = task.get(key, [])
+            if isinstance(values, list):
+                files.extend(values)
+    return _stable_string_list(files)
+
+
+def _review_rework_context(
+    review_data: dict[str, Any],
+    finalize_data: dict[str, Any],
+    batch_task_ids: list[str],
+) -> dict[str, Any]:
+    wanted = set(batch_task_ids)
+    milestone_files = _milestone_changed_files(finalize_data)
+    context_items: list[dict[str, Any]] = []
+    scope_candidates: list[Any] = []
+    for item in review_data.get("rework_items", []) or []:
+        if not isinstance(item, dict) or item.get("task_id") not in wanted:
+            continue
+        evidence_file = item.get("evidence_file", "")
+        normalized = {
+            "task_id": item.get("task_id"),
+            "issue": item.get("issue", ""),
+            "expected": item.get("expected", ""),
+            "actual": item.get("actual", ""),
+            "evidence_file": evidence_file if isinstance(evidence_file, str) else "",
+            "flag_id": item.get("flag_id"),
+            "source": item.get("source"),
+        }
+        if normalized["evidence_file"]:
+            scope_candidates.append(normalized["evidence_file"])
+        else:
+            scope_candidates.extend(milestone_files)
+        context_items.append(normalized)
+    return {
+        "rework_items": context_items,
+        "scope_files": _stable_string_list(scope_candidates) or milestone_files,
+        "milestone_changed_files": milestone_files,
+    }
 
 
 def _block_no_runnable_rework(
@@ -1748,6 +1829,11 @@ def handle_execute_auto_loop(
                 batch_task_ids,
                 completed_task_ids,
                 root=root,
+                rework_context=(
+                    _review_rework_context(review_data, finalize_data, batch_task_ids)
+                    if rework_mode
+                    else None
+                ),
             )
         )
         batch_number_for_artifact = (
@@ -1798,7 +1884,9 @@ def handle_execute_auto_loop(
             # Auto-driver tier-drop fallback (see handle_execute_one_batch).
             tier_drop = int(getattr(args, "tier_drop", 0) or 0)
             effective_complexity = _resolve_effective_tier_complexity(
-                batch_complexity, tier_drop
+                batch_complexity,
+                tier_drop,
+                tier_override_floor=_batch_tier_override_floor(finalize_data, batch_task_ids),
             )
             batch_tier_complexity = effective_complexity
             tier_spec = tier_map.get(effective_complexity)
