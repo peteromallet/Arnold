@@ -46,70 +46,87 @@ def _refresh_base_branch(
     chain`` do not get their currently checked-out branch stomped by an
     automatic base-branch checkout.
 
-    ``git pull --ff-only`` divergence is intentionally non-fatal. In-flight
-    chains commit milestone output to the local base branch, so a local branch
-    that is ahead of or diverged from ``origin/<base_branch>`` is expected and
-    must remain the source of truth until the epic is resolved.
+    ``git checkout <base_branch>`` is intentionally avoided because Git refuses
+    to check out a branch that is active in a sibling worktree. The remote
+    ``origin/<base_branch>`` ref is refreshed and used as the fork point; a
+    local fast-forward pull is only attempted when this worktree is already on
+    the base branch.
     """
     if no_git_refresh:
         writer("[chain] skipping git refresh (--no-git-refresh)\n")
         return
-    refresh_commands = (
-        (["git", "fetch", "origin", base_branch], True),
-        (["git", "checkout", base_branch], True),
-        (["git", "pull", "--ff-only", "origin", base_branch], False),
-    )
-    for cmd, fatal_on_failure in refresh_commands:
-        try:
-            proc = _compat().subprocess.run(
-                cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
-            )
-            writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
-            if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "").strip()
-                if detail:
-                    writer(f"[chain] {' '.join(cmd)} output:\n{detail}\n")
-                if not fatal_on_failure:
-                    writer(
-                        "[chain] warning: fast-forward refresh failed; "
-                        f"continuing on local {base_branch}. "
-                        "This is expected when an in-flight chain has local "
-                        "milestone commits or origin moved independently.\n"
-                    )
-                    continue
-                raise CliError(
-                    "git_refresh_failed",
-                    (
-                        "Chain git refresh failed before milestone initialization: "
-                        f"{' '.join(cmd)} exited {proc.returncode}. "
-                        "Resolve the checkout or rerun with --no-git-refresh."
-                    ),
-                    extra={
-                        "command": cmd,
-                        "returncode": proc.returncode,
-                        "stdout": proc.stdout,
-                        "stderr": proc.stderr,
-                    },
-                )
-        except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            writer(f"[chain] {' '.join(cmd)} failed: {exc}\n")
-            if not fatal_on_failure:
-                writer(
-                    "[chain] warning: fast-forward refresh failed; "
-                    f"continuing on local {base_branch}. "
-                    "This is expected when an in-flight chain has local "
-                    "milestone commits or origin moved independently.\n"
-                )
-                continue
+    fetch_cmd = ["git", "fetch", "origin", base_branch]
+    try:
+        proc = _compat().subprocess.run(
+            fetch_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+        )
+        writer(f"[chain] {' '.join(fetch_cmd)} -> rc={proc.returncode}\n")
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            if detail:
+                writer(f"[chain] {' '.join(fetch_cmd)} output:\n{detail}\n")
             raise CliError(
                 "git_refresh_failed",
                 (
                     "Chain git refresh failed before milestone initialization: "
-                    f"{' '.join(cmd)} failed with {exc}. "
-                    "Resolve the checkout or rerun with --no-git-refresh."
+                    f"{' '.join(fetch_cmd)} exited {proc.returncode}. "
+                    "Resolve the fetch failure or rerun with --no-git-refresh."
                 ),
-                extra={"command": cmd, "error": str(exc)},
-            ) from exc
+                extra={
+                    "command": fetch_cmd,
+                    "returncode": proc.returncode,
+                    "stdout": proc.stdout,
+                    "stderr": proc.stderr,
+                },
+            )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        writer(f"[chain] {' '.join(fetch_cmd)} failed: {exc}\n")
+        raise CliError(
+            "git_refresh_failed",
+            (
+                "Chain git refresh failed before milestone initialization: "
+                f"{' '.join(fetch_cmd)} failed with {exc}. "
+                "Resolve the fetch failure or rerun with --no-git-refresh."
+            ),
+            extra={"command": fetch_cmd, "error": str(exc)},
+        ) from exc
+
+    current_cmd = ["git", "symbolic-ref", "--short", "HEAD"]
+    current = _compat().subprocess.run(
+        current_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+    )
+    writer(f"[chain] {' '.join(current_cmd)} -> rc={current.returncode}\n")
+    if current.returncode != 0 or current.stdout.strip() != base_branch:
+        writer(
+            f"[chain] using refreshed origin/{base_branch} as the milestone fork point; "
+            f"local {base_branch} checkout refresh skipped\n"
+        )
+        return
+
+    pull_cmd = ["git", "pull", "--ff-only", "origin", base_branch]
+    try:
+        proc = _compat().subprocess.run(
+            pull_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+        )
+        writer(f"[chain] {' '.join(pull_cmd)} -> rc={proc.returncode}\n")
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            if detail:
+                writer(f"[chain] {' '.join(pull_cmd)} output:\n{detail}\n")
+            writer(
+                "[chain] warning: fast-forward refresh failed; "
+                f"continuing with refreshed origin/{base_branch}. "
+                "This is expected when the local base has milestone commits "
+                "or origin moved independently.\n"
+            )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        writer(f"[chain] {' '.join(pull_cmd)} failed: {exc}\n")
+        writer(
+            "[chain] warning: fast-forward refresh failed; "
+            f"continuing with refreshed origin/{base_branch}. "
+            "This is expected when the local base has milestone commits "
+            "or origin moved independently.\n"
+        )
 
 
 def _run_command(
