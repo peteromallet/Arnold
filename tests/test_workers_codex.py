@@ -103,6 +103,121 @@ def test_run_codex_step_clamps_spec_layer_max_effort(tmp_path: Path) -> None:
     assert "model_reasoning_effort=max" not in invoked_cmd
 
 
+def test_run_codex_step_passes_fresh_projection_capabilities_to_prompt(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    captured: list[object] = []
+    execution_payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+
+    def fake_create_prompt(*args, **kwargs):
+        captured.append(kwargs.get("projection_capabilities"))
+        return "prompt"
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_idx = command.index("-o") + 1
+        output_path = Path(command[output_idx])
+        output_path.write_text(json.dumps(execution_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=json.dumps({"type": "thread.started", "thread_id": "sess-fresh"}) + "\n",
+            stderr="",
+            duration_ms=5,
+        )
+
+    with (
+        patch("megaplan.workers._impl.create_codex_prompt", side_effect=fake_create_prompt),
+        patch("megaplan.workers._impl.run_command", side_effect=fake_run_command),
+    ):
+        run_codex_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=False,
+            fresh=True,
+        )
+
+    caps = captured[0]
+    assert caps.can_read_plan_dir is True
+    assert caps.can_read_project_dir is True
+    assert caps.has_file_tools is True
+    assert caps.checkpoint_write_access is True
+
+
+def test_run_codex_step_passes_conservative_projection_capabilities_to_resumed_prompt(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    import os
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    state["sessions"]["codex_executor"] = {
+        "id": "sess-existing",
+        "mode": "persistent",
+        "created_at": "2026-03-20T00:00:00Z",
+        "last_used_at": "2026-03-20T00:00:00Z",
+        "refreshed": False,
+    }
+    captured: list[object] = []
+    execution_payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+
+    def fake_create_prompt(*args, **kwargs):
+        captured.append(kwargs.get("projection_capabilities"))
+        return "prompt"
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_idx = command.index("-o") + 1
+        output_path = Path(command[output_idx])
+        output_path.write_text(json.dumps(execution_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=5,
+        )
+
+    with (
+        patch.dict(os.environ, {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}),
+        patch("megaplan.workers._impl.create_codex_prompt", side_effect=fake_create_prompt),
+        patch("megaplan.workers._impl.run_command", side_effect=fake_run_command),
+    ):
+        run_codex_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=True,
+            fresh=False,
+        )
+
+    caps = captured[0]
+    assert caps.can_read_plan_dir is False
+    assert caps.can_read_project_dir is True
+    assert caps.has_file_tools is True
+    assert caps.checkpoint_write_access is True
+
+
 def test_run_codex_step_sets_tool_output_truncation_limit(tmp_path: Path) -> None:
     """T4: codex tool-result output truncation at 50000 (token limit, defense-in-depth)."""
     from megaplan._core import ensure_runtime_layout
@@ -195,6 +310,39 @@ def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> 
                     persistent=False,
                     prompt_override="custom prompt",
                 )
+
+
+def test_run_codex_step_checks_final_prompt_before_run_command(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "execute"
+        assert prompt_text == "custom execute prompt"
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch("megaplan.workers._impl.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch(
+            "megaplan.workers._impl.run_command",
+            side_effect=AssertionError("run_command should not be reached"),
+        ),
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_codex_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                persistent=False,
+                fresh=True,
+                prompt_override="custom execute prompt",
+            )
 
 def test_run_step_with_worker_passes_prompt_override(tmp_path: Path) -> None:
     from megaplan.types import AgentMode

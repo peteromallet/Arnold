@@ -59,6 +59,7 @@ from megaplan.runtime.process import OrphanDetectedError, TmuxSession, pane_pids
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from megaplan._core import creative_form_id, read_json, schemas_root
 from megaplan.prompts import create_claude_prompt
+from megaplan.prompts._projection import check_prompt_size
 from megaplan.schemas import get_execution_schema_key
 from megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
@@ -75,6 +76,7 @@ from megaplan.workers._impl import (
     session_key_for,
     validate_payload,
 )
+from megaplan.workers._projection_caps import shannon_projection_capabilities
 
 
 # Sentinel marker the vendored fork carries on line 2 of index.ts. Mirrors
@@ -2035,11 +2037,17 @@ def run_shannon_step(
     persisted_session_id = stored_session_id
 
     # ── (c) build the real phase prompt (file + launcher pointer) ───────
+    projection_capabilities = shannon_projection_capabilities(read_only=read_only)
     base_prompt = (
         prompt_override
         if prompt_override is not None
         else create_claude_prompt(
-            step, state, plan_dir, root=root, **(prompt_kwargs or {})
+            step,
+            state,
+            plan_dir,
+            root=root,
+            projection_capabilities=projection_capabilities,
+            **(prompt_kwargs or {}),
         )
     )
     if output_path is not None:
@@ -2053,6 +2061,7 @@ def run_shannon_step(
     )
     schema_text = json.dumps(read_json(schemas_root(root) / schema_name))
     prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
+    check_prompt_size(prompt, phase=step)
 
     prompt_iteration = _prompt_file_iteration(step, state) if fresh and step != "execute" else None
     prompt_path = _write_prompt_file(run_dir, step, prompt, iteration=prompt_iteration)
