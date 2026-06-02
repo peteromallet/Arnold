@@ -427,14 +427,14 @@ def parallel_criteria_review_prompt(
         - Do not rely on any approved plan, plan metadata, gate summary, execution summary, or execution audit that are not present here.
         - Judge against the success criteria from `finalize.json`, but stay anchored to the original issue text when deciding whether the work actually solved the problem.
         - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
-          - `must` criteria are hard gates. A `must` criterion that fails means `needs_rework`.
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
           - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
           - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
           - If a criterion cannot be verified in this context, mark it `waived` with an explanation.
-        - Set `review_verdict` to `needs_rework` only when at least one `must` criterion fails or actual implementation work is incomplete. Use `approved` when all `must` criteria pass, even if some `should` criteria are flagged.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {{"command": "...", "baseline_status": "failed", "post_status": "failed"}}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
         - The settled decisions above are already approved. Verify implementation against them, but do not re-litigate them.
         - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
-        - `rework_items` must be structured and directly actionable. Populate `issues` as one-line summaries derived from `rework_items`.
+        - `rework_items` must be structured and directly actionable. Blocking items must include the `deterministic_check` object described above. Populate `issues` as one-line summaries derived from `rework_items`.
         - When approved, keep both `issues` and `rework_items` empty arrays.
         """
     ).strip()
@@ -559,7 +559,8 @@ def _review_prompt(
             A flag is resolved only if the final diff contains code that directly addresses the concern.
             Do not trust pre-execute promises or plan claims; check the diff itself.
             Add resolved flag IDs to `verified_flag_ids`.
-            For any unresolved flag, add a `rework_items` entry with `task_id: "REVIEW"`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, and `source: "review_flag_reverify"`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with `task_id: "REVIEW"`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`.
             """
         ).strip()
     pre_check_block = ""
@@ -612,12 +613,12 @@ def _review_prompt(
         - {criteria_guidance}
         - Trust executor evidence by default. Dig deeper only where the git diff, `execution_audit.json`, or vague notes make the claim ambiguous.
         - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
-          - `must` criteria are hard gates. A `must` criterion that fails means `needs_rework`.
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
           - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
           - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
           - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
           - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
-        - Set `review_verdict` to `needs_rework` only when at least one `must` criterion fails or actual implementation work is incomplete. Use `approved` when all `must` criteria pass, even if some `should` criteria are flagged.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {{"command": "...", "baseline_status": "failed", "post_status": "failed"}}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
         {settled_decisions_instruction}
         - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
         - {task_guidance}
@@ -672,7 +673,8 @@ def _review_prompt(
           - `evidence_file` (optional): file path supporting the finding
           - `flag_id`: critique/review flag ID when applicable, otherwise `null`
           - `source`: short machine-readable source tag when applicable, otherwise `null`
-        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, both `issues` and `rework_items` should be empty arrays.
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
         - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.
         """
     ).strip()

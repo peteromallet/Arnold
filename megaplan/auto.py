@@ -1557,13 +1557,41 @@ def _quarantine_phase_outputs(plan_dir: Path, step: str) -> list[str]:
     return quarantined
 
 
-def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bool:
+def _active_phase_already_completed(
+    plan_dir: Path | None,
+    phase: str,
+    current_state: str,
+) -> bool:
+    """True iff running ``phase`` is what produced ``current_state``."""
+    if plan_dir is None or not phase or not current_state:
+        return False
+    try:
+        from megaplan._core.workflow import phase_produced_state
+
+        state = PlanRepository.from_plan_dir(plan_dir).load_state()
+        if not isinstance(state, dict):
+            return False
+        return phase_produced_state(state, phase, current_state)
+    except Exception:
+        return False
+
+
+def _clear_orphaned_active_step(
+    plan_dir: Path | None,
+    expected_step: str,
+    *,
+    quarantine: bool = True,
+) -> bool:
     """Strip an orphaned ``active_step`` from ``state.json`` in place.
 
     Returns True iff the cleanup actually wrote a change. The expected step
     name is used purely as a safety check — if state.json's ``active_step``
     no longer matches (because some other actor cleared it), we leave it
     alone rather than racing with a healthy phase.
+
+    ``quarantine`` controls whether ``<step>_output.json`` is renamed aside.
+    Dead-worker orphans still quarantine half-written outputs; completed
+    in-process orphans keep their valid output for the successor phase.
     """
     if plan_dir is None:
         return False
@@ -1602,7 +1630,9 @@ def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bo
     recorded_step = active_phase_name(current_active)
     if recorded_step != expected_step:
         return False
-    quarantined = _quarantine_phase_outputs(plan_dir, expected_step)
+    quarantined = (
+        _quarantine_phase_outputs(plan_dir, expected_step) if quarantine else []
+    )
     def _patch_orphan_recovery(current: dict[str, Any]) -> bool:
         changed = current.pop("active_step", None) is not None
         if quarantined:
@@ -2235,6 +2265,30 @@ def drive(
                     f"({idle_seconds}s without activity >= {threshold_display}s threshold); "
                     "clearing before redispatch"
                 )
+
+        if (
+            isinstance(active_step, dict)
+            and active_step.get("recommended_action") == "wait"
+        ):
+            active_name = active_phase_name(active_step)
+            if (
+                active_name
+                and active_name != next_step
+                and isinstance(state, str)
+                and _active_phase_already_completed(plan_dir, active_name, state)
+            ):
+                log(
+                    f"active step '{active_name}' already completed "
+                    f"(state={state}, next={next_step}) but was never cleared — "
+                    "clearing in-process orphan so the driver advances",
+                    orphan_step=active_name,
+                    current_state=state,
+                    next_step=next_step,
+                )
+                _clear_orphaned_active_step(
+                    plan_dir, active_name, quarantine=False
+                )
+                active_step = None
 
         if (
             isinstance(active_step, dict)
