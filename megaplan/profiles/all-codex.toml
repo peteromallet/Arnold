@@ -17,6 +17,7 @@ vendor_locked = true
 plan = "codex"
 prep = "codex"
 critique = "codex"
+critique_evaluator = "codex"
 revise = "codex"
 gate = "codex"
 finalize = "codex"

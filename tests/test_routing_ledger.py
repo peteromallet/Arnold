@@ -160,7 +160,7 @@ def test_critique_records_one_ledger_entry_per_lens(tmp_path: Path) -> None:
     assert all(row["phase"] == "critique" for row in rows)
 
 
-def test_missing_actual_model_records_null_without_blocking(tmp_path: Path) -> None:
+def test_missing_codex_actual_model_records_resolved_model_without_blocking(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     state = _state(tmp_path)
@@ -185,7 +185,7 @@ def test_missing_actual_model_records_null_without_blocking(tmp_path: Path) -> N
 
     assert worker.model_actual is None
     [row] = _read_ledger(plan_dir)
-    assert row["actual_model"] is None
+    assert row["actual_model"] == "gpt-5.5"
 
 
 def test_ledger_write_failure_is_swallowed_and_phase_completes(tmp_path: Path) -> None:

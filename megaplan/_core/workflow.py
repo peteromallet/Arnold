@@ -83,7 +83,10 @@ def pinned_critic_model(state: PlanState) -> str:
     """
     if not bool(state["config"].get("critic_model_explicit", False)):
         return ""
-    return str(state["config"].get("critic_model", "") or "").strip()
+    pin = str(state["config"].get("critic_model", "") or "").strip()
+    if state["config"].get("profile") == "all-codex" and pin and not pin.startswith("gpt-5"):
+        return ""
+    return pin
 
 
 def robustness_critique_instruction(robustness: str) -> str:
