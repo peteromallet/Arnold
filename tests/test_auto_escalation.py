@@ -70,6 +70,11 @@ def test_external_error_category() -> None:
     assert ids == []
 
 
+def test_review_non_convergence_policy_escalates() -> None:
+    assert CATEGORY_POLICY[FailureCategory.review_non_convergence].escalate is True
+    assert CATEGORY_POLICY[FailureCategory.review_non_convergence].retries_first == 0
+
+
 # ─── Structured drift kind wins over substring ───────────────────────────────
 
 

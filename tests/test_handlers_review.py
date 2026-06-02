@@ -8,6 +8,7 @@ from megaplan._core import atomic_write_json, read_json, save_state
 from megaplan.handlers.review import (
     _finalize_review_outcome,
     _format_review_success_summary,
+    _review_infrastructure_failure,
     _synthesize_review_rework_items,
 )
 from megaplan.types import STATE_EXECUTED
@@ -57,6 +58,28 @@ def test_rework_falls_back_when_missing_concerned_ids(caplog) -> None:
 
     assert rework_items[0]["task_id"] == "REVIEW-coverage"
     assert "omitted concerned_task_ids" in caplog.text
+
+
+def test_review_process_error_is_recoverable_review_infrastructure() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "rework_items": [
+            {
+                "task_id": "T1",
+                "issue": "No verification commands or file inspection were performed before verdict.",
+                "expected": "Review should inspect the workspace.",
+                "actual": "Premature final verdict.",
+                "source": "review_process_error",
+            }
+        ],
+    }
+
+    assert _review_infrastructure_failure(
+        payload,
+        issues=[],
+        total_tasks=1,
+        total_checks=0,
+    )
 
 
 def test_review_success_summary_explains_non_passing_non_blocking_criteria() -> None:

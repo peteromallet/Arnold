@@ -24,10 +24,12 @@ from megaplan._core import (
     save_flag_registry,
 )
 from megaplan.prompts.review import (
+    LARGE_REVIEW_DIFF_MAX_BYTES,
     _review_prompt,
     _settled_decisions_block,
     _settled_decisions_instruction,
     parallel_criteria_review_prompt,
+    single_check_review_prompt,
 )
 from megaplan.prompts.tiebreaker_challenger import challenger_prompt
 from megaplan.prompts.tiebreaker_researcher import researcher_prompt
@@ -1607,6 +1609,74 @@ def test_parallel_criteria_review_prompt_uses_issue_anchored_context_only(
     assert '"tasks": [' in prompt
     assert "DECISION-001" in prompt
     assert "Keep the parser fix source-local." in prompt
+
+
+def test_parallel_criteria_review_prompt_large_diff_uses_summary_not_full_patch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    full_patch = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n"
+        "+++ b/app.py\n"
+        "+FULL_PATCH_SENTINEL\n"
+        + ("+" + "x" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 50)
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_patch",
+        lambda project_dir: full_patch,
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_summary",
+        lambda project_dir: "M app.py",
+    )
+
+    prompt = parallel_criteria_review_prompt(
+        state, plan_dir, tmp_path, plan_dir / "review_criteria_verdict.json"
+    )
+
+    assert "Large git diff mode:" in prompt
+    assert "Git diff summary:\nM app.py" in prompt
+    assert "Changed files:\n- app.py" in prompt
+    assert "FULL_PATCH_SENTINEL" not in prompt
+    assert "Full git diff:" not in prompt
+
+
+def test_single_check_review_prompt_large_diff_requires_tool_backed_checks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    full_patch = (
+        "diff --git a/large.py b/large.py\n"
+        "--- a/large.py\n"
+        "+++ b/large.py\n"
+        "+FULL_PATCH_SENTINEL\n"
+        + ("+" + "y" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 50)
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_patch",
+        lambda project_dir: full_patch,
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_summary",
+        lambda project_dir: "M large.py",
+    )
+
+    prompt = single_check_review_prompt(
+        state,
+        plan_dir,
+        tmp_path,
+        {"id": "coverage", "question": "Covered?", "guidance": "Check coverage."},
+        plan_dir / "review_coverage.json",
+        [],
+    )
+
+    assert "Use your tools to inspect the workspace" in prompt
+    assert "evidence_file" in prompt
+    assert "FULL_PATCH_SENTINEL" not in prompt
+    assert "Full git diff:" not in prompt
 
 
 def test_plan_prompt_includes_notes_when_present(tmp_path: Path) -> None:

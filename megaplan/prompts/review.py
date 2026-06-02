@@ -26,6 +26,101 @@ from ._shared import _gate_summary_or_skipped
 
 log = logging.getLogger(__name__)
 
+LARGE_REVIEW_DIFF_MAX_BYTES = 120 * 1024
+LARGE_REVIEW_DIFF_MAX_FILES = 40
+
+
+def _changed_files_from_patch(patch: str) -> list[str]:
+    files: list[str] = []
+    seen: set[str] = set()
+    for line in patch.splitlines():
+        if not line.startswith("diff --git "):
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        rel_path = parts[3]
+        if rel_path.startswith("b/"):
+            rel_path = rel_path[2:]
+        if rel_path and rel_path not in seen:
+            seen.add(rel_path)
+            files.append(rel_path)
+    return files
+
+
+def _review_diff_is_large(patch: str, changed_files: list[str]) -> bool:
+    return (
+        len(patch.encode("utf-8")) > LARGE_REVIEW_DIFF_MAX_BYTES
+        or len(changed_files) > LARGE_REVIEW_DIFF_MAX_FILES
+    )
+
+
+def _prior_unmet_review_block(plan_dir: Path, state: PlanState) -> str:
+    if state.get("iteration", 1) <= 1:
+        return ""
+    prior_path = plan_dir / "review.json"
+    if not prior_path.exists():
+        return ""
+    try:
+        prior = read_json(prior_path)
+    except (OSError, ValueError):
+        return ""
+    unmet: dict[str, Any] = {
+        "criteria": [],
+        "rework_items": [],
+    }
+    for criterion in prior.get("criteria", []) or []:
+        if not isinstance(criterion, dict):
+            continue
+        if criterion.get("priority") == "must" and criterion.get("pass") in (False, "fail"):
+            unmet["criteria"].append(criterion)
+    for item in prior.get("rework_items", []) or []:
+        if isinstance(item, dict):
+            unmet["rework_items"].append(item)
+    if not unmet["criteria"] and not unmet["rework_items"]:
+        return ""
+    return textwrap.dedent(
+        f"""
+        Re-review focus:
+        This is review iteration {state.get("iteration", 1)}. Treat the prior review's still-unmet items below as the active scope and verify the delta from the last review with repository inspection and commands. Do not re-review unrelated cumulative branch history unless one of these items requires it.
+        {json_dump(unmet).strip()}
+        """
+    ).strip()
+
+
+def _large_diff_context_block(
+    *,
+    project_dir: Path,
+    diff_summary: str,
+    changed_files: list[str],
+    prior_unmet_block: str,
+) -> str:
+    file_list = "\n".join(f"- {path}" for path in changed_files) or "- No changed files detected."
+    threshold = (
+        f"{LARGE_REVIEW_DIFF_MAX_BYTES // 1024} KB or "
+        f"{LARGE_REVIEW_DIFF_MAX_FILES} changed files"
+    )
+    prior = f"\n\n{prior_unmet_block}" if prior_unmet_block else ""
+    return textwrap.dedent(
+        f"""
+        Large git diff mode:
+        The full patch exceeds the review prompt threshold ({threshold}), so it is intentionally not pasted here. Use your repository tools in {project_dir} to inspect the actual files and run focused checks before writing a verdict.
+
+        Git diff summary:
+        {diff_summary}
+
+        Changed files:
+        {file_list}{prior}
+
+        Tool-driven verification requirements:
+        - Verify every criterion/check against the actual workspace, not only this summary.
+        - Inspect relevant files with read/grep tools and run focused commands when behavior or tests are part of the criterion.
+        - Emit concrete per-criterion checks: pass/fail plus repository-backed evidence.
+        - For every `rework_items` entry, populate `evidence_file` with the file where the issue was observed.
+        - If repository inspection or commands cannot complete because of infrastructure, size, or premature output, report a review infrastructure failure; do not invent implementation rework such as "the diff does not contain the work."
+        """
+    ).strip()
+
 
 def _check_field(check: Any, name: str) -> Any:
     if isinstance(check, dict):
@@ -137,12 +232,22 @@ def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]
             git_diff = output_path.read_text(encoding="utf-8")
         except FileNotFoundError:
             git_diff = ""
+        changed_files: list[str] = []
+        large_diff = False
+        diff_summary = ""
     else:
         git_diff = collect_git_diff_patch(project_dir)
+        changed_files = _changed_files_from_patch(git_diff)
+        large_diff = _review_diff_is_large(git_diff, changed_files)
+        diff_summary = collect_git_diff_summary(project_dir) if large_diff else ""
     return {
         "project_dir": project_dir,
         "intent_block": intent_brief_reference(state),
         "git_diff": git_diff,
+        "large_diff": large_diff,
+        "diff_summary": diff_summary,
+        "changed_files": changed_files,
+        "prior_unmet_block": _prior_unmet_review_block(plan_dir, state) if large_diff else "",
         "finalize_data": read_json(plan_dir / "finalize.json"),
         "settled_decisions": settled_decisions,
         "prior_flags": load_flag_registry(plan_dir).get("flags", []),
@@ -337,6 +442,62 @@ def single_check_review_prompt(
             "\n\nThis is review iteration {iteration}. The template may include prior findings with their current "
             "flag status. Verify whether previously raised concerns were actually fixed before you carry them forward."
         ).format(iteration=iteration)
+    if context["large_diff"]:
+        diff_context = _large_diff_context_block(
+            project_dir=context["project_dir"],
+            diff_summary=context["diff_summary"],
+            changed_files=context["changed_files"],
+            prior_unmet_block=context["prior_unmet_block"],
+        )
+        return textwrap.dedent(
+            f"""
+            You are an independent parallel-review checker. Review one focused dimension of the executed patch against the original issue text.
+
+            Project directory:
+            {context["project_dir"]}
+
+            {context["intent_block"]}
+
+            {diff_context}
+
+            Execution tracking state (`finalize.json`):
+            {json_dump(context["finalize_data"]).strip()}
+
+            {_settled_decisions_review_block(context["settled_decisions"])}
+
+            Advisory mechanical pre-check flags (copy these verbatim into `pre_check_flags` in the output file):
+            {json_dump(pre_check_flags).strip()}
+
+            {prior_flags_block}
+
+            Your output template is at: {output_path}
+            Read this file first. It contains exactly one check slot.
+
+            Check ID: {check_id}
+            Question: {question}
+            Guidance: {guidance}
+
+            Requirements:
+            - Anchor your reasoning to the original issue text and repository-backed inspection of the changed files above, not to any approved plan.
+            - Investigate only this check.
+            - Use your tools to inspect the workspace and verify this check before writing the output JSON.
+            - finalize.json executor notes and claims record what the executor BELIEVED at execution time; they may be STALE (written mid-execution, before later fixes in the same run) or self-serving, and are NOT authoritative evidence. For any check backed by an objective gate — a test command, a conformance scan, a golden-file comparison — you MUST run that gate yourself with your tools and trust the LIVE result over any pass/fail count in finalize.json. If finalize.json says a gate reported N problems but the gate passes when you run it now, the gate PASSES; do not flag it as blocking on the strength of the stale note alone.
+            - Populate the existing `checks[0].findings` array with concrete findings. Each finding should include:
+              - `detail`: a full sentence describing what you checked and what you found
+              - `flagged`: `true` when the finding represents a risk, mismatch, or unresolved question
+              - `status`: use `blocking`, `significant`, `minor`, or `n/a`
+              - `evidence_file` when a file path makes the finding easier to act on
+            - If a concern overlaps with a settled gate decision, do NOT raise it as `blocking`. Mark it `significant` and explain that the severity was downgraded because the gate already settled that concern.
+            - Use `blocking` only for issue-anchored gaps that should force another revise/execute pass.
+            - Use `significant` for meaningful but non-blocking concerns, including settled-decision downgrades.
+            - Use `minor` for informational quality notes that do not justify rework.
+            - Use `flagged: false` with `status: "n/a"` only when the finding is purely informational and poses no downside.
+            - Leave `flags` empty unless you discover an additional concern that does not fit the focused check.
+            - Keep `verified_flag_ids` and `disputed_flag_ids` empty unless you are explicitly confirming or disputing an existing flag from the prior-flag block above.
+            - Populate `checks[0].concerned_task_ids` with the real finalize task IDs affected by any blocking finding. Leave it empty when no specific task is implicated.
+            - Preserve the `pre_check_flags` list verbatim in the output file.{iteration_context}
+            """
+        ).strip()
     return textwrap.dedent(
         f"""
         You are an independent parallel-review checker. Review one focused dimension of the executed patch against the original issue text.
@@ -402,6 +563,50 @@ def parallel_criteria_review_prompt(
     """
     del root
     context = _parallel_review_context(state, plan_dir)
+    if context["large_diff"]:
+        diff_context = _large_diff_context_block(
+            project_dir=context["project_dir"],
+            diff_summary=context["diff_summary"],
+            changed_files=context["changed_files"],
+            prior_unmet_block=context["prior_unmet_block"],
+        )
+        return textwrap.dedent(
+            f"""
+            Review the execution against the original issue text and the finalized execution criteria.
+
+            Project directory:
+            {context["project_dir"]}
+
+            {context["intent_block"]}
+
+            {diff_context}
+
+            Execution tracking state (`finalize.json`):
+            {json_dump(context["finalize_data"]).strip()}
+
+            {_settled_decisions_review_block(context["settled_decisions"])}
+
+            Your output template is at: {output_path}
+            Read the file first and write your final answer into that JSON structure.
+
+            Requirements:
+            - Use only the issue text, repository-backed inspection of the changed files above, `finalize.json`, and the settled decisions shown here.
+            - Do not rely on any approved plan, plan metadata, gate summary, execution summary, or execution audit that are not present here.
+            - Judge against the success criteria from `finalize.json`, but stay anchored to the original issue text when deciding whether the work actually solved the problem.
+            - Verify each criterion with file inspection and focused commands where applicable before setting `pass`.
+            - Every criterion entry is a per-criterion check: populate `pass` and concrete evidence from the files or commands you inspected.
+            - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+              - `must` criteria are hard gates. A `must` criterion that fails means `needs_rework`.
+              - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+              - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+              - If a criterion cannot be verified in this context, mark it `waived` with an explanation.
+            - Set `review_verdict` to `needs_rework` only when at least one `must` criterion fails or actual implementation work is incomplete. Use `approved` when all `must` criteria pass, even if some `should` criteria are flagged.
+            - The settled decisions above are already approved. Verify implementation against them, but do not re-litigate them.
+            - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+            - `rework_items` must be structured and directly actionable. Populate `evidence_file` for every rework item with the file where the issue was observed. Populate `issues` as one-line summaries derived from `rework_items`.
+            - When approved, keep both `issues` and `rework_items` empty arrays.
+            """
+        ).strip()
     return textwrap.dedent(
         f"""
         Review the execution against the original issue text and the finalized execution criteria.
