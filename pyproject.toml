@@ -75,7 +75,7 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["megaplan"]
+packages = ["megaplan", "arnold"]
 exclude = [
     "megaplan/cloud/_reference/**",
     "megaplan/agent/pyproject.toml",
