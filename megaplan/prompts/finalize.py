@@ -117,22 +117,27 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
                   logic is linear and the failure mode is obvious.
             - 3 = multi-file change with non-trivial logic, control flow, or data shape the
                   executor must hold in its head; correctness is not self-evident from the diff.
-            - 4 = cross-cutting change touching several modules or a shared interface/contract,
-                  with architecture implications or non-local effects that need judgement.
-            - 5 = fundamental system change with high regression risk: concurrency, schema or
-                  state-machine changes, security-sensitive paths, or anything where a subtle
-                  error would pass tests but be wrong.
-            Score on the HARDEST aspect of the task, not the average. When genuinely torn
-            between two tiers, choose the HIGHER one and say why in the justification.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
             You are not the model that executes this task, and the score neither saves nor
             costs you anything — so do not lowball to seem efficient and do not highball to
             play safe. Both distort routing: a too-low score sends a hard task to a model
             that fails it; a too-high score burns a premium model on trivial work. Score
             what the task honestly requires, no higher and no lower.
-            FLOOR: any task that touches concurrency, schema or state-machine changes,
-            security- or auth-sensitive paths, or a public/shared interface contract is
-            NEVER below tier 4, regardless of how few lines it changes — a subtle error
-            in these areas passes tests but is wrong.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
           - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
             why this task sits at exactly that tier — cite the concrete files, interfaces, or
             risk that places it there (e.g. "touches the auth middleware contract used by 4

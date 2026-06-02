@@ -12,7 +12,10 @@ description: >
 
 # Babysit
 
-**The job is not to watch — it is to UNBLOCK and PUSH FORWARD on a timer.** A
+**The job is not to watch — it is to UNBLOCK and PUSH FORWARD on a timer, and
+to KEEP PUSHING TO COMPLETION.** When a stall traces to a harness bug, fix it at
+the source in the engine repo (`~/Documents/megaplan` — see §3a) rather than
+working around it tick after tick, then re-drive. A
 passive "I'll check in and report" loop is the failure mode. Each fire must end
 with the run measurably closer to done, or with a concrete blocker fixed.
 
