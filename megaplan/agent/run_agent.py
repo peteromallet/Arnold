@@ -80,6 +80,33 @@ DEFAULT_DEEPSEEK_API_TIMEOUT_SECONDS = 1200.0
 DEFAULT_MAX_SAME_FILE_READS = 5
 DEFAULT_HARD_MAX_SAME_FILE_READS = 10
 DEFAULT_STREAMING_TIMEOUT_HARD_CEILING_SECONDS = 3600.0
+MIN_TOOL_RESULT_CHARS = 100_000
+MAX_TOOL_RESULT_CHARS = 1_000_000
+TOOL_RESULT_CONTEXT_FRACTION = 0.10
+TOOL_RESULT_CHARS_PER_TOKEN = 4
+
+
+def _tool_result_char_limit(context_length: int | None) -> int:
+    try:
+        context = int(context_length or 0)
+    except (TypeError, ValueError):
+        context = 0
+    if context <= 0:
+        return MIN_TOOL_RESULT_CHARS
+    context_scaled = int(context * TOOL_RESULT_CONTEXT_FRACTION * TOOL_RESULT_CHARS_PER_TOKEN)
+    return min(MAX_TOOL_RESULT_CHARS, max(MIN_TOOL_RESULT_CHARS, context_scaled))
+
+
+def _truncate_tool_result_for_context(function_result: str, context_length: int | None) -> str:
+    limit = _tool_result_char_limit(context_length)
+    if len(function_result) <= limit:
+        return function_result
+    original_len = len(function_result)
+    return (
+        function_result[:limit]
+        + f"\n\n[Truncated: tool response was {original_len:,} chars, "
+        f"exceeding the {limit:,} char limit]"
+    )
 
 
 def _env_int_at_least(name: str, default: int, minimum: int) -> int:
@@ -5794,15 +5821,10 @@ class AIAgent:
                     response_preview = function_result[:self.log_prefix_chars] + "..." if len(function_result) > self.log_prefix_chars else function_result
                     print(f"  ✅ Tool {i+1} completed in {tool_duration:.2f}s - {response_preview}")
 
-            # Truncate oversized results
-            MAX_TOOL_RESULT_CHARS = 100_000
-            if len(function_result) > MAX_TOOL_RESULT_CHARS:
-                original_len = len(function_result)
-                function_result = (
-                    function_result[:MAX_TOOL_RESULT_CHARS]
-                    + f"\n\n[Truncated: tool response was {original_len:,} chars, "
-                    f"exceeding the {MAX_TOOL_RESULT_CHARS:,} char limit]"
-                )
+            function_result = _truncate_tool_result_for_context(
+                function_result,
+                getattr(self.context_compressor, "context_length", None),
+            )
 
             # Dedup identical re-issues to avoid context-bloat tool loops.
             function_result = self._maybe_dedup_tool_result(
@@ -6054,18 +6076,12 @@ class AIAgent:
                 logging.debug(f"Tool {function_name} completed in {tool_duration:.2f}s")
                 logging.debug(f"Tool result ({len(function_result)} chars): {function_result}")
 
-            # Guard against tools returning absurdly large content that would
-            # blow up the context window. 100K chars ≈ 25K tokens — generous
-            # enough for any reasonable tool output but prevents catastrophic
-            # context explosions (e.g. accidental base64 image dumps).
-            MAX_TOOL_RESULT_CHARS = 100_000
-            if len(function_result) > MAX_TOOL_RESULT_CHARS:
-                original_len = len(function_result)
-                function_result = (
-                    function_result[:MAX_TOOL_RESULT_CHARS]
-                    + f"\n\n[Truncated: tool response was {original_len:,} chars, "
-                    f"exceeding the {MAX_TOOL_RESULT_CHARS:,} char limit]"
-                )
+            # Guard against tools returning content that would blow up the
+            # context window, while allowing larger reads on large-window models.
+            function_result = _truncate_tool_result_for_context(
+                function_result,
+                getattr(self.context_compressor, "context_length", None),
+            )
 
             # Dedup identical re-issues to avoid context-bloat tool loops.
             function_result = self._maybe_dedup_tool_result(

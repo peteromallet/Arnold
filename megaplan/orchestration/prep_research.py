@@ -924,13 +924,42 @@ def run_research_fanout(
             )
         )
 
+    def _sentinel_payload(area: dict[str, Any], error: str, *, elapsed_time_ms: int = 0) -> dict[str, Any]:
+        return _research_unit_payload(
+            research_sentinel(area, "error", error),
+            elapsed_time_ms=elapsed_time_ms,
+        )
+
     def _parse_result(index: int, item: Any, unit: WorkerUnit) -> dict[str, Any]:
-        if not isinstance(item, WorkerUnitResult) or not isinstance(item.payload, dict):
-            raise CliError("worker_parse_error", "Prep research fan-out returned invalid ordered payload")
         area = unit.extra.get("area")
         if not isinstance(area, dict):
             raise CliError("worker_parse_error", "Prep research fan-out payload missing area metadata")
-        finding = _normalize_research_finding(area, item.payload)
+        if isinstance(item, dict):
+            finding = item.get("finding")
+            metrics = item.get("metrics")
+            if isinstance(finding, dict) and isinstance(metrics, dict):
+                return item
+            if any(key in item for key in ("status", "findings", "error", "files", "code_refs")):
+                try:
+                    finding = _normalize_research_finding(area, item)
+                except CliError as exc:
+                    return _sentinel_payload(area, exc.message)
+                return _research_unit_payload(finding, elapsed_time_ms=0)
+            return _sentinel_payload(
+                area,
+                "Prep research fan-out returned invalid ordered payload",
+            )
+        if not isinstance(item, WorkerUnitResult) or not isinstance(item.payload, dict):
+            elapsed_time_ms = item.duration_ms if isinstance(item, WorkerUnitResult) else 0
+            return _sentinel_payload(
+                area,
+                "Prep research fan-out returned invalid ordered payload",
+                elapsed_time_ms=elapsed_time_ms,
+            )
+        try:
+            finding = _normalize_research_finding(area, item.payload)
+        except CliError as exc:
+            return _sentinel_payload(area, exc.message, elapsed_time_ms=item.duration_ms)
         return _research_unit_payload(finding, elapsed_time_ms=item.duration_ms)
 
     raw = scatter_worker_units(
@@ -959,13 +988,22 @@ def run_research_fanout(
     )
     findings: list[dict[str, Any]] = []
     per_unit: list[dict[str, Any]] = []
-    for item in raw.ordered_results:
+    for index, item in enumerate(raw.ordered_results):
+        area = areas[index] if index < len(areas) else {"id": f"unknown-{index}"}
         if not isinstance(item, dict):
-            raise CliError("worker_parse_error", "Prep research fan-out returned invalid ordered payload")
+            item = _sentinel_payload(
+                area,
+                "Prep research fan-out returned invalid ordered payload",
+            )
         finding = item.get("finding")
         metrics = item.get("metrics")
         if not isinstance(finding, dict) or not isinstance(metrics, dict):
-            raise CliError("worker_parse_error", "Prep research fan-out payload missing finding metrics")
+            item = _sentinel_payload(
+                area,
+                "Prep research fan-out payload missing finding metrics",
+            )
+            finding = item["finding"]
+            metrics = item["metrics"]
         findings.append(finding)
         per_unit.append(metrics)
     return GenericScatterResult(

@@ -802,6 +802,64 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
     assert result.side_results[2]["status"] == "timed_out"
 
 
+def test_run_research_fanout_degrades_invalid_ordered_payload(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    areas = [
+        {"id": "a", "area": "A", "brief": "inspect a"},
+        {"id": "b", "area": "B", "brief": "inspect b"},
+    ]
+
+    def fake_scatter_worker_units(**kwargs: Any) -> prep_research.GenericScatterResult:
+        units = kwargs["units"]
+        ordered_results = [
+            kwargs["parse_result"](
+                0,
+                WorkerUnitResult(
+                    payload="not a dict",
+                    raw_output="{}",
+                    duration_ms=12,
+                    cost_usd=0.0,
+                    output_path=str(units[0].output_path),
+                    read_only=True,
+                    extra=dict(units[0].extra),
+                ),
+                units[0],
+            ),
+            {"unexpected": "shape"},
+        ]
+        return prep_research.GenericScatterResult(
+            ordered_results=ordered_results,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    with patch.object(prep_research, "scatter_worker_units", side_effect=fake_scatter_worker_units):
+        result = prep_research.run_research_fanout(
+            state,
+            plan_dir,
+            root=tmp_path,
+            areas=areas,
+            timeout_seconds=1.0,
+            max_concurrent=2,
+        )
+
+    assert [item["area"] for item in result.ordered_results] == ["a", "b"]
+    assert result.ordered_results[0]["status"] == "error"
+    assert result.ordered_results[0]["error"] == "Prep research fan-out returned invalid ordered payload"
+    assert result.ordered_results[1]["status"] == "error"
+    assert result.ordered_results[1]["error"] == "Prep research fan-out payload missing finding metrics"
+    assert [item["area"] for item in result.side_results] == ["a", "b"]
+    assert result.side_results[0]["status"] == "error"
+    assert result.side_results[1]["status"] == "error"
+
+
 def test_run_prep_orchestration_caps_fanout_writes_dossier_and_returns_worker(
     tmp_path: Path,
 ) -> None:
