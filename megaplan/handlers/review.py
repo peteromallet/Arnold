@@ -223,6 +223,112 @@ def _merge_review_verdicts(
     return verdict_count, total_tasks, check_count, total_checks, missing_evidence
 
 
+_FAILED_CHECK_STATUSES = {"fail", "failed", "failing", "red", "newly_failing", "unsatisfied"}
+
+
+def _failed_check_status(value: Any) -> bool:
+    if value is False:
+        return True
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized in _FAILED_CHECK_STATUSES
+
+
+def _grounding_check(value: dict[str, Any]) -> dict[str, Any]:
+    raw = value.get("deterministic_check")
+    if isinstance(raw, dict):
+        return raw
+    return value
+
+
+def _has_grounded_deterministic_failure(value: dict[str, Any]) -> bool:
+    check = _grounding_check(value)
+    if check.get("deterministic") is False:
+        return False
+    command = check.get("command") or check.get("check") or check.get("name")
+    if not isinstance(command, str) or not command.strip():
+        return False
+    baseline_failed = (
+        check.get("failed_on_baseline") is True
+        or _failed_check_status(check.get("baseline_status"))
+        or _failed_check_status(check.get("baseline_result"))
+        or _failed_check_status(check.get("pre_status"))
+        or _failed_check_status(check.get("pre_execute_status"))
+    )
+    post_failed = (
+        check.get("failed_after_execute") is True
+        or _failed_check_status(check.get("post_status"))
+        or _failed_check_status(check.get("post_result"))
+        or _failed_check_status(check.get("current_status"))
+        or _failed_check_status(check.get("post_execute_status"))
+    )
+    return baseline_failed and post_failed
+
+
+def _normalize_review_blockers(payload: dict[str, Any], issues: list[str]) -> None:
+    """Demote ungrounded reviewer concerns before state-machine routing."""
+    rework_items = payload.get("rework_items")
+    if not isinstance(rework_items, list):
+        return
+    disputed_ids = {
+        flag_id
+        for flag_id in payload.get("disputed_flag_ids", []) or []
+        if isinstance(flag_id, str) and flag_id
+    }
+    blocking: list[dict[str, Any]] = []
+    advisory: list[dict[str, Any]] = []
+    for item in rework_items:
+        if not isinstance(item, dict):
+            continue
+        flag_id = item.get("flag_id")
+        if isinstance(flag_id, str) and flag_id in disputed_ids:
+            advisory.append(item)
+            continue
+        if _has_grounded_deterministic_failure(item):
+            blocking.append(item)
+        else:
+            advisory.append(item)
+
+    failed_criteria = [
+        criterion
+        for criterion in payload.get("criteria", []) or []
+        if isinstance(criterion, dict)
+        and criterion.get("priority") == "must"
+        and criterion.get("pass") in (False, "fail")
+    ]
+    grounded_failed_criteria = [
+        criterion
+        for criterion in failed_criteria
+        if _has_grounded_deterministic_failure(criterion)
+    ]
+
+    if advisory:
+        payload["advisory_rework_items"] = advisory
+    if failed_criteria and len(grounded_failed_criteria) < len(failed_criteria):
+        payload["advisory_failed_criteria"] = [
+            criterion
+            for criterion in failed_criteria
+            if criterion not in grounded_failed_criteria
+        ]
+    payload["rework_items"] = blocking
+    payload["blocking_rework_items"] = blocking
+    if grounded_failed_criteria:
+        payload["blocking_failed_criteria"] = grounded_failed_criteria
+
+    if (
+        payload.get("review_verdict") == "needs_rework"
+        and not blocking
+        and not grounded_failed_criteria
+    ):
+        payload["review_verdict"] = "approved"
+        if advisory or failed_criteria:
+            issues.append(
+                "Advisory: review requested rework without a deterministic check "
+                "that failed on both baseline and post-execute; not blocking."
+            )
+
+
 def _maker_requested_stop(plan_dir: Path) -> dict[str, str] | None:
     finalize_path = plan_dir / "finalize.json"
     if not finalize_path.exists():
@@ -541,9 +647,16 @@ def _finalize_review_outcome(
     review_projection = deepcopy(finalize_data)
 
     review_verdict = worker.payload.get("review_verdict")
+    invalid_review_verdict = False
     if review_verdict not in {"approved", "needs_rework"}:
         issues.append("Invalid review_verdict; expected 'approved' or 'needs_rework'.")
         review_verdict = "needs_rework"
+        invalid_review_verdict = True
+        worker.payload["review_verdict"] = review_verdict
+
+    if not invalid_review_verdict:
+        _normalize_review_blockers(worker.payload, issues)
+        review_verdict = worker.payload.get("review_verdict")
 
     verdict_count, total_tasks, check_count, total_checks, missing_evidence = _merge_review_verdicts(
         worker.payload, review_projection, issues,

@@ -276,6 +276,185 @@ def test_auto_waits_for_healthy_active_step_instead_of_rerunning_phase(tmp_path:
     )
 
 
+def _inprocess_completed_execute_status(plan: str) -> dict:
+    response = _phase_status(plan, state="executed", next_step="review")
+    response["active_step"] = {
+        "phase": "execute",
+        "agent": "hermes",
+        "mode": "persistent",
+        "worker_pid": os.getpid(),
+        "started_at": "2026-05-31T10:00:00Z",
+        "age_seconds": 30,
+        "stale": False,
+        "health": "healthy",
+        "worker_pid_alive": True,
+        "recommended_action": "wait",
+        "recommended_action_reason": (
+            "The active step is within its expected runtime window."
+        ),
+    }
+    return response
+
+
+def test_auto_clears_inprocess_active_step_for_already_completed_phase(
+    tmp_path: Path,
+) -> None:
+    plan = "inprocess-stuck-execute"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    execute_output = plan_dir / "execute_output.json"
+    good_payload = {"result": "success", "batches": [{"id": "b1", "status": "done"}]}
+    execute_output.write_text(json.dumps(good_payload), encoding="utf-8")
+
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "executed"
+    state_data["config"] = {"robustness": "full"}
+    state_data["active_step"] = {
+        "phase": "execute",
+        "agent": "hermes",
+        "mode": "persistent",
+        "worker_pid": os.getpid(),
+        "started_at": "2026-05-31T10:00:00Z",
+    }
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    poll_count = {"n": 0}
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        poll_count["n"] += 1
+        if poll_count["n"] == 1:
+            return _inprocess_completed_execute_status(plan_name)
+        return _done_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            stall_threshold=10,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done", (
+        f"expected done after in-process orphan cleanup, got {outcome.status}: "
+        f"{outcome.reason}"
+    )
+    assert run_calls, "driver should have dispatched the successor phase"
+    assert run_calls[0][0] == "review", (
+        f"driver must advance to next_step=review, not re-run execute; "
+        f"first dispatch was {run_calls[0]}"
+    )
+    assert not any(call[0] == "execute" for call in run_calls), (
+        f"the completed execute phase must not be re-dispatched; calls={run_calls}"
+    )
+    assert outcome.iterations <= 3, (
+        f"completed-orphan recovery should not consume the full iteration "
+        f"budget; used {outcome.iterations}"
+    )
+    assert any(
+        "already completed" in event.get("msg", "") for event in outcome.events
+    ), (
+        "driver should have logged the in-process completed-orphan clear; "
+        f"events: {[event.get('msg') for event in outcome.events]}"
+    )
+
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded.get("active_step") is None
+    assert execute_output.exists(), (
+        "completed phase's valid output must not be quarantined"
+    )
+    assert json.loads(execute_output.read_text(encoding="utf-8")) == good_payload
+    assert not (plan_dir / "execute_output.json.orphaned").exists()
+
+
+def test_auto_preserves_genuinely_running_inprocess_active_step(
+    tmp_path: Path,
+) -> None:
+    plan = "inprocess-running-execute"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "finalized"
+    state_data["config"] = {"robustness": "full"}
+    state_data["active_step"] = {
+        "phase": "execute",
+        "agent": "hermes",
+        "mode": "persistent",
+        "worker_pid": os.getpid(),
+        "started_at": "2026-05-31T10:00:00Z",
+    }
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    poll_count = {"n": 0}
+    run_calls: list[list[str]] = []
+
+    def running_execute_status(plan_name: str) -> dict:
+        response = _phase_status(plan_name, state="finalized", next_step="execute")
+        response["active_step"] = {
+            "phase": "execute",
+            "agent": "hermes",
+            "mode": "persistent",
+            "worker_pid": os.getpid(),
+            "started_at": "2026-05-31T10:00:00Z",
+            "stale": False,
+            "health": "healthy",
+            "worker_pid_alive": True,
+            "recommended_action": "wait",
+            "recommended_action_reason": (
+                "The active step is within its expected runtime window."
+            ),
+        }
+        return response
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        poll_count["n"] += 1
+        if poll_count["n"] <= 3:
+            return running_execute_status(plan_name)
+        return _done_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=3,
+            stall_threshold=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done", (
+        f"expected done, got {outcome.status}: {outcome.reason}"
+    )
+    assert run_calls == [], (
+        f"driver must not dispatch a genuinely-running phase; calls={run_calls}"
+    )
+    assert not any(
+        "already completed" in event.get("msg", "") for event in outcome.events
+    ), (
+        "completed-orphan guard must not fire when phase == next_step; "
+        f"events: {[event.get('msg') for event in outcome.events]}"
+    )
+    assert any(
+        "still running" in event.get("msg", "") for event in outcome.events
+    ), "driver should have waited on the genuinely-running phase"
+
+
 def _orphaned_critique_status(plan: str) -> dict:
     """Status with an orphaned (dead-worker) active_step on critique.
 

@@ -281,6 +281,23 @@ def workflow_transition(state: PlanState, step: str) -> Transition | None:
     return None
 
 
+def phase_produced_state(state: PlanState, phase: str, produced_state: str) -> bool:
+    """Return True iff running ``phase`` produces ``produced_state``."""
+    if not phase or not produced_state:
+        return False
+    workflow = _workflow_for_robustness(
+        _workflow_robustness_from_state(state),
+        creative=is_creative_mode(state),
+        with_prep=_with_prep_from_state(state),
+        with_feedback=_with_feedback_from_state(state),
+    )
+    return any(
+        transition.next_step == phase and transition.next_state == produced_state
+        for transitions in workflow.values()
+        for transition in transitions
+    )
+
+
 def workflow_next(state: PlanState) -> list[str]:
     current = state.get("current_state")
     if not isinstance(current, str):
