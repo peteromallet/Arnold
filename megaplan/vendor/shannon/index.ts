@@ -1134,8 +1134,20 @@ export function classifyClaudeStartupBlocker(pane: string): StartupBlocker | und
 
 export function paneLooksReadyForUserMessage(pane: string) {
   const lines = pane.split(/\r?\n/).map((line) => line.trimEnd());
-  const recent = lines.slice(-8);
-  return recent.some((line) => /(^|\s)[❯>]\s*$/.test(line));
+  const recent = lines.slice(-12);
+  return recent.some((line) => {
+    // Legacy: a bare prompt marker at end of line ("❯" / "│ ❯").
+    if (/(^|\s)[❯>]\s*$/.test(line)) return true;
+    // Composer input line with placeholder/typed text. Claude Code >=2.1.x
+    // renders the empty composer as `❯ Try "how do I log an error?"`, so the
+    // marker is no longer at end-of-line and the legacy regex misses a visibly
+    // ready prompt (Shannon then times out its readiness probe). Match the
+    // marker at the START of the line (after any box-drawing/whitespace prefix)
+    // followed by text — robust to the placeholder without matching a "❯" that
+    // appears mid-output.
+    const stripped = line.replace(/^[│|\s]+/, "");
+    return /^[❯>]\s+\S/.test(stripped);
+  });
 }
 
 async function waitUntilReadyToSend(tmuxSession: string) {
