@@ -234,6 +234,7 @@ class LastGateRecord(TypedDict, total=False):
 class PlanState(TypedDict):
     name: str
     idea: str
+    idea_snapshot_path: NotRequired[str]
     current_state: PlanCurrentState
     iteration: int
     created_at: str
