@@ -2143,9 +2143,30 @@ def test_execute_all_done_review_rework_schedules_affected_tasks_without_noop_ag
         "review_verdict": "needs_rework",
         "issues": ["T1, T3, and T5 need concrete follow-up."],
         "rework_items": [
-            {"task_id": "T1", "issue": "Fix T1.", "expected": "T1 fixed.", "actual": "not fixed", "source": "review_task"},
-            {"task_id": "T3", "issue": "Fix T3.", "expected": "T3 fixed.", "actual": "not fixed", "source": "review_task"},
-            {"task_id": "T5", "issue": "Fix T5.", "expected": "T5 fixed.", "actual": "not fixed", "source": "review_task"},
+            {
+                "task_id": "T1",
+                "issue": "Fix T1.",
+                "expected": "T1 fixed.",
+                "actual": "not fixed",
+                "evidence_file": "task1_review.py",
+                "source": "review_task",
+            },
+            {
+                "task_id": "T3",
+                "issue": "Fix T3.",
+                "expected": "T3 fixed.",
+                "actual": "not fixed",
+                "evidence_file": "",
+                "source": "review_task",
+            },
+            {
+                "task_id": "T5",
+                "issue": "Fix T5.",
+                "expected": "T5 fixed.",
+                "actual": "not fixed",
+                "evidence_file": "task5_review.py",
+                "source": "review_task",
+            },
         ],
         "task_verdicts": [],
         "sense_check_verdicts": [],
@@ -2169,6 +2190,16 @@ def test_execute_all_done_review_rework_schedules_affected_tasks_without_noop_ag
         batch_ids = next(expected_batches)
         for task_id in batch_ids:
             assert task_id in prompt_override
+        assert "Review rework targeting:" in prompt_override
+        assert "Failing rework_items for this batch:" in prompt_override
+        if "T1" in batch_ids:
+            assert "task1_review.py" in prompt_override
+            assert "Fix T1." in prompt_override
+            # T3 lacks evidence_file, so the fallback milestone changed-file set is exposed.
+            assert "task3.py" in prompt_override
+        if "T5" in batch_ids:
+            assert "task5_review.py" in prompt_override
+            assert "Fix T5." in prompt_override
         seen_batches.append(batch_ids)
         payload = {
             "output": f"Reworked {', '.join(batch_ids)}.",
@@ -4080,6 +4111,8 @@ def test_resolve_effective_tier_complexity_drops_and_floors() -> None:
     assert _resolve_effective_tier_complexity(4, 5) == 3
     # A custom floor is honoured.
     assert _resolve_effective_tier_complexity(5, 4, floor=1) == 1
+    # A per-task escalation pin is a floor too; tier-drop cannot undercut it.
+    assert _resolve_effective_tier_complexity(4, 2, tier_override_floor=4) == 4
 
 
 def test_one_batch_tier_drop_routes_lower_tier(

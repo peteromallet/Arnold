@@ -60,6 +60,7 @@ def test_success_criteria_pulled_from_plan_meta(tmp_path: Path) -> None:
 
     payload = _review_template_payload(plan_dir)
 
+    assert payload["review_completion_status"] == ""
     assert payload["criteria"] == [
         {
             "name": "authoritative criterion",
@@ -68,4 +69,3 @@ def test_success_criteria_pulled_from_plan_meta(tmp_path: Path) -> None:
             "evidence": "",
         }
     ]
-
