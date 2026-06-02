@@ -12,6 +12,9 @@ from megaplan._pipeline.types import StateDelta, StateDeltaConflict, apply_delta
 from megaplan.run_outcome import RunOutcome
 
 
+_MISSING_BINDING = object()
+
+
 @dataclass(frozen=True)
 class ControlTarget:
     """A target the current run state can transition toward or recover through."""
@@ -300,11 +303,44 @@ def _resolve_binding_and_state(
 
 def read_valid_targets(
     run_state: RunStateView | Mapping[str, Any],
-    binding: ControlBinding | str = "megaplan",
+    binding: ControlBinding | str | object = _MISSING_BINDING,
     *,
     recovery: bool = False,
+    plugin_id: str | None = None,
 ) -> ControlProjection:
     """Read binding-projected targets for ``run_state``."""
+
+    if binding is _MISSING_BINDING and plugin_id is not None:
+        binding = plugin_id
+    if binding is _MISSING_BINDING:
+        raise ValueError("read_valid_targets requires an explicit binding or plugin identity")
+    if isinstance(binding, str) and binding in {"megaplan", "planning"}:
+        from arnold.runtime.operations import OperationKind, OperationRequest
+        from megaplan._pipeline.registry import (
+            control_status_result_from_operation_result,
+            dispatch_operation_for,
+        )
+
+        result = dispatch_operation_for(
+            binding,
+            OperationRequest(
+                kind=OperationKind.STATUS_PROJECTION,
+                payload={
+                    "state": dict(run_state.raw_state)
+                    if isinstance(run_state, RunStateView)
+                    else dict(run_state),
+                    "state_view": run_state if isinstance(run_state, RunStateView) else None,
+                    "mode": "recover_targets" if recovery else "valid_targets",
+                },
+            ),
+        )
+        payload = control_status_result_from_operation_result(
+            result,
+            require_recover_targets=recovery,
+            require_valid_targets=not recovery,
+        )
+        targets = payload["recover_targets"] if recovery else payload["valid_targets"]
+        return _projection_from_targets(tuple(targets), recovery=recovery)
 
     run_state, binding = _resolve_binding_and_state(run_state, binding)
     targets = binding.recover_targets(run_state) if recovery else binding.valid_targets(run_state)

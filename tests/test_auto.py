@@ -808,25 +808,120 @@ def test_get_review_marker_returns_none_when_review_missing(
 
 
 def test_run_planning_phase_dispatches_through_registry(tmp_path: Path) -> None:
-    class FakePipeline:
-        def run_phase(self, phase, **kwargs):
-            assert phase == "execute"
-            assert kwargs["plan"] == "demo"
-            assert kwargs["cwd"] == tmp_path
-            assert kwargs["argv"] == ["execute", "--plan", "demo"]
-            return 0, "{}", ""
+    from arnold.runtime.operations import OperationResult
 
-    class FakeRegistry:
-        def get(self, name):
-            assert name == "planning"
-            return FakePipeline()
+    def fake_dispatch(plugin_id, request):  # noqa: ANN001
+        assert plugin_id == "megaplan"
+        assert request.kind.value == "run_phase"
+        assert request.payload["phase"] == "execute"
+        assert request.payload["plan"] == "demo"
+        assert request.payload["cwd"] == tmp_path
+        assert request.payload["argv"] == ["execute", "--plan", "demo"]
+        return OperationResult(
+            ok=True,
+            payload={"exit_code": 0, "stdout": "{}", "stderr": ""},
+        )
 
-    with patch("megaplan._pipeline.registry.PipelineRegistry", return_value=FakeRegistry()):
+    with patch("megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch):
         code, out, err = auto._run_planning_phase(
             ["execute", "--plan", "demo"], cwd=tmp_path, timeout=5
         )
 
     assert (code, out, err) == (0, "{}", "")
+
+
+def test_run_planning_phase_reports_unsupported_operation_nonzero() -> None:
+    from arnold.runtime.operations import OperationResult
+
+    with patch(
+        "megaplan._pipeline.registry.dispatch_operation_for",
+        lambda plugin_id, request: OperationResult(
+            ok=False,
+            payload={},
+            errors=("unsupported", "run_phase"),
+        ),
+    ):
+        code, out, err = auto._run_planning_phase(["execute", "--plan", "demo"])
+
+    assert code == 1
+    assert out == ""
+    assert err == "unsupported, run_phase"
+
+
+def test_run_planning_phase_reports_incomplete_operation_result_nonzero() -> None:
+    from arnold.runtime.operations import OperationResult
+
+    with patch(
+        "megaplan._pipeline.registry.dispatch_operation_for",
+        lambda plugin_id, request: OperationResult(ok=True, payload={"exit_code": 0}),
+    ):
+        code, out, err = auto._run_planning_phase(["execute", "--plan", "demo"])
+
+    assert code == 1
+    assert out == ""
+    assert "payload.stdout" in err
+
+
+def test_run_override_command_dispatches_apply_through_registry(tmp_path: Path) -> None:
+    from arnold.runtime.operations import OperationResult
+
+    _make_plan_dir(tmp_path, "demo")
+    captured: dict[str, object] = {}
+
+    def fake_dispatch(plugin_id, request):  # noqa: ANN001
+        captured["plugin_id"] = plugin_id
+        captured["kind"] = request.kind.value
+        captured["payload"] = request.payload
+        return OperationResult(
+            ok=True,
+            payload={
+                "response": {
+                    "success": True,
+                    "step": "override",
+                    "summary": "Plan aborted.",
+                    "state": "aborted",
+                }
+            },
+        )
+
+    with patch("megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch), \
+         patch("megaplan.handlers.override._override_abort", side_effect=AssertionError), \
+         patch("megaplan.handlers.override._override_force_proceed", side_effect=AssertionError), \
+         patch("megaplan.handlers.override.handle_override", side_effect=AssertionError):
+        code, out, err = auto._run_override_command(
+            ["override", "abort", "--plan", "demo", "--reason", "stop"],
+            cwd=tmp_path,
+        )
+
+    assert code == 0
+    assert err == ""
+    assert json.loads(out)["state"] == "aborted"
+    assert captured["plugin_id"] == "megaplan"
+    assert captured["kind"] == "override_apply"
+    payload = captured["payload"]
+    assert payload["action"] == "abort"
+    assert payload["plan"] == "demo"
+
+
+def test_run_override_command_dispatches_list_through_registry(tmp_path: Path) -> None:
+    from arnold.runtime.operations import OperationResult
+
+    _make_plan_dir(tmp_path, "demo")
+
+    def fake_dispatch(plugin_id, request):  # noqa: ANN001
+        assert plugin_id == "megaplan"
+        assert request.kind.value == "override_list"
+        return OperationResult(ok=True, payload={"catalog": {"abort": {"kind": "termination"}}})
+
+    with patch("megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch):
+        code, out, err = auto._run_override_command(
+            ["override", "list", "--plan", "demo"],
+            cwd=tmp_path,
+        )
+
+    assert code == 0
+    assert err == ""
+    assert json.loads(out)["catalog"]["abort"]["kind"] == "termination"
 
 
 def test_phase_command_splits_multi_token_next_step() -> None:

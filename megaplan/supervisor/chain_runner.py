@@ -103,6 +103,9 @@ def run_chain(
 ) -> dict[str, Any]:
     """Execute a chain spec serially in listed order through the supervisor.
 
+    The default binding is the canonical ``megaplan`` plugin identity; chain
+    callers inject a concrete binding only for non-megaplan run types.
+
     Returns the CLI-facing dict shape used by the old chain path, with
     ``status``, ``milestone_results``, and ``events`` available at top level.
     """

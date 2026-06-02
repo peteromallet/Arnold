@@ -30,7 +30,7 @@ def test_arnold_module_verb_dispatches_run(monkeypatch) -> None:
     assert calls == [["run", "megaplan", "--plan-dir", "/tmp/demo"]]
 
 
-def test_arnold_auto_defaults_to_planning(monkeypatch) -> None:
+def test_arnold_auto_defaults_to_megaplan(monkeypatch) -> None:
     calls: list[list[str]] = []
 
     monkeypatch.setattr(
@@ -54,6 +54,13 @@ def test_arnold_auto_accepts_legacy_planning_alias(monkeypatch) -> None:
 
     assert arnold.main(["auto", "planning", "--plan", "demo"]) == 0
     assert calls == [["auto", "--plan", "demo"]]
+
+
+def test_arnold_usage_uses_canonical_megaplan(capsys) -> None:
+    assert arnold.main([]) == 2
+    out = capsys.readouterr().out
+    assert "arnold auto [megaplan]" in out
+    assert "[planning]" not in out
 
 
 def test_arnold_console_module_entry_lists_pipelines() -> None:

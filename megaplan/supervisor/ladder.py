@@ -100,6 +100,9 @@ def apply_ladder(
 ) -> LadderDecision:
     """Apply one autonomy-ladder step and persist supervisor state.
 
+    The default binding is the canonical ``megaplan`` plugin identity; callers
+    pass a concrete ``ControlBinding`` for non-megaplan run types.
+
     The ladder walks this order:
 
     * successful outcomes advance the node;

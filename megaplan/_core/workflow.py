@@ -12,6 +12,7 @@ parallel sources, no parity-drift risk.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -392,6 +393,85 @@ def _resume_phase_args(phase: str, cursor: dict[str, Any], plan: str) -> list[st
     return args
 
 
+def _run_id_from_state(state: dict[str, Any], plan: str) -> str:
+    run_id = state.get("name")
+    if isinstance(run_id, str) and run_id:
+        return run_id
+    return plan
+
+
+def _current_manifest_hash_for(pipeline_name: str) -> str | None:
+    from megaplan._pipeline.registry import pipeline_metadata
+
+    try:
+        value = pipeline_metadata(pipeline_name).get("manifest_hash")
+    except RuntimeError:
+        return None
+    return value if isinstance(value, str) and value else None
+
+
+def _persist_resume_runtime_envelope(
+    repo: Any,
+    *,
+    plan: str,
+    phase: str,
+    cursor: dict[str, Any],
+    previous_state: dict[str, Any],
+    raw_pipeline_name: str,
+    pipeline_name: str,
+    stored_manifest_hash: str | None,
+    current_manifest_hash: str | None,
+) -> None:
+    from arnold.runtime.envelope import RuntimeEnvelope
+    from arnold.runtime.resume import (
+        TRUST_QUARANTINED_MANIFEST_MISMATCH,
+        TRUST_TRUSTED,
+        ResumeCursorRef,
+    )
+
+    state = repo.load_state()
+    manifest_hash = current_manifest_hash or stored_manifest_hash
+    if not isinstance(manifest_hash, str) or not manifest_hash:
+        manifest_hash = "legacy:manifest-unavailable"
+    trust_state = (
+        TRUST_QUARANTINED_MANIFEST_MISMATCH
+        if stored_manifest_hash
+        and current_manifest_hash
+        and stored_manifest_hash != current_manifest_hash
+        else TRUST_TRUSTED
+    )
+    envelope = RuntimeEnvelope(
+        plugin_id=pipeline_name,
+        manifest_hash=manifest_hash,
+        plugin_state_schema_version=0,
+        run_id=_run_id_from_state(previous_state, plan),
+        artifact_root=str(repo.plan_dir),
+        resume_cursor=ResumeCursorRef(
+            plugin_id=pipeline_name,
+            run_id=_run_id_from_state(previous_state, plan),
+            cursor=dict(cursor),
+        ),
+        trust_state=trust_state,
+    )
+    state["_pipeline_name"] = pipeline_name
+    state["_pipeline_manifest_hash"] = manifest_hash
+    state["_runtime_identity_schema_version"] = RuntimeEnvelope.schema_version
+    state["runtime_envelope"] = json.loads(envelope.to_json())
+    if raw_pipeline_name != pipeline_name:
+        meta = dict(state.get("meta") or {})
+        migrations = list(meta.get("pipeline_alias_migrations") or [])
+        migration = {
+            "from": raw_pipeline_name,
+            "to": pipeline_name,
+            "phase": phase,
+        }
+        if migration not in migrations:
+            migrations.append(migration)
+        meta["pipeline_alias_migrations"] = migrations
+        state["meta"] = meta
+    repo.save_state(state)
+
+
 # `_RESUME_ACTIVE_STATES` is now derived on demand from the realized graph
 # via `topology.predecessors(phase, policy='resume')` — see M3 Step 7.
 
@@ -425,23 +505,52 @@ def resume_plan(
         if isinstance(cursor.get("pipeline"), str) and cursor.get("pipeline")
         else previous_state.get("_pipeline_name")
     )
+    has_runtime_envelope = isinstance(previous_state.get("runtime_envelope"), dict)
     if not isinstance(raw_pipeline_name, str) or not raw_pipeline_name:
-        raw_pipeline_name = "megaplan"
-    from megaplan._pipeline.registry import canonical_pipeline_name, pipeline_metadata
+        raw_pipeline_name = (
+            str(previous_state["runtime_envelope"].get("plugin_id") or "")
+            if has_runtime_envelope
+            else "megaplan"
+        )
+    from megaplan._pipeline.registry import (
+        canonical_pipeline_name,
+        dispatch_operation_for,
+        resume_result_from_operation_result,
+    )
 
     pipeline_name = canonical_pipeline_name(raw_pipeline_name)
+    if not has_runtime_envelope and pipeline_name != "megaplan":
+        raise CliError(
+            "pipeline_identity_unavailable",
+            f"Plan '{plan}' is missing runtime envelope for plugin '{pipeline_name}'",
+            extra={"pipeline": pipeline_name},
+        )
     stored_manifest_hash = cursor.get("pipeline_manifest_hash")
     if not isinstance(stored_manifest_hash, str) or not stored_manifest_hash:
         stored_manifest_hash = previous_state.get("_pipeline_manifest_hash")
-    if isinstance(stored_manifest_hash, str) and stored_manifest_hash:
-        current_manifest_hash = pipeline_metadata(pipeline_name).get("manifest_hash")
-        if not isinstance(current_manifest_hash, str) or not current_manifest_hash:
+    if not isinstance(stored_manifest_hash, str) or not stored_manifest_hash:
+        stored_manifest_hash = None
+    current_manifest_hash = _current_manifest_hash_for(pipeline_name)
+    if stored_manifest_hash:
+        if not current_manifest_hash:
             raise CliError(
                 "pipeline_manifest_unavailable",
                 f"Cannot verify pipeline identity for '{pipeline_name}' during resume",
                 extra={"pipeline": pipeline_name, "stored_manifest_hash": stored_manifest_hash},
             )
         if current_manifest_hash != stored_manifest_hash:
+            if pipeline_name == "megaplan":
+                _persist_resume_runtime_envelope(
+                    repo,
+                    plan=plan,
+                    phase=phase,
+                    cursor=cursor,
+                    previous_state=previous_state,
+                    raw_pipeline_name=raw_pipeline_name,
+                    pipeline_name=pipeline_name,
+                    stored_manifest_hash=stored_manifest_hash,
+                    current_manifest_hash=current_manifest_hash,
+                )
             raise CliError(
                 "pipeline_manifest_mismatch",
                 f"Refusing to resume '{plan}' with changed pipeline manifest for '{pipeline_name}'",
@@ -457,39 +566,60 @@ def resume_plan(
         state = dict(previous_state)
         state["current_state"] = active_state
         repo.save_state(state)
-    if raw_pipeline_name != pipeline_name:
-        state = repo.load_state()
-        meta = dict(state.get("meta") or {})
-        migrations = list(meta.get("pipeline_alias_migrations") or [])
-        migration = {
-            "from": raw_pipeline_name,
-            "to": pipeline_name,
-            "phase": phase,
-        }
-        if migration not in migrations:
-            migrations.append(migration)
-        meta["pipeline_alias_migrations"] = migrations
-        state["meta"] = meta
-        repo.save_state(state)
+    if pipeline_name == "megaplan":
+        _persist_resume_runtime_envelope(
+            repo,
+            plan=plan,
+            phase=phase,
+            cursor=cursor,
+            previous_state=previous_state,
+            raw_pipeline_name=raw_pipeline_name,
+            pipeline_name=pipeline_name,
+            stored_manifest_hash=stored_manifest_hash,
+            current_manifest_hash=current_manifest_hash,
+        )
+    rollback_state = repo.load_state()
     try:
-        if runner is None:
-            from megaplan._pipeline.registry import PipelineRegistry
+        from arnold.runtime.operations import OperationKind, OperationRequest
 
-            pipeline = PipelineRegistry().get(pipeline_name)
-            if pipeline is None:
-                code, stdout, stderr = 1, "", "megaplan pipeline unavailable"
-            else:
-                code, stdout, stderr = pipeline.run_phase(
-                    phase,
-                    plan=plan,
-                    cwd=root,
-                    plan_dir=plan_dir,
-                    argv=args,
-                )
-        else:
-            code, stdout, stderr = runner(args, cwd=root)
+        operation_runner = None
+        if runner is not None:
+            def operation_runner(
+                operation_phase: str,
+                *,
+                plan: str,
+                cwd: Path | None = None,
+                plan_dir: Path | None = None,
+                argv: list[str] | None = None,
+            ) -> tuple[int, str, str]:
+                del operation_phase, plan, plan_dir
+                return runner(list(argv or args), cwd=cwd)
+
+        operation_result = dispatch_operation_for(
+            pipeline_name,
+            OperationRequest(
+                kind=OperationKind.RESUME,
+                payload={
+                    "cursor": dict(cursor),
+                    "plan": plan,
+                    "root": root,
+                    "plan_dir": plan_dir,
+                    "runner": operation_runner,
+                },
+            ),
+        )
+        bridged = resume_result_from_operation_result(
+            operation_result,
+            plan=plan,
+            phase=phase,
+            resume_cursor=cursor,
+            state=repo.load_state().get("current_state"),
+        )
+        code = int(bridged.get("exit_code", 0 if bridged.get("success") else 1))
+        stdout = str(bridged.get("stdout", ""))
+        stderr = str(bridged.get("stderr", ""))
     except RevisionConflict as error:
-        repo.save_state(previous_state)
+        repo.save_state(rollback_state)
         state = repo.load_state()
         epic_id = state.get("epic_id") or (state.get("meta") or {}).get("epic_id")
         details = {"phase": phase, "message": str(error), "resume_cursor": cursor}
@@ -509,7 +639,7 @@ def resume_plan(
             extra=details,
         ) from error
     if code != 0:
-        repo.save_state(previous_state)
+        repo.save_state(rollback_state)
         return {
             "success": False,
             "step": "resume",

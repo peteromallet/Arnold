@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -466,6 +467,196 @@ def test_creative_run_seeds_runtime_state_before_step_context(
     assert state["config"]["primary_criterion"] == "most surprising exact image"
     assert state["config"]["project_dir"] == str(Path.cwd())
     assert captured["inputs"]["_pipeline"] == "creative"
+
+
+def test_run_persists_runtime_identity_for_new_non_resume_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.runtime.envelope import RuntimeEnvelope
+    from megaplan._pipeline import executor as executor_module
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline import registry as registry_module
+    from megaplan._pipeline import run_cli as run_cli_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    plan_dir = tmp_path / "identity-run"
+
+    monkeypatch.setattr(preflight_module, "preflight_or_raise", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        executor_module,
+        "run_pipeline",
+        lambda pipeline, ctx, *, artifact_root: {
+            "final_stage": getattr(pipeline, "entry", "prep"),
+            "state": dict(ctx.state),
+        },
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "pipeline_metadata",
+        lambda name: {
+            "supported_modes": ("plan",),
+            "default_profile": None,
+            "manifest_hash": "sha256:test-manifest",
+        },
+    )
+    monkeypatch.setattr(
+        run_cli_module,
+        "_build_pipeline_for_run",
+        lambda args: SimpleNamespace(entry="prep", stages={}),
+    )
+
+    rc = cli_run(_run_args(pipeline_name="megaplan", plan_dir=plan_dir))
+
+    assert rc == 0
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["_pipeline_name"] == "megaplan"
+    assert state["_pipeline_manifest_hash"] == "sha256:test-manifest"
+    assert state["_runtime_identity_schema_version"] == RuntimeEnvelope.schema_version
+
+    envelope = RuntimeEnvelope.from_json(json.dumps(state["runtime_envelope"]))
+    assert envelope.plugin_id == "megaplan"
+    assert envelope.manifest_hash == "sha256:test-manifest"
+    assert envelope.plugin_state_schema_version == 0
+    assert envelope.run_id == plan_dir.name
+    assert envelope.artifact_root == str(plan_dir)
+    assert envelope.resume_cursor is None
+    assert envelope.trust_state == "trusted"
+
+
+def test_run_fails_closed_when_runtime_identity_metadata_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline import registry as registry_module
+    from megaplan._pipeline import run_cli as run_cli_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    plan_dir = tmp_path / "identity-missing"
+
+    monkeypatch.setattr(preflight_module, "preflight_or_raise", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        registry_module,
+        "pipeline_metadata",
+        lambda name: {
+            "supported_modes": ("plan",),
+            "default_profile": None,
+        },
+    )
+    monkeypatch.setattr(
+        run_cli_module,
+        "_build_pipeline_for_run",
+        lambda args: SimpleNamespace(entry="prep", stages={}),
+    )
+
+    rc = cli_run(_run_args(pipeline_name="megaplan", plan_dir=plan_dir))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"] == "pipeline_identity_unavailable"
+    assert not (plan_dir / "state.json").exists()
+
+
+def test_run_uses_profile_validate_operation_when_advertised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.runtime.operations import OperationKind, OperationResult
+    from megaplan._pipeline import executor as executor_module
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline import registry as registry_module
+    from megaplan._pipeline import run_cli as run_cli_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    calls: list[object] = []
+
+    monkeypatch.setattr(
+        preflight_module,
+        "preflight_or_raise",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("generic preflight fallback should not run")
+        ),
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "supported_operations_for",
+        lambda name: frozenset({OperationKind.PROFILE_VALIDATE}),
+    )
+
+    def fake_dispatch(plugin_id, request):  # noqa: ANN001
+        calls.append((plugin_id, request))
+        return OperationResult(ok=True, payload={"validated": True})
+
+    monkeypatch.setattr(registry_module, "dispatch_operation_for", fake_dispatch)
+    monkeypatch.setattr(
+        executor_module,
+        "run_pipeline",
+        lambda pipeline, ctx, *, artifact_root: {
+            "final_stage": getattr(pipeline, "entry", "prep"),
+            "state": dict(ctx.state),
+        },
+    )
+    monkeypatch.setattr(
+        run_cli_module,
+        "_build_pipeline_for_run",
+        lambda args: SimpleNamespace(entry="prep", stages={}),
+    )
+
+    rc = cli_run(_run_args(pipeline_name="megaplan", plan_dir=tmp_path / "profile-op"))
+
+    assert rc == 0
+    assert calls
+    plugin_id, request = calls[0]
+    assert plugin_id == "megaplan"
+    assert request.kind == OperationKind.PROFILE_VALIDATE
+
+
+def test_run_preserves_generic_preflight_fallback_when_profile_validate_not_advertised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.runtime.operations import OperationKind
+    from megaplan._pipeline import executor as executor_module
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline import registry as registry_module
+    from megaplan._pipeline import run_cli as run_cli_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    calls: list[dict[str, object]] = []
+
+    def fake_preflight(profile, **kwargs):  # noqa: ANN001
+        calls.append({"profile": profile, **kwargs})
+
+    monkeypatch.setattr(preflight_module, "preflight_or_raise", fake_preflight)
+    monkeypatch.setattr(registry_module, "supported_operations_for", lambda name: frozenset())
+    monkeypatch.setattr(
+        registry_module,
+        "dispatch_operation_for",
+        lambda plugin_id, request: (_ for _ in ()).throw(
+            AssertionError("PROFILE_VALIDATE dispatch should not run")
+        ),
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "run_pipeline",
+        lambda pipeline, ctx, *, artifact_root: {
+            "final_stage": getattr(pipeline, "entry", "prep"),
+            "state": dict(ctx.state),
+        },
+    )
+    monkeypatch.setattr(
+        run_cli_module,
+        "_build_pipeline_for_run",
+        lambda args: SimpleNamespace(entry="prep", stages={}),
+    )
+
+    rc = cli_run(_run_args(pipeline_name="megaplan", plan_dir=tmp_path / "profile-fallback"))
+
+    assert rc == 0
+    assert calls
+    assert calls[0]["pipeline_name"] == "megaplan"
 
 
 def test_cli_run_list_includes_epic_blitz(capsys) -> None:

@@ -20,7 +20,6 @@ from typing import Any, Optional, Tuple
 
 from megaplan.control_interface import read_valid_targets
 from megaplan.observability.events import EventKind, read_events
-from megaplan.planning.control_binding import planning_control_binding, planning_run_state_view
 from megaplan.run_outcome import RunOutcome
 
 # Default phase timeout (overridable from state)
@@ -47,6 +46,19 @@ def _parse_iso(ts_str: str) -> Optional[float]:
 def _active_phase_name(active: dict[str, Any]) -> str | None:
     phase = active.get("phase") or active.get("step")
     return phase if isinstance(phase, str) and phase else None
+
+
+def _projected_outcome(state: dict[str, Any]) -> RunOutcome | None:
+    current_state = state.get("current_state")
+    if current_state == "done":
+        return RunOutcome.SUCCEEDED
+    if current_state in {"failed", "aborted"}:
+        return RunOutcome.FAILED
+    if current_state == "blocked":
+        return RunOutcome.BLOCKED
+    if current_state in {"awaiting_human", "clarifying"}:
+        return RunOutcome.AWAITING_HUMAN
+    return None
 
 
 def _git_info(project_dir: Path) -> dict:
@@ -368,8 +380,8 @@ def _compute_block_details(plan_dir: Path, state: Optional[dict]) -> dict:
         except Exception:
             continue
 
-    run_state = planning_run_state_view(state)
-    is_blocked = flags_count > 0 or current_state in {"gated", "clarifying"} or run_state.outcome in {
+    outcome = _projected_outcome(state)
+    is_blocked = flags_count > 0 or current_state in {"gated", "clarifying"} or outcome in {
         RunOutcome.BLOCKED,
         RunOutcome.AWAITING_HUMAN,
         RunOutcome.FAILED,
@@ -378,14 +390,14 @@ def _compute_block_details(plan_dir: Path, state: Optional[dict]) -> dict:
 
     if is_blocked:
         try:
-            recovery = run_state.outcome in {
+            recovery = outcome in {
                 RunOutcome.BLOCKED,
                 RunOutcome.AWAITING_HUMAN,
                 RunOutcome.FAILED,
             }
             recov = read_valid_targets(
-                run_state,
-                planning_control_binding(),
+                state,
+                plugin_id="megaplan",
                 recovery=recovery,
             )
             result["recoverable_via"] = [

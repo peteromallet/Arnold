@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from arnold.runtime.envelope import RuntimeEnvelope
 from megaplan._core.workflow import resume_plan
 from megaplan._pipeline import registry
 from megaplan._pipeline.registry import _NAME_ALIASES, canonical_pipeline_name, get_pipeline
@@ -78,6 +79,12 @@ def test_resume_plan_with_pre_m6_planning_cursor_runs(tmp_path: Path) -> None:
     assert state["meta"]["pipeline_alias_migrations"] == [
         {"from": "planning", "to": "megaplan", "phase": "execute"}
     ]
+    envelope = RuntimeEnvelope.from_json(json.dumps(state["runtime_envelope"]))
+    assert envelope.plugin_id == "megaplan"
+    assert envelope.run_id == plan
+    assert envelope.resume_cursor is not None
+    assert envelope.resume_cursor.cursor["phase"] == "execute"
+    assert envelope.resume_cursor.cursor["pipeline"] == "planning"
 
 
 def test_resume_plan_refuses_pipeline_manifest_chimera(tmp_path: Path, monkeypatch) -> None:
@@ -121,6 +128,12 @@ def test_resume_plan_refuses_pipeline_manifest_chimera(tmp_path: Path, monkeypat
     assert called is False
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state["current_state"] == "blocked"
+    envelope = RuntimeEnvelope.from_json(json.dumps(state["runtime_envelope"]))
+    assert envelope.plugin_id == "megaplan"
+    assert envelope.trust_state == "quarantined-manifest-mismatch"
+    assert state["meta"]["pipeline_alias_migrations"] == [
+        {"from": "planning", "to": "megaplan", "phase": "execute"}
+    ]
 
 
 def test_resume_plan_accepts_matching_pipeline_manifest_hash(tmp_path: Path, monkeypatch) -> None:
@@ -162,3 +175,88 @@ def test_resume_plan_accepts_matching_pipeline_manifest_hash(tmp_path: Path, mon
 
     result = resume_plan(tmp_path, plan, runner=runner)
     assert result["success"] is True
+
+
+def test_resume_plan_rollback_preserves_runtime_envelope_on_failed_operation(tmp_path: Path) -> None:
+    plan = "legacy-failed-resume"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "idea": "legacy",
+                "current_state": "blocked",
+                "iteration": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "_pipeline_name": "planning",
+                "resume_cursor": {"phase": "execute", "pipeline": "planning"},
+                "history": [],
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "meta": {},
+                "last_gate": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def runner(args: list[str], *, cwd: Path) -> tuple[int, str, str]:
+        state_path = plan_dir / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["current_state"] = "executing"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        return 2, "", "failed"
+
+    result = resume_plan(tmp_path, plan, runner=runner)
+
+    assert result["success"] is False
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "finalized"
+    assert state["resume_cursor"] == {"phase": "execute", "pipeline": "planning"}
+    envelope = RuntimeEnvelope.from_json(json.dumps(state["runtime_envelope"]))
+    assert envelope.plugin_id == "megaplan"
+    assert envelope.resume_cursor is not None
+    assert state["meta"]["pipeline_alias_migrations"] == [
+        {"from": "planning", "to": "megaplan", "phase": "execute"}
+    ]
+
+
+def test_resume_plan_refuses_non_builtin_missing_runtime_envelope(tmp_path: Path) -> None:
+    plan = "creative-without-envelope"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "idea": "legacy",
+                "current_state": "blocked",
+                "iteration": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "_pipeline_name": "creative",
+                "resume_cursor": {"phase": "draft", "pipeline": "creative"},
+                "history": [],
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "meta": {},
+                "last_gate": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    called = False
+
+    def runner(args: list[str], *, cwd: Path) -> tuple[int, str, str]:
+        nonlocal called
+        called = True
+        return 0, "", ""
+
+    with pytest.raises(CliError) as exc:
+        resume_plan(tmp_path, plan, runner=runner)
+
+    assert exc.value.code == "pipeline_identity_unavailable"
+    assert called is False
