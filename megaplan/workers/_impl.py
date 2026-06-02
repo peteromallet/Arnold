@@ -65,7 +65,9 @@ from megaplan.prompts import (
     create_hermes_prompt,
     _resolve_prompt_root,
 )
+from megaplan.prompts._projection import check_prompt_size
 from megaplan.runtime.process import TmuxSession, kill_group, spawn
+from megaplan.workers._projection_caps import codex_projection_capabilities
 
 
 from megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
@@ -2174,13 +2176,24 @@ def run_codex_step(
     else:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+    projection_capabilities = codex_projection_capabilities(
+        resumed_session=bool(persistent and session.get("id") and not fresh),
+        session_has_plan_dir_access=(
+            session.get("plan_dir_access")
+            if isinstance(session.get("plan_dir_access"), bool)
+            else None
+        ),
+        checkpoint_write_access=not read_only,
+    )
     prompt = prompt_override if prompt_override is not None else create_codex_prompt(
         step,
         state,
         plan_dir,
         root=root,
+        projection_capabilities=projection_capabilities,
         **(prompt_kwargs or {}),
     )
+    check_prompt_size(prompt, phase=step)
     timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
     if read_only:

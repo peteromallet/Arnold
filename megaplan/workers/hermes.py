@@ -27,6 +27,8 @@ from megaplan.workers._impl import (
 from megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
 from megaplan.forms.provocations import select_active_checks
 from megaplan.prompts import create_hermes_prompt
+from megaplan.prompts._projection import check_prompt_size
+from megaplan.workers._projection_caps import hermes_projection_capabilities
 
 
 def _sanitize_db_name(identifier: str) -> str:
@@ -1088,8 +1090,14 @@ def run_hermes_step(
     # Build prompt — megaplan prompts embed the JSON schema, but some models
     # ignore formatting instructions buried in long prompts.  Append a clear
     # reminder so the final response is valid JSON, not markdown.
+    toolsets = _toolsets_for_phase(step)
+    projection_capabilities = hermes_projection_capabilities(toolsets)
     prompt = prompt_override if prompt_override is not None else create_hermes_prompt(
-        step, state, plan_dir, root=root
+        step,
+        state,
+        plan_dir,
+        root=root,
+        projection_capabilities=projection_capabilities,
     )
     # Add web search guidance for phases that have it
     if step in ("plan", "critique", "revise"):
@@ -1109,8 +1117,6 @@ def run_hermes_step(
             "\n\nIMPORTANT: Do NOT rename, modify, or delete EVAL.ts or any test files. "
             "They are used for scoring after execution and must remain unchanged."
         )
-
-    toolsets = _toolsets_for_phase(step)
 
     # Critique and review: use custom template writers that pre-populate IDs.
     # Other template-file phases: hermes_worker writes a generic template.
@@ -1160,6 +1166,8 @@ def run_hermes_step(
             "Do NOT use markdown. Do NOT wrap in code fences. Output ONLY raw JSON "
             "matching this template:\n\n" + template
         )
+
+    check_prompt_size(prompt, phase=step)
 
     if (
         output_path is not None

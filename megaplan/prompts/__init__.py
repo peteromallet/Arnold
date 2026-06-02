@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from functools import partial
 from pathlib import Path
 from typing import Callable
@@ -68,6 +69,7 @@ from .review import (
 from .critique_evaluator import _critique_evaluator_prompt
 from .review_doc import _review_doc_prompt
 from .review_joke import _review_joke_prompt
+from ._projection import PromptProjectionCapabilities
 
 _PromptBuilder = Callable[..., str]
 
@@ -127,6 +129,21 @@ def _prepend_harness_guard(prompt: str) -> str:
     return f"{_NESTED_HARNESS_GUARD}\n\n{prompt}"
 
 
+def _builder_kwargs(builder: _PromptBuilder, prompt_kwargs: dict[str, object]) -> dict[str, object]:
+    """Forward only kwargs accepted by the target builder."""
+    if not prompt_kwargs:
+        return {}
+    signature = inspect.signature(builder)
+    if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+        return dict(prompt_kwargs)
+    accepted = {
+        name
+        for name, param in signature.parameters.items()
+        if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    return {key: value for key, value in prompt_kwargs.items() if key in accepted}
+
+
 def _execute_batch_prompt(
     state: PlanState,
     plan_dir: Path,
@@ -134,12 +151,27 @@ def _execute_batch_prompt(
     completed_task_ids: set[str] | None = None,
     root: Path | None = None,
     rework_context: dict[str, object] | None = None,
+    projection_capabilities: PromptProjectionCapabilities | None = None,
 ) -> str:
     mode = state.get("config", {}).get("mode", "code")
     if mode == "doc":
-        return _execute_doc_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
+        return _execute_doc_batch_prompt(
+            state,
+            plan_dir,
+            batch_task_ids,
+            completed_task_ids,
+            root=root,
+            projection_capabilities=projection_capabilities,
+        )
     if is_creative_mode(state):
-        return _execute_creative_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
+        return _execute_creative_batch_prompt(
+            state,
+            plan_dir,
+            batch_task_ids,
+            completed_task_ids,
+            root=root,
+            projection_capabilities=projection_capabilities,
+        )
     return _execute_code_batch_prompt(
         state,
         plan_dir,
@@ -147,6 +179,7 @@ def _execute_batch_prompt(
         completed_task_ids,
         root=root,
         rework_context=rework_context,
+        projection_capabilities=projection_capabilities,
     )
 
 
@@ -254,7 +287,7 @@ def create_prompt(
     builder = _resolve_builder(builders, step, state, label)
     contract_context = prompt_kwargs.pop("contract_context", None)
     if step == "review":
-        return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
+        return _prepend_harness_guard(builder(state, plan_dir, **_builder_kwargs(builder, prompt_kwargs)))
     if step == "plan":
         return _prepend_harness_guard(builder(state, plan_dir, contract_context=contract_context))
     if step == "prep":
@@ -270,13 +303,29 @@ def create_prompt(
             builder(state, plan_dir, root=root, contract_context=contract_context, **allowed)
         )
     if step in ("critique", "critique_evaluator"):
+        critique_kwargs = _builder_kwargs(
+            builder,
+            {
+                **prompt_kwargs,
+                "contract_context": contract_context,
+            },
+        )
         return _prepend_harness_guard(
-            builder(state, plan_dir, root=root, contract_context=contract_context, **prompt_kwargs)
+            builder(state, plan_dir, root=root, **critique_kwargs)
         )
     if step == "gate":
-        return _prepend_harness_guard(builder(state, plan_dir, root=root, contract_context=contract_context))
+        gate_kwargs = _builder_kwargs(
+            builder,
+            {
+                **prompt_kwargs,
+                "contract_context": contract_context,
+            },
+        )
+        return _prepend_harness_guard(builder(state, plan_dir, root=root, **gate_kwargs))
     if step in _ROOT_BEARING_STEPS:
-        return _prepend_harness_guard(builder(state, plan_dir, root=root))
+        return _prepend_harness_guard(
+            builder(state, plan_dir, root=root, **_builder_kwargs(builder, prompt_kwargs))
+        )
     return _prepend_harness_guard(builder(state, plan_dir))
 
 

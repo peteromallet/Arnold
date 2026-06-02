@@ -1106,6 +1106,384 @@ def test_run_shannon_step_repeats_execute_batch_scope_after_schema(
     assert "exactly these task IDs and no others: T2" in prompt_text
     assert "exactly these sense check IDs and no others: SC2" in prompt_text
 
+
+def test_run_shannon_step_checks_builder_prompt_after_schema_before_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "execute"
+        assert "EXECUTE BATCH OUTPUT SCOPE" in prompt_text
+        assert "exactly these task IDs and no others: T2" in prompt_text
+        assert "exactly these sense check IDs and no others: SC2" in prompt_text
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch("megaplan.workers.shannon.create_claude_prompt", return_value=built_prompt),
+        patch("megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch(
+            "megaplan.workers.shannon._write_prompt_file",
+            side_effect=AssertionError("prompt file should not be written"),
+        ),
+        patch(
+            "megaplan.workers.shannon.run_command",
+            side_effect=AssertionError("run_command should not be reached"),
+        ),
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+            )
+
+
+def test_run_shannon_step_checks_prompt_override_after_schema_before_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    prompt_override = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "execute"
+        assert prompt_text.startswith("Execute batch 2.")
+        assert "EXECUTE BATCH OUTPUT SCOPE" in prompt_text
+        assert "exactly these task IDs and no others: T2" in prompt_text
+        assert "exactly these sense check IDs and no others: SC2" in prompt_text
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch("megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch(
+            "megaplan.workers.shannon._write_prompt_file",
+            side_effect=AssertionError("prompt file should not be written"),
+        ),
+        patch(
+            "megaplan.workers.shannon.run_command",
+            side_effect=AssertionError("run_command should not be reached"),
+        ),
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+                prompt_override=prompt_override,
+            )
+
+
+def test_run_shannon_step_normal_builder_prompt_dispatches_after_guard_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normal-sized builder prompt reaches dispatch after the guard passes,
+    and scope-reinforcement strings are present at guard time."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "normal-builder-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    guard_checked: list[str] = []
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        guard_checked.append(prompt_text)
+        # Normal — no raise
+
+    with (
+        patch("megaplan.workers.shannon.create_claude_prompt", return_value=built_prompt),
+        patch("megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+        )
+
+    assert run_command.call_count == 1
+    assert result.payload == payload
+    # Guard was consulted with the full prompt after schema augmentation
+    assert len(guard_checked) == 1
+    assert "Execute batch 2." in guard_checked[0]
+    # Scope-reinforcement strings are present when the guard runs
+    assert "EXECUTE BATCH OUTPUT SCOPE" in guard_checked[0]
+    assert "exactly these task IDs and no others: T2" in guard_checked[0]
+    assert "exactly these sense check IDs and no others: SC2" in guard_checked[0]
+
+
+def test_run_shannon_step_normal_prompt_override_dispatches_after_guard_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normal-sized prompt_override reaches dispatch after the guard passes,
+    and scope-reinforcement strings are present at guard time."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    prompt_override = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "normal-override-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    guard_checked: list[str] = []
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        guard_checked.append(prompt_text)
+        # Normal — no raise
+
+    with (
+        patch("megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override=prompt_override,
+        )
+
+    assert run_command.call_count == 1
+    assert result.payload == payload
+    # Guard was consulted with the full prompt after schema augmentation
+    assert len(guard_checked) == 1
+    assert "Execute batch 2." in guard_checked[0]
+    # Scope-reinforcement strings are present when the guard runs
+    assert "EXECUTE BATCH OUTPUT SCOPE" in guard_checked[0]
+    assert "exactly these task IDs and no others: T2" in guard_checked[0]
+    assert "exactly these sense check IDs and no others: SC2" in guard_checked[0]
+
+
+def test_run_shannon_step_passes_read_only_projection_capabilities_to_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    captured: list[object] = []
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(plan_payload),
+                "session_id": "read-only-session",
+                "total_cost_usd": 0.02,
+                "usage": {"input_tokens": 11, "output_tokens": 7},
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    def _fake_prompt(*args, **kwargs):
+        captured.append(kwargs.get("projection_capabilities"))
+        return "return json"
+
+    with (
+        patch("megaplan.workers.shannon.create_claude_prompt", side_effect=_fake_prompt),
+        patch("megaplan.workers.shannon.run_command", return_value=fake_result),
+    ):
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            read_only=True,
+        )
+
+    caps = captured[0]
+    assert caps.can_read_plan_dir is True
+    assert caps.can_read_project_dir is True
+    assert caps.has_file_tools is True
+    assert caps.checkpoint_write_access is False
+
+
+def test_run_shannon_step_passes_write_projection_capabilities_to_prompt_and_keeps_schema_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    captured: list[object] = []
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "write-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    def _fake_prompt(*args, **kwargs):
+        captured.append(kwargs.get("projection_capabilities"))
+        return "return json"
+
+    with (
+        patch("megaplan.workers.shannon.create_claude_prompt", side_effect=_fake_prompt),
+        patch("megaplan.workers.shannon.run_command", return_value=fake_result),
+    ):
+        run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            read_only=False,
+        )
+
+    caps = captured[0]
+    assert caps.can_read_plan_dir is True
+    assert caps.can_read_project_dir is True
+    assert caps.has_file_tools is True
+    assert caps.checkpoint_write_access is True
+    run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "execute" / "shannon"
+    prompt_text = (run_dir / "execute_shannon_prompt.txt").read_text(encoding="utf-8")
+    assert "Output format:" in prompt_text
+
+
 def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
     tmp_path: Path,
 ) -> None:

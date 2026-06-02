@@ -16,6 +16,11 @@ from megaplan._core import (
 )
 from megaplan.types import PlanState
 
+from ._projection import (
+    PromptProjectionCapabilities,
+    project_execution_audit_context,
+    project_review_context,
+)
 from ._shared import _gate_summary_or_skipped
 from .review import _settled_decisions_block, _settled_decisions_instruction
 
@@ -49,6 +54,7 @@ def _review_joke_prompt(
     task_guidance: str,
     sense_check_guidance: str,
     pre_check_flags: list[dict[str, Any]] | None = None,
+    projection_capabilities: PromptProjectionCapabilities | None = None,
 ) -> str:
     project_dir = Path(state["config"]["project_dir"])
     output_path = state["config"].get("output_path", "output.md")
@@ -67,6 +73,27 @@ def _review_joke_prompt(
     execution = read_json(plan_dir / "execution.json")
     gate = _gate_summary_or_skipped(plan_dir)
     finalize_data = read_json(plan_dir / "finalize.json")
+    audit_path = plan_dir / "execution_audit.json"
+    execution_audit_data = read_json(audit_path) if audit_path.exists() else None
+    projected_review = project_review_context(
+        finalize_data,
+        execution,
+        capabilities=projection_capabilities,
+    )
+    audit_block = ""
+    if execution_audit_data is not None:
+        projected_audit = project_execution_audit_context(execution_audit_data)
+        audit_block = (
+            "Execution audit source of truth (`execution_audit.json`, prompt projection only):\n"
+            + json_dump(projected_audit).strip()
+            + "\n"
+        )
+    else:
+        audit_block = (
+            "Execution audit source of truth (`execution_audit.json`): not present. "
+            "Skip that artifact gracefully and rely on `finalize.json`, `execution.json`, "
+            "the approved scene canvas, and the output scene.\n"
+        )
     settled_decisions_block = _settled_decisions_block(gate)
     settled_decisions_instruction = _settled_decisions_instruction(gate)
 
@@ -131,8 +158,8 @@ def _review_joke_prompt(
         Approved scene canvas:
         {latest_plan}
 
-        Execution tracking state (`finalize.json`):
-        {json_dump(finalize_data).strip()}
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {json_dump(projected_review).strip()}
 
         Plan metadata:
         {json_dump(latest_meta).strip()}
@@ -142,9 +169,7 @@ def _review_joke_prompt(
 
         {settled_decisions_block}{extra_sections}
 
-        Execution summary:
-        {json_dump(execution).strip()}
-
+        {audit_block}
         Output scene content:
         {output_content}
 

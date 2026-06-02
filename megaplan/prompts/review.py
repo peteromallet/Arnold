@@ -22,6 +22,11 @@ from megaplan._core import (
 )
 from megaplan.types import PlanState
 
+from ._projection import (
+    PromptProjectionCapabilities,
+    project_execution_audit_context,
+    project_review_context,
+)
 from ._shared import _gate_summary_or_skipped
 
 log = logging.getLogger(__name__)
@@ -244,15 +249,56 @@ def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]
     return {
         "project_dir": project_dir,
         "intent_block": intent_brief_reference(state),
+        "approved_plan": latest_plan_path(plan_dir, state).read_text(encoding="utf-8"),
         "git_diff": git_diff,
         "large_diff": large_diff,
         "diff_summary": diff_summary,
         "changed_files": changed_files,
         "prior_unmet_block": _prior_unmet_review_block(plan_dir, state) if large_diff else "",
         "finalize_data": read_json(plan_dir / "finalize.json"),
+        "execution_data": read_json(plan_dir / "execution.json"),
+        "execution_audit_data": read_json(plan_dir / "execution_audit.json")
+        if (plan_dir / "execution_audit.json").exists()
+        else None,
         "settled_decisions": settled_decisions,
         "prior_flags": load_flag_registry(plan_dir).get("flags", []),
     }
+
+
+def _projected_review_blocks(
+    finalize_data: dict[str, Any],
+    execution_data: dict[str, Any] | None,
+    execution_audit_data: dict[str, Any] | None,
+    *,
+    capabilities: PromptProjectionCapabilities | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    projected_review = project_review_context(
+        finalize_data,
+        execution_data,
+        capabilities=capabilities,
+    )
+    projected_audit = project_execution_audit_context(execution_audit_data)
+    return projected_review, projected_audit
+
+
+def _execution_audit_block(
+    execution_audit_data: dict[str, Any] | None,
+    *,
+    capabilities: PromptProjectionCapabilities | None = None,
+) -> str:
+    if execution_audit_data is None:
+        return (
+            "Execution audit source of truth (`execution_audit.json`): not present. "
+            "Skip that artifact gracefully and rely on `finalize.json`, `execution.json`, "
+            "the approved plan, and the git diff."
+        )
+    projected_audit = project_execution_audit_context(execution_audit_data)
+    return textwrap.dedent(
+        f"""
+        Execution audit source of truth (`execution_audit.json`, prompt projection only):
+        {json_dump(projected_audit).strip()}
+        """
+    ).strip()
 
 
 def _flag_text(flag: dict[str, Any]) -> str:
@@ -419,9 +465,20 @@ def single_check_review_prompt(
     output_path: Path,
     pre_check_flags: list[dict[str, Any]],
     prior_flags: list[dict[str, Any]] | None = None,
+    projection_capabilities: PromptProjectionCapabilities | None = None,
 ) -> str:
     del root
     context = _parallel_review_context(state, plan_dir)
+    projected_review, _ = _projected_review_blocks(
+        context["finalize_data"],
+        context["execution_data"],
+        context["execution_audit_data"],
+        capabilities=projection_capabilities,
+    )
+    audit_block = _execution_audit_block(
+        context["execution_audit_data"],
+        capabilities=projection_capabilities,
+    )
     check_id = _check_field(check, "id")
     question = _check_field(check, "question")
     guidance = _check_field(check, "guidance") or ""
@@ -459,10 +516,15 @@ def single_check_review_prompt(
 
             {context["intent_block"]}
 
+            Approved plan:
+            {context["approved_plan"]}
+
             {diff_context}
 
-            Execution tracking state (`finalize.json`):
-            {json_dump(context["finalize_data"]).strip()}
+            Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+            {json_dump(projected_review).strip()}
+
+            {audit_block}
 
             {_settled_decisions_review_block(context["settled_decisions"])}
 
@@ -479,7 +541,7 @@ def single_check_review_prompt(
             Guidance: {guidance}
 
             Requirements:
-            - Anchor your reasoning to the original issue text and repository-backed inspection of the changed files above, not to any approved plan.
+            - Anchor your reasoning to the original issue text first, then use the approved plan and projected execution context as supporting context for what the executor committed to deliver.
             - Investigate only this check.
             - Use your tools to inspect the workspace and verify this check before writing the output JSON.
             - finalize.json executor notes and claims record what the executor BELIEVED at execution time; they may be STALE (written mid-execution, before later fixes in the same run) or self-serving, and are NOT authoritative evidence. For any check backed by an objective gate — a test command, a conformance scan, a golden-file comparison — you MUST run that gate yourself with your tools and trust the LIVE result over any pass/fail count in finalize.json. If finalize.json says a gate reported N problems but the gate passes when you run it now, the gate PASSES; do not flag it as blocking on the strength of the stale note alone.
@@ -508,11 +570,16 @@ def single_check_review_prompt(
 
         {context["intent_block"]}
 
+        Approved plan:
+        {context["approved_plan"]}
+
         Full git diff:
         {context["git_diff"]}
 
-        Execution tracking state (`finalize.json`):
-        {json_dump(context["finalize_data"]).strip()}
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {json_dump(projected_review).strip()}
+
+        {audit_block}
 
         {_settled_decisions_review_block(context["settled_decisions"])}
 
@@ -529,7 +596,7 @@ def single_check_review_prompt(
         Guidance: {guidance}
 
         Requirements:
-        - Anchor your reasoning to the original issue text and the full diff above, not to any approved plan.
+        - Anchor your reasoning to the original issue text first, then use the approved plan and projected execution context as supporting context for what the executor committed to deliver.
         - Investigate only this check.
         - Populate the existing `checks[0].findings` array with concrete findings. Each finding should include:
           - `detail`: a full sentence describing what you checked and what you found
@@ -554,16 +621,26 @@ def parallel_criteria_review_prompt(
     plan_dir: Path,
     root: Path | None,
     output_path: Path,
+    projection_capabilities: PromptProjectionCapabilities | None = None,
 ) -> str:
     """Build the parallel-mode criteria review prompt.
 
-    This intentionally does not wrap `_review_prompt()`. The brief literally
-    asked to keep `_review_prompt()` as the parallel criteria check, but that would
-    leak plan/gate/execution context that conflicts with the stronger
-    issue-anchored review contract. This divergence is deliberate.
+    This intentionally keeps the issue-anchored review contract tighter than
+    `_review_prompt()` while still keeping the approved plan inline and
+    projecting oversized execution artifacts.
     """
     del root
     context = _parallel_review_context(state, plan_dir)
+    projected_review, _ = _projected_review_blocks(
+        context["finalize_data"],
+        context["execution_data"],
+        context["execution_audit_data"],
+        capabilities=projection_capabilities,
+    )
+    audit_block = _execution_audit_block(
+        context["execution_audit_data"],
+        capabilities=projection_capabilities,
+    )
     if context["large_diff"]:
         diff_context = _large_diff_context_block(
             project_dir=context["project_dir"],
@@ -580,10 +657,15 @@ def parallel_criteria_review_prompt(
 
             {context["intent_block"]}
 
+            Approved plan:
+            {context["approved_plan"]}
+
             {diff_context}
 
-            Execution tracking state (`finalize.json`):
-            {json_dump(context["finalize_data"]).strip()}
+            Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+            {json_dump(projected_review).strip()}
+
+            {audit_block}
 
             {_settled_decisions_review_block(context["settled_decisions"])}
 
@@ -591,9 +673,9 @@ def parallel_criteria_review_prompt(
             Read the file first and write your final answer into that JSON structure.
 
             Requirements:
-            - Use only the issue text, repository-backed inspection of the changed files above, `finalize.json`, and the settled decisions shown here.
-            - Do not rely on any approved plan, plan metadata, gate summary, execution summary, or execution audit that are not present here.
-            - Judge against the success criteria from `finalize.json`, but stay anchored to the original issue text when deciding whether the work actually solved the problem.
+            - Stay anchored to the issue text when deciding whether the work solved the problem. Use the approved plan plus the projected finalize/execution/audit context here as supporting evidence, not as substitutes for repository inspection.
+            - Do not rely on plan metadata or raw gate/execution dumps that are not present here.
+            - Judge against the success criteria from the projected finalize context, but stay anchored to the original issue text when deciding whether the work actually solved the problem.
             - Verify each criterion with file inspection and focused commands where applicable before setting `pass`.
             - Every criterion entry is a per-criterion check: populate `pass` and concrete evidence from the files or commands you inspected.
             - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
@@ -618,11 +700,16 @@ def parallel_criteria_review_prompt(
 
         {context["intent_block"]}
 
+        Approved plan:
+        {context["approved_plan"]}
+
         Full git diff:
         {context["git_diff"]}
 
-        Execution tracking state (`finalize.json`):
-        {json_dump(context["finalize_data"]).strip()}
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {json_dump(projected_review).strip()}
+
+        {audit_block}
 
         {_settled_decisions_review_block(context["settled_decisions"])}
 
@@ -630,9 +717,9 @@ def parallel_criteria_review_prompt(
         Read the file first and write your final answer into that JSON structure.
 
         Requirements:
-        - Use only the issue text, full git diff, `finalize.json`, and the settled decisions shown above.
-        - Do not rely on any approved plan, plan metadata, gate summary, execution summary, or execution audit that are not present here.
-        - Judge against the success criteria from `finalize.json`, but stay anchored to the original issue text when deciding whether the work actually solved the problem.
+        - Stay anchored to the issue text when deciding whether the work solved the problem. Use the approved plan plus the projected finalize/execution/audit context here as supporting evidence, not as substitutes for repository inspection.
+        - Do not rely on plan metadata or raw gate/execution dumps that are not present here.
+        - Judge against the success criteria from the projected finalize context, but stay anchored to the original issue text when deciding whether the work actually solved the problem.
         - Verify each criterion with file inspection and focused commands where applicable before setting `pass`.
         - Every criterion entry is a per-criterion check: populate `pass` and concrete evidence from the files or commands you inspected.
         - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
@@ -724,6 +811,7 @@ def _review_prompt(
     task_guidance: str,
     sense_check_guidance: str,
     pre_check_flags: list[dict[str, Any]] | None = None,
+    projection_capabilities: PromptProjectionCapabilities | None = None,
 ) -> str:
     project_dir = Path(state["config"]["project_dir"])
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
@@ -731,19 +819,22 @@ def _review_prompt(
     execution = read_json(plan_dir / "execution.json")
     gate = _gate_summary_or_skipped(plan_dir)
     finalize_data = read_json(plan_dir / "finalize.json")
+    projected_review, _ = _projected_review_blocks(
+        finalize_data,
+        execution,
+        read_json(plan_dir / "execution_audit.json")
+        if (plan_dir / "execution_audit.json").exists()
+        else None,
+        capabilities=projection_capabilities,
+    )
     settled_decisions_block = _settled_decisions_block(gate)
     settled_decisions_instruction = _settled_decisions_instruction(gate)
     diff_summary = collect_git_diff_summary(project_dir)
     audit_path = plan_dir / "execution_audit.json"
-    if audit_path.exists():
-        audit_block = textwrap.dedent(
-            f"""
-            Execution audit (`execution_audit.json`):
-            {json_dump(read_json(audit_path)).strip()}
-            """
-        ).strip()
-    else:
-        audit_block = "Execution audit (`execution_audit.json`): not present. Skip that artifact gracefully and rely on `finalize.json`, `execution.json`, and the git diff."
+    audit_block = _execution_audit_block(
+        read_json(audit_path) if audit_path.exists() else None,
+        capabilities=projection_capabilities,
+    )
     flag_reverify_items: list[dict[str, str]] = []
     for flag in load_flag_registry(plan_dir).get("flags", []):
         if not isinstance(flag, dict):
@@ -801,8 +892,8 @@ def _review_prompt(
         Approved plan:
         {latest_plan}
 
-        Execution tracking state (`finalize.json`):
-        {json_dump(finalize_data).strip()}
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {json_dump(projected_review).strip()}
 
         Plan metadata:
         {json_dump(latest_meta).strip()}
@@ -811,9 +902,6 @@ def _review_prompt(
         {json_dump(gate).strip()}
 
         {settled_decisions_block}{extra_sections}
-
-        Execution summary:
-        {json_dump(execution).strip()}
 
         {audit_block}
 
