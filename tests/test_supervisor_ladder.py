@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
@@ -81,6 +82,10 @@ def test_bump_one_tier_is_deterministic_and_bounded() -> None:
     assert bump_one_tier("premium", ("premium", "apex")) == ("apex", True)
     assert bump_one_tier("apex", ("premium", "apex")) == ("apex", False)
     assert bump_one_tier("custom", ("premium", "apex")) == ("custom", False)
+
+
+def test_apply_ladder_defaults_binding_to_canonical_megaplan() -> None:
+    assert inspect.signature(apply_ladder).parameters["binding"].default == "megaplan"
 
 
 def test_ladder_retries_are_bounded_and_persisted(tmp_path: Path) -> None:

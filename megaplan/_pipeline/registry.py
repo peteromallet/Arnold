@@ -1,7 +1,9 @@
 """Pipeline registry — feed in pipelines by name.
 
-Symmetric registration policy: first-class pipelines, including
-``planning``, are discovered as Python modules via
+Symmetric registration policy: first-class pipelines, including the
+canonical ``megaplan`` pipeline (physically packaged under
+``megaplan/pipelines/planning/`` and kept backwards-compatible through
+the legacy ``planning`` alias), are discovered as Python modules via
 :func:`discover_python_pipelines`. Demo pipelines (``doc-critique``,
 ``judges``) are not registered as production pipelines; they remain
 directly importable from their demo modules.
@@ -103,8 +105,10 @@ def _manifest_discovery_enabled() -> bool:
     return os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY", "0") == "1"
 
 
+CANONICAL_BUILTIN_PIPELINE = "megaplan"
 # Registry-maintained compatibility aliases for names persisted by older plans.
-_NAME_ALIASES: dict[str, str] = {"planning": "planning"}
+LEGACY_PIPELINE_ALIASES: dict[str, str] = {"planning": CANONICAL_BUILTIN_PIPELINE}
+_NAME_ALIASES: dict[str, str] = dict(LEGACY_PIPELINE_ALIASES)
 
 def canonical_pipeline_name(name: str) -> str:
     """Return the registry-canonical pipeline name for *name*."""
@@ -116,13 +120,12 @@ def _manifest_metadata(name: str, disposition: Disposition) -> dict[str, Any]:
     manifest = disposition.manifest
     if manifest is None:
         return {}
-    meta: dict[str, Any] = {}
+    meta: dict[str, Any] = {"name": manifest.name}
     if manifest.description:
         meta["description"] = manifest.description
     if manifest.default_profile:
         meta["default_profile"] = manifest.default_profile
-    if manifest.supported_modes:
-        meta["supported_modes"] = tuple(manifest.supported_modes)
+    meta["supported_modes"] = tuple(manifest.supported_modes)
     meta["arnold_api_version"] = manifest.arnold_api_version
     meta["capabilities"] = tuple(manifest.capabilities)
     manifest_hash = getattr(manifest, "manifest_hash", None)
@@ -215,7 +218,7 @@ class PipelineRegistry:
             for d in scan_python_pipelines():
                 if d.status != "discovered" or d.cli_name is None or d.manifest is None:
                     continue
-                name = d.cli_name
+                name = canonical_pipeline_name(d.cli_name)
                 if name in self.builders:
                     continue
                 # Resolve package_prefix for deferred import (same logic as
@@ -236,6 +239,7 @@ class PipelineRegistry:
 
         # Flag-OFF: legacy quad-list path (re-imports modules eagerly).
         for name, builder, meta, source_path in discover_python_pipelines():
+            name = canonical_pipeline_name(name)
             if name in self.builders:
                 # Either a duplicate discovered earlier or a programmatic
                 # re-register.
@@ -260,16 +264,22 @@ class PipelineRegistry:
         """
         name = canonical_pipeline_name(name)
         self._ensure_discovered()
-        if name not in self.builders:
+        builder_name = name
+        if builder_name not in self.builders:
+            for legacy_name, canonical_name in _NAME_ALIASES.items():
+                if canonical_name == name and legacy_name in self.builders:
+                    builder_name = legacy_name
+                    break
+        if builder_name not in self.builders:
             raise KeyError(
                 f"no pipeline named {name!r}; available: {sorted(self.builders)}"
             )
-        builder = self.builders[name]
+        builder = self.builders[builder_name]
         # Trust-gate only when manifest discovery is on AND this builder
         # came from manifest-first discovery (deferred). Built-ins and
         # programmatic registrations bypass.
         if _manifest_discovery_enabled() and getattr(builder, "_m6_deferred", False):
-            module_file = self._module_files.get(name)
+            module_file = self._module_files.get(builder_name)
             if module_file is not None:
                 tier = classify(module_file, blessed_allowlist=BLESSED_ALLOWLIST)
                 if tier not in (TrustTier.AUTO_EXEC, TrustTier.BLESSED):
@@ -281,8 +291,10 @@ class PipelineRegistry:
                         stacklevel=2,
                     )
                     return None
-                if self.metadata.get(name, {}).get("manifest_origin") == "user":
-                    _reserve_out_of_tree_quota(name, module_file, self.metadata[name])
+                if self.metadata.get(builder_name, {}).get("manifest_origin") == "user":
+                    _reserve_out_of_tree_quota(
+                        builder_name, module_file, self.metadata[builder_name]
+                    )
         return builder()
 
     def names(self) -> tuple[str, ...]:
@@ -394,7 +406,7 @@ def run_pipeline_by_name(
     pipeline = get_pipeline(name)
     artifact_root = Path(artifact_root or plan_dir)
     inputs_dict: dict[str, Any] = dict(inputs or {})
-    inputs_dict.setdefault("_pipeline", name)
+    inputs_dict.setdefault("_pipeline", canonical_pipeline_name(name))
     ctx = StepContext(
         plan_dir=Path(plan_dir),
         state=dict(state or {}),
@@ -420,6 +432,23 @@ def _cli_name(module_stem: str) -> str:
     return module_stem.replace("_", "-")
 
 
+def _discovered_cli_name(
+    entry: Path,
+    *,
+    package_prefix: str | None,
+) -> str:
+    """Return the CLI-visible name for a discovered pipeline entry."""
+
+    if (
+        package_prefix == "megaplan.pipelines"
+        and entry.is_dir()
+        and entry.name == "planning"
+        and (entry / "__init__.py").exists()
+    ):
+        return CANONICAL_BUILTIN_PIPELINE
+    return _cli_name(entry.stem if entry.is_file() else entry.name)
+
+
 def _scan_dir_for_pipeline_modules(
     pipelines_dir: Path,
     *,
@@ -441,7 +470,7 @@ def _scan_dir_for_pipeline_modules(
         if entry.name.startswith("_") or entry.name.startswith("."):
             continue
         if entry.is_file() and entry.suffix == ".py":
-            cli = _cli_name(entry.stem)
+            cli = _discovered_cli_name(entry, package_prefix=package_prefix)
             if cli in seen:
                 continue
             seen.add(cli)
@@ -454,7 +483,7 @@ def _scan_dir_for_pipeline_modules(
             # a sibling file we've already seen — the file wins (the
             # hyphenated directory is treated as a resource bundle, not
             # a Python package).
-            cli = _cli_name(entry.name) if "_" in entry.name else entry.name
+            cli = _discovered_cli_name(entry, package_prefix=package_prefix)
             if cli in seen:
                 continue
             seen.add(cli)
@@ -536,6 +565,9 @@ def _load_module_from_path(
 
 def _module_metadata(module: Any) -> dict[str, Any]:
     meta: dict[str, Any] = {}
+    name = getattr(module, "name", "")
+    if isinstance(name, str) and name:
+        meta["name"] = name
     description = getattr(module, "description", "")
     if isinstance(description, str) and description:
         meta["description"] = description
@@ -545,6 +577,12 @@ def _module_metadata(module: Any) -> dict[str, Any]:
     supported_modes = getattr(module, "supported_modes", ())
     if isinstance(supported_modes, (list, tuple)):
         meta["supported_modes"] = tuple(supported_modes)
+    arnold_api_version = getattr(module, "arnold_api_version", "")
+    if isinstance(arnold_api_version, str) and arnold_api_version:
+        meta["arnold_api_version"] = arnold_api_version
+    capabilities = getattr(module, "capabilities", ())
+    if isinstance(capabilities, (list, tuple)):
+        meta["capabilities"] = tuple(capabilities)
     recommended_profiles = getattr(module, "recommended_profiles", ())
     if isinstance(recommended_profiles, (list, tuple)):
         meta["recommended_profiles"] = tuple(recommended_profiles)
@@ -600,6 +638,7 @@ def scan_python_pipelines() -> list[Disposition]:
             continue
 
         for cli_name, module_file in dir_entries:
+            cli_name = canonical_pipeline_name(cli_name)
             # --- duplicate (earlier scan root wins) ---
             if cli_name in seen:
                 dispositions.append(Disposition(
@@ -752,6 +791,7 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
         for cli_name, module_file in _scan_dir_for_pipeline_modules(
             pipelines_dir, package_prefix=package_prefix,
         ):
+            cli_name = canonical_pipeline_name(cli_name)
             if cli_name in seen:
                 continue
             module = _load_module_from_path(module_file, package_prefix=package_prefix)

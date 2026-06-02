@@ -1,7 +1,8 @@
-"""Manifest-first discovery finds planning with correct metadata.
+"""Manifest-first discovery finds megaplan with correct metadata.
 
-The in-tree planning pipeline is a discovered module. These tests assert that
-discover_python_pipelines() (flag-ON) returns a 'planning' entry whose
+The in-tree planning pipeline package is discovered under the canonical
+``megaplan`` identity. These tests assert that discover_python_pipelines()
+(flag-ON) returns a ``megaplan`` entry whose
 manifest-derived metadata matches the expected contract.
 """
 
@@ -20,14 +21,15 @@ from megaplan._pipeline.discovery.manifest import Manifest
 # ── Expected metadata from megaplan/pipelines/planning/__init__.py ──────
 
 EXPECTED_PLANNING_METADATA = {
+    "name": "megaplan",
     "description": (
-        "Built-in planning pipeline: prep → plan → critique/gate/revise loop "
+        "Built-in megaplan pipeline: prep → plan → critique/gate/revise loop "
         "→ finalize → execute → review. Gate verdicts: proceed / iterate / "
         "tiebreaker / escalate. Robustness levels: bare / light / full / "
         "thorough / extreme."
     ),
     "arnold_api_version": "1.0",
-    "capabilities": ("plan",),
+    "capabilities": ("plan", "execute", "review"),
     "supported_modes": ("plan",),
 }
 
@@ -64,11 +66,11 @@ def test_discover_python_pipelines_flag_on_finds_planning_with_correct_metadata(
 
     # ── planning must be present ──
     by_name = {q[0]: q for q in quads}
-    assert "planning" in by_name, (
-        f"planning not discovered under flag-ON; got names: {sorted(by_name)}"
+    assert "megaplan" in by_name, (
+        f"megaplan not discovered under flag-ON; got names: {sorted(by_name)}"
     )
 
-    cli_name, builder, meta, source_path = by_name["planning"]
+    cli_name, builder, meta, source_path = by_name["megaplan"]
 
     # ── builder is deferred ──
     assert getattr(builder, "_m6_deferred", False), (
@@ -105,9 +107,9 @@ def test_discover_python_pipelines_flag_on_planning_builder_is_callable_and_yiel
         quads = registry.discover_python_pipelines()
 
     by_name = {q[0]: q for q in quads}
-    assert "planning" in by_name
+    assert "megaplan" in by_name
 
-    _cli_name, builder, _meta, _source_path = by_name["planning"]
+    _cli_name, builder, _meta, _source_path = by_name["megaplan"]
 
     from megaplan._pipeline.types import Pipeline as PipelineCls
 
@@ -136,7 +138,7 @@ def test_scan_python_pipelines_flag_on_planning_disposition_has_manifest(
         dispositions = registry.scan_python_pipelines()
 
     planning_dispositions = [
-        d for d in dispositions if d.cli_name == "planning"
+        d for d in dispositions if d.cli_name == "megaplan"
     ]
     assert len(planning_dispositions) >= 1, (
         f"no planning disposition; got cli_names: "
@@ -148,6 +150,6 @@ def test_scan_python_pipelines_flag_on_planning_disposition_has_manifest(
     assert isinstance(d.manifest, Manifest), (
         f"planning manifest is {type(d.manifest)}, not Manifest"
     )
-    assert d.manifest.capabilities == ("plan",)
+    assert d.manifest.capabilities == ("plan", "execute", "review")
     assert d.manifest.arnold_api_version == "1.0"
-    assert d.manifest.name == "planning"
+    assert d.manifest.name == "megaplan"

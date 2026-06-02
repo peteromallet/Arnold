@@ -3,8 +3,8 @@
 Callers inject a ``BakeoffControlBinding`` instance directly (e.g. via
 ``bakeoff_control_binding()``) rather than relying on string dispatch
 (``binding="bakeoff"``).  The control interface's ``_resolve_binding_and_state``
-only supports the legacy ``"planning"`` string path; all new bindings use
-direct ``ControlBinding`` injection.
+supports both the canonical ``"megaplan"`` and legacy ``"planning"`` string
+dispatch; all new bindings use direct ``ControlBinding`` injection.
 """
 
 from __future__ import annotations

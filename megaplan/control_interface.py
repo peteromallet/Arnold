@@ -274,13 +274,14 @@ def _resolve_binding_and_state(
     run_state: RunStateView | Mapping[str, Any],
     binding: ControlBinding | str,
 ) -> tuple[RunStateView, ControlBinding]:
-    # Only "planning" is supported as a legacy string dispatch.
+    # The canonical megaplan binding and the legacy planning alias both
+    # resolve to the same planning control surface.
     # New bindings (e.g. bakeoff) use direct ControlBinding instance
     # injection — no string dispatch is added.  The caller imports
     # and constructs the binding (e.g. bakeoff_control_binding()) and
     # passes it directly.
     if isinstance(binding, str):
-        if binding != "planning":
+        if binding not in {"megaplan", "planning"}:
             raise ValueError(f"unknown control binding: {binding!r}")
         planning = import_module("megaplan." + "planning")
 
@@ -299,7 +300,7 @@ def _resolve_binding_and_state(
 
 def read_valid_targets(
     run_state: RunStateView | Mapping[str, Any],
-    binding: ControlBinding | str = "planning",
+    binding: ControlBinding | str = "megaplan",
     *,
     recovery: bool = False,
 ) -> ControlProjection:

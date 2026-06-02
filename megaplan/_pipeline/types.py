@@ -398,7 +398,7 @@ class Pipeline:
                     "project_dir": (state.get("config") or {}).get("project_dir", str(root)),
                 },
                 mode=(state.get("config") or {}).get("mode", "code"),
-                inputs={"_pipeline": "planning", "_progress_env": progress_env or {}},
+                inputs={"_pipeline": "megaplan", "_progress_env": progress_env or {}},
             )
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 result = step.run(ctx)

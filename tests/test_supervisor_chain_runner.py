@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 from pathlib import Path
@@ -265,6 +266,10 @@ def test_chain_runner_executes_milestones_serially_with_injected_seams(
         ("a", "done"),
         ("b", "done"),
     ]
+
+
+def test_run_chain_defaults_binding_to_canonical_megaplan() -> None:
+    assert inspect.signature(run_chain).parameters["binding"].default == "megaplan"
 
 
 def test_chain_runner_retries_same_node_before_advancing(tmp_path: Path) -> None:

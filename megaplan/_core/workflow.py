@@ -420,16 +420,16 @@ def resume_plan(
         raise CliError("invalid_resume_cursor", f"Plan '{plan}' has an invalid resume cursor", extra={"resume_cursor": cursor})
     args = _resume_phase_args(phase, cursor, plan)
     previous_state = repo.load_state()
-    pipeline_name = (
+    raw_pipeline_name = (
         cursor.get("pipeline")
         if isinstance(cursor.get("pipeline"), str) and cursor.get("pipeline")
         else previous_state.get("_pipeline_name")
     )
-    if not isinstance(pipeline_name, str) or not pipeline_name:
-        pipeline_name = "planning"
+    if not isinstance(raw_pipeline_name, str) or not raw_pipeline_name:
+        raw_pipeline_name = "megaplan"
     from megaplan._pipeline.registry import canonical_pipeline_name, pipeline_metadata
 
-    pipeline_name = canonical_pipeline_name(pipeline_name)
+    pipeline_name = canonical_pipeline_name(raw_pipeline_name)
     stored_manifest_hash = cursor.get("pipeline_manifest_hash")
     if not isinstance(stored_manifest_hash, str) or not stored_manifest_hash:
         stored_manifest_hash = previous_state.get("_pipeline_manifest_hash")
@@ -457,13 +457,27 @@ def resume_plan(
         state = dict(previous_state)
         state["current_state"] = active_state
         repo.save_state(state)
+    if raw_pipeline_name != pipeline_name:
+        state = repo.load_state()
+        meta = dict(state.get("meta") or {})
+        migrations = list(meta.get("pipeline_alias_migrations") or [])
+        migration = {
+            "from": raw_pipeline_name,
+            "to": pipeline_name,
+            "phase": phase,
+        }
+        if migration not in migrations:
+            migrations.append(migration)
+        meta["pipeline_alias_migrations"] = migrations
+        state["meta"] = meta
+        repo.save_state(state)
     try:
         if runner is None:
             from megaplan._pipeline.registry import PipelineRegistry
 
             pipeline = PipelineRegistry().get(pipeline_name)
             if pipeline is None:
-                code, stdout, stderr = 1, "", "planning pipeline unavailable"
+                code, stdout, stderr = 1, "", "megaplan pipeline unavailable"
             else:
                 code, stdout, stderr = pipeline.run_phase(
                     phase,

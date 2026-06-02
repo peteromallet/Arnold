@@ -32,6 +32,7 @@ from megaplan._pipeline.runtime import (
     pipeline_runtime_enabled,
     policy_from_cli_args,
 )
+from megaplan import auto as auto_module
 
 
 def test_stall_detector_increments_on_repeat_state() -> None:
@@ -118,6 +119,36 @@ def test_pipeline_runtime_enabled_default_off(monkeypatch: pytest.MonkeyPatch) -
 def test_pipeline_runtime_enabled_when_env_set(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEGAPLAN_PIPELINE_AUTO", "1")
     assert pipeline_runtime_enabled() is True
+
+
+def test_run_planning_phase_uses_canonical_megaplan_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+
+    class FakePipeline:
+        def run_phase(self, phase: str, **kwargs: object) -> tuple[int, str, str]:
+            calls["phase"] = phase
+            calls["kwargs"] = kwargs
+            return 0, "ok", ""
+
+    class FakeRegistry:
+        def get(self, name: str) -> FakePipeline | None:
+            calls["pipeline_name"] = name
+            return FakePipeline()
+
+    monkeypatch.setattr("megaplan._pipeline.registry.PipelineRegistry", lambda: FakeRegistry())
+
+    code, stdout, stderr = auto_module._run_planning_phase(
+        ["execute", "--plan", "demo"],
+        cwd=tmp_path,
+        liveness_plan_dir=tmp_path,
+    )
+
+    assert (code, stdout, stderr) == (0, "ok", "")
+    assert calls["pipeline_name"] == "megaplan"
+    assert calls["phase"] == "execute"
 
 
 # ----------------------------------------------------------------------------

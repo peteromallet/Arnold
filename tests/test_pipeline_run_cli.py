@@ -18,24 +18,25 @@ def test_run_list_shows_builtin_pipelines() -> None:
     """``megaplan run --list`` shows registered pipelines.
 
     Demo pipelines (doc-critique, judges) are no longer registered as
-    built-ins; only planning and discovered pipelines appear.
+    built-ins; only megaplan and discovered pipelines appear.
     """
     proc = subprocess.run(
         [sys.executable, "-m", "megaplan", "run", "--list"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
-    assert "planning" in proc.stdout
+    assert "megaplan" in proc.stdout
+    assert "planning" not in proc.stdout
 
 
 def test_run_describe_returns_description() -> None:
     """``megaplan run <name> --describe`` for a registered pipeline."""
     proc = subprocess.run(
-        [sys.executable, "-m", "megaplan", "run", "planning", "--describe"],
+        [sys.executable, "-m", "megaplan", "run", "megaplan", "--describe"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "planning" in proc.stdout.lower() or "production" in proc.stdout.lower()
+    assert "megaplan" in proc.stdout.lower() or "production" in proc.stdout.lower()
 
 
 def test_run_doc_critique_demo_module_drives_to_done(tmp_path: Path) -> None:
@@ -106,7 +107,8 @@ def test_registered_pipelines_includes_writing_panel_strict() -> None:
     from megaplan._pipeline.registry import registered_pipelines
     names = registered_pipelines()
     assert "writing-panel-strict" in names
-    assert "planning" in names
+    assert "megaplan" in names
+    assert "planning" not in names
 
 
 def test_registered_pipelines_includes_epic_blitz() -> None:
@@ -172,10 +174,11 @@ def test_handle_list_pipelines() -> None:
     result = handle_list(Path.cwd(), args)
     assert result["success"] is True
     assert result["step"] == "list"
-    assert len(result["pipelines"]) >= 2  # at minimum writing-panel-strict + planning
+    assert len(result["pipelines"]) >= 2  # at minimum writing-panel-strict + megaplan
     names = [p["name"] for p in result["pipelines"]]
     assert "writing-panel-strict" in names
-    assert "planning" in names
+    assert "megaplan" in names
+    assert "planning" not in names
     assert "epic-blitz" in names
 
 
@@ -369,8 +372,8 @@ def test_creative_only_options_rejected_for_non_creative_before_preflight(
 
     rc = cli_run(
         _run_args(
-            pipeline_name="planning",
-            plan_dir=tmp_path / "planning",
+            pipeline_name="megaplan",
+            plan_dir=tmp_path / "megaplan",
             form="poem",
             primary_criterion="most surprising exact image",
         )
@@ -410,13 +413,13 @@ def test_run_pipeline_injects_pipeline_context_without_persisting_internal_input
 
     rc = cli_run(
         _run_args(
-            pipeline_name="planning",
-            plan_dir=tmp_path / "planning-context",
+            pipeline_name="megaplan",
+            plan_dir=tmp_path / "megaplan-context",
         )
     )
 
     assert rc == 0
-    assert captured["inputs"]["_pipeline"] == "planning"
+    assert captured["inputs"]["_pipeline"] == "megaplan"
     assert "_pipeline" not in captured["state"].get("_inputs", {})
 
 

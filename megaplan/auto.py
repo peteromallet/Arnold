@@ -411,7 +411,9 @@ def _run_planning_phase(
 ) -> tuple[int, str, str]:
     """Run one auto-dispatched command in-process.
 
-    Kept as the test seam replacing the retired subprocess helper.
+    Kept as the test seam replacing the retired subprocess helper. The
+    helper name stays legacy for test stability; dispatch now targets the
+    canonical ``megaplan`` pipeline identity.
     """
 
     del timeout, idle_timeout
@@ -422,11 +424,11 @@ def _run_planning_phase(
     plan = _plan_arg(args)
     if plan is None:
         return 1, "", "missing --plan"
-    from megaplan._pipeline.registry import PipelineRegistry
+    from megaplan._pipeline.registry import CANONICAL_BUILTIN_PIPELINE, PipelineRegistry
 
-    pipeline = PipelineRegistry().get("planning")
+    pipeline = PipelineRegistry().get(CANONICAL_BUILTIN_PIPELINE)
     if pipeline is None:
-        return 1, "", "planning pipeline unavailable"
+        return 1, "", "megaplan pipeline unavailable"
     return pipeline.run_phase(
         args[0],
         plan=plan,

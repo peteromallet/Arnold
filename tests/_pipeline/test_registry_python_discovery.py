@@ -1,7 +1,7 @@
 """T10 — Python-module pipeline discovery + metadata + SKILL.md surface.
 
 Covers the six contract points laid out in the brief:
-  (a) registered_pipelines() lists planning, writing-panel-strict.
+  (a) registered_pipelines() lists megaplan, writing-panel-strict.
   (b) A drop-in user pipeline at a temp ~/.megaplan/pipelines/foo.py
       (monkeypatched HOME) is discovered and runnable via the registry.
   (c) metadata['writing-panel-strict'] exposes description, default_profile,
@@ -40,10 +40,11 @@ def test_registered_pipelines_lists_builtins_plus_writing_panel_strict_and_epic_
     from megaplan._pipeline.registry import registered_pipelines
 
     names = registered_pipelines()
-    for required in ("planning", "writing-panel-strict", "epic-blitz"):
+    for required in ("megaplan", "writing-panel-strict", "epic-blitz"):
         assert required in names, (
             f"missing {required!r} in registry; got {names!r}"
         )
+    assert "planning" not in names
     # Demo pipelines (doc-critique, judges) are not built-ins.
     for demo_name in ("doc-critique", "judges"):
         assert demo_name not in names, (
@@ -199,7 +200,7 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Plant a sibling file whose CLI name == 'planning' under the user
-    scan root and assert discovery keeps the in-tree module, not the user
+    scan root and assert discovery keeps the canonical megaplan module, not the user
     duplicate.
     """
 
@@ -235,7 +236,7 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
         warnings.simplefilter("always")
         discovered = discover_python_pipelines()
 
-    planning_entries = [entry for entry in discovered if entry[0] == "planning"]
+    planning_entries = [entry for entry in discovered if entry[0] == "megaplan"]
     assert len(planning_entries) == 1
     assert Path(planning_entries[0][3]) != planted
 
@@ -264,7 +265,7 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
     )
 
     # The in-tree metadata never carries the planted bogus description.
-    builtin_meta = pipeline_metadata("planning")
+    builtin_meta = pipeline_metadata("megaplan")
     assert builtin_meta.get("description") != (
         "BOGUS override of the in-tree planning pipeline."
     )

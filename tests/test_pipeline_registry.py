@@ -44,7 +44,8 @@ def test_builtin_pipelines_are_registered() -> None:
     demo modules but are no longer registered as built-ins.
     """
     names = registered_pipelines()
-    assert "planning" in names
+    assert "megaplan" in names
+    assert "planning" not in names
     assert "epic-blitz" in names
 
 
