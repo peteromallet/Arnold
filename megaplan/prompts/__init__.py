@@ -133,13 +133,21 @@ def _execute_batch_prompt(
     batch_task_ids: list[str],
     completed_task_ids: set[str] | None = None,
     root: Path | None = None,
+    rework_context: dict[str, object] | None = None,
 ) -> str:
     mode = state.get("config", {}).get("mode", "code")
     if mode == "doc":
         return _execute_doc_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
     if is_creative_mode(state):
         return _execute_creative_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
-    return _execute_code_batch_prompt(state, plan_dir, batch_task_ids, completed_task_ids, root=root)
+    return _execute_code_batch_prompt(
+        state,
+        plan_dir,
+        batch_task_ids,
+        completed_task_ids,
+        root=root,
+        rework_context=rework_context,
+    )
 
 
 def _resolve_builder(

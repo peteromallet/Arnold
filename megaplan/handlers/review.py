@@ -112,7 +112,7 @@ def _is_substantive_reviewer_verdict(text: str) -> bool:
     return not is_rubber_stamp(text, strict=True)
 
 
-_REVIEW_INFRASTRUCTURE_SOURCES = {"review_incomplete"}
+_REVIEW_INFRASTRUCTURE_SOURCES = {"review_incomplete", "review_process_error"}
 _NO_REPOSITORY_INSPECTION_MARKERS = (
     "no repository inspection",
     "without repository inspection",
@@ -121,6 +121,16 @@ _NO_REPOSITORY_INSPECTION_MARKERS = (
     "could not inspect the repository",
     "no repo inspection",
     "without repo inspection",
+    "no verification commands",
+    "without verification commands",
+    "no file inspection",
+    "without file inspection",
+    "did not inspect files",
+    "didn't inspect files",
+    "premature final verdict",
+    "premature verdict",
+    "placeholder review",
+    "review could not complete",
 )
 
 
@@ -129,6 +139,26 @@ def _text_indicates_no_repository_inspection(value: Any) -> bool:
         return False
     lowered = value.lower()
     return any(marker in lowered for marker in _NO_REPOSITORY_INSPECTION_MARKERS)
+
+
+def _has_genuine_rejection(payload: dict[str, Any]) -> bool:
+    for criterion in payload.get("criteria", []) or []:
+        if not isinstance(criterion, dict):
+            continue
+        if criterion.get("priority") == "must" and criterion.get("pass") in (False, "fail"):
+            return True
+    for item in payload.get("rework_items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        # An infrastructure-failure marker item ("review couldn't complete") is
+        # not a genuine implementation rejection — it IS the infra signal, so it
+        # must not override the infra classification via the genuine-rejection
+        # short-circuit. Real blocking rework items (no infra source) still win.
+        if item.get("source") in _REVIEW_INFRASTRUCTURE_SOURCES:
+            continue
+        if _rework_item_is_blocker(item):
+            return True
+    return False
 
 
 def _review_infrastructure_failure(
@@ -144,12 +174,39 @@ def _review_infrastructure_failure(
     a reviewer failure into a bogus executor pass and can overwrite useful
     execution evidence.
     """
+    raw_completion_status = payload.get("review_completion_status")
+    completion_status = (
+        raw_completion_status
+        if raw_completion_status in {"complete", "incomplete"}
+        else None
+    )
+    # Explicit structured infra signals are authoritative and win FIRST: the
+    # reviewer is self-reporting that it could not complete, so an explicit
+    # "incomplete" status or an infra-tagged rework item must keep the plan in
+    # review even when the (untagged) rework items would otherwise look like a
+    # genuine rejection. Acting on an incomplete review is the unsafe direction.
+    if completion_status == "incomplete":
+        return True
     for item in payload.get("rework_items", []) or []:
         if not isinstance(item, dict):
             continue
         source = item.get("source")
         if isinstance(source, str) and source in _REVIEW_INFRASTRUCTURE_SOURCES:
             return True
+
+    # A genuine rejection (failed must-criterion or real, non-infra blocking
+    # rework item) beats the fuzzy text / empty-verdict heuristics below — never
+    # swallow a real rejection just because its prose resembles an infra
+    # complaint. (Structured infra signals above already took precedence.)
+    if _has_genuine_rejection(payload):
+        return False
+
+    if completion_status is not None:
+        return False
+
+    for item in payload.get("rework_items", []) or []:
+        if not isinstance(item, dict):
+            continue
         if _text_indicates_no_repository_inspection(item.get("issue")):
             return True
     if any(_text_indicates_no_repository_inspection(issue) for issue in issues):

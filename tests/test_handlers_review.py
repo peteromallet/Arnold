@@ -8,6 +8,7 @@ from megaplan._core import atomic_write_json, read_json, save_state
 from megaplan.handlers.review import (
     _finalize_review_outcome,
     _format_review_success_summary,
+    _review_infrastructure_failure,
     _synthesize_review_rework_items,
 )
 from megaplan.types import STATE_EXECUTED
@@ -57,6 +58,160 @@ def test_rework_falls_back_when_missing_concerned_ids(caplog) -> None:
 
     assert rework_items[0]["task_id"] == "REVIEW-coverage"
     assert "omitted concerned_task_ids" in caplog.text
+
+
+def test_review_process_error_is_recoverable_review_infrastructure() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "rework_items": [
+            {
+                "task_id": "T1",
+                "issue": "No verification commands or file inspection were performed before verdict.",
+                "expected": "Review should inspect the workspace.",
+                "actual": "Premature final verdict.",
+                "source": "review_process_error",
+                "status": "n/a",
+            }
+        ],
+    }
+
+    assert _review_infrastructure_failure(
+        payload,
+        issues=[],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
+def test_review_infra_classifier_does_not_swallow_failed_must_criterion() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "review_completion_status": "complete",
+        "criteria": [
+            {
+                "name": "Regression is fixed",
+                "priority": "must",
+                "pass": "fail",
+                "evidence": "No file inspection guard covers the real failed branch.",
+            }
+        ],
+        "issues": ["The implementation still fails when the issue text mentions no file inspection."],
+        "rework_items": [
+            {
+                "task_id": "T1",
+                "issue": "The no file inspection phrase appears in a genuine rejection.",
+                "expected": "Real rework should route to execute.",
+                "actual": "The implementation still fails the must criterion.",
+                "source": "review_coverage",
+            }
+        ],
+    }
+
+    assert not _review_infrastructure_failure(
+        payload,
+        issues=payload["issues"],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
+def test_review_completion_status_incomplete_is_infrastructure_failure() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "review_completion_status": "incomplete",
+        "criteria": [],
+        "issues": [],
+        "rework_items": [],
+        "task_verdicts": [{"task_id": "T1", "reviewer_verdict": "", "evidence_files": []}],
+        "sense_check_verdicts": [],
+    }
+
+    assert _review_infrastructure_failure(
+        payload,
+        issues=[],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
+def test_incomplete_status_wins_over_untagged_infra_rework_item() -> None:
+    # Regression (re-audit hole B): an explicit "incomplete" status must keep the
+    # plan in review even when the rework item describing the infra failure omits
+    # a `source` tag (so it would otherwise look like a genuine blocking rework
+    # item and trip the genuine-rejection short-circuit → bogus route to execute).
+    payload = {
+        "review_verdict": "needs_rework",
+        "review_completion_status": "incomplete",
+        "criteria": [],
+        "issues": ["Incomplete review"],
+        "rework_items": [
+            {
+                "task_id": "T1",
+                "issue": "Could not complete repository inspection — premature verdict",
+                "expected": "Complete repo inspection",
+                "actual": "No inspection performed",
+            }
+        ],
+        "task_verdicts": [
+            {"task_id": "T1", "reviewer_verdict": "limited", "evidence_files": ["src/x.py"]}
+        ],
+        "sense_check_verdicts": [],
+    }
+
+    assert _review_infrastructure_failure(
+        payload,
+        issues=["Incomplete review"],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
+def test_blank_review_completion_status_uses_legacy_empty_verdict_fallback() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "review_completion_status": "",
+        "criteria": [],
+        "issues": [],
+        "rework_items": [],
+        "task_verdicts": [],
+        "sense_check_verdicts": [],
+    }
+
+    assert _review_infrastructure_failure(
+        payload,
+        issues=[],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
+def test_review_infra_classifier_does_not_swallow_blocking_rework_item() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        # A COMPLETE review that found a genuine blocking issue whose text happens
+        # to quote an infra-marker phrase ("no file inspection") must NOT be
+        # swallowed as infra. (An explicit "incomplete" status would correctly win
+        # and keep the plan in review — that case is covered separately.)
+        "review_completion_status": "complete",
+        "criteria": [],
+        "issues": ["Blocking rework mentions no file inspection but is still real."],
+        "rework_items": [
+            {
+                "task_id": "T1",
+                "issue": "Blocking issue text includes no file inspection as a quoted product phrase.",
+                "expected": "The task should be fixed.",
+                "actual": "It is still broken.",
+                "status": "blocking",
+            }
+        ],
+    }
+
+    assert not _review_infrastructure_failure(
+        payload,
+        issues=payload["issues"],
+        total_tasks=1,
+        total_checks=0,
+    )
 
 
 def test_review_success_summary_explains_non_passing_non_blocking_criteria() -> None:

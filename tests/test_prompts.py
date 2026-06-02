@@ -24,10 +24,12 @@ from megaplan._core import (
     save_flag_registry,
 )
 from megaplan.prompts.review import (
+    LARGE_REVIEW_DIFF_MAX_BYTES,
     _review_prompt,
     _settled_decisions_block,
     _settled_decisions_instruction,
     parallel_criteria_review_prompt,
+    single_check_review_prompt,
 )
 from megaplan.prompts.tiebreaker_challenger import challenger_prompt
 from megaplan.prompts.tiebreaker_researcher import researcher_prompt
@@ -355,13 +357,15 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
         Requirements:
         - Verify each success criterion explicitly.
         - Trust executor evidence by default. Dig deeper only where the git diff, `execution_audit.json`, or vague notes make the claim ambiguous.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
         - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
-          - `must` criteria are hard gates. A `must` criterion that fails means `needs_rework`.
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
           - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
           - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
           - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
           - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
-        - Set `review_verdict` to `needs_rework` only when at least one `must` criterion fails or actual implementation work is incomplete. Use `approved` when all `must` criteria pass, even if some `should` criteria are flagged.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {{"command": "...", "baseline_status": "failed", "post_status": "failed"}}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
         {settled_decisions_instruction}
         - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
         - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
@@ -370,6 +374,7 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
         ```json
         {{
           "review_verdict": "approved",
+          "review_completion_status": "complete",
           "criteria": [
             {{
               "name": "All existing tests pass",
@@ -413,10 +418,11 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
           - `issue`: what is wrong
           - `expected`: what correct behavior looks like
           - `actual`: what was observed
-          - `evidence_file` (optional): file path supporting the finding
+          - `evidence_file`: file path supporting the finding
           - `flag_id`: critique/review flag ID when applicable, otherwise `null`
           - `source`: short machine-readable source tag when applicable, otherwise `null`
-        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, both `issues` and `rework_items` should be empty arrays.
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
         - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.
         """
     ).strip()
@@ -988,6 +994,9 @@ def test_review_prompt_includes_execution_and_gate(tmp_path: Path) -> None:
     assert "Gate summary" in prompt
     assert "Execution summary" in prompt
     assert "Execution tracking state (`finalize.json`)" in prompt
+    assert "review_completion_status" in prompt
+    assert "could not inspect the repository or run verification commands" in prompt
+    assert "repository-backed evidence for every criterion verdict" in prompt
 
 
 def test_plan_prompt_is_nonempty(tmp_path: Path) -> None:
@@ -1607,6 +1616,75 @@ def test_parallel_criteria_review_prompt_uses_issue_anchored_context_only(
     assert '"tasks": [' in prompt
     assert "DECISION-001" in prompt
     assert "Keep the parser fix source-local." in prompt
+
+
+def test_parallel_criteria_review_prompt_large_diff_uses_summary_not_full_patch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    full_patch = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n"
+        "+++ b/app.py\n"
+        "+FULL_PATCH_SENTINEL\n"
+        + ("+" + "x" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 50)
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_patch",
+        lambda project_dir: full_patch,
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_summary",
+        lambda project_dir: "M app.py",
+    )
+
+    prompt = parallel_criteria_review_prompt(
+        state, plan_dir, tmp_path, plan_dir / "review_criteria_verdict.json"
+    )
+
+    assert "Large git diff mode:" in prompt
+    assert "Git diff summary:\nM app.py" in prompt
+    assert "Changed files:\n- app.py" in prompt
+    assert "review_completion_status" in prompt
+    assert "FULL_PATCH_SENTINEL" not in prompt
+    assert "Full git diff:" not in prompt
+
+
+def test_single_check_review_prompt_large_diff_requires_tool_backed_checks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    full_patch = (
+        "diff --git a/large.py b/large.py\n"
+        "--- a/large.py\n"
+        "+++ b/large.py\n"
+        "+FULL_PATCH_SENTINEL\n"
+        + ("+" + "y" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 50)
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_patch",
+        lambda project_dir: full_patch,
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_summary",
+        lambda project_dir: "M large.py",
+    )
+
+    prompt = single_check_review_prompt(
+        state,
+        plan_dir,
+        tmp_path,
+        {"id": "coverage", "question": "Covered?", "guidance": "Check coverage."},
+        plan_dir / "review_coverage.json",
+        [],
+    )
+
+    assert "Use your tools to inspect the workspace" in prompt
+    assert "evidence_file" in prompt
+    assert "FULL_PATCH_SENTINEL" not in prompt
+    assert "Full git diff:" not in prompt
 
 
 def test_plan_prompt_includes_notes_when_present(tmp_path: Path) -> None:
