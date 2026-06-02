@@ -3226,6 +3226,106 @@ def test_review_nonconvergence_second_same_issue_escalates() -> None:
     assert streaks["T1"] == 2
 
 
+def test_review_nonconvergence_model_issue_text_normalization_escalates(
+    tmp_path: Path,
+) -> None:
+    previous = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "flag_id": None,
+                    "source": None,
+                    "issue": "Missing null check",
+                    "evidence_file": "artifacts/review-a.md",
+                }
+            ],
+        }
+    )
+    current = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "flag_id": None,
+                    "source": "reviewer-pass-2",
+                    "issue": "missing   null check",
+                    "evidence_file": "artifacts/review-b.md",
+                }
+            ],
+        }
+    )
+    assert previous["T1"] == current["T1"]
+
+    streaks = {"T1": 1}
+    nonconverging = auto._nonconverging_rework_tasks(
+        previous=previous,
+        current=current,
+        streaks=streaks,
+    )
+
+    assert nonconverging == ["T1"]
+    assert streaks["T1"] == 2
+
+    plan_dir = _make_plan_dir(tmp_path, "review-model-rephrased")
+    _write_tier_state(plan_dir, max_tier=3)
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": "T1", "complexity": 3, "tier_override": 3}]}),
+        encoding="utf-8",
+    )
+    baseline, next_tier = auto._review_nonconvergence_escalation_plan(
+        plan_dir=plan_dir,
+        task_id="T1",
+        ladder=_PREMIUM_LADDER,
+    )
+    assert baseline == 3
+    assert next_tier == (4, "claude:claude-opus-4-7")
+
+
+def test_review_nonconvergence_different_model_issues_reset_streak() -> None:
+    previous = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "flag_id": None,
+                    "source": None,
+                    "issue": "Missing null check",
+                    "evidence_file": "artifacts/review-a.md",
+                }
+            ],
+        }
+    )
+    current = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "flag_id": None,
+                    "source": None,
+                    "issue": "Incorrect timeout handling",
+                    "evidence_file": "artifacts/review-b.md",
+                }
+            ],
+        }
+    )
+    assert previous["T1"] != current["T1"]
+
+    streaks = {"T1": 1}
+    nonconverging = auto._nonconverging_rework_tasks(
+        previous=previous,
+        current=current,
+        streaks=streaks,
+    )
+
+    assert nonconverging == []
+    assert streaks["T1"] == 1
+
+
 def test_review_nonconvergence_shrinking_findings_do_not_escalate() -> None:
     streaks = {"T1": 1}
 
