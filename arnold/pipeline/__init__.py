@@ -26,6 +26,7 @@ All public names are re-exported here.  Import from ``arnold.pipeline``:
 No Megaplan re-exports appear here; this is the neutral surface.
 """
 
+from arnold.pipeline.executor import run_pipeline
 from arnold.pipeline.state import StateDelta, apply_delta
 from arnold.pipeline.types import (
     Edge,
@@ -49,4 +50,5 @@ __all__ = [
     "StepContext",
     "StepResult",
     "apply_delta",
+    "run_pipeline",
 ]
