@@ -70,6 +70,7 @@ def test_review_process_error_is_recoverable_review_infrastructure() -> None:
                 "expected": "Review should inspect the workspace.",
                 "actual": "Premature final verdict.",
                 "source": "review_process_error",
+                "status": "n/a",
             }
         ],
     }
@@ -77,6 +78,101 @@ def test_review_process_error_is_recoverable_review_infrastructure() -> None:
     assert _review_infrastructure_failure(
         payload,
         issues=[],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
+def test_review_infra_classifier_does_not_swallow_failed_must_criterion() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "review_completion_status": "complete",
+        "criteria": [
+            {
+                "name": "Regression is fixed",
+                "priority": "must",
+                "pass": "fail",
+                "evidence": "No file inspection guard covers the real failed branch.",
+            }
+        ],
+        "issues": ["The implementation still fails when the issue text mentions no file inspection."],
+        "rework_items": [
+            {
+                "task_id": "T1",
+                "issue": "The no file inspection phrase appears in a genuine rejection.",
+                "expected": "Real rework should route to execute.",
+                "actual": "The implementation still fails the must criterion.",
+                "source": "review_coverage",
+            }
+        ],
+    }
+
+    assert not _review_infrastructure_failure(
+        payload,
+        issues=payload["issues"],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
+def test_review_completion_status_incomplete_is_infrastructure_failure() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "review_completion_status": "incomplete",
+        "criteria": [],
+        "issues": [],
+        "rework_items": [],
+        "task_verdicts": [{"task_id": "T1", "reviewer_verdict": "", "evidence_files": []}],
+        "sense_check_verdicts": [],
+    }
+
+    assert _review_infrastructure_failure(
+        payload,
+        issues=[],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
+def test_blank_review_completion_status_uses_legacy_empty_verdict_fallback() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "review_completion_status": "",
+        "criteria": [],
+        "issues": [],
+        "rework_items": [],
+        "task_verdicts": [],
+        "sense_check_verdicts": [],
+    }
+
+    assert _review_infrastructure_failure(
+        payload,
+        issues=[],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
+def test_review_infra_classifier_does_not_swallow_blocking_rework_item() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "review_completion_status": "incomplete",
+        "criteria": [],
+        "issues": ["Blocking rework mentions no file inspection but is still real."],
+        "rework_items": [
+            {
+                "task_id": "T1",
+                "issue": "Blocking issue text includes no file inspection as a quoted product phrase.",
+                "expected": "The task should be fixed.",
+                "actual": "It is still broken.",
+                "status": "blocking",
+            }
+        ],
+    }
+
+    assert not _review_infrastructure_failure(
+        payload,
+        issues=payload["issues"],
         total_tasks=1,
         total_checks=0,
     )

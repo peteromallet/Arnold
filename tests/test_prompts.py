@@ -357,6 +357,7 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
         Requirements:
         - Verify each success criterion explicitly.
         - Trust executor evidence by default. Dig deeper only where the git diff, `execution_audit.json`, or vague notes make the claim ambiguous.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
         - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
           - `must` criteria are hard gates. A `must` criterion that fails means `needs_rework`.
           - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
@@ -364,6 +365,7 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
           - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
           - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
         - Set `review_verdict` to `needs_rework` only when at least one `must` criterion fails or actual implementation work is incomplete. Use `approved` when all `must` criteria pass, even if some `should` criteria are flagged.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
         {settled_decisions_instruction}
         - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
         - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
@@ -372,6 +374,7 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
         ```json
         {{
           "review_verdict": "approved",
+          "review_completion_status": "complete",
           "criteria": [
             {{
               "name": "All existing tests pass",
@@ -415,7 +418,7 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
           - `issue`: what is wrong
           - `expected`: what correct behavior looks like
           - `actual`: what was observed
-          - `evidence_file` (optional): file path supporting the finding
+          - `evidence_file`: file path supporting the finding
           - `flag_id`: critique/review flag ID when applicable, otherwise `null`
           - `source`: short machine-readable source tag when applicable, otherwise `null`
         - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, both `issues` and `rework_items` should be empty arrays.
@@ -990,6 +993,9 @@ def test_review_prompt_includes_execution_and_gate(tmp_path: Path) -> None:
     assert "Gate summary" in prompt
     assert "Execution summary" in prompt
     assert "Execution tracking state (`finalize.json`)" in prompt
+    assert "review_completion_status" in prompt
+    assert "could not inspect the repository or run verification commands" in prompt
+    assert "repository-backed evidence for every criterion verdict" in prompt
 
 
 def test_plan_prompt_is_nonempty(tmp_path: Path) -> None:
@@ -1639,6 +1645,7 @@ def test_parallel_criteria_review_prompt_large_diff_uses_summary_not_full_patch(
     assert "Large git diff mode:" in prompt
     assert "Git diff summary:\nM app.py" in prompt
     assert "Changed files:\n- app.py" in prompt
+    assert "review_completion_status" in prompt
     assert "FULL_PATCH_SENTINEL" not in prompt
     assert "Full git diff:" not in prompt
 
