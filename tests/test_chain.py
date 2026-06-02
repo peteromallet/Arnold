@@ -102,13 +102,13 @@ def _write_plan_state(root: Path, plan: str, state: str) -> Path:
     return plan_dir
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
         cwd=str(repo),
         capture_output=True,
         text=True,
-        check=True,
+        check=check,
     )
 
 
@@ -263,6 +263,34 @@ def test_load_spec_defaults_base_branch_to_main(tmp_path: Path) -> None:
     spec_path = _write_spec(tmp_path, {"milestones": [{"label": "m1", "idea": str(idea)}]})
 
     assert load_spec(spec_path).base_branch == "main"
+
+
+def test_load_spec_rejects_unknown_base_key_with_hint(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"base": "setup/cloud", "milestones": [{"label": "m1", "idea": str(idea)}]},
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+
+    assert excinfo.value.code == "invalid_spec"
+    assert "did you mean `base_branch`" in excinfo.value.message
+
+
+def test_load_spec_rejects_unknown_top_level_key(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea)}], "surprise": True},
+    )
+
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+
+    assert excinfo.value.code == "invalid_spec"
+    assert "`surprise`" in excinfo.value.message
 
 
 @pytest.mark.parametrize("value", ["", "   ", 42, ["main"]])
@@ -1399,12 +1427,14 @@ def test_chain_start_invokes_driver(
         *,
         no_git_refresh: bool = False,
         no_push: bool = False,
+        fresh: bool = False,
         one: bool = False,
         mode: str = "start",
         writer=None,
     ):
         del writer
         del no_push
+        del fresh
         del one
         calls.append((spec_path_arg, root, no_git_refresh, mode))
         return {"status": "done", "reason": "", "chain_state": {}, "events": []}
@@ -1455,11 +1485,12 @@ def test_chain_plan_and_execute_subcommands_parse_and_dispatch_modes(
         *,
         no_git_refresh: bool = False,
         no_push: bool = False,
+        fresh: bool = False,
         one: bool = False,
         mode: str = "start",
         writer=None,
     ):
-        del spec_path_arg, root, no_push, writer
+        del spec_path_arg, root, no_push, fresh, writer
         modes.append((mode, no_git_refresh, one))
         return {"status": "finalized", "reason": "", "chain_state": {}, "events": []}
 
@@ -1815,17 +1846,28 @@ def test_refresh_base_branch_default_invokes_git(tmp_path: Path) -> None:
     """Default behavior (no_git_refresh=False) still issues the git commands."""
     from megaplan.chain import _refresh_base_branch
 
-    class _Proc:
-        returncode = 0
+    calls = [
+        subprocess.CompletedProcess(
+            args=["git", "fetch", "origin", "setup/cloud"],
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "symbolic-ref", "--short", "HEAD"],
+            returncode=0,
+            stdout="feature\n",
+            stderr="",
+        ),
+    ]
 
-    with patch("megaplan.chain.subprocess.run", return_value=_Proc()) as mock_run:
+    with patch("megaplan.chain.subprocess.run", side_effect=calls) as mock_run:
         _refresh_base_branch(tmp_path, "setup/cloud", writer=lambda _m: None)
-    # fetch + checkout + pull
-    assert mock_run.call_count == 3
+    # fetch + current-branch probe; no checkout of setup/cloud.
+    assert mock_run.call_count == 2
     cmds = [call.args[0] for call in mock_run.call_args_list]
     assert cmds[0] == ["git", "fetch", "origin", "setup/cloud"]
-    assert cmds[1] == ["git", "checkout", "setup/cloud"]
-    assert cmds[2] == ["git", "pull", "--ff-only", "origin", "setup/cloud"]
+    assert cmds[1] == ["git", "symbolic-ref", "--short", "HEAD"]
 
 
 def test_refresh_base_branch_continues_on_non_fast_forward_pull(tmp_path: Path) -> None:
@@ -1840,9 +1882,9 @@ def test_refresh_base_branch_continues_on_non_fast_forward_pull(tmp_path: Path) 
             stderr="",
         ),
         subprocess.CompletedProcess(
-            args=["git", "checkout", "setup/cloud"],
+            args=["git", "symbolic-ref", "--short", "HEAD"],
             returncode=0,
-            stdout="",
+            stdout="setup/cloud\n",
             stderr="",
         ),
         subprocess.CompletedProcess(
@@ -1858,7 +1900,7 @@ def test_refresh_base_branch_continues_on_non_fast_forward_pull(tmp_path: Path) 
         _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append)
 
     assert any("Not possible to fast-forward" in msg for msg in msgs)
-    assert any("continuing on local setup/cloud" in msg for msg in msgs)
+    assert any("continuing with refreshed origin/setup/cloud" in msg for msg in msgs)
 
 
 def test_refresh_base_branch_aborts_on_fetch_failure(tmp_path: Path) -> None:
@@ -1884,8 +1926,8 @@ def test_refresh_base_branch_aborts_on_fetch_failure(tmp_path: Path) -> None:
     assert any("unable to access origin" in msg for msg in msgs)
 
 
-def test_refresh_base_branch_aborts_on_checkout_failure(tmp_path: Path) -> None:
-    """A failed checkout must stop the chain before stale work executes."""
+def test_refresh_base_branch_skips_checkout_when_base_locked_elsewhere(tmp_path: Path) -> None:
+    """Base refresh must not checkout a branch that may be active in another worktree."""
     from megaplan.chain import _refresh_base_branch
 
     calls = [
@@ -1896,21 +1938,20 @@ def test_refresh_base_branch_aborts_on_checkout_failure(tmp_path: Path) -> None:
             stderr="",
         ),
         subprocess.CompletedProcess(
-            args=["git", "checkout", "setup/cloud"],
-            returncode=1,
-            stdout="",
-            stderr="local changes would be overwritten",
+            args=["git", "symbolic-ref", "--short", "HEAD"],
+            returncode=0,
+            stdout="feature\n",
+            stderr="",
         ),
     ]
     msgs: list[str] = []
 
-    with patch("megaplan.chain.subprocess.run", side_effect=calls):
-        with pytest.raises(CliError) as excinfo:
-            _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append)
+    with patch("megaplan.chain.subprocess.run", side_effect=calls) as mock_run:
+        _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append)
 
-    assert excinfo.value.code == "git_refresh_failed"
-    assert "git checkout setup/cloud exited 1" in excinfo.value.message
-    assert any("local changes would be overwritten" in msg for msg in msgs)
+    cmds = [call.args[0] for call in mock_run.call_args_list]
+    assert ["git", "checkout", "setup/cloud"] not in cmds
+    assert any("local setup/cloud checkout refresh skipped" in msg for msg in msgs)
 
 
 def test_plan_state_uses_module_launcher(tmp_path: Path) -> None:
@@ -2399,6 +2440,61 @@ def test_checkout_milestone_branch_falls_back_to_local_base_when_fetch_fails(tmp
 
     assert ["git", "checkout", "-B", "mp/m2", "main"] in commands
     assert ["git", "checkout", "-B", "mp/m2", "origin/main"] not in commands
+
+
+def test_reset_chain_anchors_removes_only_spec_state_and_milestone_branches(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    _git(tmp_path, "init", "--bare", str(origin))
+    repo.mkdir()
+    _git(repo, "init", "--initial-branch=main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-m", "initial")
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "push", "-u", "origin", "main")
+    _git(repo, "branch", "mp/m1")
+    _git(repo, "push", "origin", "mp/m1")
+    _git(repo, "branch", "mp/unrelated")
+    _git(repo, "push", "origin", "mp/unrelated")
+
+    idea = repo / "idea.md"
+    idea.write_text("idea\n", encoding="utf-8")
+    spec_path = _write_spec(
+        repo,
+        {
+            "base_branch": "main",
+            "milestones": [{"label": "m1", "idea": str(idea), "branch": "mp/m1"}],
+        },
+    )
+    save_chain_state(spec_path, ChainState(current_milestone_index=0))
+    legacy_path = spec_path.with_name("chain_state.json")
+    legacy_path.write_text("{}\n", encoding="utf-8")
+
+    summary = chain_module.reset_chain_anchors(
+        spec_path,
+        repo,
+        load_spec(spec_path),
+        writer=lambda _m: None,
+        include_remote_branches=True,
+    )
+
+    assert summary["state_files"] == [
+        str(_state_path_for(spec_path)),
+        str(legacy_path),
+    ]
+    assert summary["local_branches"] == ["mp/m1"]
+    assert summary["remote_branches"] == ["mp/m1"]
+    assert not _state_path_for(spec_path).exists()
+    assert not legacy_path.exists()
+    assert _git(repo, "show-ref", "--verify", "--quiet", "refs/heads/mp/m1", check=False).returncode == 1
+    assert _git(repo, "ls-remote", "--exit-code", "--heads", "origin", "mp/m1", check=False).returncode == 2
+    assert _git(repo, "show-ref", "--verify", "--quiet", "refs/heads/mp/unrelated", check=False).returncode == 0
+    assert _git(repo, "ls-remote", "--exit-code", "--heads", "origin", "mp/unrelated", check=False).returncode == 0
 
 
 def test_ensure_milestone_pr_uses_configured_base_branch(tmp_path: Path) -> None:

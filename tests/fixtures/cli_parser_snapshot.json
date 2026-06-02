@@ -1501,6 +1501,21 @@
                   "choices": null,
                   "const": true,
                   "default": false,
+                  "dest": "fresh",
+                  "help": "Discard this spec's persisted chain state and milestone branches before starting. With --no-push, remote branch deletion is skipped.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--fresh"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
                   "dest": "one",
                   "help": "Drive at most one pending milestone, persist progress, then stop cleanly.",
                   "metavar": null,
@@ -1766,6 +1781,21 @@
                   "choices": null,
                   "const": true,
                   "default": false,
+                  "dest": "fresh",
+                  "help": "Discard this spec's persisted chain state and milestone branches before starting. With --no-push, remote branch deletion is skipped.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--fresh"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
                   "dest": "one",
                   "help": "Drive at most one pending milestone, persist progress, then stop cleanly.",
                   "metavar": null,
@@ -1915,6 +1945,21 @@
                   "nargs": "0",
                   "option_strings": [
                     "--no-push"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "fresh",
+                  "help": "Discard this spec's persisted chain state and milestone branches before starting. With --no-push, remote branch deletion is skipped.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--fresh"
                   ],
                   "required": false,
                   "type": null

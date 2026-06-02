@@ -97,6 +97,20 @@ VALID_FAILURE_ACTIONS = (
     "bump_robustness",
 )
 VALID_MERGE_POLICIES = ("auto", "review")
+VALID_CHAIN_SPEC_KEYS = frozenset(
+    {
+        "base_branch",
+        "seed",
+        "milestones",
+        "on_failure",
+        "on_escalate",
+        "merge_policy",
+        "prerequisite_policy",
+        "validation_policy",
+        "review_policy",
+        "driver",
+    }
+)
 
 # Autonomy-ladder bump ordering. These are the *one-tier-up* escalation maps
 # the chain applies when a milestone exhausts its retry budget. There is no
@@ -440,6 +454,18 @@ class ChainSpec:
     def from_dict(cls, raw: dict[str, Any]) -> "ChainSpec":
         if not isinstance(raw, dict):
             raise CliError("invalid_spec", "chain spec must be a YAML mapping")
+        unknown_keys = sorted(str(key) for key in raw if key not in VALID_CHAIN_SPEC_KEYS)
+        if unknown_keys:
+            if "base" in unknown_keys:
+                raise CliError(
+                    "invalid_spec",
+                    "unknown top-level chain spec key `base`; did you mean `base_branch`?",
+                )
+            formatted = ", ".join(f"`{key}`" for key in unknown_keys)
+            raise CliError(
+                "invalid_spec",
+                f"unknown top-level chain spec key(s): {formatted}",
+            )
         base_branch = raw.get("base_branch", "main")
         if not isinstance(base_branch, str) or not base_branch.strip():
             raise CliError("invalid_spec", "`base_branch` must be a non-empty string")
@@ -801,6 +827,79 @@ def save_chain_state(spec_path: Path, state: ChainState) -> None:
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
     tmp.replace(state_path)
+
+
+def _spec_milestone_branches(spec: ChainSpec) -> list[str]:
+    branches: list[str] = []
+    seen: set[str] = set()
+    for milestone in spec.milestones:
+        branch = milestone.branch
+        if branch and branch not in seen:
+            seen.add(branch)
+            branches.append(branch)
+    return branches
+
+
+def reset_chain_anchors(
+    spec_path: Path,
+    root: Path,
+    spec: ChainSpec,
+    *,
+    writer=sys.stdout.write,
+    include_remote_branches: bool = True,
+) -> dict[str, Any]:
+    """Remove resume anchors for one chain spec before an explicit fresh start."""
+    removed_state: list[str] = []
+    for state_path in (_state_path_for(spec_path), _legacy_state_path_for(spec_path)):
+        if state_path.exists():
+            state_path.unlink()
+            removed_state.append(str(state_path))
+
+    removed_local_branches: list[str] = []
+    removed_remote_branches: list[str] = []
+    skipped_remote_branches: list[str] = []
+    for branch in _spec_milestone_branches(spec):
+        local = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if local.returncode == 0:
+            _run_command(
+                root,
+                ["git", "branch", "-D", branch],
+                writer=writer,
+                error_code="chain_reset_failed",
+            )
+            removed_local_branches.append(branch)
+        elif local.returncode not in (1,):
+            raise CliError(
+                "chain_reset_failed",
+                f"could not inspect local branch {branch!r}: git show-ref exited {local.returncode}",
+                extra={"branch": branch, "stdout": local.stdout, "stderr": local.stderr},
+            )
+
+        if include_remote_branches:
+            if _remote_branch_exists(root, branch, writer=writer):
+                _run_command(
+                    root,
+                    ["git", "push", "origin", "--delete", branch],
+                    writer=writer,
+                    error_code="chain_reset_failed",
+                )
+                removed_remote_branches.append(branch)
+        else:
+            skipped_remote_branches.append(branch)
+
+    return {
+        "state_files": removed_state,
+        "local_branches": removed_local_branches,
+        "remote_branches": removed_remote_branches,
+        "skipped_remote_branches": skipped_remote_branches,
+    }
 
 
 def _completed_records_by_label(state: ChainState) -> dict[str, dict[str, Any]]:
@@ -2479,6 +2578,7 @@ def run_chain(
     writer=sys.stdout.write,
     no_git_refresh: bool = False,
     no_push: bool = False,
+    fresh: bool = False,
     one: bool = False,
     stop_at_finalized: bool = False,
     mode: Literal["start", "plan", "execute"] = "start",
@@ -2490,6 +2590,27 @@ def run_chain(
     execution_pass = mode == "execute"
     effective_stop_at_finalized = planning_pass or (stop_at_finalized and not execution_pass)
     spec = load_spec(spec_path)
+    push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
+    reset_summary: dict[str, Any] | None = None
+    if fresh:
+        reset_summary = reset_chain_anchors(
+            spec_path,
+            root,
+            spec,
+            writer=writer,
+            include_remote_branches=push_enabled,
+        )
+        writer(
+            "[chain] fresh start reset anchors: "
+            f"{len(reset_summary['state_files'])} state file(s), "
+            f"{len(reset_summary['local_branches'])} local branch(es), "
+            f"{len(reset_summary['remote_branches'])} remote branch(es)"
+        )
+        if reset_summary["skipped_remote_branches"]:
+            writer(
+                "; skipped remote branch deletion because pushing is disabled"
+            )
+        writer("\n")
     state = load_chain_state(spec_path)
     validate_paths(spec, root, state)
     _preflight_agent_backends(spec, writer=writer)
@@ -2503,7 +2624,6 @@ def run_chain(
             get_effective("execution", "completion_contract_mode")
         )
     preexisting_dirty_paths = _dirty_worktree_paths(root)
-    push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
 
     # ---- Preflight: data-loss guard for --no-push + require_clean_base ----
     # With pushing disabled, milestones never commit, so each milestone's output
@@ -2538,6 +2658,8 @@ def run_chain(
         )
 
     events: list[dict[str, Any]] = []
+    if reset_summary is not None:
+        events.append({"msg": "fresh reset anchors", "reset": reset_summary})
 
     def log(msg: str, **fields: Any) -> None:
         events.append({"msg": msg, **fields})
@@ -3352,6 +3474,14 @@ def _add_chain_run_args(parser: Any) -> None:
         help="Disable branch/PR/push lifecycle for no-network runs.",
     )
     parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help=(
+            "Discard this spec's persisted chain state and milestone branches "
+            "before starting. With --no-push, remote branch deletion is skipped."
+        ),
+    )
+    parser.add_argument(
         "--one",
         action="store_true",
         help="Drive at most one pending milestone, persist progress, then stop cleanly.",
@@ -3472,6 +3602,7 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
 
     no_git_refresh = bool(getattr(args, "no_git_refresh", False))
     no_push = bool(getattr(args, "no_push", False))
+    fresh = bool(getattr(args, "fresh", False))
     one = bool(getattr(args, "one", False))
     try:
         result = run_chain(
@@ -3479,6 +3610,7 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
             root,
             no_git_refresh=no_git_refresh,
             no_push=no_push,
+            fresh=fresh,
             one=one,
             mode=action or "start",
         )

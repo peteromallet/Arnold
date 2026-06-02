@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from importlib import resources
@@ -1340,6 +1341,59 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
         )
 
 
+def _reset_chain_worktree_target(
+    invoking_repo: Path,
+    target: Path,
+    branch: str,
+    *,
+    worktree_registered: Callable[[Path, Path], bool],
+) -> None:
+    """Clear the named chain worktree target for an explicit --fresh start."""
+    if not (target.exists() or worktree_registered(invoking_repo, target)):
+        return
+    if worktree_registered(invoking_repo, target):
+        proc = subprocess.run(
+            ["git", "worktree", "remove", "--force", str(target)],
+            cwd=str(invoking_repo),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise CliError(
+                "worktree_reset_failed",
+                (
+                    f"refusing --fresh worktree reset: could not remove registered "
+                    f"worktree at {target}: {(proc.stderr or proc.stdout).strip()}"
+                ),
+            )
+    if target.exists():
+        shutil.rmtree(target)
+    proc = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        cwd=str(invoking_repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        delete = subprocess.run(
+            ["git", "branch", "-D", branch],
+            cwd=str(invoking_repo),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if delete.returncode != 0:
+            raise CliError(
+                "worktree_reset_failed",
+                (
+                    f"refusing --fresh worktree reset: could not delete local "
+                    f"branch {branch!r}: {(delete.stderr or delete.stdout).strip()}"
+                ),
+            )
+
+
 def _setup_chain_worktree(args: argparse.Namespace) -> None:
     """Create a shared worktree for ``megaplan chain`` and reroot the command.
 
@@ -1402,6 +1456,13 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
     ensure_no_inprogress_op(invoking_repo)
 
     target = (Path.home() / "Documents" / ".megaplan-worktrees" / name).resolve()
+    if bool(getattr(args, "fresh", False)):
+        _reset_chain_worktree_target(
+            invoking_repo,
+            target,
+            name,
+            worktree_registered=worktree_registered,
+        )
     if target.exists():
         raise CliError(
             "worktree_target_exists",
