@@ -973,6 +973,17 @@ def run_hermes_step(
         _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override)
     fresh = fresh or step != "execute"
+    # Execute: shed context every batch instead of reloading the entire prior
+    # hermes_executor conversation (which has no LIMIT and grows unbounded across
+    # batches). megaplan re-sends a phase's full context from disk on every batch,
+    # so the carried message history is dead weight — Shannon discards it for the
+    # same reason (shannon.py: "NEVER plain-resume a session"). An unbounded
+    # hermes_executor session inflates pre-first-token latency until the stream
+    # stalls (the "DeepSeek freezes mid-SSE" symptom). Mirrors the codex execute
+    # fresh-per-batch fix in workers/_impl.py. Set
+    # MEGAPLAN_HERMES_EXECUTE_PERSIST_SESSION=1 to restore the legacy behavior.
+    if step == "execute" and os.getenv("MEGAPLAN_HERMES_EXECUTE_PERSIST_SESSION") != "1":
+        fresh = True
 
     AIAgent, SessionDB = _import_hermes_runtime()
     # Logging is configured once at process startup by entry points such as

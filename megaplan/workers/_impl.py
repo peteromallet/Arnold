@@ -164,7 +164,16 @@ DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 # slug-correct probe is the primary path and kills a wedge at ~the idle bound
 # (~5 min). Override via SHANNON_PROBE_RESCUE_CAP_SECONDS.
 DEFAULT_PROBE_RESCUE_CAP_SECONDS = 600.0
-DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS = 80_000_000
+# Rotate the persistent codex executor session to a FRESH one once its
+# accumulated context crosses this many tokens. The old value (80M) never fired
+# — gpt-5.x's effective context is a tiny fraction of it — so the executor kept
+# resuming a session that grew across every batch. Resuming a multi-million-token
+# rollout makes the API's time-to-first-token balloon: the codex process parks in
+# the SSE socket wait (0% CPU, zero output) for many minutes, presenting as an
+# indefinite hang while the liveness heartbeat keeps the run looking alive.
+# ~1M keeps a session productive for several batches yet rotates well before the
+# resume turn stalls. Override via MEGAPLAN_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS.
+DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS = 1_000_000
 CODEX_EXECUTOR_SESSION_HEADROOM_ENV = "MEGAPLAN_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS"
 
 
@@ -439,6 +448,12 @@ def run_command(
                 process = subprocess.run(
                     command,
                     input=stdin_text,
+                    # Seal stdin to /dev/null when no payload is supplied so child CLIs
+                    # that read stdin (notably ``codex exec``) get immediate EOF instead
+                    # of inheriting — and hanging on — the worker's stdin. (subprocess.run
+                    # forbids passing a non-None ``stdin`` together with ``input``, so this
+                    # only sets stdin when stdin_text is None.)
+                    stdin=subprocess.DEVNULL if stdin_text is None else None,
                     text=True,
                     cwd=str(cwd),
                     capture_output=True,
@@ -479,7 +494,14 @@ def run_command(
             process = spawn(
                 command,
                 cwd=str(cwd),
-                stdin=subprocess.PIPE if stdin_text is not None else None,
+                # ``else subprocess.DEVNULL`` (NOT ``None``): a child with no stdin
+                # payload must receive immediate EOF, not inherit the worker's stdin.
+                # ``codex exec`` reads stdin and blocks forever at "Reading additional
+                # input from stdin" — even with the prompt in argv — if its stdin is an
+                # open-but-idle inherited fd. Sealing it to /dev/null is the documented
+                # fix and prevents the codex-exec startup wedge that masquerades as a
+                # live worker (the liveness heartbeat keeps ticking while it hangs).
+                stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,
@@ -1991,6 +2013,18 @@ def run_codex_step(
     if effort is not None and effort not in _VALID_CODEX_EFFORTS:
         raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
     fresh = fresh or step not in _CROSS_CALL_PERSISTENT_STEPS
+    # Codex execute: shed context every batch instead of resuming one ever-growing
+    # session. megaplan re-sends a phase's full context from disk on every batch, so
+    # the in-session rollout is dead weight — Shannon discards it for exactly this
+    # reason (shannon.py: "NEVER plain-resume a session"), and resuming a
+    # multi-million-token codex rollout balloons time-to-first-token into an
+    # indefinite SSE-socket park (the masked-stall hang). Codex's own skill doc says
+    # use `exec` for one-shots, not `exec resume`, for batched work. Fresh-per-batch
+    # eliminates the unbounded-growth stall by construction; the token-headroom guard
+    # below stays as defense-in-depth. Set MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION=1
+    # to restore the legacy resume-the-same-session behavior.
+    if step == "execute" and os.getenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION") != "1":
+        fresh = True
     if os.getenv(MOCK_ENV_VAR) == "1":
         _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
@@ -2170,6 +2204,19 @@ def run_codex_step(
             )
         except (TypeError, ValueError):
             pre_first_byte_s = 180.0
+        # Mid-task idle watchdog (backstop to the session-headroom rotation above).
+        # codex emits NDJSON events continuously while a turn is alive; a turn that
+        # parks waiting on the SSE socket (e.g. a bloated-resume time-to-first-token
+        # stall that slipped past the headroom gate) produces ZERO stdout/stderr.
+        # ``run_command``'s idle watchdog only resets on REAL output bytes (never the
+        # liveness heartbeat), so this converts an indefinite park into a retryable
+        # ``worker_stall`` instead of riding the 2h wall-clock. Set generously so a
+        # single long, output-silent tool subprocess (bounded by the test baseline)
+        # is not false-killed. Override via MEGAPLAN_CODEX_IDLE_TIMEOUT_S (0 disables).
+        try:
+            codex_idle_s = float(os.getenv("MEGAPLAN_CODEX_IDLE_TIMEOUT_S", "600"))
+        except (TypeError, ValueError):
+            codex_idle_s = 600.0
         result = run_command(
             command,
             cwd=Path.cwd(),
@@ -2178,6 +2225,7 @@ def run_codex_step(
             timeout=timeout_seconds,
             activity_callback=_activity_callback_for_state(state, plan_dir),
             pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
+            idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
         )
     except CliError as error:
         error.extra["raw_output"] = _merge_partial_output(
@@ -2545,6 +2593,28 @@ def _runtime_fallback_candidates(current_agent: str) -> list[str]:
     return [agent for agent in detect_available_agents() if agent != current_agent]
 
 
+_VENDOR_AWARE_DEFAULT_STEPS = frozenset({"critique_evaluator", "feedback"})
+
+
+def _effective_premium_vendor(args: argparse.Namespace) -> str | None:
+    vendor = getattr(args, "_effective_vendor", None) or getattr(args, "vendor", None)
+    return vendor if vendor in {"claude", "codex"} else None
+
+
+def _vendor_adjusted_default_spec(step: str, spec: str, args: argparse.Namespace) -> str:
+    vendor = _effective_premium_vendor(args)
+    if step not in _VENDOR_AWARE_DEFAULT_STEPS or vendor is None:
+        return spec
+    parsed = parse_agent_spec(spec)
+    if parsed.agent not in {"claude", "codex"} or parsed.agent == vendor:
+        return spec
+    if parsed.model is None and parsed.effort is None:
+        return vendor
+    if parsed.model is None and parsed.effort is not None:
+        return f"{vendor}:{parsed.effort}"
+    return spec
+
+
 def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None = None) -> AgentMode:
     """Returns an :class:`AgentMode` with agent, mode, refreshed, model, effort, resolved_model.
 
@@ -2614,7 +2684,9 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
             else:
                 # Fall back to config / defaults
                 config = load_config(home)
-                spec = config.get("agents", {}).get(step) or DEFAULT_AGENT_ROUTING[step]
+                configured_spec = config.get("agents", {}).get(step)
+                spec = configured_spec or DEFAULT_AGENT_ROUTING[step]
+                spec = _vendor_adjusted_default_spec(step, spec, args)
                 spec_parsed = parse_agent_spec(spec)
                 agent = spec_parsed.agent
                 model = spec_parsed.model

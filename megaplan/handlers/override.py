@@ -662,6 +662,26 @@ def _override_set_profile(
     previous_profile = state["config"].get("profile")
     state["config"]["profile"] = new_profile
     state["config"]["phase_model"] = phase_models
+    # Realign config.vendor to the new profile's EXECUTE family when that family
+    # is a premium vendor (claude/codex). A single-vendor profile (e.g.
+    # all-claude / all-codex) pins execute to one premium family; a tiered profile
+    # (partnered/premium-tier) pins execute to hermes/deepseek and leaves vendor as
+    # a genuine dial. Without this, switching to all-claude while a stale
+    # config.vendor=codex lingers silently re-runs the all-claude vendor-swap
+    # (claude→codex) on every tier, so execute keeps resolving to codex despite the
+    # profile change. Only premium execute families realign; hermes/deepseek
+    # execute (tiered profiles) leaves the vendor dial untouched.
+    _exec_spec = next(
+        (pm.split("=", 1)[1] for pm in phase_models if pm.startswith("execute=")),
+        "",
+    ).lower()
+    _exec_family = None
+    if _exec_spec.startswith("claude"):
+        _exec_family = "claude"
+    elif _exec_spec.startswith("codex") or "gpt-5" in _exec_spec:
+        _exec_family = "codex"
+    if _exec_family is not None and state["config"].get("vendor") != _exec_family:
+        state["config"]["vendor"] = _exec_family
     _append_to_meta(
         state,
         "overrides",
