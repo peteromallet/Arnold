@@ -727,6 +727,60 @@ def test_validate_execution_evidence_clean_run_produces_no_completion_findings(
         assert not any(keyword in f for f in result["findings"]), result["findings"]
 
 
+def test_validate_execution_evidence_counts_committed_milestone_work(
+    tmp_path: Path,
+) -> None:
+    """Regression: a chain milestone commits its work and leaves a clean working
+    tree. A status-only check then sees nothing and falsely flags every committed
+    file as "not present in git status". The committed milestone range must count.
+    """
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=str(project_dir),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    git("init", "-q")
+    git("config", "user.email", "t@t.test")
+    git("config", "user.name", "t")
+    (project_dir / "seed.txt").write_text("seed\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "seed")
+    git("branch", "-M", "main")
+    # Feature branch with COMMITTED work; working tree deliberately left clean.
+    git("checkout", "-q", "-b", "feature/milestone")
+    (project_dir / "src").mkdir()
+    (project_dir / "src" / "a.py").write_text("print('a')\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "implement A")
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": ["src/a.py"],
+                "commands_run": [],
+                "executor_notes": "added src/a.py",
+            },
+        ],
+        "sense_checks": [],
+    }
+    result = validate_execution_evidence(finalize_data, project_dir)
+    assert result["skipped"] is False
+    assert "src/a.py" in result["files_in_diff"]
+    # The committed file must not be flagged as a phantom (not-present) claim.
+    assert not any(
+        "not present in git status" in f for f in result["findings"]
+    ), result["findings"]
+
+
 def test_validate_execution_evidence_reads_nested_git_repo_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -792,15 +846,24 @@ def test_validate_execution_evidence_flags_diff_mismatches_and_weak_notes(
         ],
     }
 
-    monkeypatch.setattr(
-        "megaplan.orchestration.evaluation.subprocess.run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args=["git", "status", "--short"],
-            returncode=0,
-            stdout=" M src/existing.py\n?? untracked.md\nR  old_name.py -> docs/new_name.py\nD  deleted.txt\n",
-            stderr="",
-        ),
-    )
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess:
+        argv = args[0] if args else kwargs.get("args", [])
+        subcommand = argv[1] if isinstance(argv, (list, tuple)) and len(argv) > 1 else ""
+        if subcommand == "status":
+            stdout = (
+                " M src/existing.py\n?? untracked.md\n"
+                "R  old_name.py -> docs/new_name.py\nD  deleted.txt\n"
+            )
+        elif subcommand == "branch":
+            # On `main`, _branch_diff_base() returns None, so the committed
+            # milestone range stays empty and this test exercises the
+            # status-only mismatch path it was written for.
+            stdout = "main\n"
+        else:
+            stdout = ""
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("megaplan.orchestration.evaluation.subprocess.run", fake_run)
 
     result = validate_execution_evidence(finalize_data, project_dir)
 
@@ -1239,6 +1302,7 @@ def test_build_gate_signals_fixture_shape_is_stable(tmp_path: Path) -> None:
         "significant_flags",
         "unresolved_flags",
         "resolved_flags",
+        "addressed_flags",
         "weighted_score",
         "weighted_history",
         "plan_delta_from_previous",

@@ -2695,6 +2695,7 @@ def run_chain(
                     milestone.branch or "",
                     base_branch=spec.base_branch,
                     writer=writer,
+                    from_origin=push_enabled and not no_git_refresh,
                 )
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
@@ -2727,6 +2728,7 @@ def run_chain(
                     milestone.branch or "",
                     base_branch=spec.base_branch,
                     writer=writer,
+                    from_origin=push_enabled and not no_git_refresh,
                 )
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=None
