@@ -19,7 +19,7 @@ import pytest
 
 import run_agent
 from honcho_integration.client import HonchoClientConfig
-from run_agent import AIAgent, _inject_honcho_turn_context
+from run_agent import AIAgent, _inject_honcho_turn_context, _truncate_tool_result_for_context
 from agent.prompt_builder import DEFAULT_AGENT_IDENTITY
 
 
@@ -826,16 +826,34 @@ class TestExecuteToolCalls:
         assert messages[0]["role"] == "tool"
         assert messages[0]["tool_call_id"] == "c1"
 
-    def test_result_truncation_over_100k(self, agent):
+    def test_result_truncation_allows_140k_for_large_context(self, agent):
+        tc = _mock_tool_call(name="web_search", arguments="{}", call_id="c1")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
+        messages = []
+        read_result = "x" * 140_000
+        agent.context_compressor.context_length = 1_000_000
+        with patch("run_agent.handle_function_call", return_value=read_result):
+            agent._execute_tool_calls(mock_msg, messages, "task-1")
+
+        assert messages[0]["content"] == read_result
+
+    def test_result_truncation_keeps_100k_floor_for_unknown_context(self, agent):
         tc = _mock_tool_call(name="web_search", arguments="{}", call_id="c1")
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
         messages = []
         big_result = "x" * 150_000
+        agent.context_compressor.context_length = None
         with patch("run_agent.handle_function_call", return_value=big_result):
             agent._execute_tool_calls(mock_msg, messages, "task-1")
-        # Content should be truncated
+
         assert len(messages[0]["content"]) < 150_000
-        assert "Truncated" in messages[0]["content"]
+        assert "exceeding the 100,000 char limit" in messages[0]["content"]
+
+    def test_result_truncation_caps_multi_mb_output_for_large_context(self):
+        result = _truncate_tool_result_for_context("x" * 2_000_000, 1_000_000)
+
+        assert len(result) < 2_000_000
+        assert "exceeding the 400,000 char limit" in result
 
 
 class TestConcurrentToolExecution:
@@ -1018,8 +1036,8 @@ class TestConcurrentToolExecution:
 
     def test_concurrent_handles_tool_error(self, agent):
         """If one tool raises, others should still complete."""
-        tc1 = _mock_tool_call(name="web_search", arguments='{}', call_id="c1")
-        tc2 = _mock_tool_call(name="web_search", arguments='{}', call_id="c2")
+        tc1 = _mock_tool_call(name="web_search", arguments='{"q":"one"}', call_id="c1")
+        tc2 = _mock_tool_call(name="web_search", arguments='{"q":"two"}', call_id="c2")
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
         messages = []
 
@@ -1054,21 +1072,21 @@ class TestConcurrentToolExecution:
         assert "cancelled" in messages[0]["content"].lower() or "skipped" in messages[0]["content"].lower()
         assert "cancelled" in messages[1]["content"].lower() or "skipped" in messages[1]["content"].lower()
 
-    def test_concurrent_truncates_large_results(self, agent):
-        """Concurrent path should truncate results over 100k chars."""
-        tc1 = _mock_tool_call(name="web_search", arguments='{}', call_id="c1")
-        tc2 = _mock_tool_call(name="web_search", arguments='{}', call_id="c2")
+    def test_concurrent_allows_140k_for_large_context(self, agent):
+        """Concurrent path should use the same context-aware truncation cap."""
+        tc1 = _mock_tool_call(name="web_search", arguments='{"q":"one"}', call_id="c1")
+        tc2 = _mock_tool_call(name="web_search", arguments='{"q":"two"}', call_id="c2")
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
         messages = []
-        big_result = "x" * 150_000
+        read_result = "x" * 140_000
+        agent.context_compressor.context_length = 1_000_000
 
-        with patch("run_agent.handle_function_call", return_value=big_result):
+        with patch("run_agent.handle_function_call", return_value=read_result):
             agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
 
         assert len(messages) == 2
         for m in messages:
-            assert len(m["content"]) < 150_000
-            assert "Truncated" in m["content"]
+            assert m["content"] == read_result
 
     def test_invoke_tool_dispatches_to_handle_function_call(self, agent):
         """_invoke_tool should route regular tools through handle_function_call."""
