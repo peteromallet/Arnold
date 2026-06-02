@@ -95,7 +95,7 @@ def apply_ladder(
     run_state: RunStateView,
     outcome: RunOutcome,
     plan_dir: Path,
-    binding: ControlBinding | str = "planning",
+    binding: ControlBinding | str = "megaplan",
     policy: SupervisorLadderPolicy = SupervisorLadderPolicy(),
 ) -> LadderDecision:
     """Apply one autonomy-ladder step and persist supervisor state.

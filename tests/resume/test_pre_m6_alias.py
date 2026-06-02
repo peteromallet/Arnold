@@ -12,8 +12,8 @@ from megaplan.types import CliError
 
 
 def test_pre_m6_planning_name_alias_resolves_registry_pipeline() -> None:
-    assert _NAME_ALIASES["planning"] == "planning"
-    assert canonical_pipeline_name("planning") == "planning"
+    assert _NAME_ALIASES["planning"] == "megaplan"
+    assert canonical_pipeline_name("planning") == "megaplan"
     pipeline = get_pipeline("planning")
     assert pipeline is not None
     assert pipeline.entry == "prep"
@@ -75,6 +75,9 @@ def test_resume_plan_with_pre_m6_planning_cursor_runs(tmp_path: Path) -> None:
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state["current_state"] == "done"
     assert "resume_cursor" not in state
+    assert state["meta"]["pipeline_alias_migrations"] == [
+        {"from": "planning", "to": "megaplan", "phase": "execute"}
+    ]
 
 
 def test_resume_plan_refuses_pipeline_manifest_chimera(tmp_path: Path, monkeypatch) -> None:

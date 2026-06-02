@@ -97,7 +97,7 @@ def run_chain(
     writer=sys.stdout.write,
     driver: RunDriver | None = None,
     pack_runner: PackRunner | None = None,
-    binding: ControlBinding | str = "planning",
+    binding: ControlBinding | str = "megaplan",
     ladder_policy: SupervisorLadderPolicy = SupervisorLadderPolicy(),
     one: bool = False,
 ) -> dict[str, Any]:
@@ -456,8 +456,8 @@ def _run_request(
         phase_timeout=spec.phase_timeout,
         status_timeout=spec.status_timeout,
         # The supervisor owns cross-run escalation through the neutral ladder.
-        # Do not ask the planning auto-driver to perform its old
-        # planning-specific force-proceed action in the flag-on path.
+        # Do not ask the canonical megaplan auto-driver to perform its old
+        # legacy-planning force-proceed action in the flag-on path.
         escalate_action=SUPERVISOR_DRIVER_ESCALATE_ACTION,
         writer=writer,
     )

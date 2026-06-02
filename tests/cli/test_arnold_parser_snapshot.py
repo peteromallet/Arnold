@@ -12,7 +12,7 @@ EXPECTED_SURFACE = {
         "doc",
         "epic-blitz",
         "jokes",
-        "planning",
+        "megaplan",
         "select-tournament",
         "writing-panel-strict",
     ],
@@ -148,5 +148,5 @@ def test_arnold_override_dispatch_split(monkeypatch, capsys) -> None:
     ]
 
     err = capsys.readouterr().err
-    assert "use 'arnold planning override force-proceed'" in err
+    assert "use 'arnold megaplan override force-proceed'" in err
     assert "use 'arnold override add-note'" in err

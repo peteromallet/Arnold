@@ -2,7 +2,7 @@
 
 Arnold is the module-oriented namespace over the pipeline registry. It keeps the
 existing ``megaplan`` console script live while exposing discovered pipeline
-modules without a privileged planning branch.
+modules without a privileged legacy-planning branch.
 """
 
 from __future__ import annotations
@@ -35,6 +35,8 @@ PLANNING_OVERRIDE_ACTIONS: tuple[str, ...] = (
 )
 
 MODULE_VERBS: tuple[str, ...] = ("run", "check", "doctor", "describe", "auto")
+# Legacy constant name retained to avoid churn in Arnold docs/tests; the
+# canonical pipeline identity routed through this surface is ``megaplan``.
 PLANNING_MODULE_VERBS: tuple[str, ...] = (*MODULE_VERBS, "override")
 
 
@@ -193,12 +195,12 @@ def _handle_pipelines(argv: list[str]) -> int:
 
 
 def _handle_auto(argv: list[str]) -> int:
-    module = "planning"
+    module = "megaplan"
     rest = list(argv)
     if rest and not rest[0].startswith("-"):
         module = canonical_pipeline_name(rest.pop(0))
-    if module != "planning":
-        print("arnold auto currently supports the planning module only", file=sys.stderr)
+    if module != "megaplan":
+        print("arnold auto currently supports the megaplan module only", file=sys.stderr)
         return 2
     return _megaplan_main(["auto", *rest])
 
@@ -209,8 +211,8 @@ def _handle_umbrella_override(argv: list[str]) -> int:
     action = argv[0]
     if action in PLANNING_OVERRIDE_ACTIONS:
         print(
-            f"arnold override: {action!r} is planning-scoped; "
-            f"use 'arnold planning override {action}'",
+            f"arnold override: {action!r} is megaplan-scoped; "
+            f"use 'arnold megaplan override {action}'",
             file=sys.stderr,
         )
         return 2
@@ -226,13 +228,13 @@ def _handle_planning_override(argv: list[str]) -> int:
     action = argv[0]
     if action in UMBRELLA_OVERRIDE_ACTIONS:
         print(
-            f"arnold planning override: {action!r} is umbrella-scoped; "
+            f"arnold megaplan override: {action!r} is umbrella-scoped; "
             f"use 'arnold override {action}'",
             file=sys.stderr,
         )
         return 2
     if action not in PLANNING_OVERRIDE_ACTIONS:
-        print(f"arnold planning override: unknown action {action!r}", file=sys.stderr)
+        print(f"arnold megaplan override: unknown action {action!r}", file=sys.stderr)
         return 2
     return _megaplan_main(["override", *argv])
 
@@ -252,11 +254,11 @@ def _handle_module_verb(module: str, argv: list[str]) -> int:
         return _megaplan_main(["run", module, "--describe", *rest])
     if verb == "auto":
         return _handle_auto([module, *rest])
-    if verb == "override" and module == "planning":
+    if verb == "override" and module == "megaplan":
         return _handle_planning_override(rest)
     if verb == "override":
         print(
-            f"arnold {module}: override is only available for the planning module",
+            f"arnold {module}: override is only available for the megaplan module",
             file=sys.stderr,
         )
         return 2
@@ -269,7 +271,7 @@ def _print_usage(*, file=None) -> None:  # type: ignore[no-untyped-def]
     print(
         "usage: arnold run ... | arnold pipelines {list,check,doctor,new} | "
         "arnold <module> {run,check,doctor,describe,auto} | "
-        "arnold planning override ... | arnold auto [planning] ... | "
+        "arnold megaplan override ... | arnold auto [megaplan] ... | "
         "arnold override ...",
         file=target,
     )

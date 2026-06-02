@@ -180,7 +180,7 @@ EXAMPLE_PACKS: tuple[ExamplePack, ...] = (
         ),
     ),
     ExamplePack(
-        slug="planning",
+        slug="megaplan",
         doc_slug="planning-as-composition",
         title="Planning as Composition",
         source_dir=REPO_ROOT / "megaplan" / "pipelines" / "planning",

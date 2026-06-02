@@ -2,7 +2,8 @@
 
 ## Overview
 
-The `planning` pipeline is the built-in megaplan plan-production substrate.
+The `megaplan` pipeline (packaged at `megaplan/pipelines/planning/`) is the built-in megaplan plan-production substrate.
+Its canonical registry identity is `megaplan` with the legacy alias `planning → megaplan`.
 It orchestrates the full prepare → plan → critique/gate/revise loop →
 finalize → execute → review lifecycle.
 
@@ -53,4 +54,4 @@ Driver substrate: `subprocess_isolated` (execute/review) + `graph+loop-node`
 (critique→gate→revise subloop).
 
 `arnold_api_version`: `1.0`
-`capabilities`: `plan`
+`capabilities`: `plan, execute, review`

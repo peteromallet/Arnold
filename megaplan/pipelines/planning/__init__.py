@@ -1,4 +1,4 @@
-"""Python composition of the first-class ``planning`` pipeline.
+"""Python composition of the first-class ``megaplan`` pipeline.
 
 The planning pipeline is the megaplan plan-production substrate:
 
@@ -25,7 +25,10 @@ Robustness levels control the depth of the critique/gate loop:
 Driver substrate: ``subprocess_isolated`` for execute/review stages;
 ``graph+loop-node`` for the critique→gate→revise subloop.
 
-This package is the canonical discovered ``planning`` pipeline.
+This package is the canonical discovered ``megaplan`` pipeline.
+Its physical package path remains ``megaplan.pipelines.planning`` so the
+legacy ``planning`` import path keeps working while registry discovery
+publishes the canonical ``megaplan`` identity.
 ``build_pipeline()`` owns the full stage wiring; ``megaplan._pipeline.planning``
 is a thin shim that re-exports ``compile_planning_pipeline`` for backwards
 compatibility.
@@ -46,9 +49,9 @@ from megaplan._pipeline.types import (
 
 # ── Module-level metadata surfaced via PipelineRegistry ────────────────
 
-name: str = "planning"
+name: str = "megaplan"
 description: str = (
-    "Built-in planning pipeline: prep → plan → critique/gate/revise loop "
+    "Built-in megaplan pipeline: prep → plan → critique/gate/revise loop "
     "→ finalize → execute → review. Gate verdicts: proceed / iterate / "
     "tiebreaker / escalate. Robustness levels: bare / light / full / "
     "thorough / extreme."
@@ -58,14 +61,14 @@ supported_modes: tuple[str, ...] = ("plan",)
 driver: tuple[str, str] = ("subprocess_isolated", "graph+loop-node")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("plan",)
+capabilities: tuple[str, ...] = ("plan", "execute", "review")
 
 
 # ── Pipeline assembly ──────────────────────────────────────────────────
 
 
 def build_pipeline(**kwargs) -> Pipeline:  # type: ignore[no-untyped-def]
-    """Return the canonical planning :class:`Pipeline`.
+    """Return the canonical megaplan :class:`Pipeline`.
 
     Sprint 5 Chunk A: this is the only canonical compile target. Stage
     keys are phase names (``prep / plan / critique / gate / revise /
