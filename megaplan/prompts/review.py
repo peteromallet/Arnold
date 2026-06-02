@@ -208,6 +208,7 @@ def _review_template_payload(plan_dir: Path, state: PlanState | None = None) -> 
 
     return {
         "review_verdict": "",
+        "review_completion_status": "",
         "criteria": criteria,
         "issues": [],
         "rework_items": [],
@@ -601,6 +602,7 @@ def parallel_criteria_review_prompt(
               - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
               - If a criterion cannot be verified in this context, mark it `waived` with an explanation.
             - Set `review_verdict` to `needs_rework` only when at least one `must` criterion fails or actual implementation work is incomplete. Use `approved` when all `must` criteria pass, even if some `should` criteria are flagged.
+            - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
             - The settled decisions above are already approved. Verify implementation against them, but do not re-litigate them.
             - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
             - `rework_items` must be structured and directly actionable. Populate `evidence_file` for every rework item with the file where the issue was observed. Populate `issues` as one-line summaries derived from `rework_items`.
@@ -631,12 +633,15 @@ def parallel_criteria_review_prompt(
         - Use only the issue text, full git diff, `finalize.json`, and the settled decisions shown above.
         - Do not rely on any approved plan, plan metadata, gate summary, execution summary, or execution audit that are not present here.
         - Judge against the success criteria from `finalize.json`, but stay anchored to the original issue text when deciding whether the work actually solved the problem.
+        - Verify each criterion with file inspection and focused commands where applicable before setting `pass`.
+        - Every criterion entry is a per-criterion check: populate `pass` and concrete evidence from the files or commands you inspected.
         - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
           - `must` criteria are hard gates. A `must` criterion that fails means `needs_rework`.
           - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
           - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
           - If a criterion cannot be verified in this context, mark it `waived` with an explanation.
         - Set `review_verdict` to `needs_rework` only when at least one `must` criterion fails or actual implementation work is incomplete. Use `approved` when all `must` criteria pass, even if some `should` criteria are flagged.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
         - The settled decisions above are already approved. Verify implementation against them, but do not re-litigate them.
         - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
         - `rework_items` must be structured and directly actionable. Populate `issues` as one-line summaries derived from `rework_items`.
@@ -696,6 +701,7 @@ def _write_review_template(plan_dir: Path, state: PlanState) -> Path:
 
     template = {
         "review_verdict": "",
+        "review_completion_status": "",
         "criteria": criteria,
         "issues": [],
         "rework_items": [],
@@ -816,6 +822,7 @@ def _review_prompt(
         Requirements:
         - {criteria_guidance}
         - Trust executor evidence by default. Dig deeper only where the git diff, `execution_audit.json`, or vague notes make the claim ambiguous.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
         - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
           - `must` criteria are hard gates. A `must` criterion that fails means `needs_rework`.
           - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
@@ -823,6 +830,7 @@ def _review_prompt(
           - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
           - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
         - Set `review_verdict` to `needs_rework` only when at least one `must` criterion fails or actual implementation work is incomplete. Use `approved` when all `must` criteria pass, even if some `should` criteria are flagged.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
         {settled_decisions_instruction}
         - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
         - {task_guidance}
@@ -831,6 +839,7 @@ def _review_prompt(
         ```json
         {{
           "review_verdict": "approved",
+          "review_completion_status": "complete",
           "criteria": [
             {{
               "name": "All existing tests pass",
@@ -874,7 +883,7 @@ def _review_prompt(
           - `issue`: what is wrong
           - `expected`: what correct behavior looks like
           - `actual`: what was observed
-          - `evidence_file` (optional): file path supporting the finding
+          - `evidence_file`: file path supporting the finding
           - `flag_id`: critique/review flag ID when applicable, otherwise `null`
           - `source`: short machine-readable source tag when applicable, otherwise `null`
         - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, both `issues` and `rework_items` should be empty arrays.
