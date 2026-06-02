@@ -173,9 +173,23 @@ def build_pipeline(**kwargs) -> Pipeline:  # type: ignore[no-untyped-def]
 compile_planning_pipeline = build_pipeline
 
 
+def operation_registry():
+    from .operations import operation_registry as _operation_registry
+
+    return _operation_registry()
+
+
+def override_catalog():
+    from .operations import override_catalog as _override_catalog
+
+    return _override_catalog()
+
+
 __all__ = [
     "build_pipeline",
     "compile_planning_pipeline",
+    "operation_registry",
+    "override_catalog",
     "description",
     "default_profile",
     "supported_modes",

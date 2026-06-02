@@ -424,19 +424,41 @@ def _run_planning_phase(
     plan = _plan_arg(args)
     if plan is None:
         return 1, "", "missing --plan"
-    from megaplan._pipeline.registry import CANONICAL_BUILTIN_PIPELINE, PipelineRegistry
-
-    pipeline = PipelineRegistry().get(CANONICAL_BUILTIN_PIPELINE)
-    if pipeline is None:
-        return 1, "", "megaplan pipeline unavailable"
-    return pipeline.run_phase(
-        args[0],
-        plan=plan,
-        cwd=cwd,
-        plan_dir=liveness_plan_dir,
-        argv=args,
-        progress_env=progress_env,
+    from arnold.runtime.operations import OperationKind, OperationRequest
+    from megaplan._pipeline.registry import (
+        CANONICAL_BUILTIN_PIPELINE,
+        dispatch_operation_for,
+        phase_tuple_from_operation_result,
     )
+
+    result = dispatch_operation_for(
+        CANONICAL_BUILTIN_PIPELINE,
+        OperationRequest(
+            kind=OperationKind.RUN_PHASE,
+            payload={
+                "phase": args[0],
+                "plan": plan,
+                "cwd": cwd,
+                "plan_dir": liveness_plan_dir,
+                "argv": list(args),
+                "progress_env": dict(progress_env or {}),
+            },
+        ),
+    )
+    if not result.ok:
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        exit_code = payload.get("exit_code")
+        stdout = payload.get("stdout")
+        stderr = payload.get("stderr")
+        return (
+            exit_code if isinstance(exit_code, int) and exit_code != 0 else 1,
+            stdout if isinstance(stdout, str) else "",
+            stderr if isinstance(stderr, str) and stderr else ", ".join(result.errors),
+        )
+    try:
+        return phase_tuple_from_operation_result(result)
+    except ValueError as exc:
+        return 1, "", str(exc)
 
 
 def _plan_arg(args: list[str]) -> str | None:
@@ -461,21 +483,71 @@ def _run_override_command(
     root = Path(cwd or Path.cwd())
     try:
         from megaplan.cli import load_plan
-        from megaplan.handlers.override import (
-            _override_abort,
-            _override_force_proceed,
-            handle_override,
-        )
         from megaplan._core.io import json_dump
+        from arnold.runtime.operations import OperationKind, OperationRequest
+        from megaplan._pipeline.registry import (
+            CANONICAL_BUILTIN_PIPELINE,
+            dispatch_operation_for,
+        )
 
         plan_dir, state = load_plan(root, plan)
         namespace = _override_namespace(args, plan=plan)
-        if action == "force-proceed":
-            response = _override_force_proceed(root, plan_dir, state, namespace)
-        elif action == "abort":
-            response = _override_abort(root, plan_dir, state, namespace)
+        if action in {"", "list"}:
+            result = dispatch_operation_for(
+                CANONICAL_BUILTIN_PIPELINE,
+                OperationRequest(
+                    kind=OperationKind.OVERRIDE_LIST,
+                    payload={"state": dict(state), "root": root, "plan": plan, "plan_dir": plan_dir},
+                ),
+            )
         else:
-            response = handle_override(root, namespace)
+            result = dispatch_operation_for(
+                CANONICAL_BUILTIN_PIPELINE,
+                OperationRequest(
+                    kind=OperationKind.OVERRIDE_APPLY,
+                    payload={
+                        "state": dict(state),
+                        "root": root,
+                        "plan": plan,
+                        "plan_dir": plan_dir,
+                        "action": action,
+                        "reason": getattr(namespace, "reason", None),
+                        "note": getattr(namespace, "note", None),
+                        "source": getattr(namespace, "source", None),
+                        "params": {
+                            key: value
+                            for key in (
+                                "robustness",
+                                "profile",
+                                "phase",
+                                "model",
+                                "vendor",
+                                "user_approved",
+                                "strict_notes",
+                            )
+                            if (value := getattr(namespace, key, None)) is not None
+                        },
+                    },
+                ),
+            )
+        if not result.ok:
+            payload = dict(result.payload) if isinstance(result.payload, dict) else {}
+            error = payload.get("error")
+            message = payload.get("message")
+            return (
+                1,
+                "",
+                json.dumps(
+                    {
+                        "success": False,
+                        "error": error if isinstance(error, str) else ",".join(result.errors),
+                        "message": message if isinstance(message, str) else ",".join(result.errors),
+                    }
+                ),
+            )
+        response = result.payload.get("response") if isinstance(result.payload, dict) else None
+        if response is None:
+            response = result.payload
         return 0, json_dump(response), ""
     except CliError as error:
         payload: dict[str, Any] = {
@@ -535,31 +607,10 @@ def _override_force_proceed_in_process(
     reason: str,
     user_approved: bool = False,
 ) -> tuple[int, str, str]:
-    from megaplan.cli import load_plan
-    from megaplan.handlers.override import _override_force_proceed
-    from megaplan._core.io import json_dump
-
-    try:
-        plan_dir, state = load_plan(root, plan)
-        args = argparse.Namespace(
-            plan=plan,
-            override_action="force-proceed",
-            reason=reason,
-            user_approved=user_approved,
-            strict_notes=None,
-        )
-        return 0, json_dump(_override_force_proceed(root, plan_dir, state, args)), ""
-    except CliError as error:
-        payload: dict[str, Any] = {
-            "success": False,
-            "error": error.code,
-            "message": error.message,
-        }
-        if error.extra:
-            payload["details"] = dict(error.extra)
-        return error.exit_code, "", json.dumps(payload)
-    except Exception as error:  # noqa: BLE001
-        return 1, "", f"{type(error).__name__}: {error}"
+    args = ["override", "force-proceed", "--plan", plan, "--reason", reason]
+    if user_approved:
+        args.append("--user-approved")
+    return _run_override_command(args, cwd=root)
 
 
 def _override_abort_in_process(
@@ -568,30 +619,10 @@ def _override_abort_in_process(
     plan: str,
     reason: str,
 ) -> tuple[int, str, str]:
-    from megaplan.cli import load_plan
-    from megaplan.handlers.override import _override_abort
-    from megaplan._core.io import json_dump
-
-    try:
-        plan_dir, state = load_plan(root, plan)
-        args = argparse.Namespace(
-            plan=plan,
-            override_action="abort",
-            reason=reason,
-            strict_notes=None,
-        )
-        return 0, json_dump(_override_abort(root, plan_dir, state, args)), ""
-    except CliError as error:
-        payload: dict[str, Any] = {
-            "success": False,
-            "error": error.code,
-            "message": error.message,
-        }
-        if error.extra:
-            payload["details"] = dict(error.extra)
-        return error.exit_code, "", json.dumps(payload)
-    except Exception as error:  # noqa: BLE001
-        return 1, "", f"{type(error).__name__}: {error}"
+    return _run_override_command(
+        ["override", "abort", "--plan", plan, "--reason", reason],
+        cwd=root,
+    )
 
 
 def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:

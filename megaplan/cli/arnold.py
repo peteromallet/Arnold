@@ -11,11 +11,14 @@ import argparse
 import sys
 from typing import Sequence
 
+from arnold.runtime.operations import OperationKind
 from megaplan._pipeline.registry import (
     canonical_pipeline_name,
     discover_python_pipelines,
+    override_catalog_for,
     pipeline_metadata,
     scan_python_pipelines,
+    supported_operations_for,
 )
 
 UMBRELLA_OVERRIDE_ACTIONS: tuple[str, ...] = (
@@ -209,14 +212,15 @@ def _handle_umbrella_override(argv: list[str]) -> int:
     if not argv:
         return _megaplan_main(["override"])
     action = argv[0]
-    if action in PLANNING_OVERRIDE_ACTIONS:
+    catalog = _megaplan_override_catalog()
+    if action in _megaplan_scoped_override_actions(catalog):
         print(
             f"arnold override: {action!r} is megaplan-scoped; "
             f"use 'arnold megaplan override {action}'",
             file=sys.stderr,
         )
         return 2
-    if action not in UMBRELLA_OVERRIDE_ACTIONS:
+    if action not in _umbrella_override_actions(catalog):
         print(f"arnold override: unknown action {action!r}", file=sys.stderr)
         return 2
     return _megaplan_main(["override", *argv])
@@ -226,17 +230,62 @@ def _handle_planning_override(argv: list[str]) -> int:
     if not argv:
         return _megaplan_main(["override"])
     action = argv[0]
-    if action in UMBRELLA_OVERRIDE_ACTIONS:
+    catalog = _megaplan_override_catalog()
+    if action in _umbrella_override_actions(catalog):
         print(
             f"arnold megaplan override: {action!r} is umbrella-scoped; "
             f"use 'arnold override {action}'",
             file=sys.stderr,
         )
         return 2
-    if action not in PLANNING_OVERRIDE_ACTIONS:
+    if (
+        not _megaplan_override_apply_advertised()
+        or action not in _megaplan_scoped_override_actions(catalog)
+    ):
         print(f"arnold megaplan override: unknown action {action!r}", file=sys.stderr)
         return 2
     return _megaplan_main(["override", *argv])
+
+
+def _megaplan_override_catalog() -> dict[str, object]:
+    try:
+        supported = supported_operations_for("megaplan")
+    except RuntimeError:
+        supported = frozenset({OperationKind.OVERRIDE_LIST, OperationKind.OVERRIDE_APPLY})
+    if OperationKind.OVERRIDE_LIST not in supported:
+        return {}
+    try:
+        return override_catalog_for("megaplan")
+    except RuntimeError:
+        from megaplan.pipelines.planning.operations import override_catalog
+
+        return override_catalog()
+
+
+def _megaplan_override_apply_advertised() -> bool:
+    try:
+        return OperationKind.OVERRIDE_APPLY in supported_operations_for("megaplan")
+    except RuntimeError:
+        return True
+
+
+def _catalog_actions_by_kind(
+    catalog: dict[str, object],
+    kinds: set[str],
+) -> set[str]:
+    actions: set[str] = set()
+    for action, meta in catalog.items():
+        if isinstance(action, str) and isinstance(meta, dict) and meta.get("kind") in kinds:
+            actions.add(action)
+    return actions
+
+
+def _megaplan_scoped_override_actions(catalog: dict[str, object]) -> set[str]:
+    return _catalog_actions_by_kind(catalog, {"transition", "recovery"})
+
+
+def _umbrella_override_actions(catalog: dict[str, object]) -> set[str]:
+    return _catalog_actions_by_kind(catalog, {"annotation", "termination", "config"})
 
 
 def _handle_module_verb(module: str, argv: list[str]) -> int:

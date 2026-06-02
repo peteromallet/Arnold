@@ -45,7 +45,6 @@ from megaplan._core import (
 )
 from megaplan._core import topology as _topology
 from megaplan.control_interface import ControlTransition, RunStateView, apply_transition
-from megaplan.planning import planning_control_binding
 from megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
 from megaplan.orchestration.evaluation import (
     build_gate_artifact,
@@ -452,7 +451,7 @@ def _handle_routed_override(
     result = apply_transition(
         run_state,
         transition,
-        planning_control_binding(),
+        "megaplan",
         plan_dir=plan_dir,
     )
     if not result.accepted:

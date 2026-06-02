@@ -125,20 +125,19 @@ def test_run_planning_phase_uses_canonical_megaplan_pipeline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from arnold.runtime.operations import OperationResult
+
     calls: dict[str, object] = {}
 
-    class FakePipeline:
-        def run_phase(self, phase: str, **kwargs: object) -> tuple[int, str, str]:
-            calls["phase"] = phase
-            calls["kwargs"] = kwargs
-            return 0, "ok", ""
+    def fake_dispatch(plugin_id: str, request: object) -> OperationResult:
+        calls["pipeline_name"] = plugin_id
+        calls["request"] = request
+        return OperationResult(
+            ok=True,
+            payload={"exit_code": 0, "stdout": "ok", "stderr": ""},
+        )
 
-    class FakeRegistry:
-        def get(self, name: str) -> FakePipeline | None:
-            calls["pipeline_name"] = name
-            return FakePipeline()
-
-    monkeypatch.setattr("megaplan._pipeline.registry.PipelineRegistry", lambda: FakeRegistry())
+    monkeypatch.setattr("megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch)
 
     code, stdout, stderr = auto_module._run_planning_phase(
         ["execute", "--plan", "demo"],
@@ -148,7 +147,8 @@ def test_run_planning_phase_uses_canonical_megaplan_pipeline(
 
     assert (code, stdout, stderr) == (0, "ok", "")
     assert calls["pipeline_name"] == "megaplan"
-    assert calls["phase"] == "execute"
+    assert calls["request"].kind.value == "run_phase"
+    assert calls["request"].payload["phase"] == "execute"
 
 
 # ----------------------------------------------------------------------------

@@ -31,7 +31,6 @@ from megaplan.orchestration.phase_result import (
     read_phase_result,
 )
 from megaplan.control_interface import read_valid_targets
-from megaplan.planning.control_binding import planning_control_binding, planning_run_state_view
 from megaplan.run_outcome import RunOutcome
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
@@ -271,15 +270,27 @@ def _unique_strings(values: list[str]) -> list[str]:
     return sorted({value for value in values if value})
 
 
+def _projected_outcome(state: dict[str, Any]) -> RunOutcome | None:
+    current_state = state.get("current_state")
+    if current_state == "done":
+        return RunOutcome.SUCCEEDED
+    if current_state in {"failed", "aborted"}:
+        return RunOutcome.FAILED
+    if current_state == "blocked":
+        return RunOutcome.BLOCKED
+    if current_state in {"awaiting_human", "clarifying"}:
+        return RunOutcome.AWAITING_HUMAN
+    return None
+
+
 def _projected_target_ids(
     state: dict[str, Any],
     *,
     recovery: bool,
 ) -> list[str]:
-    run_state = planning_run_state_view(state)
     targets = read_valid_targets(
-        run_state,
-        planning_control_binding(),
+        state,
+        plugin_id="megaplan",
         recovery=recovery,
     )
     return [
@@ -292,8 +303,7 @@ def _projected_target_ids(
 
 
 def _projected_valid_next(state: dict[str, Any]) -> list[str]:
-    run_state = planning_run_state_view(state)
-    use_recovery = run_state.outcome in {
+    use_recovery = _projected_outcome(state) in {
         RunOutcome.BLOCKED,
         RunOutcome.AWAITING_HUMAN,
         RunOutcome.FAILED,
@@ -305,7 +315,7 @@ def _projected_valid_next(state: dict[str, Any]) -> list[str]:
 
 
 def _external_error_resume_command(state: dict[str, Any]) -> str | None:
-    if planning_run_state_view(state).outcome != RunOutcome.BLOCKED:
+    if _projected_outcome(state) != RunOutcome.BLOCKED:
         return None
     latest_failure = state.get("latest_failure")
     resume_cursor = state.get("resume_cursor")
@@ -348,7 +358,7 @@ def _build_blocker_recovery_context(
             if isinstance(command, str)
         ]
     )
-    if planning_run_state_view(state).outcome == RunOutcome.BLOCKED and blockers:
+    if _projected_outcome(state) == RunOutcome.BLOCKED and blockers:
         plan_name = state.get("name")
         if isinstance(plan_name, str) and plan_name:
             suggested_commands.append(
@@ -927,7 +937,7 @@ def handle_status(root: Path, args: argparse.Namespace) -> StepResponse:
         for pd in cli_mod.active_plan_dirs(root):
             # cache-tolerant: status-view read.
             st = cli_mod.read_json(pd / "state.json")
-            if planning_run_state_view(st).outcome == RunOutcome.AWAITING_HUMAN:
+            if _projected_outcome(st) == RunOutcome.AWAITING_HUMAN:
                 items.append({"name": st["name"], "state": st["current_state"]})
         return {
             "success": True,

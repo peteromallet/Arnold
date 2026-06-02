@@ -134,14 +134,14 @@ def test_arnold_override_dispatch_split(monkeypatch, capsys) -> None:
     monkeypatch.setattr(arnold, "_megaplan_main", lambda argv: calls.append(list(argv)) or 0)
 
     assert arnold.main(["override", "add-note", "--plan", "demo", "--note", "context"]) == 0
-    assert arnold.main(["planning", "override", "force-proceed", "--plan", "demo"]) == 0
+    assert arnold.main(["megaplan", "override", "force-proceed", "--plan", "demo"]) == 0
     assert calls == [
         ["override", "add-note", "--plan", "demo", "--note", "context"],
         ["override", "force-proceed", "--plan", "demo"],
     ]
 
     assert arnold.main(["override", "force-proceed", "--plan", "demo"]) == 2
-    assert arnold.main(["planning", "override", "add-note", "--plan", "demo"]) == 2
+    assert arnold.main(["megaplan", "override", "add-note", "--plan", "demo"]) == 2
     assert calls == [
         ["override", "add-note", "--plan", "demo", "--note", "context"],
         ["override", "force-proceed", "--plan", "demo"],

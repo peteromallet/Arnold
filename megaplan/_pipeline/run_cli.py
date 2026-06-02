@@ -29,6 +29,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from arnold.runtime.envelope import RuntimeEnvelope
+from arnold.runtime.resume import TRUST_TRUSTED
 from megaplan._core.state import write_plan_state
 
 
@@ -169,7 +171,6 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     """
 
     from megaplan._pipeline.executor import run_pipeline
-    from megaplan._pipeline.preflight import preflight_or_raise
     from megaplan._pipeline.registry import (
         pipeline_metadata,
     )
@@ -234,17 +235,13 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             print(f"Error applying --vendor: {exc}", file=sys.stderr)
             return 2
 
-    try:
-        preflight_or_raise(
-            resolved_profile,
-            pipeline_name=pipeline_name,
-            profile_name=cli_profile or default_profile,
-        )
-    except SystemExit as exc:
-        code = exc.code
-        if isinstance(code, int):
-            return code
-        return 0 if code is None else 1
+    preflight_code = _validate_profile_for_run(
+        pipeline_name=pipeline_name,
+        resolved_profile=resolved_profile,
+        profile_name=cli_profile or default_profile,
+    )
+    if preflight_code is not None:
+        return preflight_code
 
     inputs = _parse_inputs(args.inputs)
     input_file: str | None = getattr(args, "input_file", None)
@@ -278,10 +275,20 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         state = json.loads(args.state) if args.state else {}
 
     if not resume_choice:
-        state["_pipeline_name"] = pipeline_name
-        manifest_hash = metadata.get("manifest_hash")
-        if isinstance(manifest_hash, str) and manifest_hash:
-            state["_pipeline_manifest_hash"] = manifest_hash
+        try:
+            runtime_envelope = _runtime_identity_block(
+                pipeline_name=pipeline_name,
+                metadata=metadata,
+                state=state,
+                plan_dir=plan_dir,
+            )
+        except CliError as error:
+            _print_cli_error(error)
+            return error.exit_code
+        state["_pipeline_name"] = runtime_envelope["plugin_id"]
+        state["_pipeline_manifest_hash"] = runtime_envelope["manifest_hash"]
+        state["_runtime_identity_schema_version"] = RuntimeEnvelope.schema_version
+        state["runtime_envelope"] = runtime_envelope
 
     # Continue-loop input swap: repoint the primary input to the latest
     # version of the artifact the human edited. The "primary input" is
@@ -397,6 +404,53 @@ def _validate_run_parameters(args: argparse.Namespace) -> None:
             )
 
 
+def _validate_profile_for_run(
+    *,
+    pipeline_name: str,
+    resolved_profile: dict[str, Any],
+    profile_name: str | None,
+) -> int | None:
+    from arnold.runtime.operations import OperationKind, OperationRequest
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline.registry import (
+        dispatch_operation_for,
+        supported_operations_for,
+    )
+
+    if OperationKind.PROFILE_VALIDATE in supported_operations_for(pipeline_name):
+        result = dispatch_operation_for(
+            pipeline_name,
+            OperationRequest(
+                kind=OperationKind.PROFILE_VALIDATE,
+                payload={
+                    "profile": dict(resolved_profile),
+                    "pipeline_name": pipeline_name,
+                    "profile_name": profile_name,
+                },
+            ),
+        )
+        if result.ok:
+            return None
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        exit_code = payload.get("exit_code")
+        if isinstance(exit_code, int):
+            return exit_code
+        return 1
+
+    try:
+        preflight_module.preflight_or_raise(
+            resolved_profile,
+            pipeline_name=pipeline_name,
+            profile_name=profile_name,
+        )
+    except SystemExit as exc:
+        code = exc.code
+        if isinstance(code, int):
+            return code
+        return 0 if code is None else 1
+    return None
+
+
 def _print_cli_error(error: CliError) -> None:
     payload: dict[str, Any] = {
         "success": False,
@@ -408,6 +462,57 @@ def _print_cli_error(error: CliError) -> None:
     if error.extra:
         payload["details"] = dict(error.extra)
     print(json.dumps(payload))
+
+
+def _runtime_identity_block(
+    *,
+    pipeline_name: str,
+    metadata: dict[str, Any],
+    state: dict[str, Any],
+    plan_dir: Path,
+) -> dict[str, Any]:
+    from megaplan._pipeline.registry import canonical_pipeline_name
+    from megaplan._pipeline.discovery.manifest import ManifestError, read_manifest
+    from megaplan.types import CliError
+
+    plugin_id = canonical_pipeline_name(pipeline_name)
+    manifest_hash = metadata.get("manifest_hash")
+    if not isinstance(manifest_hash, str) or not manifest_hash:
+        source_path = metadata.get("source_path")
+        if isinstance(source_path, str) and source_path:
+            manifest = read_manifest(Path(source_path))
+            if not isinstance(manifest, ManifestError):
+                manifest_hash = manifest.manifest_hash
+    if not isinstance(plugin_id, str) or not plugin_id:
+        raise CliError(
+            "pipeline_identity_unavailable",
+            "canonical pipeline identity is unavailable for this run",
+        )
+    if not isinstance(manifest_hash, str) or not manifest_hash:
+        raise CliError(
+            "pipeline_identity_unavailable",
+            f"manifest identity metadata is unavailable for pipeline '{pipeline_name}'",
+            extra={"pipeline": pipeline_name},
+        )
+
+    run_id = state.get("name")
+    if not isinstance(run_id, str) or not run_id:
+        run_id = plan_dir.name
+
+    plugin_state_schema_version = metadata.get("plugin_state_schema_version", 0)
+    if not isinstance(plugin_state_schema_version, int):
+        plugin_state_schema_version = 0
+
+    envelope = RuntimeEnvelope(
+        plugin_id=plugin_id,
+        manifest_hash=manifest_hash,
+        plugin_state_schema_version=plugin_state_schema_version,
+        run_id=run_id,
+        artifact_root=str(plan_dir),
+        resume_cursor=None,
+        trust_state=TRUST_TRUSTED,
+    )
+    return json.loads(envelope.to_json())
 
 
 def _seed_creative_runtime_state(

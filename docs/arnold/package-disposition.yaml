@@ -886,7 +886,7 @@ rows:
   reason: '`auto.py` contains one reusable subprocess/watcher seam, but the driver loop, phase dispatch, override behavior,
     and terminal-state policy are hardcoded to the Megaplan planning plugin.'
   blockers:
-  - '`_run_planning_phase()` resolves `PipelineRegistry().get("planning")` and calls `pipeline.run_phase(...)` directly.'
+  - '`_run_planning_phase()` resolves `PipelineRegistry().get("megaplan")` and calls `pipeline.run_phase(...)` directly.'
   - '`drive()` imports `AUTOMATION_TERMINAL_STATES`, many `STATE_*` constants, `PlanRepository`, phase-result recovery policy,
     and emits planning-specific override/help text.'
   - Override helpers and command builders hardcode `override force-proceed`, `override abort`, `override add-note`, `feedback
@@ -947,7 +947,7 @@ rows:
   - Move override command synthesis and Megaplan terminal-state policy behind the plugin-owned auto driver.
   first_extraction_unit: arnold/runtime/auto_subprocess.py
   tests_gates:
-  - 'static-gate: Arnold-owned auto runtime helpers must not resolve `PipelineRegistry().get("planning")` or import Megaplan
+  - 'static-gate: Arnold-owned auto runtime helpers must not resolve `PipelineRegistry().get("megaplan")` or import Megaplan
     `STATE_*` constants'
   - 'static-gate: Arnold-owned auto runtime helpers must not synthesize `override` or `feedback workflow` commands'
   configurable_seams: []

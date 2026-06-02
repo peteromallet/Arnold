@@ -26,10 +26,24 @@ from pathlib import Path
 
 import pytest
 
+from arnold.runtime.operations import (
+    OperationKind,
+    OperationRegistry,
+    OperationRequest,
+    OperationResult,
+)
+from megaplan._pipeline.discovery.trust import TrustTier
 from megaplan._pipeline.registry import (
     PipelineRegistry,
+    control_status_result_from_operation_result,
     discover_python_pipelines,
+    dispatch_operation_for,
+    operation_registry_for,
+    override_catalog_for,
+    phase_tuple_from_operation_result,
     register_pipeline,
+    resume_result_from_operation_result,
+    supported_operations_for,
 )
 
 
@@ -269,6 +283,258 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
     assert builtin_meta.get("description") != (
         "BOGUS override of the in-tree planning pipeline."
     )
+
+
+def test_operation_helpers_discover_factories_and_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pkg = tmp_path / "user" / "pipelines" / "ops_demo"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text(
+        "from arnold.runtime.operations import (\n"
+        "    NullOperationRegistry,\n"
+        "    OperationKind,\n"
+        "    OperationRegistry,\n"
+        "    OperationRequest,\n"
+        "    OperationResult,\n"
+        ")\n"
+        "from megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
+        "from dataclasses import dataclass\n"
+        "\n"
+        "description = 'ops demo'\n"
+        "default_profile = None\n"
+        "supported_modes = ('plan',)\n"
+        "\n"
+        "@dataclass\n"
+        "class _Step:\n"
+        "    name: str = 'noop'\n"
+        "    def run(self, ctx: StepContext) -> StepResult:\n"
+        "        return StepResult(next='halt')\n"
+        "\n"
+        "class _Registry:\n"
+        "    def supported_operations(self):\n"
+        "        return frozenset({OperationKind.RUN_PHASE, OperationKind.OVERRIDE_APPLY})\n"
+        "    def dispatch(self, request: OperationRequest) -> OperationResult:\n"
+        "        return OperationResult(ok=True, payload={'kind': request.kind.value})\n"
+        "\n"
+        "def build_pipeline() -> Pipeline:\n"
+        "    return Pipeline(stages={'noop': Stage(name='noop', step=_Step(), edges=(Edge(label='halt', target='halt'),))}, entry='noop')\n"
+        "\n"
+        "def operation_registry() -> OperationRegistry:\n"
+        "    return _Registry()\n"
+        "\n"
+        "def override_catalog():\n"
+        "    return {'force-proceed': {'opaque': True}}\n",
+        encoding="utf-8",
+    )
+    (pkg / "SKILL.md").write_text("# skill\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "megaplan._pipeline.registry.classify",
+        lambda *args, **kwargs: TrustTier.BLESSED,
+    )
+    monkeypatch.setattr(
+        "megaplan._pipeline.registry._get_scan_roots",
+        lambda: [(pkg.parent, None)],
+    )
+    reg = PipelineRegistry()
+
+    assert reg.metadata_for("ops-demo")["supported_operations"] == (
+        "override_apply",
+        "run_phase",
+    )
+    discovered = reg.operation_registry_for("ops-demo")
+    assert isinstance(discovered, OperationRegistry)
+    assert reg.supported_operations_for("ops-demo") == frozenset(
+        {OperationKind.RUN_PHASE, OperationKind.OVERRIDE_APPLY}
+    )
+    assert reg.override_catalog_for("ops-demo") == {
+        "force-proceed": {"opaque": True}
+    }
+
+
+def test_operation_helpers_fail_closed_for_absent_and_untrusted_factories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_dir = tmp_path / "user" / "pipelines"
+    user_dir.mkdir(parents=True)
+    user_pkg = user_dir / "user_ops"
+    user_pkg.mkdir()
+    (user_pkg / "__init__.py").write_text(
+        "from arnold.runtime.operations import OperationKind, OperationRequest, OperationResult\n"
+        "from megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
+        "from dataclasses import dataclass\n"
+        "\n"
+        "description = 'user ops'\n"
+        "default_profile = None\n"
+        "supported_modes = ('plan',)\n"
+        "\n"
+        "@dataclass\n"
+        "class _Step:\n"
+        "    name: str = 'noop'\n"
+        "    def run(self, ctx: StepContext) -> StepResult:\n"
+        "        return StepResult(next='halt')\n"
+        "\n"
+        "class _Registry:\n"
+        "    def supported_operations(self):\n"
+        "        return frozenset({OperationKind.RESUME})\n"
+        "    def dispatch(self, request: OperationRequest) -> OperationResult:\n"
+        "        return OperationResult(ok=True)\n"
+        "\n"
+        "def build_pipeline() -> Pipeline:\n"
+        "    return Pipeline(stages={'noop': Stage(name='noop', step=_Step(), edges=(Edge(label='halt', target='halt'),))}, entry='noop')\n"
+        "\n"
+        "def operation_registry():\n"
+        "    return _Registry()\n"
+        "\n"
+        "def override_catalog():\n"
+        "    return {'resume-now': {'opaque': True}}\n",
+        encoding="utf-8",
+    )
+    (user_pkg / "SKILL.md").write_text("# skill\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "megaplan._pipeline.registry._get_scan_roots",
+        lambda: [(user_dir, None)],
+    )
+    reg = PipelineRegistry()
+
+    assert reg.metadata_for("user-ops").get("supported_operations") is None
+    assert reg.supported_operations_for("user-ops") == frozenset()
+    assert reg.override_catalog_for("user-ops") == {}
+    assert reg.operation_registry_for("user-ops").supported_operations() == frozenset()
+
+
+def test_operation_helpers_canonicalize_planning_alias_to_megaplan_operations() -> None:
+    from megaplan._pipeline import registry as registry_module
+
+    registry_module._GLOBAL_REGISTRY = registry_module.PipelineRegistry()
+    assert supported_operations_for("planning") == supported_operations_for("megaplan")
+    assert override_catalog_for("planning") == override_catalog_for("megaplan")
+    assert (
+        operation_registry_for("planning").supported_operations()
+        == operation_registry_for("megaplan").supported_operations()
+    )
+
+
+def test_dispatch_operation_for_returns_exact_unsupported_result_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._pipeline import registry as registry_module
+
+    calls: list[str] = []
+
+    class _BoomRegistry:
+        def dispatch(self, request):  # noqa: ANN001
+            calls.append(request.kind.value)
+            raise AssertionError("unsupported operation must not dispatch")
+
+    monkeypatch.setattr(
+        registry_module,
+        "supported_operations_for",
+        lambda plugin_id: frozenset({OperationKind.RUN_PHASE}),
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "operation_registry_for",
+        lambda plugin_id: _BoomRegistry(),
+    )
+
+    result = dispatch_operation_for(
+        "planning",
+        OperationRequest(
+            kind=OperationKind.RESUME,
+            payload={"opaque": "sentinel"},
+        ),
+    )
+
+    assert calls == []
+    assert result == OperationResult(
+        ok=False,
+        payload={},
+        errors=("unsupported", OperationKind.RESUME.value),
+    )
+
+
+def test_operation_bridge_helpers_preserve_defaults_and_unknown_payload_keys() -> None:
+    bridged = control_status_result_from_operation_result(
+        OperationResult(
+            ok=True,
+            payload={
+                "binding": object(),
+                "state_view": object(),
+                "sentinel": {"opaque": True},
+            },
+        )
+    )
+
+    assert bridged["valid_targets"] == ()
+    assert bridged["recover_targets"] == ()
+    assert bridged["diagnostics"] == ()
+    assert bridged["sentinel"] == {"opaque": True}
+
+    resume_result = resume_result_from_operation_result(
+        OperationResult(
+            ok=False,
+            payload={
+                "args": ["execute", "--plan", "demo"],
+                "exit_code": 7,
+                "stdout": "resume stdout",
+                "stderr": "resume stderr",
+                "sentinel": {"opaque": True},
+            },
+            errors=("resume_failed", "execute"),
+        ),
+        plan="demo",
+        phase="execute",
+        resume_cursor={"phase": "execute"},
+    )
+
+    assert resume_result["success"] is False
+    assert resume_result["sentinel"] == {"opaque": True}
+    assert phase_tuple_from_operation_result(
+        OperationResult(
+            ok=True,
+            payload={
+                "exit_code": 0,
+                "stdout": "ok",
+                "stderr": "",
+            },
+        )
+    ) == (0, "ok", "")
+
+
+@pytest.mark.parametrize(
+    ("bridge", "result"),
+    [
+        (
+            phase_tuple_from_operation_result,
+            OperationResult(ok=True, payload={"stdout": "", "stderr": ""}),
+        ),
+        (
+            lambda result: resume_result_from_operation_result(
+                result,
+                plan="demo",
+                phase="execute",
+                resume_cursor={"phase": "execute"},
+            ),
+            OperationResult(ok=False, payload={"exit_code": 1, "stdout": "", "stderr": ""}),
+        ),
+        (
+            lambda result: control_status_result_from_operation_result(
+                result,
+                require_valid_targets=True,
+            ),
+            OperationResult(
+                ok=True,
+                payload={"binding": object(), "state_view": object()},
+            ),
+        ),
+    ],
+)
+def test_operation_bridge_helpers_fail_loudly_on_missing_required_keys(bridge, result) -> None:
+    with pytest.raises(ValueError):
+        bridge(result)
 
 
 # ── (d/e) Epic Blitz topology assertions ──────────────────────────────

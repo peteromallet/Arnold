@@ -45,6 +45,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+from arnold.runtime.operations import (
+    NullOperationRegistry,
+    OperationKind,
+    OperationRegistry,
+    OperationRequest,
+    OperationResult,
+)
 from megaplan._pipeline.discovery.manifest import (
     Manifest,
     ManifestError,
@@ -116,6 +123,74 @@ def canonical_pipeline_name(name: str) -> str:
     return _NAME_ALIASES.get(name, name)
 
 
+def _package_prefix_for_module_file(module_file: Path) -> str | None:
+    normalised = str(module_file.resolve()).replace("\\", "/")
+    fragment = "/megaplan/pipelines/"
+    if fragment in normalised or normalised.endswith("/megaplan/pipelines"):
+        return "megaplan.pipelines"
+    return None
+
+
+def _load_trusted_pipeline_module(module_file: Path) -> Any | None:
+    tier = classify(module_file, blessed_allowlist=BLESSED_ALLOWLIST)
+    if tier not in (TrustTier.AUTO_EXEC, TrustTier.BLESSED):
+        return None
+    return _load_module_from_path(
+        module_file,
+        package_prefix=_package_prefix_for_module_file(module_file),
+    )
+
+
+def _coerce_supported_operations(value: object) -> frozenset[OperationKind]:
+    if not isinstance(value, (set, frozenset, list, tuple)):
+        return frozenset()
+    supported: set[OperationKind] = set()
+    for item in value:
+        if isinstance(item, OperationKind):
+            supported.add(item)
+            continue
+        if isinstance(item, str):
+            try:
+                supported.add(OperationKind(item))
+            except ValueError:
+                continue
+    return frozenset(supported)
+
+
+def _supported_operation_names(registry: OperationRegistry) -> tuple[str, ...]:
+    try:
+        supported = registry.supported_operations()
+    except Exception:  # noqa: BLE001 - helper must fail closed
+        return ()
+    return tuple(sorted(kind.value for kind in _coerce_supported_operations(supported)))
+
+
+def _operation_registry_from_module(module: Any) -> OperationRegistry:
+    factory = getattr(module, "operation_registry", None)
+    if not callable(factory):
+        return NullOperationRegistry()
+    try:
+        registry = factory()
+    except Exception:  # noqa: BLE001 - helper must fail closed
+        return NullOperationRegistry()
+    if isinstance(registry, OperationRegistry):
+        return registry
+    return NullOperationRegistry()
+
+
+def _override_catalog_from_module(module: Any) -> dict[str, Any]:
+    factory = getattr(module, "override_catalog", None)
+    if not callable(factory):
+        return {}
+    try:
+        catalog = factory()
+    except Exception:  # noqa: BLE001 - helper must fail closed
+        return {}
+    if isinstance(catalog, Mapping):
+        return dict(catalog)
+    return {}
+
+
 def _manifest_metadata(name: str, disposition: Disposition) -> dict[str, Any]:
     manifest = disposition.manifest
     if manifest is None:
@@ -181,6 +256,8 @@ class PipelineRegistry:
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     _discovered: bool = field(default=False, init=False)
     _module_files: dict[str, Path] = field(default_factory=dict, init=False)
+    _operation_registries: dict[str, OperationRegistry] = field(default_factory=dict, init=False)
+    _override_catalogs: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
 
     def register(
         self,
@@ -312,6 +389,47 @@ class PipelineRegistry:
         self._ensure_discovered()
         return dict(self.metadata.get(name, {}))
 
+    def operation_registry_for(self, name: str) -> OperationRegistry:
+        name = canonical_pipeline_name(name)
+        self._ensure_discovered()
+        cached = self._operation_registries.get(name)
+        if cached is not None:
+            return cached
+        module_file = self._module_files.get(name)
+        registry: OperationRegistry = NullOperationRegistry()
+        if module_file is not None:
+            module = _load_trusted_pipeline_module(module_file)
+            if module is not None:
+                registry = _operation_registry_from_module(module)
+        self._operation_registries[name] = registry
+        supported = _supported_operation_names(registry)
+        if supported:
+            self.metadata.setdefault(name, {})["supported_operations"] = supported
+        return registry
+
+    def supported_operations_for(self, name: str) -> frozenset[OperationKind]:
+        registry = self.operation_registry_for(name)
+        try:
+            supported = registry.supported_operations()
+        except Exception:  # noqa: BLE001 - helper must fail closed
+            return frozenset()
+        return _coerce_supported_operations(supported)
+
+    def override_catalog_for(self, name: str) -> dict[str, Any]:
+        name = canonical_pipeline_name(name)
+        self._ensure_discovered()
+        cached = self._override_catalogs.get(name)
+        if cached is not None:
+            return dict(cached)
+        module_file = self._module_files.get(name)
+        catalog: dict[str, Any] = {}
+        if module_file is not None:
+            module = _load_trusted_pipeline_module(module_file)
+            if module is not None:
+                catalog = _override_catalog_from_module(module)
+        self._override_catalogs[name] = dict(catalog)
+        return dict(catalog)
+
     def read_skill_md(self, name: str) -> str | None:
         """Return the SKILL.md contents for *name*, or ``None``.
 
@@ -372,6 +490,204 @@ def describe_pipeline(name: str) -> str:
 
 def pipeline_metadata(name: str) -> dict[str, Any]:
     return _GLOBAL_REGISTRY.metadata_for(name)
+
+
+def operation_registry_for(name: str) -> OperationRegistry:
+    name = canonical_pipeline_name(name)
+    try:
+        return _GLOBAL_REGISTRY.operation_registry_for(name)
+    except RuntimeError:
+        if name == CANONICAL_BUILTIN_PIPELINE:
+            from megaplan.pipelines.planning import operation_registry
+
+            return operation_registry()
+        raise
+
+
+def supported_operations_for(name: str) -> frozenset[OperationKind]:
+    name = canonical_pipeline_name(name)
+    try:
+        return _GLOBAL_REGISTRY.supported_operations_for(name)
+    except RuntimeError:
+        if name == CANONICAL_BUILTIN_PIPELINE:
+            from megaplan.pipelines.planning import operation_registry
+
+            return operation_registry().supported_operations()
+        raise
+
+
+def _unsupported_operation_result(kind: object) -> OperationResult:
+    kind_value = kind.value if isinstance(kind, OperationKind) else str(kind)
+    return OperationResult(ok=False, payload={}, errors=("unsupported", kind_value))
+
+
+def dispatch_operation_for(
+    plugin_id: str,
+    request: OperationRequest,
+) -> OperationResult:
+    """Dispatch *request* through the canonical plugin operation registry.
+
+    ``planning`` is only accepted as an explicit legacy alias for the
+    canonical ``megaplan`` plugin identity. Unsupported operations fail
+    closed with the exact neutral unsupported result rather than falling
+    back to direct pipeline dispatch.
+    """
+
+    plugin_id = canonical_pipeline_name(plugin_id)
+    supported = supported_operations_for(plugin_id)
+    if request.kind not in supported:
+        return _unsupported_operation_result(request.kind)
+    payload = request.payload if isinstance(request.payload, Mapping) else {}
+    return operation_registry_for(plugin_id).dispatch(
+        OperationRequest(kind=request.kind, payload=dict(payload))
+    )
+
+
+def _bridge_payload(result: OperationResult, *, bridge_name: str) -> Mapping[str, Any]:
+    payload = result.payload
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"{bridge_name} requires OperationResult.payload to be a mapping")
+    return payload
+
+
+def _require_payload_key(
+    payload: Mapping[str, Any],
+    key: str,
+    *,
+    bridge_name: str,
+) -> Any:
+    if key not in payload:
+        raise ValueError(f"{bridge_name} requires payload.{key}")
+    return payload[key]
+
+
+def _require_payload_str(
+    payload: Mapping[str, Any],
+    key: str,
+    *,
+    bridge_name: str,
+) -> str:
+    value = _require_payload_key(payload, key, bridge_name=bridge_name)
+    if not isinstance(value, str):
+        raise ValueError(f"{bridge_name} requires payload.{key} to be a string")
+    return value
+
+
+def _require_payload_int(
+    payload: Mapping[str, Any],
+    key: str,
+    *,
+    bridge_name: str,
+) -> int:
+    value = _require_payload_key(payload, key, bridge_name=bridge_name)
+    if not isinstance(value, int):
+        raise ValueError(f"{bridge_name} requires payload.{key} to be an int")
+    return value
+
+
+def phase_tuple_from_operation_result(result: OperationResult) -> tuple[int, str, str]:
+    """Bridge a ``RUN_PHASE`` result back to the legacy tuple contract."""
+
+    payload = _bridge_payload(result, bridge_name="phase_tuple_from_operation_result")
+    return (
+        _require_payload_int(
+            payload, "exit_code", bridge_name="phase_tuple_from_operation_result"
+        ),
+        _require_payload_str(
+            payload, "stdout", bridge_name="phase_tuple_from_operation_result"
+        ),
+        _require_payload_str(
+            payload, "stderr", bridge_name="phase_tuple_from_operation_result"
+        ),
+    )
+
+
+def resume_result_from_operation_result(
+    result: OperationResult,
+    *,
+    plan: str,
+    phase: str,
+    resume_cursor: Mapping[str, Any],
+    state: str | None = None,
+) -> dict[str, Any]:
+    """Bridge a ``RESUME`` result back to the legacy ``resume_plan()`` shape."""
+
+    payload = dict(
+        _bridge_payload(result, bridge_name="resume_result_from_operation_result")
+    )
+    args = _require_payload_key(
+        payload, "args", bridge_name="resume_result_from_operation_result"
+    )
+    exit_code = _require_payload_int(
+        payload, "exit_code", bridge_name="resume_result_from_operation_result"
+    )
+    stdout = _require_payload_str(
+        payload, "stdout", bridge_name="resume_result_from_operation_result"
+    )
+    stderr = _require_payload_str(
+        payload, "stderr", bridge_name="resume_result_from_operation_result"
+    )
+    if not isinstance(args, list) or not all(isinstance(item, str) for item in args):
+        raise ValueError(
+            "resume_result_from_operation_result requires payload.args to be a list[str]"
+        )
+
+    bridged: dict[str, Any] = {
+        "success": result.ok and exit_code == 0,
+        "step": "resume",
+        "plan": plan,
+        "phase": phase,
+    }
+    if bridged["success"]:
+        bridged["command"] = list(args)
+        if state is not None:
+            bridged["state"] = state
+    else:
+        bridged["resume_cursor"] = dict(resume_cursor)
+        bridged["exit_code"] = exit_code
+        bridged["stdout"] = stdout
+        bridged["stderr"] = stderr
+    for key, value in payload.items():
+        bridged.setdefault(key, value)
+    return bridged
+
+
+def control_status_result_from_operation_result(
+    result: OperationResult,
+    *,
+    require_valid_targets: bool = False,
+    require_recover_targets: bool = False,
+) -> dict[str, Any]:
+    """Bridge a ``STATUS_PROJECTION`` result for legacy control/status callers."""
+
+    bridge_name = "control_status_result_from_operation_result"
+    if not result.ok:
+        raise ValueError(
+            f"{bridge_name} requires ok=True, got errors={result.errors!r}"
+        )
+    payload = dict(_bridge_payload(result, bridge_name=bridge_name))
+    _require_payload_key(payload, "binding", bridge_name=bridge_name)
+    _require_payload_key(payload, "state_view", bridge_name=bridge_name)
+    if require_valid_targets:
+        _require_payload_key(payload, "valid_targets", bridge_name=bridge_name)
+    if require_recover_targets:
+        _require_payload_key(payload, "recover_targets", bridge_name=bridge_name)
+    payload.setdefault("valid_targets", ())
+    payload.setdefault("recover_targets", ())
+    payload.setdefault("diagnostics", ())
+    return payload
+
+
+def override_catalog_for(name: str) -> dict[str, Any]:
+    name = canonical_pipeline_name(name)
+    try:
+        return _GLOBAL_REGISTRY.override_catalog_for(name)
+    except RuntimeError:
+        if name == CANONICAL_BUILTIN_PIPELINE:
+            from megaplan.pipelines.planning import override_catalog
+
+            return override_catalog()
+        raise
 
 
 def read_pipeline_skill_md(name: str) -> str | None:
@@ -563,7 +879,7 @@ def _load_module_from_path(
     return module
 
 
-def _module_metadata(module: Any) -> dict[str, Any]:
+def _module_metadata(module: Any, *, source_path: Path | None = None) -> dict[str, Any]:
     meta: dict[str, Any] = {}
     name = getattr(module, "name", "")
     if isinstance(name, str) and name:
@@ -586,6 +902,14 @@ def _module_metadata(module: Any) -> dict[str, Any]:
     recommended_profiles = getattr(module, "recommended_profiles", ())
     if isinstance(recommended_profiles, (list, tuple)):
         meta["recommended_profiles"] = tuple(recommended_profiles)
+    if source_path is not None:
+        tier = classify(source_path, blessed_allowlist=BLESSED_ALLOWLIST)
+        if tier in (TrustTier.AUTO_EXEC, TrustTier.BLESSED):
+            supported = _supported_operation_names(
+                _operation_registry_from_module(module)
+            )
+            if supported:
+                meta["supported_operations"] = supported
     return meta
 
 
@@ -801,7 +1125,7 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
             if not callable(build):
                 continue
             seen.add(cli_name)
-            metadata = _module_metadata(module)
+            metadata = _module_metadata(module, source_path=module_file)
             out.append((cli_name, build, metadata, module_file))
 
     return out

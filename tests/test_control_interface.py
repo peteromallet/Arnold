@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import megaplan
 import megaplan.control_interface as control_interface
 from megaplan._core.state import write_plan_state
@@ -244,14 +246,19 @@ def test_neutral_control_target_constants_are_stable_and_project_through_targets
     ]
 
 
-def test_read_valid_targets_supports_default_planning_dispatch() -> None:
-    projection = read_valid_targets(_state())
-
-    assert [target.id for target in projection] == ["plan"]
+def test_read_valid_targets_requires_explicit_binding_or_plugin_identity() -> None:
+    with pytest.raises(ValueError, match="explicit binding"):
+        read_valid_targets(_state())
 
 
 def test_read_valid_targets_supports_named_planning_binding() -> None:
     projection = read_valid_targets(_state(), binding="planning")
+
+    assert [target.id for target in projection] == ["plan"]
+
+
+def test_read_valid_targets_supports_canonical_megaplan_operation_dispatch() -> None:
+    projection = read_valid_targets(_state(), binding="megaplan")
 
     assert [target.id for target in projection] == ["plan"]
 
