@@ -148,7 +148,15 @@ def _has_genuine_rejection(payload: dict[str, Any]) -> bool:
         if criterion.get("priority") == "must" and criterion.get("pass") in (False, "fail"):
             return True
     for item in payload.get("rework_items", []) or []:
-        if isinstance(item, dict) and _rework_item_is_blocker(item):
+        if not isinstance(item, dict):
+            continue
+        # An infrastructure-failure marker item ("review couldn't complete") is
+        # not a genuine implementation rejection — it IS the infra signal, so it
+        # must not override the infra classification via the genuine-rejection
+        # short-circuit. Real blocking rework items (no infra source) still win.
+        if item.get("source") in _REVIEW_INFRASTRUCTURE_SOURCES:
+            continue
+        if _rework_item_is_blocker(item):
             return True
     return False
 
