@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit",
+    "typecheck": "bun install --frozen-lockfile && bunx tsc --noEmit",
     "pack:check": "bun pm pack --dry-run && (cd packages/shannon-agent-sdk && bun pm pack --dry-run)"
   },
   "files": [

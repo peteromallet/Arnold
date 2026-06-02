@@ -33,7 +33,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-import logging
 import os
 import random
 import re
@@ -202,6 +201,7 @@ class ShannonConfig:
     # ── root-drop / runtime env ──────────────────────────────────────────
     drop_root: bool        # MEGAPLAN_SHANNON_DROP_ROOT (or auto-detect)
     chmod_workspace: bool  # MEGAPLAN_SHANNON_CHMOD_WORKSPACE
+    claude_config_mode: str  # MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE; isolated|native
 
     # ── structural tells (T9 targets; fields land here now) ──────────────
     voice: str       # prompt voice; no env-var yet; default "announced"
@@ -280,6 +280,15 @@ class ShannonConfig:
         else:
             drop_root = _running_as_root() and trusted_container
         _roulette = _truthy("MEGAPLAN_SHANNON_SESSION_ROULETTE")
+        claude_config_mode = (
+            _get("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE").lower() or "isolated"
+        )
+        if claude_config_mode not in {"isolated", "native"}:
+            raise CliError(
+                "worker_error",
+                "Invalid MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE "
+                f"{claude_config_mode!r}; expected 'isolated' or 'native'.",
+            )
 
         return cls(
             readiness_probe_raw=readiness_probe_raw,
@@ -299,6 +308,7 @@ class ShannonConfig:
             max_output_tokens=_int_pos("MEGAPLAN_SHANNON_MAX_OUTPUT_TOKENS", 128000),
             drop_root=drop_root,
             chmod_workspace=(_truthy("MEGAPLAN_SHANNON_CHMOD_WORKSPACE") is not False),
+            claude_config_mode=claude_config_mode,
             voice="announced",
             env_scrub=(_truthy("MEGAPLAN_SHANNON_ENV_SCRUB") is not False),
         )
@@ -860,6 +870,7 @@ class TurnContext:
     work_dir: Path
     plan_dir: Path
     run_dir: Path
+    claude_config_dir: str | None
     tmux_session: TmuxSession
     state: PlanState
 
@@ -946,6 +957,17 @@ def session_id_of(raw: str | None) -> str | None:
     return None
 
 
+def _typed_control_prompt_env(turn: Turn) -> dict[str, str] | None:
+    """Return the per-turn env addition for short control-message typing."""
+    if turn.delivery != "argv":
+        return None
+    if turn.body in {"/clear", "/compact"} and turn.expect in {"completion", "rotation"}:
+        return {"SHANNON_TYPE_PROMPT_MAX_CHARS": "256"}
+    if turn.expect == "non_empty" and turn.body == "Hello, say ready when you are.":
+        return {"SHANNON_TYPE_PROMPT_MAX_CHARS": "256"}
+    return None
+
+
 def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
     """Execute one planned :class:`Turn` as a single ``run_command`` call.
 
@@ -1004,12 +1026,17 @@ def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
     else:
         launch_command = command
 
+    run_env = ctx.env
+    typed_env = _typed_control_prompt_env(turn)
+    if typed_env is not None:
+        run_env = {**ctx.env, **typed_env}
+
     try:
         result = run_command(
             launch_command,
             cwd=ctx.work_dir,
             stdin_text=stdin_text,
-            env=ctx.env,
+            env=run_env,
             timeout=turn.timeout,
             activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
             idle_timeout=_worker_stream_idle_timeout_seconds(),
@@ -1017,7 +1044,8 @@ def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
                 ctx.tmux_session,
                 turn.session_id,
                 ctx.work_dir,
-                claude_config_dir=str(ctx.run_dir / "claude_config"),
+                claude_config_dir=ctx.claude_config_dir,
+                home=ctx.env.get("HOME"),
             ),
             tmux_session=ctx.tmux_session,
         )
@@ -1575,6 +1603,7 @@ def _claude_transcript_paths(
     work_dir: Path,
     *,
     claude_config_dir: str | None = None,
+    home: str | None = None,
 ) -> list[Path]:
     """Best-effort list of candidate Claude transcript .jsonl files for a turn.
 
@@ -1596,6 +1625,8 @@ def _claude_transcript_paths(
     try:
         if claude_config_dir:
             projects_root = Path(claude_config_dir) / "projects"
+        elif home:
+            projects_root = Path(home) / ".claude" / "projects"
         else:
             projects_root = Path.home() / ".claude" / "projects"
     except Exception:
@@ -1633,6 +1664,7 @@ def _make_shannon_liveness_probe(
     work_dir: Path,
     *,
     claude_config_dir: str | None = None,
+    home: str | None = None,
 ):
     """Build a liveness probe for the buffered shannon worker.
 
@@ -1688,7 +1720,7 @@ def _make_shannon_liveness_probe(
     def _max_transcript_mtime() -> float:
         newest = 0.0
         for path in _claude_transcript_paths(
-            session_id, work_dir, claude_config_dir=claude_config_dir
+            session_id, work_dir, claude_config_dir=claude_config_dir, home=home
         ):
             try:
                 m = path.stat().st_mtime
@@ -1772,8 +1804,43 @@ def _shannon_run_dir(plan_dir: Path, *, plan_id: str, step: str) -> Path:
     return plan_dir / ".megaplan" / "runs" / plan_id / step / "shannon"
 
 
+def _write_tmux_session_ledger(
+    run_dir: Path,
+    *,
+    plan_id: str,
+    step: str,
+    iteration: int,
+    tmux_session_name: str,
+) -> Path:
+    """Record the opaque tmux session's operator mapping under *run_dir*."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    ledger_path = run_dir / "tmux_session.json"
+    payload = {
+        "version": 1,
+        "plan_id": plan_id,
+        "step": step,
+        "iteration": iteration,
+        "tmux_session_name": tmux_session_name,
+        "tmux_session_name_derivation": "sha256(plan_id|step|iteration)[:12]",
+        "run_dir": str(run_dir),
+    }
+    fd, tmp = tempfile.mkstemp(dir=str(run_dir), prefix=".tmux_session.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp, ledger_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return ledger_path
+
+
 def _ensure_workspace_trusted(
-    work_dir: Path, *, claude_config_dir: str | None = None
+    work_dir: Path, *, claude_config_dir: str | None = None, home: str | None = None
 ) -> None:
     """Pre-accept Claude Code's folder-trust dialog for *work_dir* before launch.
 
@@ -1797,10 +1864,16 @@ def _ensure_workspace_trusted(
     When *claude_config_dir* is set (``CLAUDE_CONFIG_DIR`` env-var), the trust
     file is ``<claude_config_dir>/.claude.json`` instead of ``~/.claude.json``.
     This keeps per-run trust entries scoped to the run artifact dir.
+
+    When native config mode is selected and the worker drops root, *home* must
+    be the effective child ``HOME`` so pre-trust writes land where Claude will
+    actually read them.
     """
     try:
         if claude_config_dir:
             cfg_path = Path(claude_config_dir) / ".claude.json"
+        elif home:
+            cfg_path = Path(home) / ".claude.json"
         else:
             cfg_path = Path(os.path.expanduser("~/.claude.json"))
         candidates = {str(work_dir)}
@@ -1901,12 +1974,18 @@ def run_shannon_step(
     # ~/.claude. Left on disk after the step for post-hoc inspection.
     plan_id = str(state.get("name", ""))
     run_dir = _shannon_run_dir(plan_dir, plan_id=plan_id, step=step)
-    claude_config_dir = run_dir / "claude_config"
-    claude_config_dir.mkdir(parents=True, exist_ok=True)
     empty_mcp_config_path = run_dir / "empty_mcp_config.json"
     empty_mcp_config_path.write_text('{"mcpServers":{}}\n', encoding="utf-8")
 
-    _ensure_workspace_trusted(work_dir, claude_config_dir=str(claude_config_dir))
+    claude_config_dir = (
+        run_dir / "claude_config" if cfg.claude_config_mode == "isolated" else None
+    )
+    if claude_config_dir is not None:
+        claude_config_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_workspace_trusted(
+        work_dir,
+        claude_config_dir=str(claude_config_dir) if claude_config_dir is not None else None,
+    )
 
     # Tmux session name is a truncated sha256 of (plan_id, step, iteration)
     # so it's recoverable for reaping but carries no lexical advertisement
@@ -1917,6 +1996,13 @@ def run_shannon_step(
         f"{plan_id}|{step}|{iteration}".encode("utf-8")
     ).hexdigest()[:12]
     tmux_session = TmuxSession(session_name)
+    _write_tmux_session_ledger(
+        run_dir,
+        plan_id=plan_id,
+        step=step,
+        iteration=iteration,
+        tmux_session_name=session_name,
+    )
 
     # Reap any residual same-(plan,step) tmux pane from a prior attempt; if
     # the session survives teardown it is genuinely unkillable and must fail
@@ -2024,7 +2110,10 @@ def run_shannon_step(
     # /clear session-file churn does not pile up in the user's home dir.
     # The vendored fork's P15 patch strips MEGAPLAN_*/SHANNON_* from the
     # grandchild env but CLAUDE_CONFIG_DIR passes through to Claude.
-    env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
+    if claude_config_dir is not None:
+        env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
+    else:
+        env.pop("CLAUDE_CONFIG_DIR", None)
     if paste_mode:
         # Keep the historical env flag for older vendored launchers and for
         # operator diagnostics. The current vendored launcher always starts
@@ -2057,6 +2146,11 @@ def run_shannon_step(
     # Compute the nonroot shannon prefix + child env EXACTLY ONCE per run and
     # thread the result through ctx — :func:`run_turn` MUST NOT recompute it.
     shannon_prefix, env = _prepare_nonroot_shannon_runtime(work_dir, env, cfg=cfg)
+    _ensure_workspace_trusted(
+        work_dir,
+        claude_config_dir=str(claude_config_dir) if claude_config_dir is not None else None,
+        home=env.get("HOME"),
+    )
 
     ctx = TurnContext(
         base_flags=base_flags,
@@ -2065,6 +2159,7 @@ def run_shannon_step(
         work_dir=work_dir,
         plan_dir=plan_dir,
         run_dir=run_dir,
+        claude_config_dir=str(claude_config_dir) if claude_config_dir is not None else None,
         tmux_session=tmux_session,
         state=state,
     )

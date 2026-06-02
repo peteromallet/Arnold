@@ -74,6 +74,7 @@ const TURN_TIMEOUT_MS = Number(Bun.env.SHANNON_TURN_TIMEOUT_MS ?? 900_000);
 const WEB_SEARCH_COST_USD = 0.01;
 const SEND_DELAY_MIN_MS = Number(Bun.env.SHANNON_SEND_DELAY_MIN_MS ?? 350);
 const SEND_DELAY_MAX_MS = Number(Bun.env.SHANNON_SEND_DELAY_MAX_MS ?? 2500);
+const TYPE_PROMPT_MAX_CHARS = Number(Bun.env.SHANNON_TYPE_PROMPT_MAX_CHARS ?? 0);
 
 type ModelPricing = {
   inputPerMTok: number;
@@ -247,8 +248,20 @@ export function projectKeyForCwd(cwd: string): string {
   return resolve(cwd).normalize("NFC").replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
-export function claudeProjectFolder(cwd: string, home = Bun.env.HOME ?? ""): string {
-  return join(home, ".claude", "projects", projectKeyForCwd(cwd));
+export function claudeProjectsRoot(
+  claudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR,
+  home = Bun.env.HOME ?? "",
+): string {
+  if (claudeConfigDir) return join(claudeConfigDir, "projects");
+  return join(home, ".claude", "projects");
+}
+
+export function claudeProjectFolder(
+  cwd: string,
+  claudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR,
+  home = Bun.env.HOME ?? "",
+): string {
+  return join(claudeProjectsRoot(claudeConfigDir, home), projectKeyForCwd(cwd));
 }
 
 function isRootProcess() {
@@ -292,26 +305,26 @@ async function maybeSendStartupEnterKeys(tmuxSession: string) {
 }
 
 // >>> megaplan-shannon-helpers v1 >>>
-function megaplanSlashCommand(prompt) {
+function megaplanSlashCommand(prompt: unknown): string | undefined {
   if (typeof prompt !== "string") return undefined;
   const trimmed = prompt.trimStart();
   if (!trimmed.startsWith("/")) return undefined;
   return trimmed.trim().split(/\s+/)[0];
 }
 
-function megaplanSlashPromptMatches(prompt, content) {
+function megaplanSlashPromptMatches(prompt: unknown, content: unknown): boolean {
   const cmd = megaplanSlashCommand(prompt);
   if (!cmd || typeof content !== "string") return false;
   return content.includes("<command-name>" + cmd);
 }
 
-function megaplanRowText(row) {
+function megaplanRowText(row: TranscriptRow): string {
   const top = typeof row.content === "string" ? row.content : "";
   const msg = typeof row.message?.content === "string" ? row.message.content : "";
   return top + "\n" + msg;
 }
 
-function megaplanSlashSynthReply(cmd, sessionId, row) {
+function megaplanSlashSynthReply(cmd: string, sessionId: string | undefined, row: TranscriptRow): JsonRecord {
   const sid = (row && (row.sessionId ?? row.session_id)) ?? sessionId;
   return {
     type: "assistant",
@@ -328,7 +341,7 @@ function megaplanSlashSynthReply(cmd, sessionId, row) {
   };
 }
 
-function megaplanSlashCompletionRow(prompt, rows) {
+function megaplanSlashCompletionRow(prompt: unknown, rows: TranscriptRow[]): JsonRecord | undefined {
   const cmd = megaplanSlashCommand(prompt);
   if (!cmd) return undefined;
   let cmdIdx = -1;
@@ -1163,15 +1176,44 @@ function randomSendDelayMs() {
 }
 
 async function sendPrompt(tmuxSession: string, prompt: string) {
-  const _mpBuf = `shannon-${tmuxSession}`;
-  const _mpLoad = Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  _mpLoad.stdin.write(prompt);
-  await _mpLoad.stdin.end();
-  if ((await _mpLoad.exited) !== 0) {
-    throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);
+  if (canTypePromptLiterally(prompt)) {
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "-l", prompt]);
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+    return;
   }
-  await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
-  await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+
+  const _mpBuf = randomUUID();
+  let primaryError: unknown;
+  try {
+    const _mpLoad = Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    _mpLoad.stdin.write(prompt);
+    await _mpLoad.stdin.end();
+    if ((await _mpLoad.exited) !== 0) {
+      throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);
+    }
+    await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    try {
+      await runCommand(["tmux", "delete-buffer", "-b", _mpBuf]);
+    } catch (deleteError) {
+      if (primaryError === undefined) {
+        throw deleteError;
+      }
+    }
+  }
+}
+
+function canTypePromptLiterally(prompt: string) {
+  return (
+    Number.isFinite(TYPE_PROMPT_MAX_CHARS)
+    && TYPE_PROMPT_MAX_CHARS > 0
+    && prompt.length <= TYPE_PROMPT_MAX_CHARS
+    && !/[\r\n\x00-\x1F\x7F]/.test(prompt)
+  );
 }
 
 async function nextPrompt(iterator: AsyncIterator<string>): Promise<string | undefined> {

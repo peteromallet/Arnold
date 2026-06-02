@@ -1284,7 +1284,7 @@ def test_all_codex_resolves_to_codex_without_vendor_flag(
     apply_profile_expansion(args, None)
 
     resolved = _phase_models_to_map(args.phase_model)
-    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
+    for phase in ("plan", "prep", "critique", "critique_evaluator", "revise", "gate", "finalize",
                   "execute", "loop_plan", "loop_execute", "review",
                   "tiebreaker_researcher", "tiebreaker_challenger",
                   "feedback"):
@@ -1293,6 +1293,20 @@ def test_all_codex_resolves_to_codex_without_vendor_flag(
             f"{phase} expected codex but got {resolved[phase]!r}"
         )
     assert resolved["feedback"] == "codex:low"
+
+
+def test_all_codex_ignores_non_codex_explicit_critic_model_pin() -> None:
+    from megaplan._core.workflow import pinned_critic_model
+
+    state = {
+        "config": {
+            "profile": "all-codex",
+            "critic_model": "deepseek-v4-pro",
+            "critic_model_explicit": True,
+        }
+    }
+
+    assert pinned_critic_model(state) == ""
 
 
 def test_vendor_codex_without_profile_selects_all_codex(
@@ -1309,7 +1323,7 @@ def test_vendor_codex_without_profile_selects_all_codex(
     # all-codex now carries a within-Codex execute effort ladder.
     assert getattr(args, "tier_models", None) is not None
     assert "execute" in args.tier_models
-    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
+    for phase in ("plan", "prep", "critique", "critique_evaluator", "revise", "gate", "finalize",
                   "execute", "loop_plan", "loop_execute", "review",
                   "tiebreaker_researcher", "tiebreaker_challenger",
                   "feedback"):

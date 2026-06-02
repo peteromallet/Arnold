@@ -731,8 +731,10 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
         for index, unit in enumerate(units):
             if index == 1:
                 payload, cost_usd, pt, ct, tt = kwargs["on_unit_error"](index, RuntimeError("unit failed"))
+                payload = kwargs["parse_result"](index, payload, unit)
             elif index == 2:
                 payload, cost_usd, pt, ct, tt = kwargs["on_unit_error"](index, TimeoutError("took too long"))
+                payload = kwargs["parse_result"](index, payload, unit)
             else:
                 finding = {
                     "area": unit.extra["area"]["id"],

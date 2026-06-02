@@ -270,17 +270,38 @@ Anchor (verbatim):
 
 Replacement:
 ```ts
-  const _mpBuf = `shannon-${tmuxSession}`;
-  const _mpLoad = Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  _mpLoad.stdin.write(prompt);
-  await _mpLoad.stdin.end();
-  if ((await _mpLoad.exited) !== 0) {
-    throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);
+  if (canTypePromptLiterally(prompt)) {
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "-l", prompt]);
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+    return;
   }
-  await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
+
+  const _mpBuf = randomUUID();
+  let primaryError: unknown;
+  try {
+    const _mpLoad = Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    _mpLoad.stdin.write(prompt);
+    await _mpLoad.stdin.end();
+    if ((await _mpLoad.exited) !== 0) {
+      throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);
+    }
+    await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    try {
+      await runCommand(["tmux", "delete-buffer", "-b", _mpBuf]);
+    } catch (deleteError) {
+      if (primaryError === undefined) {
+        throw deleteError;
+      }
+    }
+  }
 ```
 
-megaplan reason: Real megaplan prompts are 70–128KB; `tmux set-buffer`'s ~16KB argv cap silently truncated them. `tmux load-buffer … -` feeds via stdin (no size cap); `paste-buffer -p` uses bracketed paste so multi-line prompts aren't submitted line-by-line.
+megaplan reason: Real megaplan prompts are 70–128KB; `tmux set-buffer`'s ~16KB argv cap silently truncated them. `tmux load-buffer … -` feeds via stdin (no size cap); `paste-buffer -p` uses bracketed paste so multi-line prompts aren't submitted line-by-line. The buffer name is now an opaque UUID and `delete-buffer` runs in `finally`; cleanup failures surface only when no earlier load/paste/send failure is being rethrown. A tiny opt-in typing path is available for short control turns through `SHANNON_TYPE_PROMPT_MAX_CHARS`, but the default and all long/multiline/control-character prompts remain stdin-backed paste.
 
 ---
 
@@ -507,6 +528,18 @@ The deselected test (`test_plan_session_no_io`) has a known teardown leak (its `
 
 Pre-existing test failures (unrelated to Shannon vendoring): `test_audits.py` (debt.json state), `test_feedback_phase.py`, `test_prep.py`, `test_prep_no_shadow_skills.py`, `test_tickets.py`, `test_workers_agent_mode.py`, `test_workers_claude.py`.
 
+## Manual Smoke Checklist
+
+Run these before treating a vendored Shannon refresh as operator-ready. Keep the probes manual because several checks depend on a real Claude Code install, tmux, workspace trust/auth state, and whether the host is root or non-root.
+
+- **Trusted cwd**: Run Shannon through the Python worker in a cwd that is already trusted. Expect native interactive `claude` inside the opaque tmux session, readiness-gated prompt send, a Claude transcript under the selected config root, and a `tmux_session.json` ledger under `.megaplan/runs/<plan_id>/<step>/shannon/`.
+- **Untrusted/temp cwd**: Run from a fresh temp/worktree path. In isolated mode, `_ensure_workspace_trusted` should write trust entries under `<run_dir>/claude_config/.claude.json`; startup should not hang on the trust dialog. In native mode, repeat only with `MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE=native` and confirm trust writes follow the effective child `HOME`.
+- **No-bypass approval prompt**: Force a run where Claude presents an approval prompt instead of a composer. Shannon must classify it as an approval blocker, fail closed, and include captured tmux pane text rather than paste the work prompt.
+- **Auth failure**: Run with no usable Claude auth. Expect an auth blocker or parsed `auth_error`, with captured pane/output preserved for diagnosis.
+- **Concurrent same-cwd runs**: Start two separate plan/step/iteration combinations in the same cwd. Expect isolated config roots by default, distinct opaque tmux session names, distinct ledgers, and no transcript cross-talk.
+- **Long prompt delivery**: Send a prompt comfortably above common argv limits, with multiple lines. Expect `load-buffer -b <uuid> -`, stdin write, `paste-buffer -p`, Enter submission, and `delete-buffer` cleanup; it must not use prompt argv or `tmux set-buffer`.
+- **Native config mode with drop-root**: If native mode is shipped in the runtime being tested, set `MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE=native` and exercise the root-to-non-root path. Confirm `CLAUDE_CONFIG_DIR` is removed from the Shannon env, trust and liveness transcript probing use the post-drop-root child `HOME`, and the run still records its tmux ledger. Current status: shipped as explicit opt-in; isolated mode remains default.
+
 ## PR Notes: Tells Closed / Tells Residual
 
 ### Tells closed by this vendoring
@@ -518,12 +551,17 @@ Pre-existing test failures (unrelated to Shannon vendoring): `test_audits.py` (d
 - **Inner env contamination**: P15 scrubs all `MEGAPLAN_*` / `SHANNON_*` keys from the grandchild Claude process via `env -u KEY` prefixes.
 - **Turn-timeout advertisement**: The parent timeout is passed via `SHANNON_TURN_TIMEOUT_MS` (env, not argv).
 - **Globally-installed `shannon` binary requirement**: Gone. The vendored fork ships as `megaplan/vendor/shannon/index.ts` and is invoked via `bun <absolute-path>`.
+- **Opaque tmux observability gap**: The tmux name is intentionally non-advertising, but `tmux_session.json` maps it back to plan id, step, iteration, derivation, and run dir for operators.
+- **Native config root mismatch**: Native config mode is now implemented as `MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE=native`; when selected, inherited `CLAUDE_CONFIG_DIR` is removed and trust/transcript probes follow the effective child `HOME`, including after drop-root.
 
-### Tells residual (documented, not addressed)
+### Deliberately Unchanged / Non-goals
 
-- **Keystroke cadence / inter-keystroke timing**: Not addressed. P5 (bootstrap Enter nudges) and P9 (bracketed paste) are the entire keyboard-interaction surface. Full keystroke-emulation is a deferred non-goal per the brief's anti-scope.
-- **Tmux process tree**: Shannon still creates a tmux session with a `claude` process inside it. The tmux session name is now opaque but the presence of tmux itself is an architectural constant of Shannon.
+- **Observable tmux process tree**: Shannon still creates a tmux session with a real `claude` process inside it. The session name is opaque and ledgered, but the presence of tmux remains an architectural constant.
+- **Stdin-backed long prompt delivery**: Long/main prompts intentionally keep `tmux load-buffer … -` plus `paste-buffer -p`; this preserves reliability and argv-size safety. Optional literal typing is restricted to short control turns when `SHANNON_TYPE_PROMPT_MAX_CHARS` is set by the Python wrapper.
+- **Isolated config by default**: Per-run `CLAUDE_CONFIG_DIR` stays the default to avoid user-home transcript churn and concurrent-run leakage. Native config is explicit opt-in, not the default.
+- **Fail-closed blocker screens**: Trust, auth, approval, and onboarding screens remain hard blockers. Shannon captures pane text and fails instead of attempting to drive those UI states with a work prompt.
+- **Native config as opt-in**: Native config mode shipped, but only behind `MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE=native`; unknown values fail fast.
 
 ## Deferred
 
-- **Keystroke-emulation** — known non-goal for this vendoring. Bootstrap Enter nudges (P5) and bracketed paste (P9) are the entire keyboard-interaction surface.
+- **Full keystroke-emulation** — known non-goal for this vendoring. Bootstrap Enter nudges, optional short-control typing, and bracketed paste are the entire keyboard-interaction surface.

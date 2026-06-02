@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
@@ -653,6 +654,7 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
         )
 
     command = run_command.call_args.args[0]
+    env = run_command.call_args.kwargs["env"]
     # Shannon is launched as ``bun <vendored-index.ts> ...`` and the main
     # megaplan prompt is handed to the wrapper over stream-json stdin. The
     # vendored wrapper then starts native Claude in tmux and pastes it after
@@ -680,22 +682,37 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     assert "--allow-dangerously-skip-permissions" in command
     # Readiness probe may trigger probabilistically; accept either flag.
     assert ("--session-id" in command) or ("--resume" in command)
-    assert run_command.call_args.kwargs["env"]["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
+    assert env["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
     # Output ceiling is raised above the inherited ~64k default so opus is not
     # cut off mid-run before emitting the structured envelope.
-    assert run_command.call_args.kwargs["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
-    assert run_command.call_args.kwargs["env"]["BASH_DEFAULT_TIMEOUT_MS"] == "7200000"
-    assert run_command.call_args.kwargs["env"]["BASH_MAX_TIMEOUT_MS"] == "7200000"
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
+    assert env["BASH_DEFAULT_TIMEOUT_MS"] == "7200000"
+    assert env["BASH_MAX_TIMEOUT_MS"] == "7200000"
+    assert env["SHANNON_TMUX_SESSION_NAME"]
+    assert re.fullmatch(r"[0-9a-f]{12}", env["SHANNON_TMUX_SESSION_NAME"])
     # On non-root systems, ANTHROPIC_API_KEY is set to "" to block Bun's dotenv auto-load.
-    api_key_val = run_command.call_args.kwargs["env"].get("ANTHROPIC_API_KEY")
+    api_key_val = env.get("ANTHROPIC_API_KEY")
     assert api_key_val is None or api_key_val == ""
     # Prompt file now lives under .megaplan/runs/<plan_id>/<step>/shannon/
     # (the per-run artifact directory) instead of the plan directory root.
     run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "execute" / "shannon"
+    assert env["CLAUDE_CONFIG_DIR"] == str(run_dir / "claude_config")
     prompt_file = run_dir / "execute_shannon_prompt.txt"
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "return json" in prompt_text
     assert "Output format:" in prompt_text
+    ledger_path = run_dir / "tmux_session.json"
+    assert ledger_path.is_relative_to(run_dir)
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert ledger == {
+        "version": 1,
+        "plan_id": state["name"],
+        "step": "execute",
+        "iteration": int(state.get("iteration", 0) or 0),
+        "tmux_session_name": env["SHANNON_TMUX_SESSION_NAME"],
+        "tmux_session_name_derivation": "sha256(plan_id|step|iteration)[:12]",
+        "run_dir": str(run_dir),
+    }
     assert result.payload == payload
     assert result.session_id == "real-shannon-session"
     assert result.cost_usd == 0.02
@@ -809,8 +826,79 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     assert "--bare" in command[6]
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-test"
     assert env["HOME"] == str(tmp_path / "project" / ".megaplan" / "shannon-home")
+    run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon"
+    assert env["CLAUDE_CONFIG_DIR"] == str(run_dir / "claude_config")
     assert env["MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT"] == "4"
     assert (tmp_path / "project" / ".megaplan" / "shannon-home" / ".claude.json").exists()
+
+
+def test_run_shannon_step_native_config_mode_uses_effective_child_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult
+    from megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE", "native")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "should-not-leak"))
+    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 0)
+    monkeypatch.setattr("megaplan.workers.shannon.shutil.which", lambda name: "/bin/su" if name == "su" else None)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(payload),
+                "session_id": "real-shannon-session",
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    with (
+        patch("megaplan.workers.shannon._ensure_workspace_trusted") as trust,
+        patch("megaplan.workers.shannon._make_shannon_liveness_probe", return_value=lambda: True) as liveness,
+        patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+        )
+
+    env = run_command.call_args.kwargs["env"]
+    expected_home = tmp_path / "project" / ".megaplan" / "shannon-home"
+    run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon"
+    assert env["HOME"] == str(expected_home)
+    assert "CLAUDE_CONFIG_DIR" not in env
+    assert not (run_dir / "claude_config").exists()
+    assert trust.call_args.kwargs == {
+        "claude_config_dir": None,
+        "home": str(expected_home),
+    }
+    assert liveness.call_args.kwargs == {
+        "claude_config_dir": None,
+        "home": str(expected_home),
+    }
+
 
 def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -1135,6 +1223,90 @@ def test_run_shannon_step_read_only_uses_tool_restrictions_without_bypass_flags(
     assert "--dangerously-skip-permissions" not in command
     assert "--allow-dangerously-skip-permissions" not in command
     assert result.payload == payload
+
+
+def test_vendored_shannon_current_launch_and_paste_contracts() -> None:
+    """Pin wrapper-owned native launch and stdin-backed paste before hardening."""
+    from megaplan.workers.shannon import VENDORED_SHANNON_PATH
+
+    src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
+
+    # The TypeScript wrapper owns the interactive tmux launch and starts the
+    # plain Claude CLI inside the tmux pane.
+    assert "const claudeLaunchArgs = [" in src
+    assert '"claude",' in src
+    assert '"tmux",\n      "new-session",' in src
+    assert "...claudeLaunchArgs," in src
+    # The user prompt is not threaded into the inner Claude argv; sendPrompt
+    # waits for readiness and delivers prompt bytes through tmux paste instead.
+    launch_block = src[src.index("const claudeLaunchArgs = [") : src.index("void maybeSendStartupEnterKeys")]
+    assert "options.prompt" not in launch_block
+    assert "prompt" not in launch_block
+    assert "await waitUntilReadyToSend(tmuxSession);" in src
+    assert "await sendPrompt(tmuxSession, prompt);" in src
+
+    # Long/main prompt delivery stays stdin-backed with an opaque tmux buffer:
+    # load-buffer reads from "-", prompt bytes are written to stdin, then
+    # paste-buffer -p and Enter submit. The temporary buffer is cleaned up
+    # without naming the worker/session/cwd in tmux global buffer state.
+    assert "const _mpBuf = randomUUID();" in src
+    assert "const _mpBuf = `shannon-${tmuxSession}`;" not in src
+    assert 'Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"]' in src
+    assert "_mpLoad.stdin.write(prompt)" in src
+    assert '"paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession' in src
+    assert '"send-keys", "-t", tmuxSession, "C-m"' in src
+    assert "finally {" in src
+    assert 'await runCommand(["tmux", "delete-buffer", "-b", _mpBuf]);' in src
+
+    # Optional short-turn typing is a narrow env-gated branch: by default the
+    # threshold is zero, typed prompts must fit the threshold and contain no
+    # newline/control characters, and the branch uses tmux send-keys -l before
+    # falling through to the unchanged paste-buffer path for every other turn.
+    assert "const TYPE_PROMPT_MAX_CHARS = Number(Bun.env.SHANNON_TYPE_PROMPT_MAX_CHARS ?? 0);" in src
+    assert "function canTypePromptLiterally(prompt: string)" in src
+    assert "TYPE_PROMPT_MAX_CHARS > 0" in src
+    assert "prompt.length <= TYPE_PROMPT_MAX_CHARS" in src
+    assert r"&& !/[\r\n\x00-\x1F\x7F]/.test(prompt)" in src
+    assert '"send-keys", "-t", tmuxSession, "-l", prompt' in src
+
+    # Transcript discovery has a single config-root-aware project-folder helper
+    # chain. It prefers CLAUDE_CONFIG_DIR/projects and falls back to the
+    # effective child HOME's ~/.claude/projects only when CLAUDE_CONFIG_DIR is
+    # unset.
+    assert "export function claudeProjectsRoot(" in src
+    assert "claudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR" in src
+    assert 'if (claudeConfigDir) return join(claudeConfigDir, "projects");' in src
+    assert 'return join(home, ".claude", "projects");' in src
+    assert "return join(claudeProjectsRoot(claudeConfigDir, home), projectKeyForCwd(cwd));" in src
+    assert "export function claudeProjectFolder(" in src
+    assert "const projectFolder = claudeProjectFolder(options.cwd);" in src
+    assert src.count("claudeProjectFolder(options.cwd)") == 1
+    assert src.count("listTranscriptPaths(projectFolder)") == 2
+    assert "await waitForSessionWithPrompt(" in src
+
+
+def test_python_shannon_current_session_teardown_and_drop_root_contracts() -> None:
+    """Pin worker-side session identity, teardown, and drop-root HOME contracts."""
+    import inspect
+
+    from megaplan.workers import shannon as shannon_mod
+
+    run_src = inspect.getsource(shannon_mod.run_shannon_step)
+    assert 'env["SHANNON_TMUX_SESSION_NAME"] = session_name' in run_src
+    assert "tmux_session = TmuxSession(session_name)" in run_src
+    assert "_write_tmux_session_ledger(" in run_src
+    assert "pids = pane_pids(session_name)" in run_src
+    assert "tmux_session.teardown()" in run_src
+    assert "if tmux_session.exists():" in run_src
+    assert 'remediation=f"tmux kill-session -t {session_name}"' in run_src
+    assert run_src.index("_write_tmux_session_ledger(") < run_src.index("pids = pane_pids(session_name)")
+
+    nonroot_src = inspect.getsource(shannon_mod._prepare_nonroot_shannon_runtime)
+    assert 'work_dir / ".megaplan" / "shannon-home"' in nonroot_src
+    assert 'child_env["HOME"] = str(home)' in nonroot_src
+    assert 'child_env.pop("TMUX", None)' in nonroot_src
+    assert 'child_env["TMUX_TMPDIR"] = "/tmp"' in nonroot_src
+    assert 'return [su_path, "-m", "-s", "/bin/bash", user, "-c"], child_env' in nonroot_src
 
 
 def test_vendored_shannon_contains_turn_timeout_and_tool_use_patches() -> None:
@@ -1781,6 +1953,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("MEGAPLAN_SHANNON_DROP_ROOT", "1")
     monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_ENV_SCRUB", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE", "native")
 
     cfg = ShannonConfig.load({})
 
@@ -1801,6 +1974,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert cfg.max_output_tokens == 64000
     assert cfg.drop_root is True
     assert cfg.chmod_workspace is False
+    assert cfg.claude_config_mode == "native"
     assert cfg.env_scrub is False
 
     # Defaults fire when env-vars are absent.
@@ -1811,6 +1985,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delenv("MEGAPLAN_SHANNON_DROP_ROOT")
     monkeypatch.delenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE")
     monkeypatch.delenv("MEGAPLAN_SHANNON_ENV_SCRUB")
+    monkeypatch.delenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE")
     # Override root detection so drop_root auto-logic is predictable in CI.
     monkeypatch.setattr("megaplan.workers.shannon._running_as_root", lambda: False)
 
@@ -1822,6 +1997,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert cfg2.paste_first_turn is True
     assert cfg2.drop_root is False
     assert cfg2.chmod_workspace is True
+    assert cfg2.claude_config_mode == "isolated"
     assert cfg2.env_scrub is True
     assert cfg2.readiness_timeout_seconds == 99   # still set from above
     assert cfg2.execute_timeout_seconds == 888
@@ -1829,6 +2005,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
 
     # Verify the pure defaults when nothing is set at all.
     default_cfg = ShannonConfig.load({}, env={})
+    assert default_cfg.claude_config_mode == "isolated"
     assert default_cfg.readiness_timeout_seconds == 120
     assert default_cfg.execute_timeout_seconds == 7200
     assert default_cfg.context_op_timeout_seconds == 180
@@ -1844,6 +2021,44 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert default_cfg.chmod_workspace is True
     assert default_cfg.env_scrub is True
     assert default_cfg.voice == "announced"
+
+
+def test_shannon_config_rejects_unknown_claude_config_mode() -> None:
+    from megaplan.workers.shannon import ShannonConfig
+
+    with pytest.raises(CliError, match="MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE"):
+        ShannonConfig.load({}, env={"MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE": "shared"})
+
+
+def test_python_shannon_claude_config_mode_contracts() -> None:
+    """Isolated config stays default; native mode follows effective child HOME."""
+    import inspect
+
+    from megaplan.workers import shannon as shannon_mod
+
+    config_src = inspect.getsource(shannon_mod.ShannonConfig.load)
+    assert (
+        '_get("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE").lower() or "isolated"'
+        in config_src
+    )
+    assert 'claude_config_mode not in {"isolated", "native"}' in config_src
+
+    run_src = inspect.getsource(shannon_mod.run_shannon_step)
+    assert (
+        'run_dir / "claude_config" if cfg.claude_config_mode == "isolated" else None'
+        in run_src
+    )
+    assert 'env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)' in run_src
+    assert 'env.pop("CLAUDE_CONFIG_DIR", None)' in run_src
+    assert "home=env.get(\"HOME\")" in run_src
+
+    trust_src = inspect.getsource(shannon_mod._ensure_workspace_trusted)
+    assert 'cfg_path = Path(claude_config_dir) / ".claude.json"' in trust_src
+    assert 'cfg_path = Path(home) / ".claude.json"' in trust_src
+
+    transcript_src = inspect.getsource(shannon_mod._claude_transcript_paths)
+    assert 'projects_root = Path(claude_config_dir) / "projects"' in transcript_src
+    assert 'projects_root = Path(home) / ".claude" / "projects"' in transcript_src
 
 
 def test_native_prompt_handoff_delivers_prompt_via_stdin_by_default(
@@ -2154,6 +2369,7 @@ def _make_turn_ctx(tmp_path: Path, *, shannon_prefix: list[str] | None = None,
         work_dir=work_dir,
         plan_dir=plan_dir,
         run_dir=plan_dir / ".megaplan" / "runs" / "t7-plan" / "execute" / "shannon",
+        claude_config_dir=str(plan_dir / ".megaplan" / "runs" / "t7-plan" / "execute" / "shannon" / "claude_config"),
         tmux_session=TmuxSession("t7-test-session"),
         state={"name": "t7-plan", "iteration": 1},
     )
@@ -2219,6 +2435,50 @@ def test_run_turn_builds_resume_and_session_id_args(tmp_path: Path) -> None:
         "type": "user",
         "message": {"role": "user", "content": "the real prompt"},
     }
+
+
+def test_run_turn_enables_typed_env_only_for_short_control_turns(tmp_path: Path) -> None:
+    """Short pre-turns may opt into typing without mutating shared worker env."""
+    from megaplan.workers.shannon import run_turn, Turn
+    from megaplan.workers import CommandResult
+
+    shared_env = {"BASE": "1"}
+    ctx = _make_turn_ctx(tmp_path, env=shared_env)
+    fake = CommandResult(
+        command=[], cwd=tmp_path, returncode=0,
+        stdout='{"session_id": "landed"}', stderr="", duration_ms=1,
+    )
+
+    readiness = Turn(
+        session_id="sid-ready", resume=False,
+        body="Hello, say ready when you are.",
+        delivery="argv", expect="non_empty", timeout=60, pre_sleep_s=0.0,
+    )
+    with patch("megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(readiness, ctx)
+    readiness_env = rc.call_args.kwargs["env"]
+    assert readiness_env is not ctx.env
+    assert readiness_env["SHANNON_TYPE_PROMPT_MAX_CHARS"] == "256"
+    assert "SHANNON_TYPE_PROMPT_MAX_CHARS" not in ctx.env
+    assert shared_env == {"BASE": "1"}
+
+    clear = Turn(
+        session_id="sid-clear", resume=True, body="/clear",
+        delivery="argv", expect="rotation", timeout=60, pre_sleep_s=0.0,
+    )
+    with patch("megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(clear, ctx)
+    assert rc.call_args.kwargs["env"]["SHANNON_TYPE_PROMPT_MAX_CHARS"] == "256"
+    assert "SHANNON_TYPE_PROMPT_MAX_CHARS" not in ctx.env
+
+    main = Turn(
+        session_id="sid-main", resume=True, body="the real prompt",
+        delivery="stdin", expect="envelope", timeout=7200, pre_sleep_s=0.0,
+    )
+    with patch("megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(main, ctx)
+    assert rc.call_args.kwargs["env"] is ctx.env
+    assert "SHANNON_TYPE_PROMPT_MAX_CHARS" not in rc.call_args.kwargs["env"]
 
 
 def test_run_turn_propagates_cli_error_codes(tmp_path: Path) -> None:
@@ -2401,7 +2661,7 @@ def test_run_artifacts_written_to_run_dir_not_cwd(
     The prompt file, Claude config, and transcript paths must resolve under
     the per-run directory — never in cwd or plan_dir root.
     """
-    import os
+    import re
 
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers.shannon import (
@@ -2454,13 +2714,29 @@ def test_run_artifacts_written_to_run_dir_not_cwd(
 
     # ── Transcript paths resolve under CLAUDE_CONFIG_DIR ──
     from megaplan.workers.shannon import _claude_transcript_paths
-    cd_str = str(claude_config_dir)
+    projects_root = claude_config_dir / "projects"
+    slug = re.sub(r"[^a-zA-Z0-9_-]", "-", str(tmp_path.resolve()))
+    transcript = projects_root / slug / "test-sid.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("{}\n", encoding="utf-8")
     paths = _claude_transcript_paths(
-        "test-sid", tmp_path, claude_config_dir=cd_str
+        "test-sid", tmp_path, claude_config_dir=str(claude_config_dir)
     )
-    # Even if no transcript exists yet, the projects root is under claude_config_dir
-    # (Py3.9 does not have is_relative_to so we use str.startswith)
-    assert cd_str in str(Path.home() / ".claude") or True  # home fallback not used when cd is set
+    assert paths == [transcript]
+    assert all(path.is_relative_to(projects_root) for path in paths)
+
+    # Native config mode leaves CLAUDE_CONFIG_DIR unset, so transcript probing
+    # must use the effective child HOME rather than the supervisor's home.
+    child_home = run_dir / "native-home"
+    native_projects_root = child_home / ".claude" / "projects"
+    native_transcript = native_projects_root / slug / "native-sid.jsonl"
+    native_transcript.parent.mkdir(parents=True)
+    native_transcript.write_text("{}\n", encoding="utf-8")
+    native_paths = _claude_transcript_paths(
+        "native-sid", tmp_path, claude_config_dir=None, home=str(child_home)
+    )
+    assert native_paths == [native_transcript]
+    assert all(path.is_relative_to(native_projects_root) for path in native_paths)
 
 
 # ---------------------------------------------------------------------------
