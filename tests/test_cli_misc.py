@@ -34,6 +34,7 @@ def test_cli_command_registry_is_explicit_and_ordered() -> None:
         "runtime",
         "session",
         "logs",
+        "debug",
         "runpod",
         "watchdog",
         "schemas",
