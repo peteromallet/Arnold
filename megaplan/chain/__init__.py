@@ -625,6 +625,7 @@ class ChainState:
 
     current_milestone_index: int = -1
     current_plan_name: str | None = None
+    current_milestone_base_sha: str | None = None
     last_state: str | None = None
     pr_number: int | None = None
     pr_state: str | None = None
@@ -664,6 +665,7 @@ class ChainState:
         return {
             "current_milestone_index": self.current_milestone_index,
             "current_plan_name": self.current_plan_name,
+            "current_milestone_base_sha": self.current_milestone_base_sha,
             "last_state": self.last_state,
             "pr_number": self.pr_number,
             "pr_state": self.pr_state,
@@ -750,6 +752,7 @@ class ChainState:
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
+            current_milestone_base_sha=raw.get("current_milestone_base_sha"),
             last_state=raw.get("last_state"),
             pr_number=int(raw["pr_number"]) if raw.get("pr_number") is not None else None,
             pr_state=raw.get("pr_state"),
@@ -1557,6 +1560,7 @@ def _write_chain_policy_into_plan_meta(
     spec_path: Path,
     milestone_label: str,
     *,
+    milestone_base_sha: str | None = None,
     plan_only: bool = False,
     contract_context: dict[str, Any] | None = None,
 ) -> None:
@@ -1611,6 +1615,8 @@ def _write_chain_policy_into_plan_meta(
         "milestone_label": milestone_label,
         "plan_only": plan_only,
     }
+    if milestone_base_sha:
+        chain_policy["milestone_base_sha"] = milestone_base_sha
     if contract_context is not None:
         chain_policy["dependency_labels"] = list(contract_context.get("dependency_labels", []))
         chain_policy["upstream_contracts"] = list(contract_context.get("upstream_contracts", []))
@@ -1625,6 +1631,24 @@ def _write_chain_policy_into_plan_meta(
         return True
 
     write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_patch_chain_policy)
+
+
+def _current_head_sha(root: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(root),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
 
 
 def validate_paths(spec: ChainSpec, root: Path, state: ChainState | None = None) -> None:
@@ -2731,10 +2755,12 @@ def run_chain(
         )
         state.current_milestone_index = 0
         state.current_plan_name = None
+        state.current_milestone_base_sha = None
         save_chain_state(spec_path, state)
 
     elif state.current_milestone_index < 0:
         state.current_milestone_index = 0
+        state.current_milestone_base_sha = None
         save_chain_state(spec_path, state)
 
     # ---- Milestones ----
@@ -2793,6 +2819,7 @@ def run_chain(
             idx += 1
             state.current_milestone_index = idx
             state.current_plan_name = None
+            state.current_milestone_base_sha = None
             state.last_state = "done"
             state.pr_number = None
             state.pr_state = None
@@ -2872,6 +2899,8 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=None
                 )
+            milestone_base_sha = _current_head_sha(root)
+            state.current_milestone_base_sha = milestone_base_sha
             eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
             eff_robustness = (
                 state.robustness_bumps.get(milestone.label)
@@ -2916,6 +2945,7 @@ def run_chain(
                 spec,
                 spec_path,
                 milestone.label,
+                milestone_base_sha=milestone_base_sha,
                 plan_only=planning_pass,
                 contract_context=contract_context,
             )
@@ -3056,6 +3086,7 @@ def run_chain(
             else:
                 log(f"retrying milestone {milestone.label} with a new plan")
                 state.current_plan_name = None  # force re-init next loop
+                state.current_milestone_base_sha = None
             state.pr_number = None
             state.pr_state = None
             save_chain_state(spec_path, state)
@@ -3145,6 +3176,7 @@ def run_chain(
                 f"retry {milestone_retry_count + 1}/{max_retries}"
             )
             state.current_plan_name = None  # force re-init on next loop
+            state.current_milestone_base_sha = None
             state.pr_number = None
             state.pr_state = None
             save_chain_state(spec_path, state)
@@ -3184,6 +3216,7 @@ def run_chain(
         idx += 1
         state.current_milestone_index = idx
         state.current_plan_name = None
+        state.current_milestone_base_sha = None
         state.pr_number = None
         state.pr_state = None
         save_chain_state(spec_path, state)

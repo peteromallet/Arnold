@@ -26,6 +26,7 @@ from megaplan._core import (
 )
 from megaplan.prompts.review import (
     LARGE_REVIEW_DIFF_MAX_BYTES,
+    compact_review_prompt,
     _review_prompt,
     _settled_decisions_block,
     _settled_decisions_instruction,
@@ -1844,7 +1845,7 @@ def test_parallel_criteria_review_prompt_uses_issue_anchored_context_only(
     )
     monkeypatch.setattr(
         "megaplan.prompts.review.collect_git_diff_patch",
-        lambda project_dir: "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n+print('patched')\n",
+        lambda project_dir, base_ref=None: "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n+print('patched')\n",
     )
 
     prompt = parallel_criteria_review_prompt(state, plan_dir, tmp_path, plan_dir / "review_criteria_verdict.json")
@@ -1875,11 +1876,11 @@ def test_parallel_criteria_review_prompt_large_diff_uses_summary_not_full_patch(
     )
     monkeypatch.setattr(
         "megaplan.prompts.review.collect_git_diff_patch",
-        lambda project_dir: full_patch,
+        lambda project_dir, base_ref=None: full_patch,
     )
     monkeypatch.setattr(
         "megaplan.prompts.review.collect_git_diff_summary",
-        lambda project_dir: "M app.py",
+        lambda project_dir, base_ref=None: "M app.py",
     )
 
     prompt = parallel_criteria_review_prompt(
@@ -1908,11 +1909,11 @@ def test_single_check_review_prompt_large_diff_requires_tool_backed_checks(
     )
     monkeypatch.setattr(
         "megaplan.prompts.review.collect_git_diff_patch",
-        lambda project_dir: full_patch,
+        lambda project_dir, base_ref=None: full_patch,
     )
     monkeypatch.setattr(
         "megaplan.prompts.review.collect_git_diff_summary",
-        lambda project_dir: "M large.py",
+        lambda project_dir, base_ref=None: "M large.py",
     )
 
     prompt = single_check_review_prompt(
@@ -1930,6 +1931,63 @@ def test_single_check_review_prompt_large_diff_requires_tool_backed_checks(
     assert "Review execution context (`finalize.json` + `execution.json`, prompt projection only):" in prompt
     assert "FULL_PATCH_SENTINEL" not in prompt
     assert "Full git diff:" not in prompt
+
+
+def test_review_prompt_uses_milestone_base_sha_for_diff_collection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["meta"]["chain_policy"] = {"milestone_base_sha": "abc123base"}
+    seen: dict[str, str | None] = {}
+
+    def fake_patch(project_dir: Path, base_ref: str | None = None) -> str:
+        seen["patch_base"] = base_ref
+        return "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n+print('patched')\n"
+
+    monkeypatch.setattr("megaplan.prompts.review.collect_git_diff_patch", fake_patch)
+
+    prompt = parallel_criteria_review_prompt(
+        state, plan_dir, tmp_path, plan_dir / "review_criteria_verdict.json"
+    )
+
+    assert seen["patch_base"] == "abc123base"
+    assert "diff --git a/app.py b/app.py" in prompt
+
+
+def test_compact_review_prompt_degrades_oversized_review_to_usable_verdict_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    full_patch = (
+        "diff --git a/huge.py b/huge.py\n"
+        "--- a/huge.py\n"
+        "+++ b/huge.py\n"
+        "+FULL_PATCH_SENTINEL\n"
+        + ("+" + "z" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 20)
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_patch",
+        lambda project_dir, base_ref=None: full_patch,
+    )
+    monkeypatch.setattr(
+        "megaplan.prompts.review.collect_git_diff_summary",
+        lambda project_dir, base_ref=None: "M huge.py",
+    )
+
+    prompt = compact_review_prompt(
+        state,
+        plan_dir,
+        tmp_path,
+        prompt_size_error={"prompt_size": 175460, "max_chars": 150000},
+    )
+
+    assert "Normal review prompt overflow:" in prompt
+    assert "still produce a usable `review_verdict`" in prompt
+    assert "Large git diff mode:" in prompt
+    assert "Git diff summary:\nM huge.py" in prompt
+    assert "FULL_PATCH_SENTINEL" not in prompt
 
 
 def test_plan_prompt_includes_notes_when_present(tmp_path: Path) -> None:
