@@ -276,6 +276,76 @@ def _format_statement_source(source: str, *, max_chars: int = 72) -> str:
     return source[: max(0, max_chars - 3)] + "..."
 
 
+def _iter_ui_nodes(ui_payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Return root and nested UI node dictionaries from a LiteGraph payload."""
+    found: list[Mapping[str, Any]] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, Mapping):
+            nodes = value.get("nodes")
+            if isinstance(nodes, list):
+                for node in nodes:
+                    if isinstance(node, Mapping):
+                        found.append(node)
+                        visit(node)
+            for key in ("graphs", "subgraphs"):
+                nested = value.get(key)
+                if isinstance(nested, list):
+                    for item in nested:
+                        visit(item)
+                elif isinstance(nested, Mapping):
+                    for item in nested.values():
+                        visit(item)
+
+    visit(ui_payload)
+    return found
+
+
+def _present_class_types(session: Any) -> list[str]:
+    """Enumerate class types currently present in an EditSession working graph."""
+    working_ui = getattr(session, "working_ui", None)
+    if not isinstance(working_ui, Mapping):
+        return []
+    types: set[str] = set()
+    for node in _iter_ui_nodes(working_ui):
+        class_type = node.get("type") or node.get("class_type")
+        if isinstance(class_type, str) and class_type:
+            types.add(class_type)
+    return sorted(types)
+
+
+def _format_available_node_names(rows: Any, *, max_line_chars: int = 96) -> str:
+    """Format NodeSignatureRow-like objects as a compact deterministic name list."""
+    names = sorted(
+        {
+            class_type
+            for row in rows or []
+            if isinstance((class_type := getattr(row, "class_type", None)), str)
+            and class_type
+        }
+    )
+    if not names:
+        return ""
+    lines: list[str] = []
+    current = names[0]
+    for name in names[1:]:
+        candidate = f"{current}, {name}"
+        if len(candidate) > max_line_chars:
+            lines.append(current)
+            current = name
+        else:
+            current = candidate
+    lines.append(current)
+    return "\n".join(lines)
+
+
+def _format_query_output(text: str, *, max_chars: int = 4000) -> str:
+    """Bound read-only query output before it is included in agent feedback."""
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 18)].rstrip() + "\n... [truncated]"
+
+
 def _format_batch_report(
     batch_result: Any,
     *,
@@ -321,6 +391,9 @@ def _format_batch_report(
         if extras:
             line += f" ({'; '.join(extras)})"
         statement_lines.append(line)
+        query_output = statement.detail.get("query_output") if isinstance(statement.detail, dict) else None
+        if isinstance(query_output, str) and query_output:
+            statement_lines.append(_format_query_output(query_output))
 
     diagnostic_lines = [
         f"! {diagnostic.code}: {diagnostic.message}"
@@ -809,7 +882,9 @@ def _stage_agent_batch_repl(
     session = EditSession(prepared_ui, schema_provider=state.schema_provider)
     state.batch_session = session
     initial_render = session.render()
-    signature_catalog = session.search(formatted=True)
+    present_types = _present_class_types(session)
+    signature_catalog = session.search(focus_types=present_types, formatted=True)
+    available_node_names = _format_available_node_names(session.search(formatted=False))
     state.python_before = initial_render
     state.before_py_path.write_text(initial_render, encoding="utf-8")
     if isinstance(signature_catalog, str):
@@ -848,6 +923,7 @@ def _stage_agent_batch_repl(
             turn_number=turn_number,
             python_source=initial_render if turn_number == 0 else "",
             signature_catalog=state.batch_signature_catalog if turn_number == 0 else "",
+            available_node_names=available_node_names if turn_number == 0 else "",
             diff=last_diff,
             report=last_report,
             budget_remaining=budget_remaining,

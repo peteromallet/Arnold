@@ -2782,12 +2782,13 @@ def test_extract_batch_fence_empty_fence_is_valid() -> None:
     assert "Maybe later." in prose
 
 
-def test_build_batch_messages_turn_zero_includes_full_python_and_catalog() -> None:
-    """Turn 0 messages include the full Python render and signature catalog."""
+def test_build_batch_messages_turn_zero_includes_full_python_scoped_catalog_and_names() -> None:
+    """Turn 0 messages include render, in-graph signatures, and names-only index."""
     messages = agent_provider.build_batch_messages(
         task="Add a node",
         python_source="workflow = ...",
         signature_catalog="FooNode(input: IMAGE, output: IMAGE)",
+        available_node_names="BarNode, FooNode, ImageScaleBy",
         budget_remaining=12,
         max_batches=12,
     )
@@ -2806,6 +2807,9 @@ def test_build_batch_messages_turn_zero_includes_full_python_and_catalog() -> No
     assert "del node_var" in system
     assert "ImageScaleBy(image=vaedecodetiled.IMAGE" in system
     assert "Never ask for or use numeric node ids" in system
+    assert "Only signatures for nodes already in the graph are shown below" in system
+    assert 'MUST first call `search(focus_types=["ClassName"])`' in system
+    assert "Never guess a signature you have not seen" in system
     assert "add_node(...)" in system
     assert "Do not write operation calls" in system
     # No JSON-delta response requirements (may mention JSON only to forbid it)
@@ -2817,7 +2821,9 @@ def test_build_batch_messages_turn_zero_includes_full_python_and_catalog() -> No
     assert "workflow = ..." in user
     assert "```python" in user
     assert "FooNode" in user
-    assert "signature" in user.lower() or "catalog" in user.lower()
+    assert "Signatures for nodes currently in the graph:" in user
+    assert "Other available node type names" in user
+    assert "BarNode, FooNode, ImageScaleBy" in user
 
 
 def test_build_batch_messages_later_turn_includes_diff_and_report_only() -> None:

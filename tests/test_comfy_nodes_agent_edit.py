@@ -34,6 +34,9 @@ class _Provider:
     def get_schema(self, class_type: str) -> NodeSchema | None:
         return self._schemas.get(class_type)
 
+    def schemas(self) -> dict[str, NodeSchema]:
+        return self._schemas
+
 
 def _schema(class_type: str, outputs: list[OutputSpec] | None = None) -> NodeSchema:
     return NodeSchema(
@@ -922,7 +925,7 @@ def test_handle_agent_edit_batch_repl_runs_bounded_loop_with_turn0_render_then_d
             super().__init__(*args, **kwargs)
 
         def search(self, *, formatted=False, **kwargs):
-            session_stats["search_calls"].append(formatted)
+            session_stats["search_calls"].append({"formatted": formatted, **kwargs})
             return super().search(formatted=formatted, **kwargs)
 
     monkeypatch.setattr(edit_session_module, "EditSession", _TrackingSession)
@@ -964,14 +967,18 @@ def test_handle_agent_edit_batch_repl_runs_bounded_loop_with_turn0_render_then_d
         audit_ref_expected=True,
     )
     assert session_stats["init"] == 1
-    assert session_stats["search_calls"] == [True]
+    assert session_stats["search_calls"] == [
+        {"formatted": True, "focus_types": ["LoadImage", "SaveImage"]},
+        {"formatted": False},
+    ]
     assert len(captured_messages) == 2
 
     turn0_system = captured_messages[0][0]["content"]
     turn0_user = captured_messages[0][1]["content"]
     assert "```batch" in turn0_system
     assert "Current scratchpad Python (full render):" in turn0_user
-    assert "Available node signatures" in turn0_user
+    assert "Signatures for nodes currently in the graph:" in turn0_user
+    assert "Other available node type names" in turn0_user
     assert "Diff from previous render" not in turn0_user
 
     turn1_user = captured_messages[1][1]["content"]
@@ -996,6 +1003,96 @@ def test_handle_agent_edit_batch_repl_runs_bounded_loop_with_turn0_render_then_d
     assert len(response_turns) == 2
     assert response_turns[0]["batch_result"]["landed_op_count"] == 1
     assert response_turns[1]["batch_result"]["batch_ok"] is False
+
+
+def test_handle_agent_edit_batch_repl_turn0_catalog_is_scoped_and_search_first(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={"images": InputSpec("IMAGE", required=True)},
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "ImageScaleBy": NodeSchema(
+                class_type="ImageScaleBy",
+                pack=None,
+                inputs={
+                    "image": InputSpec("IMAGE", required=True),
+                    "scale_by": InputSpec("FLOAT", required=False, default=1.0),
+                },
+                outputs=[OutputSpec("IMAGE", "IMAGE")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    captured_messages: list[list[dict[str, str]]] = []
+
+    def _fake_batch_client(messages):
+        captured_messages.append(messages)
+        return {"batch": "done()", "message": "No changes needed."}
+
+    handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "inspect the graph",
+            "session_id": "batch-scoped-catalog",
+            "max_batches": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    system = captured_messages[0][0]["content"]
+    user = captured_messages[0][1]["content"]
+    catalog = user.split("Signatures for nodes currently in the graph:", 1)[1].split(
+        "Other available node type names", 1
+    )[0]
+    names = user.split("Other available node type names", 1)[1]
+
+    assert "def LoadImage" in catalog
+    assert "def SaveImage" in catalog
+    assert "def ImageScaleBy" not in catalog
+    assert "ImageScaleBy" in names
+    assert "Only signatures for nodes already in the graph are shown below" in system
+    assert 'MUST first call `search(focus_types=["ClassName"])`' in system
+    assert "Never guess a signature you have not seen" in system
+
+
+def test_batch_repl_search_query_output_is_in_next_turn_report() -> None:
+    from vibecomfy.comfy_nodes.agent_edit import _format_batch_report
+    from vibecomfy.porting.edit_session import EditSession
+
+    provider = _Provider(
+        {
+            "ImageScaleBy": NodeSchema(
+                class_type="ImageScaleBy",
+                pack=None,
+                inputs={"image": InputSpec("IMAGE", required=True)},
+                outputs=[OutputSpec("IMAGE", "IMAGE")],
+                source_provider="test",
+                confidence=1.0,
+            )
+        }
+    )
+    session = EditSession(_ui_graph(), schema_provider=provider)
+
+    result = session.apply_batch('search(focus_types=["ImageScaleBy"])')
+    report = _format_batch_report(result, consecutive_errors=0, budget_remaining=1)
+
+    assert result.ok is True
+    assert result.statements[0].op_kind == "query"
+    assert "def ImageScaleBy" in result.statements[0].detail["query_output"]
+    assert "def ImageScaleBy" in report
 
 
 def test_batch_budget_failure_kind_prefers_schema_gap_then_unrepresentable_then_model_mistake() -> None:
