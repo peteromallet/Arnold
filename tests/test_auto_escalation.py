@@ -64,6 +64,12 @@ def test_internal_error_category() -> None:
     assert ids == []
 
 
+def test_malformed_model_output_uses_internal_retry_category() -> None:
+    cat, ids = classify_failure(ExitKind.malformed_model_output.value, [], [])
+    assert cat == FailureCategory.internal_error
+    assert ids == []
+
+
 def test_external_error_category() -> None:
     cat, ids = classify_failure(ExitKind.external_error.value, [], [])
     assert cat == FailureCategory.external_error

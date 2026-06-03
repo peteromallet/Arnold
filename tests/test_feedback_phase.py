@@ -5,7 +5,7 @@ Covers:
     (b) Template — render_template with prefilled populates ai_* lines
     (c) Parser — round-trips ai_* fields, regression test for regex non-overlap
     (d) Prompt builder — build_feedback_prompt mentions every stage, marks absent
-    (e) Routing — profile loading, apply_vendor_rewrite leaves feedback at claude:low
+    (e) Routing — profile loading, apply_vendor_rewrite follows the active vendor
     (f) Handler happy path — mock worker returns valid JSON → populated feedback.md
     (g) Handler malformed output — invalid JSON → empty template, state DONE, no exception
     (h) Handler --force merge — preserves user fields, overwrites ai_*
@@ -655,7 +655,7 @@ class TestRouting:
     """Profile loading and vendor-rewrite routing for the feedback slot."""
 
     def test_any_profile_loads_with_feedback_slot(self) -> None:
-        """Loading any TOML profile with feedback = 'claude:low' succeeds."""
+        """Loading any TOML profile with a feedback slot succeeds."""
         from megaplan.profiles import load_profile_sources
         sources = load_profile_sources()
         # sources is list[tuple[str, str, dict]]: (source, name, profile)
@@ -665,12 +665,12 @@ class TestRouting:
                 f"Profile '{name}' missing 'feedback' slot"
             )
             # All built-in profiles should have feedback set
-            assert profile["feedback"] in ("claude:low", "claude"), (
+            assert profile["feedback"].split(":", 1)[0] in {"claude", "codex", "hermes"}, (
                 f"Profile '{name}' has unexpected feedback value: {profile['feedback']}"
             )
 
-    def test_vendor_rewrite_leaves_feedback_at_claude_low(self) -> None:
-        """apply_vendor_rewrite('codex') leaves feedback at claude:low."""
+    def test_vendor_rewrite_moves_feedback_to_codex(self) -> None:
+        """apply_vendor_rewrite('codex') moves feedback off Claude too."""
         from megaplan.profiles import apply_vendor_rewrite
         profile = {
             "plan": "claude",
@@ -680,8 +680,7 @@ class TestRouting:
             "feedback": "claude:low",
         }
         rewritten = apply_vendor_rewrite(profile, "codex")
-        # All premium slots become codex, but feedback stays claude:low
-        assert rewritten["feedback"] == "claude:low"
+        assert rewritten["feedback"] == "codex:low"
         assert rewritten["plan"] == "codex"
 
     def test_vendor_rewrite_claude_vendor_for_claude_profile(self) -> None:
@@ -724,14 +723,10 @@ class TestRouting:
         # but importantly feedback is untouched
         assert "feedback" in rewritten
 
-    def test_vendor_rewrite_preserves_bare_feedback_not_normalized_or_swapped(self) -> None:
-        """Bare feedback='claude' stays 'claude' — not normalized to 'claude:low'
-        and not swapped to the target vendor."""
+    def test_vendor_rewrite_swaps_bare_feedback_without_normalizing_effort(self) -> None:
+        """Bare feedback='claude' swaps vendor without adding ':low'."""
         from megaplan.profiles import apply_vendor_rewrite
 
-        # all-claude.toml has bare feedback = "claude" (no effort suffix).
-        # This test proves that behavior is intentional: bare values are
-        # preserved as-is during vendor rewrite.
         profile: dict[str, str] = {
             "plan": "claude",
             "critique": "claude",
@@ -743,15 +738,12 @@ class TestRouting:
         # Premium phases become codex (vendor-swapped)
         assert rewritten["plan"] == "codex"
         assert rewritten["critique"] == "codex"
-        # feedback is NOT vendor-swapped — it stays claude
-        assert rewritten["feedback"] == "claude"
-        # feedback is NOT normalized — bare "claude" stays bare,
-        # not coerced to "claude:low"
+        assert rewritten["feedback"] == "codex"
         assert rewritten["feedback"] != "claude:low"
 
     def test_vendor_rewrite_defaults_feedback_when_absent(self) -> None:
         """When profile has no 'feedback' key, apply_vendor_rewrite defaults
-        to 'claude:low'."""
+        to the active vendor at low effort."""
         from megaplan.profiles import apply_vendor_rewrite
 
         profile: dict[str, str] = {
@@ -761,6 +753,10 @@ class TestRouting:
         rewritten = apply_vendor_rewrite(profile, "claude")
         assert rewritten["feedback"] == "claude:low"
         assert rewritten["plan"] == "claude"
+
+        rewritten_codex = apply_vendor_rewrite(profile, "codex")
+        assert rewritten_codex["feedback"] == "codex:low"
+        assert rewritten_codex["plan"] == "codex"
 
     def test_default_agent_routing_has_feedback(self) -> None:
         """DEFAULT_AGENT_ROUTING includes 'feedback' key."""

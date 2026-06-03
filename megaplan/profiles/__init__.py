@@ -1309,12 +1309,10 @@ def apply_vendor_rewrite(
                         f"Vendor swap conflict on prep stage '{stage}': {e.message}",
                     ) from e
                 raise
-    # feedback is preserved from the profile (skipped during vendor swap for
-    # cross-run comparability) and defaults to "claude:low" when absent
     result: dict[str, str] = {}
-    for phase, spec in profile.items():
-        if phase == "feedback":
-            continue
+    profile_with_feedback = dict(profile)
+    profile_with_feedback.setdefault("feedback", f"{vendor}:low")
+    for phase, spec in profile_with_feedback.items():
         try:
             result[phase] = _swap_premium_spec(spec, vendor)
         except CliError as e:
@@ -1324,7 +1322,6 @@ def apply_vendor_rewrite(
                     f"Vendor swap conflict on phase '{phase}': {e.message}",
                 ) from e
             raise
-    result["feedback"] = profile.get("feedback", "claude:low")
     return result
 
 
@@ -1490,7 +1487,7 @@ def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
 
 
 # Profiles whose name asserts the vendor. If resolution drifts away from the
-# asserted vendor on any non-feedback phase, fail loudly: the resolved
+# asserted vendor on any premium phase, fail loudly: the resolved
 # phase_model is persisted into state.config and silently invalidates the
 # user's requested profile for the whole sprint.
 #
@@ -1515,20 +1512,16 @@ def _validate_named_profile_invariants(
         return
     bad: list[str] = []
     for phase, spec in resolved.items():
-        if phase == "feedback":
-            continue
         agent, _model = parse_agent_spec(spec)
         if agent != expected:
             bad.append(f"{phase}={spec}")
     # Also validate tier entries: a named-vendor profile must not have
     # tier entries from the *wrong premium vendor* (claude vs codex) on any
-    # non-feedback phase.  DeepSeek / hermes entries are always allowed
-    # because they represent the cheap-fallback tiers, not a vendor choice.
+    # phase. DeepSeek / hermes entries are always allowed because they
+    # represent the cheap-fallback tiers, not a vendor choice.
     _PREMIUM_AGENTS = frozenset({"claude", "codex"})
     if tier_models:
         for phase, tiers in tier_models.items():
-            if phase == "feedback":
-                continue
             for tier_int, spec in tiers.items():
                 agent, _model = parse_agent_spec(spec)
                 if agent in _PREMIUM_AGENTS and agent != expected:
@@ -1536,7 +1529,7 @@ def _validate_named_profile_invariants(
     if bad:
         raise CliError(
             "profile_resolution_mismatch",
-            f"profile={profile_name} expected {expected} on every non-feedback "
+            f"profile={profile_name} expected {expected} on every premium "
             f"phase but resolved to: {', '.join(bad)}. "
             f"Mark the profile vendor_locked=true or pass --vendor {expected} explicitly.",
         )
@@ -1585,6 +1578,9 @@ def apply_profile_expansion(
         resolved = resolve_profile(profile_name, profiles)
         profile_meta = metadata.get(profile_name, {})
         vendor_locked = bool(profile_meta.get("vendor_locked", False))
+        named_vendor = _NAMED_VENDOR_PROFILES.get(profile_name)
+        if vendor_locked and named_vendor in VALID_VENDORS:
+            args._effective_vendor = named_vendor
 
         # Resolve tier_models from metadata (with inheritance).
         tier_models: dict[str, dict[int, str]] | None = None
@@ -1654,6 +1650,7 @@ def apply_profile_expansion(
                     "invalid_vendor",
                     f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
                 )
+            args._effective_vendor = vendor
             if _profile_has_premium_slots(resolved) or inherited_prep_models:
                 resolved = apply_vendor_rewrite(
                     resolved,

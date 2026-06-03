@@ -550,7 +550,8 @@ def test_render_credential_failure_non_tty_structure(monkeypatch) -> None:
 
 def test_preflight_feedback_slot_is_soft(monkeypatch) -> None:
     """The opt-in feedback slot must not gate the run. A Codex-only user can
-    run all-codex (which pins feedback=claude:low) without an Anthropic key."""
+    still run a profile that has a legacy feedback=claude:low slot without
+    an Anthropic key."""
     from megaplan._pipeline.preflight import preflight_check_profile
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

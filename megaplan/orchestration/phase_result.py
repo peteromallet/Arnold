@@ -28,6 +28,7 @@ class ExitKind(str, Enum):
     blocked_by_prereq = "blocked_by_prereq"
     timeout = "timeout"
     context_exhausted = "context_exhausted"
+    malformed_model_output = "malformed_model_output"
     internal_error = "internal_error"
     external_error = "external_error"
 
@@ -243,6 +244,18 @@ def _classify_external_error(exc: Exception) -> ExternalError | None:
     if payload is None:
         return None
     return ExternalError.from_dict(payload)
+
+
+def _is_malformed_model_output_error(exc: Exception) -> bool:
+    from megaplan.types import CliError
+
+    if not isinstance(exc, CliError):
+        return False
+    if exc.code not in {"parse_error", "worker_parse_error"}:
+        return False
+    if exc.extra.get("model_output_parse_error") is not None:
+        return bool(exc.extra.get("model_output_parse_error"))
+    return "raw_output" in exc.extra
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +599,8 @@ def phase_result_guard(plan_dir: Path):
         # Decide exit_kind based on exception class
         if isinstance(exc, subprocess.TimeoutExpired):
             ek = ExitKind.timeout.value
+        elif _is_malformed_model_output_error(exc):
+            ek = ExitKind.malformed_model_output.value
         else:
             ek = ExitKind.internal_error.value
         external_error = None

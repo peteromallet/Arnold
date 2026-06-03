@@ -3162,11 +3162,15 @@ def drive(
                     "suggested_recovery_commands": [resume_command],
                 },
             )
-        elif result is not None and getattr(result, "exit_kind", None) == ExitKind.internal_error.value:
+        elif result is not None and getattr(result, "exit_kind", None) in {
+            ExitKind.internal_error.value,
+            ExitKind.malformed_model_output.value,
+        }:
             # Don't bail immediately — megaplan often records a partial failure
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
-            log(f"phase '{next_step}' exited with internal_error: {err.strip() or out.strip()[-400:]}")
+            failure_kind = str(getattr(result, "exit_kind", None))
+            log(f"phase '{next_step}' exited with {failure_kind}: {err.strip() or out.strip()[-400:]}")
             # plan_locked is transient contention from a concurrent auto/phase,
             # not a phase failure. Writing STATE_FAILED here turns a recoverable
             # lock-wait into a terminal state — the bug that surfaced when two
@@ -3178,7 +3182,7 @@ def drive(
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="phase_failed",
-                    message=f"phase '{next_step}' internal_error",
+                    message=f"phase '{next_step}' {failure_kind}",
                     current_state=None,
                     phase=next_step,
                     resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
