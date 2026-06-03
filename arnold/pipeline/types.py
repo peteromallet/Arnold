@@ -148,11 +148,21 @@ class Stage:
     ``name`` identifies the stage within ``Pipeline.stages``.  ``step`` is
     the executable unit.  ``edges`` is the set of labelled transitions that
     the executor follows after the step completes.
+
+    ``decision_vocabulary`` declares the set of valid decision strings
+    that this stage may produce (e.g. ``frozenset({"proceed", "iterate"})``).
+    An empty set means the stage does not participate in decision-typed
+    routing — all dispatch is label-based.  ``override_vocabulary`` is the
+    corresponding set of valid override-action strings (e.g.
+    ``frozenset({"force_proceed", "abort"})``).  Both are plugin-owned:
+    Arnold imposes no literal set; runtimes declare their own vocabulary.
     """
 
     name: str
     step: Step
     edges: tuple[Edge, ...] = ()
+    decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
+    override_vocabulary: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -164,6 +174,10 @@ class ParallelStage:
     and returns a single ``StepResult`` whose ``next`` label dispatches
     like a regular ``Stage``.  ``max_workers`` caps the thread/process pool
     size (``None`` means unbounded).
+
+    ``decision_vocabulary`` and ``override_vocabulary`` serve the same
+    purpose as in :class:`Stage` — they declare the set of valid decision
+    and override-action strings for the join result's dispatch.
     """
 
     name: str
@@ -171,6 +185,8 @@ class ParallelStage:
     join: Callable[[list[StepResult], StepContext], StepResult]
     edges: tuple[Edge, ...] = ()
     max_workers: int | None = None
+    decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
+    override_vocabulary: frozenset[str] = field(default_factory=frozenset)
 
 
 # ---------------------------------------------------------------------------

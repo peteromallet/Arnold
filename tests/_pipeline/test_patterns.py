@@ -1,12 +1,12 @@
 """Targeted unit tests for megaplan._pipeline.patterns.
 
 One test per pattern covering the produced Stage/Edge graph: stage
-names, ``Edge.kind`` ('normal' vs 'gate'), and recommendation targets
-for gate edges. Explicit regression cases are spelled out for the three
+names, ``Edge.kind`` ('normal' vs 'decision'), and recommendation targets
+for decision edges. Explicit regression cases are spelled out for the three
 patterns highlighted in the brief:
 
 * ``critique_revise_gate_loop`` — ``gate_extra_edges`` passthrough
-  produces exactly the four ``kind='gate'`` recommendation edges plus
+  produces exactly the four ``kind='decision'`` edges plus
   every caller-supplied extra edge, in order.
 * ``panel_parallel`` — three reviewers produce a :class:`ParallelStage`
   whose join collates per-reviewer outputs as ``{reviewer_id}.{label}``
@@ -16,27 +16,9 @@ patterns highlighted in the brief:
   state via the planning binding onto the parent's
   :class:`PipelineVerdict`.
 
-Post-M2 GateRecommendation policy (T14): flag-ON parametrize branches
-assert on ``verdict.payload['reduce_result']`` (ReduceResult); flag-OFF
-branches retain ``verdict.recommendation`` assertions for byte-identical
-edge dispatch. Remaining GateRecommendation references in this file are
-each enumerated and justified below:
-
-* ``GateRecommendation`` import (line ~40) — used as the literal type
-  alias for ``_VerdictStep.recommendation`` field (assertion-shape
-  scaffold; not a planning-binding consumer).
-* ``_VerdictStep.recommendation: GateRecommendation`` field — the
-  literal-string type narrows the test-double's constructor; kept
-  because the field is exercised by both flag-ON and flag-OFF tests as
-  a fixed input recommendation.
-* ``def _promote(state) -> GateRecommendation`` (subpipeline_call) — the
-  promote callable's literal return-type narrows what the test-double
-  returns; SubloopStep then wraps it byte-identically flag-ON via
-  planning_bindings.planning_promote, flag-OFF via the legacy typed
-  assignment. The literal-return-type is what allows the flag-OFF path
-  to assert ``verdict.recommendation == 'iterate'`` and the flag-ON
-  path to also assert the same recommendation (planning_promote preserves
-  the 4-verdict literal semantics).
+Post-M3b (T12): GateRecommendation typed literal is removed.
+Recommendation fields use plain ``str`` throughout.  The ``_promote``
+callable returns ``str`` and ``_VerdictStep.recommendation`` is ``str``.
 """
 
 from __future__ import annotations
@@ -61,7 +43,6 @@ import pytest
 from megaplan._pipeline.subloop import SubloopStep
 from megaplan._pipeline.types import (
     Edge,
-    GateRecommendation,
     ParallelStage,
     Pipeline,
     ReduceResult,
@@ -121,7 +102,7 @@ class _VerdictStep:
     """Step that emits a fixed :class:`PipelineVerdict.recommendation`."""
 
     name: str
-    recommendation: GateRecommendation
+    recommendation: str
     kind: str = "judge"
     prompt_key: str | None = None
     slot: str | None = None
@@ -151,12 +132,12 @@ class TestCritiqueReviseGateLoop:
 
         assert set(stages.keys()) == {"critique", "gate", "revise"}
 
-        # Gate carries exactly the four kind='gate' recommendation edges.
+        # Gate carries exactly the four kind='decision' edges.
         gate_edges = stages["gate"].edges
         assert len(gate_edges) == 4
-        assert all(e.kind == "gate" for e in gate_edges)
-        rec_targets = {e.recommendation: e.target for e in gate_edges}
-        assert rec_targets == {
+        assert all(e.kind == "decision" for e in gate_edges)
+        label_targets = {e.label: e.target for e in gate_edges}
+        assert label_targets == {
             "iterate": "revise",
             "proceed": "finalize",
             "tiebreaker": "tiebreaker",
@@ -203,12 +184,12 @@ class TestCritiqueReviseGateLoop:
         gate_edges = stages["gate"].edges
         assert len(gate_edges) == 8
 
-        # First four edges are the recommendation edges, in fixed order.
+        # First four edges are the decision edges, in fixed order.
         rec_only = gate_edges[:4]
-        assert [e.recommendation for e in rec_only] == [
-            "iterate", "proceed", "tiebreaker", "escalate",
+        assert [e.label for e in rec_only] == [
+            "proceed", "iterate", "tiebreaker", "escalate",
         ]
-        assert all(e.kind == "gate" for e in rec_only)
+        assert all(e.kind == "decision" for e in rec_only)
 
         # The last four are the caller-supplied extras, in supplied order.
         assert tuple(gate_edges[4:]) == extra
@@ -230,7 +211,12 @@ class TestCritiqueReviseGateLoop:
             revise_target="prep",
         )
         assert stages["critique"].edges == critique_fallbacks
-        assert stages["revise"].edges == (Edge(label="critique", target="prep"),)
+        # Revise edge comes from routing plugin (Arnold Edge without recommendation field).
+        revise_edges = stages["revise"].edges
+        assert len(revise_edges) == 1
+        assert revise_edges[0].label == "critique"
+        assert revise_edges[0].target == "prep"
+        assert revise_edges[0].kind == "normal"
 
 
 # ── panel_parallel ─────────────────────────────────────────────────────
@@ -331,7 +317,7 @@ class TestSubpipelineCall:
     ) -> None:
         """Regression (c): the child Pipeline runs under :class:`SubloopStep`
         with its state propagating back via the ``promote`` callable as a
-        :data:`GateRecommendation` on the parent's :class:`PipelineVerdict`."""
+        plain ``str`` recommendation on the parent's :class:`PipelineVerdict`."""
 
         # Child pipeline: a single Step that publishes
         # ``current_state='critiqued'`` (the shape an InProcessHandlerStep
@@ -342,7 +328,7 @@ class TestSubpipelineCall:
             entry="run",
         )
 
-        def _promote(state: dict[str, Any]) -> GateRecommendation:
+        def _promote(state: dict[str, Any]) -> str:
             cs = state.get("current_state", "")
             if cs == "critiqued":
                 return "iterate"
@@ -377,7 +363,7 @@ class TestSubpipelineCall:
             entry="run",
         )
 
-        def _promote(state: dict[str, Any]) -> GateRecommendation:
+        def _promote(state: dict[str, Any]) -> str:
             return "escalate" if state.get("current_state") == "aborted" else "proceed"
 
         subloop = subpipeline_call(child, promote=_promote)
@@ -450,12 +436,12 @@ class TestIterateUntil:
 
 
 class TestEscalateIf:
-    def test_returns_escape_edge_with_gate_kind_and_recommendation(self) -> None:
+    def test_returns_escape_edge_with_decision_kind_and_label(self) -> None:
         handler = _StubStep(name="escalate_to_human")
         step, edge = escalate_if(lambda s: True, handler)
         assert step is handler
-        assert edge.kind == "gate"
-        assert edge.recommendation == "escalate"
+        assert edge.kind == "decision"
+        assert edge.label == "escalate"
         assert edge.target == "escalate_to_human"
 
 

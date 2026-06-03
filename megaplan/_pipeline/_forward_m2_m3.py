@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from megaplan._pipeline.types import GateRecommendation, ReduceResult  # TODO(M2): finalize ReduceResult shape
+from megaplan._pipeline.types import ReduceResult  # TODO(M2): finalize ReduceResult shape
 
 # ── RoutingKey ─────────────────────────────────────────────────────────
 # TODO(M2): M2 will freeze this as the sole routing type; see
@@ -98,20 +98,24 @@ class _RestoreAndDivergeType:
 restore_and_diverge = _RestoreAndDivergeType()
 
 
-# ── Bridge: legacy GateRecommendation → RoutingKey ─────────────────────
+# ── Bridge: planning decision string → RoutingKey ──────────────────────
 # TODO(M2/M3): This bridge converts the planning-app's 4-verdict labels
 # into the typed RoutingKey surface. The planning binding (M2 W5) will
 # be the authoritative producer; this bridge exists so M5a node-library
 # code can compile against RoutingKey before M2 lands.
+#
+# M3b: recommendation is plain str (was GateRecommendation).
 #
 # Collision note (SD2): both proceed and tiebreaker map to kind='advance'.
 # Disambiguation is via .name — downstream dispatch that needs kind-level
 # distinction MUST read .name, not .kind alone.
 
 def _bridge_recommendation_to_routing_key(
-    recommendation: GateRecommendation,
+    recommendation: str,
 ) -> RoutingKey:
-    """Convert a legacy GateRecommendation literal to a RoutingKey.
+    """Convert a planning decision string to a RoutingKey.
+
+    M3b: *recommendation* is a plain ``str`` (was a typed gate recommendation literal).
 
     Mapping:
       'proceed'    → RoutingKey(name='proceed',    kind='advance')
@@ -122,7 +126,7 @@ def _bridge_recommendation_to_routing_key(
     Note: proceed and tiebreaker both map to kind='advance'. This is
     intentional — disambiguation at the dispatch level uses .name.
     """
-    _MAP: dict[GateRecommendation, RoutingKey] = {
+    _MAP: dict[str, RoutingKey] = {
         "proceed": RoutingKey(name="proceed", kind="advance"),
         "iterate": RoutingKey(name="iterate", kind="revise"),
         "tiebreaker": RoutingKey(name="tiebreaker", kind="advance"),
@@ -130,7 +134,7 @@ def _bridge_recommendation_to_routing_key(
     }
     if recommendation not in _MAP:
         raise ValueError(
-            f"Unknown GateRecommendation {recommendation!r}; "
+            f"Unknown recommendation {recommendation!r}; "
             f"expected one of {list(_MAP.keys())}"
         )
     return _MAP[recommendation]

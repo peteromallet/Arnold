@@ -185,16 +185,22 @@ class PipelineBuilder(_BasePipelineBuilder):
         on_escalate: str,
         extra_edges: tuple[Edge, ...] = (),
     ) -> "PipelineBuilder":
-        """Add a gate stage with the four ``kind='gate'`` recommendation
+        """Add a gate stage with the four ``kind='decision'``
         edges plus any caller-supplied ``extra_edges`` in order. Gate
         stages own their outgoing edges — no auto-link to subsequent
-        stages."""
-        gate_edges: tuple[Edge, ...] = (
-            Edge(label="iterate", target=on_iterate, kind="gate", recommendation="iterate"),
-            Edge(label="proceed", target=on_proceed, kind="gate", recommendation="proceed"),
-            Edge(label="tiebreaker", target=on_tiebreaker, kind="gate", recommendation="tiebreaker"),
-            Edge(label="escalate", target=on_escalate, kind="gate", recommendation="escalate"),
-        ) + tuple(extra_edges)
+        stages.
+
+        Delegates to :func:`~megaplan.pipelines.planning.routing.planning_gate_edges`
+        so edge construction stays in one place."""
+        from megaplan.pipelines.planning.routing import planning_gate_edges
+
+        gate_edges = planning_gate_edges(
+            on_proceed=on_proceed,
+            on_iterate=on_iterate,
+            on_tiebreaker=on_tiebreaker,
+            on_escalate=on_escalate,
+            gate_extra_edges=extra_edges,
+        )
         stage = Stage(name=stage_name, step=step, edges=gate_edges)
         self.add_stage(stage, emit_label=None)
         return self
@@ -267,18 +273,22 @@ class PipelineBuilder(_BasePipelineBuilder):
         on_escalate: str = "finalize",
     ) -> "PipelineBuilder":
         """Plug in the canonical :class:`TiebreakerStep` with the
-        LOAD-BEARING gate-kind edge tuple from T11. The legacy
+        LOAD-BEARING decision-kind edge tuple from T11. The legacy
         label-only edges are gone — this is a deliberate behaviour
-        delta documented in the 0.22.0 changelog."""
+        delta documented in the 0.22.0 changelog.
+
+        Delegates to :func:`~megaplan.pipelines.planning.routing.tiebreaker_edges`
+        so edge construction stays in one place."""
         # Imported lazily to avoid a hard handlers-package dependency at
         # builder import time.
         from megaplan._pipeline.stages.tiebreaker import TiebreakerStep
+        from megaplan.pipelines.planning.routing import tiebreaker_edges
 
         step = TiebreakerStep(name=name)
-        tb_edges: tuple[Edge, ...] = (
-            Edge(label="", target=on_iterate, kind="gate", recommendation="iterate"),
-            Edge(label="", target=on_proceed, kind="gate", recommendation="proceed"),
-            Edge(label="", target=on_escalate, kind="gate", recommendation="escalate"),
+        tb_edges = tiebreaker_edges(
+            on_iterate=on_iterate,
+            on_proceed=on_proceed,
+            on_escalate=on_escalate,
         )
         stage = Stage(name=name, step=cast(Step, step), edges=tb_edges)
         self.add_stage(stage, emit_label=None)
@@ -320,7 +330,7 @@ class PipelineBuilder(_BasePipelineBuilder):
         handler: Step,
     ) -> "PipelineBuilder":
         """Append the *handler* as a standalone stage and add the
-        ``kind='gate'`` escalate edge to the most-recently-added
+        ``kind='decision'`` escalate edge to the most-recently-added
         stage."""
         if self._last_stage is None:
             raise ValueError(".escalate() requires a previously added stage")

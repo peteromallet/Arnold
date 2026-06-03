@@ -12,7 +12,7 @@ themselves live elsewhere (e.g. ``_pipeline/stages/``,
 Sprint conventions encoded here:
 
 * Gate stages produced by :func:`critique_revise_gate_loop` carry the
-  four required ``kind="gate"`` recommendation edges (one per literal
+  four required ``kind="decision"`` edges (one per literal
   of the planning binding) ahead of any caller-supplied
   ``gate_extra_edges``. The executor's typed-verdict dispatch resolves
   them in preference to label-string matching.
@@ -45,6 +45,8 @@ from megaplan._pipeline.types import (
 )
 
 
+
+
 def critique_revise_gate_loop(
     critique_step: Step,
     gate_step: Step,
@@ -62,26 +64,37 @@ def critique_revise_gate_loop(
 
     Returns ``{"critique": Stage, "gate": Stage, "revise": Stage}``.
 
-    The gate stage carries exactly the four ``kind="gate"`` recommendation
-    edges (iterate / proceed / tiebreaker / escalate) targeting
+    The gate stage carries ``kind='decision'`` edges for the four
+    planning labels (iterate / proceed / tiebreaker / escalate) targeting
     *on_iterate* / *on_proceed* / *on_tiebreaker* / *on_escalate*, plus
-    any *gate_extra_edges* appended in order. The critique stage carries
-    only *critique_fallback_edges* (caller-provided, typically the two
-    label-fallback edges to ``"gate"``); when empty the critique stage
-    defaults to a single ``Edge(label="gate", target="gate")``. The
-    revise stage routes back to *revise_target* (default ``"critique"``,
-    forming the loop).
+    any *gate_extra_edges* appended in order.  Edge construction is
+    delegated to
+    :func:`megaplan.pipelines.planning.routing.critique_revise_gate_routing`.
+
+    The critique stage carries only *critique_fallback_edges*
+    (caller-provided, typically the two label-fallback edges to
+    ``"gate"``); when empty the critique stage defaults to a single
+    ``Edge(label="gate", target="gate")``. The revise stage routes back
+    to *revise_target* (default ``"critique"``, forming the loop).
 
     Caller is responsible for wiring inbound edges to ``"critique"`` and
     for naming the downstream stages that the four gate edges point at.
     """
 
-    gate_edges: tuple[Edge, ...] = (
-        Edge(label="iterate", target=on_iterate, kind="gate", recommendation="iterate"),
-        Edge(label="proceed", target=on_proceed, kind="gate", recommendation="proceed"),
-        Edge(label="tiebreaker", target=on_tiebreaker, kind="gate", recommendation="tiebreaker"),
-        Edge(label="escalate", target=on_escalate, kind="gate", recommendation="escalate"),
-    ) + tuple(gate_extra_edges)
+    # Delegate edge construction to the planning plugin (Megaplan-owned
+    # decision literals live ONLY in megaplan.pipelines.planning.routing).
+    # Lazy import to avoid circular dependency (planning/__init__.py imports
+    # from megaplan._pipeline.patterns).
+    from megaplan.pipelines.planning.routing import critique_revise_gate_routing as _routing
+
+    routing = _routing(
+        on_proceed=on_proceed,
+        on_iterate=on_iterate,
+        on_tiebreaker=on_tiebreaker,
+        on_escalate=on_escalate,
+        on_revise=revise_target,
+        gate_extra_edges=gate_extra_edges,
+    )
 
     critique_edges: tuple[Edge, ...] = tuple(critique_fallback_edges) or (
         Edge(label="gate", target="gate"),
@@ -89,11 +102,11 @@ def critique_revise_gate_loop(
 
     return {
         "critique": Stage(name="critique", step=critique_step, edges=critique_edges),
-        "gate": Stage(name="gate", step=gate_step, edges=gate_edges),
+        "gate": Stage(name="gate", step=gate_step, edges=routing["gate"]),
         "revise": Stage(
             name="revise",
             step=revise_step,
-            edges=(Edge(label="critique", target=revise_target),),
+            edges=routing["revise"],
         ),
     }
 
@@ -329,19 +342,20 @@ def escalate_if(
 
     Documentation-first: callers plug *escalation_handler* into the host
     stage's neighbour graph and append the produced *escape_edge*
-    (``kind="gate"``, ``recommendation="escalate"``) as an outgoing edge.
+    (``kind="decision"``, ``label="escalate"``) as an outgoing edge.
     *condition* documents when the host Step should emit a
-    :class:`PipelineVerdict` whose ``recommendation == "escalate"``; the host
+    :class:`PipelineVerdict` whose ``label == "escalate"``; the host
     Step's ``run()`` consults it against :attr:`StepContext.state`.
     """
 
     del condition  # consumed by host Step
 
+    from megaplan.pipelines.planning.routing import PLAN_ESCALATE as _ESC
+
     escape_edge = Edge(
-        label="escalate",
+        label=_ESC,
         target=escalation_handler.name,
-        kind="gate",
-        recommendation="escalate",
+        kind="decision",
     )
     return escalation_handler, escape_edge
 
@@ -358,8 +372,8 @@ def escalate_via_subpipeline(
     """Return the ``(subloop, escape_edge)`` pair for divergent escalation.
 
     Composes :func:`subpipeline_call` with an escape :class:`Edge` whose
-    ``recommendation`` is :attr:`restore_and_diverge.name`
-    (``"escalate"`` — with :func:`# TODO(M3) <megaplan._pipeline._forward_m2_m3.restore_and_diverge>`
+    label is :attr:`restore_and_diverge.name`
+    (``\"escalate\"`` — with :func:`# TODO(M3) <megaplan._pipeline._forward_m2_m3.restore_and_diverge>`
     marker).  Callers wire the returned *subloop* into the host pipeline
     as a :class:`SubloopStep` and append the *escape_edge* as an outgoing
     :class:`Edge` on the preceding stage, exactly as :func:`escalate_if`
@@ -386,10 +400,10 @@ def escalate_via_subpipeline(
     * :func:`escalate_if` and :func:`subpipeline_call`
       are left intact and remain exported through
       :mod:`megaplan._pipeline.patterns`.
-    * The escape edge's ``recommendation`` is
+    * The escape edge's ``label`` is
       :attr:`restore_and_diverge.name` (``"escalate"``) so the
-      gate-dispatch path can route it alongside the existing
-      ``kind="gate"`` edges produced by :func:`escalate_if` and
+      decision-dispatch path can route it alongside the existing
+      ``kind="decision"`` edges produced by :func:`escalate_if` and
       :func:`critique_revise_gate_loop`.
     """
     del condition  # consumed by the host Step that invokes this path
@@ -402,14 +416,13 @@ def escalate_via_subpipeline(
     )
 
     # TODO(M3): when M3 maps restore_and_diverge as a RoutingKey, the
-    # recommendation below will be RoutingKey(name='restore_and_diverge',
+    # label below will be RoutingKey(name='restore_and_diverge',
     # kind='restore').  For M5a it is the literal 'escalate' so the
-    # existing gate-dispatch validator and executor handle it.
+    # existing decision-dispatch executor handles it.
     escape_edge = Edge(
         label=restore_and_diverge.name,
         target=subloop.name,
-        kind="gate",
-        recommendation=restore_and_diverge.name,
+        kind="decision",
     )
     return subloop, escape_edge
 

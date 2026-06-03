@@ -322,7 +322,8 @@ def test_calibration_gate_catches_state_star_attribute(
 def test_calibration_gate_catches_gaterecommendation_import(
     tmp_path,
 ) -> None:
-    """Detect ``from foo import GateRecommendation`` in calibration sources."""
+    """Detect import of the removed GateRecommendation symbol (AST gate;
+    does not require the symbol to be importable)."""
     _write(
         tmp_path,
         "megaplan/calibration/bad.py",
@@ -336,7 +337,8 @@ def test_calibration_gate_catches_gaterecommendation_import(
 def test_calibration_gate_catches_gaterecommendation_reference(
     tmp_path,
 ) -> None:
-    """Detect bare ``GateRecommendation`` name reference in calibration sources."""
+    """Detect bare name reference to the removed GateRecommendation symbol
+    (AST gate; does not require the symbol to be importable)."""
     _write(
         tmp_path,
         "megaplan/calibration/bad.py",

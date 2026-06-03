@@ -1,8 +1,10 @@
 """W7 — pipelines check static graph validator tests (T13).
 
 Validator scope: Edge.target real-stage-or-halt, no 'halt' as edge LABEL
-(except the conventional terminal pair), every gate edge has a valid
-GateRecommendation, and reachability from entry. NO Port resolution (M2).
+(except the conventional terminal pair), every decision edge has a valid
+label matching the stage's decision vocabulary, and reachability from
+entry. NO Port resolution (M2).  M3b: decision edges use kind='decision';
+kind='gate' edges are legacy and validated alongside kind='decision'.
 """
 
 from __future__ import annotations

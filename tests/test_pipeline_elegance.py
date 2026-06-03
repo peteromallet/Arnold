@@ -29,12 +29,16 @@ def test_no_string_packed_gate_labels_in_production() -> None:
 
 
 def test_subloop_and_override_have_executor_branches() -> None:
-    """Both reserved Step kinds have executor branches now."""
+    """Both reserved Step kinds have executor branches now.
+
+    M3b: the executor delegates to the shared Arnold routing resolver
+    (resolve_edge) instead of the legacy find_override_edge.
+    """
     executor_src = (
         _REPO_ROOT / "megaplan/_pipeline/executor.py"
     ).read_text()
-    assert "find_override_edge" in executor_src, (
-        "executor must import find_override_edge to dispatch kind='override' edges"
+    assert "resolve_edge" in executor_src, (
+        "executor must import resolve_edge from Arnold routing resolver"
     )
     subloop_src = (
         _REPO_ROOT / "megaplan/_pipeline/subloop.py"

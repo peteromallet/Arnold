@@ -3,7 +3,7 @@
 The planning pipeline is keyed by phase name:
 ``prep / plan / critique / gate / revise / finalize / execute / review /
 tiebreaker``. Gate recommendations are represented as typed
-``kind="gate"`` edges on the ``gate`` stage. User-facing override
+``kind=\"decision\"`` edges on the ``gate`` stage. User-facing override
 command labels remain as normal fallback edges because the live gate
 handler still emits and reports those commands.
 """
@@ -123,7 +123,7 @@ def _compile_legacy_planning_pipeline() -> Pipeline:
                    Edge(label="halt", target="halt")),
         ),
         # T11 LOAD-BEARING: TiebreakerStep is a SubloopStep that emits a
-        # PipelineVerdict with a typed recommendation. The three kind='gate' edges
+        # PipelineVerdict with a typed recommendation. The three kind='decision' edges
         # below replace the legacy label-only edges; the legacy 'escalate
         # folds into the finalize branch' semantics are preserved via
         # escalate→finalize (anti-scope: no new pipeline branches this
@@ -131,9 +131,9 @@ def _compile_legacy_planning_pipeline() -> Pipeline:
         "tiebreaker": Stage(
             name="tiebreaker", step=TiebreakerStep(),
             edges=(
-                Edge(label="", target="critique", kind="gate", recommendation="iterate"),
-                Edge(label="", target="finalize", kind="gate", recommendation="proceed"),
-                Edge(label="", target="finalize", kind="gate", recommendation="escalate"),
+                Edge(label="iterate", target="critique", kind="decision"),
+                Edge(label="proceed", target="finalize", kind="decision"),
+                Edge(label="escalate", target="finalize", kind="decision"),
             ),
         ),
     }
