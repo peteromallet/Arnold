@@ -413,22 +413,28 @@ FLAG_VALID_STATUSES = {
 DEBT_ESCALATION_THRESHOLD = 3
 MOCK_ENV_VAR = "MEGAPLAN_MOCK_WORKERS"
 
+PREMIUM_AGENT = "premium"
+
+
 DEFAULT_AGENT_ROUTING: dict[str, str] = {
-    "plan": "claude",
+    "plan": PREMIUM_AGENT,
     "prep": "hermes",
-    "critique": "codex",
-    "critique_evaluator": "claude",
-    "revise": "claude",
-    "gate": "claude",
-    "feedback": "claude:low",
-    "finalize": "claude",
-    "execute": "codex",
-    "loop_plan": "claude",
-    "loop_execute": "codex",
-    "review": "codex",
-    "tiebreaker_researcher": "codex",
-    "tiebreaker_challenger": "codex",
+    "critique": PREMIUM_AGENT,
+    "critique_evaluator": PREMIUM_AGENT,
+    "revise": PREMIUM_AGENT,
+    "gate": PREMIUM_AGENT,
+    "feedback": f"{PREMIUM_AGENT}:low",
+    "finalize": PREMIUM_AGENT,
+    "execute": PREMIUM_AGENT,
+    "loop_plan": PREMIUM_AGENT,
+    "loop_execute": PREMIUM_AGENT,
+    "review": PREMIUM_AGENT,
+    "tiebreaker_researcher": PREMIUM_AGENT,
+    "tiebreaker_challenger": PREMIUM_AGENT,
 }
+# Runnable worker families only. ``premium`` is a symbolic placeholder used
+# in source defaults/profile data and must never be offered as a dispatchable
+# agent choice.
 KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
 # Canonical robustness names — match docs/megaplan-prep.md.
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
@@ -496,6 +502,56 @@ _VALID_PREMIUM_EFFORTS: dict[str, frozenset[str]] = {
 _PREMIUM_EFFORT_TOKENS: frozenset[str] = (
     _VALID_CLAUDE_SPEC_EFFORTS | _VALID_CODEX_SPEC_EFFORTS
 )
+
+
+def is_premium_placeholder_agent(agent: str) -> bool:
+    """True when *agent* is the symbolic premium placeholder."""
+    return agent == PREMIUM_AGENT
+
+
+def is_premium_placeholder_spec(spec: str | "AgentSpec") -> bool:
+    """True when *spec* is the symbolic premium placeholder spec."""
+    parsed = spec if isinstance(spec, AgentSpec) else parse_agent_spec(spec)
+    return is_premium_placeholder_agent(parsed.agent)
+
+
+def resolve_premium_placeholder_agent(agent: str, vendor: str) -> str:
+    """Resolve the symbolic premium placeholder agent to a concrete vendor."""
+    return vendor if is_premium_placeholder_agent(agent) else agent
+
+
+def resolve_premium_placeholder_spec(spec: str | "AgentSpec", vendor: str) -> "AgentSpec":
+    """Resolve a symbolic premium placeholder spec to a concrete vendor spec."""
+    parsed = spec if isinstance(spec, AgentSpec) else parse_agent_spec(spec)
+    if not is_premium_placeholder_agent(parsed.agent):
+        return parsed
+    return AgentSpec(
+        agent=resolve_premium_placeholder_agent(parsed.agent, vendor),
+        model=parsed.model,
+        effort=parsed.effort,
+    )
+
+
+def _validate_premium_placeholder_spec(spec: str, *, model: str | None, effort: str | None) -> None:
+    """Reject malformed symbolic premium placeholder specs.
+
+    ``premium`` is intentionally narrower than concrete premium vendors:
+    it is a symbolic source default only, so we allow a bare placeholder or
+    an effort-only form (``premium:low``). Model-bearing symbolic specs are
+    rejected until resolved to a concrete vendor.
+    """
+    if model is not None:
+        raise CliError(
+            "invalid_agent_spec",
+            f"Invalid premium agent spec {spec!r}: symbolic premium specs do not "
+            "accept model pins; use 'premium' or 'premium:<effort>'.",
+        )
+    if effort is not None and effort not in _PREMIUM_EFFORT_TOKENS:
+        raise CliError(
+            "invalid_agent_spec",
+            f"Invalid premium agent spec {spec!r}: effort token {effort!r} is not "
+            f"valid ({', '.join(sorted(_PREMIUM_EFFORT_TOKENS))}).",
+        )
 
 
 def _is_claude_model_name(name: str) -> bool:
@@ -636,6 +692,8 @@ def parse_agent_spec(spec: str) -> AgentSpec:
     AgentSpec(agent='claude', model='sonnet-4.6', effort='medium')
     >>> parse_agent_spec("codex:gpt-5.3-codex:high")
     AgentSpec(agent='codex', model='gpt-5.3-codex', effort='high')
+    >>> parse_agent_spec("premium:low")
+    AgentSpec(agent='premium', model=None, effort='low')
     >>> parse_agent_spec("hermes:fireworks:accounts/foo")
     AgentSpec(agent='hermes', model='fireworks:accounts/foo', effort=None)
     """
@@ -643,6 +701,11 @@ def parse_agent_spec(spec: str) -> AgentSpec:
         return AgentSpec(agent=spec)
 
     agent, rest = spec.split(":", 1)
+
+    # Symbolic premium placeholder: source-default/profile intent only.
+    if is_premium_placeholder_agent(agent):
+        _validate_premium_placeholder_spec(spec, model=None, effort=rest)
+        return AgentSpec(agent=agent, effort=rest)
 
     # Non-premium agents (hermes, shannon): everything after the first
     # colon is the model — colons in the model string are preserved.

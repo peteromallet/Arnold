@@ -5,13 +5,20 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import DEFAULT_AGENT_ROUTING, CliError, StepResponse
+from megaplan.types import (
+    DEFAULT_AGENT_ROUTING,
+    CliError,
+    PREMIUM_AGENT,
+    StepResponse,
+    parse_agent_spec,
+)
 from megaplan._core import (
     atomic_write_text,
     detect_available_agents,
     load_config,
     save_config,
 )
+from megaplan.profiles import effective_premium_vendor
 from .roots import _find_megaplan_root
 from .skills import (
     _GLOBAL_TARGETS,
@@ -172,9 +179,22 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
     config_path = None
     routing = None
     if available:
+        vendor = effective_premium_vendor()
+        def _resolve_default(spec: str) -> str:
+            parsed = parse_agent_spec(spec)
+            if parsed.agent == PREMIUM_AGENT:
+                if parsed.effort:
+                    return f"{vendor}:{parsed.effort}"
+                return vendor
+            return spec
         agents_config = {
-            step: (default if default in available else available[0])
+            step: (
+                resolved
+                if parse_agent_spec(resolved).agent in available
+                else available[0]
+            )
             for step, default in DEFAULT_AGENT_ROUTING.items()
+            for resolved in (_resolve_default(default),)
         }
         config = load_config(home)
         config["agents"] = agents_config

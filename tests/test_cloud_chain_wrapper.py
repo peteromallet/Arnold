@@ -618,6 +618,9 @@ def test_cloud_chain_preflight_blocks_missing_remote_commands_before_tmux(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     parser = _parser()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
 
     spec_path = tmp_path / "chain.yaml"
     _write_chain_spec(
@@ -682,6 +685,9 @@ def test_cloud_chain_preflight_blocks_missing_codex_commands_before_tmux(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     parser = _parser()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
 
     spec_path = tmp_path / "chain.yaml"
     _write_chain_spec(spec_path, [{"label": "m1", "idea": "/workspace/app/ideas/foundation.txt"}])
@@ -728,6 +734,204 @@ def test_cloud_chain_preflight_blocks_missing_codex_commands_before_tmux(
     assert "bun" not in commands[1]
     assert "tmux new-session" not in " ".join(commands)
     assert uploads == []
+
+
+def test_cloud_chain_preflight_codex_vendor_premium_profile_requires_only_openai(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Vendor-neutral premium profile with codex vendor → only codex commands, OPENAI_API_KEY."""
+    parser = _parser()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    spec_path = tmp_path / "chain.yaml"
+    _write_chain_spec(
+        spec_path,
+        [{"label": "m1", "idea": "/workspace/app/ideas/foundation.txt", "profile": "premium", "vendor": "codex"}],
+    )
+    idea_dir = tmp_path / "ideas"
+    (idea_dir / "ideas").mkdir(parents=True)
+    (idea_dir / "ideas" / "foundation.txt").write_text("foundation\n", encoding="utf-8")
+    cloud_yaml_path = tmp_path / "cloud.yaml"
+    cloud_yaml_path.write_text("provider: railway\n", encoding="utf-8")
+    commands: list[str] = []
+    uploads: list[tuple[Path, str]] = []
+
+    class StubProvider:
+        supports_session = False
+
+        def upload_file(self, src: Path, dest: str) -> None:
+            uploads.append((src, dest))
+
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            if "command -v" in command:
+                return subprocess.CompletedProcess(
+                    args=["ssh"],
+                    returncode=0,
+                    stdout="\n",
+                    stderr="",
+                )
+            if "git -C" in command:
+                return subprocess.CompletedProcess(
+                    args=["ssh"],
+                    returncode=0,
+                    stdout="main\nabc123\n",
+                    stderr="",
+                )
+            return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+
+    args = parser.parse_args(
+        ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
+    )
+    assert run_cloud_cli(tmp_path, args) == 0
+
+    # Preflight should show only codex commands and OPENAI_API_KEY
+    payload = _json_payload_from_output(capsys.readouterr().out)
+    preflight = payload["chain"]["resolved_phase_map_summary"][0]
+    assert preflight["runtime_commands"] == ["codex", "tmux"]
+    assert "OPENAI_API_KEY" in preflight["env_hints"]
+    assert "ANTHROPIC_API_KEY" not in preflight["env_hints"]
+
+
+def test_cloud_chain_preflight_apex_profile_requires_both_providers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mixed apex profile → both claude and codex commands, both env hints."""
+    parser = _parser()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    spec_path = tmp_path / "chain.yaml"
+    _write_chain_spec(
+        spec_path,
+        [{"label": "m1", "idea": "/workspace/app/ideas/foundation.txt", "profile": "apex"}],
+    )
+    idea_dir = tmp_path / "ideas"
+    (idea_dir / "ideas").mkdir(parents=True)
+    (idea_dir / "ideas" / "foundation.txt").write_text("foundation\n", encoding="utf-8")
+    cloud_yaml_path = tmp_path / "cloud.yaml"
+    cloud_yaml_path.write_text("provider: railway\n", encoding="utf-8")
+    commands: list[str] = []
+    uploads: list[tuple[Path, str]] = []
+
+    class StubProvider:
+        supports_session = False
+
+        def upload_file(self, src: Path, dest: str) -> None:
+            uploads.append((src, dest))
+
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            if "command -v" in command:
+                return subprocess.CompletedProcess(
+                    args=["ssh"],
+                    returncode=0,
+                    stdout="\n",
+                    stderr="",
+                )
+            if "git -C" in command:
+                return subprocess.CompletedProcess(
+                    args=["ssh"],
+                    returncode=0,
+                    stdout="main\nabc123\n",
+                    stderr="",
+                )
+            return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+
+    args = parser.parse_args(
+        ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
+    )
+    assert run_cloud_cli(tmp_path, args) == 0
+
+    payload = _json_payload_from_output(capsys.readouterr().out)
+    preflight = payload["chain"]["resolved_phase_map_summary"][0]
+    assert "claude" in preflight["runtime_commands"]
+    assert "codex" in preflight["runtime_commands"]
+    assert "bun" in preflight["runtime_commands"]
+    assert "tmux" in preflight["runtime_commands"]
+    assert "ANTHROPIC_API_KEY" in preflight["env_hints"]
+    assert "OPENAI_API_KEY" in preflight["env_hints"]
+
+
+def test_cloud_chain_preflight_explicit_codex_pins_override_claude_vendor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Concrete codex pins → OPENAI_API_KEY even under claude vendor in chain wrapper."""
+    parser = _parser()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    spec_path = tmp_path / "chain.yaml"
+    _write_chain_spec(
+        spec_path,
+        [{
+            "label": "m1",
+            "idea": "/workspace/app/ideas/foundation.txt",
+            "profile": "premium",
+            "vendor": "claude",
+            "phase_model": ["execute=codex:high"],
+        }],
+    )
+    idea_dir = tmp_path / "ideas"
+    (idea_dir / "ideas").mkdir(parents=True)
+    (idea_dir / "ideas" / "foundation.txt").write_text("foundation\n", encoding="utf-8")
+    cloud_yaml_path = tmp_path / "cloud.yaml"
+    cloud_yaml_path.write_text("provider: railway\n", encoding="utf-8")
+    commands: list[str] = []
+    uploads: list[tuple[Path, str]] = []
+
+    class StubProvider:
+        supports_session = False
+
+        def upload_file(self, src: Path, dest: str) -> None:
+            uploads.append((src, dest))
+
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            if "command -v" in command:
+                return subprocess.CompletedProcess(
+                    args=["ssh"],
+                    returncode=0,
+                    stdout="\n",
+                    stderr="",
+                )
+            if "git -C" in command:
+                return subprocess.CompletedProcess(
+                    args=["ssh"],
+                    returncode=0,
+                    stdout="main\nabc123\n",
+                    stderr="",
+                )
+            return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+
+    args = parser.parse_args(
+        ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
+    )
+    assert run_cloud_cli(tmp_path, args) == 0
+
+    payload = _json_payload_from_output(capsys.readouterr().out)
+    preflight = payload["chain"]["resolved_phase_map_summary"][0]
+    assert "codex" in preflight["runtime_commands"]
+    assert "OPENAI_API_KEY" in preflight["env_hints"]
 
 
 def test_cloud_bootstrap_omits_name_when_plan_name_is_unset(

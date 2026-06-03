@@ -13,8 +13,14 @@ from pathlib import Path
 from typing import Any
 
 from megaplan.chain import ChainSpec
-from megaplan.profiles import apply_profile_expansion
-from megaplan.types import DEFAULT_AGENT_ROUTING, parse_agent_spec
+from megaplan.profiles import apply_profile_expansion, effective_premium_vendor
+from megaplan.types import (
+    DEFAULT_AGENT_ROUTING,
+    format_agent_spec,
+    is_premium_placeholder_spec,
+    parse_agent_spec,
+    resolve_premium_placeholder_spec,
+)
 
 
 AGENTS_DEFAULT_WARNING = (
@@ -46,13 +52,19 @@ def _expanded_phase_models(
     profile: str | None,
     phase_model: list[str],
     project_dir: Path | None,
+    vendor: str | None = None,
+    depth: str | None = None,
+    critic: str | None = None,
 ) -> list[str]:
+    if profile is None:
+        return list(phase_model)
+
     args = argparse.Namespace(
         profile=profile,
         phase_model=list(phase_model),
-        vendor=None,
-        critic=None,
-        depth=None,
+        vendor=vendor,
+        critic=critic,
+        depth=depth,
         agent=None,
         hermes=None,
         _profile_applied=False,
@@ -72,6 +84,28 @@ def _resolved_phase_map(phase_models: list[str], fallback_routing: dict[str, str
     return {
         phase: overrides.get(phase, fallback)
         for phase, fallback in fallback_routing.items()
+    }
+
+
+def _concrete_fallback_routing(
+    *,
+    vendor: str | None,
+    depth: str | None,
+    critic: str | None,
+    cloud_default_agent: str | None,
+) -> dict[str, str]:
+    if cloud_default_agent:
+        return {phase: cloud_default_agent for phase in DEFAULT_AGENT_ROUTING}
+
+    args = argparse.Namespace(vendor=vendor, depth=depth, critic=critic)
+    effective_vendor = effective_premium_vendor(args, {})
+    return {
+        phase: (
+            format_agent_spec(resolve_premium_placeholder_spec(spec, effective_vendor))
+            if is_premium_placeholder_spec(spec)
+            else spec
+        )
+        for phase, spec in DEFAULT_AGENT_ROUTING.items()
     }
 
 
@@ -105,17 +139,20 @@ def resolve_cloud_chain_runtime_dependencies(
     runtime_commands: set[str] = set()
     env_hints: set[str] = set()
     provider_requirements: list[dict[str, Any]] = []
-    fallback_routing = (
-        {phase: cloud_default_agent for phase in DEFAULT_AGENT_ROUTING}
-        if cloud_default_agent
-        else dict(DEFAULT_AGENT_ROUTING)
-    )
-
     for milestone in chain_spec.milestones:
+        fallback_routing = _concrete_fallback_routing(
+            vendor=milestone.vendor,
+            depth=milestone.depth,
+            critic=milestone.critic,
+            cloud_default_agent=cloud_default_agent,
+        )
         expanded_phase_models = _expanded_phase_models(
             profile=milestone.profile,
             phase_model=milestone.phase_model,
             project_dir=project_dir,
+            vendor=milestone.vendor,
+            depth=milestone.depth,
+            critic=milestone.critic,
         )
         resolved = _resolved_phase_map(expanded_phase_models, fallback_routing)
         milestone_agents: set[str] = set()

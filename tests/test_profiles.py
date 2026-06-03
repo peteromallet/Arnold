@@ -1005,6 +1005,38 @@ def test_vendor_codex_flips_premium_slots_on_all_claude(
         )
 
 
+def test_apply_vendor_rewrite_resolves_symbolic_premium_slots_before_swapping() -> None:
+    from megaplan.profiles import apply_vendor_rewrite
+
+    tier_models = {"execute": {4: "premium:medium"}}
+    prep_models = {"triage": "premium:low"}
+    profile = {
+        "plan": "premium:high",
+        "critique": "hermes:deepseek:deepseek-v4-pro",
+        "feedback": "premium:low",
+    }
+
+    rewritten = apply_vendor_rewrite(
+        profile,
+        "codex",
+        tier_models=tier_models,
+        prep_models=prep_models,
+    )
+
+    assert rewritten["plan"] == "codex:high"
+    assert rewritten["feedback"] == "codex:low"
+    assert tier_models["execute"][4] == "codex:medium"
+    assert prep_models["triage"] == "codex:low"
+
+
+def test_apply_vendor_rewrite_does_not_inject_feedback_when_omitted() -> None:
+    from megaplan.profiles import apply_vendor_rewrite
+
+    rewritten = apply_vendor_rewrite({"plan": "premium:high"}, "codex")
+
+    assert rewritten == {"plan": "codex:high"}
+
+
 def test_vendor_codex_preserves_effort_tier(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1096,9 +1128,9 @@ def test_vendor_is_noop_on_profile_without_premium_slots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """all-deepseek-pro has no claude/codex slots except feedback.
+    """all-deepseek-pro has no rewritable premium slots.
 
-    --vendor leaves the normal phase map alone, but moves feedback off Claude.
+    --vendor leaves the phase map alone, including concrete Hermes feedback.
     """
     _isolate_user_config(tmp_path, monkeypatch)
 
@@ -1111,8 +1143,8 @@ def test_vendor_is_noop_on_profile_without_premium_slots(
 
     baseline_map = _phase_models_to_map(baseline.phase_model)
     flagged_map = _phase_models_to_map(flagged.phase_model)
-    assert baseline_map.pop("feedback") == "claude:low"
-    assert flagged_map.pop("feedback") == "codex:low"
+    assert baseline_map.pop("feedback").startswith("hermes:")
+    assert flagged_map.pop("feedback").startswith("hermes:")
     assert baseline_map == flagged_map
 
 
@@ -1254,7 +1286,8 @@ def test_all_codex_resolves_to_codex_without_vendor_flag(
     resolved = _phase_models_to_map(args.phase_model)
     for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
                   "execute", "loop_plan", "loop_execute", "review",
-                  "tiebreaker_researcher", "tiebreaker_challenger"):
+                  "tiebreaker_researcher", "tiebreaker_challenger",
+                  "feedback"):
         agent = resolved[phase].split(":", 1)[0]
         assert agent == "codex", (
             f"{phase} expected codex but got {resolved[phase]!r}"
@@ -1278,7 +1311,8 @@ def test_vendor_codex_without_profile_selects_all_codex(
     assert "execute" in args.tier_models
     for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
                   "execute", "loop_plan", "loop_execute", "review",
-                  "tiebreaker_researcher", "tiebreaker_challenger"):
+                  "tiebreaker_researcher", "tiebreaker_challenger",
+                  "feedback"):
         assert resolved[phase].split(":", 1)[0] == "codex"
 
 
@@ -1628,9 +1662,9 @@ def test_solo_profile_is_noop_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """solo has no premium slots except feedback.
+    """solo has no rewritable premium slots.
 
-    --vendor leaves the normal phase map alone, but moves feedback off Claude.
+    --vendor leaves the phase map alone, including concrete Hermes feedback.
     """
     _isolate_user_config(tmp_path, monkeypatch)
 
@@ -1643,8 +1677,8 @@ def test_solo_profile_is_noop_under_vendor_codex(
 
     baseline_map = _phase_models_to_map(baseline.phase_model)
     flagged_map = _phase_models_to_map(flagged.phase_model)
-    assert baseline_map.pop("feedback") == "claude:low"
-    assert flagged_map.pop("feedback") == "codex:low"
+    assert baseline_map.pop("feedback").startswith("hermes:")
+    assert flagged_map.pop("feedback").startswith("hermes:")
     assert baseline_map == flagged_map
 
 
@@ -2840,6 +2874,14 @@ def test_depth_rewrite_propagates_to_tier_entries_author_phases_only() -> None:
     assert tier_models["execute"][4] == "claude:medium"
 
 
+def test_profile_has_premium_slots_counts_symbolic_placeholder() -> None:
+    from megaplan.profiles import _profile_has_premium_slots
+
+    assert _profile_has_premium_slots({"plan": "premium:low"}) is True
+    assert _profile_has_premium_slots({"plan": "claude:low"}) is True
+    assert _profile_has_premium_slots({"plan": "hermes:deepseek:deepseek-v4-pro"}) is False
+
+
 def test_named_vendor_tier_drift_raises_profile_resolution_mismatch() -> None:
     """A variable-codex tier 4 of claude:medium must raise profile_resolution_mismatch."""
     from megaplan.profiles import _validate_named_profile_invariants
@@ -2862,6 +2904,201 @@ def test_named_vendor_tier_drift_passes_when_correct() -> None:
         {"plan": "codex:low"},
         tier_models={"execute": {4: "codex:medium", 5: "codex:high"}},
     )
+
+
+def test_validate_resolved_profile_invariants_rejects_symbolic_premium_anywhere() -> None:
+    from megaplan.profiles import _validate_resolved_profile_invariants
+
+    with pytest.raises(CliError, match="symbolic premium placeholders still present"):
+        _validate_resolved_profile_invariants(
+            "premium",
+            {"plan": "premium:low", "feedback": "premium:low"},
+            tier_models={"execute": {4: "premium:medium"}},
+            prep_models={"triage": "premium:low"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end symbolic premium placeholder tests (T5)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_vendor_rewrite_resolves_symbolic_premium_placeholders_across_all_slot_kinds() -> None:
+    """Prove that symbolic ``premium`` placeholders are resolved to the
+    target vendor in every slot kind: profile phases, tier_models, and
+    prep_models — all before concrete vendor swapping."""
+    from megaplan.profiles import apply_vendor_rewrite
+
+    profile = {
+        "plan": "premium:high",
+        "prep": "hermes:deepseek:deepseek-v4-pro",
+        "critique": "premium:low",
+        "revise": "premium:medium",
+        "gate": "hermes:deepseek:deepseek-v4-pro",
+        "finalize": "premium:high",
+        "execute": "hermes:deepseek:deepseek-v4-pro",
+        "loop_plan": "premium:max",
+        "loop_execute": "hermes:deepseek:deepseek-v4-pro",
+        "review": "hermes:deepseek:deepseek-v4-pro",
+        "tiebreaker_researcher": "premium:low",
+        "tiebreaker_challenger": "hermes:deepseek:deepseek-v4-pro",
+        "feedback": "premium:low",
+    }
+
+    tier_models = {
+        "execute": {
+            4: "premium:medium",
+            5: "premium:high",
+        },
+    }
+
+    prep_models = {
+        "triage": "premium:low",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "premium:low",
+    }
+
+    # Resolve with codex vendor: symbolic → codex (no swap needed since
+    # placeholder resolves directly to the target vendor).
+    rewritten = apply_vendor_rewrite(
+        profile,
+        "codex",
+        tier_models=tier_models,
+        prep_models=prep_models,
+    )
+
+    # All symbolic premium slots resolved to codex with preserved effort.
+    assert rewritten["plan"] == "codex:high"
+    assert rewritten["critique"] == "codex:low"
+    assert rewritten["revise"] == "codex:medium"
+    assert rewritten["finalize"] == "codex:high"
+    assert rewritten["loop_plan"] == "codex:max"
+    assert rewritten["tiebreaker_researcher"] == "codex:low"
+    assert rewritten["feedback"] == "codex:low"
+
+    # Non-premium slots unchanged.
+    assert rewritten["prep"] == "hermes:deepseek:deepseek-v4-pro"
+    assert rewritten["gate"] == "hermes:deepseek:deepseek-v4-pro"
+    assert rewritten["execute"] == "hermes:deepseek:deepseek-v4-pro"
+    assert rewritten["review"] == "hermes:deepseek:deepseek-v4-pro"
+
+    # Tier models resolved.
+    assert tier_models["execute"][4] == "codex:medium"
+    assert tier_models["execute"][5] == "codex:high"
+
+    # Prep models resolved.
+    assert prep_models["triage"] == "codex:low"
+    assert prep_models["distill"] == "codex:low"
+
+    # No symbolic premium anywhere in the result.
+    for phase, spec in rewritten.items():
+        agent = spec.split(":", 1)[0]
+        assert agent != "premium", (
+            f"unresolved symbolic premium in {phase}={spec!r}"
+        )
+
+
+def test_apply_vendor_rewrite_resolves_bare_symbolic_premium_placeholder() -> None:
+    """Prove that bare ``premium`` (no effort suffix) resolves and swaps
+    cleanly: ``premium`` with vendor=codex → ``codex``."""
+    from megaplan.profiles import apply_vendor_rewrite
+
+    rewritten = apply_vendor_rewrite(
+        {"plan": "premium", "critique": "premium", "feedback": "premium"},
+        "claude",
+    )
+
+    assert rewritten["plan"] == "claude"
+    assert rewritten["critique"] == "claude"
+    assert rewritten["feedback"] == "claude"
+
+    rewritten_codex = apply_vendor_rewrite(
+        {"plan": "premium", "execute": "premium", "feedback": "premium"},
+        "codex",
+    )
+
+    assert rewritten_codex["plan"] == "codex"
+    assert rewritten_codex["execute"] == "codex"
+    assert rewritten_codex["feedback"] == "codex"
+
+
+def test_all_claude_remains_vendor_rewritable_under_vendor_codex_no_symbolic_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prove that ``all-claude`` (concrete claude slots) correctly flips
+    every premium phase to codex under ``--vendor codex``, and that the
+    resolved expansion contains no symbolic ``premium`` agent entries
+    anywhere — only concrete claude/codex/hermes."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="all-claude")
+    args.vendor = "codex"
+    apply_profile_expansion(args, None)
+
+    resolved = _phase_models_to_map(args.phase_model)
+
+    # Every premium phase should be codex after vendor rewrite, including
+    # feedback. It participates in the same selected-vendor contract as the
+    # rest of the premium routing surface.
+    for phase in (
+        "plan", "prep", "critique", "revise", "gate", "finalize",
+        "execute", "loop_plan", "loop_execute", "review",
+        "tiebreaker_researcher", "tiebreaker_challenger", "feedback",
+    ):
+        assert resolved[phase].startswith("codex"), (
+            f"all-claude --vendor codex: {phase} should be codex*, "
+            f"got {resolved[phase]!r}"
+        )
+
+    # No symbolic premium anywhere in the resolved phase model.
+    for phase, spec in resolved.items():
+        agent = spec.split(":", 1)[0]
+        assert agent != "premium", (
+            f"symbolic 'premium' leaked into all-claude expansion: {phase}={spec!r}"
+        )
+
+    # Tier models are rewritable too; verify no symbolic premium in tiers.
+    if args.tier_models:
+        for phase, tiers in args.tier_models.items():
+            for tier_int, spec in tiers.items():
+                agent = spec.split(":", 1)[0]
+                assert agent != "premium", (
+                    f"symbolic 'premium' leaked into "
+                    f"tier_models.{phase}.{tier_int}={spec!r}"
+                )
+
+
+def test_apply_vendor_rewrite_preserves_non_premium_slots_unchanged() -> None:
+    """Prove that hermes/shannon slots pass through vendor rewrite
+    unchanged, even when symbolic premium placeholders are present
+    alongside them in the same profile dict."""
+    from megaplan.profiles import apply_vendor_rewrite
+
+    profile = {
+        "plan": "premium:low",
+        "prep": "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro",
+        "critique": "shannon:claude-opus-4-7",
+        "revise": "premium:medium",
+        "gate": "hermes:deepseek:deepseek-v4-flash",
+        "finalize": "hermes:deepseek:deepseek-v4-pro",
+        "execute": "hermes:fireworks:accounts/fireworks/models/kimi-k2p6",
+        "feedback": "premium:low",
+    }
+
+    rewritten = apply_vendor_rewrite(profile, "codex")
+
+    # Symbolic premium resolved to codex.
+    assert rewritten["plan"] == "codex:low"
+    assert rewritten["revise"] == "codex:medium"
+    assert rewritten["feedback"] == "codex:low"
+
+    # Non-premium slots pass through unchanged.
+    assert rewritten["prep"] == "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+    assert rewritten["critique"] == "shannon:claude-opus-4-7"
+    assert rewritten["gate"] == "hermes:deepseek:deepseek-v4-flash"
+    assert rewritten["finalize"] == "hermes:deepseek:deepseek-v4-pro"
+    assert rewritten["execute"] == "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 
 
 def test_apply_profile_expansion_attaches_tier_models_to_args(
@@ -3666,11 +3903,12 @@ def test_all_codex_byte_identical_across_independent_expansions(
     assert args_a.tier_models["execute"][1] == "codex:minimal"
     assert args_a.tier_models["execute"][5] == "codex:high"
 
-    # Verify every phase resolves to codex
+    # Verify every phase resolves to codex.
     resolved = _phase_models_to_map(args_a.phase_model)
-    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize", "feedback",
+    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
                   "execute", "loop_plan", "loop_execute", "review",
-                  "tiebreaker_researcher", "tiebreaker_challenger"):
+                  "tiebreaker_researcher", "tiebreaker_challenger",
+                  "feedback"):
         agent = resolved[phase].split(":", 1)[0]
         assert agent == "codex", f"{phase} expected codex, got {resolved[phase]!r}"
 

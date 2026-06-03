@@ -563,6 +563,55 @@ def test_preflight_feedback_slot_is_soft(monkeypatch) -> None:
     assert missing == []
 
 
+def test_preflight_resolves_symbolic_premium_with_selected_vendor(monkeypatch) -> None:
+    from megaplan._pipeline.preflight import preflight_check_profile
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    missing = preflight_check_profile(
+        {"plan": "premium", "feedback": "premium:low"},
+        profile_name="premium",
+        vendor="codex",
+    )
+
+    assert missing == [
+        {
+            "slot": "plan",
+            "spec": "codex",
+            "agent": "codex",
+            "env_var": "OPENAI_API_KEY",
+        }
+    ]
+
+
+def test_preflight_resolves_symbolic_premium_with_default_vendor(monkeypatch) -> None:
+    from megaplan import profiles as profiles_module
+    from megaplan._pipeline import preflight as preflight_module
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        profiles_module,
+        "effective_premium_vendor",
+        lambda *args, **kwargs: "claude",
+    )
+
+    missing = preflight_module.preflight_check_profile(
+        {"plan": "premium:low"},
+        profile_name="premium",
+    )
+
+    assert missing == [
+        {
+            "slot": "plan",
+            "spec": "claude:low",
+            "agent": "claude",
+            "env_var": "ANTHROPIC_API_KEY",
+        }
+    ]
+
+
 def test_render_credential_failure_recommends_available_vendor_profile(
     monkeypatch,
 ) -> None:
@@ -607,6 +656,118 @@ def test_render_credential_failure_no_self_recommendation(monkeypatch) -> None:
         missing, profile_name="all-claude", is_tty=False,
     )
     assert "--profile all-claude" not in msg
+
+
+# ── Premium vendor routing preflight tests ─────────────────────────────
+
+
+def test_preflight_codex_vendor_requires_only_openai_for_premium_slots(
+    monkeypatch,
+) -> None:
+    """With ``--vendor codex``, premium placeholder slots need OpenAI, not Anthropic."""
+    from megaplan._pipeline.preflight import preflight_check_profile
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-present")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    profile = {"plan": "premium", "revise": "premium:low"}
+    missing = preflight_check_profile(
+        profile, profile_name="premium", vendor="codex",
+    )
+
+    assert len(missing) >= 1
+    env_vars = {m["env_var"] for m in missing}
+    assert "OPENAI_API_KEY" in env_vars
+    assert "ANTHROPIC_API_KEY" not in env_vars, (
+        "codex vendor should not require Anthropic for premium slots"
+    )
+    # All missing slots should be codex-bound
+    for m in missing:
+        assert m["agent"] == "codex"
+
+
+def test_preflight_claude_vendor_requires_only_anthropic_for_premium_slots(
+    monkeypatch,
+) -> None:
+    """With ``--vendor claude``, premium placeholder slots need Anthropic, not OpenAI."""
+    from megaplan._pipeline.preflight import preflight_check_profile
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-present")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    profile = {"plan": "premium", "revise": "premium:low"}
+    missing = preflight_check_profile(
+        profile, profile_name="premium", vendor="claude",
+    )
+
+    assert len(missing) >= 1
+    env_vars = {m["env_var"] for m in missing}
+    assert "ANTHROPIC_API_KEY" in env_vars
+    assert "OPENAI_API_KEY" not in env_vars, (
+        "claude vendor should not require OpenAI for premium slots"
+    )
+    for m in missing:
+        assert m["agent"] == "claude"
+
+
+def test_preflight_mixed_explicit_pins_report_both_providers(
+    monkeypatch,
+) -> None:
+    """Explicit mixed pins (plan=claude, execute=codex) report both providers."""
+    from megaplan._pipeline.preflight import preflight_check_profile
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    profile = {"plan": "claude", "execute": "codex", "revise": "codex"}
+    missing = preflight_check_profile(
+        profile, profile_name="mixed-pins",
+    )
+
+    env_vars = {m["env_var"] for m in missing}
+    assert "ANTHROPIC_API_KEY" in env_vars
+    assert "OPENAI_API_KEY" in env_vars
+
+
+def test_preflight_explicit_phase_model_pins_override_selected_vendor(
+    monkeypatch,
+) -> None:
+    """Explicit concrete ``phase_model`` pins take precedence over vendor."""
+    from megaplan._pipeline.preflight import preflight_check_profile
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-ok")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    # Profile has concrete pins: plan=codex, revise=codex
+    # These are already concrete, so vendor is irrelevant for them.
+    # The key scenario: the profile has already-expanded specs but
+    # vendor should not reintroduce symbolic resolution.
+    profile = {"plan": "codex", "revise": "codex", "execute": "codex"}
+    missing = preflight_check_profile(
+        profile, profile_name="codex-pinned", vendor="claude",
+    )
+
+    assert len(missing) >= 1
+    # All missing should be OPENAI, never ANTHROPIC — the concrete
+    # specs override the selected vendor.
+    for m in missing:
+        assert m["agent"] == "codex"
+        assert m["env_var"] == "OPENAI_API_KEY"
+
+    # Conversely, with claude pins, Anthropic is required regardless of
+    # selected codex vendor.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-ok")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    profile2 = {"plan": "claude", "revise": "claude", "execute": "claude"}
+    missing2 = preflight_check_profile(
+        profile2, profile_name="claude-pinned", vendor="codex",
+    )
+
+    assert len(missing2) >= 1
+    for m in missing2:
+        assert m["agent"] == "claude"
+        assert m["env_var"] == "ANTHROPIC_API_KEY"
 
 
 # ── Existing helper tests ─────────────────────────────────────────────

@@ -11,6 +11,27 @@ Where megaplan reads its settings and secrets.
 | Project profiles | `.megaplan/profiles.toml` | Hand-edited or `megaplan config profiles` |
 | Project state | `.megaplan/state.json` | Megaplan runtime |
 
+## Agent Routing
+
+Megaplan resolves which model runs each pipeline phase through a fixed precedence chain:
+
+1. **Explicit `--phase-model` pins** (CLI). `--phase-model plan=codex:high` beats everything below.
+2. **Persisted `phase_model` entries** in the plan's `state.json`. These survive plan load/resume and have the same force as explicit CLI pins.
+3. **Profile phase slots** (from the selected built-in or custom profile TOML).
+4. **`DEFAULT_AGENT_ROUTING`** — the project's hardcoded fallback. Premium phases (plan, critique, revise, finalize, execute, review, etc.) use the symbolic agent spec **`premium`** (e.g., `premium:low`), not a concrete vendor name. Non-premium phases (prep) use `hermes`.
+
+The symbolic `premium` spec is a vendor-neutral placeholder, **not a runnable worker**. Before dispatch it is resolved to `claude` or `codex` based on the effective premium vendor, which follows its own precedence:
+
+1. **`--vendor` CLI flag** (`claude` or `codex`) — highest.
+2. **`[agent] vendor`** in user config (`~/.config/megaplan/config.json`).
+3. **Project default** — `claude` unless overridden.
+
+Choosing `--vendor codex` means every unresolved symbolic `premium` slot becomes `codex` (no implicit Claude invocation). Choosing `--vendor claude` means the reverse. Concrete premium profiles that are not marked `vendor_locked`, including `all-claude`, are still rewritable by `--vendor`. Profiles with `vendor_locked = true` (`all-codex`, `variable-claude`, `variable-codex`, `apex`) are exempt from vendor rewriting.
+
+**Concrete-only user config.** The `agents.<phase>` keys in user config must be explicit worker names (`claude`, `codex`, `hermes`). `megaplan config set agents.plan premium` is rejected — the symbolic spec is a source-default/profile construct, not a user-facing value. Use the `--vendor` flag or `[agent] vendor` to control which vendor premium phases route to, and use `--phase-model` or explicit `agents.<phase> = claude`/`codex` to pin individual phases.
+
+Display surfaces (`megaplan config show`, `megaplan status`, cloud templates) always show the resolved concrete spec, never the symbolic `premium` placeholder.
+
 ## Provider & Agent Keys
 
 Provider keys live in `~/.hermes/.env` (dotenv format, one `KEY=value` per line) and fall back to process environment variables:

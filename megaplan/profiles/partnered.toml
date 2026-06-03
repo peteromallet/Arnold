@@ -40,20 +40,20 @@
 # critic. Open-only profiles deliberately omit this field (default False) to
 # avoid forcing a premium key into a key-free setup.
 adaptive_critique = true
-plan                  = "claude:low"
+plan                  = "premium:low"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-critique_evaluator    = "claude:low"
-revise                = "claude:low"
+critique_evaluator    = "premium:low"
+revise                = "premium:low"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-finalize              = "claude:low"
+finalize              = "premium:low"
 execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-feedback              = "claude:low"
-loop_plan             = "claude:low"
+feedback              = "premium:low"
+loop_plan             = "premium:low"
 loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-review                = "claude:low"
-tiebreaker_researcher = "claude:low"
-tiebreaker_challenger = "claude:low"
+review                = "premium:low"
+tiebreaker_researcher = "premium:low"
+tiebreaker_challenger = "premium:low"
 
 [profiles.partnered.tier_models.execute]
 1 = "hermes:deepseek:deepseek-v4-flash"
