@@ -1974,6 +1974,7 @@ def run_shannon_step(
     # ~/.claude. Left on disk after the step for post-hoc inspection.
     plan_id = str(state.get("name", ""))
     run_dir = _shannon_run_dir(plan_dir, plan_id=plan_id, step=step)
+    run_dir.mkdir(parents=True, exist_ok=True)
     empty_mcp_config_path = run_dir / "empty_mcp_config.json"
     empty_mcp_config_path.write_text('{"mcpServers":{}}\n', encoding="utf-8")
 
