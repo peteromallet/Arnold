@@ -1,0 +1,27 @@
+{
+  "agent_failure_context": {
+    "explanation": "Resolver bug: unresolved helper node 285 (class_type='PrimitiveFloat') survived to emission. The resolver must eliminate all RESOLVABLE_HELPER_CLASS_TYPES nodes before _prepare_workflow_for_emit is called.",
+    "http_status": null
+  },
+  "apply_allowed": false,
+  "audit_error": null,
+  "audit_ref": {
+    "byte_count": 6249,
+    "path": "out/editor_sessions/7399e34ef2ca4810b49ae62292b61b3a/turns/0008/audit/audit.json",
+    "preview": "{\n  \"artifacts\": {\n    \"original_ui\": {\n      \"byte_count\": 106662,\n      \"path\": \"out/editor_sessions/7399e34ef2ca4810b49ae62292b61b3a/turns/0008/original.ui.json\",\n      \"preview\": \"{\\n  \\\"config\\\": {},\\n  \\\"extra\\\": {\\n    \\\"VHS_KeepIntermediate\\\": false,\\n    \\\"VHS_MetadataImage\\\": false,\\n    \\\"VHS_latentpreview\\\": false,\\n    \\\"VHS_latentpreviewrate\\\": 0,\\n    \\\"comfy_fork_version\\\": \\\"feature/av_inference@a6994ed1\\\",\\n    \\\"ds\\\": {\\n      \\\"offset\\\": [\\n        3244.693666764312,\\n        -3264.43464",
+    "sha256": "fda9d175ff44e8696e8354bc68ddd8a7bd784e63a9c5c8521c75d21bb9c54052"
+  },
+  "baseline_turn_id": null,
+  "canvas_apply_allowed": false,
+  "graph_unchanged": true,
+  "kind": "ProviderError",
+  "message": "The model provider is temporarily unavailable. The graph is unchanged.",
+  "next_action": "try again or switch route",
+  "ok": false,
+  "queue_allowed": false,
+  "retryable": true,
+  "session_id": "7399e34ef2ca4810b49ae62292b61b3a",
+  "stage": "agent_response",
+  "turn_id": "0008",
+  "user_facing_message": "The model provider is temporarily unavailable. The graph is unchanged."
+}

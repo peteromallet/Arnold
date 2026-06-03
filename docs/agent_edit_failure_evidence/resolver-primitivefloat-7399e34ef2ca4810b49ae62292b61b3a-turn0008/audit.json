@@ -1,0 +1,132 @@
+{
+  "artifacts": {
+    "original_ui": {
+      "byte_count": 106662,
+      "path": "out/editor_sessions/7399e34ef2ca4810b49ae62292b61b3a/turns/0008/original.ui.json",
+      "preview": "{\n  \"config\": {},\n  \"extra\": {\n    \"VHS_KeepIntermediate\": false,\n    \"VHS_MetadataImage\": false,\n    \"VHS_latentpreview\": false,\n    \"VHS_latentpreviewrate\": 0,\n    \"comfy_fork_version\": \"feature/av_inference@a6994ed1\",\n    \"ds\": {\n      \"offset\": [\n        3244.693666764312,\n        -3264.4346454431056\n      ],\n      \"scale\": 0.4376931224439931\n    },\n    \"frontendVersion\": \"1.39.19\",\n    \"prompt\": {\n      \"1\": {\n        \"_meta\": {\n          \"title\": \"Load Checkpoint\"\n        },\n        \"class_type\": \"Che",
+      "sha256": "da6de90939c0962044767a78e00e06847e0ff3101fca8bc720c2fa4a34316a2e"
+    },
+    "request": {
+      "byte_count": 113969,
+      "path": "out/editor_sessions/7399e34ef2ca4810b49ae62292b61b3a/turns/0008/request.json",
+      "preview": "{\n  \"client_graph_hash\": \"5aa942462635ae669cfcfe78b81eb000ea12c219a02d3f61bf0f82f99c973a68\",\n  \"client_live_canvas_token\": \"<REDACTED>\",\n  \"graph\": {\n    \"config\": {},\n    \"extra\": {\n      \"VHS_KeepIntermediate\": false,\n      \"VHS_MetadataImage\": false,\n      \"VHS_latentpreview\": false,\n      \"VHS_latentpreviewrate\": 0,\n      \"comfy_fork_version\": \"feature/av_inference@a6994ed1\",\n      \"ds\": {\n        \"offset\": [\n          3244.693666764312,\n          -3264.4346454431056\n        ],\n        \"scale\": 0.437693",
+      "sha256": "5924f901c7f6f945b343cf58dafeb490a3d4b5ea538f19822e357d2abc67ace0"
+    }
+  },
+  "baseline_turn_id": null,
+  "created_at": "2026-06-02T20:17:51Z",
+  "failure": {
+    "agent_failure_context": {
+      "explanation": "Resolver bug: unresolved helper node 285 (class_type='PrimitiveFloat') survived to emission. The resolver must eliminate all RESOLVABLE_HELPER_CLASS_TYPES nodes before _prepare_workflow_for_emit is called.",
+      "http_status": null
+    },
+    "apply_allowed": false,
+    "audit_error": null,
+    "audit_ref": null,
+    "baseline_turn_id": null,
+    "canvas_apply_allowed": false,
+    "graph_unchanged": true,
+    "kind": "ProviderError",
+    "message": "The model provider is temporarily unavailable. The graph is unchanged.",
+    "next_action": "try again or switch route",
+    "ok": false,
+    "queue_allowed": false,
+    "retryable": true,
+    "session_id": "7399e34ef2ca4810b49ae62292b61b3a",
+    "stage": "agent_response",
+    "turn_id": "0008",
+    "user_facing_message": "The model provider is temporarily unavailable. The graph is unchanged."
+  },
+  "gates": {
+    "ir_validate_ok": false,
+    "lower_ok": false,
+    "python_load_ok": false,
+    "queue_validate_ok": false,
+    "state_match_ok": true,
+    "ui_emit_ok": false,
+    "ui_fidelity_ok": false,
+    "ui_load_safe_ok": false
+  },
+  "metadata": {
+    "agent_edit_v2": {
+      "delta_ops": {
+        "automatic_link_removals": [],
+        "diagnostics": [],
+        "guard_result": {
+          "diagnostics": [],
+          "ok": true
+        },
+        "normalize": {
+          "allow_list_used": false,
+          "fallback_used": false
+        },
+        "ops": [],
+        "re_stitches": []
+      },
+      "enabled": true,
+      "op_count": 0
+    },
+    "batch_repl": {
+      "budget_state": {},
+      "done_summary": "",
+      "enabled": true,
+      "exit_mode": "",
+      "feedback": "",
+      "final_summary": "",
+      "signature_catalog_available": false,
+      "turn_count": 0
+    },
+    "lowering": [],
+    "provider": {}
+  },
+  "redactions": [],
+  "response_ref": null,
+  "schema_version": 1,
+  "session_id": "7399e34ef2ca4810b49ae62292b61b3a",
+  "stage_results": [
+    {
+      "artifacts": [],
+      "blocking": true,
+      "duration_ms": null,
+      "gate_updates": {},
+      "issues": [
+        {
+          "explanation": "Resolver bug: unresolved helper node 285 (class_type='PrimitiveFloat') survived to emission. The resolver must eliminate all RESOLVABLE_HELPER_CLASS_TYPES nodes before _prepare_workflow_for_emit is called.",
+          "http_status": null
+        }
+      ],
+      "ok": false,
+      "stage": "agent_batch",
+      "value": null
+    },
+    {
+      "artifacts": [
+        {
+          "byte_count": 113969,
+          "path": "out/editor_sessions/7399e34ef2ca4810b49ae62292b61b3a/turns/0008/request.json",
+          "preview": "{\n  \"client_graph_hash\": \"5aa942462635ae669cfcfe78b81eb000ea12c219a02d3f61bf0f82f99c973a68\",\n  \"client_live_canvas_token\": \"<REDACTED>\",\n  \"graph\": {\n    \"config\": {},\n    \"extra\": {\n      \"VHS_KeepIntermediate\": false,\n      \"VHS_MetadataImage\": false,\n      \"VHS_latentpreview\": false,\n      \"VHS_latentpreviewrate\": 0,\n      \"comfy_fork_version\": \"feature/av_inference@a6994ed1\",\n      \"ds\": {\n        \"offset\": [\n          3244.693666764312,\n          -3264.4346454431056\n        ],\n        \"scale\": 0.437693",
+          "sha256": "5924f901c7f6f945b343cf58dafeb490a3d4b5ea538f19822e357d2abc67ace0"
+        },
+        {
+          "byte_count": 106662,
+          "path": "out/editor_sessions/7399e34ef2ca4810b49ae62292b61b3a/turns/0008/original.ui.json",
+          "preview": "{\n  \"config\": {},\n  \"extra\": {\n    \"VHS_KeepIntermediate\": false,\n    \"VHS_MetadataImage\": false,\n    \"VHS_latentpreview\": false,\n    \"VHS_latentpreviewrate\": 0,\n    \"comfy_fork_version\": \"feature/av_inference@a6994ed1\",\n    \"ds\": {\n      \"offset\": [\n        3244.693666764312,\n        -3264.4346454431056\n      ],\n      \"scale\": 0.4376931224439931\n    },\n    \"frontendVersion\": \"1.39.19\",\n    \"prompt\": {\n      \"1\": {\n        \"_meta\": {\n          \"title\": \"Load Checkpoint\"\n        },\n        \"class_type\": \"Che",
+          "sha256": "da6de90939c0962044767a78e00e06847e0ff3101fca8bc720c2fa4a34316a2e"
+        }
+      ],
+      "blocking": false,
+      "duration_ms": 36,
+      "gate_updates": {},
+      "issues": [],
+      "ok": true,
+      "stage": "ingest",
+      "value": {
+        "mode": "agent_edit_v2_delta",
+        "node_count": 82,
+        "scope_count": 1
+      }
+    }
+  ],
+  "turn_id": "0008",
+  "turn_state": "candidate"
+}
