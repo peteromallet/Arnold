@@ -1,4 +1,4 @@
-base_branch: shannon-native-launch-hardening
+base_branch: working-branch
 
 milestones:
   - label: m0-contract-foundation
@@ -61,4 +61,3 @@ driver:
   auto_approve: true
   max_iterations: 80
   poll_sleep: 8.0
-
