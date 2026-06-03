@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -1927,9 +1928,14 @@ def test_plan_state_uses_module_launcher(tmp_path: Path) -> None:
         "-m",
         "megaplan",
         "status",
+        "--project-dir",
+        str(tmp_path),
         "--plan",
         "demo-plan",
     ]
+    assert mock_run.call_args.kwargs["cwd"] == str(chain_module.megaplan_engine_root())
+    env = mock_run.call_args.kwargs["env"]
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(chain_module.megaplan_engine_root())
 
 
 def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
@@ -1989,6 +1995,9 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
         "--idea-file",
         str(idea_path),
     ]
+    assert mock_run.call_args.kwargs["cwd"] == str(chain_module.megaplan_engine_root())
+    env = mock_run.call_args.kwargs["env"]
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(chain_module.megaplan_engine_root())
 
 
 def test_init_plan_warns_when_vendor_ignored_by_locked_profile(tmp_path: Path) -> None:
