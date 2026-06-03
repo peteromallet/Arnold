@@ -50,3 +50,9 @@ def apply_delta(state: Any, delta: StateDelta) -> Any:
         else:
             state = patch
     return state
+
+__all__ = [
+    "StateDelta",
+    "apply_delta",
+]
+

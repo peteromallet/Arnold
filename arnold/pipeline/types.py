@@ -5,14 +5,34 @@ pipeline runtime can consume.  Opinionated vocabulary (typed gate/override
 literals, run envelopes, plan directories, profiles, budgets) is deliberately
 excluded — this is the *structural* skeleton only.
 
+Carriers defined here (in addition to the core pipeline DAG types):
+
+* ``Port``              — a named typed port with content-type and taint.
+* ``PortRef``           — a reference to a named port with content type.
+* ``ContentRoutingKey`` — content-type–qualified routing key (``key: str``).
+* ``ContentTypeRegistry`` — map content-type names → schema SHA-256 digests.
+* ``_canonical_json_dumps`` — deterministic JSON serialization helper.
+* ``register_schema``   — SHA-256 digest of canonical JSON for a schema.
+* ``ReduceResult``      — structured output of a reduce-kind step.
+* ``SelectionResult``   — structured output of a selection/tournament reduce.
+* ``RoutingKey``        — dispatch routing key with ``name`` and ``kind``.
+* ``RoutingKeyKind``    — literal kind values for ``RoutingKey``.
+
+Notable omissions (Megaplan opinions — stay in megaplan/_pipeline/types.py):
+* ``Overlay``, ``StepMixin``, ``StepMixinProperty``
+* ``GateRecommendation``, ``OverrideAction``, ``EdgeKind`` literals
+* ``StateDelta`` (CAS version), ``NextEdge``, ``BudgetRef``, ``Profile``
+
 Sub-module of ``arnold.pipeline``.  Import from here or from the parent
 package once ``arnold/pipeline/__init__.py`` re-exports are wired.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Mapping, Protocol, runtime_checkable
 
 
 # ---------------------------------------------------------------------------
@@ -192,3 +212,199 @@ class Pipeline:
 
     stages: Mapping[str, Stage | ParallelStage]
     entry: str
+
+
+# ---------------------------------------------------------------------------
+# Port  &  PortRef
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Port:
+    """A named typed port that declares its content type.
+
+    Every pipeline Step declares zero-or-more ports via ``produces`` and
+    ``consumes``.  The executor uses these declarations for
+    contract-level validation and routing-key construction when
+    typed ports are on.
+    """
+
+    name: str
+    content_type: str
+    taint: frozenset[str] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True)
+class PortRef:
+    """A reference to a named port with its declared content type."""
+
+    port_name: str
+    content_type: str
+
+
+# ---------------------------------------------------------------------------
+# ContentRoutingKey
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ContentRoutingKey:
+    """A content-type–qualified routing key for fan-out dispatch.
+
+    Concretely::
+
+        ContentRoutingKey(key="text/markdown")
+
+    The executor constructs routing keys formed from the
+    content type declared on a producing port.
+    """
+
+    key: str
+
+
+# ---------------------------------------------------------------------------
+# Content type registry helpers
+# ---------------------------------------------------------------------------
+
+
+def _canonical_json_dumps(value: Any) -> str:
+    """Serialize *value* deterministically with sorted keys.
+
+    Mirrors ``megaplan.store.snapshot.canonical_json_dumps`` but kept
+    local so the ``arnold.pipeline`` package has zero dependency on the
+    store layer.
+    """
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def register_schema(schema_obj: Any) -> str:
+    """Return the deterministic SHA-256 hex digest of *schema_obj*'s
+    canonical JSON representation.
+
+    ``schema_obj`` may be any JSON-serialisable value (typically a
+    ``dict``, ``list``, or Pydantic ``BaseModel``).  The returned string
+    is the raw hex digest (no ``sha256:`` prefix) so callers can format
+    the prefix as they wish.
+    """
+    raw = _canonical_json_dumps(schema_obj)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+@dataclass
+class ContentTypeRegistry:
+    """Map content-type names → schema SHA-256 digests.
+
+    Duplicate registration raises ``ValueError``.
+    """
+
+    _schemas: dict[str, str] = field(default_factory=dict)
+
+    def register(self, name: str, schema_obj: Any) -> str:
+        if name in self._schemas:
+            raise ValueError(f"content type {name!r} already registered")
+        digest = register_schema(schema_obj)
+        self._schemas[name] = digest
+        return digest
+
+    def get(self, name: str) -> str:
+        """Return the SHA-256 digest registered for *name*.
+
+        Raises ``KeyError`` when *name* is not registered.
+        """
+        if name not in self._schemas:
+            raise KeyError(
+                f"no content type named {name!r}; "
+                f"available: {sorted(self._schemas)}"
+            )
+        return self._schemas[name]
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._schemas
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(sorted(self._schemas))
+
+
+# ---------------------------------------------------------------------------
+# Reduce / Selection result primitives
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReduceResult:
+    """Structured output of a reduce-kind step.
+
+    ``value`` is the reduced value; ``scores`` is a per-input ordered
+    tuple of floats; ``tally`` is a mapping of label → count; ``provenance``
+    records source step / port identifiers; ``label`` optionally names
+    the chosen variant (e.g. ``"winner"``).
+    """
+
+    value: Any
+    scores: tuple[float, ...] = ()
+    tally: Mapping[str, int] = field(default_factory=dict)
+    provenance: tuple[str, ...] = ()
+    label: str | None = None
+
+
+@dataclass(frozen=True)
+class SelectionResult:
+    """Structured output of a selection / tournament reduce.
+
+    ``winner`` is the selected index; ``subset`` are the candidates
+    that survived an earlier filter; ``losers`` are the eliminated
+    candidates; ``scores`` is per-candidate; ``cleared`` is true when the
+    decision unambiguously cleared the tiebreaker threshold.
+    """
+
+    winner: int
+    subset: tuple[int, ...] = ()
+    losers: tuple[int, ...] = ()
+    scores: tuple[float, ...] = ()
+    cleared: bool = False
+
+
+# ---------------------------------------------------------------------------
+# RoutingKey  (dispatch routing — canonical shape from _forward_m2_m3)
+# ---------------------------------------------------------------------------
+
+RoutingKeyKind = Literal["advance", "revise", "restore", "escalate", "select", "custom"]
+
+
+@dataclass(frozen=True)
+class RoutingKey:
+    """Frozen routing-key type — the ONE type downstream dispatch cites.
+
+    ``name`` is the primary key for dispatch disambiguation.
+    ``kind`` classifies the routing intent (advance, revise, escalate, etc.).
+    """
+
+    name: str
+    kind: RoutingKeyKind = "advance"
+
+__all__ = [
+    "Edge",
+    "PipelineVerdict",
+    "StepContext",
+    "StepResult",
+    "Step",
+    "Stage",
+    "ParallelStage",
+    "Pipeline",
+    "Port",
+    "PortRef",
+    "ContentRoutingKey",
+    "ContentTypeRegistry",
+    "ReduceResult",
+    "SelectionResult",
+    "RoutingKey",
+    "RoutingKeyKind",
+    "_canonical_json_dumps",
+    "register_schema",
+]
+

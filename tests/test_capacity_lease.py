@@ -92,7 +92,7 @@ def test_fork_bomb_no_double_issue_no_skip(base_dir: Path) -> None:
     contiguous 1..N permutation — no duplicates, no skips."""
 
     n = 16
-    ctx = mp.get_context("fork")
+    ctx = mp.get_context("spawn")
     with ctx.Pool(processes=4) as pool:
         tokens = pool.map(_child_acquire, [(str(base_dir), "fork-bomb")] * n)
 

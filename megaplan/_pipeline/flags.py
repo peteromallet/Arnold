@@ -1,32 +1,45 @@
-"""Feature flag helpers for megaplan._pipeline.
+"""Deprecated re-export bridge for megaplan._pipeline.flags.
 
-Centralized single source of truth for MEGAPLAN_TYPED_PORTS and future
-feature flags.  All callers must import from here rather than calling
-``os.getenv`` directly.
+The neutral ``typed_ports_on`` has moved to :mod:`arnold.pipeline.flags`
+(where it unconditionally returns ``False``).  This bridge overrides it
+with the Megaplan-specific ``MEGAPLAN_TYPED_PORTS`` env-var check so
+existing consumers retain their expected behaviour.
 
-M4 T5 — Companion flags
------------------------
-The seven companion flags introduced for the unified-dispatch strangler
-(``UNIFIED_EMIT``, ``UNIFIED_EVIDENCE``, ``UNIFIED_CONFIG``, ``EFFECT_LEDGER``,
-``UNIFIED_RECOVERY``, ``UNIFIED_BUDGET``, ``UNIFIED_EVALUAND`` / ``R5_UNIFIED``)
-are deliberately **NOT** entries in the long-lived ``FLAG-*`` catalog.  Their
-lifecycle is tied to the strangler pattern — each flips once its organ has
-migrated and then disappears.  Treat them as scaffold, not as feature gates.
-
-Each companion inherits from ``MEGAPLAN_UNIFIED_DISPATCH`` (the master gate)
-when its own env var is unset, so a single master flip exercises every organ
-simultaneously while still allowing per-organ overrides for debugging.
+All companion flags (``unified_emit_on``, ``unified_evidence_on``, …)
+remain in this module until their respective strangler organs are
+fully migrated.  Import from :mod:`arnold.pipeline.flags` for the
+neutral default — import from here only if you need the Megaplan
+override.
 """
 
 from __future__ import annotations
 
 import os
+import warnings
 
+warnings.warn(
+    "megaplan._pipeline.flags is deprecated; "
+    "use arnold.pipeline.flags for neutral flags.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+# Import the neutral function from arnold (always returns False)
+from arnold.pipeline.flags import typed_ports_on as _neutral_typed_ports_on  # noqa: E402
+
+
+# ── Override: Megaplan consumers check MEGAPLAN_TYPED_PORTS ────────────
 
 def typed_ports_on() -> bool:
-    """Return ``True`` when ``MEGAPLAN_TYPED_PORTS`` env var is ``'1'``."""
+    """Return ``True`` when ``MEGAPLAN_TYPED_PORTS`` env var is ``'1'``.
+
+    Overrides the neutral :func:`arnold.pipeline.flags.typed_ports_on`
+    (which always returns ``False``) with the Megaplan env-var gate.
+    """
     return os.getenv("MEGAPLAN_TYPED_PORTS") == "1"
 
+
+# ── Original companion flags (unchanged) ───────────────────────────────
 
 def _master_on() -> bool:
     """Return ``True`` when ``MEGAPLAN_UNIFIED_DISPATCH`` env var is ``'1'``."""
@@ -145,7 +158,6 @@ def m7_sinks_on() -> bool:
     Capsule, Warrant, and Builder sinks remain default-off public surfaces
     until this exact env var is flipped.
     """
-
     return os.getenv("MEGAPLAN_M7_SINKS") == "1"
 
 
@@ -155,7 +167,6 @@ def control_interface_routing_on() -> bool:
     The M5c control-interface route is a strangler path and remains
     independent from the unified-dispatch master gate until explicitly flipped.
     """
-
     return os.getenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING") == "1"
 
 
@@ -167,7 +178,6 @@ def supervisor_tier_routing_on() -> bool:
     No routing is changed by this flag alone — consumers must explicitly
     check this function before dispatching to the supervisor path.
     """
-
     return os.getenv("MEGAPLAN_SUPERVISOR_TIER") == "1"
 
 
