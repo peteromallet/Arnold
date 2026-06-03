@@ -1277,9 +1277,56 @@ def test_run_megaplan_uses_module_launcher(tmp_path: Path) -> None:
         "-m",
         "megaplan",
         "status",
+        "--project-dir",
+        str(tmp_path),
         "--plan",
         "demo",
     ]
+    assert mock_run.call_args.kwargs["cwd"] == str(auto.megaplan_engine_root())
+    env = mock_run.call_args.kwargs["env"]
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(auto.megaplan_engine_root())
+
+
+def test_run_megaplan_project_dir_keeps_engine_before_target_package(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    (target / "megaplan").mkdir(parents=True)
+    (target / "megaplan" / "__init__.py").write_text("# target package without __main__\n", encoding="utf-8")
+
+    proc = auto.subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout="",
+        stderr="missing plan",
+    )
+
+    with patch.object(auto.subprocess, "run", return_value=proc) as mock_run:
+        code, _out, err = auto._run_megaplan(["status", "--plan", "demo"], cwd=target, timeout=5)
+
+    assert code == 1
+    assert err == "missing plan"
+    assert mock_run.call_args.kwargs["cwd"] == str(auto.megaplan_engine_root())
+    env = mock_run.call_args.kwargs["env"]
+    pythonpath = env["PYTHONPATH"].split(os.pathsep)
+    assert pythonpath[0] == str(auto.megaplan_engine_root())
+    assert str(target) not in pythonpath[:1]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["status", "--project-dir", "/tmp/project", "--plan", "demo"],
+        ["execute", "--project-dir", "/tmp/project", "--plan", "demo"],
+        ["override", "--project-dir", "/tmp/project", "force-proceed", "--plan", "demo"],
+        ["feedback", "--project-dir", "/tmp/project", "workflow", "--plan", "demo"],
+        ["auto", "--project-dir", "/tmp/project", "--plan", "demo"],
+    ],
+)
+def test_auto_spawned_commands_accept_project_dir(argv: list[str]) -> None:
+    from megaplan.cli.parser import build_parser
+
+    args = build_parser().parse_args(argv)
+
+    assert args.project_dir == "/tmp/project"
 
 
 def test_phase_command_splits_multi_token_next_step() -> None:

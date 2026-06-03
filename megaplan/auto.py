@@ -37,7 +37,12 @@ from megaplan._core import active_phase_name, find_plan_dir
 from megaplan._core.io import atomic_write_json, read_json
 from megaplan._core.state import append_history, write_plan_state
 from megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
-from megaplan.runtime.process import kill_group, spawn
+from megaplan.runtime.process import (
+    kill_group,
+    megaplan_engine_env,
+    megaplan_engine_root,
+    spawn,
+)
 from megaplan.observability.events import emit as emit_event, EventKind, read_events
 from megaplan.orchestration.phase_result import (
     ExitKind,
@@ -312,15 +317,19 @@ def _run_megaplan(
     The subprocess is killed; any grandchildren it spawned (e.g. codex) may
     need a moment to settle but will exit when their parent's pipes close.
     """
+    project_dir = cwd or Path.cwd()
+    run_args = _with_project_dir_arg(args, project_dir)
     env = None
     if progress_env:
         env = os.environ.copy()
         env.update(progress_env)
+    env = megaplan_engine_env(env)
+    engine_cwd = str(megaplan_engine_root())
     if idle_timeout is None:
         try:
             proc = subprocess.run(
-                [sys.executable, "-m", "megaplan", *args],
-                cwd=str(cwd) if cwd else None,
+                [sys.executable, "-m", "megaplan", *run_args],
+                cwd=engine_cwd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -340,8 +349,8 @@ def _run_megaplan(
             return 127, "", str(error)
     try:
         proc = spawn(
-            [sys.executable, "-m", "megaplan", *args],
-            cwd=str(cwd) if cwd else None,
+            [sys.executable, "-m", "megaplan", *run_args],
+            cwd=engine_cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
@@ -397,7 +406,7 @@ def _run_megaplan(
             logging.getLogger("megaplan").info(
                 "%s",
                 _format_phase_heartbeat(
-                    args,
+                    run_args,
                     elapsed_s=now - started,
                     plan_dir=liveness_plan_dir,
                     progress_changed=liveness_changed_since_heartbeat,
@@ -428,6 +437,14 @@ def _run_megaplan(
     stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")
     stderr = b"".join(stderr_parts).decode("utf-8", errors="replace")
     return int(proc.returncode or 0), stdout, stderr
+
+
+def _with_project_dir_arg(args: list[str], project_dir: Path) -> list[str]:
+    if "--project-dir" in args:
+        return list(args)
+    if not args:
+        return ["--project-dir", str(project_dir)]
+    return [args[0], "--project-dir", str(project_dir), *args[1:]]
 
 
 def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
@@ -4017,6 +4034,7 @@ def build_auto_parser(subparsers: Any) -> None:
         help="Drive a plan to completion without human intervention",
     )
     auto_parser.add_argument("--plan", required=True, help="Plan name")
+    auto_parser.add_argument("--project-dir", default=None)
     auto_parser.add_argument(
         "--stall-threshold",
         type=int,
