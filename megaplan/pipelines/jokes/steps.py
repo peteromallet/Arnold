@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from megaplan._pipeline.step_helpers import next_version
-from megaplan._pipeline.types import StepContext, StepResult
+# M3a: next_version kept as bridge import — Arnold next_version has
+# different signature (ctx, stage, label, suffix vs output_dir).
+from megaplan._pipeline.step_helpers import next_version  # bridge
+from arnold.pipeline import StepContext, StepResult
 from megaplan.pipelines.jokes.prompts import render_prompt
 
 
@@ -30,7 +32,7 @@ class JokeStep:
             previous=state["_joke_artifacts"],
         )
 
-        out_dir = Path(ctx.plan_dir) / self.name
+        out_dir = Path(ctx.artifact_root) / self.name
         out_dir.mkdir(parents=True, exist_ok=True)
         version = next_version(out_dir)
         prompt_path = out_dir / f"prompt_v{version}.md"

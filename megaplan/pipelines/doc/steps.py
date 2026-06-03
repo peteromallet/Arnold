@@ -7,7 +7,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
-from megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipeline import StepContext, StepResult
+
+
+def _root_dir(ctx: StepContext) -> Path:
+    """Return the pipeline root directory from either Arnold or Megaplan context.
+
+    Arnold StepContext has ``artifact_root``; Megaplan has ``plan_dir``.
+    This bridge helper keeps the doc pipeline compatible with both runtimes.
+    """
+    root = getattr(ctx, 'artifact_root', None)
+    if root is not None:
+        return Path(root)
+    return getattr(ctx, 'plan_dir')  # type: ignore[no-any-return]
 
 
 @dataclass(frozen=True)
@@ -18,7 +30,7 @@ class OutlineStep:
     slot: str | None = None
 
     def run(self, ctx: StepContext) -> StepResult:
-        out = Path(ctx.plan_dir) / "outline" / "sections.json"
+        out = _root_dir(ctx) / "outline" / "sections.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         if not out.exists():
             out.write_text(json.dumps([]))
@@ -40,7 +52,7 @@ class OutlineArtifactReader:
             if raw is not None:
                 path = Path(raw)
         if path is None:
-            path = Path(ctx.plan_dir) / "outline" / "sections.json"
+            path = _root_dir(ctx) / "outline" / "sections.json"
         if not path.exists():
             return StepResult(state_patch={"specs": []}, next="done")
         try:
@@ -63,7 +75,7 @@ class SectionDraftStep:
 
     def run(self, ctx: StepContext) -> StepResult:
         sid = self.section_id or "section"
-        out = Path(ctx.plan_dir) / "section_drafts" / f"{sid}.md"
+        out = _root_dir(ctx) / "section_drafts" / f"{sid}.md"
         out.parent.mkdir(parents=True, exist_ok=True)
         if not out.exists():
             out.write_text(f"# {self.section_title or sid}\n")
@@ -88,7 +100,7 @@ class CritiqueStep:
     slot: str | None = None
 
     def run(self, ctx: StepContext) -> StepResult:
-        out = Path(ctx.plan_dir) / "critique" / "v1.md"
+        out = _root_dir(ctx) / "critique" / "v1.md"
         out.parent.mkdir(parents=True, exist_ok=True)
         if not out.exists():
             out.write_text("")
@@ -103,7 +115,7 @@ class ReviseStep:
     slot: str | None = None
 
     def run(self, ctx: StepContext) -> StepResult:
-        out = Path(ctx.plan_dir) / "revise" / "v1.md"
+        out = _root_dir(ctx) / "revise" / "v1.md"
         out.parent.mkdir(parents=True, exist_ok=True)
         if not out.exists():
             out.write_text("")
@@ -118,7 +130,7 @@ class AssemblyStep:
     slot: str | None = None
 
     def run(self, ctx: StepContext) -> StepResult:
-        out = Path(ctx.plan_dir) / "assembly" / "final.md"
+        out = _root_dir(ctx) / "assembly" / "final.md"
         out.parent.mkdir(parents=True, exist_ok=True)
         if not out.exists():
             out.write_text("")

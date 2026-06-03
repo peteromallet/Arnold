@@ -2,6 +2,9 @@
 step), PanelReviewerStep (one reviewer within a parallel panel), HumanDecisionStep
 (pause-and-resume human decision gate). Used by
 megaplan._pipeline.builder.PipelineBuilder.
+
+M3a compatibility bridge; delete in M7.
+Neutral equivalents now live in ``arnold.pipeline.steps``.
 """
 
 from megaplan._pipeline.steps.agent import AgentStep

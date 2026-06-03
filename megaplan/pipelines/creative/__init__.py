@@ -24,11 +24,9 @@ from __future__ import annotations
 
 from megaplan.forms import available_form_ids
 from megaplan.types import CliError
-from megaplan._pipeline.types import (
-    Edge,
-    Pipeline,
-    Stage,
-)
+
+# M3a: Edge / Pipeline / Stage migrated to Arnold neutral shapes.
+from arnold.pipeline import Edge, Pipeline, Stage
 from megaplan.pipelines.creative.steps import CreativeStep
 
 # Import the prompts sub-package for its register_pipeline_prompt side-effects.

@@ -1,48 +1,22 @@
-"""Fluent :class:`PipelineBuilder` for composing Python pipelines.
+"""Fluent :class:`PipelineBuilder` for composing Megaplan pipelines.
 
-Ergonomic sugar over the frozen primitives in
-:mod:`megaplan._pipeline.types` plus the pattern library in
-:mod:`megaplan._pipeline.patterns`. Designed for terse pipeline
-definition::
+Extends the neutral :class:`arnold.pipeline.builder.PipelineBuilder` with
+Megaplan-specific step classes (AgentStep, PanelReviewerStep,
+HumanDecisionStep, SubloopStep, TiebreakerStep), gate/tiebreaker/human_gate
+conveniences, and pattern helpers (iterate, escalate, mode).
 
-    pipeline = (
-        Pipeline.builder("writing-panel-strict", description="...")
-            .input("draft", file=True)
-            .panel("panel_review", reviewers=[...], inputs=["draft"])
-            .agent("synth", prompt="prompts/synth.md", inputs=["panel_review.*"])
-            .agent("revise", prompt="prompts/revise.md", inputs=["draft", "synth"])
-            .human_gate(
-                "human_decide",
-                artifact="revise",
-                options=["continue", "stop"],
-                edges={"continue": "panel_review", "stop": "done"},
-            )
-            .build()
-    )
-
-Design contracts (load-bearing for downstream tasks):
-
-* The builder injects ``_panel_reviewer_order`` onto downstream
-  :class:`AgentStep` instances using the **private** dataclass field —
-  the audit recorded in finalize T1.i locked in
-  ``_panel_reviewer_order`` (no public-alias rename).
-* The frozen :class:`Pipeline` dataclass carries only
-  ``stages / entry / overlays`` — no ``metadata`` field. Pipeline-level
-  metadata (``description``, ``default_profile``, ``supported_modes``)
-  is accepted by :meth:`Pipeline.builder` and stashed on the builder for
-  :class:`PipelineRegistry` to surface via ``PipelineRegistry.metadata``
-  (Step 8 / T9). The :meth:`build` return value is a plain
-  :class:`Pipeline`.
-* :meth:`tiebreaker` plugs in the canonical
-  :class:`TiebreakerStep` with the LOAD-BEARING edge tuple from T11:
-  three ``kind="gate"`` recommendation edges (``iterate`` → critique,
-  ``proceed`` → finalize, ``escalate`` → finalize).
+M3a: Graph-building mechanics (add_stage, add_parallel_stage,
+add_caller_supplied_edges, attach_resource_bundles, build) are inherited
+from the neutral Arnold base. This subclass adds Megaplan policy defaults
+and step constructors.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, cast
+
+from arnold.pipeline.builder import PipelineBuilder as _BasePipelineBuilder
 
 from megaplan._pipeline.patterns import (
     PromoteFn,
@@ -70,8 +44,12 @@ PromptRegistryFn = Callable[[str], str]
 ReviewerSpec = tuple[str, str]  # (reviewer_id, prompt_ref)
 
 
-class PipelineBuilder:
-    """Chained builder that assembles a :class:`Pipeline`.
+class PipelineBuilder(_BasePipelineBuilder):
+    """Chained builder that assembles a Megaplan :class:`Pipeline`.
+
+    Inherits neutral graph-building from
+    :class:`arnold.pipeline.builder.PipelineBuilder` and layers on
+    Megaplan-specific step constructors and conveniences.
 
     Linking semantics: each ``.agent`` / ``.panel`` / ``.subpipeline``
     call appends a transition edge from the previously added stage to
@@ -97,8 +75,7 @@ class PipelineBuilder:
         prompt_registry: PromptRegistryFn | None = None,
         pipeline_version: int = 1,
     ) -> None:
-        self.name: str = name
-        self.description: str = description
+        super().__init__(name, description)
         self.default_profile: str | None = default_profile
         self.supported_modes: tuple[str, ...] = tuple(supported_modes)
 
@@ -107,15 +84,10 @@ class PipelineBuilder:
         self._prompt_registry: PromptRegistryFn | None = prompt_registry
         self._pipeline_version: int = pipeline_version
 
-        self._stages: dict[str, Stage | ParallelStage] = {}
         self._inputs: dict[str, bool] = {}
         self._panel_reviewer_order: dict[str, list[str]] = {}
         self._overlays: list[Overlay] = []
         self._modes_dict: dict[str, Mapping[str, str]] = {}
-
-        self._entry: str | None = None
-        self._last_stage: str | None = None
-        self._last_emit_label: str | None = None  # None => no auto-link
 
     # ── declarative kwargs ──────────────────────────────────────────
 
@@ -151,7 +123,7 @@ class PipelineBuilder:
             _mode="",
         )
         stage = Stage(name=stage_name, step=cast(Step, step), edges=())
-        self._append_stage(stage, emit_label="done")
+        self.add_stage(stage, emit_label="done")
         return self
 
     def panel(
@@ -199,7 +171,7 @@ class PipelineBuilder:
             max_workers=max_workers,
             next_label="next",
         )
-        self._append_stage(parallel, emit_label="next")
+        self.add_parallel_stage(parallel, emit_label="next")
         return self
 
     def gate(
@@ -224,7 +196,7 @@ class PipelineBuilder:
             Edge(label="escalate", target=on_escalate, kind="gate", recommendation="escalate"),
         ) + tuple(extra_edges)
         stage = Stage(name=stage_name, step=step, edges=gate_edges)
-        self._append_stage(stage, emit_label=None)
+        self.add_stage(stage, emit_label=None)
         return self
 
     def human_gate(
@@ -258,7 +230,7 @@ class PipelineBuilder:
             Edge(label=option, target=edges[option]) for option in options
         )
         stage = Stage(name=stage_name, step=cast(Step, step), edges=stage_edges)
-        self._append_stage(stage, emit_label=None)
+        self.add_stage(stage, emit_label=None)
         return self
 
     def subpipeline(
@@ -283,7 +255,7 @@ class PipelineBuilder:
         stage = Stage(name=name, step=cast(Step, step), edges=())
         # SubloopStep emits next=<recommendation>; default promote yields
         # "proceed", so use that as the natural emit label for auto-link.
-        self._append_stage(stage, emit_label="proceed")
+        self.add_stage(stage, emit_label="proceed")
         return self
 
     def tiebreaker(
@@ -309,7 +281,7 @@ class PipelineBuilder:
             Edge(label="", target=on_escalate, kind="gate", recommendation="escalate"),
         )
         stage = Stage(name=name, step=cast(Step, step), edges=tb_edges)
-        self._append_stage(stage, emit_label=None)
+        self.add_stage(stage, emit_label=None)
         return self
 
     # ── pattern conveniences ────────────────────────────────────────
@@ -395,9 +367,10 @@ class PipelineBuilder:
         self._overlays.append(overlay)
         return self
 
-    # ── build ───────────────────────────────────────────────────────
+    # ── build (override — returns Megaplan Pipeline with overlays) ───
 
     def build(self) -> Pipeline:
+        """Assemble and return the frozen Megaplan :class:`Pipeline`."""
         if self._entry is None:
             raise ValueError(
                 f"PipelineBuilder({self.name!r}).build(): no stages added"
@@ -408,23 +381,17 @@ class PipelineBuilder:
             overlays=tuple(self._overlays),
         )
 
-    # ── internals ───────────────────────────────────────────────────
+    # ── internals (override — uses Megaplan Edge/Stage types) ─────────
 
-    def _append_stage(
-        self,
-        stage: Stage | ParallelStage,
-        *,
-        emit_label: str | None,
-    ) -> None:
-        """Add *stage* to the graph; auto-link from the previous stage
-        if it advertised an ``emit_label``."""
+    def _auto_link(self, new_stage_name: str) -> None:
+        """Create an auto-link edge using Megaplan :class:`Edge`."""
         if (
             self._last_stage is not None
             and self._last_emit_label is not None
             and self._last_stage in self._stages
         ):
             prev = self._stages[self._last_stage]
-            new_edge = Edge(label=self._last_emit_label, target=stage.name)
+            new_edge = Edge(label=self._last_emit_label, target=new_stage_name)
             if not any(
                 e.label == new_edge.label and e.target == new_edge.target
                 for e in prev.edges
@@ -443,12 +410,6 @@ class PipelineBuilder:
                         step=prev.step,
                         edges=prev.edges + (new_edge,),
                     )
-
-        self._stages[stage.name] = stage
-        if self._entry is None:
-            self._entry = stage.name
-        self._last_stage = stage.name
-        self._last_emit_label = emit_label
 
 
 __all__ = ["PipelineBuilder"]

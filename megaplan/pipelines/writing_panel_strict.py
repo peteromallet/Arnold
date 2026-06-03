@@ -29,6 +29,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# M3a: Pipeline kept as megaplan bridge — build_pipeline() uses Pipeline.builder()
+# which returns a megaplan PipelineBuilder with .panel()/.agent()/.human_gate()
+# convenience methods not available on the Arnold PipelineBuilder.
 from megaplan._pipeline.types import Pipeline
 
 

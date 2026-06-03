@@ -1,12 +1,12 @@
 """Pipeline registry — feed in pipelines by name.
 
-Symmetric registration policy: first-class pipelines, including the
-canonical ``megaplan`` pipeline (physically packaged under
-``megaplan/pipelines/planning/`` and kept backwards-compatible through
-the legacy ``planning`` alias), are discovered as Python modules via
-:func:`discover_python_pipelines`. Demo pipelines (``doc-critique``,
-``judges``) are not registered as production pipelines; they remain
-directly importable from their demo modules.
+M3a compatibility bridge; delete in M7.
+
+The neutral Arnold registry core lives at :mod:`arnold.pipeline.registry`.
+This module supplies Megaplan-specific defaults (scan roots, legacy
+alias, budget quota reservation, operation-registry fallbacks, planning
+override catalogs) and wires the global singleton so existing consumers
+continue working through the bridge.
 
 Discovery scans (T9 / Step 8):
 
@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+from arnold.pipeline.registry import PipelineRegistry as ArnoldPipelineRegistry
 from arnold.runtime.operations import (
     NullOperationRegistry,
     OperationKind,
@@ -68,6 +69,56 @@ from megaplan._pipeline.types import Pipeline
 
 PipelineBuilder = Callable[[], Pipeline]
 _OUT_OF_TREE_SUB_BUDGET_USD = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Megaplan adapter — Arnold core with Megaplan defaults
+# ---------------------------------------------------------------------------
+
+
+def make_megaplan_registry() -> ArnoldPipelineRegistry:
+    """Create an Arnold :class:`PipelineRegistry` configured with Megaplan defaults.
+
+    Injects the Megaplan-specific scan roots (``megaplan/pipelines/``,
+    ``~/.megaplan/pipelines/``), the legacy ``planning`` → ``megaplan``
+    alias, and a discovery hook that delegates to this module's
+    :func:`scan_python_pipelines` and :func:`discover_python_pipelines`.
+
+    The returned registry uses the Arnold core for storage and query
+    operations; Megaplan-specific methods (``operation_registry_for``,
+    ``override_catalog_for``, ``read_skill_md``, quota reservation) are
+    layered on top by the module-level :class:`PipelineRegistry` bridge.
+
+    M3a compatibility bridge; delete in M7.
+    """
+    from pathlib import Path
+
+    _scan_roots = (
+        Path(__file__).resolve().parent.parent / "pipelines",
+        Path.home() / ".megaplan" / "pipelines",
+    )
+
+    def _discovery_hook(reg: ArnoldPipelineRegistry) -> None:
+        """Populate *reg* from Megaplan scan roots."""
+        # Use the megaplan-specific discovery logic.
+        for name, builder, meta, source_path in discover_python_pipelines():
+            name = canonical_pipeline_name(name)
+            if name in reg:
+                continue
+            reg.register(
+                name,
+                builder,
+                description=str(meta.get("description", "") or ""),
+                metadata=meta,
+                module_file=source_path,
+            )
+
+    return ArnoldPipelineRegistry(
+        scan_roots=_scan_roots,
+        package_prefixes=("megaplan.pipelines",),
+        alias_map=dict(LEGACY_PIPELINE_ALIASES),
+        discovery_hook=_discovery_hook,
+    )
 
 
 @dataclass

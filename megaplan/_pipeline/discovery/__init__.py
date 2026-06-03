@@ -1,21 +1,41 @@
 """Discovery surface for pipeline packages.
 
-This package owns the manifest-first, non-executing discovery contract.
-See ``briefs/m6/manifest-contract.md`` for the full specification.
+M3a compatibility bridge; delete in M7.
+
+Re-exports from the neutral Arnold discovery modules, injecting
+Megaplan-specific defaults (``in_tree_path_fragment``, known
+capabilities).
 """
 
-from megaplan._pipeline.discovery.manifest import (
+# M3a compatibility bridge; delete in M7
+from arnold.pipeline.discovery.manifest import (  # noqa: F401
     Manifest,
     ManifestError,
     read_manifest,
 )
-from megaplan._pipeline.discovery.trust import (
+from arnold.pipeline.discovery.trust import (  # noqa: F401
     BLESSED_ALLOWLIST,
-    KNOWN_CAPABILITIES,
     TrustTier,
-    check_capabilities,
     classify,
 )
+
+# Megaplan-specific constants (not in neutral Arnold)
+KNOWN_CAPABILITIES: frozenset[str] = frozenset(
+    {
+        "plan",
+        "execute",
+        "review",
+        "gate",
+        "doc",
+        "creative",
+    }
+)
+
+
+def check_capabilities(capabilities: tuple[str, ...] | list[str]) -> list[str]:
+    """Return a list of unrecognised capability kinds in *capabilities*."""
+    return [c for c in capabilities if c not in KNOWN_CAPABILITIES]
+
 
 __all__ = [
     "Manifest",

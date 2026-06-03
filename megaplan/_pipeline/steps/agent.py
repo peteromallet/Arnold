@@ -5,6 +5,9 @@ Writes ``<plan_dir>/<stage_id>/v<n>.md`` with the model's response.
 Canonical Python-composition Step impl — not a YAML wrapper. Shared
 input/prompt/version helpers live in
 :mod:`megaplan._pipeline.step_helpers`.
+
+M3a compatibility bridge; delete in M7.
+Neutral equivalent: :class:`arnold.pipeline.steps.agent.AgentStep`.
 """
 
 from __future__ import annotations

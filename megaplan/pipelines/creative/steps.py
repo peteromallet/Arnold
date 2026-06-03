@@ -7,9 +7,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from megaplan._pipeline.prompts import resolve_prompt
-from megaplan._pipeline.step_helpers import next_version
-from megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipeline import StepContext, StepResult
+
+from megaplan._pipeline.prompts import resolve_prompt  # bridge: global prompt registry
+from megaplan._pipeline.step_helpers import next_version  # bridge: different signature
+
+
+def _root_dir(ctx: StepContext) -> Path:
+    """Return the pipeline root directory from either Arnold or Megaplan context.
+
+    Arnold StepContext has ``artifact_root``; Megaplan has ``plan_dir``.
+    This bridge helper keeps the creative pipeline compatible with both runtimes.
+    """
+    root = getattr(ctx, 'artifact_root', None)
+    if root is not None:
+        return Path(root)
+    return getattr(ctx, 'plan_dir')  # type: ignore[no-any-return]
 
 
 @dataclass(frozen=True)
@@ -32,7 +45,7 @@ class CreativeStep:
         render_ctx = dataclasses.replace(ctx, state=state, inputs=inputs)
 
         prompt_text = _render_prompt(render_ctx, self)
-        out_dir = Path(ctx.plan_dir) / self.name
+        out_dir = _root_dir(ctx) / self.name
         out_dir.mkdir(parents=True, exist_ok=True)
         version = next_version(out_dir)
         prompt_path = out_dir / f"prompt_v{version}.md"

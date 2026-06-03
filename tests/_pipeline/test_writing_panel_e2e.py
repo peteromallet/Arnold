@@ -26,6 +26,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+# M3a partial migration: the writing-panel-strict pipeline uses the megaplan
+# builder (.panel()/.agent()/.human_gate()), so its step instances and stage
+# types are megaplan bridge types.  HumanDecisionStep is explicitly a megaplan
+# bridge (human-gate pause/resume), not an Arnold neutral primitive.
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.resume import with_entry
 from megaplan._pipeline.steps.agent import AgentStep

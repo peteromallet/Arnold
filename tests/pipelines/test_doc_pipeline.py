@@ -1,30 +1,8 @@
-"""T6 — end-to-end tests for the ``doc`` pipeline (0.23, sprint).
+"""T6 — end-to-end tests for the ``doc`` pipeline (0.23, sprint) — M3a Arnold migration.
 
-Exercises the new first-class ``doc`` pipeline through the same
-``megaplan run`` code path the Step 19 real-model smoke uses:
-:func:`megaplan._pipeline.run_cli.cli_run` →
-:func:`megaplan._pipeline.run_cli._run_pipeline`.
-
-Required assertions (per the batch sense check, SC6):
-
-* ``tuple(build_pipeline().stages.keys()) == ('outline','section_drafts',
-  'critique','revise','assembly')`` — NOTE: ``Pipeline.stages`` is
-  ``Mapping[str, Stage | ParallelStage]`` per ``types.py:225-231`` so the
-  test iterates ``.keys()`` and never tries ``s.name`` on a string.
-* ``supported_modes`` and ``description`` surface through the
-  ``PipelineRegistry`` metadata API.
-* ``isinstance(build_pipeline().stages['section_drafts'].step,
-  SubloopStep)`` — the ``section_drafts`` stage wraps a
-  ``dynamic_fanout``-produced ``SubloopStep`` (the dynamic primitive
-  lives below the Stage level per ``executor.py:171,179,295,298``).
-* Mocking the outline artifact with N=3 sections produces 3 fanout
-  invocations of the per-section ``base_prompt``.
-
-The doc pipeline's stage shells write placeholder files (no real worker
-is invoked), so cli_run drives the pipeline end-to-end without needing
-a worker mock — the test pre-seeds ``<plan_dir>/outline/sections.json``
-so the ``OutlineArtifactReader`` generator inside the SubloopStep
-finds 3 specs and the fanout fires 3 times.
+Exercises the new first-class ``doc`` pipeline.  The direct-executor test
+uses the Arnold executor; the cli_run test still exercises the Megaplan
+bridge path.
 """
 
 from __future__ import annotations
@@ -63,7 +41,6 @@ def _make_run_args(
 
 # ── (a) Stage-keys assertion — iterate ``.keys()`` (mapping), not ``.name`` ─
 
-
 def test_doc_pipeline_stage_keys_in_canonical_order() -> None:
     from megaplan.pipelines.doc import build_pipeline
 
@@ -88,7 +65,6 @@ def test_doc_pipeline_stage_keys_in_canonical_order() -> None:
 
 # ── (b) supported_modes + description surface through PipelineRegistry ───
 
-
 def test_doc_pipeline_metadata_surfaces_through_registry() -> None:
     from megaplan._pipeline.registry import (
         pipeline_metadata,
@@ -107,7 +83,6 @@ def test_doc_pipeline_metadata_surfaces_through_registry() -> None:
 
 # ── (c) section_drafts is a dynamic_fanout-produced SubloopStep ──────────
 
-
 def test_doc_pipeline_section_drafts_is_subloopstep() -> None:
     from megaplan._pipeline.subloop import SubloopStep
     from megaplan.pipelines.doc import build_pipeline
@@ -124,16 +99,20 @@ def test_doc_pipeline_section_drafts_is_subloopstep() -> None:
 
 # ── (d) Mocked outline with 3 specs → 3 fanout invocations of base_prompt ─
 
-
 def test_doc_pipeline_fanout_invokes_base_prompt_per_section(
     tmp_path: Path,
 ) -> None:
     """Pre-seeding outline/sections.json with 3 specs makes the
     ``dynamic_fanout`` SubloopStep fire its ``base_prompt`` (the
-    ``SectionDraftStep``) exactly 3 times, producing 3 section files."""
+    ``SectionDraftStep``) exactly 3 times, producing 3 section files.
+
+    Uses the Arnold executor (M3a migration).
+    """
 
     from megaplan.pipelines.doc import build_pipeline
     from megaplan.pipelines.doc.steps import SectionDraftStep
+    from arnold.pipeline import run_pipeline
+    from arnold.runtime.envelope import RuntimeEnvelope
 
     plan_dir = tmp_path / "doc-run"
     plan_dir.mkdir(parents=True, exist_ok=True)
@@ -157,24 +136,12 @@ def test_doc_pipeline_fanout_invokes_base_prompt_per_section(
         return original_run(self, ctx)
 
     pipeline = build_pipeline()
-    # Drive the executor directly — the per-section shells are
-    # self-contained (no worker calls), so we don't need cli_run's profile
-    # / preflight machinery to verify fanout count.
-    from megaplan._pipeline.executor import run_pipeline
-    from megaplan._pipeline.types import StepContext
-
-    ctx = StepContext(
-        plan_dir=plan_dir,
-        state={},
-        profile={},
-        mode="code",
-        inputs={},
-    )
     # Patch on the class so all specialised clones (via dataclasses.replace)
     # share the spied run().
     SectionDraftStep.run = spy_run  # type: ignore[assignment]
     try:
-        run_pipeline(pipeline, ctx, artifact_root=plan_dir)
+        envelope = RuntimeEnvelope(artifact_root=str(plan_dir))
+        run_pipeline(pipeline, initial_state={}, envelope=envelope)
     finally:
         SectionDraftStep.run = original_run  # type: ignore[assignment]
 
@@ -189,13 +156,18 @@ def test_doc_pipeline_fanout_invokes_base_prompt_per_section(
 
 # ── cli_run integration: drive the pipeline through the megaplan run path ─
 
-
 def test_doc_pipeline_runs_through_cli_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Drive the doc pipeline through ``cli_run`` (the same code path
     Step 19's real-model smoke uses) and verify the pipeline reaches
-    the terminal ``assembly`` stage."""
+    the terminal ``assembly`` stage.
+
+    This test exercises the Megaplan bridge path — the doc pipeline's
+    steps are dual-compatible (support both Arnold artifact_root and
+    Megaplan plan_dir), and the pipeline graph uses Megaplan types,
+    so cli_run continues to work.
+    """
 
     from megaplan._pipeline import preflight as preflight_module
     from megaplan._pipeline.run_cli import cli_run
