@@ -985,6 +985,16 @@ def _isolate_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(profiles_module, "_resolve_default_vendor", lambda: "claude")
 
 
+def _clear_model_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    for env_var in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "FIREWORKS_API_KEY",
+    ):
+        monkeypatch.delenv(env_var, raising=False)
+
+
 def test_vendor_codex_flips_premium_slots_on_all_claude(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1644,24 +1654,26 @@ def test_new_tier_profiles_all_load(
         assert name in catalog, f"missing tier profile {name!r}: catalog={sorted(catalog)}"
 
 
-def test_solo_profile_resolves_to_deepseek_end_to_end(
+def test_solo_profile_resolves_to_deepseek_reasoning_with_premium_floor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 
     args = _worker_args(profile="solo")
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    # solo runs DeepSeek end-to-end (including critique/review); no Kimi slot.
+    # solo keeps reasoning phases on DeepSeek; only finalize and execute
+    # tier routing participate in the invariant floor.
     for phase in (
         "plan",
         "prep",
         "critique",
         "revise",
         "gate",
-        "finalize",
         "execute",
         "loop_plan",
         "loop_execute",
@@ -1670,17 +1682,43 @@ def test_solo_profile_resolves_to_deepseek_end_to_end(
         "tiebreaker_challenger",
     ):
         assert resolved[phase] == DEEPSEEK_DIRECT, f"solo.{phase} should be DeepSeek, got {resolved[phase]!r}"
+    assert resolved["finalize"] == "claude:low"
+    assert args.tier_models["execute"][4] == "claude:claude-sonnet-4-6"
+    assert args.tier_models["execute"][5] == "claude:claude-opus-4-7"
+
+
+def test_solo_profile_deepseek_only_falls_back_for_finalize_and_execute_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._pipeline.preflight import preflight_check_profile
+
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    args = _worker_args(profile="solo")
+    apply_profile_expansion(args, None)
+    resolved = _phase_models_to_map(args.phase_model)
+
+    assert resolved["finalize"] == DEEPSEEK_DIRECT
+    assert args.tier_models["execute"][4] == DEEPSEEK_DIRECT
+    assert args.tier_models["execute"][5] == DEEPSEEK_DIRECT
+    assert preflight_check_profile(resolved, profile_name="solo") == []
 
 
 def test_solo_profile_is_noop_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """solo has no rewritable premium slots.
+    """--vendor leaves solo reasoning phases alone.
 
-    --vendor leaves the phase map alone, including concrete Hermes feedback.
+    With only DeepSeek available, the premium floor also falls back to
+    DeepSeek, preserving the historical solo behavior.
     """
     _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
 
     baseline = _worker_args(profile="solo")
     apply_profile_expansion(baseline, None)
@@ -3361,10 +3399,11 @@ def test_critique_tiers_4_and_5_match_execute_tiers(
     monkeypatch: pytest.MonkeyPatch,
     profile_name: str,
 ) -> None:
-    """Tiers 4-5 of ``tier_models.critique`` match the corresponding
-    ``tier_models.execute`` entries.  No profile in this sprint needs
-    3-tier aliasing because every built-in profile defines the full
-    1-5 ladder."""
+    """Tiers 4-5 of ``tier_models.critique`` match execute except solo.
+
+    Solo keeps critique on DeepSeek for its all-DeepSeek reasoning identity,
+    while execute escalates under the invariant floor.
+    """
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile=profile_name)
@@ -3374,6 +3413,12 @@ def test_critique_tiers_4_and_5_match_execute_tiers(
     assert tier_models is not None
     execute_tiers = tier_models["execute"]
     critique_tiers = tier_models["critique"]
+
+    if profile_name == "solo":
+        for t in (4, 5):
+            assert "deepseek" in critique_tiers[t].lower()
+            assert critique_tiers[t] != execute_tiers[t]
+        return
 
     for t in (4, 5):
         assert critique_tiers[t] == execute_tiers[t], (
@@ -3834,6 +3879,35 @@ feedback = "claude:low"
     assert state["config"]["tier_models"]["execute"]["4"] == "claude:medium"
 
 
+def test_init_saves_max_execute_tier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.handlers.init import handle_init
+
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+
+    response = handle_init(
+        root,
+        _init_args(
+            project_dir,
+            profile="solo",
+            name="max-execute-tier-state",
+            auto_approve=True,
+            max_execute_tier=3,
+        ),
+    )
+
+    state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
+    state = json.loads(state_path.read_text())
+    assert state["config"]["max_execute_tier"] == 3
+
+
 def test_snapshot_cli_provenance_includes_tier_models() -> None:
     """_snapshot_cli_provenance includes tier_models when present in config."""
     from megaplan.handlers.shared import _snapshot_cli_provenance
@@ -3842,12 +3916,14 @@ def test_snapshot_cli_provenance_includes_tier_models() -> None:
         "config": {
             "profile": "variable",
             "mode": "code",
+            "max_execute_tier": 3,
             "tier_models": {"execute": {1: "hermes:deepseek-flash", 5: "claude:high"}},
         }
     }
     snap = _snapshot_cli_provenance(state)
     assert "tier_models" in snap
     assert snap["tier_models"]["execute"][1] == "hermes:deepseek-flash"
+    assert snap["max_execute_tier"] == 3
 
 
 def test_snapshot_cli_provenance_omits_tier_models_when_absent() -> None:

@@ -104,6 +104,20 @@ def _add_workflow_shape_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_execute_tier_cap_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--max-execute-tier",
+        type=int,
+        choices=[1, 2, 3, 4, 5],
+        default=None,
+        metavar="N",
+        help=(
+            "Cap tier-routed execute lookup at N (1-5). A complexity above N "
+            "routes as tier N; unset means no cap."
+        ),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     import megaplan.cli as cli_mod
 
@@ -283,6 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
     )
     _add_vendor_critic_args(init_parser)
+    _add_execute_tier_cap_arg(init_parser)
     _add_workflow_shape_args(init_parser)
     init_parser.add_argument(
         "--prep-direction",
@@ -785,6 +800,7 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "execute":
             step_parser.add_argument("--confirm-destructive", action="store_true")
             step_parser.add_argument("--user-approved", action="store_true")
+            _add_execute_tier_cap_arg(step_parser)
             step_parser.add_argument(
                 "--batch",
                 type=int,

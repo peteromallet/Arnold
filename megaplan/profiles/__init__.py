@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import tomllib
 from importlib.resources import files
 from pathlib import Path
@@ -1560,6 +1561,55 @@ def apply_deepseek_provider_rewrite(
     }
 
 
+_PREMIUM_CREDENTIAL_ENV: dict[str, str] = {
+    "claude": "ANTHROPIC_API_KEY",
+    "codex": "OPENAI_API_KEY",
+}
+
+
+def _premium_credential_configured(vendor: str) -> bool:
+    env_var = _PREMIUM_CREDENTIAL_ENV.get(vendor)
+    return bool(env_var and os.environ.get(env_var, "").strip())
+
+
+def _deepseek_credential_configured() -> bool:
+    return bool(
+        os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        or os.environ.get("FIREWORKS_API_KEY", "").strip()
+    )
+
+
+def _best_available_floor_spec(spec: str) -> str:
+    parsed = parse_agent_spec(spec)
+    if parsed.agent not in _PREMIUM_VENDORS:
+        return spec
+    if _premium_credential_configured(parsed.agent):
+        return spec
+    other = "codex" if parsed.agent == "claude" else "claude"
+    if _premium_credential_configured(other):
+        return _swap_premium_spec(spec, other)
+    if _deepseek_credential_configured():
+        return FIREWORKS_DEEPSEEK_V4_PRO_SPEC
+    return spec
+
+
+def apply_available_model_floor(
+    profile: dict[str, str],
+    *,
+    tier_models: dict[str, dict[int, str]] | None = None,
+) -> dict[str, str]:
+    """Degrade finalize / execute premium floor specs when premium keys are absent."""
+    result = dict(profile)
+    if "finalize" in result:
+        result["finalize"] = _best_available_floor_spec(result["finalize"])
+    if tier_models is not None:
+        execute_tiers = tier_models.get("execute")
+        if isinstance(execute_tiers, dict):
+            for tier_int, spec in execute_tiers.items():
+                execute_tiers[tier_int] = _best_available_floor_spec(spec)
+    return result
+
+
 def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
     for spec in profile.values():
         parsed = parse_agent_spec(spec)
@@ -1734,6 +1784,12 @@ def apply_profile_expansion(
             state_critic = state_config.get("critic")
             state_depth = state_config.get("depth")
             state_deepseek_provider = state_config.get("deepseek_provider")
+            state_max_execute_tier = state_config.get("max_execute_tier")
+            if (
+                getattr(args, "max_execute_tier", None) is None
+                and isinstance(state_max_execute_tier, int)
+            ):
+                args.max_execute_tier = state_max_execute_tier
         effective_critic_flag = cli_critic or state_critic
         effective_depth_flag = cli_depth or state_depth
         effective_deepseek_provider_flag = (
@@ -1784,6 +1840,7 @@ def apply_profile_expansion(
             # --depth is still applied to author phases.
             resolved = apply_depth_rewrite(resolved, effective_depth_flag, tier_models=tier_models)
 
+        resolved = apply_available_model_floor(resolved, tier_models=tier_models)
         resolved = apply_deepseek_provider_rewrite(resolved, effective_deepseek_provider_flag, tier_models=tier_models)
 
         _validate_named_profile_invariants(profile_name, resolved, tier_models=tier_models)

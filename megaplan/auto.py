@@ -839,11 +839,16 @@ def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
     execute_tiers = tier_models.get("execute")
     if not isinstance(execute_tiers, dict) or not execute_tiers:
         return {}
+    max_execute_tier = config.get("max_execute_tier")
+    if not isinstance(max_execute_tier, int) or not 1 <= max_execute_tier <= 5:
+        max_execute_tier = None
     ladder: dict[int, str] = {}
     for raw_tier, spec in execute_tiers.items():
         try:
             tier_num = int(raw_tier)
         except (TypeError, ValueError):
+            continue
+        if max_execute_tier is not None and tier_num > max_execute_tier:
             continue
         if isinstance(spec, str) and spec.strip():
             ladder[tier_num] = spec
