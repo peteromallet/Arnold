@@ -510,6 +510,96 @@ rows:
   tests_gates:
   - 'none-yet: neutral builder extraction is blocked on policy-free defaults'
   configurable_seams: []
+
+# ── builder.py neutral symbol rows ───────────────────────────────────────────
+- source: megaplan/_pipeline/builder.py
+  target: "arnold neutral symbol: PipelineBuilder (core methods)"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral fluent builder class (minus gate/tiebreaker/human_gate methods). Core methods agent, panel, subpipeline, iterate, escalate, mode, overlay, build, and internal _append_stage are generic pipeline composition.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/builder.py
+  target: "arnold neutral symbol: WorkerFn"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral WorkerFn type alias used by AgentStep/PanelReviewerStep.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/builder.py
+  target: "arnold neutral symbol: PromptRegistryFn"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral prompt registry lookup type alias.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/builder.py
+  target: "arnold neutral symbol: ReviewerSpec"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral reviewer spec type alias — (reviewer_id, prompt_ref) tuple.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
 - source: megaplan/_core/scheduler
   target: arnold/core/scheduler
   granularity: directory
@@ -5364,13 +5454,124 @@ rows:
   tests_gates: []
   configurable_seams: []
 - source: megaplan/_pipeline/artifacts.py
-  target: megaplan/pipelines/megaplan/artifacts.py
+  target: arnold/pipeline/artifacts.py
   granularity: file
-  disposition: megaplan-plugin
-  reason: Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
+  disposition: arnold-core
+  reason: Entirely neutral versioned-artifact path helpers — artifact_dir, latest_version, next_version_path, versioned_artifacts, latest_artifact_path. Only import is StepContext from types. No Megaplan phase vocabulary, handler references, or branded paths. Previously misclassified as megaplan-plugin.
   blockers:
-  - Carries Megaplan phase vocabulary, handler references, or planning defaults.
-  - May reference megaplan.planning, megaplan.handlers, or megaplan.orchestration.
+  - None — the file is already fully neutral.
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: arnold/pipeline/artifacts.py
+  tests_gates: []
+  configurable_seams: []
+
+# ── artifacts.py neutral symbol rows ─────────────────────────────────────────
+- source: megaplan/_pipeline/artifacts.py
+  target: "arnold neutral symbol: artifact_dir"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral artifact directory helper — creates <plan_dir>/<kind>/.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/artifacts.py
+  target: "arnold neutral symbol: latest_version"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral latest-version scanner — finds highest v<N>.<ext> in a directory.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/artifacts.py
+  target: "arnold neutral symbol: next_version_path"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral next-version path generator — returns <plan_dir>/<kind>/v<latest+1>.<ext>.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/artifacts.py
+  target: "arnold neutral symbol: versioned_artifacts"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral versioned artifact iterator — yields existing files in ascending version order.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/artifacts.py
+  target: "arnold neutral symbol: latest_artifact_path"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral latest-artifact path lookup.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
   allowed_imports: []
   forbidden_imports: []
   vocabulary_owned: []
@@ -5561,20 +5762,134 @@ rows:
   tests_gates: []
   configurable_seams: []
 - source: megaplan/_pipeline/executor.py
-  target: arnold/pipeline/executor.py
-  granularity: file
-  disposition: arnold-core
-  reason: Pipeline runtime primitive — generic dispatch, execution, pattern, or validation infrastructure.
+  target: "arnold/pipeline/executor.py (neutral core loop + dispatch skeleton) + megaplan/pipelines/megaplan/executor_adapter.py (governor, activation, evaluand, port-binding policy)"
+  granularity: split
+  disposition: split-required
+  reason: The executor skeleton (stage walk, _atomic_write_json, _verify_outputs) is neutral, but the current file is deeply entangled with Megaplan policy — governor charging, activation lifecycle, evaluand transactions, port-binding dispatch, unified-dispatch flag gates, and in-process runtime install — all of which must stay in the Megaplan plugin.
   blockers:
-  - May reference Megaplan phase strings or handler routing.
-  - May import from megaplan.types or megaplan.schemas for type contracts.
+  - Governor charge/fold, activation lifecycle, evaluand transaction wrappers, and runtime-governor install are Megaplan policy.
+  - Port-binding dispatch (typed_ports_on) and unified-dispatch/evaluand feature-flag gates are entangled in the main loop.
+  - Imports megaplan._core.state, megaplan.types, megaplan.runtime.governor, megaplan._core.activation, megaplan.observability.events.
   allowed_imports: []
   forbidden_imports: []
   vocabulary_owned: []
   string_policy: []
   extraction_prerequisite:
-  - Audit for Megaplan-specific string literals and type references.
+  - Extract the neutral stage-walk skeleton, atomic I/O helpers, and _verify_outputs into arnold/pipeline/executor.py.
+  - Leave governor, activation, evaluand, port-binding, and flag-gated dispatch paths behind in a Megaplan bridge adapter.
   first_extraction_unit: arnold/pipeline/executor.py
+  tests_gates: []
+  configurable_seams: []
+
+# ── executor.py neutral symbol rows ─────────────────────────────────────────
+- source: megaplan/_pipeline/executor.py
+  target: "arnold neutral symbol: _atomic_write_json"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral atomic I/O and verification helpers suitable for Arnold runtime.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/executor.py
+  target: "arnold neutral symbol: _write_forensic_backup"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral forensic backup helper.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/executor.py
+  target: "arnold neutral symbol: _verify_outputs"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral output verification — checks file existence only, no Megaplan policy.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/executor.py
+  target: "arnold neutral symbol: _is_safe_for_parallel"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral parallel-safety guard for InProcessHandlerStep — type check only, no Megaplan policy in the guard logic.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/executor.py
+  target: "arnold neutral symbol: run_pipeline"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral core stage-walk loop skeleton (after extraction of governor/activation/evaluand/port-binding). The symbol row documents the intent; actual extraction is gated on prior policy removal.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
   tests_gates: []
   configurable_seams: []
 - source: megaplan/_pipeline/faults.py
@@ -5762,20 +6077,113 @@ rows:
   tests_gates: []
   configurable_seams: []
 - source: megaplan/_pipeline/pattern_topology.py
-  target: arnold/pipeline/pattern_topology.py
-  granularity: file
-  disposition: arnold-core
-  reason: Pipeline runtime primitive — generic dispatch, execution, pattern, or validation infrastructure.
+  target: "arnold/pipeline/pattern_topology.py (neutral: panel_parallel, alternating_turns, subpipeline_call, iterate_until) + megaplan/pipelines/megaplan/pattern_topology_adapter.py (critique_revise_gate_loop, escalate_if, escalate_via_subpipeline, phase_zero_gate, mode_prompts)"
+  granularity: split
+  disposition: split-required
+  reason: panel_parallel, alternating_turns, subpipeline_call, and iterate_until are neutral topology builders, but critique_revise_gate_loop, escalate_if, escalate_via_subpipeline, phase_zero_gate, and mode_prompts embed Megaplan gate vocabulary (critique/gate/revise/tiebreaker/escalate/proceed/iterate/plan) and use Overlay (excluded from Arnold per SD2).
   blockers:
-  - May reference Megaplan phase strings or handler routing.
-  - May import from megaplan.types or megaplan.schemas for type contracts.
+  - critique_revise_gate_loop hardcodes Megaplan planning stage names and gate recommendation literals.
+  - escalate_if/escalate_via_subpipeline use Megaplan escalation vocabulary and restore_and_diverge sentinel.
+  - phase_zero_gate defaults on_pass='plan' (Megaplan phase name).
+  - mode_prompts produces Overlay instances excluded from Arnold per SD2.
   allowed_imports: []
   forbidden_imports: []
   vocabulary_owned: []
   string_policy: []
   extraction_prerequisite:
-  - Audit for Megaplan-specific string literals and type references.
+  - Move neutral functions (panel_parallel, alternating_turns, subpipeline_call, iterate_until) into arnold/pipeline/pattern_topology.py.
+  - Leave Megaplan-gate functions and mode_prompts behind in a Megaplan adapter module.
   first_extraction_unit: arnold/pipeline/pattern_topology.py
+  tests_gates: []
+  configurable_seams: []
+
+# ── pattern_topology.py neutral symbol rows ──────────────────────────────────
+- source: megaplan/_pipeline/pattern_topology.py
+  target: "arnold neutral symbol: panel_parallel"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral parallel fan-out pattern — generic reviewer IDs, no phase strings.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/pattern_topology.py
+  target: "arnold neutral symbol: alternating_turns"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral N-agent alternating workshop topology — generic role chaining.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/pattern_topology.py
+  target: "arnold neutral symbol: subpipeline_call"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral SubloopStep construction helper — generic nested pipeline invocation.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/pattern_topology.py
+  target: "arnold neutral symbol: iterate_until"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral loop wrapper — adds self-loop + halt edges to any Stage, no Megaplan vocabulary.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
   tests_gates: []
   configurable_seams: []
 - source: megaplan/_pipeline/pattern_types.py
@@ -5892,6 +6300,162 @@ rows:
   first_extraction_unit: null
   tests_gates: []
   configurable_seams: []
+
+# ── prompts.py neutral symbol rows ───────────────────────────────────────────
+- source: megaplan/_pipeline/prompts.py
+  target: "arnold neutral symbol: PromptRenderer"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral prompt renderer type alias — Callable[[StepContext, Mapping], str].
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/prompts.py
+  target: "arnold neutral symbol: PromptRegistry"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral prompt registry dataclass — pipeline+mode aware key→renderer mapping with fallback precedence.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/prompts.py
+  target: "arnold neutral symbol: _GLOBAL_REGISTRY"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral global prompt registry singleton.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/prompts.py
+  target: "arnold neutral symbol: register_prompt"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral prompt registration function.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/prompts.py
+  target: "arnold neutral symbol: resolve_prompt"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral prompt resolution function — delegates to PromptRegistry.render with ctx.mode and pipeline scoping.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/prompts.py
+  target: "arnold neutral symbol: register_pipeline_prompt"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral pipeline-scoped prompt registration helper.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/prompts.py
+  target: "arnold neutral symbol: registered_keys"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral registry key enumeration.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
 - source: megaplan/_pipeline/receipt.py
   target: arnold/pipeline/receipt.py
   granularity: file
@@ -5910,20 +6474,245 @@ rows:
   tests_gates: []
   configurable_seams: []
 - source: megaplan/_pipeline/registry.py
-  target: arnold/pipeline/registry.py
-  granularity: file
-  disposition: arnold-core
-  reason: Pipeline runtime primitive — generic dispatch, execution, pattern, or validation infrastructure.
+  target: "arnold/pipeline/registry.py (PipelineRegistry CRUD + skill.md reading) + megaplan/pipelines/megaplan/registry_adapter.py (discovery, trust, manifest, budget)"
+  granularity: split
+  disposition: split-required
+  reason: The core PipelineRegistry dataclass (register, get, names, describe, metadata_for, read_skill_md, operation_registry_for) is neutral, but the discovery path hardcodes megaplan.pipelines scan roots, MEGAPLAN_M6_MANIFEST_DISCOVERY env vars, trust classification, manifest parsing, and budget authority integration — all Megaplan-branded policy.
   blockers:
-  - May reference Megaplan phase strings or handler routing.
-  - May import from megaplan.types or megaplan.schemas for type contracts.
+  - Discovery scan roots and env vars are branded 'megaplan'.
+  - Trust-tier classification and manifest parsing are coupled to Megaplan discovery conventions.
+  - Budget authority integration imports megaplan.runtime.budget_authority.
+  - CANONICAL_BUILTIN_PIPELINE = 'megaplan' and LEGACY_PIPELINE_ALIASES hardcode Megaplan names.
   allowed_imports: []
   forbidden_imports: []
   vocabulary_owned: []
   string_policy: []
   extraction_prerequisite:
-  - Audit for Megaplan-specific string literals and type references.
+  - Extract PipelineRegistry class, global singleton, and skill.md reading into arnold/pipeline/registry.py.
+  - Leave discovery, trust, manifest, and budget authority behind in a Megaplan bridge adapter.
   first_extraction_unit: arnold/pipeline/registry.py
+  tests_gates: []
+  configurable_seams: []
+
+# ── registry.py neutral symbol rows ──────────────────────────────────────────
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: PipelineRegistry"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral pipeline registry dataclass — name→builder mapping with lazy discovery gating and basic CRUD.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: _GLOBAL_REGISTRY"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral global registry singleton used by register_pipeline/get_pipeline/registered_pipelines.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: register_pipeline"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral public registration function.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: get_pipeline"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral pipeline lookup function.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: registered_pipelines"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral pipeline enumeration function.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: describe_pipeline"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral pipeline description lookup.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: pipeline_metadata"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral pipeline metadata lookup.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: read_skill_md"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral SKILL.md reader — filesystem access only, no Megaplan policy.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: operation_registry_for"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral operation registry lookup — delegates to Arnold's OperationRegistry.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/registry.py
+  target: "arnold neutral symbol: canonical_pipeline_name"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral alias resolution — maps legacy names to canonical without Megaplan policy.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
   tests_gates: []
   configurable_seams: []
 - source: megaplan/_pipeline/resume.py
@@ -6199,6 +6988,96 @@ rows:
   extraction_prerequisite:
   - Audit for Megaplan-specific string literals and type references.
   first_extraction_unit: arnold/pipeline/steps/__init__.py
+  tests_gates: []
+  configurable_seams: []
+
+# ── steps/__init__.py neutral symbol rows ────────────────────────────────────
+- source: megaplan/_pipeline/steps/__init__.py
+  target: "arnold neutral symbol: steps.__init__"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral re-export module — simply imports and re-exports AgentStep, PanelReviewerStep, HumanDecisionStep.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/steps/agent.py
+  target: "arnold neutral symbol: AgentStep"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral single-model markdown step — reads inputs, renders prompt, calls worker, writes versioned output. Generic pipeline composition primitive. Only Megaplan entanglement is typed_ports_on() flag import in run().
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/steps/panel.py
+  target: "arnold neutral symbol: PanelReviewerStep"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral panel reviewer step — one reviewer within a fan-out panel, scoped to a persona. Writes per-reviewer versioned output. Generic pipeline composition primitive. Only Megaplan entanglement is typed_ports_on() flag import in run().
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: megaplan/_pipeline/steps/human_gate.py
+  target: "arnold neutral symbol: HumanDecisionStep"
+  granularity: symbol
+  disposition: arnold-core
+  reason: Neutral human decision gate step — pause-and-resume with awaiting_user.json. Uses pause file and state keys that are generic (plan_dir/awaiting_user.json convention) but _pipeline_name and _pipeline_version fields carry Megaplan branding. Deferred to M7 for full neutralization of resume conventions.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
   tests_gates: []
   configurable_seams: []
 - source: megaplan/_pipeline/steps/agent.py
@@ -6533,5 +7412,250 @@ rows:
   tests_gates:
   - 'none-yet: legacy surface, no extraction planned'
   configurable_seams: []
+
+# ── Arnold pipeline target file rows (M3a T2) ───────────────────────────────
+# These rows document Arnold-native pipeline files created or extracted
+# during M3a.  Sources are the Arnold target paths themselves; files that do
+# not yet exist in git are expected to be created by later M3a tasks.
+- source: arnold/pipeline/__init__.py
+  target: arnold/pipeline/__init__.py
+  granularity: file
+  disposition: arnold-core
+  reason: Arnold pipeline package init — re-exports neutral pipeline primitives.  Already created in M0; no Megaplan phase vocabulary or handler references.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports:
+  - megaplan
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/executor.py
+  target: arnold/pipeline/executor.py
+  granularity: file
+  disposition: arnold-core
+  reason: Arnold pipeline executor — neutral stage-walk skeleton, atomic I/O helpers, and output verification extracted from megaplan/_pipeline/executor.py.  Already created in M0.  Megaplan policy (governor, activation, evaluand, port-binding) remains in the Megaplan adapter.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports:
+  - megaplan.runtime.governor
+  - megaplan._core.activation
+  - megaplan.observability.events
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/state.py
+  target: arnold/pipeline/state.py
+  granularity: file
+  disposition: arnold-core
+  reason: Arnold pipeline state primitives — neutral state management extracted from megaplan/_pipeline state helpers.  Already created in M0.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports:
+  - megaplan
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/types.py
+  target: arnold/pipeline/types.py
+  granularity: file
+  disposition: arnold-core
+  reason: Arnold pipeline types — neutral typed-port carriers (Port, PortRef, RoutingKey, ContentTypeRegistry, ReduceResult, SelectionResult, StateDelta) extracted from megaplan/_pipeline/types.py.  Already created in M0.  Excludes Megaplan policy types (GateRecommendation, OverrideAction, Pipeline.run_phase).
+  blockers: []
+  allowed_imports: []
+  forbidden_imports:
+  - megaplan.cli.feedback
+  - megaplan._core
+  - megaplan.types
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates:
+  - 'static-gate: arnold/pipeline/types.py must not import megaplan._core, megaplan.cli.feedback, or megaplan.types'
+  - 'static-gate: arnold/pipeline/types.py must not contain feedback|planning|confirm_self_review literals'
+  configurable_seams: []
+- source: arnold/pipeline/resources.py
+  target: arnold/pipeline/resources.py
+  granularity: file
+  disposition: arnold-core
+  reason: Neutral resource/prompt-loading interface (PipelineResourceBundle, prompt resolution primitives) extracted from megaplan/_pipeline/prompts.py neutral symbols.  Created as an Arnold-native module with no Megaplan phase vocabulary or handler references.
+  blockers:
+  - File does not exist yet — to be created by T6 (resources.py).
+  allowed_imports: []
+  forbidden_imports:
+  - megaplan.handlers
+  - megaplan._core
+  - megaplan.execute
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite:
+  - Extract PromptRenderer, PromptRegistry, _GLOBAL_REGISTRY, register_prompt, resolve_prompt, register_pipeline_prompt, registered_keys from megaplan/_pipeline/prompts.py.
+  first_extraction_unit: arnold/pipeline/resources.py
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/artifacts.py
+  target: arnold/pipeline/artifacts.py
+  granularity: file
+  disposition: arnold-core
+  reason: Neutral versioned-artifact path helpers extracted from megaplan/_pipeline/artifacts.py — artifact_dir, latest_version, next_version_path, versioned_artifacts, latest_artifact_path.  Entirely free of Megaplan phase vocabulary.
+  blockers:
+  - File does not exist yet — to be created by T7 (artifacts.py).
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite:
+  - Copy neutral artifact helpers from megaplan/_pipeline/artifacts.py; only import is StepContext from types.
+  first_extraction_unit: arnold/pipeline/artifacts.py
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/registry.py
+  target: arnold/pipeline/registry.py
+  granularity: file
+  disposition: arnold-core
+  reason: Neutral pipeline registry CRUD + skill.md reading extracted from megaplan/_pipeline/registry.py.  Core PipelineRegistry dataclass (register, get, names, describe, metadata_for, read_skill_md, operation_registry_for) is policy-free.  Discovery/trust/manifest/budget authority remain in Megaplan adapter.
+  blockers:
+  - File does not exist yet — to be created by T11 (registry core extraction).
+  - Discovery scan roots, env vars, trust classification, manifest parsing, and budget authority must stay in Megaplan bridge adapter.
+  allowed_imports: []
+  forbidden_imports:
+  - megaplan.runtime.budget_authority
+  - megaplan.pipelines
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite:
+  - Extract PipelineRegistry class, global singleton, and skill.md reading into arnold/pipeline/registry.py.
+  first_extraction_unit: arnold/pipeline/registry.py
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/discovery/__init__.py
+  target: arnold/pipeline/discovery/__init__.py
+  granularity: file
+  disposition: arnold-core
+  reason: Neutral discovery package init extracted from megaplan/_pipeline/discovery/__init__.py.  Re-exports discovery primitives without Megaplan-branded scan roots or trust classification.
+  blockers:
+  - File does not exist yet — to be created during registry extraction (T11).
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite:
+  - Audit for Megaplan-specific string literals and type references before extraction.
+  first_extraction_unit: arnold/pipeline/discovery/__init__.py
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/steps/__init__.py
+  target: arnold/pipeline/steps/__init__.py
+  granularity: file
+  disposition: arnold-core
+  reason: Neutral steps package init extracted from megaplan/_pipeline/steps/__init__.py.  Re-exports AgentStep, PanelReviewerStep, HumanDecisionStep as Arnold-native step primitives.
+  blockers:
+  - File does not exist yet — to be created by T19 (steps extraction).
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite:
+  - Audit for Megaplan-specific string literals and type references before extraction.
+  first_extraction_unit: arnold/pipeline/steps/__init__.py
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/steps/agent.py
+  target: arnold/pipeline/steps/agent.py
+  granularity: file
+  disposition: arnold-core
+  reason: Neutral single-model markdown step — reads inputs, renders prompt, calls worker, writes versioned output.  Generic pipeline composition primitive extracted from megaplan/_pipeline/steps/agent.py.  Only known entanglement is typed_ports_on() flag import in run().
+  blockers:
+  - File does not exist yet — to be created by T19 (steps extraction).
+  - typed_ports_on() flag import from megaplan._pipeline.flags creates a minor entanglement resolved in M3a batch 7.
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite:
+  - Extract AgentStep class with its neutral run(), _render_prompt(), and _write_versioned_output() methods.
+  first_extraction_unit: arnold/pipeline/steps/agent.py
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/steps/panel.py
+  target: arnold/pipeline/steps/panel.py
+  granularity: file
+  disposition: arnold-core
+  reason: Neutral panel reviewer step — one reviewer within a fan-out panel, scoped to a persona.  Writes per-reviewer versioned output.  Generic pipeline composition primitive extracted from megaplan/_pipeline/steps/panel.py.
+  blockers:
+  - File does not exist yet — to be created by T19 (steps extraction).
+  - typed_ports_on() flag import from megaplan._pipeline.flags creates a minor entanglement resolved in M3a batch 7.
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite:
+  - Extract PanelReviewerStep class with neutral run() and output-writing logic.
+  first_extraction_unit: arnold/pipeline/steps/panel.py
+  tests_gates: []
+  configurable_seams: []
+- source: arnold/pipeline/steps/human_gate.py
+  target: arnold/pipeline/steps/human_gate.py
+  granularity: file
+  disposition: arnold-core
+  reason: Neutral human decision gate step — pause-and-resume with awaiting_user.json.  Extracted from megaplan/_pipeline/steps/human_gate.py.  Deferred to M7 for full neutralization of resume conventions (_pipeline_name, _pipeline_version carry Megaplan branding).
+  blockers:
+  - File does not exist yet — to be created by T19 (steps extraction).
+  - Pause file path and state keys (_pipeline_name, _pipeline_version) carry Megaplan branding; deferred to M7 for full neutralization.
+  allowed_imports: []
+  forbidden_imports: []
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite:
+  - Extract HumanDecisionStep class; defer resume convention neutralization to M7.
+  first_extraction_unit: arnold/pipeline/steps/human_gate.py
+  tests_gates: []
+  configurable_seams: []
+
 parity_gates: []
+
+# ── M3a Deferral Ledger ─────────────────────────────────────────────────────
+# Targets that cannot be cleanly extracted in M3a because they are
+# entangled with unresolved dependencies. Consult this ledger before
+# any extraction task — do not extract deferred targets.
+deferral_ledger:
+- target: megaplan/_pipeline/executor.py (run_pipeline, _run_parallel_stage, _record_error, _assert_envelope_present, _merge_state_to_disk)
+  reason: Entangled with Megaplan governor charging, activation lifecycle, evaluand transactions, port-binding dispatch, and feature-flag gates. Cannot extract neutral skeleton until policy branches are adapter-isolated.
+  depends_on: T8 (executor split), T9 (parallel split)
+  deferred_until: M3a batch 5 (executor parity tests)
+- target: megaplan/_pipeline/registry.py (_ensure_discovered, scan_python_pipelines, discover_python_pipelines, _reserve_out_of_tree_quota)
+  reason: Discovery uses Megaplan-branded scan roots, env vars, trust classification, manifest parsing, and budget authority. Must remain in Megaplan adapter until discovery is pluggable.
+  depends_on: T11 (registry core extraction)
+  deferred_until: M3a batch 6
+- target: megaplan/_pipeline/subloop.py (SubloopStep.run imports run_pipeline)
+  reason: SubloopStep.run() imports run_pipeline from megaplan._pipeline.executor, uses ctx.plan_dir (Megaplan-specific), and RoutingKey(name, kind) from _forward_m2_m3 (Megaplan Protocol, not Arnold concrete RoutingKey(key)). Also depends on pattern_types.PromoteFn which references Megaplan StepContext/StepResult. T17 audit confirmed: deeply entangled — defer until executor, types, and RoutingKey bridges stabilize.
+  depends_on: T8 (executor split), T4 (type contract change)
+  deferred_until: M3a batch 7 (subloop audit)
+  audit_t17: confirmed_deferred 2026-06-03
+- target: megaplan/_pipeline/pattern_joins.py (typed_ports_on import)
+  reason: majority_vote and weighted_vote import typed_ports_on() from megaplan._pipeline.flags. The flag check gates a minor behavior delta in verdict.recommendation. Can be extracted once flags are relocated or the delta is bridged.
+  depends_on: T4 (type contract change)
+  deferred_until: M3a batch 7
+- target: megaplan/_pipeline/pattern_topology.py (critique_revise_gate_loop, escalate_if, escalate_via_subpipeline, phase_zero_gate, mode_prompts)
+  reason: These functions embed Megaplan gate vocabulary and use Overlay (excluded from Arnold per SD2). Cannot be relocated; must stay in Megaplan adapter.
+  depends_on: T14 (pure contracts/patterns move)
+  deferred_until: M3a batch 7 (topology classification)
+- target: megaplan/_pipeline/builder.py (gate, tiebreaker, human_gate methods)
+  reason: These methods hardcode Megaplan recommendation labels and stage targets. Cannot extract until the builder API accepts plugin-owned policy defaults.
+  depends_on: T18 (builder extraction)
+  deferred_until: M3a batch 7
+- target: megaplan/_pipeline/steps/human_gate.py (awaiting_user.json resume conventions)
+  reason: Pause file path and state keys (_pipeline_name, _pipeline_version) carry Megaplan branding. Deferred to M7 for full neutralization.
+  depends_on: T19 (steps extraction)
+  deferred_until: M7
+
 runtime_settings_gates: []

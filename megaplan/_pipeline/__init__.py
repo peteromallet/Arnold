@@ -3,9 +3,17 @@
 Re-exports the frozen primitive types defined in ``types.py``. The
 executor and demo modules live alongside and are imported separately
 (``megaplan._pipeline.executor`` / ``megaplan._pipeline.demo_judges``).
+
+M3a compatibility bridge: several of the re-exported types (Edge,
+Pipeline, Stage, Step, StepContext, StepResult, PipelineVerdict,
+ParallelStage) now have neutral counterparts in ``arnold.pipeline``.
+The megaplan versions are kept as forwarders so legacy consumers
+continue to compile.  Delete these re-exports in M7 when old paths
+are removed.
 """
 
-from megaplan._pipeline.types import (
+# M3a compatibility bridge; delete in M7
+from megaplan._pipeline.types import (  # noqa: E402
     Edge,
     Overlay,
     ParallelStage,

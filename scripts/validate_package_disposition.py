@@ -40,6 +40,7 @@ TOP_LEVEL_KEYS = {
     "rows",
     "parity_gates",
     "runtime_settings_gates",
+    "deferral_ledger",
 }
 
 ROW_REQUIRED_FIELDS = {
@@ -109,7 +110,11 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 def _tracked_python_files(repo_root: Path) -> list[str]:
     result = subprocess.run(
-        ["git", "ls-files", "--", "megaplan/*.py", "megaplan/**/*.py"],
+        [
+            "git", "ls-files", "--",
+            "megaplan/*.py", "megaplan/**/*.py",
+            "arnold/pipeline/*.py", "arnold/pipeline/**/*.py",
+        ],
         cwd=repo_root,
         check=True,
         capture_output=True,
@@ -305,10 +310,13 @@ def _parse_rows(data: dict[str, Any], tracked_files: list[str], errors: list[str
             seen.add(key)
 
         if granularity in {"file", "symbol"} and source not in tracked_files:
-            errors.append(
-                f"{owner} source {source!r} must be an exact tracked file from "
-                "`git ls-files -- 'megaplan/**/*.py'`"
-            )
+            # Arnold pipeline files may not exist yet (created by later tasks);
+            # only enforce file existence for megaplan sources.
+            if source.startswith("megaplan/"):
+                errors.append(
+                    f"{owner} source {source!r} must be an exact tracked file from "
+                    "`git ls-files -- 'megaplan/**/*.py'`"
+                )
         if granularity == "directory" and source in tracked_files:
             errors.append(
                 f"{owner} source {source!r} is a tracked file; directory rows must point to directories"
@@ -317,13 +325,12 @@ def _parse_rows(data: dict[str, Any], tracked_files: list[str], errors: list[str
             members = _directory_members(source, tracked_files)
             if not members and granularity == "directory":
                 errors.append(
-                    f"{owner} directory source {source!r} does not contain tracked "
-                    "megaplan/**/*.py files"
+                    f"{owner} directory source {source!r} does not contain tracked files"
                 )
             if not members and granularity == "split":
                 errors.append(
                     f"{owner} split source {source!r} must be either a tracked file "
-                    "or a directory containing tracked megaplan/**/*.py files"
+                    "or a directory containing tracked files"
                 )
 
         rows.append(

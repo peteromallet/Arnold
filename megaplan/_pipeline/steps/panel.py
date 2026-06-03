@@ -5,6 +5,9 @@ runs all reviewers in a ThreadPoolExecutor; output ordering follows YAML
 reviewer-list order (handled by the executor, not this step).
 
 Writes ``<plan_dir>/<stage_id>/<reviewer_id>/v<n>.md``.
+
+M3a compatibility bridge; delete in M7.
+Neutral equivalent: :class:`arnold.pipeline.steps.panel.PanelReviewerStep`.
 """
 
 from __future__ import annotations

@@ -17,7 +17,11 @@ from collections.abc import Sequence
 
 from megaplan._pipeline.contracts import BindResult, PortBindError, RepairGradient, bind
 from megaplan._pipeline.flags import typed_ports_on
-from megaplan._pipeline.types import Edge, ParallelStage, Pipeline, Port, PortRef, Stage
+
+# M3a: Edge / Port / PortRef migrated to Arnold neutral shapes.
+from arnold.pipeline import Edge, Port, PortRef
+# M3a: Stage / ParallelStage / Pipeline kept as bridge — uses produces/consumes/binding_map fields.
+from megaplan._pipeline.types import ParallelStage, Pipeline, Stage
 from .steps import (
     BRACKET_RESULT_PORT,
     CANDIDATE_SCORES_PORT,

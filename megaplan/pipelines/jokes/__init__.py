@@ -7,7 +7,7 @@ its own joke content stages and explicit stage wiring.
 
 from __future__ import annotations
 
-from megaplan._pipeline.types import Edge, Pipeline, Stage
+from arnold.pipeline import Edge, Pipeline, Stage
 from megaplan.pipelines.jokes.steps import JokeStep
 
 

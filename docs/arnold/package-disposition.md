@@ -14,29 +14,29 @@ Run `python scripts/render_package_disposition_md.py --write` to regenerate.
 ## Overview
 
 **Schema version:** 1
-**Disposition rows:** 224
+**Disposition rows:** 275
 **Exclusions:** 0
 **Parity gates:** 0
 **Runtime settings gates:** 0
 
 ### Disposition counts
 
-- arnold-core: 53
+- arnold-core: 102
 - arnold-service-interface: 1
 - arnold-adapter: 3
 - arnold-shared-leaf: 25
-- megaplan-plugin: 109
+- megaplan-plugin: 108
 - product-app: 0
 - legacy-hold: 18
 - delete-merge: 0
-- split-required: 15
+- split-required: 18
 
 ### Granularity counts
 
 - directory: 29
-- file: 149
-- symbol: 31
-- split: 15
+- file: 158
+- symbol: 70
+- split: 18
 
 ## Coverage Exclusions
 
@@ -44,7 +44,7 @@ _(none — all tracked files must have disposition rows)_
 
 ## Disposition Rows by Classification
 
-### arnold-core (50 rows)
+### arnold-core (60 rows)
 
 #### megaplan/_pipeline/discovery/trust.py
 **Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/discovery/trust.py
@@ -493,6 +493,18 @@ _(none — all tracked files must have disposition rows)_
 
 ---
 
+#### megaplan/_pipeline/artifacts.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/artifacts.py
+
+**Reason:** Entirely neutral versioned-artifact path helpers — artifact_dir, latest_version, next_version_path, versioned_artifacts, latest_artifact_path. Only import is StepContext from types. No Megaplan phase vocabulary, handler references, or branded paths. Previously misclassified as megaplan-plugin.
+
+**Blockers:**
+- None — the file is already fully neutral.
+
+**First extraction unit:** `arnold/pipeline/artifacts.py`
+
+---
+
 #### megaplan/_pipeline/demos/__init__.py
 **Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/demos/__init__.py
 
@@ -570,22 +582,6 @@ _(none — all tracked files must have disposition rows)_
 - Audit for Megaplan-specific string literals and type references.
 
 **First extraction unit:** `arnold/pipeline/dispatch_subprocess.py`
-
----
-
-#### megaplan/_pipeline/executor.py
-**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/executor.py
-
-**Reason:** Pipeline runtime primitive — generic dispatch, execution, pattern, or validation infrastructure.
-
-**Blockers:**
-- May reference Megaplan phase strings or handler routing.
-- May import from megaplan.types or megaplan.schemas for type contracts.
-
-**Extraction prerequisites:**
-- Audit for Megaplan-specific string literals and type references.
-
-**First extraction unit:** `arnold/pipeline/executor.py`
 
 ---
 
@@ -717,22 +713,6 @@ _(none — all tracked files must have disposition rows)_
 
 ---
 
-#### megaplan/_pipeline/pattern_topology.py
-**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/pattern_topology.py
-
-**Reason:** Pipeline runtime primitive — generic dispatch, execution, pattern, or validation infrastructure.
-
-**Blockers:**
-- May reference Megaplan phase strings or handler routing.
-- May import from megaplan.types or megaplan.schemas for type contracts.
-
-**Extraction prerequisites:**
-- Audit for Megaplan-specific string literals and type references.
-
-**First extraction unit:** `arnold/pipeline/pattern_topology.py`
-
----
-
 #### megaplan/_pipeline/pattern_types.py
 **Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/pattern_types.py
 
@@ -778,22 +758,6 @@ _(none — all tracked files must have disposition rows)_
 - Audit for Megaplan-specific string literals and type references.
 
 **First extraction unit:** `arnold/pipeline/receipt.py`
-
----
-
-#### megaplan/_pipeline/registry.py
-**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/registry.py
-
-**Reason:** Pipeline runtime primitive — generic dispatch, execution, pattern, or validation infrastructure.
-
-**Blockers:**
-- May reference Megaplan phase strings or handler routing.
-- May import from megaplan.types or megaplan.schemas for type contracts.
-
-**Extraction prerequisites:**
-- Audit for Megaplan-specific string literals and type references.
-
-**First extraction unit:** `arnold/pipeline/registry.py`
 
 ---
 
@@ -890,6 +854,196 @@ _(none — all tracked files must have disposition rows)_
 - Audit for Megaplan-specific string literals and type references.
 
 **First extraction unit:** `arnold/pipeline/validator.py`
+
+---
+
+#### arnold/pipeline/__init__.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/__init__.py
+
+**Reason:** Arnold pipeline package init — re-exports neutral pipeline primitives.  Already created in M0; no Megaplan phase vocabulary or handler references.
+
+**Blockers:**
+- _(none)_
+
+
+**Import policy:**
+- Forbidden: `megaplan`
+
+---
+
+#### arnold/pipeline/executor.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/executor.py
+
+**Reason:** Arnold pipeline executor — neutral stage-walk skeleton, atomic I/O helpers, and output verification extracted from megaplan/_pipeline/executor.py.  Already created in M0.  Megaplan policy (governor, activation, evaluand, port-binding) remains in the Megaplan adapter.
+
+**Blockers:**
+- _(none)_
+
+
+**Import policy:**
+- Forbidden: `megaplan.runtime.governor`, `megaplan._core.activation`, `megaplan.observability.events`
+
+---
+
+#### arnold/pipeline/state.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/state.py
+
+**Reason:** Arnold pipeline state primitives — neutral state management extracted from megaplan/_pipeline state helpers.  Already created in M0.
+
+**Blockers:**
+- _(none)_
+
+
+**Import policy:**
+- Forbidden: `megaplan`
+
+---
+
+#### arnold/pipeline/types.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/types.py
+
+**Reason:** Arnold pipeline types — neutral typed-port carriers (Port, PortRef, RoutingKey, ContentTypeRegistry, ReduceResult, SelectionResult, StateDelta) extracted from megaplan/_pipeline/types.py.  Already created in M0.  Excludes Megaplan policy types (GateRecommendation, OverrideAction, Pipeline.run_phase).
+
+**Blockers:**
+- _(none)_
+
+
+**Import policy:**
+- Forbidden: `megaplan.cli.feedback`, `megaplan._core`, `megaplan.types`
+
+**Tests / gates:**
+- static-gate: arnold/pipeline/types.py must not import megaplan._core, megaplan.cli.feedback, or megaplan.types
+- static-gate: arnold/pipeline/types.py must not contain feedback|planning|confirm_self_review literals
+
+---
+
+#### arnold/pipeline/resources.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/resources.py
+
+**Reason:** Neutral resource/prompt-loading interface (PipelineResourceBundle, prompt resolution primitives) extracted from megaplan/_pipeline/prompts.py neutral symbols.  Created as an Arnold-native module with no Megaplan phase vocabulary or handler references.
+
+**Blockers:**
+- File does not exist yet — to be created by T6 (resources.py).
+
+**Import policy:**
+- Forbidden: `megaplan.handlers`, `megaplan._core`, `megaplan.execute`
+
+**Extraction prerequisites:**
+- Extract PromptRenderer, PromptRegistry, _GLOBAL_REGISTRY, register_prompt, resolve_prompt, register_pipeline_prompt, registered_keys from megaplan/_pipeline/prompts.py.
+
+**First extraction unit:** `arnold/pipeline/resources.py`
+
+---
+
+#### arnold/pipeline/artifacts.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/artifacts.py
+
+**Reason:** Neutral versioned-artifact path helpers extracted from megaplan/_pipeline/artifacts.py — artifact_dir, latest_version, next_version_path, versioned_artifacts, latest_artifact_path.  Entirely free of Megaplan phase vocabulary.
+
+**Blockers:**
+- File does not exist yet — to be created by T7 (artifacts.py).
+
+**Extraction prerequisites:**
+- Copy neutral artifact helpers from megaplan/_pipeline/artifacts.py; only import is StepContext from types.
+
+**First extraction unit:** `arnold/pipeline/artifacts.py`
+
+---
+
+#### arnold/pipeline/registry.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/registry.py
+
+**Reason:** Neutral pipeline registry CRUD + skill.md reading extracted from megaplan/_pipeline/registry.py.  Core PipelineRegistry dataclass (register, get, names, describe, metadata_for, read_skill_md, operation_registry_for) is policy-free.  Discovery/trust/manifest/budget authority remain in Megaplan adapter.
+
+**Blockers:**
+- File does not exist yet — to be created by T11 (registry core extraction).
+- Discovery scan roots, env vars, trust classification, manifest parsing, and budget authority must stay in Megaplan bridge adapter.
+
+**Import policy:**
+- Forbidden: `megaplan.runtime.budget_authority`, `megaplan.pipelines`
+
+**Extraction prerequisites:**
+- Extract PipelineRegistry class, global singleton, and skill.md reading into arnold/pipeline/registry.py.
+
+**First extraction unit:** `arnold/pipeline/registry.py`
+
+---
+
+#### arnold/pipeline/discovery/__init__.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/discovery/__init__.py
+
+**Reason:** Neutral discovery package init extracted from megaplan/_pipeline/discovery/__init__.py.  Re-exports discovery primitives without Megaplan-branded scan roots or trust classification.
+
+**Blockers:**
+- File does not exist yet — to be created during registry extraction (T11).
+
+**Extraction prerequisites:**
+- Audit for Megaplan-specific string literals and type references before extraction.
+
+**First extraction unit:** `arnold/pipeline/discovery/__init__.py`
+
+---
+
+#### arnold/pipeline/steps/__init__.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/steps/__init__.py
+
+**Reason:** Neutral steps package init extracted from megaplan/_pipeline/steps/__init__.py.  Re-exports AgentStep, PanelReviewerStep, HumanDecisionStep as Arnold-native step primitives.
+
+**Blockers:**
+- File does not exist yet — to be created by T19 (steps extraction).
+
+**Extraction prerequisites:**
+- Audit for Megaplan-specific string literals and type references before extraction.
+
+**First extraction unit:** `arnold/pipeline/steps/__init__.py`
+
+---
+
+#### arnold/pipeline/steps/agent.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/steps/agent.py
+
+**Reason:** Neutral single-model markdown step — reads inputs, renders prompt, calls worker, writes versioned output.  Generic pipeline composition primitive extracted from megaplan/_pipeline/steps/agent.py.  Only known entanglement is typed_ports_on() flag import in run().
+
+**Blockers:**
+- File does not exist yet — to be created by T19 (steps extraction).
+- typed_ports_on() flag import from megaplan._pipeline.flags creates a minor entanglement resolved in M3a batch 7.
+
+**Extraction prerequisites:**
+- Extract AgentStep class with its neutral run(), _render_prompt(), and _write_versioned_output() methods.
+
+**First extraction unit:** `arnold/pipeline/steps/agent.py`
+
+---
+
+#### arnold/pipeline/steps/panel.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/steps/panel.py
+
+**Reason:** Neutral panel reviewer step — one reviewer within a fan-out panel, scoped to a persona.  Writes per-reviewer versioned output.  Generic pipeline composition primitive extracted from megaplan/_pipeline/steps/panel.py.
+
+**Blockers:**
+- File does not exist yet — to be created by T19 (steps extraction).
+- typed_ports_on() flag import from megaplan._pipeline.flags creates a minor entanglement resolved in M3a batch 7.
+
+**Extraction prerequisites:**
+- Extract PanelReviewerStep class with neutral run() and output-writing logic.
+
+**First extraction unit:** `arnold/pipeline/steps/panel.py`
+
+---
+
+#### arnold/pipeline/steps/human_gate.py
+**Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/steps/human_gate.py
+
+**Reason:** Neutral human decision gate step — pause-and-resume with awaiting_user.json.  Extracted from megaplan/_pipeline/steps/human_gate.py.  Deferred to M7 for full neutralization of resume conventions (_pipeline_name, _pipeline_version carry Megaplan branding).
+
+**Blockers:**
+- File does not exist yet — to be created by T19 (steps extraction).
+- Pause file path and state keys (_pipeline_name, _pipeline_version) carry Megaplan branding; deferred to M7 for full neutralization.
+
+**Extraction prerequisites:**
+- Extract HumanDecisionStep class; defer resume convention neutralization to M7.
+
+**First extraction unit:** `arnold/pipeline/steps/human_gate.py`
 
 ---
 
@@ -1374,7 +1528,7 @@ _(none — all tracked files must have disposition rows)_
 
 ---
 
-### megaplan-plugin (94 rows)
+### megaplan-plugin (93 rows)
 
 #### megaplan/cli/status_view.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/status_view.py
@@ -2436,17 +2590,6 @@ _(none — all tracked files must have disposition rows)_
 
 #### megaplan/_pipeline/_forward_m2_m3.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/_forward_m2_m3.py
-
-**Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
-
-**Blockers:**
-- Carries Megaplan phase vocabulary, handler references, or planning defaults.
-- May reference megaplan.planning, megaplan.handlers, or megaplan.orchestration.
-
----
-
-#### megaplan/_pipeline/artifacts.py
-**Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/artifacts.py
 
 **Reason:** Megaplan-specific pipeline policy — planning stages, handler steps, demos, or Megaplan-branded configuration.
 
@@ -3667,7 +3810,7 @@ _(none — all tracked files must have disposition rows)_
 **Reason:** `auto.py` contains one reusable subprocess/watcher seam, but the driver loop, phase dispatch, override behavior, and terminal-state policy are hardcoded to the Megaplan planning plugin.
 
 **Blockers:**
-- `_run_planning_phase()` resolves `PipelineRegistry().get("planning")` and calls `pipeline.run_phase(...)` directly.
+- `_run_planning_phase()` resolves `PipelineRegistry().get("megaplan")` and calls `pipeline.run_phase(...)` directly.
 - `drive()` imports `AUTOMATION_TERMINAL_STATES`, many `STATE_*` constants, `PlanRepository`, phase-result recovery policy, and emits planning-specific override/help text.
 - Override helpers and command builders hardcode `override force-proceed`, `override abort`, `override add-note`, `feedback workflow`, and `recover-blocked`.
 - Environment/path strings such as `MEGAPLAN_AUTO_HEARTBEAT_SECONDS`, `MEGAPLAN_ENVELOPE_IN`, and `python -m megaplan resume` keep the file anchored to Megaplan runtime conventions.
@@ -3697,7 +3840,7 @@ _(none — all tracked files must have disposition rows)_
 **First extraction unit:** `arnold/runtime/auto_subprocess.py`
 
 **Tests / gates:**
-- static-gate: Arnold-owned auto runtime helpers must not resolve `PipelineRegistry().get("planning")` or import Megaplan `STATE_*` constants
+- static-gate: Arnold-owned auto runtime helpers must not resolve `PipelineRegistry().get("megaplan")` or import Megaplan `STATE_*` constants
 - static-gate: Arnold-owned auto runtime helpers must not synthesize `override` or `feedback workflow` commands
 
 ---
@@ -4155,30 +4298,120 @@ _(none — all tracked files must have disposition rows)_
 - `megaplan/observability/effect_ledger.py` → arnold/observability/effect_ledger.py::Effect
 - `megaplan/observability/effect_ledger.py` → arnold/observability/effect_ledger.py::NONCOMPENSABLE
 
+### megaplan/_pipeline/executor.py
+**Disposition:** `split-required` | **Granularity:** `split` | **Target:** arnold/pipeline/executor.py (neutral core loop + dispatch skeleton) + megaplan/pipelines/megaplan/executor_adapter.py (governor, activation, evaluand, port-binding policy)
+
+**Reason:** The executor skeleton (stage walk, _atomic_write_json, _verify_outputs) is neutral, but the current file is deeply entangled with Megaplan policy — governor charging, activation lifecycle, evaluand transactions, port-binding dispatch, unified-dispatch flag gates, and in-process runtime install — all of which must stay in the Megaplan plugin.
+
+**Blockers:**
+- Governor charge/fold, activation lifecycle, evaluand transaction wrappers, and runtime-governor install are Megaplan policy.
+- Port-binding dispatch (typed_ports_on) and unified-dispatch/evaluand feature-flag gates are entangled in the main loop.
+- Imports megaplan._core.state, megaplan.types, megaplan.runtime.governor, megaplan._core.activation, megaplan.observability.events.
+
+**Extraction prerequisites:**
+- Extract the neutral stage-walk skeleton, atomic I/O helpers, and _verify_outputs into arnold/pipeline/executor.py.
+- Leave governor, activation, evaluand, port-binding, and flag-gated dispatch paths behind in a Megaplan bridge adapter.
+
+**First extraction unit:** `arnold/pipeline/executor.py`
+
+---
+
+**Child symbols** (5):
+
+- `megaplan/_pipeline/executor.py` → arnold neutral symbol: _atomic_write_json
+- `megaplan/_pipeline/executor.py` → arnold neutral symbol: _write_forensic_backup
+- `megaplan/_pipeline/executor.py` → arnold neutral symbol: _verify_outputs
+- `megaplan/_pipeline/executor.py` → arnold neutral symbol: _is_safe_for_parallel
+- `megaplan/_pipeline/executor.py` → arnold neutral symbol: run_pipeline
+
+### megaplan/_pipeline/pattern_topology.py
+**Disposition:** `split-required` | **Granularity:** `split` | **Target:** arnold/pipeline/pattern_topology.py (neutral: panel_parallel, alternating_turns, subpipeline_call, iterate_until) + megaplan/pipelines/megaplan/pattern_topology_adapter.py (critique_revise_gate_loop, escalate_if, escalate_via_subpipeline, phase_zero_gate, mode_prompts)
+
+**Reason:** panel_parallel, alternating_turns, subpipeline_call, and iterate_until are neutral topology builders, but critique_revise_gate_loop, escalate_if, escalate_via_subpipeline, phase_zero_gate, and mode_prompts embed Megaplan gate vocabulary (critique/gate/revise/tiebreaker/escalate/proceed/iterate/plan) and use Overlay (excluded from Arnold per SD2).
+
+**Blockers:**
+- critique_revise_gate_loop hardcodes Megaplan planning stage names and gate recommendation literals.
+- escalate_if/escalate_via_subpipeline use Megaplan escalation vocabulary and restore_and_diverge sentinel.
+- phase_zero_gate defaults on_pass='plan' (Megaplan phase name).
+- mode_prompts produces Overlay instances excluded from Arnold per SD2.
+
+**Extraction prerequisites:**
+- Move neutral functions (panel_parallel, alternating_turns, subpipeline_call, iterate_until) into arnold/pipeline/pattern_topology.py.
+- Leave Megaplan-gate functions and mode_prompts behind in a Megaplan adapter module.
+
+**First extraction unit:** `arnold/pipeline/pattern_topology.py`
+
+---
+
+**Child symbols** (4):
+
+- `megaplan/_pipeline/pattern_topology.py` → arnold neutral symbol: panel_parallel
+- `megaplan/_pipeline/pattern_topology.py` → arnold neutral symbol: alternating_turns
+- `megaplan/_pipeline/pattern_topology.py` → arnold neutral symbol: subpipeline_call
+- `megaplan/_pipeline/pattern_topology.py` → arnold neutral symbol: iterate_until
+
+### megaplan/_pipeline/registry.py
+**Disposition:** `split-required` | **Granularity:** `split` | **Target:** arnold/pipeline/registry.py (PipelineRegistry CRUD + skill.md reading) + megaplan/pipelines/megaplan/registry_adapter.py (discovery, trust, manifest, budget)
+
+**Reason:** The core PipelineRegistry dataclass (register, get, names, describe, metadata_for, read_skill_md, operation_registry_for) is neutral, but the discovery path hardcodes megaplan.pipelines scan roots, MEGAPLAN_M6_MANIFEST_DISCOVERY env vars, trust classification, manifest parsing, and budget authority integration — all Megaplan-branded policy.
+
+**Blockers:**
+- Discovery scan roots and env vars are branded 'megaplan'.
+- Trust-tier classification and manifest parsing are coupled to Megaplan discovery conventions.
+- Budget authority integration imports megaplan.runtime.budget_authority.
+- CANONICAL_BUILTIN_PIPELINE = 'megaplan' and LEGACY_PIPELINE_ALIASES hardcode Megaplan names.
+
+**Extraction prerequisites:**
+- Extract PipelineRegistry class, global singleton, and skill.md reading into arnold/pipeline/registry.py.
+- Leave discovery, trust, manifest, and budget authority behind in a Megaplan bridge adapter.
+
+**First extraction unit:** `arnold/pipeline/registry.py`
+
+---
+
+**Child symbols** (10):
+
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: PipelineRegistry
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: _GLOBAL_REGISTRY
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: register_pipeline
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: get_pipeline
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: registered_pipelines
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: describe_pipeline
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: pipeline_metadata
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: read_skill_md
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: operation_registry_for
+- `megaplan/_pipeline/registry.py` → arnold neutral symbol: canonical_pipeline_name
+
 ## Import / String Policy Summary
 
 ### Forbidden Imports
 
-- `megaplan._core` — forbidden from: `megaplan/_pipeline/types.py`, `megaplan/observability/__init__.py`, `megaplan/observability/composition_obs.py`, `megaplan/observability/evaluand.py`, `megaplan/observability/event_sink.py` (+1 more)
+- `megaplan` — forbidden from: `arnold/pipeline/__init__.py`, `arnold/pipeline/state.py`
+- `megaplan._core` — forbidden from: `arnold/pipeline/resources.py`, `arnold/pipeline/types.py`, `megaplan/_pipeline/types.py`, `megaplan/observability/__init__.py`, `megaplan/observability/composition_obs.py` (+3 more)
+- `megaplan._core.activation` — forbidden from: `arnold/pipeline/executor.py`
 - `megaplan._core.state` — forbidden from: `megaplan/control_interface.py`
 - `megaplan._pipeline` — forbidden from: `megaplan/observability/__init__.py`, `megaplan/observability/composition_obs.py`, `megaplan/observability/effect_ledger.py`, `megaplan/observability/evaluand.py`, `megaplan/observability/event_sink.py` (+2 more)
 - `megaplan._pipeline.types` — forbidden from: `megaplan/control_interface.py`
 - `megaplan.agent` — forbidden from: `megaplan/agent_runtime`
 - `megaplan.auto` — forbidden from: `megaplan/drivers/in_process.py`
 - `megaplan.cli` — forbidden from: `megaplan/auto.py`, `megaplan/cli/arnold.py`, `megaplan/drivers`, `megaplan/runtime/governor.py`, `megaplan/store/__init__.py` (+17 more)
-- `megaplan.cli.feedback` — forbidden from: `megaplan/_pipeline/types.py`
+- `megaplan.cli.feedback` — forbidden from: `arnold/pipeline/types.py`, `megaplan/_pipeline/types.py`
 - `megaplan.control_interface` — forbidden from: `megaplan/observability/__init__.py`, `megaplan/observability/evaluand.py`, `megaplan/observability/event_sink.py`, `megaplan/observability/fold.py`
-- `megaplan.execute` — forbidden from: `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py`, `megaplan/_pipeline/discovery/manifest.py`, `megaplan/_pipeline/discovery/trust.py` (+8 more)
+- `megaplan.execute` — forbidden from: `arnold/pipeline/resources.py`, `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py`, `megaplan/_pipeline/discovery/manifest.py` (+9 more)
 - `megaplan.finalize` — forbidden from: `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py`, `megaplan/_pipeline/discovery/manifest.py`, `megaplan/_pipeline/discovery/trust.py` (+5 more)
-- `megaplan.handlers` — forbidden from: `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py`, `megaplan/_pipeline/discovery/manifest.py`, `megaplan/_pipeline/discovery/trust.py` (+28 more)
+- `megaplan.handlers` — forbidden from: `arnold/pipeline/resources.py`, `megaplan/_core/scheduler`, `megaplan/_pipeline`, `megaplan/_pipeline/contracts.py`, `megaplan/_pipeline/discovery/manifest.py` (+29 more)
+- `megaplan.observability.events` — forbidden from: `arnold/pipeline/executor.py`
 - `megaplan.orchestration` — forbidden from: `megaplan/observability/events.py`
 - `megaplan.orchestration.progress` — forbidden from: `megaplan/_pipeline/types.py`, `megaplan/auto.py`
+- `megaplan.pipelines` — forbidden from: `arnold/pipeline/registry.py`
 - `megaplan.planning` — forbidden from: `megaplan/agent_runtime`, `megaplan/control_interface.py`, `megaplan/observability/__init__.py`, `megaplan/observability/composition_obs.py`, `megaplan/observability/effect_ledger.py` (+4 more)
 - `megaplan.profiles` — forbidden from: `megaplan/drivers/in_process.py`, `megaplan/drivers/subprocess_isolated.py`, `megaplan/runtime/governor.py`, `megaplan/runtime/sandbox.py`
 - `megaplan.prompts` — forbidden from: `megaplan/workers/_impl.py`
+- `megaplan.runtime.budget_authority` — forbidden from: `arnold/pipeline/registry.py`
+- `megaplan.runtime.governor` — forbidden from: `arnold/pipeline/executor.py`
 - `megaplan.schemas` — forbidden from: `megaplan/workers/_impl.py`
 - `megaplan.store` — forbidden from: `megaplan/auto.py`, `megaplan/observability/composition_obs.py`, `megaplan/observability/effect_ledger.py`, `megaplan/observability/evaluand.py`, `megaplan/observability/event_sink.py`
-- `megaplan.types` — forbidden from: `megaplan/_pipeline/types.py`, `megaplan/auto.py`, `megaplan/profiles/__init__.py`, `megaplan/runtime/process.py`, `megaplan/runtime/sandbox.py`
+- `megaplan.types` — forbidden from: `arnold/pipeline/types.py`, `megaplan/_pipeline/types.py`, `megaplan/auto.py`, `megaplan/profiles/__init__.py`, `megaplan/runtime/process.py` (+1 more)
 - `megaplan.workers` — forbidden from: `megaplan/runtime/governor.py`, `megaplan/runtime/process.py`
 
 ### Allowed Import Overrides
@@ -4248,7 +4481,7 @@ _(none defined)_
 
 ## Next-Milestone Recommendations
 
-- **Resolve 15 split-required row(s):** each split parent needs child symbols finalized before extraction can begin.
+- **Resolve 18 split-required row(s):** each split parent needs child symbols finalized before extraction can begin.
 - **Investigate 18 legacy-hold row(s):** these files have unclear ownership and need deeper inspection.
 - **Extract capability seams** (M2a) before relocating plugins (M2b) to `arnold/pipelines/megaplan/`.
 - **Define parity gates:** no behavior-preservation gates have been declared.

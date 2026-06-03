@@ -59,9 +59,11 @@ milestones:
     idea: .megaplan/briefs/arnold-megaplan-cleanup/m3a-neutral-runtime-relocation.md
     branch: epic/arnold-cleanup-m3a-neutral-runtime-relocation
     depends_on: [m2b-dispatch-rewire]
-    profile: solo
+    profile: partnered
+    vendor: codex
     robustness: full
-    notes: "solo/full. Move classified neutral mechanics into arnold.pipeline."
+    depth: high
+    notes: "partnered//high @codex. Move classified neutral mechanics into arnold.pipeline. RE-TIERED from solo (2026-06-03): relocation across package boundaries is an import-topology hazard, not a cheap behavior-preserving move — solo m3a thrashed on a self-inflicted circular import (bridge-everything + eager __init__ re-exports from a DeepSeek planner)."
 
   - label: m3b-decision-routing
     idea: .megaplan/briefs/arnold-megaplan-cleanup/m3b-decision-routing.md
@@ -97,25 +99,31 @@ milestones:
     idea: .megaplan/briefs/arnold-megaplan-cleanup/m4-megaplan-stages-handlers.md
     branch: epic/arnold-cleanup-m4-megaplan-stages-handlers
     depends_on: [m3d-batch-recovery-contracts]
-    profile: solo
+    profile: partnered
+    vendor: codex
     robustness: full
-    notes: "solo/full. Move Megaplan stages and handler placement into the plugin."
+    depth: high
+    notes: "partnered//high @codex. Move Megaplan stages and handler placement into the plugin. RE-TIERED from solo (2026-06-03): same import-topology/relocation hazard as m3a."
 
   - label: m5a-megaplan-prompts-state-profiles-control
     idea: .megaplan/briefs/arnold-megaplan-cleanup/m5a-megaplan-prompts-state-profiles-control.md
     branch: epic/arnold-cleanup-m5a-megaplan-prompts-state-profiles-control
     depends_on: [m4-megaplan-stages-handlers]
-    profile: solo
+    profile: partnered
+    vendor: codex
     robustness: full
-    notes: "solo/full. Move prompts, state, schemas, profiles, and control into the plugin."
+    depth: high
+    notes: "partnered//high @codex. Move prompts, state, schemas, profiles, and control into the plugin. RE-TIERED from solo (2026-06-03): same import-topology/relocation hazard as m3a."
 
   - label: m5b-execute-review-orchestration-policy
     idea: .megaplan/briefs/arnold-megaplan-cleanup/m5b-execute-review-orchestration-policy.md
     branch: epic/arnold-cleanup-m5b-execute-review-orchestration-policy
     depends_on: [m5a-megaplan-prompts-state-profiles-control]
-    profile: solo
+    profile: partnered
+    vendor: codex
     robustness: full
-    notes: "solo/full. Move execute/review/orchestration policy according to M-1 classification."
+    depth: high
+    notes: "partnered//high @codex. Move execute/review/orchestration policy according to M-1 classification. RE-TIERED from solo (2026-06-03): same import-topology/relocation hazard as m3a."
 
   - label: m6-package-cli-rename
     idea: .megaplan/briefs/arnold-megaplan-cleanup/m6-package-cli-rename.md

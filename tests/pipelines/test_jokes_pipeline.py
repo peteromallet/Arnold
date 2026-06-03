@@ -1,12 +1,17 @@
+"""Focused tests for the standalone ``jokes`` pipeline — M3a Arnold migration.
+
+Uses Arnold executor and Arnold types.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
 
+from arnold.pipeline import Pipeline, Stage, StepContext, run_pipeline
+from arnold.runtime.envelope import RuntimeEnvelope
 from megaplan._pipeline import registry
 from megaplan._pipeline.discovery.manifest import Manifest, read_manifest
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.types import Stage, StepContext
 
 
 PIPELINE_INIT = (
@@ -65,11 +70,16 @@ def test_jokes_runs_and_emits_final_artifact(tmp_path) -> None:
     module = importlib.import_module("megaplan.pipelines.jokes")
     pipeline = module.build_pipeline(topic="dependency graphs")
     plan_dir = tmp_path / "jokes"
-    ctx = StepContext(plan_dir=plan_dir, state={}, profile={}, mode="joke")
 
-    result = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
+    envelope = RuntimeEnvelope(artifact_root=str(plan_dir))
+    run_pipeline(pipeline, initial_state={}, envelope=envelope)
 
-    assert result["final_stage"] == "emit"
-    artifact = Path(result["state"]["joke_artifact"])
-    assert artifact.is_file()
-    assert "dependency graphs" in artifact.read_text(encoding="utf-8")
+    # Verify the final emit stage artifact exists on disk.
+    # The emit stage writes to <artifact_root>/emit/v1.md and
+    # records the path in state_patch["joke_artifact"].
+    emit_dir = plan_dir / "emit"
+    assert emit_dir.is_dir()
+    artifacts = sorted(emit_dir.glob("v*.md"))
+    assert len(artifacts) >= 1
+    final_artifact = artifacts[-1]
+    assert "dependency graphs" in final_artifact.read_text(encoding="utf-8")

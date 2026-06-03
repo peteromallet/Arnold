@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from megaplan._pipeline.types import (
+# M3a: all structural types migrated to Arnold neutral shapes.
+from arnold.pipeline import (
     PipelineVerdict,
     Port,
     PortRef,
@@ -25,6 +26,18 @@ WINNER_CONTENT_TYPE = "application/x-select-tournament-winner+json"
 CANDIDATE_SCORES_PORT = Port("candidate_scores", SCORE_CONTENT_TYPE)
 BRACKET_RESULT_PORT = Port("bracket_result", BRACKET_CONTENT_TYPE)
 WINNER_PORT = Port("winner_result", WINNER_CONTENT_TYPE)
+
+
+def _root_dir(ctx: StepContext) -> Path:
+    """Return the pipeline root directory from either Arnold or Megaplan context.
+
+    Arnold StepContext has ``artifact_root``; Megaplan has ``plan_dir``.
+    This bridge helper keeps the select-tournament pipeline compatible with both runtimes.
+    """
+    root = getattr(ctx, 'artifact_root', None)
+    if root is not None:
+        return Path(root)
+    return getattr(ctx, 'plan_dir')  # type: ignore[no-any-return]
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
@@ -59,7 +72,7 @@ class CandidateScoreStep:
             "score": self.score,
         }
         path = _write_json(
-            Path(ctx.plan_dir) / "score_candidates" / f"candidate_{self.seed}.json",
+            _root_dir(ctx) / "score_candidates" / f"candidate_{self.seed}.json",
             payload,
         )
         return StepResult(outputs={"candidate_score": path}, next="done")
@@ -87,7 +100,7 @@ def join_candidate_scores(results: list[StepResult], ctx: StepContext) -> StepRe
         label="candidate_scores",
     )
     path = _write_json(
-        Path(ctx.plan_dir) / "score_candidates" / "v1.json",
+        _root_dir(ctx) / "score_candidates" / "v1.json",
         {
             "candidates": candidates,
             "scores": list(reduce_result.scores),
@@ -158,7 +171,7 @@ class PairwiseBracketStep:
             cleared=True,
         )
         path = _write_json(
-            Path(ctx.plan_dir) / "pairwise_bracket" / "v1.json",
+            _root_dir(ctx) / "pairwise_bracket" / "v1.json",
             {
                 "rounds": rounds,
                 "winner": winner,
@@ -207,7 +220,7 @@ class WinnerStep:
             "score": winner["score"],
             "source_port": BRACKET_RESULT_PORT.name,
         }
-        path = _write_json(Path(ctx.plan_dir) / "winner" / "v1.json", payload)
+        path = _write_json(_root_dir(ctx) / "winner" / "v1.json", payload)
         return StepResult(
             outputs={WINNER_PORT.name: path},
             next="halt",
