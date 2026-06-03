@@ -126,6 +126,7 @@ const PANEL_IDS = Object.freeze({
   queueRegion: "vibecomfy-agent-panel-region-queue",
   auditRegion: "vibecomfy-agent-panel-region-audit",
   debugRegion: "vibecomfy-agent-panel-region-debug",
+  previewToggle: "vibecomfy-agent-preview-toggle",
 });
 
 const ROUTE_ALIASES = Object.freeze({
@@ -470,6 +471,66 @@ function installIntentNodeFallback() {
     return result;
   };
   app.__vibecomfyIntentFallbackInstalled = true;
+}
+
+function installAgentPreviewOverlay() {
+  // Draw the pending-candidate preview overlay onto whatever canvas/context
+  // LiteGraph is currently rendering.
+  const overlayDraw = function (ctx) {
+    const panel = agentPanel;
+    if (!panel || !panel.state.previewEnabled) {
+      return;
+    }
+    if (panel.state.phase !== PANEL_STATE.AWAITING_REVIEW) {
+      return;
+    }
+    if (!panel.state.candidateGraph) {
+      return;
+    }
+    try {
+      const diff = getOrBuildPreviewDiff();
+      if (diff) {
+        drawPreviewOverlay(ctx, diff);
+      }
+    } catch (e) {
+      console.warn("[vibecomfy] drawPreviewOverlay threw:", e);
+    }
+  };
+
+  // This ComfyUI build assigns an INSTANCE-level `app.canvas.onDrawForeground`
+  // (the prototype method is null) AND reassigns it after we patch — on graph
+  // load / canvas recreation — which silently discards a one-shot wrapper. So we
+  // TAG our wrapper and re-install it via a lightweight guard whenever the live
+  // method is no longer ours, chaining to whatever the build last set.
+  const protoFn = window.LiteGraph?.LGraphCanvas?.prototype?.onDrawForeground;
+  const ensurePatched = function () {
+    const canvas = app?.canvas;
+    if (!canvas) {
+      return;
+    }
+    const current = canvas.onDrawForeground;
+    if (current && current.__vibecomfyOverlayWrapper) {
+      return;
+    }
+    const orig = current;
+    const wrapper = function (ctx, ...args) {
+      try {
+        if (orig && orig !== wrapper) {
+          orig.call(this, ctx, ...args);
+        } else if (protoFn) {
+          protoFn.call(this, ctx, ...args);
+        }
+      } catch (e) {
+        console.warn("[vibecomfy] original onDrawForeground threw:", e);
+      }
+      overlayDraw.call(this, ctx);
+    };
+    wrapper.__vibecomfyOverlayWrapper = true;
+    canvas.onDrawForeground = wrapper;
+  };
+  ensurePatched();
+  // Re-assert the wrapper periodically; the build re-creates the canvas method.
+  setInterval(ensurePatched, 1000);
 }
 
 async function checkFrontendVersion() {
@@ -1368,6 +1429,41 @@ function createAgentPanel() {
   footer.appendChild(undoBtn);
   footer.appendChild(closeBtn);
 
+  const previewToggleLabel = el("label", "");
+  Object.assign(previewToggleLabel.style, {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    cursor: "pointer",
+    fontFamily: "monospace",
+    fontSize: "12px",
+    color: "#edf2f7",
+    margin: "0",
+  });
+  const previewToggleInput = el("input");
+  previewToggleInput.type = "checkbox";
+  previewToggleInput.id = PANEL_IDS.previewToggle;
+  previewToggleLabel.appendChild(previewToggleInput);
+  previewToggleLabel.appendChild(document.createTextNode("Preview changes"));
+  footer.appendChild(previewToggleLabel);
+
+  previewToggleInput.addEventListener("change", function () {
+    const panel = agentPanel;
+    if (!panel) {
+      return;
+    }
+    panel.state.previewEnabled = this.checked;
+    if (this.checked) {
+      getOrBuildPreviewDiff();
+    }
+    if (app?.canvas?.setDirty) {
+      app.canvas.setDirty(true, true);
+    }
+    if (app?.canvas?.draw) {
+      app.canvas.draw(true, true);
+    }
+  });
+
   shell.appendChild(header);
   shell.appendChild(metaRow);
   shell.appendChild(body);
@@ -1392,6 +1488,7 @@ function createAgentPanel() {
       reject: rejectBtn,
       undo: undoBtn,
       close: closeBtn,
+      previewToggle: previewToggleInput,
       settingsSave,
       settingsTest,
     },
@@ -1429,6 +1526,7 @@ function createAgentPanel() {
       statusSnapshot: null,
       lastAppliedChanges: null,
       queueGuard: getQueueGuardStateForPanel(),
+      previewEnabled: false,
     },
   };
 }
@@ -1685,6 +1783,346 @@ function getLiveGraphNodes(graph) {
     return graph.nodes;
   }
   return [];
+}
+
+// ── Diff preview data model ───────────────────────────────────────────────
+
+function getUid(node) {
+  return node?.properties?.vibecomfy_uid || null;
+}
+
+function readWidgetValues(node) {
+  if (Array.isArray(node?.widgets_values)) {
+    return node.widgets_values;
+  }
+  if (Array.isArray(node?.widgets)) {
+    return node.widgets.map((w) => (w && typeof w === "object" ? w.value : undefined));
+  }
+  return [];
+}
+
+function clearCandidatePreviewState(panel) {
+  if (!panel) {
+    return;
+  }
+  delete panel.state._previewDiff;
+  delete panel.state._previewDiffGraphHash;
+  try {
+    const graph = getLiveGraph();
+    if (graph) {
+      if (typeof graph.setDirtyCanvas === "function") {
+        graph.setDirtyCanvas(true, true);
+      } else if (app?.canvas?.setDirty) {
+        app.canvas.setDirty(true, true);
+      }
+    }
+    app?.canvas?.draw?.(true, true);
+  } catch (_e) {
+    // Best-effort canvas repaint — diff cache is already cleared.
+  }
+}
+
+function computePreviewDiff(candidateGraph, candidateReport) {
+  try {
+    const panel = agentPanel;
+    const candidateGraphHash = panel?.state?.candidateGraphHash;
+    if (
+      candidateGraphHash
+      && panel.state._previewDiffGraphHash === candidateGraphHash
+      && panel.state._previewDiff
+    ) {
+      return panel.state._previewDiff;
+    }
+
+    const liveNodes = getLiveGraphNodes(getLiveGraph());
+    const candidateNodes = Array.isArray(candidateGraph?.nodes) ? candidateGraph.nodes : [];
+
+    // ── Index by uid ──────────────────────────────────────────────────────
+    const liveByUid = new Map();
+    for (const node of liveNodes) {
+      const uid = getUid(node);
+      if (uid) {
+        liveByUid.set(uid, node);
+      }
+    }
+    const candidateByUid = new Map();
+    for (const node of candidateNodes) {
+      const uid = getUid(node);
+      if (uid) {
+        candidateByUid.set(uid, node);
+      }
+    }
+
+    // ── Edited: nodes present in both whose widget values differ ──────────
+    const edited = [];
+    for (const [uid, liveNode] of liveByUid) {
+      const candidateNode = candidateByUid.get(uid);
+      if (!candidateNode) {
+        continue;
+      }
+      const liveValues = readWidgetValues(liveNode);
+      const candidateValues = readWidgetValues(candidateNode);
+      const maxLen = Math.max(liveValues.length, candidateValues.length);
+      const changedWidgetIndices = [];
+      for (let i = 0; i < maxLen; i += 1) {
+        const a = liveValues[i];
+        const b = candidateValues[i];
+        if (!Object.is(a, b) && JSON.stringify(a) !== JSON.stringify(b)) {
+          changedWidgetIndices.push(i);
+        }
+      }
+      if (changedWidgetIndices.length > 0) {
+        edited.push({
+          uid,
+          changedWidgetIndices,
+        });
+      }
+    }
+
+    // ── Added: candidate-only nodes with unwired required inputs ──────────
+    const added = [];
+    for (const [uid, candidateNode] of candidateByUid) {
+      if (liveByUid.has(uid)) {
+        continue;
+      }
+      const unwiredRequiredInputs = (Array.isArray(candidateNode.inputs) ? candidateNode.inputs : [])
+        .filter((input) => !input?.link && !input?.widget)
+        .map((input) => input?.name || null)
+        .filter(Boolean);
+      added.push({
+        uid,
+        class_type: candidateNode.type || candidateNode.class_type || null,
+        unwiredRequiredInputs,
+      });
+    }
+
+    // ── Removed: live-only nodes (by uid) ─────────────────────────────────
+    const removed = [];
+    for (const [uid, liveNode] of liveByUid) {
+      if (!candidateByUid.has(uid)) {
+        removed.push({
+          uid,
+          class_type: liveNode.type || liveNode.comfyClass || null,
+        });
+      }
+    }
+
+    // ── Removed named: from the backend report ────────────────────────────
+    const removedNamed = (
+      Array.isArray(candidateReport?.change?.content_edits?.removed_named)
+        ? candidateReport.change.content_edits.removed_named
+        : []
+    ).map((item) => ({
+      uid: item?.uid || null,
+      class_type: item?.class_type || null,
+    }));
+
+    // ── Unresolved: report entries we cannot square with either graph ─────
+    const unresolved = [];
+    const reportEdited = Array.isArray(candidateReport?.change?.content_edits?.edited)
+      ? candidateReport.change.content_edits.edited
+      : [];
+    const reportNew = Array.isArray(candidateReport?.change?.content_edits?.new_auto_placed)
+      ? candidateReport.change.content_edits.new_auto_placed
+      : [];
+    const reportRemoved = Array.isArray(candidateReport?.change?.content_edits?.removed)
+      ? candidateReport.change.content_edits.removed
+      : [];
+
+    for (const uid of reportEdited) {
+      if (!liveByUid.has(uid) && !candidateByUid.has(uid)) {
+        unresolved.push({ uid, kind: "edited", reason: "not found in live or candidate graph" });
+      }
+    }
+    for (const uid of reportNew) {
+      if (!candidateByUid.has(uid)) {
+        unresolved.push({ uid, kind: "new_auto_placed", reason: "not found in candidate graph" });
+      }
+    }
+    for (const uid of reportRemoved) {
+      if (!liveByUid.has(uid)) {
+        unresolved.push({ uid, kind: "removed", reason: "not found in live graph" });
+      }
+    }
+
+    if (unresolved.length > 0) {
+      console.warn("[vibecomfy] computePreviewDiff — unresolved report entries:", unresolved);
+    }
+
+    const diff = {
+      edited,
+      added,
+      removed,
+      removed_named: removedNamed,
+      unresolved,
+    };
+
+    // ── Cache on panel state ──────────────────────────────────────────────
+    if (panel && candidateGraphHash) {
+      panel.state._previewDiff = diff;
+      panel.state._previewDiffGraphHash = candidateGraphHash;
+    }
+
+    return diff;
+  } catch (e) {
+    console.warn("[vibecomfy] computePreviewDiff failed, returning empty diff:", e);
+    return {
+      edited: [],
+      added: [],
+      removed: [],
+      removed_named: [],
+      unresolved: [],
+    };
+  }
+}
+
+function getOrBuildPreviewDiff() {
+  const panel = agentPanel;
+  if (!panel) {
+    return null;
+  }
+  const candidateGraph = panel.state.candidateGraph;
+  const candidateReport = panel.state.candidateReport;
+  if (!candidateGraph || !candidateReport) {
+    return null;
+  }
+  const candidateGraphHash = panel.state.candidateGraphHash;
+  if (
+    panel.state._previewDiff &&
+    panel.state._previewDiffGraphHash === candidateGraphHash
+  ) {
+    return panel.state._previewDiff;
+  }
+  return computePreviewDiff(candidateGraph, candidateReport);
+}
+
+function drawPreviewOverlay(ctx, diff) {
+  if (!ctx || !diff) {
+    return;
+  }
+  ctx.save();
+  try {
+    if (ctx.setLineDash) {
+      ctx.setLineDash([]);
+    }
+
+    const editedColor = "#ffc107";
+    const addedColor = "#4caf50";
+    const addedFill = "rgba(76, 175, 80, 0.18)";
+    const removedColor = "#f44336";
+    const lineWidth = 3;
+    const TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
+    const SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
+
+    const drawBadge = function (bx, by, text, color) {
+      ctx.save();
+      if (ctx.setLineDash) {
+        ctx.setLineDash([]);
+      }
+      ctx.font = "bold 12px sans-serif";
+      const padX = 5;
+      const bw = ctx.measureText(text).width + padX * 2;
+      const bh = 18;
+      ctx.fillStyle = color;
+      ctx.fillRect(bx, by - bh, bw, bh);
+      ctx.fillStyle = "#000000";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, bx + padX, by - bh / 2 + 1);
+      ctx.restore();
+    };
+
+    // ── Edited nodes (amber outline) ────────────────────────────────────
+    for (const item of diff.edited || []) {
+      const node = lookupLiveNodeByUid(item.uid);
+      if (!node || !node.pos) {
+        continue;
+      }
+      const x = node.pos[0];
+      const y = node.pos[1];
+      const w = Array.isArray(node.size) ? node.size[0] : 200;
+      const h = Array.isArray(node.size) ? node.size[1] : 100;
+      ctx.setLineDash([]);
+      ctx.strokeStyle = editedColor;
+      ctx.lineWidth = lineWidth;
+      ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+      // Tint the changed widget rows (approximate LiteGraph row geometry:
+      // widgets render below the title and the node's input slots).
+      const inCount = Array.isArray(node.inputs) ? node.inputs.length : 0;
+      const rowsTop = y + TITLE_H + inCount * SLOT_H;
+      ctx.fillStyle = "rgba(255, 193, 7, 0.22)";
+      for (const wi of item.changedWidgetIndices || []) {
+        ctx.fillRect(x, rowsTop + wi * SLOT_H, w, SLOT_H - 2);
+      }
+    }
+
+    // ── Removed nodes (red outline + "− will be removed" badge) ─────────
+    const removedItems = (diff.removed || []).concat(diff.removed_named || []);
+    for (const item of removedItems) {
+      const node = lookupLiveNodeByUid(item.uid);
+      if (!node || !node.pos) {
+        continue;
+      }
+      const x = node.pos[0];
+      const y = node.pos[1];
+      const w = Array.isArray(node.size) ? node.size[0] : 200;
+      const h = Array.isArray(node.size) ? node.size[1] : 100;
+      ctx.setLineDash([]);
+      ctx.strokeStyle = removedColor;
+      ctx.lineWidth = lineWidth;
+      ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+      drawBadge(x - 2, y - 2, "− will be removed", removedColor);
+    }
+
+    // ── Added nodes (translucent green ghost + "+ new" badge; candidate pos) ─
+    const candidateGraph = agentPanel?.state?.candidateGraph;
+    if (candidateGraph && diff.added && diff.added.length > 0) {
+      const addedByUid = new Map(diff.added.map(function (a) { return [a.uid, a]; }));
+      const candidateNodes = Array.isArray(candidateGraph.nodes)
+        ? candidateGraph.nodes
+        : [];
+      for (var i = 0; i < candidateNodes.length; i += 1) {
+        var cn = candidateNodes[i];
+        var uid =
+          cn && cn.properties ? cn.properties.vibecomfy_uid : undefined;
+        if (!uid || !addedByUid.has(uid)) {
+          continue;
+        }
+        var pos = cn.pos;
+        if (!pos || !Array.isArray(pos) || pos.length < 2) {
+          continue;
+        }
+        var cx = pos[0];
+        var cy = pos[1];
+        var cw = Array.isArray(cn.size) ? cn.size[0] : 200;
+        var ch = Array.isArray(cn.size) ? cn.size[1] : 100;
+        ctx.fillStyle = addedFill;
+        ctx.fillRect(cx - 2, cy - 2, cw + 4, ch + 4);
+        ctx.strokeStyle = addedColor;
+        ctx.lineWidth = lineWidth;
+        ctx.setLineDash([6, 3]);
+        ctx.strokeRect(cx - 2, cy - 2, cw + 4, ch + 4);
+        ctx.setLineDash([]);
+        drawBadge(cx - 2, cy - 2, "+ new", addedColor);
+        // Red dot on each unwired required input port of the added node.
+        const addedEntry = addedByUid.get(uid);
+        const unwired = (addedEntry && addedEntry.unwiredRequiredInputs) || [];
+        if (unwired.length > 0) {
+          const cinputs = Array.isArray(cn.inputs) ? cn.inputs : [];
+          ctx.fillStyle = removedColor;
+          for (var si = 0; si < cinputs.length; si += 1) {
+            var inm = cinputs[si] && cinputs[si].name;
+            if (inm && unwired.indexOf(inm) !== -1) {
+              ctx.beginPath();
+              ctx.arc(cx, cy + TITLE_H + (si + 0.5) * SLOT_H, 4, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    ctx.restore();
+  }
 }
 
 function lookupLiveNodeByUid(uid) {
@@ -2123,6 +2561,15 @@ function renderAgentPanel(panel) {
   panel.buttons.settingsSave.disabled = submitting || applying;
   panel.buttons.settingsTest.disabled = submitting || applying;
 
+  const canPreview = reviewing && panel.state.candidateGraph;
+  if (!canPreview) {
+    panel.state.previewEnabled = false;
+  }
+  if (panel.buttons.previewToggle) {
+    panel.buttons.previewToggle.disabled = !canPreview;
+    panel.buttons.previewToggle.checked = panel.state.previewEnabled && canPreview;
+  }
+
   setButtonEmphasis(panel.buttons.submit, canSubmit || submitting, "primary");
   setButtonEmphasis(panel.buttons.apply, reviewing || applying, "primary");
   setButtonEmphasis(panel.buttons.reject, reviewing || applying, "danger");
@@ -2408,6 +2855,15 @@ async function submitAgentEdit(panel) {
       raw_payload: result,
     });
     renderAgentPanel(panel);
+
+    if (panel.state.previewEnabled) {
+      if (app?.canvas?.setDirty) {
+        app.canvas.setDirty(true, true);
+      }
+      if (app?.canvas?.draw) {
+        app.canvas.draw(true, true);
+      }
+    }
   })();
 
   return panel.state.inFlightSubmit;
@@ -2462,6 +2918,7 @@ async function applyAgentCandidate(panel) {
         expected_live_canvas_token: expectedLiveCanvasToken,
       });
       panel.state.debugPayload = panel.state.failure;
+      clearCandidatePreviewState(panel);
       renderAgentPanel(panel);
       return;
     }
@@ -2556,6 +3013,7 @@ async function applyAgentCandidate(panel) {
         accept_response: accepted,
       });
       panel.state.debugPayload = panel.state.failure;
+      clearCandidatePreviewState(panel);
       renderAgentPanel(panel);
       return;
     }
@@ -2614,6 +3072,7 @@ async function applyAgentCandidate(panel) {
     panel.state.phase = PANEL_STATE.IDLE;
     panel.state.baselineTurnId = accepted.baseline_turn_id || panel.state.turnId || panel.state.baselineTurnId;
     panel.state.auditRef = accepted.audit_ref || panel.state.auditRef;
+    clearCandidatePreviewState(panel);
     panel.state.candidateGraph = null;
     panel.state.candidateGraphHash = null;
     panel.state.candidateReport = null;
@@ -2731,6 +3190,7 @@ async function rejectAgentCandidate(panel) {
     raw_payload: rejected,
   });
   panel.state.phase = PANEL_STATE.IDLE;
+  clearCandidatePreviewState(panel);
   panel.state.candidateGraph = null;
   panel.state.candidateGraphHash = null;
   panel.state.candidateReport = null;
@@ -2971,6 +3431,7 @@ app.registerExtension({
   async setup() {
     await checkFrontendVersion();
     installIntentNodeFallback();
+    installAgentPreviewOverlay();
     decorateLiveIntentNodes();
     installQueueGuard();
     const proto = window.LiteGraph?.LGraphCanvas?.prototype;
