@@ -1903,6 +1903,8 @@ def run_shannon_step(
     run_dir = _shannon_run_dir(plan_dir, plan_id=plan_id, step=step)
     claude_config_dir = run_dir / "claude_config"
     claude_config_dir.mkdir(parents=True, exist_ok=True)
+    empty_mcp_config_path = run_dir / "empty_mcp_config.json"
+    empty_mcp_config_path.write_text('{"mcpServers":{}}\n', encoding="utf-8")
 
     _ensure_workspace_trusted(work_dir, claude_config_dir=str(claude_config_dir))
 
@@ -1980,6 +1982,10 @@ def run_shannon_step(
     # The vendored fork's absolute path is required because the drop-root path
     # may shell-join the argv under ``su -c``.
     base_flags: list[str] = ["bun", str(VENDORED_SHANNON_PATH)]
+    # Unattended Megaplan phases must not depend on operator/account MCP health.
+    # Claude Code can surface unauthenticated or broken MCPs as startup banners,
+    # which makes Shannon's interactive readiness gate environment-sensitive.
+    base_flags.extend(["--strict-mcp-config", "--mcp-config", str(empty_mcp_config_path)])
     if model is not None:
         base_flags.extend(["--model", model])
     base_flags.append("--output-format=stream-json")

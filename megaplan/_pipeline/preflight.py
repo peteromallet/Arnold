@@ -46,11 +46,9 @@ def _check_credential(env_var: str) -> bool:
 
 
 # Slots that are opt-in / non-blocking and so must NOT hard-fail preflight.
-# ``feedback`` only runs under --with-feedback and is deliberately pinned to a
-# fixed vendor (claude:low) for cross-run ratings comparability — see
-# ``apply_vendor_rewrite``. Demanding its credential would make every
-# single-vendor profile (all-codex, all-deepseek-*, solo) unrunnable for a
-# user who lacks that one extra key, even though they never invoke feedback.
+# ``feedback`` only runs under --with-feedback. Demanding its credential would
+# make profiles with a legacy cross-vendor feedback slot unrunnable for a user
+# who lacks that one extra key, even though they never invoke feedback.
 # If feedback IS used without the key, it fails at runtime on a throwaway
 # template rather than blocking the whole run.
 _SOFT_SLOTS: frozenset[str] = frozenset({"feedback"})

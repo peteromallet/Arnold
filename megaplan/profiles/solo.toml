@@ -29,6 +29,7 @@
 plan                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+critique_evaluator    = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 revise                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"

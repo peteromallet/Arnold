@@ -669,6 +669,9 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     # instead of the fully buffered single-array --output-format=json.
     assert "--output-format=stream-json" in command
     assert "--output-format=json" not in command
+    assert "--strict-mcp-config" in command
+    mcp_config = Path(command[command.index("--mcp-config") + 1])
+    assert json.loads(mcp_config.read_text(encoding="utf-8")) == {"mcpServers": {}}
     assert "--json-schema" not in command
     assert "--add-dir" not in command
     assert "--permission-mode" in command
@@ -801,6 +804,8 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     assert " -p " not in command[6]
     assert "--input-format=stream-json" in command[6]
     assert "claude -p" not in command[6]
+    assert "--strict-mcp-config" in command[6]
+    assert "--mcp-config" in command[6]
     assert "--bare" in command[6]
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-test"
     assert env["HOME"] == str(tmp_path / "project" / ".megaplan" / "shannon-home")
@@ -1736,6 +1741,16 @@ def test_vendored_shannon_readiness_classifier_handles_blockers() -> None:
       }}
       if (!paneLooksReadyForUserMessage("\\n│ ❯ ")) {{
         throw new Error("expected composer prompt to be ready");
+      }}
+      const claude2160Pane = [
+        "Some startup text",
+        "⚠ 2 setup issues: MCP · /doctor",
+        "",
+        "❯ Try \\"write a test for cli.py\\"",
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · PR #65 · ← for agents",
+      ].join("\\n");
+      if (!paneLooksReadyForUserMessage(claude2160Pane)) {{
+        throw new Error("expected Claude Code v2.1.160 composer prompt to be ready");
       }}
       if (paneLooksReadyForUserMessage("normal output > with more text")) {{
         throw new Error("non-terminal greater-than sign should not be ready");

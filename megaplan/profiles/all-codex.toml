@@ -10,10 +10,8 @@
 # tasks run at `high`. The flat `execute = "codex"` entry (default effort) is
 # the fallback when tier routing is disabled (e.g. --phase-model execute=…).
 #
-# Note: `feedback` is pinned to `claude:low` (a deliberate cross-run
-# comparability choice for the ratings template). It only runs under
-# --with-feedback; a Codex-only user can run everything else without an
-# Anthropic key because preflight treats the opt-in feedback slot as soft.
+# Feedback stays inside Codex too, so a Codex-only chain never needs the
+# Claude/Shannon TUI path.
 [profiles.all-codex]
 vendor_locked = true
 plan = "codex"
@@ -23,7 +21,7 @@ revise = "codex"
 gate = "codex"
 finalize = "codex"
 execute = "codex"
-feedback              = "claude:low"
+feedback              = "codex:low"
 loop_plan = "codex"
 loop_execute = "codex"
 review = "codex"

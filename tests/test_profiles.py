@@ -1096,8 +1096,10 @@ def test_vendor_is_noop_on_profile_without_premium_slots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """all-deepseek-pro has no claude/codex slots — --vendor flag must be a
-    silent no-op (no error, no change to the resolved phase map)."""
+    """all-deepseek-pro has no claude/codex slots except feedback.
+
+    --vendor leaves the normal phase map alone, but moves feedback off Claude.
+    """
     _isolate_user_config(tmp_path, monkeypatch)
 
     baseline = _worker_args(profile="all-deepseek-pro")
@@ -1107,9 +1109,11 @@ def test_vendor_is_noop_on_profile_without_premium_slots(
     flagged.vendor = "codex"
     apply_profile_expansion(flagged, None)
 
-    assert _phase_models_to_map(baseline.phase_model) == _phase_models_to_map(
-        flagged.phase_model
-    )
+    baseline_map = _phase_models_to_map(baseline.phase_model)
+    flagged_map = _phase_models_to_map(flagged.phase_model)
+    assert baseline_map.pop("feedback") == "claude:low"
+    assert flagged_map.pop("feedback") == "codex:low"
+    assert baseline_map == flagged_map
 
 
 def test_vendor_locked_profile_silently_ignores_vendor_flag(
@@ -1255,7 +1259,7 @@ def test_all_codex_resolves_to_codex_without_vendor_flag(
         assert agent == "codex", (
             f"{phase} expected codex but got {resolved[phase]!r}"
         )
-    assert resolved["feedback"] == "claude:low"
+    assert resolved["feedback"] == "codex:low"
 
 
 def test_vendor_codex_without_profile_selects_all_codex(
@@ -1276,6 +1280,56 @@ def test_vendor_codex_without_profile_selects_all_codex(
                   "execute", "loop_plan", "loop_execute", "review",
                   "tiebreaker_researcher", "tiebreaker_challenger"):
         assert resolved[phase].split(":", 1)[0] == "codex"
+
+
+def test_vendor_codex_directed_routes_evaluator_and_feedback_to_codex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="directed", vendor="codex")
+    apply_profile_expansion(args, None)
+
+    resolved = _phase_models_to_map(args.phase_model)
+    assert resolved["feedback"] == "codex:low"
+
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+        evaluator = resolve_agent_mode("critique_evaluator", args)
+    assert evaluator.agent == "codex"
+    assert evaluator.effort is None
+
+
+def test_all_codex_routes_default_evaluator_to_codex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="all-codex")
+    apply_profile_expansion(args, None)
+
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+        evaluator = resolve_agent_mode("critique_evaluator", args)
+    assert evaluator.agent == "codex"
+
+
+def test_vendor_claude_directed_keeps_evaluator_and_feedback_on_claude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="directed", vendor="claude")
+    apply_profile_expansion(args, None)
+
+    resolved = _phase_models_to_map(args.phase_model)
+    assert resolved["feedback"] == "claude:low"
+
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+        evaluator = resolve_agent_mode("critique_evaluator", args)
+    assert evaluator.agent == "claude"
+    assert evaluator.effort is None
 
 
 def test_state_vendor_codex_without_profile_selects_all_codex(
@@ -1574,7 +1628,10 @@ def test_solo_profile_is_noop_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """solo has no premium slots, so --vendor codex must not change anything."""
+    """solo has no premium slots except feedback.
+
+    --vendor leaves the normal phase map alone, but moves feedback off Claude.
+    """
     _isolate_user_config(tmp_path, monkeypatch)
 
     baseline = _worker_args(profile="solo")
@@ -1584,9 +1641,11 @@ def test_solo_profile_is_noop_under_vendor_codex(
     flagged.vendor = "codex"
     apply_profile_expansion(flagged, None)
 
-    assert _phase_models_to_map(baseline.phase_model) == _phase_models_to_map(
-        flagged.phase_model
-    )
+    baseline_map = _phase_models_to_map(baseline.phase_model)
+    flagged_map = _phase_models_to_map(flagged.phase_model)
+    assert baseline_map.pop("feedback") == "claude:low"
+    assert flagged_map.pop("feedback") == "codex:low"
+    assert baseline_map == flagged_map
 
 
 def test_directed_profile_default_resolves_with_claude_plan_only(
@@ -3607,14 +3666,13 @@ def test_all_codex_byte_identical_across_independent_expansions(
     assert args_a.tier_models["execute"][1] == "codex:minimal"
     assert args_a.tier_models["execute"][5] == "codex:high"
 
-    # Verify every non-feedback phase resolves to codex
+    # Verify every phase resolves to codex
     resolved = _phase_models_to_map(args_a.phase_model)
-    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
+    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize", "feedback",
                   "execute", "loop_plan", "loop_execute", "review",
                   "tiebreaker_researcher", "tiebreaker_challenger"):
         agent = resolved[phase].split(":", 1)[0]
         assert agent == "codex", f"{phase} expected codex, got {resolved[phase]!r}"
-    assert resolved["feedback"] == "claude:low"
 
 
 def test_all_codex_no_tier_metadata(

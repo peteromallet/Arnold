@@ -16,6 +16,7 @@ from megaplan.workers import (
     parse_json_file,
     validate_payload,
 )
+from megaplan.workers._impl import CommandResult, run_codex_step
 
 
 def test_parse_claude_envelope_prefers_structured_output() -> None:
@@ -280,6 +281,134 @@ def test_recover_codex_payload_handles_stderr_bleed_in_output_file(tmp_path: Pat
         raw="",
     )
     assert recovered == valid_payload
+
+
+def _valid_revise_payload() -> dict[str, object]:
+    return {
+        "plan": "Use regex clarify\\\\s*\\\\( safely.",
+        "changes_summary": "Escaped regex backslashes.",
+        "flags_addressed": [],
+        "assumptions": [],
+        "success_criteria": [],
+        "questions": [],
+    }
+
+
+def test_codex_parse_failure_invokes_one_repair_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests._workers_helpers import _mock_state
+
+    plan_dir, state = _mock_state(tmp_path)
+    output_path = plan_dir / "revise_output.json"
+    invalid_raw = (
+        '{"plan":"Use regex clarify\\s*\\(","changes_summary":"x",'
+        '"flags_addressed":[],"assumptions":[],"success_criteria":[],"questions":[]}'
+    )
+    valid_payload = _valid_revise_payload()
+    prompts: list[str] = []
+
+    def fake_run_command(command, *, cwd, stdin_text, **_kwargs):
+        prompts.append(stdin_text)
+        target = Path(command[command.index("-o") + 1])
+        target.write_text(
+            invalid_raw if len(prompts) == 1 else json.dumps(valid_payload),
+            encoding="utf-8",
+        )
+        return CommandResult(command=list(command), cwd=Path(cwd), returncode=0, stdout="", stderr="", duration_ms=1)
+
+    monkeypatch.setattr("megaplan.workers._impl.run_command", fake_run_command)
+
+    result = run_codex_step(
+        "revise",
+        state,
+        plan_dir,
+        root=Path(__file__).resolve().parents[1],
+        persistent=False,
+        fresh=True,
+        model="gpt-5.5",
+        output_path=output_path,
+    )
+
+    assert result.payload == valid_payload
+    assert len(prompts) == 2
+    assert "error at line 1 col" in prompts[1]
+    assert "Escape every backslash as `\\\\`" in prompts[1]
+    assert "clarify\\\\s*\\\\(" in prompts[1]
+
+
+def test_codex_repair_retry_is_bounded_to_one_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests._workers_helpers import _mock_state
+
+    plan_dir, state = _mock_state(tmp_path)
+    output_path = plan_dir / "revise_output.json"
+    invalid_raw = (
+        '{"plan":"Use regex clarify\\s*\\(","changes_summary":"x",'
+        '"flags_addressed":[],"assumptions":[],"success_criteria":[],"questions":[]}'
+    )
+    prompts: list[str] = []
+
+    def fake_run_command(command, *, cwd, stdin_text, **_kwargs):
+        prompts.append(stdin_text)
+        target = Path(command[command.index("-o") + 1])
+        target.write_text(invalid_raw, encoding="utf-8")
+        return CommandResult(command=list(command), cwd=Path(cwd), returncode=0, stdout="", stderr="", duration_ms=1)
+
+    monkeypatch.setattr("megaplan.workers._impl.run_command", fake_run_command)
+
+    with pytest.raises(CliError) as exc_info:
+        run_codex_step(
+            "revise",
+            state,
+            plan_dir,
+            root=Path(__file__).resolve().parents[1],
+            persistent=False,
+            fresh=True,
+            model="gpt-5.5",
+            output_path=output_path,
+        )
+
+    assert len(prompts) == 2
+    assert exc_info.value.code == "parse_error"
+    assert exc_info.value.extra["model_output_parse_error"] is True
+
+
+def test_codex_valid_json_does_not_trigger_repair_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests._workers_helpers import _mock_state
+
+    plan_dir, state = _mock_state(tmp_path)
+    output_path = plan_dir / "revise_output.json"
+    valid_payload = _valid_revise_payload()
+    prompts: list[str] = []
+
+    def fake_run_command(command, *, cwd, stdin_text, **_kwargs):
+        prompts.append(stdin_text)
+        target = Path(command[command.index("-o") + 1])
+        target.write_text(json.dumps(valid_payload), encoding="utf-8")
+        return CommandResult(command=list(command), cwd=Path(cwd), returncode=0, stdout="", stderr="", duration_ms=1)
+
+    monkeypatch.setattr("megaplan.workers._impl.run_command", fake_run_command)
+
+    result = run_codex_step(
+        "revise",
+        state,
+        plan_dir,
+        root=Path(__file__).resolve().parents[1],
+        persistent=False,
+        fresh=True,
+        model="gpt-5.5",
+        output_path=output_path,
+    )
+
+    assert result.payload == valid_payload
+    assert len(prompts) == 1
 
 def test_recover_codex_payload_prefers_valid_output_file_over_raw_transcript(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"

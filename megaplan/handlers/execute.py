@@ -290,6 +290,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                         kind=str(d.get("kind", "quality_gate")),
                         message=str(d.get("message", "")),
                         task_id=d.get("task_id"),
+                        blocker_id=d.get("blocker_id"),
+                        phase=d.get("phase"),
                     )
                     for d in dev_raw
                     if isinstance(d, (str, dict))
