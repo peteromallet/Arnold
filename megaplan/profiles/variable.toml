@@ -38,30 +38,30 @@
 #   * `--deepseek-provider direct` — flips hermes:fireworks:… DeepSeek specs
 #     to hermes:deepseek:… (tiers 1-3).
 [profiles.variable]
-plan                  = "claude:low"
+plan                  = "premium:low"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-critique              = "claude:low"
-revise                = "claude:low"
+critique              = "premium:low"
+revise                = "premium:low"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-finalize              = "claude:medium"
+finalize              = "premium:medium"
 execute               = "hermes:deepseek:deepseek-v4-flash"
-feedback              = "claude:low"
-loop_plan             = "claude:low"
+feedback              = "premium:low"
+loop_plan             = "premium:low"
 loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-review                = "claude:low"
-tiebreaker_researcher = "claude:low"
-tiebreaker_challenger = "claude:low"
+review                = "premium:low"
+tiebreaker_researcher = "premium:low"
+tiebreaker_challenger = "premium:low"
 
 [profiles.variable.tier_models.execute]
 1 = "hermes:deepseek:deepseek-v4-flash"
 2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-4 = "claude:low"
-5 = "claude"
+4 = "premium:low"
+5 = "premium"
 
 [profiles.variable.tier_models.critique]
 1 = "hermes:deepseek:deepseek-v4-flash"
 2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-4 = "claude:low"
-5 = "claude"
+4 = "premium:low"
+5 = "premium"

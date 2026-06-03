@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -562,3 +563,102 @@ def test_parse_agent_spec_accepts_default_routing_specs() -> None:
 
     for spec in set(DEFAULT_AGENT_ROUTING.values()):
         parse_agent_spec(spec)
+
+
+@pytest.mark.parametrize(
+    "bad_spec",
+    [
+        "premium:sonnet-4.6",
+        "premium:gpt-5.5",
+        "premium:claude-opus-4-7",
+        "premium:gpt-5.5:high",
+    ],
+)
+def test_parse_agent_spec_rejects_symbolic_premium_model_pins(bad_spec: str) -> None:
+    from megaplan.types import CliError, parse_agent_spec
+
+    with pytest.raises(CliError, match="Invalid premium agent spec"):
+        parse_agent_spec(bad_spec)
+
+
+def test_premium_placeholder_resolves_only_to_concrete_premium_vendors() -> None:
+    from megaplan.types import (
+        AgentSpec,
+        PREMIUM_AGENT,
+        resolve_premium_placeholder_agent,
+        resolve_premium_placeholder_spec,
+    )
+
+    assert resolve_premium_placeholder_agent(PREMIUM_AGENT, "claude") == "claude"
+    assert resolve_premium_placeholder_agent(PREMIUM_AGENT, "codex") == "codex"
+    assert resolve_premium_placeholder_spec(f"{PREMIUM_AGENT}:low", "claude") == AgentSpec("claude", effort="low")
+    assert resolve_premium_placeholder_spec(f"{PREMIUM_AGENT}:low", "codex") == AgentSpec("codex", effort="low")
+
+
+def test_premium_stays_out_of_runnable_agents_and_only_appears_in_source_defaults() -> None:
+    from megaplan.types import DEFAULT_AGENT_ROUTING, KNOWN_AGENTS, PREMIUM_AGENT, parse_agent_spec
+
+    assert PREMIUM_AGENT not in KNOWN_AGENTS
+
+    premium_default_steps = {
+        step
+        for step, spec in DEFAULT_AGENT_ROUTING.items()
+        if parse_agent_spec(spec).agent == PREMIUM_AGENT
+    }
+    assert premium_default_steps == {
+        "plan",
+        "critique",
+        "critique_evaluator",
+        "revise",
+        "gate",
+        "feedback",
+        "finalize",
+        "execute",
+        "loop_plan",
+        "loop_execute",
+        "review",
+        "tiebreaker_researcher",
+        "tiebreaker_challenger",
+    }
+    assert DEFAULT_AGENT_ROUTING["prep"] == "hermes"
+
+
+def test_effective_premium_vendor_prefers_cli_then_loaded_config_then_project_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from megaplan import profiles
+
+    monkeypatch.setattr(profiles, "_resolve_default_vendor", lambda: "claude")
+
+    assert profiles.effective_premium_vendor(
+        argparse.Namespace(vendor="codex"),
+        {"vendor": "claude"},
+    ) == "codex"
+    assert profiles.effective_premium_vendor(
+        argparse.Namespace(vendor=None),
+        {"vendor": "codex"},
+    ) == "codex"
+    assert profiles.effective_premium_vendor(argparse.Namespace(vendor=None), {}) == "claude"
+
+
+@pytest.mark.parametrize(
+    ("args_vendor", "config_vendor", "default_vendor", "expected_message"),
+    [
+        ("bogus", None, "claude", "CLI --vendor"),
+        (None, "bogus", "claude", "loaded config vendor"),
+        (None, None, "bogus", "project default vendor"),
+    ],
+)
+def test_effective_premium_vendor_rejects_unusable_values(
+    monkeypatch: pytest.MonkeyPatch,
+    args_vendor: str | None,
+    config_vendor: str | None,
+    default_vendor: str,
+    expected_message: str,
+) -> None:
+    from megaplan import profiles
+    from megaplan.types import CliError
+
+    monkeypatch.setattr(profiles, "_resolve_default_vendor", lambda: default_vendor)
+
+    config = {} if config_vendor is None else {"vendor": config_vendor}
+    with pytest.raises(CliError, match=expected_message):
+        profiles.effective_premium_vendor(argparse.Namespace(vendor=args_vendor), config)

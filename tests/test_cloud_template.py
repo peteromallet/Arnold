@@ -106,6 +106,10 @@ def test_render_entrypoint_replaces_placeholders_and_reigh_hardcodes(mode: str) 
     assert rendered.count("megaplan config set agents.review claude") == 1
     assert "megaplan config set agents.review codex" not in rendered
     assert "phase_agent." not in rendered
+    # Symbolic premium must never appear in generated agent routing commands.
+    assert not any(" premium" in line for line in routing_lines), (
+        f"symbolic premium leaked into routing commands: {routing_lines}"
+    )
 
     if mode == "auto":
         assert 'if [ ! -f "$IDEA_FILE" ]; then' in rendered
@@ -130,6 +134,46 @@ def test_render_entrypoint_apikey_codex_auth_opt_out_omits_chatgpt_forcing() -> 
     assert 'CODEX_AUTH_METHOD="apikey"' in rendered
     assert 'preferred_auth_method = "chatgpt"' not in rendered
     assert 'forced_login_method = "chatgpt"' not in rendered
+
+
+def test_render_entrypoint_resolves_symbolic_default_routing_to_codex_vendor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "codex")
+    spec = replace(_spec("idle"), agents={})
+
+    rendered = render_entrypoint(spec)
+
+    routing_lines = [
+        line.strip()
+        for line in rendered.splitlines()
+        if "megaplan config set agents." in line
+    ]
+    assert routing_lines
+    assert not any(" premium" in line for line in routing_lines)
+    assert "megaplan config set agents.plan codex" in rendered
+    assert "megaplan config set agents.feedback codex:low" in rendered
+    assert "megaplan config set agents.review codex" in rendered
+
+
+def test_render_entrypoint_resolves_symbolic_default_routing_to_claude_vendor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    spec = replace(_spec("idle"), agents={})
+
+    rendered = render_entrypoint(spec)
+
+    routing_lines = [
+        line.strip()
+        for line in rendered.splitlines()
+        if "megaplan config set agents." in line
+    ]
+    assert routing_lines
+    assert not any(" premium" in line for line in routing_lines)
+    assert "megaplan config set agents.plan claude" in rendered
+    assert "megaplan config set agents.feedback claude:low" in rendered
+    assert "megaplan config set agents.review claude" in rendered
 
 
 def test_render_entrypoint_wires_megaplan_repo_refresh_install() -> None:

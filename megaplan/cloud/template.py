@@ -9,7 +9,13 @@ from pathlib import Path, PurePosixPath
 from string import Template
 
 from megaplan.cloud.spec import CloudSpec, RepoSpec, ToolchainSpec
-from megaplan.types import DEFAULT_AGENT_ROUTING
+from megaplan.profiles import effective_premium_vendor
+from megaplan.types import (
+    DEFAULT_AGENT_ROUTING,
+    format_agent_spec,
+    is_premium_placeholder_spec,
+    resolve_premium_placeholder_spec,
+)
 
 
 PLACEHOLDERS = (
@@ -158,12 +164,20 @@ def _runner_block(spec: CloudSpec) -> str:
 
 def _agent_routing_block(spec: CloudSpec) -> str:
     default_agent = spec.agents.get("default")
+    selected_vendor = (
+        default_agent
+        if default_agent in {"claude", "codex"}
+        else effective_premium_vendor()
+    )
     routing = {
         step: spec.agents.get(step, default_agent or fallback)
         for step, fallback in DEFAULT_AGENT_ROUTING.items()
     }
     return "\n".join(
-        f'megaplan config set agents.{step} {agent} >/dev/null 2>&1 || true'
+        "megaplan config set agents."
+        f"{step} "
+        f"{format_agent_spec(resolve_premium_placeholder_spec(agent, selected_vendor)) if is_premium_placeholder_spec(agent) else agent} "
+        ">/dev/null 2>&1 || true"
         for step, agent in routing.items()
     )
 
