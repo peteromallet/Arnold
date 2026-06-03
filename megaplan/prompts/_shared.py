@@ -6,13 +6,7 @@ import textwrap
 from pathlib import Path
 from typing import Any, Mapping
 
-from megaplan._core import (
-    debt_by_subsystem,
-    escalated_subsystems,
-    json_dump,
-    load_debt_registry,
-    read_json,
-)
+from megaplan._core import json_dump, read_json
 
 
 def _resolve_prompt_root(plan_dir: Path, root: Path | None) -> Path:
@@ -85,104 +79,6 @@ def _gate_audit_or_skipped(plan_dir: Path) -> dict[str, object]:
         "recommendation": "proceed",
         "flags": [],
     }
-
-
-def _grouped_debt_for_prompt(
-    plan_dir: Path, root: Path | None
-) -> dict[str, list[dict[str, object]]]:
-    registry = load_debt_registry(_resolve_prompt_root(plan_dir, root))
-    grouped_entries = debt_by_subsystem(registry)
-    return {
-        subsystem: [
-            {
-                "id": entry["id"],
-                "concern": entry["concern"],
-                "occurrence_count": entry["occurrence_count"],
-                "plan_ids": entry["plan_ids"],
-            }
-            for entry in entries
-        ]
-        for subsystem, entries in sorted(grouped_entries.items())
-    }
-
-
-def _escalated_debt_for_prompt(
-    plan_dir: Path, root: Path | None
-) -> list[dict[str, object]]:
-    registry = load_debt_registry(_resolve_prompt_root(plan_dir, root))
-    return [
-        {
-            "subsystem": subsystem,
-            "total_occurrences": total,
-            "plan_count": len(
-                {plan_id for entry in entries for plan_id in entry["plan_ids"]}
-            ),
-            "entries": [
-                {
-                    "id": entry["id"],
-                    "concern": entry["concern"],
-                    "occurrence_count": entry["occurrence_count"],
-                    "plan_ids": entry["plan_ids"],
-                }
-                for entry in entries
-            ],
-        }
-        for subsystem, total, entries in escalated_subsystems(registry)
-    ]
-
-
-def _debt_watch_lines(plan_dir: Path, root: Path | None) -> list[str]:
-    lines: list[str] = []
-    for subsystem, entries in sorted(_grouped_debt_for_prompt(plan_dir, root).items()):
-        for entry in entries:
-            lines.append(
-                f"[DEBT] {subsystem}: {entry['concern']} "
-                f"(flagged {entry['occurrence_count']} times across {len(entry['plan_ids'])} plans)"
-            )
-    return lines
-
-
-def _planning_debt_block(plan_dir: Path, root: Path | None) -> str:
-    return textwrap.dedent(
-        f"""
-        Known accepted debt grouped by subsystem:
-        {json_dump(_grouped_debt_for_prompt(plan_dir, root)).strip()}
-
-        Escalated debt subsystems:
-        {json_dump(_escalated_debt_for_prompt(plan_dir, root)).strip()}
-
-        Debt guidance:
-        - These are known accepted limitations. Do not re-flag them unless the current plan makes them worse, broadens them, or fails to contain them.
-        - Prefix every new concern with a subsystem tag followed by a colon, for example `Timeout recovery: retry backoff remains brittle`.
-        - When a concern is recurring debt that still needs to be flagged, prefix it with `Recurring debt:` after the subsystem tag, for example `Timeout recovery: Recurring debt: retry backoff remains brittle`.
-        """
-    ).strip()
-
-
-def _gate_debt_block(plan_dir: Path, root: Path | None) -> str:
-    return textwrap.dedent(
-        f"""
-        Known accepted debt grouped by subsystem:
-        {json_dump(_grouped_debt_for_prompt(plan_dir, root)).strip()}
-
-        Escalated debt subsystems:
-        {json_dump(_escalated_debt_for_prompt(plan_dir, root)).strip()}
-
-        Debt guidance:
-        - Treat recurring debt as decision context, not background noise.
-        - If the current unresolved flags overlap an escalated subsystem, prefer recommending holistic redesign over another point fix.
-        """
-    ).strip()
-
-
-def _finalize_debt_block(plan_dir: Path, root: Path | None) -> str:
-    watch_lines = _debt_watch_lines(plan_dir, root)
-    return textwrap.dedent(
-        f"""
-        Debt watch items (do not make these worse):
-        {json_dump(watch_lines).strip()}
-        """
-    ).strip()
 
 
 def _resolve_contract_context(

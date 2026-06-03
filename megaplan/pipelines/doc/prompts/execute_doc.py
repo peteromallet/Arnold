@@ -23,7 +23,6 @@ from megaplan.prompts._projection import (
     project_execute_context,
 )
 from megaplan.prompts._shared import (
-    _debt_watch_lines,
     _gate_summary_or_skipped,
     _render_prep_block,
 )
@@ -291,17 +290,6 @@ def _execute_doc_batch_prompt(
                     prior_batch_deviations = json_dump(deviations).strip()
     approval_note = _execute_approval_note(state)
     prior_doc_block = _prior_doc_context_block(state)
-    debt_watch_items = _debt_watch_lines(plan_dir, root)
-    debt_watch_block = (
-        "\n".join(
-            [
-                "Debt watch items (do not make these worse):",
-                *[f"- {item}" for item in debt_watch_items],
-            ]
-        )
-        if debt_watch_items
-        else "Debt watch items (do not make these worse):\n- None."
-    )
     gate_carry = _gate_summary_or_skipped(plan_dir)
     try:
         latest_plan_text = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
@@ -355,8 +343,6 @@ def _execute_doc_batch_prompt(
         {json_dump(batch_sense_checks).strip()}
 
         {execution_context}
-
-        {debt_watch_block}
 
         {approval_note}
         Robustness level: {configured_robustness(state)}.

@@ -21,14 +21,32 @@ from megaplan.flags import flag_resolution_summary
 from megaplan.audits.iteration import compute_iteration_pressure, render_pressure_table
 from megaplan.types import FlagRegistry, PlanState
 
-from ._shared import _gate_debt_block
-
-
 def _iteration_pressure_block(state: PlanState, plan_dir: Path) -> str:
     entries = compute_iteration_pressure(plan_dir, state)
     if not entries:
         return ""
     return render_pressure_table(entries)
+
+
+def _gate_signals_for_prompt(gate_signals: Mapping[str, Any]) -> dict[str, Any]:
+    projected = dict(gate_signals)
+    signals = gate_signals.get("signals")
+    if isinstance(signals, Mapping):
+        projected_signals = dict(signals)
+        projected_signals.pop("debt_overlaps", None)
+        projected_signals.pop("escalated_debt_subsystems", None)
+        projected["signals"] = projected_signals
+    warnings = gate_signals.get("warnings")
+    if isinstance(warnings, list):
+        projected["warnings"] = [
+            warning
+            for warning in warnings
+            if not (
+                isinstance(warning, str)
+                and warning.startswith("Recurring debt detected in subsystem ")
+            )
+        ]
+    return projected
 
 
 def _gate_prompt(
@@ -65,7 +83,6 @@ def _gate_prompt(
         for flag in unresolved
     ]
     robustness = configured_robustness(state)
-    debt_block = _gate_debt_block(plan_dir, root)
     # Critique check summary — flagged counts only (unflagged findings are in the
     # artifact JSON for audit but not injected into the gate prompt).
     critique_checks_block = ""
@@ -101,7 +118,7 @@ def _gate_prompt(
         {json_dump(latest_meta).strip()}
 
         Gate signals:
-        {json_dump(gate_signals).strip()}
+        {json_dump(_gate_signals_for_prompt(gate_signals)).strip()}
 
         {critique_checks_block}
 
@@ -110,8 +127,6 @@ def _gate_prompt(
 
         Addressed but unverified flags:
         {json_dump(gate_signals.get("signals", {}).get("addressed_flags", [])).strip()}
-
-        {debt_block}
 
         {_iteration_pressure_block(state, plan_dir)}
 

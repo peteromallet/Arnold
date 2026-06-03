@@ -30,7 +30,7 @@ from ._projection import (
     project_execute_context,
     project_rework_context,
 )
-from ._shared import _debt_watch_lines, _gate_summary_or_skipped, _render_prep_block
+from ._shared import _gate_summary_or_skipped, _render_prep_block
 
 _EXECUTE_OUTPUT_SHAPE_EXAMPLE = textwrap.dedent(
     """
@@ -131,7 +131,7 @@ def _execute_review_block(
 
 
 def _execute_nudges(
-    finalize_data: dict[str, Any], plan_dir: Path, root: Path | None
+    finalize_data: dict[str, Any], plan_dir: Path | None = None, root: Path | None = None
 ) -> str:
     nudge_lines: list[str] = []
     sense_checks = finalize_data.get("sense_checks", [])
@@ -147,11 +147,6 @@ def _execute_nudges(
     if watch_items:
         nudge_lines.append("Watch items to keep visible during execution:")
         for item in watch_items:
-            nudge_lines.append(f"- {item}")
-    debt_watch_items = _debt_watch_lines(plan_dir, root)
-    if debt_watch_items:
-        nudge_lines.append("Debt watch items (do not make these worse):")
-        for item in debt_watch_items:
             nudge_lines.append(f"- {item}")
     return "\n".join(nudge_lines)
 
@@ -627,17 +622,6 @@ def _execute_batch_prompt(
         finalize_data, resolutions, batch_task_ids
     )
     approval_note = _execute_approval_note(state)
-    debt_watch_items = _debt_watch_lines(plan_dir, root)
-    debt_watch_block = (
-        "\n".join(
-            [
-                "Debt watch items (do not make these worse):",
-                *[f"- {item}" for item in debt_watch_items],
-            ]
-        )
-        if debt_watch_items
-        else "Debt watch items (do not make these worse):\n- None."
-    )
     gate_carry = _gate_summary_or_skipped(plan_dir)
     try:
         latest_plan_text = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
@@ -699,8 +683,6 @@ def _execute_batch_prompt(
         {rework_targeting_block}
 
         {execution_context}
-
-        {debt_watch_block}
 
         {approval_note}
         Robustness level: {configured_robustness(state)}.

@@ -349,7 +349,7 @@ def test_batch_prompt_preserves_exact_scoping_strings(tmp_path: Path) -> None:
     assert "Completed task context (already satisfied, do not re-execute unless directly required by current edits):" in prompt
     assert "Batch-scoped sense checks:" in prompt
     assert "## Execution context (settled - DO NOT re-litigate)" in prompt
-    assert "Debt watch items (do not make these worse):" in prompt
+    assert "Debt watch items (do not make these worse):" not in prompt
 
     # Task IDs rendered correctly
     assert "T-EXEC" in prompt

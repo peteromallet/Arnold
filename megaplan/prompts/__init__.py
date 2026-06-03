@@ -12,13 +12,7 @@ from megaplan.forms import get_form
 from megaplan.types import CliError, PlanState
 
 from ._shared import (
-    _debt_watch_lines,
-    _escalated_debt_for_prompt,
-    _finalize_debt_block,
-    _gate_debt_block,
-    _grouped_debt_for_prompt,
     _render_contracts_block,
-    _planning_debt_block,
     _render_prep_block,
     _resolve_prompt_root,
 )
@@ -356,8 +350,6 @@ __all__ = [
     "_critique_prompt",
     "_critique_creative_prompt",
     "_critique_joke_prompt",
-    "_debt_watch_lines",
-    "_escalated_debt_for_prompt",
     "_execute_approval_note",
     "_execute_batch_prompt",
     "_execute_creative_batch_prompt",
@@ -370,14 +362,10 @@ __all__ = [
     "_execute_prompt",
     "_execute_rerun_guidance",
     "_execute_review_block",
-    "_finalize_debt_block",
     "_finalize_prompt",
     "_flag_summary",
-    "_gate_debt_block",
     "_gate_prompt",
-    "_grouped_debt_for_prompt",
     "_plan_prompt",
-    "_planning_debt_block",
     "_prep_distill_prompt",
     "_prep_doc_prompt",
     "_prep_joke_prompt",
