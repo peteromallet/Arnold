@@ -1,11 +1,11 @@
-\"\"\"Type aliases used as contracts by the pipeline pattern library.
+"""Type aliases used as contracts by the pipeline pattern library.
 
 :data:`PromoteFn` and :data:`JoinFn` are the two canonical callable
 signatures consumed by :mod:`arnold.pipeline.pattern_topology` and
 :mod:`arnold.pipeline.patterns`.  They are factored into their own
 module so that topology modules can import them without pulling in the
 entire pattern aggregation surface.
-\"\"\"
+"""
 
 from __future__ import annotations
 
@@ -23,4 +23,3 @@ __all__ = [
     "JoinFn",
     "PromoteFn",
 ]
-

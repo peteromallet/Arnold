@@ -17,8 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from megaplan._pipeline.flags import typed_ports_on
-from megaplan._pipeline.types import StepContext
+from arnold.pipeline.flags import typed_ports_on
+from arnold.pipeline.types import StepContext
 
 
 def latest_artifact(stage_dir: Path) -> Path | None:
