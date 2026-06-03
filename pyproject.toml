@@ -38,6 +38,18 @@ png = [
   # PNG/WebP source is requested without Pillow installed.
   "Pillow>=10.0",
 ]
+agent = [
+  # The agent-edit runtime backend (arnold == the `megaplan-harness` package).
+  # OPTIONAL: only the VibeComfy agent-edit panel routing to the local
+  # Arnold/Hermes backend needs it. vibecomfy installs and tests without it; the
+  # runtime is pluggable via VIBECOMFY_ARNOLD_RUNTIME_MODULE and falls back to a
+  # pure-Python path when the package is absent. Mirrors the runpod-lifecycle
+  # git-pin pattern below. Pinned to the latest pushed arnold SHA we validate
+  # against; bump as arnold stabilizes (a real release tag would replace this).
+  # For local co-development of the engine, prefer an editable checkout instead
+  # so unpushed engine fixes are live:  pip install -e ~/Documents/megaplan
+  "megaplan-harness @ git+https://github.com/peteromallet/arnold.git@c3fe84a05b169f08531153a36f368dfa4e7f4ccf",
+]
 runpod-local = [
   "python-dotenv>=1.0",
   "runpod-lifecycle @ git+https://github.com/banodoco/runpod-lifecycle.git@v0.1.1",
