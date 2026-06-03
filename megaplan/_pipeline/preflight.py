@@ -61,6 +61,28 @@ def _resolve_concrete_slot_spec(spec: str, *, vendor: str | None = None) -> str:
     return format_agent_spec(resolve_premium_placeholder_spec(spec, resolved_vendor))
 
 
+def _resolve_preflight_slot_spec(
+    slot_name: str,
+    spec: str,
+    *,
+    vendor: str | None = None,
+) -> str:
+    from megaplan.profiles import (
+        DEFAULT_DEEPSEEK_PROVIDER,
+        apply_available_model_floor,
+        apply_deepseek_provider_rewrite,
+    )
+
+    concrete = _resolve_concrete_slot_spec(spec, vendor=vendor)
+    if slot_name != "finalize":
+        return concrete
+    floored = apply_available_model_floor({"finalize": concrete})
+    return apply_deepseek_provider_rewrite(
+        floored,
+        DEFAULT_DEEPSEEK_PROVIDER,
+    )["finalize"]
+
+
 # Slots that are opt-in / non-blocking and so must NOT hard-fail preflight.
 # ``feedback`` only runs when explicitly requested, so its credential remains
 # soft. If feedback IS used without the key, it fails at runtime on a
@@ -199,7 +221,7 @@ def preflight_check_profile(
         if slot in _SOFT_SLOTS:
             # Opt-in / non-blocking slot — don't gate the whole run on it.
             continue
-        concrete_spec = _resolve_concrete_slot_spec(spec, vendor=vendor)
+        concrete_spec = _resolve_preflight_slot_spec(slot, spec, vendor=vendor)
         required = _required_env_vars_for_slot(concrete_spec, slot)
         for env_var, display_name in required:
             if not _check_credential(env_var):

@@ -118,6 +118,13 @@ def _resolve_tier_spec(
 DEFAULT_TIER_DROP_FLOOR = 3
 
 
+def _max_execute_tier(args: argparse.Namespace) -> int | None:
+    value = getattr(args, "max_execute_tier", None)
+    if isinstance(value, int) and 1 <= value <= 5:
+        return value
+    return None
+
+
 def _resolve_effective_tier_complexity(
     batch_complexity: int,
     tier_drop: int,
@@ -794,6 +801,9 @@ def handle_execute_one_batch(
             tier_drop,
             tier_override_floor=_batch_tier_override_floor(finalize_data, batch_task_ids),
         )
+        max_execute_tier = _max_execute_tier(args)
+        if max_execute_tier is not None:
+            effective_complexity = min(effective_complexity, max_execute_tier)
         tier_complexity = effective_complexity
         tier_spec = tier_map.get(effective_complexity)
         if tier_spec:
@@ -2124,6 +2134,9 @@ def handle_execute_auto_loop(
                 tier_drop,
                 tier_override_floor=_batch_tier_override_floor(finalize_data, batch_task_ids),
             )
+            max_execute_tier = _max_execute_tier(args)
+            if max_execute_tier is not None:
+                effective_complexity = min(effective_complexity, max_execute_tier)
             batch_tier_complexity = effective_complexity
             tier_spec = tier_map.get(effective_complexity)
             if tier_spec:

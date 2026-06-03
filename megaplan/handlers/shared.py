@@ -335,6 +335,7 @@ def _snapshot_cli_provenance(state: PlanState) -> dict[str, Any]:
             "auto_approve",
             "mode",
             "robustness",
+            "max_execute_tier",
             "tier_models",
             "prep_models",
             "prep_model_resolver_trace",

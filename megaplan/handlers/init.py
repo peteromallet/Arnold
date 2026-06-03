@@ -259,6 +259,8 @@ def _build_state_config(
         config["depth"] = args.depth
     if getattr(args, "deepseek_provider", None):
         config["deepseek_provider"] = args.deepseek_provider
+    if getattr(args, "max_execute_tier", None) is not None:
+        config["max_execute_tier"] = args.max_execute_tier
     if getattr(args, "with_prep", False):
         config["with_prep"] = True
     if getattr(args, "with_feedback", False):
@@ -444,6 +446,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["depth"] = args.depth
     if getattr(args, "deepseek_provider", None):
         state["config"]["deepseek_provider"] = args.deepseek_provider
+    if getattr(args, "max_execute_tier", None) is not None:
+        state["config"]["max_execute_tier"] = args.max_execute_tier
     tier_models = getattr(args, "tier_models", None)
     if tier_models:
         state["config"]["tier_models"] = tier_models

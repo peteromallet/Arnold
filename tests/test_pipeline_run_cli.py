@@ -612,6 +612,22 @@ def test_preflight_resolves_symbolic_premium_with_default_vendor(monkeypatch) ->
     ]
 
 
+def test_preflight_finalize_premium_falls_back_with_deepseek_only(monkeypatch) -> None:
+    from megaplan._pipeline import preflight as preflight_module
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
+
+    missing = preflight_module.preflight_check_profile(
+        {"finalize": "premium:low"},
+        profile_name="solo",
+    )
+
+    assert missing == []
+
+
 def test_render_credential_failure_recommends_available_vendor_profile(
     monkeypatch,
 ) -> None:

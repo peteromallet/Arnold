@@ -4460,6 +4460,68 @@ def test_one_batch_tier_drop_routes_lower_tier(
     assert response.get("batch_complexity") == 3
 
 
+def test_one_batch_max_execute_tier_clamps_lookup(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--max-execute-tier 3 routes a complexity-5 batch through tier 3."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    for task in finalize_data["tasks"]:
+        task["complexity"] = 5
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    tier_spec_calls: list[str] = []
+
+    def _tracking_resolve_tier_spec(args, tier_spec):
+        tier_spec_calls.append(tier_spec)
+        return ("resolved-agent", "resolved-mode", "resolved-model")
+
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_resolve_tier_spec",
+        _tracking_resolve_tier_spec,
+    )
+    state = load_state(plan_fixture.plan_dir)
+    tier_map = {
+        1: "tier-1-spec",
+        2: "tier-2-spec",
+        3: "tier-3-spec",
+        4: "tier-4-spec",
+        5: "tier-5-spec",
+    }
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+            max_execute_tier=3,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=tier_map,
+    )
+
+    assert tier_spec_calls == ["tier-3-spec"]
+    assert response.get("tier_model_spec") == "tier-3-spec"
+    assert response.get("batch_complexity") == 3
+
+
 def test_one_batch_tier_selection_missing_complexity_defaults_to_5(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
