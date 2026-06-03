@@ -141,6 +141,52 @@ def _write_finalize_with_actions(
     finalize_path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def _write_minimal_status_plan(root: Path, plan: str, state: str) -> None:
+    plan_dir = root / ".megaplan" / "plans" / plan
+    plan_dir.mkdir(parents=True)
+    payload = {
+        "name": plan,
+        "idea": "test",
+        "current_state": state,
+        "iteration": 1,
+        "created_at": "2026-06-03T00:00:00Z",
+        "config": {"project_dir": str(root)},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {"notes": []},
+        "last_gate": {},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_status_project_dir_resolves_plan_from_target_not_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from megaplan import cli as cli_mod
+
+    engine_root = tmp_path / "engine"
+    target_root = tmp_path / "target"
+    engine_root.mkdir()
+    target_root.mkdir()
+    _write_minimal_status_plan(engine_root, "demo-plan", "planned")
+    _write_minimal_status_plan(target_root, "demo-plan", "executed")
+
+    monkeypatch.chdir(engine_root)
+    monkeypatch.setattr(cli_mod, "_auto_sync_installed_skills", lambda: None)
+
+    code = cli_mod.main(
+        ["status", "--project-dir", str(target_root), "--plan", "demo-plan"]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["plan"] == "demo-plan"
+    assert payload["state"] == "executed"
+
+
 def test_user_action_resolve_valid_write(tmp_path: Path) -> None:
     """End-to-end: write a resolution via the CLI handler, verify persistence."""
     root, plan_dir, state = _setup_resolution_plan_dir(tmp_path)
