@@ -21,6 +21,7 @@ from __future__ import annotations
 import concurrent.futures
 from typing import Any, Callable, Mapping
 
+from arnold.pipeline.routing import RoutingError, resolve_edge
 from arnold.pipeline.state import StateDelta, apply_delta
 from arnold.pipeline.types import (
     ParallelStage,
@@ -137,17 +138,24 @@ def run_pipeline(
             delta = StateDelta(patches=(dict(result.state_patch),))
             state = apply_delta(state, delta)
 
-        next_label = result.next
-        if next_label == "halt":
-            break
-
-        next_name: str | None = None
-        for edge in stage.edges:
-            if edge.label == next_label:
-                next_name = None if edge.target == "halt" else edge.target
+        # ── Route via the shared policy-neutral resolver ──────────────
+        try:
+            edge = resolve_edge(stage, result, result.verdict, stage.edges)
+        except RoutingError:
+            # For simple stages (no declared vocabularies), a missing
+            # normal-label edge terminates gracefully — backward compat
+            # with pre-T4 lenient dispatch.
+            if not stage.decision_vocabulary and not stage.override_vocabulary:
                 break
+            # Stages with declared vocabularies propagate RoutingError
+            # so callers can distinguish invalid signals from normal
+            # dispatch misses.
+            raise
 
-        current_name = next_name
+        if edge is None:
+            break  # explicit halt (result.next == 'halt')
+
+        current_name = None if edge.target == "halt" else edge.target
 
     return envelope
 

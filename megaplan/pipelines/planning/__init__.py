@@ -151,7 +151,7 @@ def build_pipeline(**kwargs) -> Pipeline:  # type: ignore[no-untyped-def]
                    Edge(label="halt", target="halt")),
         ),
         # T11 LOAD-BEARING: TiebreakerStep is a SubloopStep that emits a
-        # PipelineVerdict with a typed recommendation. The three kind='gate' edges
+        # PipelineVerdict with a typed recommendation. The three kind='decision' edges
         # below replace the legacy label-only edges; the legacy 'escalate
         # folds into the finalize branch' semantics are preserved via
         # escalate→finalize (anti-scope: no new pipeline branches this
@@ -159,9 +159,9 @@ def build_pipeline(**kwargs) -> Pipeline:  # type: ignore[no-untyped-def]
         "tiebreaker": Stage(
             name="tiebreaker", step=TiebreakerStep(),
             edges=(
-                Edge(label="", target="critique", kind="gate", recommendation="iterate"),
-                Edge(label="", target="finalize", kind="gate", recommendation="proceed"),
-                Edge(label="", target="finalize", kind="gate", recommendation="escalate"),
+                Edge(label="iterate", target="critique", kind="decision"),
+                Edge(label="proceed", target="finalize", kind="decision"),
+                Edge(label="escalate", target="finalize", kind="decision"),
             ),
         ),
     }

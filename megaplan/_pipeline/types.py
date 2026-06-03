@@ -38,18 +38,17 @@ Contract notes (load-bearing for executor authors and Step authors):
     revision note lives in ``.megaplan/briefs/megaplan-decomposition.md`` under the
     ``## Revision notes`` heading (added in Sprint 1 T5).
 
-(e) Typed-gate dispatch (Sprint 4 Chunk A): ``PipelineVerdict.recommendation`` and
-    ``Edge.kind`` together replace the legacy ``"gate_<condition>:<next>"``
-    label-string encoding for gate transitions. When a Step returns a
-    ``PipelineVerdict`` whose ``recommendation`` is set (one of the
-    ``GateRecommendation`` literals), the executor matches outgoing edges
-    by ``(kind == "gate" and recommendation == verdict.recommendation)``
-    in preference to label-string matching. ``kind == "normal"`` edges
-    continue to dispatch on ``Edge.label == result.next``. ``kind ==
-    "override"`` is reserved for Chunk D — the executor MUST NOT branch on
-    it in Chunk A. ``PipelineVerdict.override`` is added now (defaulted, additive)
-    so that Chunk D can wire override edges without re-freezing ``PipelineVerdict``;
-    it is not consumed by the Chunk-A executor.
+(e) Decision/override dispatch (M3b): ``PipelineVerdict.recommendation`` is a
+    plain ``str | None`` (no longer a typed gate recommendation literal).
+    The shared Arnold routing resolver (:func:`arnold.pipeline.routing.resolve_edge`)
+    dispatches edges by ``kind`` and ``label``: ``kind='decision'`` +
+    ``label=<key>`` for recommendations, ``kind='override'`` +
+    ``label='override <action>'`` for overrides, and ``kind='normal'`` +
+    ``label==result.next`` for normal labels. The ``PipelineVerdict.override``
+    field is also ``str | None``, consumed by the Arnold resolver's override
+    dispatch tier. Decision/override vocabularies live on ``Stage`` and
+    ``ParallelStage`` as ``decision_vocabulary`` / ``override_vocabulary``
+    frozensets (M3b T2).
 """
 
 from __future__ import annotations
@@ -78,26 +77,27 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only aliases
 
 NextEdge = str
 
-GateRecommendation = Literal["proceed", "iterate", "tiebreaker", "escalate"]
-OverrideAction = Literal["force_proceed", "abort", "replan", "add_note"]
-EdgeKind = Literal["normal", "gate", "override"]
+# M3b: GateRecommendation and OverrideAction typed Literals are removed.
+# recommendations and overrides are now plain str | None on PipelineVerdict.
+# Edge dispatch uses kind='decision' (was kind='gate') with label=<key>.
+EdgeKind = Literal["normal", "decision", "override"]
 
 
 @dataclass(frozen=True)
 class Edge:
     """A labelled transition from one stage to another.
 
-    Dispatch depends on ``kind``:
+    Dispatch depends on ``kind`` (M3b: ``kind='gate'`` is renamed to
+    ``kind='decision'``; the shared Arnold routing resolver dispatches
+    by ``kind`` + ``label``):
 
     * ``kind == "normal"`` (default): the executor matches when
-      ``Edge.label == StepResult.next``. ``label`` is the sole match key.
-    * ``kind == "gate"``: the executor matches when
-      ``Edge.recommendation == StepResult.verdict.recommendation``.
-      ``label`` is NOT consulted for dispatch and is held only for
-      debug-readable rendering (planning emits the recommendation name as
-      the label, e.g. ``"iterate"``).
-    * ``kind == "override"``: reserved for Chunk D; not dispatched by the
-      Chunk-A executor.
+      ``Edge.label == StepResult.next``.
+    * ``kind == "decision"``: the executor matches when
+      ``Edge.label == StepResult.verdict.recommendation``.
+    * ``kind == "override"``: the executor matches when
+      ``Edge.label == "override <action>"`` and
+      ``StepResult.verdict.override == "<action>"``.
 
     ``target`` is the name of the next stage in ``Pipeline.stages``. The
     reserved target ``'halt'`` terminates the pipeline.
@@ -106,7 +106,7 @@ class Edge:
     label: str
     target: str
     kind: EdgeKind = "normal"
-    recommendation: GateRecommendation | None = None
+    recommendation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,21 +118,20 @@ class PipelineVerdict:
     Mapping for arbitrary structured detail; see the immutability note in
     the module docstring.
 
-    ``recommendation`` is the typed gate signal consumed by the executor's
-    ``kind == "gate"`` edge dispatch (Sprint 4 Chunk A). When set, the
-    executor matches the enclosing stage's gate edges by
-    ``Edge.recommendation == verdict.recommendation`` in preference to the
-    legacy ``Edge.label == result.next`` path. ``override`` is added now
-    for forward compatibility with Chunk D's override-edge dispatch; the
-    Chunk-A executor does not consume it.
+    ``recommendation`` is a freeform string consumed by the Arnold routing
+    resolver's ``kind='decision'`` edge dispatch (M3b). When set, the
+    resolver matches the enclosing stage's decision edges by
+    ``Edge.label == verdict.recommendation``. ``override`` is consumed
+    by the resolver's ``kind='override'`` edge dispatch
+    (``Edge.label == f"override {verdict.override}"``).
     """
 
     score: float
     flags: tuple[str, ...] = ()
     notes: str = ""
     payload: Mapping[str, Any] = field(default_factory=dict)
-    recommendation: GateRecommendation | None = None
-    override: OverrideAction | None = None
+    recommendation: str | None = None
+    override: str | None = None
 
 
 @dataclass(frozen=True)
@@ -232,6 +231,11 @@ class Stage:
     Step's typed-port declarations. When empty, the binder falls back to
     the Step's own ``produces`` / ``consumes`` tuples. Read by the binder
     only when :func:`megaplan._pipeline.flags.typed_ports_on` is true.
+
+    ``decision_vocabulary`` / ``override_vocabulary`` (M3b T2) declare
+    the allowed decision keys and override actions for this stage.
+    When non-empty, the Arnold routing resolver validates incoming
+    signals against these sets.
     """
 
     name: str
@@ -240,6 +244,8 @@ class Stage:
     produces: tuple["Port", ...] = field(default_factory=tuple)
     consumes: tuple["PortRef", ...] = field(default_factory=tuple)
     loop_condition: Callable[[Any], bool] | None = None
+    decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
+    override_vocabulary: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -271,6 +277,8 @@ class ParallelStage:
     max_workers: int | None = None
     produces: tuple["Port", ...] = field(default_factory=tuple)
     consumes: tuple["PortRef", ...] = field(default_factory=tuple)
+    decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
+    override_vocabulary: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)

@@ -39,7 +39,7 @@ class _StubGateStep:
     """Lightweight Step double used as the gate's underlying Step.
 
     The builder's ``.gate`` method takes ``step=`` directly and wires
-    the four ``kind='gate'`` recommendation edges itself, so the Step
+    the four ``kind='decision'`` edges itself, so the Step
     implementation only needs to satisfy the Protocol shape.
     """
 
@@ -94,10 +94,10 @@ class TestBuilderEquivalence:
             name="gate",
             step=gate_step,
             edges=(
-                Edge(label="iterate", target="plan", kind="gate", recommendation="iterate"),
-                Edge(label="proceed", target="finalize", kind="gate", recommendation="proceed"),
-                Edge(label="tiebreaker", target="tiebreaker", kind="gate", recommendation="tiebreaker"),
-                Edge(label="escalate", target="halt", kind="gate", recommendation="escalate"),
+                Edge(label="proceed", target="finalize", kind="decision"),
+                Edge(label="iterate", target="plan", kind="decision"),
+                Edge(label="tiebreaker", target="tiebreaker", kind="decision"),
+                Edge(label="escalate", target="halt", kind="decision"),
             ),
         )
         expected = Pipeline(

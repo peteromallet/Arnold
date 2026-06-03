@@ -14,11 +14,14 @@ edges live on a new ``Stage.override_edges`` field that defaults to
 
 from __future__ import annotations
 
-from megaplan._pipeline.types import Edge, OverrideAction
+from megaplan._pipeline.types import Edge
 
 
-def override_edge(action: OverrideAction, target: str) -> Edge:
-    """Build an :class:`Edge` that matches a specific override action."""
+def override_edge(action: str, target: str) -> Edge:
+    """Build an :class:`Edge` that matches a specific override action.
+
+    M3b: *action* is a plain ``str`` (was a typed override action literal).
+    """
 
     return Edge(
         label=f"override {action}",
@@ -30,13 +33,15 @@ def override_edge(action: OverrideAction, target: str) -> Edge:
 
 def find_override_edge(
     edges: "tuple[Edge, ...]",
-    action: OverrideAction | None,
+    action: str | None,
 ) -> Edge | None:
     """Find the override edge matching the action, or None.
 
     The match is on ``edge.kind == "override"`` AND
     ``edge.label == f"override {action}"`` to keep the label
     human-readable.
+
+    M3b: *action* is a plain ``str | None`` (was a typed override action literal).
     """
 
     if action is None:

@@ -25,7 +25,6 @@ from megaplan._pipeline.patterns import (
 )
 from megaplan._pipeline.subloop import SubloopStep
 from megaplan._pipeline.types import (
-    GateRecommendation,
     ReduceResult,
     Stage,
     StepContext,
@@ -78,7 +77,7 @@ class _ReviewerStep:
     prompt_key: str | None = None
     slot: str | None = None
     reviewer_id: str = ""
-    recommendation: GateRecommendation = "proceed"
+    recommendation: str = "proceed"
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(
@@ -105,7 +104,7 @@ class _AggregateStep:
     kind: str = "judge"
     prompt_key: str | None = None
     slot: str | None = None
-    recs_per_call: list[list[GateRecommendation]] = field(default_factory=list)
+    recs_per_call: list[list[str]] = field(default_factory=list)
     call_count: int = 0
 
     def run(self, ctx: StepContext) -> StepResult:
@@ -115,7 +114,7 @@ class _AggregateStep:
         # Aggregate verdict's recommendation is whichever is most-common
         # at the per-reviewer level (any tie-break is fine here — the
         # primitive consults the ratio, not the aggregate label).
-        top: GateRecommendation = recs[0] if recs else "proceed"
+        top: str = recs[0] if recs else "proceed"
         return StepResult(
             verdict=PipelineVerdict(
                 score=1.0,

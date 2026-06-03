@@ -33,8 +33,6 @@ from megaplan._pipeline import judge_manifest, judge_manifest_discovery
 from megaplan._pipeline.types import (
     CONTENT_TYPES,
     EdgeKind,
-    GateRecommendation,
-    OverrideAction,
     Port,
     PortRef,
     RoutingKey,
@@ -680,16 +678,14 @@ def render_reference() -> str:
                 ("vocabulary", "value", "source"),
                 [
                     *_literal_table("EdgeKind", _literal_values(EdgeKind), _source_path(Port)),
-                    *_literal_table(
-                        "GateRecommendation",
-                        _literal_values(GateRecommendation),
-                        _source_path(Port),
-                    ),
-                    *_literal_table(
-                        "OverrideAction",
-                        _literal_values(OverrideAction),
-                        _source_path(Port),
-                    ),
+                    # M3b: GateRecommendation and OverrideAction typed literals
+                    # are removed. Decision and override routing uses plain
+                    # str vocabularies declared on Stage.decision_vocabulary
+                    # and Stage.override_vocabulary (frozenset[str]).
+                    # Planning decision keys: proceed, iterate, tiebreaker, escalate.
+                    # Planning override keys: force_proceed (CLI: force-proceed).
+                    ("Decision vocabulary", "frozenset[str] (per-stage)", _source_path(Port)),
+                    ("Override vocabulary", "frozenset[str] (per-stage)", _source_path(Port)),
                 ],
             ),
             "",

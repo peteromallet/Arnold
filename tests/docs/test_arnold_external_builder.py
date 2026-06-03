@@ -33,6 +33,8 @@ PYTHONPATH_FOR_SUBPROCESS = os.pathsep.join(
     if path
 )
 FORBIDDEN_BUILDER_VOCABULARY = re.compile(
+    # M3b: GateRecommendation typed literal removed; check for the name
+    # string and decision vocabulary terms still forbidden in builders.
     r"GateRecommendation|STATE_|proceed|iterate|tiebreaker|escalate"
 )
 

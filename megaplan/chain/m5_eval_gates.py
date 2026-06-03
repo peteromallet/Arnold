@@ -390,8 +390,9 @@ def check_calibration_source_purity(
     2. **No STATE_\\* imports or usages** — any import of a ``STATE_*``
        constant from ``megaplan.types`` or bare ``STATE_*`` reference.
     3. **No GateRecommendation references** — any import, type annotation,
-       or bare name ``GateRecommendation`` detected via AST (does NOT
-       require the symbol to be importable).
+       or bare name ``GateRecommendation`` detected via AST (the symbol
+       is no longer importable as a typed literal; the gate uses pure
+       AST string matching).
 
     The check is purely AST-based for (2) and (3) — it never imports the
     symbols it is checking for.

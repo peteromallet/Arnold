@@ -39,19 +39,16 @@ Contract notes:
     stage's artifact directory (or anywhere else under ``ctx.plan_dir``).
     The executor verifies existence only, not directory layout.
 
-(f) PipelineVerdict-first edge dispatch on ``kind="gate"`` edges: when a Step
-    returns a :class:`StepResult` whose ``verdict.recommendation`` is
-    set, the executor first searches ``node.edges`` for the edge whose
-    ``kind == "gate"`` and ``recommendation == verdict.recommendation``.
-    On miss (or when no recommendation is set), it falls back to the
-    legacy ``kind == "normal"`` + ``label == result.next`` match. If
-    neither path finds an edge, the executor raises ``LookupError``
-    naming both the ``result.next`` label and the ``verdict.recommendation``
-    so debugging starts from both fields. ``kind == "override"`` edges
-    are reserved for Chunk D and are NOT consumed by the Chunk-A
-    dispatcher — any such edges sit inert in ``node.edges`` until that
-    branch lands. The ``result.next == "halt"`` short-circuit above the
-    dispatch block is preserved unchanged.
+(f) Arnold-resolved edge dispatch (M3b): the executor delegates to
+    :func:`arnold.pipeline.routing.resolve_edge` for override, decision,
+    and normal edge dispatch. The Megaplan executor retains its own
+    lifecycle (loop_condition, governor, state merge, policy stall,
+    and escalate-policy fallback) while using the shared Arnold resolver
+    for edge matching. ``kind='decision'`` edges (formerly ``kind='gate'``)
+    match via ``label == verdict.recommendation``; ``kind='override'``
+    edges match via ``label == 'override <action>'``. The escalate-policy
+    fallback is applied when the resolver raises ``RoutingError`` for an
+    ``escalate`` decision with no matching edge.
 """
 
 from __future__ import annotations
@@ -266,9 +263,10 @@ def run_pipeline(
     pre-merge bare path. When a :class:`RuntimePolicy` is supplied (previously
     only reachable via :func:`run_pipeline_with_policy`), per-iteration policy
     guards engage: ``max_iterations`` cap, stall observation, cost-cap abort,
-    and escalate-policy fallback. ``find_override_edge`` dispatch runs
-    unconditionally for both paths — the policy path inherits the override
-    edge ladder from the bare path so verdict.override is honored consistently.
+    and escalate-policy fallback. Edge dispatch is delegated to the shared
+    Arnold resolver (:func:`arnold.pipeline.routing.resolve_edge`) for both
+    paths — the policy path inherits the override edge ladder from the bare
+    path so verdict.override is honored consistently.
     """
 
     artifact_root = Path(artifact_root)
@@ -500,30 +498,26 @@ def run_pipeline(
             if cond(ls):
                 return {"state": state, "final_stage": node.name, "halt_reason": "loop_condition", "envelope": envelope}
 
-        # PipelineVerdict-first edge dispatch:
-        #  - If verdict.override is set (Chunk D), match a kind="override" edge.
-        #  - Else if verdict.recommendation is set (Chunk A), match a
-        #    kind="gate" edge by recommendation.
-        #  - Otherwise (or on miss) fall back to kind="normal" +
-        #    label == result.next dispatch.
-        from megaplan._pipeline.override import find_override_edge
+        # M3b: delegate edge dispatch to the shared Arnold routing resolver.
+        # The resolver handles halt (returns None for result.next == 'halt'),
+        # override (kind='override' + label='override <action>'), decision
+        # (kind='decision' + label=<key>), and normal label match.
+        from arnold.pipeline.routing import resolve_edge, RoutingError
 
         edge = None
-        rec = None
-        if result.verdict is not None and result.verdict.override is not None:
-            edge = find_override_edge(node.edges, result.verdict.override)
-        if edge is None and result.verdict is not None and result.verdict.recommendation is not None:
-            rec = result.verdict.recommendation
-            edge = next(
-                (
-                    e
-                    for e in node.edges
-                    if e.kind == "gate" and e.recommendation == rec
-                ),
-                None,
+        try:
+            edge = resolve_edge(
+                stage=node,
+                result=result,
+                verdict=result.verdict,
+                edges=node.edges,
             )
-            # Escalate-policy resolution (policy path only).
-            if policy is not None and rec == "escalate" and edge is None:
+        except RoutingError:
+            # Megaplan-specific escalate-policy fallback.
+            # When the resolver finds no matching edge for an 'escalate'
+            # decision, the policy may force-proceed instead.
+            rec = result.verdict.recommendation if result.verdict else None
+            if policy is not None and rec == "escalate":
                 _assert_envelope_present(envelope, "escalate_path")
                 resolution = policy.escalate.resolve(node.name)
                 if resolution == "force_proceed":
@@ -531,24 +525,16 @@ def run_pipeline(
                         (
                             e
                             for e in node.edges
-                            if e.kind == "gate" and e.recommendation == "proceed"
+                            if e.kind == "decision" and e.label == "proceed"
                         ),
                         None,
                     )
+            if edge is None:
+                raise
+
         if edge is None:
-            edge = next(
-                (
-                    e
-                    for e in node.edges
-                    if e.kind == "normal" and e.label == result.next
-                ),
-                None,
-            )
-        if edge is None:
-            raise LookupError(
-                f"Stage {node.name!r} produced next={result.next!r} "
-                f"recommendation={rec!r} but no matching edge was found"
-            )
+            # halt — resolve_edge returns None for result.next == "halt"
+            return {"state": state, "final_stage": node.name, "envelope": envelope}
         if edge.target == "halt":
             return {"state": state, "final_stage": node.name, "envelope": envelope}
         cursor = edge.target

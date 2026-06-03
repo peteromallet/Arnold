@@ -7,7 +7,10 @@ from typing import Any
 import pytest
 
 from arnold.pipeline import run_pipeline
-from arnold.pipeline.types import Edge, ParallelStage, Pipeline, Stage, StepContext, StepResult
+from arnold.pipeline.routing import RoutingError
+from arnold.pipeline.types import (
+    Edge, ParallelStage, Pipeline, PipelineVerdict, Stage, StepContext, StepResult,
+)
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.operations import NullOperationRegistry
 
@@ -686,3 +689,264 @@ class TestExecutorParityParallelCombined:
         # After step sees both prior and join state
         assert s_after.calls[0].state.get("key") == "before_value"
         assert s_after.calls[0].state.get("joined") is True
+
+
+# ---------------------------------------------------------------------------
+# T4: Decision/override routing dispatch — 8 new scenarios
+# ---------------------------------------------------------------------------
+
+
+class _VerdictStep:
+    """A step that returns a configurable PipelineVerdict for routing tests."""
+
+    def __init__(
+        self,
+        name: str,
+        kind: str = "decide",
+        *,
+        recommendation: str | None = None,
+        override: str | None = None,
+        next_label: str = "halt",
+        patch: dict[str, Any] | None = None,
+    ) -> None:
+        self.name = name
+        self.kind = kind
+        self._recommendation = recommendation
+        self._override = override
+        self._next = next_label
+        self._patch = patch or {}
+        self.calls: list[StepContext] = []
+
+    def run(self, ctx: StepContext) -> StepResult:
+        self.calls.append(ctx)
+        verdict = None
+        if self._recommendation is not None or self._override is not None:
+            verdict = PipelineVerdict(
+                score=0.5,
+                recommendation=self._recommendation,
+                override=self._override,
+            )
+        return StepResult(
+            outputs={"from": self.name},
+            verdict=verdict,
+            next=self._next,
+            state_patch=self._patch,
+        )
+
+
+class TestDecisionOverrideRouting:
+    """Tests for the 4-tier dispatch integrated via resolve_edge."""
+
+    # SC4.1 — override precedence
+    def test_override_takes_precedence_over_decision(self) -> None:
+        """When both override and recommendation are set, override wins."""
+        step = _VerdictStep(
+            "gate", kind="decide",
+            recommendation="proceed",
+            override="force_proceed",
+            next_label="fallback",
+        )
+        # Edges: decision→halt (should NOT be taken), override→done (SHOULD
+        # be taken), normal fbt
+        stage = Stage(
+            name="gate", step=step,
+            edges=(
+                Edge(label="proceed", target="halt", kind="decision"),
+                Edge(label="override force_proceed", target="done", kind="override"),
+                Edge(label="fallback", target="halt", kind="normal"),
+            ),
+            override_vocabulary=frozenset({"force_proceed"}),
+            decision_vocabulary=frozenset({"proceed"}),
+        )
+        done_step = _VerdictStep("done", next_label="halt")
+        pipeline = Pipeline(
+            stages={
+                "gate": stage,
+                "done": Stage(name="done", step=done_step, edges=()),
+            },
+            entry="gate",
+        )
+        run_pipeline(pipeline, {}, RuntimeEnvelope())
+        # Override edge targets "done", so done_step must have run.
+        assert len(done_step.calls) == 1
+        assert len(step.calls) == 1
+
+    # SC4.2 — invalid decision
+    def test_invalid_decision_raises_routing_error(self) -> None:
+        """A decision key not in decision_vocabulary raises RoutingError."""
+        step = _VerdictStep(
+            "gate", kind="decide",
+            recommendation="bogus",
+            next_label="normal_fallback",
+        )
+        stage = Stage(
+            name="gate", step=step,
+            edges=(
+                Edge(label="proceed", target="done", kind="decision"),
+                Edge(label="normal_fallback", target="done", kind="normal"),
+            ),
+            decision_vocabulary=frozenset({"proceed"}),
+        )
+        pipeline = Pipeline(
+            stages={"gate": stage},
+            entry="gate",
+        )
+        with pytest.raises(RoutingError, match="bogus"):
+            run_pipeline(pipeline, {}, RuntimeEnvelope())
+
+    # SC4.3 — invalid override
+    def test_invalid_override_raises_routing_error(self) -> None:
+        """An override action not in override_vocabulary raises RoutingError."""
+        step = _VerdictStep(
+            "gate", kind="decide",
+            override="bogus_override",
+            next_label="normal_fallback",
+        )
+        stage = Stage(
+            name="gate", step=step,
+            edges=(
+                Edge(label="override force_proceed", target="done", kind="override"),
+                Edge(label="normal_fallback", target="done", kind="normal"),
+            ),
+            override_vocabulary=frozenset({"force_proceed"}),
+        )
+        pipeline = Pipeline(
+            stages={"gate": stage},
+            entry="gate",
+        )
+        with pytest.raises(RoutingError, match="bogus_override"):
+            run_pipeline(pipeline, {}, RuntimeEnvelope())
+
+    # SC4.4 — missing decision edge
+    def test_missing_decision_edge_raises_routing_error(self) -> None:
+        """Valid decision but no matching kind='decision' edge → RoutingError."""
+        step = _VerdictStep(
+            "gate", kind="decide",
+            recommendation="proceed",
+            next_label="normal_fallback",
+        )
+        stage = Stage(
+            name="gate", step=step,
+            edges=(
+                Edge(label="iterate", target="loop", kind="decision"),
+                Edge(label="normal_fallback", target="loop", kind="normal"),
+            ),
+            decision_vocabulary=frozenset({"proceed", "iterate"}),
+        )
+        pipeline = Pipeline(
+            stages={"gate": stage},
+            entry="gate",
+        )
+        with pytest.raises(RoutingError, match="proceed"):
+            run_pipeline(pipeline, {}, RuntimeEnvelope())
+
+    # SC4.5 — missing override edge
+    def test_missing_override_edge_raises_routing_error(self) -> None:
+        """Valid override but no matching kind='override' edge → RoutingError."""
+        step = _VerdictStep(
+            "gate", kind="decide",
+            override="force_proceed",
+            next_label="normal_fallback",
+        )
+        stage = Stage(
+            name="gate", step=step,
+            edges=(
+                Edge(label="override abort", target="halt", kind="override"),
+                Edge(label="normal_fallback", target="halt", kind="normal"),
+            ),
+            override_vocabulary=frozenset({"force_proceed", "abort"}),
+        )
+        pipeline = Pipeline(
+            stages={"gate": stage},
+            entry="gate",
+        )
+        with pytest.raises(RoutingError, match="force_proceed"):
+            run_pipeline(pipeline, {}, RuntimeEnvelope())
+
+    # SC4.6 — permissive vocab (empty vocabulary skips validation)
+    def test_permissive_vocab_accepts_any_string(self) -> None:
+        """Empty decision_vocabulary skips validation — any string is accepted."""
+        step = _VerdictStep(
+            "gate", kind="decide",
+            recommendation="anything_goes",
+            next_label="normal_fallback",
+        )
+        stage = Stage(
+            name="gate", step=step,
+            edges=(
+                Edge(label="anything_goes", target="done", kind="decision"),
+                Edge(label="normal_fallback", target="done", kind="normal"),
+            ),
+            # Empty decision_vocabulary → no validation
+        )
+        done_step = _VerdictStep("done", next_label="halt")
+        pipeline = Pipeline(
+            stages={
+                "gate": stage,
+                "done": Stage(name="done", step=done_step, edges=()),
+            },
+            entry="gate",
+        )
+        run_pipeline(pipeline, {}, RuntimeEnvelope())
+        assert len(done_step.calls) == 1
+        assert len(step.calls) == 1
+
+    # SC4.7 — halt short-circuit
+    def test_halt_short_circuits_before_decision_dispatch(self) -> None:
+        """result.next=='halt' terminates immediately, ignoring verdict."""
+        step = _VerdictStep(
+            "gate", kind="decide",
+            recommendation="proceed",
+            override="force_proceed",
+            next_label="halt",
+        )
+        stage = Stage(
+            name="gate", step=step,
+            edges=(
+                Edge(label="proceed", target="done", kind="decision"),
+                Edge(label="override force_proceed", target="done", kind="override"),
+            ),
+            decision_vocabulary=frozenset({"proceed"}),
+            override_vocabulary=frozenset({"force_proceed"}),
+        )
+        done_step = _VerdictStep("done", next_label="halt")
+        pipeline = Pipeline(
+            stages={
+                "gate": stage,
+                "done": Stage(name="done", step=done_step, edges=()),
+            },
+            entry="gate",
+        )
+        run_pipeline(pipeline, {}, RuntimeEnvelope())
+        # Halt short-circuits — done must NOT run.
+        assert len(done_step.calls) == 0
+        assert len(step.calls) == 1
+
+    # SC4.8 — edge target halt
+    def test_edge_target_halt_terminates_pipeline(self) -> None:
+        """An edge whose target is 'halt' terminates even for decision routing."""
+        step = _VerdictStep(
+            "gate", kind="decide",
+            recommendation="proceed",
+            next_label="fallback",
+        )
+        stage = Stage(
+            name="gate", step=step,
+            edges=(
+                Edge(label="proceed", target="halt", kind="decision"),
+                Edge(label="fallback", target="done", kind="normal"),
+            ),
+            decision_vocabulary=frozenset({"proceed"}),
+        )
+        after_step = _VerdictStep("after", next_label="halt")
+        pipeline = Pipeline(
+            stages={
+                "gate": stage,
+                "after": Stage(name="after", step=after_step, edges=()),
+            },
+            entry="gate",
+        )
+        run_pipeline(pipeline, {}, RuntimeEnvelope())
+        # Decision edge targets 'halt' — 'after' must NOT run.
+        assert len(after_step.calls) == 0
+        assert len(step.calls) == 1
