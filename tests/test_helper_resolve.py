@@ -18,7 +18,8 @@ import pytest
 
 from vibecomfy.errors import ConversionParityError
 from vibecomfy.porting.helper_resolve import ResolveDiagnostics, resolve_helpers
-from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
+from vibecomfy.porting.ui_emitter import emit_ui_json
+from vibecomfy.workflow import RawWidgetPayload, VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 
 # ─── Minimal workflow builder ────────────────────────────────────────────────
@@ -291,6 +292,46 @@ class TestPhaseC:
         assert wf.nodes["3"].inputs["a"] == pytest.approx(24.0)
         assert wf.nodes["4"].inputs["b"] == pytest.approx(24.0)
         assert "0" not in wf.nodes
+
+    def test_primitive_float_folds_into_linked_widget_value_slot(self) -> None:
+        """PrimitiveFloat feeding a widget-as-link input updates the literal widget slot."""
+        wf = _wf(
+            ("0", "PrimitiveFloat", {"w_widget_0": 7.5}),
+            ("1", "KSampler", {}),
+            edges=[("0", "0", "1", "cfg")],
+        )
+        sampler = wf.nodes["1"]
+        sampler.inputs.update(
+            {
+                "seed": 5,
+                "steps": 20,
+                "sampler_name": "euler",
+                "scheduler": "normal",
+                "denoise": 1.0,
+            }
+        )
+        sampler.metadata["_ui"] = {
+            "widgets_values": [5, "fixed", 20, 1.0, "euler", "normal", 1.0],
+            "inputs": [{"name": "cfg", "link": 1, "widget": {"name": "cfg"}}],
+        }
+        sampler.raw_widgets = RawWidgetPayload(
+            values=[5, "fixed", 20, 1.0, "euler", "normal", 1.0],
+            shape="list",
+            source="ui.widgets_values",
+            has_dict_rows=False,
+            length=7,
+        )
+
+        resolve_helpers(wf, {})
+
+        assert "0" not in wf.nodes
+        assert wf.edges == []
+        assert wf.nodes["1"].inputs["cfg"] == pytest.approx(7.5)
+        assert wf.nodes["1"].metadata["_ui"]["widgets_values"][3] == pytest.approx(7.5)
+        assert wf.nodes["1"].raw_widgets is not None
+        assert wf.nodes["1"].raw_widgets.values[3] == pytest.approx(7.5)
+        emitted = next(node for node in emit_ui_json(wf)["nodes"] if node["id"] == 1)
+        assert emitted["widgets_values"][3] == pytest.approx(7.5)
 
     def test_primitive_boolean_coercion(self) -> None:
         """PrimitiveBoolean coerces value to Python bool."""

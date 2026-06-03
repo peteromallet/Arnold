@@ -258,7 +258,7 @@ def _fold_primitive_node_literal(workflow: Any, edge: Any, node: Any) -> None:
     raw_value = node.inputs.get("value") or node.widgets.get("widget_0")
     target_node = workflow.nodes.get(edge.to_node)
     if target_node is not None:
-        target_node.inputs[edge.to_input] = raw_value
+        _fold_literal_into_consumer(target_node, edge.to_input, raw_value)
 
 
 def _phase_c_value_primitives(
@@ -310,7 +310,7 @@ def _phase_c_value_primitives(
             consumer_node = workflow.nodes.get(edge.to_node)
             if consumer_node is None:
                 raise make_error(_missing_consumer_spec(node_id, node.class_type, edge.to_node))
-            consumer_node.inputs[edge.to_input] = literal
+            _fold_literal_into_consumer(consumer_node, edge.to_input, literal)
             workflow.register_input(
                 bname,
                 edge.to_node,
@@ -324,7 +324,7 @@ def _phase_c_value_primitives(
                 consumer_node = workflow.nodes.get(edge.to_node)
                 if consumer_node is None:
                     raise make_error(_missing_consumer_spec(node_id, node.class_type, edge.to_node))
-                consumer_node.inputs[edge.to_input] = literal
+                _fold_literal_into_consumer(consumer_node, edge.to_input, literal)
 
         outbound_obj_ids = frozenset(id(edge) for edge in outbound)
         workflow.edges = [edge for edge in workflow.edges if id(edge) not in outbound_obj_ids]
@@ -339,6 +339,73 @@ def _missing_consumer_spec(node_id: str, class_type: str, consumer_id: str) -> H
         "not found in workflow",
         next_action=f"check node {node_id} ({class_type})",
     )
+
+
+def _fold_literal_into_consumer(node: Any, field: str, literal: Any) -> None:
+    field_name = str(field)
+    node.inputs[field_name] = literal
+    _update_raw_widget_value(node, field_name, literal)
+
+
+def _update_raw_widget_value(node: Any, field: str, literal: Any) -> None:
+    """Keep captured UI widget defaults aligned after folding linked widgets.
+
+    ComfyUI represents widget-as-link fields in ``inputs`` but still carries the
+    widget's positional default in ``widgets_values``.  Once a Primitive* helper
+    is folded into a literal, downstream emitters may rebuild UI JSON from the
+    captured widget payload, so update that slot when we can identify it.
+    """
+    index = _widget_index_for_field(node, field)
+    if index is None:
+        return
+    raw_ui = getattr(node, "metadata", {}).get("_ui")
+    raw_values = raw_ui.get("widgets_values") if isinstance(raw_ui, dict) else None
+    if isinstance(raw_values, list) and index < len(raw_values):
+        raw_values[index] = literal
+    raw_widgets = getattr(node, "raw_widgets", None)
+    values = getattr(raw_widgets, "values", None)
+    if isinstance(values, list) and index < len(values):
+        values[index] = literal
+    elif isinstance(values, dict):
+        values[field] = literal
+
+
+def _widget_index_for_field(node: Any, field: str) -> int | None:
+    if field.startswith("widget_"):
+        try:
+            return int(field.split("_", 1)[1])
+        except ValueError:
+            return None
+
+    try:
+        from vibecomfy._widget_aliases import widget_names_for_class
+    except Exception:
+        widget_names_for_class = None  # type: ignore[assignment]
+
+    names = widget_names_for_class(str(node.class_type)) if widget_names_for_class else None
+    if names and field in names:
+        return list(names).index(field)
+
+    aliases = getattr(node, "metadata", {}).get("input_aliases")
+    if isinstance(aliases, (list, tuple)) and field in aliases:
+        return list(aliases).index(field)
+
+    raw_ui = getattr(node, "metadata", {}).get("_ui")
+    inputs = raw_ui.get("inputs") if isinstance(raw_ui, dict) else None
+    if isinstance(inputs, list):
+        widget_fields: list[str] = []
+        for item in inputs:
+            if not isinstance(item, Mapping):
+                continue
+            widget = item.get("widget")
+            if not isinstance(widget, Mapping):
+                continue
+            name = widget.get("name") or item.get("name")
+            if isinstance(name, str):
+                widget_fields.append(name)
+        if field in widget_fields:
+            return widget_fields.index(field)
+    return None
 
 
 def _is_resolvable_helper_node(workflow: Any, node_id: str) -> bool:
