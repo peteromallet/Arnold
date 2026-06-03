@@ -1104,9 +1104,9 @@ def test_handle_agent_edit_batch_repl_turn0_catalog_is_scoped_and_search_first(
     assert "def SaveImage" in catalog
     assert "def ImageScaleBy" not in catalog
     assert "ImageScaleBy" in names
-    assert "Only signatures for nodes already in the graph are shown below" in system
-    assert 'MUST first call `search(focus_types=["ClassName"])`' in system
-    assert "Never guess a signature you have not seen" in system
+    assert "Only signatures for nodes already in the graph are shown" in system
+    assert "Search first" in system
+    assert "Call `search()` for any other type before constructing it" in system
 
 
 def test_batch_repl_search_query_output_is_in_next_turn_report() -> None:

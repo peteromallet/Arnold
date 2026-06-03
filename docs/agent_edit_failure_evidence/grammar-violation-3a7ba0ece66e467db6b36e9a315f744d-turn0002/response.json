@@ -1,0 +1,26 @@
+{
+  "agent_failure_context": {
+    "explanation": "remove_link requires either `id` or `to`."
+  },
+  "apply_allowed": false,
+  "audit_error": null,
+  "audit_ref": {
+    "byte_count": 7625,
+    "path": "out/editor_sessions/3a7ba0ece66e467db6b36e9a315f744d/turns/0002/audit/audit.json",
+    "preview": "{\n  \"artifacts\": {\n    \"model_request\": {\n      \"byte_count\": 43586,\n      \"path\": \"out/editor_sessions/3a7ba0ece66e467db6b36e9a315f744d/turns/0002/model_request.json\",\n      \"preview\": \"{\\n  \\\"messages\\\": [\\n    {\\n      \\\"content\\\": \\\"You edit a VibeComfy browser UI graph by returning typed delta operations.\\\\nReturn only JSON with keys `delta` and `message`.\\\\n`delta` must be a list of operations that exactly follow this schema:\\\\n{\\\\\\\"additionalProperties\\\\\\\": false, \\\\\\\"properties\\\\\\\": {\\\\\\\"delta\\\\\\\": ",
+    "sha256": "08520cecca262733ed907290fe8c0633190eea36ab394fa32b947a35a2dce9c6"
+  },
+  "baseline_turn_id": null,
+  "canvas_apply_allowed": false,
+  "graph_unchanged": true,
+  "kind": "MalformedModelJSON",
+  "message": "The model response could not be parsed. The graph is unchanged.",
+  "next_action": "wait and retry; model response did not parse as valid JSON",
+  "ok": false,
+  "queue_allowed": false,
+  "retryable": true,
+  "session_id": "3a7ba0ece66e467db6b36e9a315f744d",
+  "stage": "agent_response",
+  "turn_id": "0002",
+  "user_facing_message": "The model response could not be parsed. The graph is unchanged."
+}

@@ -2795,26 +2795,35 @@ def test_build_batch_messages_turn_zero_includes_full_python_scoped_catalog_and_
     system = messages[0]["content"]
     user = messages[1]["content"]
 
-    # System mentions batch format, not JSON delta
-    assert "```batch" in system
+    # System prompt uses "live Python objects" framing
+    assert "live Python objects" in system
+    assert "Two moves" in system
+    assert "Add:" in system
+    assert "Change:" in system
+    assert "x = NodeType(field=val, input=other.OUTPUT)" in system
+    assert "obj.attr = value" in system
+    assert "Privileged calls" in system
+    assert "del x" in system
+    assert '"bypassed" | "muted" | "enabled"' in system
+    assert "bypass does NOT pass input through" in system
+    assert "search(focus_types" in system
     assert "done()" in system
     assert 'clarify("' in system.lower() or "clarify(" in system
-    assert "Python-native dataflow program" in system
-    assert "new_var = ClassType" in system
-    assert "target_var.input_field = source_var.OUTPUT_SLOT" in system
-    assert "node_var.field_name = literal" in system
-    assert 'node_var.mode = "bypassed"' in system
-    assert "del node_var" in system
+    assert "Output rule" in system
+    assert "Known limits" in system
+    assert "Envelope" in system
+    assert "Prose + exactly one" in system
+    assert "```batch" in system
     assert "ImageScaleBy(image=vaedecodetiled.IMAGE" in system
-    assert "Never ask for or use numeric node ids" in system
-    assert "Only signatures for nodes already in the graph are shown below" in system
-    assert 'MUST first call `search(focus_types=["ClassName"])`' in system
-    assert "Never guess a signature you have not seen" in system
-    assert "add_node(...)" in system
-    assert "Do not write operation calls" in system
-    # No JSON-delta response requirements (may mention JSON only to forbid it)
+    assert "Only signatures for nodes already in the graph are shown" in system
+    assert "search()" in system
+    # Size ceiling: system prompt must stay under 2600 chars
+    assert len(system) < 2600, f"system prompt is {len(system)} chars, expected <2600"
+    # No execution-semantics phrasing
     assert "return only json" not in system.lower()
     assert "delta" not in system.lower()
+    assert "execute the code" not in system.lower()
+    assert "run the code" not in system.lower()
 
     # User message includes full Python and catalog
     assert "Add a node" in user
@@ -2842,6 +2851,9 @@ def test_build_batch_messages_later_turn_includes_diff_and_report_only() -> None
     # System does NOT require JSON delta responses
     assert "return only json" not in system.lower()
     assert "delta" not in system.lower()
+    assert "execute the code" not in system.lower()
+    assert "run the code" not in system.lower()
+    assert len(system) < 2600, f"system prompt is {len(system)} chars, expected <2600"
 
     # User message includes diff + report, NOT full Python
     assert "Fix the field" in user
@@ -2873,6 +2885,65 @@ def test_build_batch_messages_no_json_delta_wording() -> None:
         assert "delta" not in system.lower()
         # No markdown fence hints for JSON
         assert "```json" not in system
+        # No execution-semantics phrasing
+        assert "execute the code" not in system.lower()
+        assert "run the code" not in system.lower()
+        # Size ceiling
+        assert len(system) < 2600, f"system prompt is {len(system)} chars, expected <2600"
+
+
+def test_build_batch_messages_system_prompt_contains_all_three_mode_strings() -> None:
+    """The system prompt includes all three mode strings: bypassed, muted, enabled."""
+    messages = agent_provider.build_batch_messages(
+        task="test",
+        python_source="x=1",
+    )
+    system = messages[0]["content"]
+    assert '"bypassed"' in system
+    assert '"muted"' in system
+    assert '"enabled"' in system
+    assert "bypass does NOT pass input through" in system
+
+
+def test_build_batch_messages_system_prompt_contains_all_four_privileged_calls() -> None:
+    """The system prompt includes all four privileged calls: del, mode, search, done."""
+    messages = agent_provider.build_batch_messages(
+        task="test",
+        python_source="x=1",
+    )
+    system = messages[0]["content"]
+    assert "del x" in system
+    assert "node.mode" in system
+    assert "search(" in system
+    assert "done()" in system
+    assert "clarify(" in system
+
+
+def test_build_batch_messages_system_prompt_no_execution_semantics() -> None:
+    """The system prompt contains no 'execute', 'run the code', or JSON-delta phrasing."""
+    messages = agent_provider.build_batch_messages(
+        task="test",
+        python_source="x=1",
+    )
+    system = messages[0]["content"]
+    system_lower = system.lower()
+    assert "return only json" not in system_lower
+    assert "delta" not in system_lower
+    assert "execute the code" not in system_lower
+    assert "run the code" not in system_lower
+    assert "json response" not in system_lower
+
+
+def test_build_batch_messages_system_prompt_size_under_ceiling() -> None:
+    """System prompt stays under 2600 chars with budget line included."""
+    messages = agent_provider.build_batch_messages(
+        task="test",
+        python_source="x=1",
+        budget_remaining=3,
+        max_batches=5,
+    )
+    system = messages[0]["content"]
+    assert len(system) < 2600, f"system prompt is {len(system)} chars, expected <2600"
 
 
 def test_batch_turn_result_to_dict() -> None:

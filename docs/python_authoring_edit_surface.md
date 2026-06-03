@@ -136,8 +136,9 @@ One in-memory working ledger per session, rendered via the existing emitter
   `def ImageUpscaleWithModel(upscale_model: UPSCALE_MODEL, image: IMAGE) -> IMAGE: ...`
   — filtered by socket-compatibility and task relevance, top-N with `search(...)`
   for more. "Find a node" is recalling a library, not browsing 745 names.
-- Each newly constructed node is annotated with where it landed: `# placed (840,320) in group "Sampling"`,
-  so the agent has layout awareness without a coordinate API (§7).
+- Coordinates are not rendered in the agent-edit surface: placement is automatic;
+  the only spatial hint available is the optional `near=anchor_var` keyword in
+  `add` statements (§7).
 
 ### 3. The grammar — the agent writes the SAME language it reads
 
@@ -322,9 +323,9 @@ by default; `near=node`, `relation="right_of"|"below"`, and `group="Name"` are
 optional overrides. It never writes raw `(x, y)` — pixel coordinates would be
 hallucinated badly and break across zoom/window. The runtime resolves `near=` to a
 coordinate, infers group membership from the anchor, sizes nodes with
-`estimate_node_size`, and dodges collisions. The agent's *only* spatial feedback is a
-read-only annotation in the re-render — `# placed (1040,400) in group "Decode"` — so
-it can notice "that landed too far right" and adjust via `near=` next turn, without
+`estimate_node_size`, and dodges collisions. The agent receives no coordinate feedback
+in the re-render; it can notice layout issues from the diff description and adjust via
+`near=` next turn, without
 ever owning coordinates. Untouched-node positions are already protected by Invariant A.
 
 ### 8. Worked example — "add an upscaling step after the decode"
@@ -333,8 +334,8 @@ What the whole surface looks like in motion (LTX/SDXL-style graph):
 
 ```python
 # turn 0 — the agent is shown the view (excerpt) + the typed library:
-#   image = VAEDecode(samples=samples, vae=vae)        # uid:f55i  placed (1120,520) "Decode"
-#   SaveImage(images=image, filename_prefix="out")     # uid:g46j  placed (1520,520)
+#   image = VAEDecode(samples=samples, vae=vae)        # uid:f55i
+#   SaveImage(images=image, filename_prefix=\"out\")     # uid:g46j
 
 # turn 1 — the agent explores, then writes one batch:
 search("upscale", accepts=["IMAGE"], returns=["IMAGE"])

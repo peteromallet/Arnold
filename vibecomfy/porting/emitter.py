@@ -332,6 +332,8 @@ _MODEL_FILE_SUFFIXES: tuple[str, ...] = (
 # Fields whose values are classified as prompts
 _PROMPT_INPUT_FIELDS: frozenset[str] = frozenset({"text", "prompt", "positive_prompt"})
 
+_AGENT_EDIT_STRING_ELIDE_THRESHOLD = 400
+
 # Fields whose values are classified as negative prompts
 _NEGATIVE_PROMPT_INPUT_FIELDS: frozenset[str] = frozenset({"negative_prompt"})
 
@@ -1889,7 +1891,7 @@ def _emit_agent_edit_lines(prepared: dict[str, Any]) -> list[str]:
             if raw_key in edge_fields or _is_link(value):
                 continue
             alias = input_aliases.get(raw_key, to_python_identifier(raw_key))
-            kwargs.append((alias, _format_value(value), raw_key))
+            kwargs.append((alias, _format_value(value, elide_strings_over=_AGENT_EDIT_STRING_ELIDE_THRESHOLD), raw_key))
 
         for raw_name, value in sorted(node.widgets.items(), key=lambda item: str(item[0])):
             raw_key = str(raw_name)
@@ -1902,16 +1904,16 @@ def _emit_agent_edit_lines(prepared: dict[str, Any]) -> list[str]:
                 if resolved.name is not None:
                     resolved_key = resolved.name
             alias = input_aliases.get(raw_key) or input_aliases.get(resolved_key) or to_python_identifier(resolved_key)
-            kwargs.append((alias, _format_value(value), resolved_key))
+            kwargs.append((alias, _format_value(value, elide_strings_over=_AGENT_EDIT_STRING_ELIDE_THRESHOLD), resolved_key))
 
-        comment = _agent_edit_comment(nid, node, output_aliases.get(nid, {}))
+        comment = _agent_edit_comment(nid, node, output_aliases.get(nid, {}), var_name=var)
         call_name = str(node.class_type)
         if call_name.isidentifier() and not keyword.iskeyword(call_name):
             call_head = f"{var} = {call_name}("
             positional: list[str] = []
         else:
             call_head = f"{var} = node("
-            positional = [_format_value(call_name)]
+            positional = [_format_value(call_name)]  # call_name is a short class id; elision intentionally not applied
         rendered_args = [*positional, *[f"{alias}={expr}" for alias, expr, _raw in kwargs]]
         if not rendered_args:
             lines.append(f"{call_head}){comment}")
@@ -1970,7 +1972,32 @@ def _agent_edit_raw_output_names(node: Any) -> dict[int, str]:
     return {index: name for index, name in enumerate(schema_names) if isinstance(name, str) and name}
 
 
-def _agent_edit_comment(nid: str, node: Any, output_aliases: Mapping[int, str]) -> str:
+def _title_canonical(s: str) -> str:
+    return "".join(ch for ch in s.casefold() if ch.isalnum())
+
+
+def _meaningful_title(
+    title: str,
+    class_type: str,
+    var_name: str | None,
+) -> str | None:
+    canonical = _title_canonical(title)
+    if not canonical:
+        return None
+    if canonical == _title_canonical(class_type):
+        return None
+    if var_name is not None and canonical == _title_canonical(var_name):
+        return None
+    return f"title:{repr(title)[1:-1]}"
+
+
+def _agent_edit_comment(
+    nid: str,
+    node: Any,
+    output_aliases: Mapping[int, str],
+    *,
+    var_name: str | None = None,
+) -> str:
     parts: list[str] = []
     uid = str(getattr(node, "uid", "") or "")
     if uid:
@@ -1979,12 +2006,11 @@ def _agent_edit_comment(nid: str, node: Any, output_aliases: Mapping[int, str]) 
         parts.append("[virtual]")
     raw_ui = getattr(node, "metadata", {}).get("_ui") if hasattr(node, "metadata") else None
     if isinstance(raw_ui, Mapping):
-        pos = raw_ui.get("pos")
-        if isinstance(pos, (list, tuple)) and len(pos) >= 2:
-            parts.append(f"placed ({pos[0]}, {pos[1]})")
         title = raw_ui.get("title") or raw_ui.get("name")
         if isinstance(title, str) and title:
-            parts.append(f"title {title!r}")
+            meaningful = _meaningful_title(title, str(node.class_type), var_name)
+            if meaningful is not None:
+                parts.append(meaningful)
     slot_parts = _agent_edit_slot_alias_parts(node, output_aliases)
     if slot_parts:
         parts.append("slots " + ", ".join(slot_parts))
@@ -3801,7 +3827,7 @@ def _topological_node_order(nodes: dict[str, Any], edges_in: dict[str, list[Any]
     return out
 
 
-def _format_value(value: Any) -> str:
+def _format_value(value: Any, *, elide_strings_over: int | None = None) -> str:
     # Normalize Windows-style backslash separators to forward slashes in model
     # file paths (e.g. 'LTXVideo\\v2\\file.safetensors' → 'LTXVideo/v2/file.safetensors').
     # ComfyUI model loaders accept either separator.
@@ -3810,6 +3836,11 @@ def _format_value(value: Any) -> str:
             f"\\{ext[1:]}" in value for ext in _MODEL_FILE_SUFFIXES
         ):
             value = value.replace("\\", "/")
+    if elide_strings_over is not None and isinstance(value, str) and len(value) > elide_strings_over:
+        head = repr(value[:240])
+        tail = repr(value[-80:])
+        n_elided = len(value) - 320
+        return f"({head} + \"[...{n_elided} chars elided...]\" + {tail})"
     return repr(value)
 
 

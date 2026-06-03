@@ -191,7 +191,7 @@ class TestRawUIJSONRejection:
         rendered = _emit_agent_edit_python_stub(wf)
         assert "ksampler = KSampler(" in rendered
         assert "uid:5" in rendered
-        assert "placed (890, 190)" in rendered
+        assert "placed (" not in rendered
         assert "slots latent='LATENT'" in rendered
 
 
@@ -549,7 +549,7 @@ class TestAgentEditPythonEmitter:
         assert "saveimage = SaveImage(" in rendered
         assert "images=vaedecode.image" in rendered
         assert "uid:5" in rendered
-        assert "placed (890, 190)" in rendered
+        assert "placed (" not in rendered
         assert "slots latent='LATENT'" in rendered
 
     def test_agent_edit_python_rejects_raw_ui_json_before_emitter_internals(self) -> None:
@@ -586,6 +586,69 @@ class TestAgentEditPythonEmitter:
         ast.parse(rendered)
         assert "setnode = SetNode(" in rendered
         assert "uid:set-uid [virtual]" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Lean render tests: title-drop + string elision
+# ---------------------------------------------------------------------------
+
+
+class TestAgentEditLeanRender:
+    """Verify the lean agent-edit render surface: title-drop heuristic and string elision."""
+
+    def test_decorative_title_equal_to_class_is_dropped(self) -> None:
+        """title='KSampler' on KSampler → no `title:` token."""
+        from vibecomfy.porting.emitter import emit_agent_edit_python
+
+        wf = VibeWorkflow("lean-class", WorkflowSource("lean-class"))
+        node = wf.add_node("KSampler", uid="k1")
+        node.metadata["_ui"] = {"title": "KSampler"}
+        rendered = emit_agent_edit_python(wf)
+        assert "title:" not in rendered
+
+    def test_decorative_title_equal_to_var_name_is_dropped(self) -> None:
+        """title matching rendered variable name → no `title:` token."""
+        from vibecomfy.porting.emitter import emit_agent_edit_python
+
+        wf = VibeWorkflow("lean-var", WorkflowSource("lean-var"))
+        node = wf.add_node("KSampler", uid="k1")
+        # _compute_variable_names derives 'ksampler' from class_type 'KSampler'
+        node.metadata["_ui"] = {"title": "ksampler"}
+        rendered = emit_agent_edit_python(wf)
+        assert "title:" not in rendered
+
+    def test_decorative_title_pure_symbols_is_dropped(self) -> None:
+        """title of only symbols ('---') → no `title:` token."""
+        from vibecomfy.porting.emitter import emit_agent_edit_python
+
+        wf = VibeWorkflow("lean-symbols", WorkflowSource("lean-symbols"))
+        node = wf.add_node("KSampler", uid="k1")
+        node.metadata["_ui"] = {"title": "---"}
+        rendered = emit_agent_edit_python(wf)
+        assert "title:" not in rendered
+
+    def test_meaningful_title_is_kept(self) -> None:
+        """distinct meaningful title (including emoji) → `title:` token present."""
+        from vibecomfy.porting.emitter import emit_agent_edit_python
+
+        wf = VibeWorkflow("lean-meaningful", WorkflowSource("lean-meaningful"))
+        node = wf.add_node("KSampler", uid="k1")
+        node.metadata["_ui"] = {"title": "📦 Model loader"}
+        rendered = emit_agent_edit_python(wf)
+        assert "title:\u200b📦 Model loader" in rendered or "title:📦 Model loader" in rendered
+
+    def test_long_string_elision_threshold_respected(self) -> None:
+        """string widget value >400 chars is elided with [...elided N chars...]."""
+        from vibecomfy.porting.emitter import _format_value
+
+        long_str = "x" * 500
+        result = _format_value(long_str, elide_strings_over=400)
+        assert "elided" in result
+        assert "chars" in result
+        # Regular (non-elided) string should use plain repr
+        short_str = "hello"
+        short_result = _format_value(short_str, elide_strings_over=400)
+        assert short_result == "'hello'"
 
 
 # ---------------------------------------------------------------------------
