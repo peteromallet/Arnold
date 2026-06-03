@@ -33,6 +33,9 @@ log = logging.getLogger(__name__)
 
 LARGE_REVIEW_DIFF_MAX_BYTES = 120 * 1024
 LARGE_REVIEW_DIFF_MAX_FILES = 40
+COMPACT_REVIEW_PLAN_MAX_CHARS = 20_000
+COMPACT_REVIEW_CONTEXT_MAX_CHARS = 60_000
+COMPACT_REVIEW_MAX_CHANGED_FILES = 200
 
 
 def _changed_files_from_patch(patch: str) -> list[str]:
@@ -58,6 +61,36 @@ def _review_diff_is_large(patch: str, changed_files: list[str]) -> bool:
         len(patch.encode("utf-8")) > LARGE_REVIEW_DIFF_MAX_BYTES
         or len(changed_files) > LARGE_REVIEW_DIFF_MAX_FILES
     )
+
+
+def _milestone_diff_base(state: PlanState | None) -> str | None:
+    if state is None:
+        return None
+    meta = state.get("meta", {})
+    if not isinstance(meta, dict):
+        return None
+    chain_policy = meta.get("chain_policy", {})
+    if not isinstance(chain_policy, dict):
+        return None
+    base = chain_policy.get("milestone_base_sha")
+    return base if isinstance(base, str) and base.strip() else None
+
+
+def _truncate_prompt_block(text: str, *, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    omitted = len(text) - limit
+    return f"{text[:limit]}\n\n[truncated {omitted:,} characters for compact review prompt]"
+
+
+def _compact_changed_files(files: list[str]) -> list[str]:
+    if len(files) <= COMPACT_REVIEW_MAX_CHANGED_FILES:
+        return files
+    omitted = len(files) - COMPACT_REVIEW_MAX_CHANGED_FILES
+    return [
+        *files[:COMPACT_REVIEW_MAX_CHANGED_FILES],
+        f"... {omitted:,} more changed files omitted from compact prompt",
+    ]
 
 
 def _prior_unmet_review_block(plan_dir: Path, state: PlanState) -> str:
@@ -242,10 +275,11 @@ def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]
         large_diff = False
         diff_summary = ""
     else:
-        git_diff = collect_git_diff_patch(project_dir)
+        diff_base = _milestone_diff_base(state)
+        git_diff = collect_git_diff_patch(project_dir, base_ref=diff_base)
         changed_files = _changed_files_from_patch(git_diff)
         large_diff = _review_diff_is_large(git_diff, changed_files)
-        diff_summary = collect_git_diff_summary(project_dir) if large_diff else ""
+        diff_summary = collect_git_diff_summary(project_dir, base_ref=diff_base) if large_diff else ""
     return {
         "project_dir": project_dir,
         "intent_block": intent_brief_reference(state),
@@ -263,6 +297,98 @@ def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]
         "settled_decisions": settled_decisions,
         "prior_flags": load_flag_registry(plan_dir).get("flags", []),
     }
+
+
+def compact_review_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None,
+    *,
+    prompt_size_error: dict[str, Any] | None = None,
+    pre_check_flags: list[dict[str, Any]] | None = None,
+    projection_capabilities: PromptProjectionCapabilities | None = None,
+) -> str:
+    """Build a bounded review prompt when the normal review prompt is too large.
+
+    The reviewer must inspect the repository directly, because this prompt
+    intentionally carries summaries instead of the full patch.
+    """
+    del root
+    project_dir = Path(state["config"]["project_dir"])
+    latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
+    finalize_data = read_json(plan_dir / "finalize.json")
+    execution_data = read_json(plan_dir / "execution.json")
+    execution_audit_data = (
+        read_json(plan_dir / "execution_audit.json")
+        if (plan_dir / "execution_audit.json").exists()
+        else None
+    )
+    projected_review, _ = _projected_review_blocks(
+        finalize_data,
+        execution_data,
+        execution_audit_data,
+        capabilities=projection_capabilities,
+    )
+    base_ref = _milestone_diff_base(state)
+    git_diff = collect_git_diff_patch(project_dir, base_ref=base_ref)
+    changed_files = _changed_files_from_patch(git_diff)
+    diff_summary = collect_git_diff_summary(project_dir, base_ref=base_ref)
+    diff_context = _large_diff_context_block(
+        project_dir=project_dir,
+        diff_summary=diff_summary,
+        changed_files=_compact_changed_files(changed_files),
+        prior_unmet_block=_prior_unmet_review_block(plan_dir, state),
+    )
+    size_note = ""
+    if prompt_size_error:
+        size_note = textwrap.dedent(
+            f"""
+            Normal review prompt overflow:
+            The first review prompt was {prompt_size_error.get("prompt_size", "unknown")} characters with a limit of {prompt_size_error.get("max_chars", "unknown")}. This compact prompt is the fallback path; still produce a usable `review_verdict`.
+            """
+        ).strip()
+    pre_check_block = ""
+    if pre_check_flags:
+        pre_check_block = textwrap.dedent(
+            f"""
+            Advisory mechanical pre-check flags:
+            {json_dump(pre_check_flags).strip()}
+            """
+        ).strip()
+    return textwrap.dedent(
+        f"""
+        Review the execution against the original issue text and finalized criteria.
+
+        {size_note}
+
+        Project directory:
+        {project_dir}
+
+        {intent_brief_reference(state)}
+
+        Approved plan (compact excerpt):
+        {_truncate_prompt_block(latest_plan, limit=COMPACT_REVIEW_PLAN_MAX_CHARS)}
+
+        {diff_context}
+
+        Review execution context (`finalize.json` + `execution.json`, compact projection):
+        {_truncate_prompt_block(json_dump(projected_review).strip(), limit=COMPACT_REVIEW_CONTEXT_MAX_CHARS)}
+
+        {_execution_audit_block(execution_audit_data, capabilities=projection_capabilities)}
+
+        {_settled_decisions_review_block(_gate_summary_or_skipped(plan_dir).get("settled_decisions", []))}
+
+        {pre_check_block}
+
+        Requirements:
+        - This is degraded large-review mode. Do not fail because the full diff was too large to paste.
+        - Use repository tools in the project directory to inspect the real changed files and run focused checks before writing the verdict.
+        - Set `review_verdict` to `needs_rework` only for issue-anchored, deterministic failures that require another execute pass. Use `approved` when all must criteria are satisfied.
+        - Set `review_completion_status` to `"incomplete"` only if repository inspection or required verification commands cannot complete; otherwise set it to `"complete"`.
+        - Populate `criteria`, `issues`, `rework_items`, `summary`, `task_verdicts`, and `sense_check_verdicts` using the existing review JSON shape.
+        - If uncertainty remains because the compact prompt omitted detail, record that as an advisory issue unless a deterministic check demonstrates a blocker.
+        """
+    ).strip()
 
 
 def _projected_review_blocks(
@@ -829,7 +955,7 @@ def _review_prompt(
     )
     settled_decisions_block = _settled_decisions_block(gate)
     settled_decisions_instruction = _settled_decisions_instruction(gate)
-    diff_summary = collect_git_diff_summary(project_dir)
+    diff_summary = collect_git_diff_summary(project_dir, base_ref=_milestone_diff_base(state))
     audit_path = plan_dir / "execution_audit.json"
     audit_block = _execution_audit_block(
         read_json(audit_path) if audit_path.exists() else None,

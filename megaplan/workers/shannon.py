@@ -60,6 +60,7 @@ from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from megaplan._core import creative_form_id, read_json, schemas_root
 from megaplan.prompts import create_claude_prompt
 from megaplan.prompts._projection import check_prompt_size
+from megaplan.prompts.review import compact_review_prompt
 from megaplan.schemas import get_execution_schema_key
 from megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
@@ -2061,7 +2062,21 @@ def run_shannon_step(
     )
     schema_text = json.dumps(read_json(schemas_root(root) / schema_name))
     prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
-    check_prompt_size(prompt, phase=step)
+    try:
+        check_prompt_size(prompt, phase=step)
+    except CliError as error:
+        if step != "review" or error.code != "prompt_oversized":
+            raise
+        base_prompt = compact_review_prompt(
+            state,
+            plan_dir,
+            root,
+            prompt_size_error=error.extra,
+            pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
+            projection_capabilities=projection_capabilities,
+        )
+        prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
+        check_prompt_size(prompt, phase=step)
 
     prompt_iteration = _prompt_file_iteration(step, state) if fresh and step != "execute" else None
     prompt_path = _write_prompt_file(run_dir, step, prompt, iteration=prompt_iteration)

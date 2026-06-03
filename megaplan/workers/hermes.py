@@ -28,6 +28,7 @@ from megaplan._core import creative_form_id, read_json, schemas_root, touch_acti
 from megaplan.forms.provocations import select_active_checks
 from megaplan.prompts import create_hermes_prompt
 from megaplan.prompts._projection import check_prompt_size
+from megaplan.prompts.review import compact_review_prompt
 from megaplan.workers._projection_caps import hermes_projection_capabilities
 
 
@@ -1167,7 +1168,36 @@ def run_hermes_step(
             "matching this template:\n\n" + template
         )
 
-    check_prompt_size(prompt, phase=step)
+    try:
+        check_prompt_size(prompt, phase=step)
+    except CliError as error:
+        if step != "review" or error.code != "prompt_oversized":
+            raise
+        prompt = compact_review_prompt(
+            state,
+            plan_dir,
+            root,
+            prompt_size_error=error.extra,
+            projection_capabilities=projection_capabilities,
+        )
+        if output_path is not None:
+            prompt += (
+                f"\n\nOUTPUT FILE: {output_path}\n"
+                "This file is your ONLY output. It contains a JSON template with the structure to fill in.\n"
+                "Workflow:\n"
+                "1. Start by reading the file to see the structure\n"
+                "2. Do your work\n"
+                "3. Read the file, add your results, write it back\n\n"
+                "Do NOT put your results in a text response. The file is the only output that matters."
+            )
+        else:
+            template = _schema_template(schema)
+            prompt += (
+                "\n\nIMPORTANT: Your final response MUST be a single valid JSON object. "
+                "Do NOT use markdown. Do NOT wrap in code fences. Output ONLY raw JSON "
+                "matching this template:\n\n" + template
+            )
+        check_prompt_size(prompt, phase=step)
 
     if (
         output_path is not None

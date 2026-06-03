@@ -66,6 +66,7 @@ from megaplan.prompts import (
     _resolve_prompt_root,
 )
 from megaplan.prompts._projection import check_prompt_size
+from megaplan.prompts.review import compact_review_prompt
 from megaplan.runtime.process import TmuxSession, kill_group, spawn
 from megaplan.workers._projection_caps import codex_projection_capabilities
 
@@ -2193,7 +2194,20 @@ def run_codex_step(
         projection_capabilities=projection_capabilities,
         **(prompt_kwargs or {}),
     )
-    check_prompt_size(prompt, phase=step)
+    try:
+        check_prompt_size(prompt, phase=step)
+    except CliError as error:
+        if step != "review" or error.code != "prompt_oversized":
+            raise
+        prompt = compact_review_prompt(
+            state,
+            plan_dir,
+            root,
+            prompt_size_error=error.extra,
+            pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
+            projection_capabilities=projection_capabilities,
+        )
+        check_prompt_size(prompt, phase=step)
     timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
     if read_only:

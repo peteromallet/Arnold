@@ -1047,7 +1047,7 @@ def current_iteration_raw_artifact(plan_dir: Path, prefix: str, iteration: int) 
 import subprocess
 
 
-def collect_git_diff_summary(project_dir: Path) -> str:
+def collect_git_diff_summary(project_dir: Path, base_ref: str | None = None) -> str:
     if not (project_dir / ".git").exists():
         return "Project directory is not a git repository."
     try:
@@ -1067,7 +1067,7 @@ def collect_git_diff_summary(project_dir: Path) -> str:
     status = process.stdout.strip()
     if status:
         return status
-    branch_summary = _collect_branch_diff_summary(project_dir)
+    branch_summary = _collect_branch_diff_summary(project_dir, base_ref=base_ref)
     return branch_summary or "No git changes detected."
 
 
@@ -1096,8 +1096,8 @@ def _branch_diff_base(project_dir: Path) -> str | None:
     return None
 
 
-def _collect_branch_diff_summary(project_dir: Path) -> str:
-    base = _branch_diff_base(project_dir)
+def _collect_branch_diff_summary(project_dir: Path, *, base_ref: str | None = None) -> str:
+    base = base_ref or _branch_diff_base(project_dir)
     if not base:
         return ""
     try:
@@ -1116,7 +1116,7 @@ def _collect_branch_diff_summary(project_dir: Path) -> str:
     return f"Branch diff against base {base[:12]}:\n{summary}" if summary else ""
 
 
-def collect_git_diff_patch(project_dir: Path) -> str:
+def collect_git_diff_patch(project_dir: Path, base_ref: str | None = None) -> str:
     if not (project_dir / ".git").exists():
         return "Project directory is not a git repository."
 
@@ -1147,7 +1147,7 @@ def collect_git_diff_patch(project_dir: Path) -> str:
             return None, f"Unable to read git diff: {detail}"
         return process, None
 
-    base = _branch_diff_base(project_dir)
+    base = base_ref or _branch_diff_base(project_dir)
     patches: list[str] = []
     seen_patches: set[str] = set()
 

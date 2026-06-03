@@ -1048,6 +1048,7 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
     state = ChainState(
         current_milestone_index=2,
         current_plan_name="foo-20260415",
+        current_milestone_base_sha="abc123base",
         last_state="done",
         pr_number=42,
         pr_state="open",
@@ -1061,6 +1062,7 @@ def test_save_and_load_chain_state_roundtrip(tmp_path: Path) -> None:
     loaded = load_chain_state(spec_path)
     assert loaded.current_milestone_index == 2
     assert loaded.current_plan_name == "foo-20260415"
+    assert loaded.current_milestone_base_sha == "abc123base"
     assert loaded.last_state == "done"
     assert loaded.pr_number == 42
     assert loaded.pr_state == "open"
@@ -1112,6 +1114,7 @@ def test_chain_state_from_dict_handles_old_json_missing_sync_fields() -> None:
     assert state.pr_number == 42
     assert state.pr_state == "OPEN"
     assert len(state.completed) == 1
+    assert state.current_milestone_base_sha is None
     # New fields default cleanly.
     assert state.branch_head is None
     assert state.pr_head is None
@@ -3622,6 +3625,7 @@ def test_initialized_plan_receives_chain_policy_metadata(
     with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
          patch("megaplan.chain._checkout_milestone_branch"), \
          patch("megaplan.chain._ensure_milestone_pr", return_value=1), \
+         patch("megaplan.chain._current_head_sha", return_value="abc123base"), \
          patch("megaplan.chain._init_plan", return_value="plan-stub-20260520"), \
          patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-stub-20260520", "done")), \
          patch("megaplan.chain._commit_and_push_phase"), \
@@ -3638,6 +3642,7 @@ def test_initialized_plan_receives_chain_policy_metadata(
     assert cp["review_policy"]["clean_milestone_pr"] == "manual"
     assert cp["source"] == "chain_yaml"
     assert cp["milestone_label"] == "m1"
+    assert cp["milestone_base_sha"] == "abc123base"
 
 
 def test_initialized_plan_respects_runtime_override_source(
