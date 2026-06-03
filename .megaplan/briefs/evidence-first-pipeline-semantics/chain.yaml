@@ -1,0 +1,64 @@
+base_branch: shannon-native-launch-hardening
+
+milestones:
+  - label: m0-contract-foundation
+    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m0-contract-foundation.md
+    profile: apex
+    robustness: thorough
+    depth: high
+    notes: "Freeze EvidenceRef, TransitionDecision, status vocabulary, provenance shape, and telemetry skeleton. No enforcement."
+
+  - label: m1-first-slice
+    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m1-first-slice.md
+    profile: premium
+    robustness: thorough
+    depth: high
+    notes: "Vertical proof for execute->review->done: review-start evidence, evidence-backed review findings, and TransitionDecision for review->done."
+
+  - label: m2-review-evidence-service
+    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m2-review-evidence-service.md
+    profile: partnered
+    robustness: full
+    depth: medium
+    notes: "Generalize review-time evidence across all review paths and migrate review payloads toward evidence refs."
+
+  - label: m3-objective-gates
+    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m3-objective-gates.md
+    profile: premium
+    robustness: thorough
+    depth: high
+    notes: "Compile machine-verifiable criteria into engine-owned checks and command evidence."
+
+  - label: m4-artifact-provenance
+    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m4-artifact-provenance.md
+    profile: directed
+    robustness: full
+    depth: medium
+    notes: "Roll write-time artifact metadata and freshness helpers across key artifacts and stores."
+
+  - label: m5-transition-validator-full
+    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m5-transition-validator-full.md
+    profile: premium
+    robustness: thorough
+    depth: high
+    notes: "Extend TransitionPolicy/Writer to full routing surface, chain/cloud/CI SHA pinning, worker capability, and override waivers."
+
+  - label: m6-rollout-enforcement
+    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m6-rollout-enforcement.md
+    profile: partnered
+    robustness: thorough
+    depth: medium
+    notes: "Operator-visible shadow/warn/enforce rollout, legacy/prose/human-deferred defaults, and docs."
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: manual
+
+driver:
+  robustness: thorough
+  auto_approve: true
+  max_iterations: 80
+  poll_sleep: 8.0
+
