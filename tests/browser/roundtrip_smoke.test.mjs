@@ -134,6 +134,87 @@ test("VibeComfy browser canonical hash helper sorts object keys while preserving
   assert.notEqual(sha256HexUtf8(CANONICAL_HASH_PAYLOADS[0]), sha256HexUtf8(arrayOrderChanged));
 });
 
+test("VibeComfy structural graph projection ignores volatile canvas fields but keeps real edits", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    const graph = {
+      extra: { ds: { scale: 0.5, offset: [20, 40] } },
+      groups: [{ title: "decor", bounding: [1, 2, 3, 4] }],
+      nodes: [
+        {
+          id: 1,
+          type: "Input",
+          pos: [100, 200],
+          size: [300, 80],
+          flags: { collapsed: true },
+          order: 4,
+          properties: { prompt: "volatile property" },
+          widgets_values: ["a prompt", { videopreview: { frame: 12 }, keep: "value" }],
+          inputs: [{ name: "seed", link: null }],
+          outputs: [{ name: "IMAGE", links: [9] }],
+        },
+        {
+          id: 2,
+          type: "SaveImage",
+          pos: [300, 200],
+          widgets_values: ["prefix"],
+          inputs: [{ name: "images", link: 9 }],
+          outputs: [],
+        },
+      ],
+      links: [[9, 1, 0, 2, 0, "IMAGE"]],
+    };
+    const volatileDrift = {
+      ...graph,
+      extra: { ds: { scale: 2.0, offset: [400, 100] } },
+      groups: [{ title: "decor", bounding: [9, 8, 7, 6] }],
+      nodes: [
+        {
+          ...graph.nodes[0],
+          pos: [999, 888],
+          size: [10, 20],
+          flags: {},
+          order: 1,
+          properties: { prompt: "changed volatile property" },
+          widgets_values: ["a prompt", { videopreview: { frame: 99 }, keep: "value" }],
+        },
+        { ...graph.nodes[1], pos: [111, 222] },
+      ],
+    };
+    const widgetChanged = {
+      ...volatileDrift,
+      nodes: [
+        { ...volatileDrift.nodes[0], widgets_values: ["different prompt", { keep: "value" }] },
+        volatileDrift.nodes[1],
+      ],
+    };
+    const rewired = {
+      ...volatileDrift,
+      nodes: [
+        volatileDrift.nodes[0],
+        { ...volatileDrift.nodes[1], inputs: [{ name: "images", link: null }] },
+      ],
+      links: [],
+    };
+
+    const project = extensionModule.buildStructuralGraphProjection;
+    assert.deepEqual(project(graph), project(volatileDrift));
+    assert.notDeepEqual(project(graph), project(widgetChanged));
+    assert.notDeepEqual(project(graph), project(rewired));
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy browser harness loads the extension, captures commands, loadGraphData, and reuses one persistent right-side panel root", async () => {
   const candidateGraph = {
     nodes: [
@@ -386,7 +467,7 @@ test("VibeComfy agent submit sends canonical graph hash, normalized route/model 
   });
 
   try {
-    await harness.loadExtension();
+    const extensionModule = await harness.loadExtension();
     await harness.setup();
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
@@ -407,7 +488,11 @@ test("VibeComfy agent submit sends canonical graph hash, normalized route/model 
     assert.equal(payload.route, "openai-codex");
     assert.equal(payload.model, "gpt-5.1");
     assert.equal(payload.client_graph_hash, sha256HexUtf8(graph));
-    assert.equal(payload.client_live_canvas_token, `live:rev:1:${sha256HexUtf8(graph)}`);
+    assert.equal(
+      payload.client_structural_graph_hash,
+      sha256HexUtf8(extensionModule.buildStructuralGraphProjection(graph)),
+    );
+    assert.equal(payload.client_live_canvas_token, "live:rev:1");
     assert.equal("baseline_turn_id" in payload, false);
     assert.match(
       payload.idempotency_key,
@@ -846,9 +931,9 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
         assert.match(body.turn_id, /^000[24]$/);
         assert.equal(body.client_graph_hash, initialGraphHash);
         if (body.turn_id === "0002") {
-          assert.equal(body.client_live_canvas_token, `live:rev:1:${initialGraphHash}`);
+          assert.equal(body.client_live_canvas_token, "live:rev:1");
         } else {
-          assert.match(body.client_live_canvas_token, new RegExp(`^live:rev:\\d+:${initialGraphHash}$`));
+          assert.match(body.client_live_canvas_token, /^live:rev:\d+$/);
         }
         assert.equal(body.submit_graph_hash, body.turn_id === "0002" ? initialGraphHash : undefined);
         assert.equal(body.candidate_graph_hash, candidateGraphHash);
@@ -915,6 +1000,9 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
     assert.equal(harness.graphClearCalls.length, 1);
     assert.equal(harness.graphConfigureCalls.length, 1);
     assert.deepEqual(harness.graphConfigureCalls[0], candidateGraph);
+    assert.equal(harness.graphChangeCalls.length, 1);
+    assert.deepEqual(harness.graphDirtyCanvasCalls, [[true, true]]);
+    assert.deepEqual(harness.canvasDrawCalls, [[true, true]]);
     assert.equal(harness.app.canvas.graph._nodes.find((node) => node.id === 2)?.boxcolor, "#ffc107");
     assert.match(harness.textDump(), /Applied candidate feedback: changed nodes were highlighted on the canvas temporarily\./);
     assert.match(harness.textDump(), /Edited uid-2/);
@@ -962,6 +1050,121 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
     assert.equal(harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-edit/accept").length, 2);
     assert.equal(harness.loadGraphDataCalls.length, 1);
     assert.equal(harness.graphConfigureCalls.length, 1);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy Apply allows nonstructural serialize drift when the live canvas revision is unchanged", async () => {
+  const initialGraph = {
+    extra: { ds: { scale: 1.0 } },
+    nodes: [
+      {
+        id: 1,
+        type: "VHS_VideoCombine",
+        pos: [100, 200],
+        flags: { collapsed: true },
+        properties: { transient: "submit" },
+        widgets_values: ["prefix", { videopreview: { frame: 1, url: "/view/a" }, keep: "same" }],
+        inputs: [{ name: "images", link: null }],
+        outputs: [{ name: "IMAGE", links: [] }],
+      },
+    ],
+    links: [],
+  };
+  const driftedGraph = {
+    extra: { ds: { scale: 1.5, offset: [20, 30] } },
+    nodes: [
+      {
+        ...initialGraph.nodes[0],
+        pos: [999, 888],
+        flags: {},
+        properties: { transient: "apply" },
+        widgets_values: ["prefix", { videopreview: { frame: 99, url: "/view/b" }, keep: "same" }],
+      },
+    ],
+    links: [],
+  };
+  const candidateGraph = {
+    nodes: [{ id: 2, type: "SaveImage", widgets_values: ["after"], inputs: [], outputs: [] }],
+    links: [],
+  };
+  const initialGraphHash = sha256HexUtf8(initialGraph);
+  assert.notEqual(sha256HexUtf8(driftedGraph), initialGraphHash);
+
+  const harness = await createBrowserHarness({
+    graph: initialGraph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "arnold",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "arnold", browser_api_key_allowed: false },
+          },
+        },
+      },
+      "/vibecomfy/agent-edit": {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: "session-apply-drift",
+          turn_id: "0001",
+          baseline_turn_id: null,
+          canvas_apply_allowed: true,
+          apply_allowed: true,
+          queue_allowed: false,
+          message: "Allowed candidate.",
+          graph: candidateGraph,
+          submit_graph_hash: initialGraphHash,
+          candidate_graph_hash: sha256HexUtf8(candidateGraph),
+          report: { change: { content_edits: { preserved: [], edited: ["2"], removed_named: [] } }, recovery: [] },
+        },
+      },
+      "/vibecomfy/agent-edit/accept": async ({ options }) => {
+        const body = JSON.parse(options.body);
+        assert.equal(body.session_id, "session-apply-drift");
+        assert.equal(body.turn_id, "0001");
+        assert.equal(body.client_graph_hash, initialGraphHash);
+        assert.equal(body.client_live_canvas_token, "live:rev:1");
+        assert.equal(body.submit_graph_hash, initialGraphHash);
+        assert.equal(body.candidate_graph_hash, sha256HexUtf8(candidateGraph));
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            action: "accept",
+            session_id: "session-apply-drift",
+            turn_id: "0001",
+            baseline_turn_id: "0001",
+          },
+        };
+      },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "remove the second pass";
+    await harness.clickButton("Submit");
+
+    harness.setCurrentGraphWithoutRevisionBump(driftedGraph);
+    await harness.clickButton("Apply Candidate");
+
+    assert.equal(harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-edit/accept").length, 1);
+    assert.equal(harness.graphConfigureCalls.length, 1);
+    assert.deepEqual(harness.graphConfigureCalls[0], candidateGraph);
+    assert.doesNotMatch(harness.textDump(), /StaleStateMismatch/);
   } finally {
     await harness.dispose();
   }
@@ -1021,7 +1224,7 @@ test("VibeComfy v2 Apply blocks if the live canvas token changes after backend a
         const body = JSON.parse(options.body);
         assert.equal(body.submit_graph_hash, initialGraphHash);
         assert.equal(body.candidate_graph_hash, candidateGraphHash);
-        assert.equal(body.client_live_canvas_token, `live:rev:1:${initialGraphHash}`);
+        assert.equal(body.client_live_canvas_token, "live:rev:1");
         harness.bumpLiveCanvasToken();
         return {
           status: 200,
@@ -1047,7 +1250,8 @@ test("VibeComfy v2 Apply blocks if the live canvas token changes after backend a
     await harness.clickButton("Submit");
     await harness.clickButton("Apply Candidate");
 
-    assert.match(harness.textDump(), /live canvas token changed before candidate loading/i);
+    assert.match(harness.textDump(), /canvas changed while Apply was waiting for backend acceptance/i);
+    assert.match(harness.textDump(), /expected_live_canvas_token/);
     assert.equal(harness.graphConfigureCalls.length, 0);
     assert.equal(harness.loadGraphDataCalls.length, 0);
     assert.deepEqual(harness.getCurrentGraph(), initialGraph);

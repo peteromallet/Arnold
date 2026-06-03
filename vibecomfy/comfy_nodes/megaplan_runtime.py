@@ -7,7 +7,7 @@ https://github.com/peteromallet/arnold, importable as the ``megaplan`` package)
 does not expose those exact entry points -- its agent backend is the
 ``megaplan.agent.run_agent.AIAgent`` class. This module is the small adapter the
 runbook calls for: it drives ``AIAgent`` for a single, tool-free completion and
-returns VibeComfy's ``{"python": ..., "message": ...}`` contract.
+returns VibeComfy's agent-edit contracts.
 
 Wire it up by pointing the discovery env var at this module::
 
@@ -251,6 +251,38 @@ def run_agent_turn_delta(
     return {"delta": result["delta"], "message": result["message"]}
 
 
+def run_agent_turn_batch(
+    *,
+    task: str,
+    route: str,
+    model: str | None = None,
+    messages: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Run one batch-REPL agent-edit turn and return raw model content."""
+    normalized = (route or "arnold").strip().lower()
+    system_msg, user_msg = _split_messages(messages)
+    if user_msg is None:
+        user_msg = f"User request:\n{task}"
+
+    if normalized == "deepseek" and not _resolve_deepseek_key():
+        raise PermissionError(
+            "DeepSeek route selected but no DEEPSEEK_API_KEY is available "
+            "(checked environment and ~/.hermes/.env). Submit a key via the "
+            "VibeComfy panel or export DEEPSEEK_API_KEY."
+        )
+
+    agent_kwargs = _build_agent_kwargs(normalized)
+    result = _run_worker(agent_kwargs, system_msg, user_msg, response_contract="batch_repl")
+    if "error" in result:
+        err = result.get("error", "agent worker failed")
+        if result.get("error_type") in {"AuthError", "AuthenticationError", "PermissionError"}:
+            raise PermissionError(err)
+        if result.get("error_type") in {"JSONDecodeError", "ValueError"}:
+            return {"content": ""}
+        raise RuntimeError(err)
+    return {"content": result["content"]}
+
+
 def get_agent_status(*, route: str, model: str | None = None) -> dict[str, Any]:
     """Report whether the selected route can actually run a turn.
 
@@ -294,4 +326,4 @@ def get_agent_status(*, route: str, model: str | None = None) -> dict[str, Any]:
     }
 
 
-__all__ = ["run_agent_turn", "run_agent_turn_delta", "get_agent_status"]
+__all__ = ["run_agent_turn", "run_agent_turn_delta", "run_agent_turn_batch", "get_agent_status"]

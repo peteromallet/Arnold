@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from typing import Any, Callable, Mapping
 
 from .agent_audit import redact_closed_set
 
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_ROUTE = "arnold"
 DEFAULT_MODEL = "agent-edit"
@@ -121,6 +124,10 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
 
 _BATCH_FENCE_RE = re.compile(r"```batch\s*\n(.*?)```", re.DOTALL)
+_BATCH_RETRY_NUDGE = (
+    "Your previous reply was empty or unparseable. Reply with prose and exactly "
+    "one ```batch fenced block."
+)
 
 
 def extract_batch_fence(text: str) -> tuple[str, str]:
@@ -132,6 +139,10 @@ def extract_batch_fence(text: str) -> tuple[str, str]:
     Raises :class:`MalformedModelJSON` when zero or multiple batch fences are
     found — the fence is the single stripping seam.
     """
+    if not text.strip():
+        raise MalformedModelJSON(
+            "Agent batch_repl response was empty. Expected exactly one ```batch fenced block."
+        )
     matches = _BATCH_FENCE_RE.findall(text)
     if len(matches) == 0:
         raise MalformedModelJSON(
@@ -171,20 +182,84 @@ def build_batch_messages(
     mention JSON delta response requirements.
     """
     system = (
-        "You edit a VibeComfy ComfyUI canvas through batch edit statements.\n"
-        "Return prose (your explanation to the user) and exactly one ```batch "
-        "fenced code block containing your edit statements.\n\n"
+        "You edit a VibeComfy ComfyUI canvas as a Python-native dataflow program.\n\n"
+        "Mental model:\n"
+        "- The canvas is shown as Python. Each node is a variable, for example "
+        "`vaedecodetiled  # uid:127`.\n"
+        "- A node's inputs are keyword arguments or assignable fields. Wiring is "
+        "reading another node's output slot, for example `vaedecodetiled.IMAGE`.\n"
+        "- You edit by writing the same Python dataflow syntax you read. Do not "
+        "write operation calls such as `add_node(...)`, `set_node_field(...)`, "
+        "`upsert_link(...)`, `remove_link(...)`, `remove_node(...)`, `set_mode(...)`, "
+        "or `reorder(...)`.\n"
+        "- The typed `def ClassName(...) -> TYPE` signatures in the Python view "
+        "and catalog are the node library you may construct.\n\n"
         "Batch statement grammar:\n"
-        "- Statements are Python-like calls: add_node(...), set_node_field(...), "
-        "remove_node(...), upsert_link(...), remove_link(...), set_mode(...), "
-        "reorder(...).\n"
-        "- Use `done()` to commit the edit session after your final batch.\n"
-        "- Use `clarify(\"...\")` to ask the user a question; the turn ends "
-        "without applying changes.\n"
-        "- Return ONLY prose + one ```batch block.  Do NOT return JSON.\n"
+        "- Construct/add a node: `new_var = ClassType(field=value, "
+        "input_kwarg=other_var.OUTPUT_SLOT, near=anchor_var)`, for example "
+        "`upscaled = ImageScaleBy(image=vaedecodetiled.IMAGE, scale_by=2.0, "
+        "near=vaedecodetiled)`.\n"
+        "- Rewire an input: `target_var.input_field = source_var.OUTPUT_SLOT`, "
+        "for example `saveanimatedwebp.images = upscaled.IMAGE`. This replaces "
+        "the existing wire on that input.\n"
+        "- Disconnect an input: `target_var.input_field = None`, for example "
+        "`saveimage.images = None`.\n"
+        "- Set a widget or literal field: `node_var.field_name = literal`, for "
+        "example `ksampler.steps = 24` or `saveimage.filename_prefix = \"upscaled\"`.\n"
+        "- Change node mode: `node_var.mode = \"bypassed\"`, `node_var.mode = "
+        "\"muted\"`, or `node_var.mode = \"enabled\"`. Integer forms `4`, `2`, "
+        "and `0` are also accepted.\n"
+        "- Remove a node: `del node_var`, for example `del old_preview`.\n"
+        "- Query without applying a change: `search(formatted=True)`, "
+        "`search(focus_types=[\"ImageScaleBy\"])`, or "
+        "`search(compatible_input_type=\"IMAGE\")`. Queries are read-only "
+        "batch statements; use the initial Python view and catalog first.\n"
+        "- Commit after the final successful edit: `done()`.\n"
+        "- Ask the user only when intent is genuinely missing: "
+        "`clarify(\"question\")`. Do not clarify for node names, fields, slots, "
+        "or types that are visible in the Python view.\n\n"
+        "References:\n"
+        "- Reference nodes by the variable names shown in the Python view. The "
+        "`# uid:` comment is a stable fallback for reasoning, not something to "
+        "ask the user for.\n"
+        "- Never ask for or use numeric node ids.\n"
+        "- Output slots are attributes on node variables. Use the slot name from "
+        "the rendered node or typed signature, such as `.IMAGE`, `.LATENT`, "
+        "`.VAE`, or `.audio`.\n\n"
+        "Batch edits:\n"
+        "- You may write several statements in one ```batch block. They execute "
+        "top-to-bottom, so a variable constructed on one line is usable later in "
+        "the same batch.\n"
+        "- Prefer a complete edit in one batch: add the needed nodes, rewire all "
+        "consumers, clean up obsolete nodes if necessary, then call `done()` when "
+        "finished.\n\n"
+        "Feedback loop:\n"
+        "- After each batch you receive a diff from the previous render, a "
+        "teaching report, and the re-rendered Python. The report has a summary "
+        "like `Batch summary: N landed, M failed...` and per-statement lines "
+        "like `✓ Statement 1: set_node_field - landed` or "
+        "`✗ Statement 2: node_call - not landed (...hint...)`.\n"
+        "- Read the diff and report. If any statement failed, fix the failed "
+        "statement in the next batch instead of asking for information already "
+        "shown in the Python.\n\n"
+        "Response envelope:\n"
+        "- Return prose (your explanation to the user) and exactly one ```batch "
+        "fenced code block containing your edit statements.\n"
+        "- Return ONLY prose + one ```batch block. Do NOT return JSON.\n"
         "- Do not use markdown fences other than the ```batch block.\n"
-        "- Prefer minimal, targeted edits.  One batch per turn.\n"
-        f"Budget: {budget_remaining} batch(es) remaining out of {max_batches}."
+        "- Prefer minimal, targeted edits. One batch per turn.\n\n"
+        f"Budget: {budget_remaining} batch(es) remaining out of {max_batches}.\n\n"
+        "Worked example:\n"
+        "User asks to add 2x upscaling after the video decode and feed the "
+        "result to the existing video saver. If the view shows "
+        "`vaedecodetiled = VAEDecodeTiled(...)` and "
+        "`saveanimatedwebp = SaveAnimatedWEBP(images=vaedecodetiled.IMAGE, ...)`, "
+        "write:\n"
+        "```batch\n"
+        "upscaled = ImageScaleBy(image=vaedecodetiled.IMAGE, scale_by=2.0, near=vaedecodetiled)\n"
+        "saveanimatedwebp.images = upscaled.IMAGE\n"
+        "done()\n"
+        "```"
     )
     if turn_number == 0:
         catalog_block = ""
@@ -637,6 +712,10 @@ def _normalize_batch_response(
             text = str(response)
     else:
         raise MalformedModelJSON("Agent response must be a string or object.")
+    if not text.strip():
+        raise MalformedModelJSON(
+            "Agent batch_repl response was empty. Expected exactly one ```batch fenced block."
+        )
     batch_code, prose = extract_batch_fence(text)
     return BatchTurnResult(
         batch=batch_code,
@@ -722,28 +801,47 @@ def run_agent_turn_batch(
         "credential_presence": _credential_presence(),
         "response_contract": "batch_repl",
     }
-    try:
-        response = _call_batch_runtime(
-            runtime,
-            task=task,
-            messages=messages,
-            route=selected_route,
-            model=selected_model,
-        )
-    except PermissionError as exc:
-        raise AuthError(str(exc)) from exc
-    except TimeoutError:
-        raise
-    except (ProviderError, MalformedModelJSON, MissingRequiredField):
-        raise
-    except Exception as exc:
-        raise ProviderError(str(exc)) from exc
-    return _normalize_batch_response(
-        response,
-        route=selected_route,
-        model=selected_model,
-        audit_metadata=audit_metadata,
-    )
+    last_malformed: MalformedModelJSON | None = None
+    for attempt in range(2):
+        attempt_messages = messages if attempt == 0 else [*messages, {"role": "system", "content": _BATCH_RETRY_NUDGE}]
+        try:
+            response = _call_batch_runtime(
+                runtime,
+                task=task,
+                messages=attempt_messages,
+                route=selected_route,
+                model=selected_model,
+            )
+            metadata = dict(audit_metadata)
+            if attempt:
+                metadata["batch_repl_retry"] = {
+                    "count": attempt,
+                    "reason": str(last_malformed) if last_malformed else "malformed batch response",
+                }
+            return _normalize_batch_response(
+                response,
+                route=selected_route,
+                model=selected_model,
+                audit_metadata=metadata,
+            )
+        except PermissionError as exc:
+            raise AuthError(str(exc)) from exc
+        except TimeoutError:
+            raise
+        except MalformedModelJSON as exc:
+            if attempt == 0:
+                last_malformed = exc
+                LOGGER.warning(
+                    "Retrying batch_repl agent turn after malformed model response: %s",
+                    exc,
+                )
+                continue
+            raise
+        except (ProviderError, MissingRequiredField):
+            raise
+        except Exception as exc:
+            raise ProviderError(str(exc)) from exc
+    raise last_malformed or MalformedModelJSON("Agent batch_repl response was malformed.")
 
 
 def get_agent_status(*, route: str | None = None, model: str | None = None) -> dict[str, Any]:

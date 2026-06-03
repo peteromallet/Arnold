@@ -21,6 +21,7 @@ import { app } from "../../scripts/app.js";
 //                            by frontend as a submit input
 //   idempotency_key (str) — optional client-generated dedup key
 //   client_graph_hash     — SHA-256 of serialized graph at submit time (opt)
+//   client_structural_graph_hash — SHA-256 of structural graph projection (opt)
 
 // ── Submit Fields (POST /vibecomfy/agent-edit) ────────────────────────────
 //   graph   (object, required) — ComfyUI UI JSON (app.canvas.graph.serialize())
@@ -29,7 +30,8 @@ import { app } from "../../scripts/app.js";
 //   model   (string, optional) — model id for the provider
 //   session_id        (string, optional) — reuse existing session
 //   idempotency_key   (string, optional) — client dedup key
-//   client_graph_hash (string, optional) — SHA-256 of `graph` for state checks
+//   client_graph_hash (string, optional) — SHA-256 of `graph` for diagnostics
+//   client_structural_graph_hash (string, optional) — structural graph hash
 //   client_live_canvas_token (string, optional) — live canvas lock token
 
 // ── Accept Fields (POST /vibecomfy/agent-edit/accept) ─────────────────────
@@ -434,6 +436,23 @@ function applyGraphInPlaceWithIntentDecoration(candidate) {
   graph.clear();
   graph.configure(candidate);
   decorateLiveIntentNodes();
+  // graph.configure() updates the data model but does NOT repaint the canvas,
+  // so an applied edit (added/removed/rewired nodes) is invisible until some
+  // other interaction forces a redraw. Trigger a repaint explicitly so the
+  // result of Apply is immediately visible in the UI.
+  try {
+    if (typeof graph.change === "function") graph.change();
+    if (typeof graph.setDirtyCanvas === "function") {
+      graph.setDirtyCanvas(true, true);
+    } else if (app?.canvas?.setDirty) {
+      app.canvas.setDirty(true, true);
+    }
+    app?.canvas?.draw?.(true, true);
+  } catch (e) {
+    // Best-effort: the candidate is already applied to the graph data; a failed
+    // redraw must not turn a successful Apply into an error.
+    console.warn("[vibecomfy] post-apply canvas redraw failed (data applied):", e);
+  }
 }
 
 function installIntentNodeFallback() {
@@ -705,14 +724,96 @@ async function sha256HexUtf8(text) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function captureLiveCanvasToken(graphHash) {
+function captureLiveCanvasRevision() {
   const graph = app?.canvas?.graph;
-  const revision = graph?._vibecomfyLiveCanvasToken
+  const revision = graph?.getRevision?.()
+    ?? graph?.revision
+    ?? graph?._vibecomfyLiveCanvasToken
     ?? graph?._vibecomfy_live_canvas_token
     ?? graph?._version
     ?? graph?._revision
     ?? null;
-  return revision == null ? `hash:${graphHash}` : `live:${String(revision)}:${graphHash}`;
+  return revision == null ? null : String(revision);
+}
+
+// Apply-state freshness must ignore editor-only serialization churn. ComfyUI can
+// rewrite layout, preview, and other non-execution fields between submit and
+// apply even when the graph the user edits is unchanged. This projection keeps
+// only execution identity: node ids/classes, link endpoints, widget values, and
+// mode. A real add/remove/rewire/widget edit changes it; pos/size/flags/groups,
+// view state, properties, and preview blobs do not.
+function _normalizeStructuralLink(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => canonicalizeJsonValue(entry));
+  }
+  if (value && typeof value === "object") {
+    return canonicalizeJsonValue(value);
+  }
+  return value;
+}
+
+function _isPreviewLikeKey(key) {
+  return /(?:^|_)(?:video)?preview(?:_|$)/i.test(String(key || ""));
+}
+
+function _normalizeStructuralWidgetValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => _normalizeStructuralWidgetValue(entry));
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value)
+      .filter(([key]) => !_isPreviewLikeKey(key))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => [key, _normalizeStructuralWidgetValue(entryValue)]);
+    return Object.fromEntries(entries);
+  }
+  return value;
+}
+
+export function buildStructuralGraphProjection(graph) {
+  const nodes = Array.isArray(graph?.nodes)
+    ? graph.nodes.map((node) => ({
+        id: node?.id ?? null,
+        type: node?.type ?? null,
+        mode: node?.mode ?? null,
+        inputs: Array.isArray(node?.inputs)
+          ? node.inputs.map((input) => ({
+              name: input?.name ?? null,
+              link: input?.link ?? null,
+            }))
+          : [],
+        outputs: Array.isArray(node?.outputs)
+          ? node.outputs.map((output) => ({
+              name: output?.name ?? null,
+              links: Array.isArray(output?.links) ? [...output.links].sort() : output?.links ?? null,
+            }))
+          : [],
+        widgets_values: _normalizeStructuralWidgetValue(node?.widgets_values ?? []),
+      }))
+    : [];
+  nodes.sort((left, right) => {
+    const leftId = String(left.id ?? "");
+    const rightId = String(right.id ?? "");
+    const idCmp = leftId.localeCompare(rightId, undefined, { numeric: true });
+    return idCmp || String(left.type ?? "").localeCompare(String(right.type ?? ""));
+  });
+  const links = Array.isArray(graph?.links)
+    ? graph.links.map((link) => _normalizeStructuralLink(link))
+    : [];
+  links.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return { nodes, links };
+}
+
+async function structuralGraphHash(graph) {
+  return sha256HexUtf8(canonicalJsonString(buildStructuralGraphProjection(graph)));
+}
+
+function captureLiveCanvasToken(_graphHash, structuralHash) {
+  const revision = captureLiveCanvasRevision();
+  if (revision != null) {
+    return `live:${revision}`;
+  }
+  return structuralHash ? `structure:${structuralHash}` : `hash:${_graphHash}`;
 }
 
 function normalizeRoutePreference(value) {
@@ -1021,7 +1122,8 @@ async function buildSubmitSnapshot(panel) {
   const graph = app.canvas.graph.serialize();
   const graphJson = canonicalJsonString(graph);
   const graphHash = await sha256HexUtf8(graphJson);
-  const liveCanvasToken = captureLiveCanvasToken(graphHash);
+  const structuralHash = await structuralGraphHash(graph);
+  const liveCanvasToken = captureLiveCanvasToken(graphHash, structuralHash);
   const route = normalizeRoutePreference(panel.fields.route.value);
   const model = normalizeModelPreference(panel.fields.model.value);
   const idempotencyKey = buildSubmitIdempotencyKey({
@@ -1030,15 +1132,16 @@ async function buildSubmitSnapshot(panel) {
     route,
     model,
   });
-  return { graph, graphJson, graphHash, liveCanvasToken, route, model, idempotencyKey };
+  return { graph, graphJson, graphHash, structuralHash, liveCanvasToken, route, model, idempotencyKey };
 }
 
 async function buildCanvasSnapshot() {
   const graph = app.canvas.graph.serialize();
   const graphJson = canonicalJsonString(graph);
   const graphHash = await sha256HexUtf8(graphJson);
-  const liveCanvasToken = captureLiveCanvasToken(graphHash);
-  return { graph, graphJson, graphHash, liveCanvasToken };
+  const structuralHash = await structuralGraphHash(graph);
+  const liveCanvasToken = captureLiveCanvasToken(graphHash, structuralHash);
+  return { graph, graphJson, graphHash, structuralHash, liveCanvasToken };
 }
 
 function createAgentPanel() {
@@ -2121,6 +2224,7 @@ async function submitAgentEdit(panel) {
       route: snapshot.route,
       model: snapshot.model,
       client_graph_hash: snapshot.graphHash,
+      client_structural_graph_hash: snapshot.structuralHash,
       client_live_canvas_token: snapshot.liveCanvasToken,
       idempotency_key: snapshot.idempotencyKey,
     };
@@ -2134,6 +2238,7 @@ async function submitAgentEdit(panel) {
       route: snapshot.route,
       model: snapshot.model,
       client_graph_hash: snapshot.graphHash,
+      client_structural_graph_hash: snapshot.structuralHash,
       client_live_canvas_token: snapshot.liveCanvasToken,
       idempotency_key: snapshot.idempotencyKey,
     };
@@ -2148,6 +2253,7 @@ async function submitAgentEdit(panel) {
         model: snapshot.model || undefined,
         session_id: panel.state.sessionId || undefined,
         client_graph_hash: snapshot.graphHash,
+        client_structural_graph_hash: snapshot.structuralHash,
         client_live_canvas_token: snapshot.liveCanvasToken,
         idempotency_key: snapshot.idempotencyKey,
       };
@@ -2225,13 +2331,17 @@ async function submitAgentEdit(panel) {
     }
 
     const expectedArrivalHash = panel.state.lastSubmit?.client_graph_hash;
-    if (expectedArrivalHash && arrivalSnapshot.graphHash !== expectedArrivalHash) {
+    const expectedArrivalToken = panel.state.lastSubmit?.client_live_canvas_token;
+    if (expectedArrivalToken && arrivalSnapshot.liveCanvasToken !== expectedArrivalToken) {
       const failure = agentPanelFailure("StaleResponseArrival", "The canvas changed before this candidate arrived. Review is blocked.", {
         retryable: true,
         graph_unchanged: true,
         next_action: "Submit a new edit from the current canvas.",
         client_graph_hash: arrivalSnapshot.graphHash,
+        client_structural_graph_hash: arrivalSnapshot.structuralHash,
         expected_graph_hash: expectedArrivalHash,
+        client_live_canvas_token: arrivalSnapshot.liveCanvasToken,
+        expected_live_canvas_token: expectedArrivalToken,
         session_id: result.session_id,
         turn_id: result.turn_id,
         baseline_turn_id: result.baseline_turn_id,
@@ -2338,30 +2448,35 @@ async function applyAgentCandidate(panel) {
     }
 
     const expectedHash = panel.state.lastSubmit?.client_graph_hash;
-    if (expectedHash && beforeApply.graphHash !== expectedHash) {
+    const expectedLiveCanvasToken = panel.state.lastSubmit?.client_live_canvas_token;
+    if (expectedLiveCanvasToken && beforeApply.liveCanvasToken !== expectedLiveCanvasToken) {
       panel.state.phase = PANEL_STATE.ERROR;
       panel.state.failure = agentPanelFailure("StaleStateMismatch", "The canvas changed after this candidate was generated. Apply is blocked.", {
         retryable: true,
         graph_unchanged: true,
         next_action: "Submit a new edit from the current canvas.",
         client_graph_hash: beforeApply.graphHash,
+        client_structural_graph_hash: beforeApply.structuralHash,
         expected_graph_hash: expectedHash,
+        client_live_canvas_token: beforeApply.liveCanvasToken,
+        expected_live_canvas_token: expectedLiveCanvasToken,
       });
       panel.state.debugPayload = panel.state.failure;
       renderAgentPanel(panel);
       return;
     }
 
+    const stateCheckGraphHash = expectedHash || beforeApply.graphHash;
     const acceptKey = buildActionIdempotencyKey({
       action: "accept",
       sessionId: panel.state.sessionId,
       turnId: panel.state.turnId,
-      graphHash: beforeApply.graphHash,
+      graphHash: stateCheckGraphHash,
     });
     const acceptBody = {
       session_id: panel.state.sessionId,
       turn_id: panel.state.turnId,
-      client_graph_hash: beforeApply.graphHash,
+      client_graph_hash: stateCheckGraphHash,
       client_live_canvas_token: beforeApply.liveCanvasToken,
       submit_graph_hash: panel.state.serverSubmitGraphHash || undefined,
       candidate_graph_hash: panel.state.candidateGraphHash || undefined,
@@ -2427,32 +2542,17 @@ async function applyAgentCandidate(panel) {
     }
 
     const currentBeforeLoad = await buildCanvasSnapshot();
-    if (currentBeforeLoad.graphHash !== beforeApply.graphHash) {
+    if (currentBeforeLoad.liveCanvasToken !== beforeApply.liveCanvasToken) {
       panel.state.phase = PANEL_STATE.ERROR;
       panel.state.failure = agentPanelFailure("StaleStateMismatch", "The canvas changed while Apply was waiting for backend acceptance. Candidate loading is blocked.", {
         retryable: true,
         graph_unchanged: true,
         next_action: "Submit a new edit from the current canvas.",
         client_graph_hash: currentBeforeLoad.graphHash,
-        expected_graph_hash: beforeApply.graphHash,
-        accept_response: accepted,
-      });
-      panel.state.debugPayload = panel.state.failure;
-      renderAgentPanel(panel);
-      return;
-    }
-    const expectedLiveCanvasToken = panel.state.lastSubmit?.client_live_canvas_token;
-    if (
-      expectedLiveCanvasToken
-      && currentBeforeLoad.liveCanvasToken !== expectedLiveCanvasToken
-    ) {
-      panel.state.phase = PANEL_STATE.ERROR;
-      panel.state.failure = agentPanelFailure("StaleStateMismatch", "The live canvas token changed before candidate loading. Candidate loading is blocked.", {
-        retryable: true,
-        graph_unchanged: true,
-        next_action: "Submit a new edit from the current canvas.",
+        client_structural_graph_hash: currentBeforeLoad.structuralHash,
+        expected_graph_hash: stateCheckGraphHash,
         client_live_canvas_token: currentBeforeLoad.liveCanvasToken,
-        expected_live_canvas_token: expectedLiveCanvasToken,
+        expected_live_canvas_token: beforeApply.liveCanvasToken,
         accept_response: accepted,
       });
       panel.state.debugPayload = panel.state.failure;

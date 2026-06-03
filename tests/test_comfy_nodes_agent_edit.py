@@ -9,7 +9,7 @@ import pytest
 
 from vibecomfy.comfy_nodes.agent_edit import AgentEditState, handle_agent_edit
 from vibecomfy.comfy_nodes.agent_contracts import FailureKind, StageResult
-from vibecomfy.comfy_nodes.agent_session import payload_hash
+from vibecomfy.comfy_nodes.agent_session import payload_hash, structural_graph_hash
 from vibecomfy.porting.convert import ConversionWriteError
 from vibecomfy.porting.lowering import LoweringDiagnostic, LoweringEvidence, LoweringResult
 from vibecomfy.porting.refuse import EditorAheadError, RefusedEmit
@@ -57,6 +57,90 @@ def _ui_graph() -> dict:
             {"LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")])}
         ),
     )
+
+
+def _json_clone(value: dict) -> dict:
+    return json.loads(json.dumps(value))
+
+
+def _with_volatile_canvas_drift(graph: dict) -> dict:
+    drifted = _json_clone(graph)
+    drifted["groups"] = [{"title": "layout-only", "bounding": [0, 0, 100, 100]}]
+    drifted["extra"] = {"ds": {"scale": 1.5, "offset": [44, 55]}}
+    for index, node in enumerate(drifted.get("nodes") or []):
+        if not isinstance(node, dict):
+            continue
+        node["pos"] = [999 + index, 888 + index]
+        node["size"] = [321, 123]
+        node["order"] = 1000 - index
+        node["flags"] = {"collapsed": index % 2 == 0}
+    return drifted
+
+
+def _with_first_widget_mutated(graph: dict, value: str) -> dict:
+    mutated = _json_clone(graph)
+    nodes = mutated.get("nodes")
+    if isinstance(nodes, list) and nodes:
+        node = nodes[-1] if isinstance(nodes[-1], dict) else nodes[0]
+        if isinstance(node, dict):
+            node["widgets_values"] = [value]
+    return mutated
+
+
+def _primitive_float_helper_ui_graph() -> dict:
+    return {
+        "nodes": [
+            {
+                "id": 285,
+                "type": "PrimitiveFloat",
+                "title": "FPS",
+                "inputs": [
+                    {
+                        "name": "value",
+                        "type": "FLOAT",
+                        "link": None,
+                        "widget": {"name": "value"},
+                    }
+                ],
+                "outputs": [{"name": "FLOAT", "type": "FLOAT", "links": [530, 533]}],
+                "widgets_values": [24],
+                "pos": [0, 0],
+                "size": [210, 60],
+                "properties": {},
+            },
+            {
+                "id": 284,
+                "type": "SetNode",
+                "title": "Set_fps",
+                "inputs": [{"name": "FLOAT", "type": "FLOAT", "link": 530}],
+                "outputs": [{"name": "*", "type": "*", "links": None}],
+                "widgets_values": ["fps"],
+                "pos": [0, 100],
+                "size": [210, 34],
+                "properties": {},
+            },
+            {
+                "id": 287,
+                "type": "SimpleCalculatorKJ",
+                "title": "Calc",
+                "inputs": [
+                    {"name": "variables.a", "type": "INT,FLOAT,BOOLEAN", "link": None},
+                    {"name": "variables.b", "type": "INT,FLOAT,BOOLEAN", "link": None},
+                    {"name": "a", "type": "*", "link": None},
+                    {"name": "b", "type": "*", "link": 533},
+                ],
+                "outputs": [{"name": "FLOAT", "type": "FLOAT", "links": []}],
+                "widgets_values": ["1+ 8*(round(a*b)/8)"],
+                "pos": [0, 200],
+                "size": [210, 136],
+                "properties": {},
+            },
+        ],
+        "links": [
+            [530, 285, 0, 284, 0, "FLOAT"],
+            [533, 285, 0, 287, 3, "FLOAT"],
+        ],
+    }
 
 
 def _allocate_action_candidate(
@@ -150,7 +234,9 @@ def test_agent_edit_state_exposes_explicit_lowering_fields(tmp_path: Path) -> No
         schema_provider=None,
         baseline_graph_hash=None,
         submit_graph_hash=None,
+        submit_structural_graph_hash=None,
         submitted_client_graph_hash=None,
+        submitted_client_structural_graph_hash=None,
         session_dir=tmp_path,
         turn_dir=tmp_path,
         request_path=tmp_path / "request.json",
@@ -347,6 +433,181 @@ def test_handle_agent_edit_v2_uses_delta_stage_sequence_without_authoring_pipeli
     # the allow-list must never be used for a simple set_node_field edit.
     assert audit["metadata"]["agent_edit_v2"]["delta_ops"]["normalize"]["allow_list_used"] is False
     assert isinstance(audit["metadata"]["agent_edit_v2"]["delta_ops"]["normalize"]["fallback_used"], bool)
+
+
+def test_agent_edit_render_resolves_primitive_float_helpers_before_emission() -> None:
+    from vibecomfy._workflow_helpers import RESOLVABLE_HELPER_CLASS_TYPES
+    from vibecomfy.porting.edit_session import EditSession
+
+    session = EditSession(_primitive_float_helper_ui_graph())
+    source = session.render()
+    workflow = session.last_rendered_workflow
+
+    assert workflow is not None
+    assert "PrimitiveFloat" not in source
+    assert "285" not in workflow.nodes
+    assert all(
+        node.class_type not in RESOLVABLE_HELPER_CLASS_TYPES
+        for node in workflow.nodes.values()
+    )
+    assert workflow.nodes["287"].inputs["b"] == 24.0
+
+
+def test_agent_edit_batch_internal_failure_is_not_provider_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": _schema("SaveImage"),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("Resolver bug: unresolved helper node 285 survived to emission")
+
+    monkeypatch.setattr(
+        "vibecomfy.comfy_nodes.agent_edit._stage_agent_batch_repl",
+        _boom,
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "change the save prefix to after",
+            "session_id": "batch-internal-error",
+        },
+        schema_provider=provider,
+        session_root=tmp_path,
+    )
+
+    _assert_failure_defaults(
+        result,
+        kind=FailureKind.VALIDATION_ERROR.value,
+        stage="agent_batch",
+        audit_ref_expected=True,
+    )
+    assert "temporarily unavailable" not in result["message"]
+    assert result["agent_failure_context"]["explanation"] == (
+        "Resolver bug: unresolved helper node 285 survived to emission"
+    )
+
+
+def test_agent_edit_batch_empty_model_response_is_malformed_not_provider_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": _schema("SaveImage"),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    from vibecomfy.comfy_nodes import agent_provider as provider_mod
+
+    monkeypatch.setattr(
+        "vibecomfy.comfy_nodes.agent_edit.run_agent_turn_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            provider_mod.MalformedModelJSON(
+                "Agent batch_repl response was empty. Expected exactly one ```batch fenced block."
+            )
+        ),
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "change the save prefix to after",
+            "session_id": "batch-empty-model-response",
+        },
+        schema_provider=provider,
+        session_root=tmp_path,
+    )
+
+    _assert_failure_defaults(
+        result,
+        kind=FailureKind.MALFORMED_MODEL_JSON.value,
+        stage="agent_response",
+        audit_ref_expected=True,
+    )
+    assert "temporarily unavailable" not in result["message"]
+    assert "batch_repl response was empty" in result["agent_failure_context"]["explanation"]
+
+
+def test_agent_edit_batch_empty_model_response_retries_once_then_commits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={
+                    "images": InputSpec("IMAGE", required=True),
+                    "filename_prefix": InputSpec("STRING"),
+                },
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    from vibecomfy.comfy_nodes import agent_provider as provider_mod
+
+    calls: list[dict[str, object]] = []
+    responses = iter(
+        [
+            {"content": ""},
+            {
+                "content": (
+                    "Applied.\n\n```batch\n"
+                    "saveimage.filename_prefix = \"after\"\n"
+                    "done()\n"
+                    "```"
+                )
+            },
+        ]
+    )
+
+    class RetryRuntime:
+        @staticmethod
+        def run_agent_turn_batch(**kwargs):
+            calls.append(kwargs)
+            return next(responses)
+
+    monkeypatch.setattr(provider_mod, "_load_arnold_runtime", lambda: RetryRuntime)
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "change the save prefix to after",
+            "session_id": "batch-empty-retry-success",
+            "max_batches": 2,
+        },
+        schema_provider=provider,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    assert "after" in json.dumps(result["graph"], sort_keys=True)
+    assert len(calls) == 2
+    assert calls[1]["messages"][-1]["role"] == "system"  # type: ignore[index]
+    audit = json.loads(Path(result["audit_ref"]["path"]).read_text(encoding="utf-8"))
+    response_turns = json.loads(
+        Path(audit["artifacts"]["model_response"]["path"]).read_text(encoding="utf-8")
+    )["turns"]
+    provider_metadata = response_turns[0]["batch_result"]["provider_metadata"]
+    assert provider_metadata["batch_repl_retry"]["count"] == 1
+    assert "batch_repl response was empty" in provider_metadata["batch_repl_retry"]["reason"]
 
 
 def test_handle_agent_edit_v2_classifies_malformed_delta_as_closed_failure_envelope(
@@ -1004,6 +1265,108 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     audit = json.loads(Path(result["audit_ref"]["path"]).read_text(encoding="utf-8"))
     assert audit["metadata"]["batch_repl"]["exit_mode"] == "done"
     assert audit["metadata"]["batch_repl"]["done_summary"] == result["done_summary"]
+
+
+def test_handle_agent_edit_batch_repl_applies_assignment_add_and_rewire(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "LoadImage": NodeSchema(
+                class_type="LoadImage",
+                pack=None,
+                inputs={"image": InputSpec("STRING")},
+                outputs=[OutputSpec("IMAGE", "image")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "ImageScaleBy": NodeSchema(
+                class_type="ImageScaleBy",
+                pack=None,
+                inputs={
+                    "image": InputSpec("IMAGE", required=True),
+                    "scale_by": InputSpec("FLOAT"),
+                },
+                outputs=[OutputSpec("IMAGE", "IMAGE")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={
+                    "images": InputSpec("IMAGE", required=True),
+                    "filename_prefix": InputSpec("STRING"),
+                },
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def _fake_batch_client(_messages):
+        return {
+            "message": "Inserted the scale node and rewired the save input.",
+            "batch": "\n".join(
+                [
+                    "upscaled = ImageScaleBy(image=loadimage.image, scale_by=2.0, near=loadimage)",
+                    "saveimage.images = upscaled.IMAGE",
+                    "done()",
+                ]
+            ),
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Add an upscaling step after the image load and wire it into the save node",
+            "session_id": "batch-assignment-upscale",
+            "max_batches": 2,
+            "max_consecutive_errors": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    assert result["done_summary"].startswith("Gate A passed:")
+
+    nodes = result["graph"]["nodes"]
+    scale_node = next(node for node in nodes if node["type"] == "ImageScaleBy")
+    save_node = next(node for node in nodes if node["type"] == "SaveImage")
+    load_node = next(node for node in nodes if node["type"] == "LoadImage")
+
+    links = result["graph"]["links"]
+    image_to_scale = next(
+        link
+        for link in links
+        if link[1] == load_node["id"] and link[3] == scale_node["id"]
+    )
+    scale_to_save = next(
+        link
+        for link in links
+        if link[1] == scale_node["id"] and link[3] == save_node["id"]
+    )
+
+    assert image_to_scale[5] == "IMAGE"
+    assert scale_to_save[5] == "IMAGE"
+    assert 2.0 in scale_node["widgets_values"]
+
+    audit = json.loads(Path(result["audit_ref"]["path"]).read_text(encoding="utf-8"))
+    turn0 = json.loads(
+        Path(audit["artifacts"]["model_response"]["path"]).read_text(encoding="utf-8")
+    )["turns"][0]["batch_result"]
+    assert turn0["landed_op_count"] == 2
+    assert [item["op_kind"] for item in turn0["statements"]] == [
+        "node_call",
+        "upsert_link",
+        "done",
+    ]
 
 
 def test_handle_agent_edit_batch_repl_scripted_transcript_commits_structurally_correct_graph(
@@ -2213,6 +2576,7 @@ def test_agent_edit_stale_submit_fails_at_ingest_via_state_match_gate(
     assert "submitted_client_graph_hash" in first
     assert first["submitted_client_graph_hash"] is None
     assert first["candidate_graph_hash"] == payload_hash(first["graph"])
+    assert first["candidate_structural_graph_hash"] == structural_graph_hash(first["graph"])
     assert first["baseline_graph_hash"] is None
 
     accepted = _handle_agent_edit_accept(
@@ -2225,7 +2589,8 @@ def test_agent_edit_stale_submit_fails_at_ingest_via_state_match_gate(
         session_root=tmp_path,
     )
     assert accepted["ok"] is True
-    assert accepted["baseline_graph_hash"] == payload_hash(first["graph"])
+    assert accepted["baseline_graph_hash"] == structural_graph_hash(first["graph"])
+    assert accepted["baseline_graph_hash_kind"] == "structural"
 
     stale = handle_agent_edit(
         {
@@ -2249,11 +2614,135 @@ def test_agent_edit_stale_submit_fails_at_ingest_via_state_match_gate(
     assert stale["agent_failure_context"]["issues"][0]["failure_kind"] == FailureKind.STALE_STATE_MISMATCH.value
     detail = stale["agent_failure_context"]["issues"][0]["detail"]
     assert detail["reason"] == "hash_mismatch"
-    assert detail["client_graph_hash_label"] == "submit_graph_hash"
-    assert detail["baseline_graph_hash"] == payload_hash(first["graph"])
-    assert detail["client_graph_hash"] == payload_hash(original_graph)
+    assert detail["client_graph_hash_label"] == "submit_structural_graph_hash"
+    assert detail["baseline_graph_hash"] == structural_graph_hash(first["graph"])
+    assert detail["client_graph_hash"] == structural_graph_hash(original_graph)
     audit = json.loads(Path(stale["audit_ref"]["path"]).read_text(encoding="utf-8"))
     assert audit["gates"]["state_match_ok"] is False
+
+
+def test_agent_edit_submit_after_accept_allows_only_volatile_reserialize_drift(
+    tmp_path: Path,
+) -> None:
+    from vibecomfy.comfy_nodes.routes import _handle_agent_edit_accept
+
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": _schema("SaveImage"),
+        }
+    )
+    original_graph = _ui_graph()
+
+    first = handle_agent_edit(
+        {
+            "graph": original_graph,
+            "task": "change the save prefix to after",
+            "session_id": "submit-after-accept",
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_deepseek_replace(
+            "before", "after", "Changed the save prefix."
+        ),
+        session_root=tmp_path,
+    )
+    assert first["ok"] is True
+
+    accepted = _handle_agent_edit_accept(
+        {
+            "session_id": "submit-after-accept",
+            "turn_id": first["turn_id"],
+            "client_graph_hash": payload_hash(original_graph),
+            "idempotency_key": "accept-first",
+        },
+        session_root=tmp_path,
+    )
+    assert accepted["ok"] is True, accepted
+
+    reserialized = _with_volatile_canvas_drift(first["graph"])
+    assert payload_hash(reserialized) != payload_hash(first["graph"])
+    assert structural_graph_hash(reserialized) == structural_graph_hash(first["graph"])
+
+    second = handle_agent_edit(
+        {
+            "graph": reserialized,
+            "task": "change the save prefix to final",
+            "session_id": "submit-after-accept",
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_deepseek_replace("after", "final", "Changed the save prefix."),
+        session_root=tmp_path,
+    )
+    if second["ok"] is False:
+        assert second["kind"] != FailureKind.STALE_STATE_MISMATCH.value, second
+        assert second["stage"] != "ingest", second
+    else:
+        assert second["baseline_graph_hash"] == structural_graph_hash(first["graph"])
+        assert second["submit_structural_graph_hash"] == structural_graph_hash(first["graph"])
+
+
+def test_agent_edit_submit_after_accept_still_blocks_real_structural_divergence(
+    tmp_path: Path,
+) -> None:
+    from vibecomfy.comfy_nodes.routes import _handle_agent_edit_accept
+
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": _schema("SaveImage"),
+        }
+    )
+    original_graph = _ui_graph()
+
+    first = handle_agent_edit(
+        {
+            "graph": original_graph,
+            "task": "change the save prefix to after",
+            "session_id": "submit-after-accept-mutated",
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_deepseek_replace(
+            "before", "after", "Changed the save prefix."
+        ),
+        session_root=tmp_path,
+    )
+    assert first["ok"] is True
+
+    accepted = _handle_agent_edit_accept(
+        {
+            "session_id": "submit-after-accept-mutated",
+            "turn_id": first["turn_id"],
+            "client_graph_hash": payload_hash(original_graph),
+            "idempotency_key": "accept-first-mutated",
+        },
+        session_root=tmp_path,
+    )
+    assert accepted["ok"] is True, accepted
+
+    mutated = _with_first_widget_mutated(first["graph"], "manual-divergence")
+    assert structural_graph_hash(mutated) != structural_graph_hash(first["graph"])
+
+    stale = handle_agent_edit(
+        {
+            "graph": mutated,
+            "task": "change the save prefix to final",
+            "session_id": "submit-after-accept-mutated",
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_deepseek_replace("after", "final", "Changed the save prefix."),
+        session_root=tmp_path,
+    )
+
+    _assert_failure_defaults(
+        stale,
+        kind=FailureKind.STALE_STATE_MISMATCH.value,
+        stage="ingest",
+        audit_ref_expected=True,
+    )
+    detail = stale["agent_failure_context"]["issues"][0]["detail"]
+    assert detail["client_graph_hash_label"] == "submit_structural_graph_hash"
+    assert detail["baseline_graph_hash"] == structural_graph_hash(first["graph"])
+    assert detail["client_graph_hash"] == structural_graph_hash(mutated)
 
 
 def test_agent_edit_queue_blockers_keep_canvas_apply_true_but_queue_false(
@@ -2529,7 +3018,8 @@ def test_agent_edit_action_routes_accept_reject_idempotency_and_audit(
     assert accepted["baseline_turn_id"] == turn_id
     assert accepted["submit_graph_hash"] == submit_graph_hash
     assert accepted["candidate_graph_hash"] == candidate_graph_hash
-    assert accepted["baseline_graph_hash"] == candidate_graph_hash
+    assert accepted["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
+    assert accepted["baseline_graph_hash_kind"] == "structural"
     assert accepted["audit_ref"]["path"].endswith("/accept_audit/audit.json")
     state = read_state(tmp_path / "s1")
     assert state["baseline_turn_id"] == turn_id
@@ -2731,7 +3221,7 @@ def test_agent_edit_v2_accept_requires_server_hash_candidate_hash_and_live_token
         session_root=tmp_path,
     )
     assert accepted["ok"] is True, accepted
-    assert accepted["baseline_graph_hash"] == candidate_hash
+    assert accepted["baseline_graph_hash"] == structural_graph_hash(candidate_graph)
 
 
 def test_agent_edit_action_routes_reject_candidates_without_baseline_update(
@@ -2872,10 +3362,10 @@ def test_agent_edit_action_routes_cover_replay_conflict_state_mismatch_and_audit
 
     assert accepted["ok"] is True
     assert accepted["baseline_turn_id"] == accepted_turn_id
-    assert accepted["baseline_graph_hash"] == accepted["candidate_graph_hash"]
+    assert accepted["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert repeated_accept["ok"] is True
     assert repeated_accept["baseline_turn_id"] == accepted_turn_id
-    assert repeated_accept["baseline_graph_hash"] == accepted["candidate_graph_hash"]
+    assert repeated_accept["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert accept_key_conflict["ok"] is False
     assert accept_key_conflict["kind"] == FailureKind.EDITOR_AHEAD_CONFLICT.value
     assert rejecting_accepted["ok"] is False
@@ -2883,10 +3373,10 @@ def test_agent_edit_action_routes_cover_replay_conflict_state_mismatch_and_audit
 
     assert rejected["ok"] is True
     assert rejected["baseline_turn_id"] == accepted_turn_id
-    assert rejected["baseline_graph_hash"] == accepted["candidate_graph_hash"]
+    assert rejected["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert repeated_reject["ok"] is True
     assert repeated_reject["baseline_turn_id"] == accepted_turn_id
-    assert repeated_reject["baseline_graph_hash"] == accepted["candidate_graph_hash"]
+    assert repeated_reject["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert accepting_rejected["ok"] is False
     assert accepting_rejected["kind"] == FailureKind.EDITOR_AHEAD_CONFLICT.value
 
@@ -2897,7 +3387,7 @@ def test_agent_edit_action_routes_cover_replay_conflict_state_mismatch_and_audit
 
     state = read_state(tmp_path / "s3")
     assert state["baseline_turn_id"] == accepted_turn_id
-    assert state["baseline_graph_hash"] == accepted["candidate_graph_hash"]
+    assert state["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert state["turns"][accepted_turn_id]["state"] == "accepted"
     assert state["turns"][rejected_turn_id]["state"] == "rejected"
     assert state["idempotency_records"]["accept:accept-a"]["turn_id"] == accepted_turn_id
@@ -2916,14 +3406,14 @@ def test_agent_edit_action_routes_cover_replay_conflict_state_mismatch_and_audit
     assert accept_response["turn_id"] == accepted_turn_id
     assert accept_response["baseline_turn_id"] == accepted_turn_id
     assert accept_response["submit_graph_hash"] == accepted_submit_hash
-    assert accept_response["baseline_graph_hash"] == accepted["candidate_graph_hash"]
+    assert accept_response["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert "audit_ref" not in accept_response
     assert reject_response["ok"] is True
     assert reject_response["action"] == "reject"
     assert reject_response["turn_id"] == rejected_turn_id
     assert reject_response["baseline_turn_id"] == accepted_turn_id
     assert reject_response["submit_graph_hash"] == rejected_submit_hash
-    assert reject_response["baseline_graph_hash"] == accepted["candidate_graph_hash"]
+    assert reject_response["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert "audit_ref" not in reject_response
 
     downloaded = _handle_agent_edit_audit(

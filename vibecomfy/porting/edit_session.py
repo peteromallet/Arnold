@@ -33,6 +33,7 @@ from vibecomfy.porting.layout.placement import (
     infer_add_node_anchor_hint,
 )
 from vibecomfy.porting.slot_codec import to_raw_name
+from vibecomfy.porting.widget_schema import effective_widget_names_for_class
 from vibecomfy.schema import get_schema_provider, schema_for, socket_types_compatible
 
 if TYPE_CHECKING:
@@ -389,6 +390,9 @@ class EditSession:
     def render(self) -> str:
         self.ledger = EditLedger.ingest(self.working_ui)
         workflow = self._workflow_from_ui(self.working_ui)
+        from vibecomfy.porting.helper_resolve import resolve_helpers
+
+        resolve_diagnostics = resolve_helpers(workflow, {})
         emission_diagnostics: list[EmissionDiagnostic] = []
         started = perf_counter()
         source = emit_agent_edit_python(
@@ -402,6 +406,19 @@ class EditSession:
         parsed_names = _extract_uid_name_pairs(source)
         lock_diagnostics = self._seed_or_validate_name_locks(parsed_names)
         all_diagnostics = [CompactDiagnostic.from_emission(item) for item in emission_diagnostics]
+        all_diagnostics.extend(
+            _diag(
+                f"resolve_{item.code}",
+                item.message,
+                severity=item.severity,
+                detail={
+                    "node_id": item.node_id,
+                    "class_type": item.class_type,
+                    **dict(item.detail),
+                },
+            )
+            for item in resolve_diagnostics.diagnostics
+        )
         all_diagnostics.extend(lock_diagnostics)
         if self.render_budget_ms is not None and elapsed_ms > self.render_budget_ms:
             all_diagnostics.append(
@@ -501,23 +518,9 @@ class EditSession:
                 ),
             )
 
-        applied = apply_delta(
-            self.original_ui,
-            ops,
-            schema_provider=self.schema_provider,
-        )
+        candidate, all_diags = self._replay_landed_ops_for_done(ops)
 
-        if not applied.ok or applied.candidate is None:
-            issue_diagnostics = tuple(
-                self._compact_port_issue(issue) for issue in applied.diagnostics
-            )
-            guard_issues: tuple[CompactDiagnostic, ...] = ()
-            if applied.guard_result is not None and applied.guard_result.diagnostics:
-                guard_issues = tuple(
-                    self._compact_port_issue(issue)
-                    for issue in applied.guard_result.diagnostics
-                )
-            all_diags = issue_diagnostics + guard_issues
+        if candidate is None:
             return DoneResult(
                 ok=False,
                 summary=(
@@ -527,7 +530,6 @@ class EditSession:
                 diagnostics=all_diags,
             )
 
-        candidate = applied.candidate
         if candidate != self.working_ui:
             return DoneResult(
                 ok=False,
@@ -563,6 +565,39 @@ class EditSession:
                 f"Summary: {gate_c_summary}"
             ),
         )
+
+    def _replay_landed_ops_for_done(
+        self,
+        ops: tuple[Any, ...],
+    ) -> tuple[dict[str, Any] | None, tuple[CompactDiagnostic, ...]]:
+        """Replay landed ops in order for Gate A.
+
+        ``apply_delta`` resolves a tuple against the input graph before it
+        mutates that graph.  Batch edit statements are sequential, so a rewire
+        may reference a node minted by an earlier add-node statement.  Replaying
+        one op at a time preserves that sequential contract while still proving
+        deterministic reproduction from ``original_ui``.
+        """
+        candidate: dict[str, Any] = deepcopy(self.original_ui)
+        for op in ops:
+            applied = apply_delta(
+                candidate,
+                (op,),
+                schema_provider=self.schema_provider,
+            )
+            if not applied.ok or applied.candidate is None:
+                issue_diagnostics = tuple(
+                    self._compact_port_issue(issue) for issue in applied.diagnostics
+                )
+                guard_issues: tuple[CompactDiagnostic, ...] = ()
+                if applied.guard_result is not None and applied.guard_result.diagnostics:
+                    guard_issues = tuple(
+                        self._compact_port_issue(issue)
+                        for issue in applied.guard_result.diagnostics
+                    )
+                return None, issue_diagnostics + guard_issues
+            candidate = applied.candidate
+        return candidate, ()
 
     # ------------------------------------------------------------------
     # Read-only queries (side-effect-free, never land ops)
@@ -1027,6 +1062,8 @@ class EditSession:
         since the schema may not carry ``widget`` metadata in test providers.
         """
         wv = node.get("widgets_values")
+        if isinstance(wv, Mapping):
+            return wv.get(field)
         if not isinstance(wv, list):
             return None
         # (a) Try inputs slot order first: find the slot named *field* and use its
@@ -2117,7 +2154,8 @@ class EditSession:
         schema_inputs = getattr(schema, "inputs", {}) or {}
         schema_input = schema_inputs.get(target.attr)
         raw_input = _find_named_slot(node_ref.node.get("inputs"), target.attr)
-        if raw_input is None and schema_input is None and target.attr != "mode":
+        widget_value = _widget_value_for_field(node_ref.node, node_ref.class_type, target.attr)
+        if raw_input is None and schema_input is None and widget_value is _MISSING_WIDGET_VALUE and target.attr != "mode":
             return None, [
                 _diag(
                     "unknown_target_field",
@@ -2129,6 +2167,8 @@ class EditSession:
         socket_type = _normalize_type(
             getattr(schema_input, "type", None) if schema_input is not None else raw_input.get("type") if isinstance(raw_input, Mapping) else None
         )
+        if socket_type is None and widget_value is not _MISSING_WIDGET_VALUE:
+            socket_type = _socket_type_from_widget_value(widget_value)
         return _ResolvedTargetField(node=node_ref, field_name=target.attr, socket_type=socket_type), []
 
     def _resolve_rhs_endpoint(
@@ -2904,6 +2944,33 @@ def _find_named_slot(slots: Any, name: str) -> dict[str, Any] | None:
     for item in slots:
         if isinstance(item, Mapping) and item.get("name") == name:
             return dict(item)
+    return None
+
+
+_MISSING_WIDGET_VALUE = object()
+
+
+def _widget_value_for_field(node: Mapping[str, Any], class_type: str, field_name: str) -> Any:
+    widgets_values = node.get("widgets_values")
+    if isinstance(widgets_values, Mapping):
+        return widgets_values[field_name] if field_name in widgets_values else _MISSING_WIDGET_VALUE
+    if isinstance(widgets_values, list):
+        widget_names = effective_widget_names_for_class(class_type, allow_object_info_fallback=True)
+        for index, name in enumerate(widget_names):
+            if name == field_name and index < len(widgets_values):
+                return widgets_values[index]
+    return _MISSING_WIDGET_VALUE
+
+
+def _socket_type_from_widget_value(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, int):
+        return "INT"
+    if isinstance(value, float):
+        return "FLOAT"
+    if isinstance(value, str):
+        return "STRING"
     return None
 
 

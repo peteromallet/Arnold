@@ -18,6 +18,7 @@ from vibecomfy.comfy_nodes.agent_audit import (
     write_text_artifact,
 )
 from vibecomfy.comfy_nodes import agent_provider
+from vibecomfy.comfy_nodes import megaplan_runtime
 from vibecomfy.comfy_nodes.agent_contracts import (
     FailureKind,
     StageResult,
@@ -45,6 +46,7 @@ from vibecomfy.comfy_nodes.agent_session import (
     read_state,
     record_idempotent_response,
     reject_turn,
+    structural_graph_hash,
     write_state_atomic,
 )
 from vibecomfy.contracts import (
@@ -615,6 +617,7 @@ def test_session_protocol_hashes_graph_subdict_and_records_candidate_hash(
     state = read_state(root / "s1")
     turn_record = state["turns"][turn_id]
     assert turn_record["submit_graph_hash"] == submit_graph_hash
+    assert turn_record["submit_structural_graph_hash"] == structural_graph_hash(request["graph"])
     assert turn_record["submitted_client_graph_hash"] == "client-before"
     assert turn_record["submit_graph_hash"] != payload_hash(request)
 
@@ -637,6 +640,9 @@ def test_session_protocol_hashes_graph_subdict_and_records_candidate_hash(
 
     state = read_state(root / "s1")
     assert state["turns"][turn_id]["candidate_graph_hash"] == payload_hash(response["graph"])
+    assert state["turns"][turn_id]["candidate_structural_graph_hash"] == structural_graph_hash(
+        response["graph"]
+    )
 
 
 def test_accept_reject_validate_against_submit_graph_hash_before_action_writes(
@@ -806,12 +812,14 @@ def test_v2_accept_requires_same_live_canvas_token_and_updates_baseline_on_succe
     assert isinstance(accepted, dict)
     assert accepted["ok"] is True
     assert accepted["baseline_turn_id"] == turn_id
-    assert accepted["baseline_graph_hash"] == candidate_graph_hash
+    assert accepted["baseline_graph_hash"] == structural_graph_hash(candidate_graph)
+    assert accepted["baseline_graph_hash_kind"] == "structural"
     assert accepted["candidate_graph_hash"] == candidate_graph_hash
     assert accepted["submitted_client_live_canvas_token"] == request["client_live_canvas_token"]
     state = read_state(root / "s1")
     assert state["baseline_turn_id"] == turn_id
-    assert state["baseline_graph_hash"] == candidate_graph_hash
+    assert state["baseline_graph_hash"] == structural_graph_hash(candidate_graph)
+    assert state["baseline_graph_hash_kind"] == "structural"
     assert state["turns"][turn_id]["state"] == "accepted"
 
 
@@ -884,10 +892,10 @@ def test_new_submit_marks_prior_candidates_unknown_and_accept_updates_baseline_g
     )
 
     assert isinstance(accepted, dict)
-    assert accepted["baseline_graph_hash"] == payload_hash(second_candidate_graph)
+    assert accepted["baseline_graph_hash"] == structural_graph_hash(second_candidate_graph)
     assert accepted["unknown_transitions"] == []
     state = read_state(root / "s1")
-    assert state["baseline_graph_hash"] == payload_hash(second_candidate_graph)
+    assert state["baseline_graph_hash"] == structural_graph_hash(second_candidate_graph)
     assert state["turns"][second_id]["state"] == "accepted"
 
 
@@ -908,7 +916,7 @@ def test_reject_preserves_existing_baseline_graph_hash(
         allocation=baseline_allocation,
         graph={"nodes": [{"id": 2, "type": "PreviewImage", "widgets_values": ["baseline"]}], "links": []},
     )
-    baseline_candidate_hash = payload_hash(baseline_candidate_graph)
+    baseline_candidate_structural_hash = structural_graph_hash(baseline_candidate_graph)
 
     accepted = accept_turn(
         session_root=root,
@@ -919,7 +927,7 @@ def test_reject_preserves_existing_baseline_graph_hash(
     )
     assert isinstance(accepted, dict)
     assert accepted["baseline_turn_id"] == baseline_turn_id
-    assert accepted["baseline_graph_hash"] == baseline_candidate_hash
+    assert accepted["baseline_graph_hash"] == baseline_candidate_structural_hash
 
     rejected_request = _request_graph("reject-next")
     rejected_allocation = allocate_turn(
@@ -945,11 +953,11 @@ def test_reject_preserves_existing_baseline_graph_hash(
 
     assert isinstance(rejected, dict)
     assert rejected["baseline_turn_id"] == baseline_turn_id
-    assert rejected["baseline_graph_hash"] == baseline_candidate_hash
+    assert rejected["baseline_graph_hash"] == baseline_candidate_structural_hash
     assert rejected["candidate_graph_hash"] == payload_hash(rejected_candidate_graph)
     state = read_state(root / "s1")
     assert state["baseline_turn_id"] == baseline_turn_id
-    assert state["baseline_graph_hash"] == baseline_candidate_hash
+    assert state["baseline_graph_hash"] == baseline_candidate_structural_hash
     assert state["turns"][rejected_turn_id]["state"] == "rejected"
 
 
@@ -2790,6 +2798,16 @@ def test_build_batch_messages_turn_zero_includes_full_python_and_catalog() -> No
     assert "```batch" in system
     assert "done()" in system
     assert 'clarify("' in system.lower() or "clarify(" in system
+    assert "Python-native dataflow program" in system
+    assert "new_var = ClassType" in system
+    assert "target_var.input_field = source_var.OUTPUT_SLOT" in system
+    assert "node_var.field_name = literal" in system
+    assert 'node_var.mode = "bypassed"' in system
+    assert "del node_var" in system
+    assert "ImageScaleBy(image=vaedecodetiled.IMAGE" in system
+    assert "Never ask for or use numeric node ids" in system
+    assert "add_node(...)" in system
+    assert "Do not write operation calls" in system
     # No JSON-delta response requirements (may mention JSON only to forbid it)
     assert "return only json" not in system.lower()
     assert "delta" not in system.lower()
@@ -2889,6 +2907,128 @@ def test_run_agent_turn_batch_audit_metadata_marks_batch_repl(monkeypatch) -> No
     md = dict(result.audit_metadata or {})
     assert md.get("response_contract") == "batch_repl"
     assert md.get("provider") == "arnold"
+
+
+def test_run_agent_turn_batch_uses_runtime_batch_entrypoint(monkeypatch) -> None:
+    """run_agent_turn_batch prefers the batch runtime contract over python fallback."""
+    calls: list[dict[str, object]] = []
+
+    class BatchRuntime:
+        @staticmethod
+        def run_agent_turn_batch(**kwargs):
+            calls.append(kwargs)
+            return {
+                "content": "Updated the prompt.\n\n```batch\ntext_prompt.text = \"lake\"\ndone()\n```"
+            }
+
+        @staticmethod
+        def run_agent_turn(**_kwargs):
+            raise AssertionError("python replacement fallback should not be used")
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: BatchRuntime)
+    result = agent_provider.run_agent_turn_batch(
+        task="set prompt",
+        messages=[{"role": "user", "content": "set prompt"}],
+        route="deepseek",
+        model="deepseek-chat",
+    )
+
+    assert result.batch == 'text_prompt.text = "lake"\ndone()'
+    assert result.route == "deepseek"
+    assert result.model == "deepseek-chat"
+    assert calls[0]["route"] == "deepseek"
+    assert calls[0]["model"] == "deepseek-chat"
+
+
+def test_run_agent_turn_batch_empty_content_is_malformed(monkeypatch) -> None:
+    """Two empty batch responses still fail as malformed model output."""
+    calls: list[dict[str, object]] = []
+
+    class EmptyBatchRuntime:
+        @staticmethod
+        def run_agent_turn_batch(**kwargs):
+            calls.append(kwargs)
+            return {"content": ""}
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: EmptyBatchRuntime)
+    with pytest.raises(agent_provider.MalformedModelJSON, match="batch_repl response was empty"):
+        agent_provider.run_agent_turn_batch(
+            task="set prompt",
+            messages=[{"role": "user", "content": "set prompt"}],
+        )
+    assert len(calls) == 2
+    assert calls[1]["messages"][-1]["role"] == "system"  # type: ignore[index]
+    assert "previous reply was empty or unparseable" in calls[1]["messages"][-1]["content"]  # type: ignore[index]
+
+
+def test_run_agent_turn_batch_retries_empty_content_once_then_succeeds(monkeypatch) -> None:
+    """The batch path retries one empty/unparseable response before surfacing failure."""
+    calls: list[dict[str, object]] = []
+    responses = iter(
+        [
+            {"content": ""},
+            {"content": "Done.\n\n```batch\nsaveimage.filename_prefix = \"after\"\ndone()\n```"},
+        ]
+    )
+
+    class RetryBatchRuntime:
+        @staticmethod
+        def run_agent_turn_batch(**kwargs):
+            calls.append(kwargs)
+            return next(responses)
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: RetryBatchRuntime)
+    result = agent_provider.run_agent_turn_batch(
+        task="set prompt",
+        messages=[{"role": "user", "content": "set prompt"}],
+        route="deepseek",
+        model="deepseek-chat",
+    )
+
+    assert result.batch == 'saveimage.filename_prefix = "after"\ndone()'
+    assert result.message == "Done."
+    assert len(calls) == 2
+    assert calls[1]["messages"][-1]["role"] == "system"  # type: ignore[index]
+    assert "previous reply was empty or unparseable" in calls[1]["messages"][-1]["content"]  # type: ignore[index]
+    metadata = dict(result.audit_metadata or {})
+    assert metadata["batch_repl_retry"]["count"] == 1
+    assert "batch_repl response was empty" in metadata["batch_repl_retry"]["reason"]
+
+
+def test_megaplan_runtime_batch_turn_uses_batch_repl_worker_contract(monkeypatch) -> None:
+    """The shipped megaplan adapter asks the worker for raw batch_repl content."""
+    calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(megaplan_runtime, "_resolve_deepseek_key", lambda: "test-key")
+
+    def _fake_run_worker(agent_kwargs, system_msg, user_msg, *, response_contract="python"):
+        calls.append(
+            {
+                "agent_kwargs": agent_kwargs,
+                "system_msg": system_msg,
+                "user_msg": user_msg,
+                "response_contract": response_contract,
+            }
+        )
+        return {"content": "Done.\n\n```batch\ndone()\n```"}
+
+    monkeypatch.setattr(megaplan_runtime, "_run_worker", _fake_run_worker)
+
+    response = megaplan_runtime.run_agent_turn_batch(
+        task="finish",
+        route="deepseek",
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": "system batch prompt"},
+            {"role": "user", "content": "user batch prompt"},
+        ],
+    )
+
+    assert response == {"content": "Done.\n\n```batch\ndone()\n```"}
+    assert calls[0]["response_contract"] == "batch_repl"
+    assert calls[0]["system_msg"] == "system batch prompt"
+    assert calls[0]["user_msg"] == "user batch prompt"
+    assert calls[0]["agent_kwargs"]["model"] == "deepseek-chat"
 
 
 def test_run_agent_turn_batch_rejects_missing_fence(monkeypatch) -> None:

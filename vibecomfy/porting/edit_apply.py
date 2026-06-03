@@ -47,6 +47,7 @@ class ResolvedFieldRef:
     input_name: str | None
     input_slot_index: int | None
     widget_index: int | None
+    widget_key: str | None
     schema_input: InputSpec | None
     automatic_link_removal: int | None = None
 
@@ -164,7 +165,7 @@ def resolve_delta(
     diagnostics: list[PortIssue] = list(ledger.diagnostics)
     resolved_ops: list[tuple[EditOp, ResolvedOp]] = []
 
-    for index, op in enumerate(delta):
+    for op in delta:
         resolved, issues = _resolve_op(ledger, op, schema_provider=schema_provider)
         diagnostics.extend(issues)
         if any(issue.severity == "error" for issue in issues):
@@ -175,7 +176,15 @@ def resolve_delta(
                 resolved_ops=tuple(resolved_ops),
             )
         assert resolved is not None
+        if isinstance(op, AddNodeOp):
+            applied_resolved, apply_diagnostics = _apply_resolved_op(ledger, op, resolved)
+            diagnostics.extend(apply_diagnostics)
+            resolved_ops.append((op, applied_resolved))
+            continue
         resolved_ops.append((op, resolved))
+
+    if delta:
+        _sync_scope_counters(ledger)
 
     return ResolveResult(
         ok=True,
@@ -191,6 +200,7 @@ def apply_delta(
     *,
     schema_provider: Any = None,
 ) -> ApplyResult:
+    stamped_before = EditLedger.ingest(original_ui).stamped_copy() if delta else None
     resolved = resolve_delta(original_ui, delta, schema_provider=schema_provider)
     if not resolved.ok:
         return ApplyResult(
@@ -202,49 +212,18 @@ def apply_delta(
         )
     if delta:
         candidate_ledger = resolved.ledger
-        stamped_before = candidate_ledger.stamped_copy()
         diagnostics = list(resolved.diagnostics)
         applied_resolved_ops: list[tuple[EditOp, ResolvedOp]] = []
         for op, resolved_op in resolved.resolved_ops:
-            if isinstance(op, SetNodeFieldOp):
-                assert isinstance(resolved_op, ResolvedFieldRef)
-                diagnostics.extend(_apply_set_node_field(candidate_ledger, resolved_op, op.value))
-                applied_resolved_ops.append((op, resolved_op))
-                continue
-            if isinstance(op, SetModeOp):
-                assert isinstance(resolved_op, ResolvedNodeRef)
-                _apply_set_mode(resolved_op, op.mode)
-                applied_resolved_ops.append((op, resolved_op))
-                continue
-            if isinstance(op, RemoveLinkOp):
-                assert isinstance(resolved_op, ResolvedRemoveLinkRef)
-                diagnostics.extend(_apply_remove_link(candidate_ledger, resolved_op))
-                applied_resolved_ops.append((op, resolved_op))
-                continue
-            if isinstance(op, RemoveNodeOp):
-                assert isinstance(resolved_op, ResolvedRemoveNodePlan)
-                diagnostics.extend(_apply_remove_node(candidate_ledger, resolved_op))
-                applied_resolved_ops.append((op, resolved_op))
-                continue
-            if isinstance(op, UpsertLinkOp):
-                assert isinstance(resolved_op, tuple)
-                source, target = resolved_op
-                assert isinstance(source, ResolvedLinkEndpoint)
-                assert isinstance(target, ResolvedLinkEndpoint)
-                diagnostics.extend(_apply_upsert_link(candidate_ledger, source, target))
-                applied_resolved_ops.append((op, resolved_op))
-                continue
             if isinstance(op, AddNodeOp):
-                assert isinstance(resolved_op, ResolvedAddNodeSpec)
-                applied_spec, add_diagnostics = _apply_add_node(candidate_ledger, resolved_op)
-                diagnostics.extend(add_diagnostics)
-                applied_resolved_ops.append((op, applied_spec))
+                assert isinstance(resolved_op, AppliedAddNodeSpec)
+                applied_resolved_ops.append((op, resolved_op))
                 continue
-            assert isinstance(op, ReorderOp)
-            assert isinstance(resolved_op, ResolvedNodeRef)
-            diagnostics.extend(_apply_reorder(resolved_op, op))
-            applied_resolved_ops.append((op, resolved_op))
+            applied_resolved, apply_diagnostics = _apply_resolved_op(candidate_ledger, op, resolved_op)
+            diagnostics.extend(apply_diagnostics)
+            applied_resolved_ops.append((op, applied_resolved))
         _sync_scope_counters(candidate_ledger)
+        assert stamped_before is not None
         guard = guard_full_ui(stamped_before, candidate_ledger.graph, tuple(applied_resolved_ops))
         diagnostics.extend(guard.diagnostics)
         if not guard.ok:
@@ -272,6 +251,38 @@ def apply_delta(
         mutation_started=False,
         guard_result=None,
     )
+
+
+def _apply_resolved_op(
+    ledger: EditLedger,
+    op: EditOp,
+    resolved_op: ResolvedOp,
+) -> tuple[ResolvedOp, list[PortIssue]]:
+    if isinstance(op, SetNodeFieldOp):
+        assert isinstance(resolved_op, ResolvedFieldRef)
+        return resolved_op, _apply_set_node_field(ledger, resolved_op, op.value)
+    if isinstance(op, SetModeOp):
+        assert isinstance(resolved_op, ResolvedNodeRef)
+        _apply_set_mode(resolved_op, op.mode)
+        return resolved_op, []
+    if isinstance(op, RemoveLinkOp):
+        assert isinstance(resolved_op, ResolvedRemoveLinkRef)
+        return resolved_op, _apply_remove_link(ledger, resolved_op)
+    if isinstance(op, RemoveNodeOp):
+        assert isinstance(resolved_op, ResolvedRemoveNodePlan)
+        return resolved_op, _apply_remove_node(ledger, resolved_op)
+    if isinstance(op, UpsertLinkOp):
+        assert isinstance(resolved_op, tuple)
+        source, target = resolved_op
+        assert isinstance(source, ResolvedLinkEndpoint)
+        assert isinstance(target, ResolvedLinkEndpoint)
+        return resolved_op, _apply_upsert_link(ledger, source, target)
+    if isinstance(op, AddNodeOp):
+        assert isinstance(resolved_op, ResolvedAddNodeSpec)
+        return _apply_add_node(ledger, resolved_op)
+    assert isinstance(op, ReorderOp)
+    assert isinstance(resolved_op, ResolvedNodeRef)
+    return resolved_op, _apply_reorder(resolved_op, op)
 
 
 def guard_full_ui(
@@ -484,7 +495,10 @@ def _guard_attribution(
     for op, resolved in resolved_ops:
         if isinstance(op, SetNodeFieldOp):
             assert isinstance(resolved, ResolvedFieldRef)
-            paths = [f"widgets_values[{resolved.widget_index}]"]
+            if resolved.widget_key is not None:
+                paths = [f"widgets_values.{resolved.widget_key}"]
+            else:
+                paths = [f"widgets_values[{resolved.widget_index}]"]
             if resolved.input_name is not None:
                 paths.append("inputs")
             allow_node_paths(op.target.scope_path, op.target.uid, *paths)
@@ -999,6 +1013,8 @@ def _resolve_set_node_field(
 
     raw_input = _find_named_slot(node.get("inputs"), op.target.field_path)
     raw_input_index = _find_named_slot_index(node.get("inputs"), op.target.field_path)
+    widgets_values = node.get("widgets_values")
+    widget_key = op.target.field_path if isinstance(widgets_values, Mapping) and op.target.field_path in widgets_values else None
     if raw_input is not None:
         input_name = op.target.field_path
         if isinstance(raw_input.get("link"), int):
@@ -1011,7 +1027,7 @@ def _resolve_set_node_field(
         widget_index = _widget_index_from_input_stubs(node.get("inputs"), op.target.field_path)
         used_schema_less_widget_recovery = widget_index is not None
 
-    if input_name is None and widget_index is None and schema_input is None:
+    if input_name is None and widget_index is None and widget_key is None and schema_input is None:
         return None, [
             _issue(
                 "unknown_node_field",
@@ -1024,7 +1040,7 @@ def _resolve_set_node_field(
                 },
             )
         ]
-    if widget_index is None:
+    if widget_index is None and widget_key is None:
         return None, [
             _issue(
                 "non_widget_field_not_editable",
@@ -1037,24 +1053,6 @@ def _resolve_set_node_field(
                 },
             )
         ]
-    if automatic_link_removal is not None:
-        widgets_values = node.get("widgets_values")
-        if isinstance(widgets_values, list) and widget_index < len(widgets_values):
-            return None, [
-                _issue(
-                    "desynced_linked_widget_state",
-                    f"{class_type}.{op.target.field_path} is simultaneously link-driven and still has a widgets_values entry; refusing to guess which state wins.",
-                    detail={
-                        "scope_path": op.target.scope_path,
-                        "uid": op.target.uid,
-                        "field_path": op.target.field_path,
-                        "class_type": class_type,
-                        "widget_index": widget_index,
-                        "link_id": automatic_link_removal,
-                        "widget_value": widgets_values[widget_index],
-                    },
-                )
-            ]
 
     value_issues = _validate_literal_value(
         value=op.value,
@@ -1105,6 +1103,7 @@ def _resolve_set_node_field(
             input_name=input_name,
             input_slot_index=raw_input_index,
             widget_index=widget_index,
+            widget_key=widget_key,
             schema_input=schema_input,
             automatic_link_removal=automatic_link_removal,
         ),
@@ -2322,10 +2321,9 @@ def _apply_set_node_field(
                         "link_id": field_ref.automatic_link_removal,
                     },
                 )
-            )
+        )
         _clear_linked_input_surface(node, field_ref)
-    assert field_ref.widget_index is not None
-    _write_widget_value(node, field_ref.widget_index, value)
+    _write_widget_value(node, field_ref, value)
     return diagnostics
 
 
@@ -2345,14 +2343,24 @@ def _clear_linked_input_surface(node: dict[str, Any], field_ref: ResolvedFieldRe
         slot["link"] = None
 
 
-def _write_widget_value(node: dict[str, Any], widget_index: int, value: Any) -> None:
+def _write_widget_value(node: dict[str, Any], field_ref: ResolvedFieldRef, value: Any) -> None:
     widgets_values = node.get("widgets_values")
+    if field_ref.widget_key is not None:
+        if isinstance(widgets_values, dict):
+            widgets_values[field_ref.widget_key] = value
+            return
+        if isinstance(widgets_values, Mapping):
+            widgets_values = dict(widgets_values)
+            widgets_values[field_ref.widget_key] = value
+            node["widgets_values"] = widgets_values
+            return
+    assert field_ref.widget_index is not None
     if not isinstance(widgets_values, list):
         widgets_values = []
         node["widgets_values"] = widgets_values
-    while len(widgets_values) <= widget_index:
+    while len(widgets_values) <= field_ref.widget_index:
         widgets_values.append(None)
-    widgets_values[widget_index] = value
+    widgets_values[field_ref.widget_index] = value
 
 
 def _reorder_names(node: Mapping[str, Any], class_type: str, axis: str) -> tuple[str, ...] | None:

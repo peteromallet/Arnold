@@ -132,6 +132,9 @@ export async function createBrowserHarness({
   const loadGraphDataCalls = [];
   const graphClearCalls = [];
   const graphConfigureCalls = [];
+  const graphChangeCalls = [];
+  const graphDirtyCanvasCalls = [];
+  const canvasDrawCalls = [];
   const queuePromptCalls = [];
   const serializeCalls = [];
   const toasts = [];
@@ -179,6 +182,18 @@ export async function createBrowserHarness({
           currentGraph = snapshot;
           syncLiveGraphNodes();
         },
+        change() {
+          graphChangeCalls.push(clone(currentGraph));
+          operationLog.push({ kind: "graph.change" });
+        },
+        setDirtyCanvas(fg, bg) {
+          graphDirtyCanvasCalls.push([fg, bg]);
+          operationLog.push({ kind: "graph.setDirtyCanvas", fg, bg });
+        },
+      },
+      draw(fg, bg) {
+        canvasDrawCalls.push([fg, bg]);
+        operationLog.push({ kind: "canvas.draw", fg, bg });
       },
     },
     extensionManager: {
@@ -318,6 +333,9 @@ export async function createBrowserHarness({
     loadGraphDataCalls,
     graphClearCalls,
     graphConfigureCalls,
+    graphChangeCalls,
+    graphDirtyCanvasCalls,
+    canvasDrawCalls,
     queuePromptCalls,
     serializeCalls,
     toasts,
@@ -363,6 +381,10 @@ export async function createBrowserHarness({
     },
     setCurrentGraph(nextGraph) {
       liveCanvasRevision += 1;
+      currentGraph = clone(nextGraph);
+      syncLiveGraphNodes();
+    },
+    setCurrentGraphWithoutRevisionBump(nextGraph) {
       currentGraph = clone(nextGraph);
       syncLiveGraphNodes();
     },

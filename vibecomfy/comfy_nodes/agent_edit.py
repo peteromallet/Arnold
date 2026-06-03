@@ -45,7 +45,13 @@ from .agent_provider import (
     run_agent_turn_delta,
 )
 from .agent_diagnostics import lower_stage_result, queue_stage_result
-from .agent_session import allocate_turn, payload_hash, record_idempotent_response, turn_dir_for
+from .agent_session import (
+    allocate_turn,
+    payload_hash,
+    record_idempotent_response,
+    structural_graph_hash,
+    turn_dir_for,
+)
 
 if TYPE_CHECKING:
     from vibecomfy.porting.edit_session import EditSession
@@ -64,7 +70,9 @@ class AgentEditState:
     schema_provider: Any
     baseline_graph_hash: str | None
     submit_graph_hash: str | None
+    submit_structural_graph_hash: str | None
     submitted_client_graph_hash: str | None
+    submitted_client_structural_graph_hash: str | None
     session_dir: Path
     turn_dir: Path
     request_path: Path
@@ -544,8 +552,8 @@ def _stage_ingest(state: AgentEditState, context: TurnContext) -> StageResult:
     update_state_match_gate(
         context,
         baseline_graph_hash=state.baseline_graph_hash,
-        client_graph_hash=state.submit_graph_hash,
-        client_graph_hash_label="submit_graph_hash",
+        client_graph_hash=state.submit_structural_graph_hash,
+        client_graph_hash_label="submit_structural_graph_hash",
     )
     state_match_gate = context.gate_results["state_match_ok"]
     if not state_match_gate.ok:
@@ -586,8 +594,8 @@ def _stage_ingest_v2(state: AgentEditState, context: TurnContext) -> StageResult
     update_state_match_gate(
         context,
         baseline_graph_hash=state.baseline_graph_hash,
-        client_graph_hash=state.submit_graph_hash,
-        client_graph_hash_label="submit_graph_hash",
+        client_graph_hash=state.submit_structural_graph_hash,
+        client_graph_hash_label="submit_structural_graph_hash",
     )
     state_match_gate = context.gate_results["state_match_ok"]
     if not state_match_gate.ok:
@@ -1545,7 +1553,7 @@ def _failure_response(
     derive_gates(
         context,
         baseline_graph_hash=state.baseline_graph_hash,
-        client_graph_hash=state.submit_graph_hash,
+        client_graph_hash=state.submit_structural_graph_hash,
     )
     failure = dataclasses.replace(
         failure,
@@ -1571,7 +1579,12 @@ def _run_stage(
     try:
         result = fn(state, context, *args, **kwargs)
     except Exception as exc:
-        failure_stage = "agent_response" if name in {"agent", "agent_delta", "agent_batch"} else name
+        failure_stage = (
+            "agent_response"
+            if name in {"agent", "agent_delta"}
+            or (name == "agent_batch" and _is_provider_exception(exc))
+            else name
+        )
         failure = classify_failure(failure_stage, exc, context)
         result = StageResult(
             stage=name,
@@ -1597,6 +1610,16 @@ def _run_stage(
         )
         raise _StageBlocked(result, failure)
     return result
+
+
+def _is_provider_exception(exc: Exception) -> bool:
+    provider_exception_names = {
+        "AuthError",
+        "MalformedModelJSON",
+        "MissingRequiredField",
+        "ProviderError",
+    }
+    return any(type_.__name__ in provider_exception_names for type_ in type(exc).__mro__)
 
 
 _RUNTIME_OBJECT_INFO_PATH: list[str] = []
@@ -1760,10 +1783,22 @@ def handle_agent_edit(
         if isinstance(turn_record, dict) and isinstance(turn_record.get("submit_graph_hash"), str)
         else None
     )
+    submit_structural_graph_hash = (
+        turn_record.get("submit_structural_graph_hash")
+        if isinstance(turn_record, dict)
+        and isinstance(turn_record.get("submit_structural_graph_hash"), str)
+        else None
+    )
     submitted_client_graph_hash = (
         turn_record.get("submitted_client_graph_hash")
         if isinstance(turn_record, dict)
         and isinstance(turn_record.get("submitted_client_graph_hash"), str)
+        else None
+    )
+    submitted_client_structural_graph_hash = (
+        turn_record.get("submitted_client_structural_graph_hash")
+        if isinstance(turn_record, dict)
+        and isinstance(turn_record.get("submitted_client_structural_graph_hash"), str)
         else None
     )
     state = AgentEditState(
@@ -1773,7 +1808,9 @@ def handle_agent_edit(
         schema_provider=schema_provider,
         baseline_graph_hash=baseline_graph_hash,
         submit_graph_hash=submit_graph_hash,
+        submit_structural_graph_hash=submit_structural_graph_hash,
         submitted_client_graph_hash=submitted_client_graph_hash,
+        submitted_client_structural_graph_hash=submitted_client_structural_graph_hash,
         session_dir=allocation.session_dir,
         turn_dir=turn_dir,
         request_path=turn_dir / "request.json",
@@ -1860,13 +1897,17 @@ def handle_agent_edit(
         artifacts=state.artifacts,
     )
     candidate_graph_hash = payload_hash(state.ui_payload)
+    candidate_structural_graph_hash = structural_graph_hash(state.ui_payload)
     response.update(
         {
             "baseline_graph_hash": state.baseline_graph_hash,
             "submit_graph_hash": state.submit_graph_hash,
+            "submit_structural_graph_hash": state.submit_structural_graph_hash,
             "submitted_client_graph_hash": state.submitted_client_graph_hash,
+            "submitted_client_structural_graph_hash": state.submitted_client_structural_graph_hash,
             "candidate_graph_hash": candidate_graph_hash,
-            "client_graph_hash": context.client_graph_hash,
+            "candidate_structural_graph_hash": candidate_structural_graph_hash,
+            "client_graph_hash": state.submitted_client_graph_hash,
         }
     )
     if _agent_edit_v2_enabled():

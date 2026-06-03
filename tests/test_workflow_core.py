@@ -595,6 +595,60 @@ def test_compile_rewrites_edge_fed_set_get_nodes_to_direct_links() -> None:
     assert api["4"]["inputs"]["images"] == ["1", 0]
 
 
+def test_compile_rewrites_set_get_source_through_bypassed_nodes() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    bypassed = VibeNode("2", "ImageFilter", inputs={})
+    bypassed.metadata["_ui"] = {"mode": 4}
+    workflow.nodes["2"] = bypassed
+    workflow.nodes["3"] = VibeNode("3", "SetNode", inputs={"widget_0": "reference_image"})
+    workflow.nodes["4"] = VibeNode("4", "GetNode", inputs={"widget_0": "reference_image"})
+    workflow.nodes["5"] = VibeNode("5", "SaveImage", inputs={})
+    workflow.connect("1.0", "2.image")
+    workflow.connect("2.0", "3.IMAGE")
+    workflow.connect("4.0", "5.images")
+
+    api = workflow.compile("api")
+
+    assert set(api) == {"1", "5"}
+    assert api["5"]["inputs"]["images"] == ["1", 0]
+
+
+@pytest.mark.parametrize(
+    ("path", "target_node_id", "target_input", "expected_source"),
+    [
+        (
+            Path("/tmp/runexx-ltx23/LTX-2.3_-_I2V_T2V_Basic_for_checkpoint_models.json"),
+            "103",
+            "model",
+            ["337", 0],
+        ),
+        (
+            Path("/tmp/runexx-ltx23/LTX-2.3_-_I2V_multi-subject-reference_Licon-MSR-lora.json"),
+            "10",
+            "model",
+            ["59", 0],
+        ),
+    ],
+)
+def test_compile_original_runexx_ui_with_bypassed_set_get_sources(
+    path: Path,
+    target_node_id: str,
+    target_input: str,
+    expected_source: list[object],
+) -> None:
+    if not path.exists():
+        pytest.skip(f"RuneXX regression fixture not present: {path}")
+
+    from vibecomfy import load_workflow_any
+
+    workflow = load_workflow_any(path)
+
+    api = workflow.compile("api")
+
+    assert api[target_node_id]["inputs"][target_input] == expected_source
+
+
 def test_helper_diagnostics_report_unresolved_broadcasts_before_compile() -> None:
     workflow = VibeWorkflow("test", WorkflowSource("test"))
     workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})

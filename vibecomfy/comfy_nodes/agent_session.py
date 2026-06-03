@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -113,6 +114,7 @@ def default_state() -> dict[str, Any]:
         "next_turn_index": 1,
         "baseline_turn_id": None,
         "baseline_graph_hash": None,
+        "baseline_graph_hash_kind": None,
         "turns": {},
         "idempotency_records": {},
     }
@@ -134,15 +136,145 @@ def read_state(session_dir: Path) -> dict[str, Any]:
         merged["idempotency_records"] = {}
     if not isinstance(merged.get("next_turn_index"), int) or merged["next_turn_index"] < 1:
         merged["next_turn_index"] = 1
-    if merged.get("baseline_graph_hash") is None and isinstance(merged.get("baseline_turn_id"), str):
+    if isinstance(merged.get("baseline_turn_id"), str):
         baseline_turn = merged["turns"].get(merged["baseline_turn_id"])
         if isinstance(baseline_turn, dict):
-            migrated_hash = baseline_turn.get("candidate_graph_hash") or baseline_turn.get(
-                "client_graph_hash"
-            )
-            merged["baseline_graph_hash"] = migrated_hash if isinstance(migrated_hash, str) else None
+            structural_hash = baseline_turn.get("candidate_structural_graph_hash")
+            if not isinstance(structural_hash, str):
+                structural_hash = _candidate_structural_hash_from_turn_dir(
+                    session_dir=path.parent,
+                    turn_id=merged["baseline_turn_id"],
+                )
+                if isinstance(structural_hash, str):
+                    baseline_turn["candidate_structural_graph_hash"] = structural_hash
+            if isinstance(structural_hash, str):
+                merged["baseline_graph_hash"] = structural_hash
+                merged["baseline_graph_hash_kind"] = "structural"
+            elif merged.get("baseline_graph_hash") is None:
+                migrated_hash = baseline_turn.get("candidate_graph_hash") or baseline_turn.get(
+                    "client_graph_hash"
+                )
+                merged["baseline_graph_hash"] = (
+                    migrated_hash if isinstance(migrated_hash, str) else None
+                )
+                merged["baseline_graph_hash_kind"] = (
+                    "raw" if isinstance(merged["baseline_graph_hash"], str) else None
+                )
+    if (
+        merged.get("baseline_graph_hash") is not None
+        and merged.get("baseline_graph_hash_kind") is None
+    ):
+        merged["baseline_graph_hash_kind"] = "raw"
     merged["schema_version"] = STATE_SCHEMA_VERSION
     return merged
+
+
+def _natural_id_key(value: Any) -> tuple[int, int | str]:
+    text = str(value if value is not None else "")
+    if re_match := re.fullmatch(r"-?\d+", text):
+        return (0, int(re_match.group(0)))
+    return (1, text)
+
+
+def _is_preview_like_key(key: Any) -> bool:
+    return re.search(r"(?:^|_)(?:video)?preview(?:_|$)", str(key or ""), re.I) is not None
+
+
+def _normalize_structural_widget_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_normalize_structural_widget_value(entry) for entry in value]
+    if isinstance(value, dict):
+        return {
+            key: _normalize_structural_widget_value(entry)
+            for key, entry in sorted(value.items(), key=lambda item: str(item[0]))
+            if not _is_preview_like_key(key)
+        }
+    return value
+
+
+def _normalize_structural_link(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_normalize_structural_link(entry) for entry in value]
+    if isinstance(value, dict):
+        return {
+            key: _normalize_structural_link(entry)
+            for key, entry in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    return value
+
+
+def structural_graph_projection(graph: Any) -> dict[str, Any]:
+    if not isinstance(graph, Mapping):
+        return {"nodes": [], "links": []}
+    nodes: list[dict[str, Any]] = []
+    for node in graph.get("nodes") if isinstance(graph.get("nodes"), list) else []:
+        if not isinstance(node, Mapping):
+            node = {}
+        inputs = []
+        for input_ in node.get("inputs") if isinstance(node.get("inputs"), list) else []:
+            if not isinstance(input_, Mapping):
+                input_ = {}
+            inputs.append({"name": input_.get("name"), "link": input_.get("link")})
+        outputs = []
+        for output in node.get("outputs") if isinstance(node.get("outputs"), list) else []:
+            if not isinstance(output, Mapping):
+                output = {}
+            output_links = output.get("links")
+            if isinstance(output_links, list):
+                output_links = sorted(output_links, key=lambda entry: str(entry))
+            outputs.append({"name": output.get("name"), "links": output_links})
+        nodes.append(
+            {
+                "id": node.get("id"),
+                "type": node.get("type"),
+                "mode": node.get("mode"),
+                "inputs": inputs,
+                "outputs": outputs,
+                "widgets_values": _normalize_structural_widget_value(
+                    node.get("widgets_values", [])
+                ),
+            }
+        )
+    nodes.sort(
+        key=lambda node: (_natural_id_key(node.get("id")), str(node.get("type") or ""))
+    )
+    links = (
+        [_normalize_structural_link(link) for link in graph.get("links")]
+        if isinstance(graph.get("links"), list)
+        else []
+    )
+    links.sort(
+        key=lambda link: json.dumps(
+            link, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+    )
+    return {"nodes": nodes, "links": links}
+
+
+def structural_graph_hash(graph: Any) -> str | None:
+    if not isinstance(graph, Mapping):
+        return None
+    return payload_hash(structural_graph_projection(graph))
+
+
+def _candidate_structural_hash_from_turn_dir(
+    *, session_dir: Path, turn_id: str
+) -> str | None:
+    for filename in ("candidate.ui.json", "response.json"):
+        path = session_dir / "turns" / turn_id / filename
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        graph = (
+            payload.get("graph")
+            if filename == "response.json" and isinstance(payload, Mapping)
+            else payload
+        )
+        digest = structural_graph_hash(graph)
+        if isinstance(digest, str):
+            return digest
+    return None
 
 
 def write_state_atomic(session_dir: Path, state: dict[str, Any]) -> None:
@@ -187,10 +319,23 @@ def _mapping_graph_hash(payload: Any, *, field: str = "graph") -> str | None:
     return payload_hash(graph)
 
 
+def _mapping_graph_structural_hash(payload: Any, *, field: str = "graph") -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    return structural_graph_hash(payload.get(field))
+
+
 def _client_graph_hash(payload: Any) -> str | None:
     if not isinstance(payload, Mapping):
         return None
     value = payload.get("client_graph_hash")
+    return value if isinstance(value, str) else None
+
+
+def _client_structural_graph_hash(payload: Any) -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    value = payload.get("client_structural_graph_hash")
     return value if isinstance(value, str) else None
 
 
@@ -212,7 +357,9 @@ def allocate_turn(
     session_dir = session_dir_for(session_root, session_id)
     request_digest = payload_hash(request_payload)
     submit_graph_hash = _mapping_graph_hash(request_payload)
+    submit_structural_graph_hash = _mapping_graph_structural_hash(request_payload)
     submitted_client_graph_hash = _client_graph_hash(request_payload)
+    submitted_client_structural_graph_hash = _client_structural_graph_hash(request_payload)
     submitted_client_live_canvas_token = _client_live_canvas_token(request_payload)
     key = _record_key("edit", idempotency_key)
 
@@ -266,9 +413,12 @@ def allocate_turn(
         state["turns"][turn_id] = {
             "state": "candidate",
             "submit_graph_hash": submit_graph_hash,
+            "submit_structural_graph_hash": submit_structural_graph_hash,
             "submitted_client_graph_hash": submitted_client_graph_hash,
+            "submitted_client_structural_graph_hash": submitted_client_structural_graph_hash,
             "submitted_client_live_canvas_token": submitted_client_live_canvas_token,
             "candidate_graph_hash": None,
+            "candidate_structural_graph_hash": None,
             "agent_edit_protocol": None,
             "client_graph_hash": None,
             "accepted_at": None,
@@ -335,6 +485,7 @@ def record_idempotent_response(
 ) -> dict[str, Any] | None:
     key = _record_key(scope, idempotency_key)
     candidate_graph_hash = _mapping_graph_hash(response)
+    candidate_structural_graph_hash = _mapping_graph_structural_hash(response)
     agent_edit_protocol = "v2_delta" if isinstance(response.get("delta_ops"), list) else "v1"
     if key is None:
         if scope == "edit" and turn_id is not None:
@@ -344,6 +495,7 @@ def record_idempotent_response(
                 turn_record = state["turns"].get(turn_id)
                 if isinstance(turn_record, dict):
                     turn_record["candidate_graph_hash"] = candidate_graph_hash
+                    turn_record["candidate_structural_graph_hash"] = candidate_structural_graph_hash
                     turn_record["agent_edit_protocol"] = agent_edit_protocol
                     write_state_atomic(session_dir, state)
         return None
@@ -365,6 +517,7 @@ def record_idempotent_response(
             turn_record = state["turns"].get(turn_id)
             if isinstance(turn_record, dict):
                 turn_record["candidate_graph_hash"] = candidate_graph_hash
+                turn_record["candidate_structural_graph_hash"] = candidate_structural_graph_hash
                 turn_record["agent_edit_protocol"] = agent_edit_protocol
         state["idempotency_records"][key] = record
         write_state_atomic(session_dir, state)
@@ -471,6 +624,25 @@ def _mutate_turn_state(
                     "candidate_graph_hash_present": False,
                 },
             )
+        candidate_structural_graph_hash = turn_record.get("candidate_structural_graph_hash")
+        if not isinstance(candidate_structural_graph_hash, str):
+            candidate_structural_graph_hash = _candidate_structural_hash_from_turn_dir(
+                session_dir=session_dir,
+                turn_id=turn_id,
+            )
+            if isinstance(candidate_structural_graph_hash, str):
+                turn_record["candidate_structural_graph_hash"] = candidate_structural_graph_hash
+        if not isinstance(candidate_structural_graph_hash, str):
+            return failure_envelope(
+                FailureKind.STALE_STATE_MISMATCH,
+                scope,
+                context,
+                agent_failure_context={
+                    "explanation": "Turn has no persisted candidate structural graph hash.",
+                    "turn_id": turn_id,
+                    "candidate_structural_graph_hash_present": False,
+                },
+            )
         agent_edit_protocol = turn_record.get("agent_edit_protocol")
         submitted_client_graph_hash = turn_record.get("submitted_client_graph_hash")
         if scope == "accept" and agent_edit_protocol == "v2_delta":
@@ -558,7 +730,8 @@ def _mutate_turn_state(
         unknown_transitions: list[dict[str, Any]] = []
         if scope == "accept":
             state["baseline_turn_id"] = turn_id
-            state["baseline_graph_hash"] = candidate_graph_hash
+            state["baseline_graph_hash"] = candidate_structural_graph_hash
+            state["baseline_graph_hash_kind"] = "structural"
             for other_turn_id, other_record in state["turns"].items():
                 if other_turn_id == turn_id or not isinstance(other_record, dict):
                     continue
@@ -588,13 +761,16 @@ def _mutate_turn_state(
             "turn_id": turn_id,
             "baseline_turn_id": state.get("baseline_turn_id"),
             "baseline_graph_hash": state.get("baseline_graph_hash"),
+            "baseline_graph_hash_kind": state.get("baseline_graph_hash_kind"),
             "accepted_state": target_state,
             "client_graph_hash": client_graph_hash,
             "submit_graph_hash": submit_graph_hash,
+            "submit_structural_graph_hash": turn_record.get("submit_structural_graph_hash"),
             "submitted_client_live_canvas_token": turn_record.get(
                 "submitted_client_live_canvas_token"
             ),
             "candidate_graph_hash": turn_record.get("candidate_graph_hash"),
+            "candidate_structural_graph_hash": turn_record.get("candidate_structural_graph_hash"),
             "unknown_transitions": unknown_transitions,
             "idempotency_key": idempotency_key,
         }

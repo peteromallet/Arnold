@@ -4,6 +4,8 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
+
 from vibecomfy.porting.edit_apply import apply_delta, guard_full_ui, resolve_delta
 from vibecomfy.porting.edit_ledger import EditLedger
 from vibecomfy.porting.edit_ops import parse_edit_delta
@@ -55,6 +57,37 @@ class _SchemaProvider:
                     "filename_prefix": InputSpec(type="STRING", required=True),
                 },
                 outputs=[],
+            ),
+        }
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        return self._schemas.get(class_type)
+
+
+class _RuneXXSchemaProvider:
+    def __init__(self) -> None:
+        self._schemas = {
+            "VAEDecodeTiled": NodeSchema(
+                class_type="VAEDecodeTiled",
+                pack="core",
+                inputs={},
+                outputs=[OutputSpec(type="IMAGE", name="IMAGE")],
+            ),
+            "ImageScaleBy": NodeSchema(
+                class_type="ImageScaleBy",
+                pack="core",
+                inputs={
+                    "image": InputSpec(type="IMAGE", required=True),
+                    "upscale_method": InputSpec(type="STRING", required=True),
+                    "scale_by": InputSpec(type="FLOAT", required=True),
+                },
+                outputs=[OutputSpec(type="IMAGE", name="IMAGE")],
+            ),
+            "VHS_VideoCombine": NodeSchema(
+                class_type="VHS_VideoCombine",
+                pack="ComfyUI-VideoHelperSuite",
+                inputs={"images": InputSpec(type="IMAGE", required=True)},
+                outputs=[OutputSpec(type="VHS_FILENAMES", name="Filenames")],
             ),
         }
 
@@ -456,6 +489,128 @@ def test_apply_delta_adds_node_with_ledger_ids_and_collision_nudging() -> None:
     assert sorted(source_output["links"]) == [9, 10]
 
 
+def test_apply_delta_resolves_node_added_earlier_in_same_delta() -> None:
+    original = _fixture()
+    stamped_before = EditLedger.ingest(original).stamped_copy()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "add_node",
+                "scope_path": "",
+                "class_type": "CLIPTextEncode",
+                "fields": {"text": "agent inserted"},
+                "inputs": {"clip": ["", "1", "CLIP"]},
+                "anchor": {"relation": "right_of", "near": ["", "1"]},
+            },
+            {
+                "op": "upsert_link",
+                "from": ["", "n1", "CONDITIONING"],
+                "to": ["", "5", "positive"],
+            },
+        ]
+    )
+
+    resolved = resolve_delta(copy.deepcopy(original), delta, schema_provider=_SchemaProvider())
+    result = apply_delta(original, delta, schema_provider=_SchemaProvider())
+
+    assert resolved.ok is True
+    assert result.ok is True
+    assert result.candidate is not None
+    assert [(type(op).__name__, type(resolved_op).__name__) for op, resolved_op in result.resolved_ops] == [
+        ("AddNodeOp", "AppliedAddNodeSpec"),
+        ("UpsertLinkOp", "tuple"),
+    ]
+    nodes_after = _normalized_root_nodes(result.candidate)
+    nodes_before = _normalized_root_nodes(stamped_before)
+    new_node = nodes_after[8]
+    assert new_node["type"] == "CLIPTextEncode"
+    assert new_node["properties"]["vibecomfy_uid"] == "n1"
+    positive = next(slot for slot in nodes_after[5]["inputs"] if slot["name"] == "positive")
+    new_link_id = positive["link"]
+    assert [link for link in result.candidate["links"] if link[0] == new_link_id] == [
+        [new_link_id, 8, 0, 5, 1, "CONDITIONING"]
+    ]
+    for node_id, before in nodes_before.items():
+        if node_id in {1, 2, 5}:
+            continue
+        assert nodes_after[node_id] == before
+
+
+def test_apply_delta_keeps_unknown_intra_delta_node_target_as_clean_failure() -> None:
+    original = _fixture()
+    before = copy.deepcopy(original)
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "add_node",
+                "scope_path": "",
+                "class_type": "CLIPTextEncode",
+                "fields": {"text": "agent inserted"},
+                "inputs": {"clip": ["", "1", "CLIP"]},
+                "anchor": {"relation": "right_of", "near": ["", "1"]},
+            },
+            {
+                "op": "upsert_link",
+                "from": ["", "n2", "CONDITIONING"],
+                "to": ["", "5", "positive"],
+            },
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=_SchemaProvider())
+
+    assert result.ok is False
+    assert result.candidate is None
+    assert result.mutation_started is False
+    assert len(result.resolved_ops) == 1
+    assert any(issue.code == "unknown_node_target" and issue.detail.get("uid") == "n2" for issue in result.diagnostics)
+    assert original == before
+
+
+def test_apply_delta_resolves_runexx_image_scale_added_then_wired_same_delta() -> None:
+    workflow_path = Path("/tmp/runexx-ltx23/LTX-2.3_-_I2V_T2V_Basic.json")
+    if not workflow_path.exists():
+        pytest.skip("RuneXX LTX-2.3 fixture is not present at /tmp/runexx-ltx23")
+    original = json.loads(workflow_path.read_text(encoding="utf-8"))
+    stamped_before = EditLedger.ingest(original).stamped_copy()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "add_node",
+                "scope_path": "",
+                "class_type": "ImageScaleBy",
+                "fields": {"upscale_method": "lanczos", "scale_by": 2.0},
+                "inputs": {"image": ["", "127", "IMAGE"]},
+                "anchor": {"relation": "right_of", "near": ["", "127"]},
+            },
+            {
+                "op": "upsert_link",
+                "from": ["", "n1", "IMAGE"],
+                "to": ["", "140", "images"],
+            },
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=_RuneXXSchemaProvider())
+
+    assert result.ok is True
+    assert result.candidate is not None
+    nodes_after = _normalized_root_nodes(result.candidate)
+    nodes_before = _normalized_root_nodes(stamped_before)
+    new_node_id = max(nodes_after)
+    new_node = nodes_after[new_node_id]
+    assert new_node["type"] == "ImageScaleBy"
+    assert new_node["properties"]["vibecomfy_uid"] == "n1"
+    saver = nodes_after[140]
+    images_input = next(slot for slot in saver["inputs"] if slot["name"] == "images")
+    new_link_id = images_input["link"]
+    assert any(link == [new_link_id, new_node_id, 0, 140, 0, "IMAGE"] for link in result.candidate["links"])
+    for node_id, before in nodes_before.items():
+        if node_id in {127, 140}:
+            continue
+        assert nodes_after[node_id] == before
+
+
 def test_apply_delta_adds_node_with_group_growth_attribution() -> None:
     original = _grouped_fixture()
     provider = _SchemaProvider()
@@ -564,8 +719,76 @@ def test_apply_delta_auto_unlinks_schema_less_linked_widget_and_records_diagnost
     assert source["outputs"][0]["links"] == []
 
 
-def test_resolve_delta_rejects_desynced_linked_widget_state() -> None:
+def test_apply_delta_sets_schema_less_dict_widget_without_changing_other_nodes() -> None:
     original = {
+        "last_node_id": 2,
+        "last_link_id": 0,
+        "nodes": [
+            {
+                "id": 1,
+                "type": "VAEDecodeTiled",
+                "pos": [0, 0],
+                "size": [210, 58],
+                "flags": {},
+                "order": 0,
+                "mode": 0,
+                "inputs": [],
+                "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": [], "slot_index": 0}],
+                "properties": {},
+                "widgets_values": [],
+            },
+            {
+                "id": 2,
+                "type": "VHS_VideoCombine",
+                "pos": [240, 0],
+                "size": [315, 270],
+                "flags": {},
+                "order": 1,
+                "mode": 0,
+                "inputs": [{"name": "images", "type": "IMAGE"}],
+                "outputs": [{"name": "Filenames", "type": "VHS_FILENAMES", "links": None, "slot_index": 0}],
+                "properties": {},
+                "widgets_values": {
+                    "frame_rate": 24,
+                    "filename_prefix": "LTX-2",
+                    "format": "video/h264-mp4",
+                    "crf": 19,
+                },
+            },
+        ],
+        "links": [],
+    }
+    stamped_before = EditLedger.ingest(original).stamped_copy()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "set_node_field",
+                "target": ["", "2", "filename_prefix"],
+                "value": "qa_run",
+            }
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=_RuneXXSchemaProvider())
+
+    assert result.ok is True
+    assert result.candidate is not None
+    target = next(node for node in result.candidate["nodes"] if node["id"] == 2)
+    assert target["widgets_values"] == {
+        "frame_rate": 24,
+        "filename_prefix": "qa_run",
+        "format": "video/h264-mp4",
+        "crf": 19,
+    }
+    before_nodes = _normalized_root_nodes(stamped_before)
+    after_nodes = _normalized_root_nodes(result.candidate)
+    assert after_nodes[1] == before_nodes[1]
+
+
+def test_apply_delta_unlinks_widget_input_and_sets_dict_widget_value() -> None:
+    original = {
+        "last_node_id": 5,
+        "last_link_id": 98,
         "nodes": [
             {
                 "id": 1,
@@ -582,34 +805,87 @@ def test_resolve_delta_rejects_desynced_linked_widget_state() -> None:
             },
             {
                 "id": 5,
-                "type": "KSampler",
+                "type": "VHS_VideoCombine",
                 "pos": [240, 0],
                 "size": [315, 270],
                 "flags": {},
                 "order": 1,
                 "mode": 0,
-                "inputs": [{"name": "seed", "type": "INT", "widget": {"name": "seed"}, "link": 98}],
+                "inputs": [
+                    {"name": "images", "type": "IMAGE", "link": None},
+                    {"name": "frame_rate", "type": "FLOAT", "widget": {"name": "frame_rate"}, "link": 98},
+                ],
                 "outputs": [],
                 "properties": {},
-                "widgets_values": [42],
+                "widgets_values": {
+                    "frame_rate": 24,
+                    "filename_prefix": "LTX-2",
+                    "format": "video/h264-mp4",
+                },
             },
         ],
-        "links": [[98, 1, 0, 5, 0, "INT"]],
+        "links": [[98, 1, 0, 5, 1, "FLOAT"]],
     }
     delta = parse_edit_delta(
         [
             {
                 "op": "set_node_field",
-                "target": ["", "5", "seed"],
+                "target": ["", "5", "frame_rate"],
+                "value": 30,
+            }
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=_RuneXXSchemaProvider())
+
+    assert result.ok is True
+    assert result.candidate is not None
+    assert {issue.code for issue in result.diagnostics} >= {"automatic_link_removal"}
+    source = next(node for node in result.candidate["nodes"] if node["id"] == 1)
+    target = next(node for node in result.candidate["nodes"] if node["id"] == 5)
+    assert source["outputs"][0]["links"] == []
+    assert target["inputs"] == [{"name": "images", "type": "IMAGE", "link": None}]
+    assert target["widgets_values"] == {
+        "frame_rate": 30,
+        "filename_prefix": "LTX-2",
+        "format": "video/h264-mp4",
+    }
+    assert result.candidate["links"] == []
+
+
+def test_resolve_delta_rejects_unknown_dict_widget_field() -> None:
+    original = {
+        "nodes": [
+            {
+                "id": 5,
+                "type": "VHS_VideoCombine",
+                "pos": [240, 0],
+                "size": [315, 270],
+                "flags": {},
+                "order": 1,
+                "mode": 0,
+                "inputs": [{"name": "images", "type": "IMAGE", "link": None}],
+                "outputs": [],
+                "properties": {},
+                "widgets_values": {"filename_prefix": "LTX-2"},
+            },
+        ],
+        "links": [],
+    }
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "set_node_field",
+                "target": ["", "5", "totally_not_a_field"],
                 "value": 123,
             }
         ]
     )
 
-    result = resolve_delta(original, delta, schema_provider=_SchemaProvider())
+    result = resolve_delta(original, delta, schema_provider=_RuneXXSchemaProvider())
 
     assert result.ok is False
-    assert any(issue.code == "desynced_linked_widget_state" for issue in result.diagnostics)
+    assert any(issue.code == "unknown_node_field" for issue in result.diagnostics)
 
 
 def test_apply_delta_set_mode_only_changes_target_node() -> None:

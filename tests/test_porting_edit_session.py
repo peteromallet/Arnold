@@ -2034,6 +2034,145 @@ class TestEditSessionPrimitiveLowering:
         assert widget is not None
         assert widget["widgets_values"][0] == 9
 
+    def test_apply_batch_lowers_schema_less_dict_widget_assignment_to_set_node_field_op(self) -> None:
+        from vibecomfy.porting import EditSession
+        from vibecomfy.porting.edit_ops import SetNodeFieldOp
+
+        raw = {
+            "last_node_id": 1,
+            "last_link_id": 0,
+            "nodes": [
+                {
+                    "id": 1,
+                    "type": "UnknownWidgetNode",
+                    "mode": 0,
+                    "pos": [0, 0],
+                    "size": [210, 58],
+                    "inputs": [],
+                    "outputs": [],
+                    "widgets_values": {
+                        "frame_rate": 24,
+                        "filename_prefix": "LTX-2",
+                        "format": "video/h264-mp4",
+                    },
+                    "properties": {"vibecomfy_uid": "dict-widget"},
+                },
+            ],
+            "links": [],
+        }
+        session = EditSession(raw, schema_provider=self._schema_provider())
+        session.uid_by_name.update({"dict_widget": "dict-widget"})
+        session.name_by_uid.update({"dict-widget": "dict_widget"})
+
+        result = session.apply_batch("dict_widget.filename_prefix = 'qa_run'\n")
+
+        assert result.ok is True
+        assert isinstance(result.landed_ops[0], SetNodeFieldOp)
+        node = session.ledger.resolve_node("", "dict-widget")
+        assert node is not None
+        assert node["widgets_values"] == {
+            "frame_rate": 24,
+            "filename_prefix": "qa_run",
+            "format": "video/h264-mp4",
+        }
+
+    def test_apply_batch_rejects_unknown_schema_less_dict_widget_field(self) -> None:
+        from vibecomfy.porting import EditSession
+
+        raw = {
+            "last_node_id": 1,
+            "last_link_id": 0,
+            "nodes": [
+                {
+                    "id": 1,
+                    "type": "UnknownWidgetNode",
+                    "mode": 0,
+                    "pos": [0, 0],
+                    "size": [210, 58],
+                    "inputs": [],
+                    "outputs": [],
+                    "widgets_values": {"filename_prefix": "LTX-2"},
+                    "properties": {"vibecomfy_uid": "dict-widget"},
+                },
+            ],
+            "links": [],
+        }
+        session = EditSession(raw, schema_provider=self._schema_provider())
+        session.uid_by_name.update({"dict_widget": "dict-widget"})
+        session.name_by_uid.update({"dict-widget": "dict_widget"})
+
+        result = session.apply_batch("dict_widget.totally_not_a_field = 1\n")
+
+        assert result.ok is False
+        assert result.diagnostics[0].code == "unknown_target_field"
+
+    def test_apply_batch_sets_runexx_dict_widget_only_filename_prefix(self) -> None:
+        from vibecomfy.porting import EditSession
+
+        workflow_path = Path("/tmp/runexx-ltx23/LTX-2.3_-_T2V_Basic.json")
+        if not workflow_path.exists():
+            pytest.skip("RuneXX LTX-2.3 fixture is not present at /tmp/runexx-ltx23")
+        raw = json.loads(workflow_path.read_text(encoding="utf-8"))
+        stamped_before = EditLedger.ingest(raw).stamped_copy()
+        before_nodes = {node["id"]: node for node in stamped_before["nodes"]}
+        session = EditSession(raw)
+        session.render()
+
+        result = session.apply_batch("vhs_videocombine.filename_prefix = 'qa_run'\n")
+        done = session.done()
+
+        assert result.ok is True
+        assert result.statements[0].landed is True
+        assert done.ok is True
+        after_nodes = {node["id"]: node for node in session.working_ui["nodes"]}
+        target = after_nodes[140]
+        assert target["type"] == "VHS_VideoCombine"
+        assert target["widgets_values"]["filename_prefix"] == "qa_run"
+        for node_id, before in before_nodes.items():
+            if node_id == 140:
+                continue
+            assert after_nodes[node_id] == before
+
+    def test_apply_batch_sets_runexx_link_overridden_frame_rate_widget(self) -> None:
+        from vibecomfy.porting import EditSession
+
+        workflow_path = Path("/tmp/runexx-ltx23/LTX-2.3_-_T2V_Basic.json")
+        if not workflow_path.exists():
+            pytest.skip("RuneXX LTX-2.3 fixture is not present at /tmp/runexx-ltx23")
+        raw = json.loads(workflow_path.read_text(encoding="utf-8"))
+        stamped_before = EditLedger.ingest(raw).stamped_copy()
+        before_nodes = {node["id"]: node for node in stamped_before["nodes"]}
+        before_links = {link[0]: link for link in stamped_before["links"]}
+        target_before = before_nodes[140]
+        frame_rate_input = next(slot for slot in target_before["inputs"] if slot.get("name") == "frame_rate")
+        removed_link_id = frame_rate_input["link"]
+        removed_link = before_links[removed_link_id]
+        source_id = removed_link[1]
+        session = EditSession(raw)
+        session.render()
+
+        result = session.apply_batch("vhs_videocombine.frame_rate = 30\n")
+        done = session.done()
+
+        assert result.ok is True
+        assert result.statements[0].landed is True
+        assert done.ok is True
+        after_nodes = {node["id"]: node for node in session.working_ui["nodes"]}
+        after_links = {link[0]: link for link in session.working_ui["links"]}
+        target = after_nodes[140]
+        source = after_nodes[source_id]
+        assert target["widgets_values"]["frame_rate"] == 30
+        assert all(slot.get("name") != "frame_rate" for slot in target["inputs"])
+        assert removed_link_id not in after_links
+        for output in source.get("outputs", []):
+            links = output.get("links")
+            if isinstance(links, list):
+                assert removed_link_id not in links
+        for node_id, before in before_nodes.items():
+            if node_id in {140, source_id}:
+                continue
+            assert after_nodes[node_id] == before
+
     def test_apply_batch_lowers_link_assignment_to_upsert_link_op(self) -> None:
         from vibecomfy.porting.edit_ops import UpsertLinkOp
 

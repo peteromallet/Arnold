@@ -735,9 +735,9 @@ class VibeWorkflow:
             return self._compile_graphbuilder()
         if backend != "api":
             raise ValueError(f"Unknown compile backend: {backend}")
-        broadcast_sources = workflow_helpers.collect_broadcast_sources(self.nodes, self.edges)
         dropped_ids, bypassed_ids = _compute_dropped_bypassed_ids(self.nodes)
         resolved_edges = _resolve_bypass_edges(self.edges, dropped_ids, bypassed_ids)
+        broadcast_sources = workflow_helpers.collect_broadcast_sources(self.nodes, resolved_edges)
         api: dict[str, Any] = {}
         for node_id, node in self.nodes.items():
             if _is_compile_stripped_node(node):

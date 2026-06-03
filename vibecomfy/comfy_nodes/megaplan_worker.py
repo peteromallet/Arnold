@@ -12,8 +12,9 @@ Protocol:
     python megaplan_worker.py <request.json> <result.json>
 
 ``request.json`` -> {"agent_kwargs": {...}, "system_message": str|null,
-                     "user_message": str, "response_contract": "python"|"delta"}
+                     "user_message": str, "response_contract": "python"|"delta"|"batch_repl"}
 ``result.json``  <- {"python": str, "message": str} or {"delta": list, "message": str} on success
+                    {"content": str} for batch_repl responses
                     {"error": str, "error_type": str} on failure
 
 stdout/stderr may contain agent chatter; the parent only reads ``result.json``.
@@ -73,21 +74,28 @@ def main() -> int:
             system_message=request.get("system_message"),
         )
         text = result.get("final_response") if isinstance(result, dict) else str(result)
-        payload = _extract_json_object(text or "")
-        message = payload.get("message")
-        if not isinstance(message, str):
-            message = "Applied the requested edit."
         response_contract = request.get("response_contract") or "python"
+        if response_contract == "batch_repl":
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("Agent returned an empty batch_repl response.")
+            out = {"content": text}
+        else:
+            payload = _extract_json_object(text or "")
+            message = payload.get("message")
+            if not isinstance(message, str):
+                message = "Applied the requested edit."
         if response_contract == "delta":
             delta = payload.get("delta")
             if not isinstance(delta, list):
                 raise ValueError("Agent JSON must include a list `delta` field.")
             out = {"delta": delta, "message": message}
-        else:
+        elif response_contract == "python":
             python = payload.get("python")
             if not isinstance(python, str):
                 raise ValueError("Agent JSON must include a string `python` field.")
             out = {"python": python, "message": message}
+        elif response_contract != "batch_repl":
+            raise ValueError(f"Unsupported response_contract {response_contract!r}.")
     except Exception as exc:  # noqa: BLE001 - report all failures to parent
         out = {"error": str(exc), "error_type": type(exc).__name__}
 
