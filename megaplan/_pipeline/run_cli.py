@@ -239,6 +239,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             resolved_profile,
             pipeline_name=pipeline_name,
             profile_name=cli_profile or default_profile,
+            vendor=vendor,
         )
     except SystemExit as exc:
         code = exc.code

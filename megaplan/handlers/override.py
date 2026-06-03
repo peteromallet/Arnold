@@ -26,6 +26,7 @@ from megaplan.types import (
     _PREMIUM_VENDORS,
     parse_agent_spec,
     format_agent_spec,
+    resolve_premium_placeholder_spec,
 )
 from megaplan._core import (
     add_or_increment_debt,
@@ -58,6 +59,62 @@ from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effor
 
 
 _REVISE_STRUCTURAL_OVERRIDE_ACTIONS = {"step-add", "step-remove", "step-move", "replan"}
+
+
+def _resolved_default_phase_spec(phase: str, state: PlanState, root: Path) -> str:
+    """Return the concrete default routing spec for *phase*."""
+    from megaplan.profiles import effective_premium_vendor
+
+    raw_spec = DEFAULT_AGENT_ROUTING.get(phase, "")
+    if not raw_spec:
+        return raw_spec
+    project_dir = Path(state.get("config", {}).get("project_dir", str(root)))
+    config = dict(state.get("config", {}))
+    config.setdefault("project_dir", str(project_dir))
+    resolved = resolve_premium_placeholder_spec(
+        raw_spec,
+        effective_premium_vendor(config=config),
+    )
+    return format_agent_spec(resolved)
+
+
+def _resolved_default_phase_agent(phase: str, state: PlanState, root: Path) -> str:
+    """Return the concrete default routing agent for *phase*."""
+    default_spec = _resolved_default_phase_spec(phase, state, root)
+    return parse_agent_spec(default_spec).agent if default_spec else ""
+
+
+def _resolved_profile_phase_spec(phase: str, state: PlanState, root: Path) -> str:
+    """Return the concrete expanded profile spec for *phase*, if any."""
+    from megaplan.profiles import apply_profile_expansion
+
+    profile_name = state.get("config", {}).get("profile")
+    if not profile_name:
+        return ""
+
+    project_dir = Path(state.get("config", {}).get("project_dir", str(root)))
+    args = argparse.Namespace(
+        profile=profile_name,
+        phase_model=[],
+        vendor=state.get("config", {}).get("vendor"),
+        critic=state.get("config", {}).get("critic"),
+        depth=state.get("config", {}).get("depth"),
+        deepseek_provider=state.get("config", {}).get("deepseek_provider"),
+        agent=None,
+        hermes=None,
+        _profile_applied=False,
+    )
+    try:
+        apply_profile_expansion(args, project_dir, state=state)
+    except Exception:
+        return ""
+
+    for pm in args.phase_model or []:
+        if isinstance(pm, str) and "=" in pm:
+            pm_phase, pm_spec = pm.split("=", 1)
+            if pm_phase == phase:
+                return pm_spec
+    return ""
 
 
 def _last_gate_is_agent_availability_preflight_block(state: PlanState) -> bool:
@@ -641,9 +698,7 @@ def _override_set_profile(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
     from megaplan.profiles import (
-        load_profiles,
-        resolve_profile,
-        profile_to_phase_models,
+        apply_profile_expansion,
     )
 
     new_profile = getattr(args, "profile", None)
@@ -655,9 +710,23 @@ def _override_set_profile(
             f"set-profile cannot be applied to a plan in terminal state '{state['current_state']}'",
         )
     project_dir = Path(state["config"].get("project_dir", str(root)))
-    profiles = load_profiles(project_dir=project_dir)
-    resolved = resolve_profile(new_profile, profiles)
-    phase_models = profile_to_phase_models(resolved)
+    inherited_config = dict(state.get("config", {}))
+    inherited_config.pop("phase_model", None)
+    inherited_config["profile"] = new_profile
+    expansion_args = argparse.Namespace(
+        profile=new_profile,
+        phase_model=[],
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+    )
+    apply_profile_expansion(
+        expansion_args,
+        project_dir,
+        state={"config": inherited_config},
+    )
+    phase_models = list(getattr(expansion_args, "phase_model", []) or [])
 
     previous_profile = state["config"].get("profile")
     state["config"]["profile"] = new_profile
@@ -726,7 +795,7 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
     # Priority: (1) persisted phase_model entry, (2) active profile, (3) DEFAULT_AGENT_ROUTING
     agent = _infer_phase_agent(phase, state, root)
     if agent is None:
-        agent = DEFAULT_AGENT_ROUTING.get(phase, "")
+        agent = _resolved_default_phase_agent(phase, state, root)
 
     explicit_spec = parse_agent_spec(model_arg) if ":" in model_arg else None
     if explicit_spec is not None and explicit_spec.agent in _PREMIUM_VENDORS:
@@ -794,7 +863,7 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
             break
     if not found:
         # No existing entry — append a new one
-        previous_spec = DEFAULT_AGENT_ROUTING.get(phase, "")
+        previous_spec = _resolved_default_phase_spec(phase, state, root)
         phase_models.append(f"{phase}={new_spec}")
 
     state["config"]["phase_model"] = phase_models
@@ -845,19 +914,10 @@ def _current_phase_spec(phase: str, state: PlanState, root: Path) -> str:
             pm_phase, pm_spec = pm.split("=", 1)
             if pm_phase == phase:
                 return pm_spec
-    profile_name = state.get("config", {}).get("profile")
-    if profile_name:
-        try:
-            from megaplan.profiles import load_profiles, resolve_profile
-
-            project_dir = Path(state["config"].get("project_dir", str(root)))
-            profiles = load_profiles(project_dir=project_dir)
-            resolved = resolve_profile(profile_name, profiles)
-            if phase in resolved:
-                return resolved[phase]
-        except Exception:
-            pass
-    return DEFAULT_AGENT_ROUTING.get(phase, "")
+    profile_spec = _resolved_profile_phase_spec(phase, state, root)
+    if profile_spec:
+        return profile_spec
+    return _resolved_default_phase_spec(phase, state, root)
 
 
 def _override_set_vendor(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
@@ -917,7 +977,7 @@ def _override_set_vendor(root: Path, plan_dir: Path, state: PlanState, args: arg
             found = True
             break
     if not found:
-        previous_spec = current_spec or DEFAULT_AGENT_ROUTING.get(phase, "")
+        previous_spec = current_spec or _resolved_default_phase_spec(phase, state, root)
         phase_models.append(f"{phase}={new_spec}")
     state["config"]["phase_model"] = phase_models
 
@@ -966,21 +1026,14 @@ def _infer_phase_agent(phase: str, state: PlanState, root: Path) -> str | None:
                 return parsed.agent
 
     # Check active profile
-    profile_name = state.get("config", {}).get("profile")
-    if profile_name:
-        try:
-            from megaplan.profiles import load_profiles, resolve_profile
-            project_dir = Path(state["config"].get("project_dir", str(root)))
-            profiles = load_profiles(project_dir=project_dir)
-            resolved = resolve_profile(profile_name, profiles)
-            if phase in resolved:
-                parsed = parse_agent_spec(resolved[phase])
-                return parsed.agent
-        except Exception:
-            pass
+    profile_spec = _resolved_profile_phase_spec(phase, state, root)
+    if profile_spec:
+        parsed = parse_agent_spec(profile_spec)
+        return parsed.agent
 
     # Fall back to DEFAULT_AGENT_ROUTING
-    return DEFAULT_AGENT_ROUTING.get(phase)
+    default_agent = _resolved_default_phase_agent(phase, state, root)
+    return default_agent or None
 
 
 def _override_resume_clarify(

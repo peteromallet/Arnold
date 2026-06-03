@@ -10,6 +10,7 @@ TTY mode: renders a structured prompt with options.
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from typing import Any
@@ -45,14 +46,25 @@ def _check_credential(env_var: str) -> bool:
     return bool(os.environ.get(env_var, "").strip())
 
 
+def _resolve_concrete_slot_spec(spec: str, *, vendor: str | None = None) -> str:
+    """Resolve symbolic premium placeholders to concrete specs for preflight."""
+    from megaplan.profiles import effective_premium_vendor
+    from megaplan.types import (
+        format_agent_spec,
+        is_premium_placeholder_spec,
+        resolve_premium_placeholder_spec,
+    )
+
+    if not is_premium_placeholder_spec(spec):
+        return spec
+    resolved_vendor = effective_premium_vendor(argparse.Namespace(vendor=vendor))
+    return format_agent_spec(resolve_premium_placeholder_spec(spec, resolved_vendor))
+
+
 # Slots that are opt-in / non-blocking and so must NOT hard-fail preflight.
-# ``feedback`` only runs under --with-feedback and is deliberately pinned to a
-# fixed vendor (claude:low) for cross-run ratings comparability — see
-# ``apply_vendor_rewrite``. Demanding its credential would make every
-# single-vendor profile (all-codex, all-deepseek-*, solo) unrunnable for a
-# user who lacks that one extra key, even though they never invoke feedback.
-# If feedback IS used without the key, it fails at runtime on a throwaway
-# template rather than blocking the whole run.
+# ``feedback`` only runs when explicitly requested, so its credential remains
+# soft. If feedback IS used without the key, it fails at runtime on a
+# throwaway template rather than blocking the whole run up front.
 _SOFT_SLOTS: frozenset[str] = frozenset({"feedback"})
 
 
@@ -160,6 +172,7 @@ def preflight_check_profile(
     *,
     pipeline_name: str = "",
     profile_name: str = "",
+    vendor: str | None = None,
 ) -> list[dict[str, Any]]:
     """Check that all slots in a resolved profile have their credentials available.
 
@@ -186,13 +199,14 @@ def preflight_check_profile(
         if slot in _SOFT_SLOTS:
             # Opt-in / non-blocking slot — don't gate the whole run on it.
             continue
-        required = _required_env_vars_for_slot(spec, slot)
+        concrete_spec = _resolve_concrete_slot_spec(spec, vendor=vendor)
+        required = _required_env_vars_for_slot(concrete_spec, slot)
         for env_var, display_name in required:
             if not _check_credential(env_var):
                 missing.append(
                     {
                         "slot": slot,
-                        "spec": spec,
+                        "spec": concrete_spec,
                         "agent": display_name,
                         "env_var": env_var,
                     }
@@ -282,6 +296,7 @@ def preflight_or_raise(
     *,
     pipeline_name: str = "",
     profile_name: str = "",
+    vendor: str | None = None,
 ) -> None:
     """Run credential preflight and exit with code 7 if credentials are missing.
 
@@ -294,6 +309,7 @@ def preflight_or_raise(
         profile,
         pipeline_name=pipeline_name,
         profile_name=profile_name,
+        vendor=vendor,
     )
 
     if not missing:

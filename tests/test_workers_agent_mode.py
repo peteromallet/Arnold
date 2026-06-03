@@ -115,6 +115,27 @@ def test_resolve_agent_mode_config_override() -> None:
             agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     assert agent == "codex"
 
+def test_resolve_agent_mode_resolves_symbolic_default_routing_through_effective_vendor() -> None:
+    with patch("megaplan.workers._impl.shutil.which", side_effect=lambda name: "/usr/bin/codex" if name == "codex" else None):
+        with patch("megaplan.workers._impl.load_config", return_value={"vendor": "codex", "agents": {}}):
+            agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent=None, vendor=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
+    assert agent == "codex"
+    assert mode == "persistent"
+    assert refreshed is False
+
+def test_resolve_agent_mode_preserves_concrete_phase_model_pin_over_vendor_defaults() -> None:
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+        with patch("megaplan.workers._impl.load_config", return_value={"vendor": "codex", "agents": {}}):
+            agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent=None, vendor=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=["plan=claude:claude-opus-4-7"]))
+    assert agent == "claude"
+    assert mode == "persistent"
+    assert refreshed is False
+    assert model == "claude-opus-4-7"
+
+def test_resolve_agent_mode_rejects_unresolved_premium_before_dispatch() -> None:
+    with pytest.raises(CliError, match="Unresolved premium placeholder reached worker dispatch"):
+        resolve_agent_mode("plan", Namespace(agent=None, vendor=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=["plan=premium:low"]))
+
 def test_resolve_agent_mode_explicit_missing_raises() -> None:
     with patch("megaplan.workers._impl.shutil.which", return_value=None):
         with pytest.raises(CliError, match="not found"):
@@ -137,6 +158,26 @@ def test_resolve_agent_mode_ephemeral_mode() -> None:
         agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent="claude", ephemeral=True, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     assert mode == "ephemeral"
     assert refreshed is True
+
+def test_resolve_agent_mode_no_config_default_routing_resolves_through_vendor() -> None:
+    """When load_config returns an empty dict (no user config), no explicit
+    --agent, and no phase_model, the DEFAULT_AGENT_ROUTING symbolic premium
+    fallback must resolve through effective_premium_vendor to a concrete
+    dispatchable agent."""
+    with patch("megaplan.workers._impl.shutil.which", side_effect=lambda name: "/usr/bin/codex" if name == "codex" else None):
+        with patch("megaplan.workers._impl.load_config", return_value={}):
+            with patch("megaplan.workers._impl.effective_premium_vendor", return_value="codex"):
+                with patch("megaplan.workers._impl.detect_available_agents", return_value=["codex"]):
+                    agent, mode, refreshed, model = resolve_agent_mode(
+                        "critique_evaluator",
+                        Namespace(agent=None, vendor=None, ephemeral=False, fresh=False,
+                                  persist=False, confirm_self_review=False, hermes=None,
+                                  phase_model=[]),
+                    )
+    assert agent == "codex"
+    assert mode == "persistent"
+    assert refreshed is False
+
 
 def test_update_session_state_preserves_created_at() -> None:
     result = update_session_state(

@@ -28,19 +28,19 @@
 #
 # See docs/megaplan-prep.md for the full rubric.
 [profiles.directed]
-plan                  = "claude:low"
+plan                  = "premium:low"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 revise                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 finalize              = "claude:claude-opus-4-7"
 execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-feedback              = "claude:low"
-loop_plan             = "claude:low"
+feedback              = "premium:low"
+loop_plan             = "premium:low"
 loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 review                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-tiebreaker_researcher = "claude:low"
-tiebreaker_challenger = "claude:low"
+tiebreaker_researcher = "premium:low"
+tiebreaker_challenger = "premium:low"
 
 [profiles.directed.tier_models.execute]
 1 = "hermes:deepseek:deepseek-v4-flash"
