@@ -1138,11 +1138,14 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
     assert result.trace_output == raw_output
     assert result.duration_ms == 25
 
-def test_run_codex_step_execute_resume_omits_add_dir_for_current_codex_cli(tmp_path: Path) -> None:
+def test_run_codex_step_execute_resume_omits_add_dir_for_current_codex_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
     plan_dir, state = _mock_state(tmp_path)
     state["sessions"]["codex_executor"] = {
         "id": "execute-session-2",
@@ -1531,6 +1534,7 @@ def test_run_codex_step_resumed_session_retries_fresh_on_poisoned_output(
         }
     }
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
 
     poisoned_raw = (
         "bwrap: Creating new namespace failed: Permission denied\n"
@@ -1597,6 +1601,7 @@ def test_run_codex_step_skips_poison_retry_when_fresh_already(
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
 
     poisoned_raw = "bwrap: Creating new namespace failed: Permission denied\n"
 

@@ -115,10 +115,9 @@ def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) ->
     command = run_command.call_args.args[0]
     assert command[0] == "bun"
     assert str(command[1]).endswith("vendor/shannon/index.ts")
-    assert "-p" in command
-    prompt_arg = command[command.index("-p") + 1]
-    assert "Read the full megaplan phase prompt from this file" in prompt_arg
-    assert run_command.call_args.kwargs["stdin_text"] is None
+    assert "-p" not in command
+    assert "custom prompt" in run_command.call_args.kwargs["stdin_text"]
+    assert "Your final answer must be exactly one valid JSON object" in run_command.call_args.kwargs["stdin_text"]
     prompt_file = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon" / "plan_v1_shannon_prompt.txt"
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "custom prompt" in prompt_text
