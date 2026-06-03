@@ -166,6 +166,7 @@ def build_batch_messages(
     turn_number: int = 0,
     python_source: str = "",
     signature_catalog: str = "",
+    available_node_names: str = "",
     diff: str = "",
     report: str = "",
     budget_remaining: int = 12,
@@ -173,9 +174,10 @@ def build_batch_messages(
 ) -> list[dict[str, str]]:
     """Build messages for the batch-REPL wire protocol.
 
-    Turn 0 includes the full Python render, typed signature catalog, and budget.
-    Later turns include only the diff, structured teaching report, remaining
-    budget, and task — no full Python re-dump.
+    Turn 0 includes the full Python render, in-graph typed signatures, a compact
+    names-only node index, and budget. Later turns include only the diff,
+    structured teaching report, remaining budget, and task — no full Python
+    re-dump.
 
     The system prompt describes prose + a single ```batch fenced block with
     ``done()`` and ``clarify(\"...\")`` as in-batch calls.  It does **not**
@@ -193,7 +195,14 @@ def build_batch_messages(
         "`upsert_link(...)`, `remove_link(...)`, `remove_node(...)`, `set_mode(...)`, "
         "or `reorder(...)`.\n"
         "- The typed `def ClassName(...) -> TYPE` signatures in the Python view "
-        "and catalog are the node library you may construct.\n\n"
+        "and in-graph signature section are the node constructors you have seen.\n"
+        "- Only signatures for nodes already in the graph are shown below. To add "
+        "ANY other node type, you MUST first call "
+        "`search(focus_types=[\"ClassName\"])` or "
+        "`search(compatible_input_type=\"IMAGE\")` in a batch to get its exact "
+        "typed signature, then construct it on a later line. Never guess a "
+        "signature you have not seen. The full list of available node type names "
+        "is provided so you know what to search for.\n\n"
         "Batch statement grammar:\n"
         "- Construct/add a node: `new_var = ClassType(field=value, "
         "input_kwarg=other_var.OUTPUT_SLOT, near=anchor_var)`, for example "
@@ -213,7 +222,8 @@ def build_batch_messages(
         "- Query without applying a change: `search(formatted=True)`, "
         "`search(focus_types=[\"ImageScaleBy\"])`, or "
         "`search(compatible_input_type=\"IMAGE\")`. Queries are read-only "
-        "batch statements; use the initial Python view and catalog first.\n"
+        "batch statements and are the primary discovery path for node signatures "
+        "not already shown.\n"
         "- Commit after the final successful edit: `done()`.\n"
         "- Ask the user only when intent is genuinely missing: "
         "`clarify(\"question\")`. Do not clarify for node names, fields, slots, "
@@ -265,8 +275,15 @@ def build_batch_messages(
         catalog_block = ""
         if signature_catalog:
             catalog_block = (
-                "\n\nAvailable node signatures (typed catalog):\n"
+                "\n\nSignatures for nodes currently in the graph:\n"
                 f"```\n{signature_catalog}\n```"
+            )
+        names_block = ""
+        if available_node_names:
+            names_block = (
+                "\n\nOther available node type names "
+                "(search to get a signature before constructing):\n"
+                f"```\n{available_node_names}\n```"
             )
         user = (
             f"User request:\n{task}\n\n"
@@ -275,6 +292,7 @@ def build_batch_messages(
             f"{python_source}\n"
             "```"
             f"{catalog_block}"
+            f"{names_block}"
         )
     else:
         diff_block = ""

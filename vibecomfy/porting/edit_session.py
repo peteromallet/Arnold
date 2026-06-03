@@ -1469,12 +1469,20 @@ class EditSession:
         source = item.source
         env = item.env
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
-            return StatementResult(
+            call_name = _call_name(statement.value)
+            if call_name == "done":
+                return StatementResult(
+                    statement_index=item.statement_index,
+                    source=source,
+                    ok=True,
+                    landed=False,
+                    op_kind="done",
+                )
+            return self._resolve_query_statement(
                 statement_index=item.statement_index,
                 source=source,
-                ok=True,
-                landed=False,
-                op_kind="done" if _call_name(statement.value) == "done" else "query",
+                call=statement.value,
+                env=env,
             )
         if isinstance(statement, ast.Assign):
             target = statement.targets[0]
@@ -1554,6 +1562,100 @@ class EditSession:
             detail={"resolved_node": node_ref, "ast_node": statement, "constant_env": dict(env)}
             if node_ref is not None
             else {"ast_node": statement, "constant_env": dict(env)},
+        )
+
+    def _resolve_query_statement(
+        self,
+        *,
+        statement_index: int,
+        source: str,
+        call: ast.Call,
+        env: Mapping[str, Any],
+    ) -> StatementResult:
+        call_name = _call_name(call)
+        if call_name != "search":
+            return StatementResult(
+                statement_index=statement_index,
+                source=source,
+                ok=False,
+                landed=False,
+                op_kind="query",
+                diagnostics=(
+                    _diag(
+                        "unsupported_query_call",
+                        "Only search(...) and done() are supported as top-level query calls.",
+                        severity="error",
+                        detail={"call": call_name},
+                    ),
+                ),
+            )
+
+        allowed = {"focus_types", "compatible_input_type", "compatible_output_type", "formatted"}
+        kwargs: dict[str, Any] = {}
+        diagnostics: list[CompactDiagnostic] = []
+        for keyword in call.keywords:
+            if keyword.arg is None:
+                diagnostics.append(
+                    _diag("kwargs_unpack_not_allowed", "**kwargs unpacking is not allowed.", severity="error")
+                )
+                continue
+            if keyword.arg not in allowed:
+                diagnostics.append(
+                    _diag(
+                        "unsupported_search_keyword",
+                        f"search(...) does not accept keyword {keyword.arg!r}.",
+                        severity="error",
+                        detail={"keyword": keyword.arg, "allowed": sorted(allowed)},
+                    )
+                )
+                continue
+            value, diagnostic = _fold_constant(keyword.value, env=env)
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
+                continue
+            kwargs[keyword.arg] = value
+        if diagnostics:
+            return StatementResult(
+                statement_index=statement_index,
+                source=source,
+                ok=False,
+                landed=False,
+                op_kind="query",
+                diagnostics=tuple(diagnostics),
+                detail={"query": "search"},
+            )
+
+        try:
+            output = self.search(
+                focus_types=kwargs.get("focus_types"),
+                compatible_input_type=kwargs.get("compatible_input_type"),
+                compatible_output_type=kwargs.get("compatible_output_type"),
+                formatted=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - report query failures in-band
+            return StatementResult(
+                statement_index=statement_index,
+                source=source,
+                ok=False,
+                landed=False,
+                op_kind="query",
+                diagnostics=(
+                    _diag(
+                        "search_query_failed",
+                        f"search(...) failed: {exc}",
+                        severity="error",
+                    ),
+                ),
+                detail={"query": "search"},
+            )
+
+        return StatementResult(
+            statement_index=statement_index,
+            source=source,
+            ok=True,
+            landed=False,
+            op_kind="query",
+            detail={"query": "search", "query_output": str(output)},
         )
 
     def _lower_statement_op(
