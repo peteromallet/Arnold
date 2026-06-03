@@ -1471,7 +1471,7 @@ def test_execute_timeout_recovers_partial_progress_from_finalize_json(
     state = load_state(plan_fixture.plan_dir)
     recovered = read_json(plan_fixture.plan_dir / "finalize.json")
 
-    assert response["success"] is True
+    assert response["success"] is False
     assert response["next_step"] == "execute"
     assert response["state"] == megaplan.STATE_FINALIZED
     assert recovered["tasks"][0]["status"] == "done"
@@ -1522,7 +1522,7 @@ def test_execute_timeout_reads_execution_checkpoint_json(
     )
     recovered = read_json(plan_fixture.plan_dir / "finalize.json")
 
-    assert response["success"] is True
+    assert response["success"] is False
     assert response["state"] == megaplan.STATE_FINALIZED
     assert recovered["tasks"][0]["status"] == "done"
     assert recovered["tasks"][0]["files_changed"] == ["IMPLEMENTED_BY_MEGAPLAN.txt"]

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from megaplan.types import DEFAULT_AGENT_ROUTING
+from megaplan.profiles import effective_premium_vendor
+from megaplan.types import (
+    DEFAULT_AGENT_ROUTING,
+    format_agent_spec,
+    resolve_premium_placeholder_spec,
+)
 
 CONTAINER_CAPABILITIES: frozenset[str] = frozenset({
     "run_shell",
@@ -50,7 +55,13 @@ def get_worker_capabilities(state: dict[str, Any]) -> dict[str, set[str]]:
             verifies = wcfg.get("verifies", [])
             result[name] = set(verifies)
     else:
-        seen_agents = set(DEFAULT_AGENT_ROUTING.values())
+        vendor = effective_premium_vendor(config=config)
+        seen_agents = {
+            format_agent_spec(
+                resolve_premium_placeholder_spec(spec, vendor)
+            ).split(":", 1)[0]
+            for spec in DEFAULT_AGENT_ROUTING.values()
+        }
         for agent in seen_agents:
             result[agent] = set(DEFAULT_CONTAINER_CAPABILITIES)
 

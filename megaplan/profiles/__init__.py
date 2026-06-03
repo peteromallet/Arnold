@@ -16,7 +16,15 @@ _WARNED_STALE_OVERRIDE: set[tuple[str, str]] = set()
 from .._core.io import config_dir
 from .._core import user_config as _user_config_module
 from .._core.user_config import VALID_VENDORS
-from ..types import CliError, DEFAULT_AGENT_ROUTING, KNOWN_AGENTS, parse_agent_spec
+from ..types import (
+    CliError,
+    DEFAULT_AGENT_ROUTING,
+    KNOWN_AGENTS,
+    format_agent_spec,
+    is_premium_placeholder_agent,
+    parse_agent_spec,
+    resolve_premium_placeholder_spec,
+)
 
 
 def _resolve_default_vendor() -> str:
@@ -27,6 +35,40 @@ def _resolve_default_vendor() -> str:
     callers go through here, never call ``user_config.default_vendor`` directly.
     """
     return _user_config_module.default_vendor()
+
+
+def effective_premium_vendor(
+    args: argparse.Namespace | None = None,
+    config: dict[str, Any] | None = None,
+) -> str:
+    """Return the effective concrete premium vendor for symbolic routing.
+
+    Resolution order is explicit CLI ``--vendor`` first, then a loaded config
+    default (for example ``state["config"]``), then the project/user default.
+    Invalid values fail closed so callers do not silently dispatch symbolic
+    premium slots to the wrong worker family.
+    """
+
+    def _validate(source: str, value: Any) -> str:
+        if not isinstance(value, str) or value not in VALID_VENDORS:
+            raise CliError(
+                "invalid_vendor",
+                f"{source} must be one of {', '.join(VALID_VENDORS)}; got {value!r}",
+            )
+        return value
+
+    effective_vendor = getattr(args, "_effective_vendor", None) if args is not None else None
+    if effective_vendor is not None:
+        return _validate("effective vendor", effective_vendor)
+
+    cli_vendor = getattr(args, "vendor", None) if args is not None else None
+    if cli_vendor is not None:
+        return _validate("CLI --vendor", cli_vendor)
+
+    if config is not None and "vendor" in config:
+        return _validate("loaded config vendor", config.get("vendor"))
+
+    return _validate("project default vendor", _resolve_default_vendor())
 
 VALID_PHASE_KEYS = frozenset(DEFAULT_AGENT_ROUTING.keys())
 
@@ -260,9 +302,9 @@ def validate_prep_stage_provider(
         _fail(f"expected a non-empty string agent spec, got {type(raw_spec).__name__}")
     spec = raw_spec.strip()
     parsed = parse_agent_spec(spec)
-    if parsed.agent not in KNOWN_AGENTS:
+    if parsed.agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(parsed.agent):
         _fail(
-            f"unknown agent '{parsed.agent}' in spec {spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}"
+            f"unknown agent '{parsed.agent}' in spec {spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)"
         )
     if parsed.agent not in READ_ONLY_PREP_AGENTS:
         _fail(
@@ -286,12 +328,12 @@ def _validate_profile_map(path: Any, profile_name: str, raw_profile: Any) -> dic
         if not isinstance(raw_spec, str):
             _raise_invalid_profile(path, profile_name, phase, f"expected a string agent spec, got {type(raw_spec).__name__}")
         parsed = parse_agent_spec(raw_spec)
-        if parsed.agent not in KNOWN_AGENTS:
+        if parsed.agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(parsed.agent):
             _raise_invalid_profile(
                 path,
                 profile_name,
                 phase,
-                f"unknown agent '{parsed.agent}' in spec {raw_spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
+                f"unknown agent '{parsed.agent}' in spec {raw_spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)",
             )
         validated[str(phase)] = raw_spec
     return validated
@@ -393,12 +435,12 @@ def _validate_tier_models(
                     f"expected a string agent spec, got {type(spec).__name__}",
                 )
             agent, _model = parse_agent_spec(spec)
-            if agent not in KNOWN_AGENTS:
+            if agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(agent):
                 _raise_invalid_profile(
                     path,
                     profile_name,
                     f"tier_models.{phase}.{tier_int}",
-                    f"unknown agent '{agent}' in spec {spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
+                    f"unknown agent '{agent}' in spec {spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)",
                 )
             v_tiers[tier_int] = spec
         if v_tiers:
@@ -1066,6 +1108,19 @@ def resolve_pipeline_profile(
     if pipeline_local_metadata is None:
         pipeline_local_metadata = _load_pipeline_local_metadata(pipeline_name)
 
+    def _resolve_runtime_profile(profile: dict[str, str]) -> dict[str, str]:
+        vendor = _resolve_default_vendor()
+        resolved: dict[str, str] = {}
+        for slot, spec in profile.items():
+            parsed = parse_agent_spec(spec)
+            if is_premium_placeholder_agent(parsed.agent):
+                resolved[slot] = format_agent_spec(
+                    resolve_premium_placeholder_spec(spec, vendor)
+                )
+            else:
+                resolved[slot] = spec
+        return resolved
+
     # ── Layer 1: CLI flag ──────────────────────────────────────────
     if cli_profile:
         profile_name = cli_profile
@@ -1080,32 +1135,38 @@ def resolve_pipeline_profile(
                     # Cross-pipeline reference — load that pipeline's profiles
                     cross_local = _load_pipeline_local_profiles(ref_pipeline)
                     cross_meta = _load_pipeline_local_metadata(ref_pipeline)
-                    return _resolve_with_inheritance(
-                        ref_profile,
-                        system_profiles=system_profiles,
-                        system_metadata=system_metadata,
-                        pipeline_local_profiles=cross_local,
-                        pipeline_local_metadata=cross_meta,
+                    return _resolve_runtime_profile(
+                        _resolve_with_inheritance(
+                            ref_profile,
+                            system_profiles=system_profiles,
+                            system_metadata=system_metadata,
+                            pipeline_local_profiles=cross_local,
+                            pipeline_local_metadata=cross_meta,
+                        )
                     )
             else:
                 profile_name = rest
 
         # Try pipeline-local first for unscoped names, then system
         if profile_name in pipeline_local_profiles:
-            return _resolve_with_inheritance(
-                profile_name,
-                system_profiles=system_profiles,
-                system_metadata=system_metadata,
-                pipeline_local_profiles=pipeline_local_profiles,
-                pipeline_local_metadata=pipeline_local_metadata,
+            return _resolve_runtime_profile(
+                _resolve_with_inheritance(
+                    profile_name,
+                    system_profiles=system_profiles,
+                    system_metadata=system_metadata,
+                    pipeline_local_profiles=pipeline_local_profiles,
+                    pipeline_local_metadata=pipeline_local_metadata,
+                )
             )
         if profile_name in system_profiles:
-            return _resolve_with_inheritance(
-                profile_name,
-                system_profiles=system_profiles,
-                system_metadata=system_metadata,
-                pipeline_local_profiles=pipeline_local_profiles,
-                pipeline_local_metadata=pipeline_local_metadata,
+            return _resolve_runtime_profile(
+                _resolve_with_inheritance(
+                    profile_name,
+                    system_profiles=system_profiles,
+                    system_metadata=system_metadata,
+                    pipeline_local_profiles=pipeline_local_profiles,
+                    pipeline_local_metadata=pipeline_local_metadata,
+                )
             )
         raise CliError(
             "unknown_profile",
@@ -1118,12 +1179,14 @@ def resolve_pipeline_profile(
     if pipeline_local_profiles:
         # Use the first pipeline-local profile as default
         first_name = next(iter(pipeline_local_profiles))
-        return _resolve_with_inheritance(
-            first_name,
-            system_profiles=system_profiles,
-            system_metadata=system_metadata,
-            pipeline_local_profiles=pipeline_local_profiles,
-            pipeline_local_metadata=pipeline_local_metadata,
+        return _resolve_runtime_profile(
+            _resolve_with_inheritance(
+                first_name,
+                system_profiles=system_profiles,
+                system_metadata=system_metadata,
+                pipeline_local_profiles=pipeline_local_profiles,
+                pipeline_local_metadata=pipeline_local_metadata,
+            )
         )
 
     # ── Layer 3: System profiles (match by name from default_profile) ──
@@ -1134,20 +1197,24 @@ def resolve_pipeline_profile(
             if ":" in rest:
                 _ref_pipeline, ref_profile = rest.split(":", 1)
                 if ref_profile in pipeline_local_profiles:
-                    return _resolve_with_inheritance(
-                        ref_profile,
-                        system_profiles=system_profiles,
-                        system_metadata=system_metadata,
-                        pipeline_local_profiles=pipeline_local_profiles,
-                        pipeline_local_metadata=pipeline_local_metadata,
+                    return _resolve_runtime_profile(
+                        _resolve_with_inheritance(
+                            ref_profile,
+                            system_profiles=system_profiles,
+                            system_metadata=system_metadata,
+                            pipeline_local_profiles=pipeline_local_profiles,
+                            pipeline_local_metadata=pipeline_local_metadata,
+                        )
                     )
                 if ref_profile in system_profiles:
-                    return _resolve_with_inheritance(
-                        ref_profile,
-                        system_profiles=system_profiles,
-                        system_metadata=system_metadata,
-                        pipeline_local_profiles=pipeline_local_profiles,
-                        pipeline_local_metadata=pipeline_local_metadata,
+                    return _resolve_runtime_profile(
+                        _resolve_with_inheritance(
+                            ref_profile,
+                            system_profiles=system_profiles,
+                            system_metadata=system_metadata,
+                            pipeline_local_profiles=pipeline_local_profiles,
+                            pipeline_local_metadata=pipeline_local_metadata,
+                        )
                     )
 
     # ── Layer 4: Profile default field → SYSTEM_DEFAULT_PROFILE ──
@@ -1158,22 +1225,26 @@ def resolve_pipeline_profile(
     for pname, pmeta in system_metadata.items():
         default_ref = pmeta.get("default")
         if default_ref and isinstance(default_ref, str) and default_ref in system_profiles:
-            return _resolve_with_inheritance(
-                default_ref,
+            return _resolve_runtime_profile(
+                _resolve_with_inheritance(
+                    default_ref,
+                    system_profiles=system_profiles,
+                    system_metadata=system_metadata,
+                    pipeline_local_profiles=pipeline_local_profiles,
+                    pipeline_local_metadata=pipeline_local_metadata,
+                )
+            )
+
+    # No metadata-based default found — fall back to the module constant
+    if SYSTEM_DEFAULT_PROFILE in system_profiles:
+        return _resolve_runtime_profile(
+            _resolve_with_inheritance(
+                SYSTEM_DEFAULT_PROFILE,
                 system_profiles=system_profiles,
                 system_metadata=system_metadata,
                 pipeline_local_profiles=pipeline_local_profiles,
                 pipeline_local_metadata=pipeline_local_metadata,
             )
-
-    # No metadata-based default found — fall back to the module constant
-    if SYSTEM_DEFAULT_PROFILE in system_profiles:
-        return _resolve_with_inheritance(
-            SYSTEM_DEFAULT_PROFILE,
-            system_profiles=system_profiles,
-            system_metadata=system_metadata,
-            pipeline_local_profiles=pipeline_local_profiles,
-            pipeline_local_metadata=pipeline_local_metadata,
         )
 
     # ── Fail loud ──────────────────────────────────────────────────
@@ -1231,6 +1302,11 @@ def _swap_premium_spec(spec: str, target_vendor: str) -> str:
     ``vendor_swap_model_conflict`` because it has no cross-vendor equivalent.
     """
     parsed = parse_agent_spec(spec)
+    if is_premium_placeholder_agent(parsed.agent):
+        raise CliError(
+            "profile_resolution_mismatch",
+            f"Unresolved premium placeholder reached vendor swap: {spec!r}",
+        )
     if parsed.agent not in _PREMIUM_VENDORS:
         return spec
     if parsed.agent == target_vendor:
@@ -1285,12 +1361,17 @@ def apply_vendor_rewrite(
             "invalid_vendor",
             f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
         )
+
+    def _resolve_symbolic(spec: str) -> str:
+        resolved = resolve_premium_placeholder_spec(spec, vendor)
+        return format_agent_spec(resolved)
+
     # Walk tier entries (mutates in-place so caller sees the rewrite).
     if tier_models is not None:
         for phase, tiers in tier_models.items():
             for tier_int, spec in tiers.items():
                 try:
-                    tiers[tier_int] = _swap_premium_spec(spec, vendor)
+                    tiers[tier_int] = _swap_premium_spec(_resolve_symbolic(spec), vendor)
                 except CliError as e:
                     if e.code == "vendor_swap_model_conflict":
                         raise CliError(
@@ -1301,7 +1382,7 @@ def apply_vendor_rewrite(
     if prep_models is not None:
         for stage, spec in prep_models.items():
             try:
-                prep_models[stage] = _swap_premium_spec(spec, vendor)
+                prep_models[stage] = _swap_premium_spec(_resolve_symbolic(spec), vendor)
             except CliError as e:
                 if e.code == "vendor_swap_model_conflict":
                     raise CliError(
@@ -1309,12 +1390,13 @@ def apply_vendor_rewrite(
                         f"Vendor swap conflict on prep stage '{stage}': {e.message}",
                     ) from e
                 raise
+    # Rewrite feedback like any other profile-provided premium slot. When a
+    # profile omits feedback, leave it absent so downstream default routing can
+    # resolve DEFAULT_AGENT_ROUTING["feedback"] through the effective vendor.
     result: dict[str, str] = {}
-    profile_with_feedback = dict(profile)
-    profile_with_feedback.setdefault("feedback", f"{vendor}:low")
-    for phase, spec in profile_with_feedback.items():
+    for phase, spec in profile.items():
         try:
-            result[phase] = _swap_premium_spec(spec, vendor)
+            result[phase] = _swap_premium_spec(_resolve_symbolic(spec), vendor)
         except CliError as e:
             if e.code == "vendor_swap_model_conflict":
                 raise CliError(
@@ -1481,13 +1563,41 @@ def apply_deepseek_provider_rewrite(
 def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
     for spec in profile.values():
         parsed = parse_agent_spec(spec)
-        if parsed.agent in _PREMIUM_VENDORS:
+        if parsed.agent in _PREMIUM_VENDORS or is_premium_placeholder_agent(parsed.agent):
             return True
     return False
 
 
+def _validate_resolved_profile_invariants(
+    profile_name: str,
+    resolved: dict[str, str],
+    *,
+    tier_models: dict[str, dict[int, str]] | None = None,
+    prep_models: dict[str, str] | None = None,
+) -> None:
+    bad: list[str] = []
+    for phase, spec in resolved.items():
+        if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+            bad.append(f"{phase}={spec}")
+    if tier_models:
+        for phase, tiers in tier_models.items():
+            for tier_int, spec in tiers.items():
+                if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+                    bad.append(f"tier_models.{phase}.{tier_int}={spec}")
+    if prep_models:
+        for stage, spec in prep_models.items():
+            if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+                bad.append(f"prep_models.{stage}={spec}")
+    if bad:
+        raise CliError(
+            "profile_resolution_mismatch",
+            f"profile={profile_name} resolved with symbolic premium placeholders still present: "
+            f"{', '.join(bad)}",
+        )
+
+
 # Profiles whose name asserts the vendor. If resolution drifts away from the
-# asserted vendor on any premium phase, fail loudly: the resolved
+# asserted vendor on any phase, fail loudly: the resolved
 # phase_model is persisted into state.config and silently invalidates the
 # user's requested profile for the whole sprint.
 #
@@ -1529,7 +1639,7 @@ def _validate_named_profile_invariants(
     if bad:
         raise CliError(
             "profile_resolution_mismatch",
-            f"profile={profile_name} expected {expected} on every premium "
+            f"profile={profile_name} expected {expected} on every "
             f"phase but resolved to: {', '.join(bad)}. "
             f"Mark the profile vendor_locked=true or pass --vendor {expected} explicitly.",
         )
@@ -1613,17 +1723,17 @@ def apply_profile_expansion(
         cli_critic = getattr(args, "critic", None)
         cli_depth = getattr(args, "depth", None)
         cli_deepseek_provider = getattr(args, "deepseek_provider", None)
-        state_vendor = None
+        state_config: dict[str, Any] = {}
         state_critic = None
         state_depth = None
         state_deepseek_provider = None
         if state is not None:
-            cfg = state.get("config") or {}
-            state_vendor = cfg.get("vendor")
-            state_critic = cfg.get("critic")
-            state_depth = cfg.get("depth")
-            state_deepseek_provider = cfg.get("deepseek_provider")
-        effective_vendor_flag = cli_vendor or state_vendor
+            raw_cfg = state.get("config") or {}
+            if isinstance(raw_cfg, dict):
+                state_config = raw_cfg
+            state_critic = state_config.get("critic")
+            state_depth = state_config.get("depth")
+            state_deepseek_provider = state_config.get("deepseek_provider")
         effective_critic_flag = cli_critic or state_critic
         effective_depth_flag = cli_depth or state_depth
         effective_deepseek_provider_flag = (
@@ -1638,18 +1748,11 @@ def apply_profile_expansion(
         # warrants apex may also warrant deep thinking).
         # Resolution order: vendor → depth → critic.
         if not vendor_locked:
-            # Always pick a vendor (CLI > state > config default) — even
+            # Always pick a vendor (CLI > loaded config > project default) — even
             # when the profile has no premium slots, picking it is cheap
             # and the rewrite is a no-op. Done this way so the resolved
             # vendor is observable / persistable downstream.
-            vendor = effective_vendor_flag
-            if vendor is None:
-                vendor = _resolve_default_vendor()
-            if vendor not in VALID_VENDORS:
-                raise CliError(
-                    "invalid_vendor",
-                    f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
-                )
+            vendor = effective_premium_vendor(args, state_config)
             args._effective_vendor = vendor
             if _profile_has_premium_slots(resolved) or inherited_prep_models:
                 resolved = apply_vendor_rewrite(
@@ -1688,6 +1791,12 @@ def apply_profile_expansion(
         prep_models, prep_trace = resolve_prep_models(
             flat_prep_spec=_prep_flat_spec_from_profile(resolved),
             prep_models=inherited_prep_models,
+        )
+        _validate_resolved_profile_invariants(
+            profile_name,
+            resolved,
+            tier_models=tier_models,
+            prep_models=prep_models,
         )
 
         # Attach post-rewrite tier map to args for downstream dispatch.
@@ -1796,6 +1905,7 @@ __all__ = [
     "apply_depth_rewrite",
     "apply_profile_expansion",
     "apply_vendor_rewrite",
+    "effective_premium_vendor",
     "load_profile_metadata",
     "load_profile_sources",
     "load_profiles",

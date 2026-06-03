@@ -113,6 +113,7 @@ def _normalize_premium_spec(agent: str, rest: str) -> str:
 _AGENT_DEFAULT_MODEL: Final[dict[str, str]] = {
     "claude": "claude-opus-4-7",
     "codex": "gpt-5.5",
+    "premium": "claude-opus-4-7",
 }
 
 
@@ -151,9 +152,11 @@ def _resolve_canonical(model: str) -> str:
     elif ":" in stripped:
         agent, rest = stripped.split(":", 1)
         agent = agent.lower()
-        if agent in ("claude", "codex"):
+        if agent in ("claude", "codex", "premium"):
             normalized = _normalize_premium_spec(agent, rest)
-            # Resolve bare agent names (e.g. ``claude`` → ``claude-opus-4-7``).
+            # Resolve bare agent names (e.g. ``claude`` -> ``claude-opus-4-7``).
+            # Symbolic ``premium`` normalizes to its effective vendor (claude
+            # by default), so ``premium:low`` -> ``claude`` -> ``claude-opus-4-7``.
             if normalized in _AGENT_DEFAULT_MODEL:
                 normalized = _AGENT_DEFAULT_MODEL[normalized]
         else:

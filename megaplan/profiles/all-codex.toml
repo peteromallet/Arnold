@@ -10,8 +10,8 @@
 # tasks run at `high`. The flat `execute = "codex"` entry (default effort) is
 # the fallback when tier routing is disabled (e.g. --phase-model execute=…).
 #
-# Feedback stays inside Codex too, so a Codex-only chain never needs the
-# Claude/Shannon TUI path.
+# Note: `feedback` is Codex too. It only runs under --with-feedback, but a
+# Codex-only profile must remain Codex-only when the optional slot is enabled.
 [profiles.all-codex]
 vendor_locked = true
 plan = "codex"

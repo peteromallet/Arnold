@@ -84,10 +84,12 @@ from megaplan.loop.handlers import (
     handle_loop_status,
 )
 from megaplan.profiles import (
+    effective_premium_vendor,
     load_profile_sources,
     load_profiles,
     resolve_profile,
 )
+from megaplan.types import format_agent_spec, is_premium_placeholder_spec, resolve_premium_placeholder_spec
 from megaplan.execute.step_edit import handle_step
 from megaplan.observability.doctor import handle_doctor
 from megaplan.observability.trace import handle_trace
@@ -452,8 +454,17 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
     action = args.config_action
     if action == "show":
         config = load_config()
+        effective_vendor = effective_premium_vendor(config=config)
+
+        def _display_spec(spec: str) -> str:
+            if is_premium_placeholder_spec(spec):
+                return format_agent_spec(
+                    resolve_premium_placeholder_spec(spec, effective_vendor)
+                )
+            return spec
+
         effective_routing = {
-            step: config.get("agents", {}).get(step, default)
+            step: config.get("agents", {}).get(step, _display_spec(default))
             for step, default in DEFAULT_AGENT_ROUTING.items()
         }
         effective_settings = {

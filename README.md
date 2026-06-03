@@ -43,6 +43,8 @@ Each phase can run on a different model. For example, here's how the default **`
 
 That split isn't fixed. The harder the work, the more it justifies premium models on more phases; the simpler it is, the more aggressively it can run on open models. The named profiles are five rungs of exactly this trade-off — `solo` (all-open, for mechanical work) → `directed` → `partnered` (the default) → `premium` → `apex` (all-premium) — and you can define custom profiles to combine models any way you like.
 
+**A note on the word "premium."** In megaplan's internals there is an *agent spec* `premium` (e.g., `premium:low`) — a symbolic placeholder that means "the operator's selected premium vendor." It appears in `DEFAULT_AGENT_ROUTING` and in unlocked profile TOMLs to keep vendor-neutral premium phases from silently locking to a single provider. Do not confuse it with the **profile** named `premium` (the fourth built-in tier). The agent spec never reaches dispatch; it is always resolved to `claude` or `codex` based on the `--vendor` flag (or `[agent] vendor` in config, or the project default) before any worker is launched. User `agents.<phase>` config entries must be concrete (`claude`, `codex`, `hermes`), never `premium`.
+
 **[docs/megaplan-prep.md](docs/megaplan-prep.md)** is a skill document for you and your agents — hand it the task and it picks the profile, robustness level, and thinking tier to match.
 
 ## Quick start
@@ -99,7 +101,7 @@ python -m pytest tests/characterization/test_import_surface.py tests/test_pipeli
 ## Some other features
 
 - **Epics** — chain many sprints into one long-running effort. Megaplan runs them in sequence with carried context, so it can deliver the equivalent of months of work reliably instead of one sprint at a time.
-- **Different models per phase** — pick a named profile (`megaplan init --profile <name>`) or override one phase (`--phase-model execute=claude`). Inspect with `megaplan config profiles list`; define your own in `.megaplan/profiles.toml`. Built-ins span all-Claude, all-Codex, all-DeepSeek, and all-open (Kimi/GLM via OpenRouter).
+- **Different models per phase** — pick a named profile (`megaplan init --profile <name>`) or override one phase (`--phase-model execute=claude`). Routing precedence: explicit `--phase-model` / persisted `phase_model` pins win first, then the profile's phase slots, then `DEFAULT_AGENT_ROUTING` (which uses the symbolic `premium` spec for premium phases). The `--vendor` flag (or `[agent] vendor` config) resolves every symbolic `premium` spec to `claude` or `codex`. User `agents.<phase>` config entries must be concrete (`claude`, `codex`, `hermes`), never `premium`. Inspect profiles with `megaplan config profiles list`; define your own in `.megaplan/profiles.toml`. Built-ins span all-Claude, all-Codex, all-DeepSeek, and all-open (Kimi/GLM via OpenRouter).
 - **Cloud runs** — `megaplan cloud` runs a plan (or a whole chain) on a remote Railway box with a persistent workspace volume, so it outlives your terminal. Ask your agent to `megaplan cloud bootstrap <idea>`. See [docs/cloud.md](docs/cloud.md).
 - **Bake-offs** — `megaplan bakeoff` runs the same idea through multiple profiles concurrently (one git worktree each), compares the results, and merges only the human-picked winner — the way to find the cheapest model mix that still passes review.
 - **Metaplan mode** — produce a design doc / RFC / spec instead of a code diff: `megaplan init --mode metaplan --output docs/foo.md "..."`.

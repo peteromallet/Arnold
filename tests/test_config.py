@@ -215,6 +215,166 @@ def test_config_set_orchestration_mode_invalid(isolated_config_dir: Path) -> Non
         )
 
 
+def test_config_show_resolves_symbolic_defaults_to_concrete_vendor(
+    isolated_config_dir: Path,
+) -> None:
+    response = megaplan.handle_config(Namespace(config_action="show"))
+
+    assert response["success"] is True
+    assert response["routing"]["plan"] == "claude"
+    assert response["routing"]["feedback"] == "claude:low"
+
+
+def test_config_show_preserves_explicit_concrete_agent_overrides(
+    isolated_config_dir: Path,
+) -> None:
+    isolated_config_dir.mkdir(parents=True, exist_ok=True)
+    (isolated_config_dir / "config.json").write_text(
+        json.dumps({"vendor": "codex", "agents": {"plan": "claude"}}),
+        encoding="utf-8",
+    )
+
+    response = megaplan.handle_config(Namespace(config_action="show"))
+
+    assert response["success"] is True
+    assert response["routing"]["plan"] == "claude"
+    assert response["routing"]["feedback"] == "codex:low"
+
+
+def test_config_set_rejects_symbolic_premium_agent(isolated_config_dir: Path) -> None:
+    with pytest.raises(megaplan.CliError, match=r"Unknown agent 'premium'"):
+        megaplan.handle_config(
+            Namespace(
+                config_action="set",
+                key="agents.plan",
+                value="premium",
+            )
+        )
+
+
+def test_config_set_rejects_symbolic_premium_with_effort(
+    isolated_config_dir: Path,
+) -> None:
+    """``premium:low`` is also rejected — effort does not make it runnable."""
+    with pytest.raises(megaplan.CliError, match=r"Unknown agent 'premium:low'"):
+        megaplan.handle_config(
+            Namespace(
+                config_action="set",
+                key="agents.plan",
+                value="premium:low",
+            )
+        )
+
+
+def test_config_show_with_explicit_codex_vendor_displays_concrete_codex(
+    isolated_config_dir: Path,
+) -> None:
+    """Config with ``vendor: codex`` should display concrete codex specs."""
+    isolated_config_dir.mkdir(parents=True, exist_ok=True)
+    (isolated_config_dir / "config.json").write_text(
+        json.dumps({"vendor": "codex"}),
+        encoding="utf-8",
+    )
+
+    response = megaplan.handle_config(Namespace(config_action="show"))
+
+    assert response["success"] is True
+    assert response["routing"]["plan"] == "codex"
+    assert response["routing"]["feedback"] == "codex:low"
+    # No symbolic premium anywhere
+    for step, spec in response["routing"].items():
+        assert "premium" not in spec, (
+            f"step '{step}' leaked symbolic premium: {spec!r}"
+        )
+
+
+def test_config_show_with_explicit_claude_vendor_displays_concrete_claude(
+    isolated_config_dir: Path,
+) -> None:
+    """Config with ``vendor: claude`` should display concrete claude specs."""
+    isolated_config_dir.mkdir(parents=True, exist_ok=True)
+    (isolated_config_dir / "config.json").write_text(
+        json.dumps({"vendor": "claude"}),
+        encoding="utf-8",
+    )
+
+    response = megaplan.handle_config(Namespace(config_action="show"))
+
+    assert response["success"] is True
+    assert response["routing"]["plan"] == "claude"
+    assert response["routing"]["feedback"] == "claude:low"
+    # No symbolic premium anywhere
+    for step, spec in response["routing"].items():
+        assert "premium" not in spec, (
+            f"step '{step}' leaked symbolic premium: {spec!r}"
+        )
+
+
+def test_config_show_default_routing_never_leaks_symbolic_premium(
+    isolated_config_dir: Path,
+) -> None:
+    """No-config show must never display 'premium' in any routing slot."""
+    response = megaplan.handle_config(Namespace(config_action="show"))
+
+    assert response["success"] is True
+    for step, spec in response["routing"].items():
+        assert "premium" not in spec, (
+            f"step '{step}' leaked symbolic premium: {spec!r}"
+        )
+    # All 12 DEFAULT_AGENT_ROUTING slots must be present and concrete
+    from megaplan.types import DEFAULT_AGENT_ROUTING
+    assert set(response["routing"].keys()) == set(DEFAULT_AGENT_ROUTING.keys())
+
+
+def test_config_show_codex_vendor_preserves_explicit_concrete_agent_overrides(
+    isolated_config_dir: Path,
+) -> None:
+    """Explicit ``agents.plan: claude`` is preserved under ``vendor: codex``."""
+    isolated_config_dir.mkdir(parents=True, exist_ok=True)
+    (isolated_config_dir / "config.json").write_text(
+        json.dumps({"vendor": "codex", "agents": {"plan": "claude"}}),
+        encoding="utf-8",
+    )
+
+    response = megaplan.handle_config(Namespace(config_action="show"))
+
+    assert response["success"] is True
+    assert response["routing"]["plan"] == "claude"
+    # Default slots still resolve to codex
+    assert response["routing"]["feedback"] == "codex:low"
+    assert response["routing"]["revise"] == "codex"
+
+
+def test_resolved_default_phase_spec_concrete_for_claude_and_codex(
+    isolated_config_dir: Path,
+) -> None:
+    """``_resolved_default_phase_spec`` returns concrete specs for both vendors."""
+    import megaplan.handlers.override as ovr
+
+    # Vendor taken from state["config"]["vendor"]; effective_premium_vendor
+    # uses it before falling back to the project default.
+
+    # Codex-vendor state
+    codex_state = {"config": {"vendor": "codex", "project_dir": str(isolated_config_dir)}}
+    spec = ovr._resolved_default_phase_spec("plan", codex_state, Path("."))
+    assert spec == "codex"
+    assert "premium" not in spec
+
+    spec_fb = ovr._resolved_default_phase_spec("feedback", codex_state, Path("."))
+    assert spec_fb == "codex:low"
+    assert "premium" not in spec_fb
+
+    # Claude-vendor state
+    claude_state = {"config": {"vendor": "claude", "project_dir": str(isolated_config_dir)}}
+    spec = ovr._resolved_default_phase_spec("plan", claude_state, Path("."))
+    assert spec == "claude"
+    assert "premium" not in spec
+
+    spec_fb = ovr._resolved_default_phase_spec("feedback", claude_state, Path("."))
+    assert spec_fb == "claude:low"
+    assert "premium" not in spec_fb
+
+
 def test_build_parser_init_flags_are_tristate() -> None:
     from megaplan.cli import build_parser
 
