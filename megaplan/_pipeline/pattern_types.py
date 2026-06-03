@@ -1,20 +1,19 @@
-"""Type aliases used as contracts by the pipeline pattern library.
+"""Deprecated re-export bridge.
 
-:data:`PromoteFn` and :data:`JoinFn` are the two canonical callable
-signatures consumed by :mod:`megaplan._pipeline.pattern_topology` and
-:mod:`megaplan._pipeline.patterns`.  They are factored into their own
-module so that topology modules can import them without pulling in the
-entire pattern aggregation surface.
+This module has moved to :mod:`arnold.pipeline.pattern_types`.
+Import from there directly.  This stub exists only for backward
+compatibility and will be removed in a future release.
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import warnings
 
-from megaplan._pipeline.types import StepContext, StepResult
+warnings.warn(
+    "megaplan._pipeline.pattern_types is deprecated; "
+    "use arnold.pipeline.pattern_types instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-PromoteFn = Callable[[dict[str, Any]], Any]
-"""Map a child pipeline's terminal state dict to a planning recommendation."""
-
-JoinFn = Callable[[list[StepResult], StepContext], StepResult]
-"""Collate a list of :class:`StepResult` instances into a single result."""
+from arnold.pipeline.pattern_types import *  # noqa: F403, E402

@@ -1,29 +1,19 @@
-"""Discovery surface for pipeline packages.
+"""Deprecated re-export bridge for megaplan._pipeline.discovery.
 
-This package owns the manifest-first, non-executing discovery contract.
-See ``briefs/m6/manifest-contract.md`` for the full specification.
+This package has moved to :mod:`arnold.pipeline.discovery`.
+Import from there directly.  This stub exists only for backward
+compatibility and will be removed in a future release.
 """
 
-from megaplan._pipeline.discovery.manifest import (
-    Manifest,
-    ManifestError,
-    read_manifest,
-)
-from megaplan._pipeline.discovery.trust import (
-    BLESSED_ALLOWLIST,
-    KNOWN_CAPABILITIES,
-    TrustTier,
-    check_capabilities,
-    classify,
+from __future__ import annotations
+
+import warnings
+
+warnings.warn(
+    "megaplan._pipeline.discovery is deprecated; "
+    "use arnold.pipeline.discovery instead.",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
-__all__ = [
-    "Manifest",
-    "ManifestError",
-    "read_manifest",
-    "TrustTier",
-    "BLESSED_ALLOWLIST",
-    "KNOWN_CAPABILITIES",
-    "classify",
-    "check_capabilities",
-]
+from arnold.pipeline.discovery import *  # noqa: F403, E402, F401

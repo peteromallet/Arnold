@@ -1,25 +1,41 @@
-"""Feature flags for the megaplan pipeline unification (M5a).
+"""Deprecated re-export bridge for megaplan._pipeline.feature_flags.
 
-Centralizes flag lookups so consumers never inline ``os.environ.get``.
-Gate warning #2: resume.py and validator.py MUST import from here,
-never read the environment variable directly.
+The canonical unified-dispatch flag now lives in
+:mod:`arnold.pipeline.feature_flags` as ``arnold_unified_dispatch_on()``
+(controlled by ``ARNOLD_UNIFIED_DISPATCH``).
+
+This bridge provides backward compatibility by also checking the legacy
+``MEGAPLAN_UNIFIED_DISPATCH`` env var, so existing consumers that have
+not yet migrated continue to work.
 """
 
 from __future__ import annotations
 
 import os
+import warnings
 
-# ── Unified dispatch flag ───────────────────────────────────────────────
-# TODO(M2/M3): When ``MEGAPLAN_UNIFIED_DISPATCH=1``, the M2 typed-Port
-# dispatch path is active instead of the legacy string/state-dict path.
-# The flag is default-OFF per the strangler discipline — old path stays
-# default-ON until the M2 merge gate (PROGRAM:122).
+warnings.warn(
+    "megaplan._pipeline.feature_flags is deprecated; "
+    "use arnold.pipeline.feature_flags instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+# Re-export the canonical arnold function
+from arnold.pipeline.feature_flags import arnold_unified_dispatch_on  # noqa: E402, F401
+
+# Provide the legacy megaplan function that checks BOTH env vars
+from arnold.pipeline.feature_flags import arnold_unified_dispatch_on as _arnold_fn  # noqa: E402
 
 
 def megaplan_unified_dispatch_on() -> bool:
-    """Return True when the unified M2/M3 dispatch path should be active.
+    """Return ``True`` when either ``ARNOLD_UNIFIED_DISPATCH`` or
+    ``MEGAPLAN_UNIFIED_DISPATCH`` is ``'1'``.
 
-    Centralized here so consumers (resume.py, validator.py, etc.) never
-    inline ``os.environ.get`` — see gate warning #2 in the M5a plan.
+    Defaults to ``False`` (per strangler discipline: old path default-ON,
+    new path default-OFF).
     """
-    return os.environ.get("MEGAPLAN_UNIFIED_DISPATCH", "0") == "1"
+    return (
+        os.environ.get("ARNOLD_UNIFIED_DISPATCH", "0") == "1"
+        or os.environ.get("MEGAPLAN_UNIFIED_DISPATCH", "0") == "1"
+    )

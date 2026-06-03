@@ -54,6 +54,12 @@ Contract notes:
     dispatch block is preserved unchanged.
 """
 
+# M3b (executor duality): when M3b lands, this module will unify with
+# arnold.pipeline.executor — the neutral executor provides the graph-walk
+# skeleton; this module adds Megaplan-specific verdict dispatch, policy
+# routing, and phase-aware state management on top.
+
+
 from __future__ import annotations
 
 import concurrent.futures
