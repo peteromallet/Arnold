@@ -7,7 +7,11 @@ from unittest.mock import patch
 
 import pytest
 
-from vibecomfy.comfy_nodes.agent_edit import AgentEditState, handle_agent_edit
+from vibecomfy.comfy_nodes.agent_edit import (
+    AgentEditState,
+    _agent_edit_contract,
+    handle_agent_edit,
+)
 from vibecomfy.comfy_nodes.agent_contracts import FailureKind, StageResult
 from vibecomfy.comfy_nodes.agent_session import payload_hash, structural_graph_hash
 from vibecomfy.porting.convert import ConversionWriteError
@@ -47,6 +51,14 @@ def _schema(class_type: str, outputs: list[OutputSpec] | None = None) -> NodeSch
         source_provider="test",
         confidence=1.0,
     )
+
+
+def _use_legacy_full(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_LEGACY", "full")
+
+
+def _use_legacy_delta(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_LEGACY", "delta")
 
 
 def _ui_graph() -> dict:
@@ -274,7 +286,40 @@ def _headless_gate_context() -> GateContext:
 # ── existing T6 regression tests (refactored) ────────────────────────────
 
 
-def test_handle_agent_edit_round_trips_deepseek_python(tmp_path: Path) -> None:
+def test_agent_edit_contract_defaults_to_batch_repl_and_warns_for_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from vibecomfy.comfy_nodes import agent_edit as agent_edit_module
+
+    agent_edit_module._WARNED_LEGACY_CONTRACTS.clear()
+    monkeypatch.delenv("VIBECOMFY_AGENT_EDIT_LEGACY", raising=False)
+    monkeypatch.delenv("VIBECOMFY_AGENT_EDIT_V2", raising=False)
+    monkeypatch.delenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", raising=False)
+    assert _agent_edit_contract() == "batch_repl"
+
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_V2", "1")
+    assert _agent_edit_contract() == "delta"
+
+    monkeypatch.delenv("VIBECOMFY_AGENT_EDIT_V2", raising=False)
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    assert _agent_edit_contract() == "batch_repl"
+
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_LEGACY", "full")
+    with caplog.at_level("WARNING"):
+        assert _agent_edit_contract() == "full"
+    assert "agent-edit legacy contract 'full' selected" in caplog.text
+
+    caplog.clear()
+    assert _agent_edit_contract() == "full"
+    assert "agent-edit legacy contract 'full' selected" not in caplog.text
+
+
+def test_handle_agent_edit_round_trips_deepseek_python(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -348,7 +393,7 @@ def test_handle_agent_edit_v2_uses_delta_stage_sequence_without_authoring_pipeli
             "SaveImage": _schema("SaveImage"),
         }
     )
-    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_V2", "1")
+    _use_legacy_delta(monkeypatch)
 
     def _fake_delta(messages):
         prompt = messages[-1]["content"]
@@ -623,7 +668,7 @@ def test_handle_agent_edit_v2_classifies_malformed_delta_as_closed_failure_envel
             "SaveImage": _schema("SaveImage"),
         }
     )
-    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_V2", "1")
+    _use_legacy_delta(monkeypatch)
 
     result = handle_agent_edit(
         {
@@ -661,7 +706,7 @@ def test_handle_agent_edit_v2_classifies_provider_error_as_closed_failure_envelo
             "SaveImage": _schema("SaveImage"),
         }
     )
-    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_V2", "1")
+    _use_legacy_delta(monkeypatch)
 
     from vibecomfy.comfy_nodes import agent_provider as provider_mod
 
@@ -706,9 +751,7 @@ def test_flag_off_legacy_stage_order_and_prompt_unchanged_with_batch_repl_unset(
             "SaveImage": _schema("SaveImage"),
         }
     )
-    # Explicitly unset the batch flag — guarantee the flag-off invariant.
-    monkeypatch.delenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", raising=False)
-    monkeypatch.delenv("VIBECOMFY_AGENT_EDIT_V2", raising=False)
+    _use_legacy_full(monkeypatch)
 
     from vibecomfy.comfy_nodes import agent_edit as agent_edit_module
     from vibecomfy.comfy_nodes.agent_audit import write_audit as real_write_audit
@@ -802,9 +845,7 @@ def test_flag_off_v2_delta_stage_order_and_prompt_unchanged_with_batch_repl_unse
             "SaveImage": _schema("SaveImage"),
         }
     )
-    # BATCH_REPL off, V2 on — the flag-off invariant for the v2 path.
-    monkeypatch.delenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", raising=False)
-    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_V2", "1")
+    _use_legacy_delta(monkeypatch)
 
     def _fake_delta(messages):
         prompt = messages[-1]["content"]
@@ -1611,6 +1652,7 @@ def test_handle_agent_edit_validates_lowered_copy_after_load_python(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -1719,6 +1761,7 @@ def test_handle_agent_edit_blocks_on_lowering_failure_before_validate_or_emit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -1778,6 +1821,7 @@ def test_handle_agent_edit_threads_synthetic_lowered_provenance_without_emitting
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -1880,6 +1924,7 @@ def test_handle_agent_edit_audit_threads_complete_lowering_metadata_and_keeps_qu
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -1986,7 +2031,9 @@ def test_handle_agent_edit_audit_threads_complete_lowering_metadata_and_keeps_qu
 
 def test_handle_agent_edit_uses_agent_generated_loader(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -2074,8 +2121,10 @@ def test_handle_agent_edit_input_failures_return_frozen_envelopes(
 
 def test_agent_edit_nodes_never_user_confirmed(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     _headless_gate_context: GateContext,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     """Prove that model-edited Python loaded through the agent-edit path
     carries ``agent_generated`` provenance, never ``user_confirmed``.
 
@@ -2150,8 +2199,10 @@ def test_agent_edit_nodes_never_user_confirmed(
 
 def test_agent_edit_rejects_hostile_model_output(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     _headless_gate_context: GateContext,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     """Hostile model output (command execution via ``os.system``) is rejected
     by the AST scanner before execution and before any gate interaction."""
     provider = _Provider(
@@ -2195,8 +2246,10 @@ def test_agent_edit_rejects_hostile_model_output(
 
 def test_agent_edit_rejects_hostile_canary_no_execution(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     _headless_gate_context: GateContext,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     """Hostile model output that writes a canary file at module level is
     rejected before execution — the canary file must not exist."""
     provider = _Provider(
@@ -2237,8 +2290,10 @@ def test_agent_edit_rejects_hostile_canary_no_execution(
 
 def test_agent_edit_rejects_multiple_hostile_bypass_classes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     _headless_gate_context: GateContext,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     """A representative set of hostile bypass classes is rejected before
     execution through the agent-edit path. Each fixture is fed as model
     output and must produce ``AgentGeneratedLoadError``."""
@@ -2285,8 +2340,10 @@ def test_agent_edit_rejects_multiple_hostile_bypass_classes(
 
 def test_agent_edit_rejects_malformed_syntax_from_model(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     _headless_gate_context: GateContext,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     """Malformed Python syntax from the model is caught in the load_python
     phase and never executed."""
     provider = _Provider(
@@ -2319,6 +2376,7 @@ def test_agent_edit_stage_failure_keeps_untouched_gates_false_and_writes_audit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -2364,6 +2422,7 @@ def test_agent_edit_uses_provider_seam_and_classifies_provider_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -2401,6 +2460,7 @@ def test_agent_edit_classifies_provider_malformed_and_missing_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -2459,6 +2519,7 @@ def test_agent_edit_convert_stage_classifies_known_errors(
     exc_factory,
     expected_kind: str,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -2495,6 +2556,7 @@ def test_agent_edit_hostile_loader_failure_keeps_exact_failure_envelope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -2561,6 +2623,7 @@ def test_agent_edit_emit_stage_classifies_refusal_and_editor_ahead(
     exc: Exception,
     expected_kind: str,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -2597,7 +2660,9 @@ def test_agent_edit_emit_stage_classifies_refusal_and_editor_ahead(
 
 def test_agent_edit_idempotency_conflict_returns_stale_state_mismatch(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -2645,7 +2710,9 @@ def test_agent_edit_idempotency_conflict_returns_stale_state_mismatch(
 
 def test_agent_edit_stale_submit_fails_at_ingest_via_state_match_gate(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     from vibecomfy.comfy_nodes.routes import _handle_agent_edit_accept
 
     provider = _Provider(
@@ -2720,7 +2787,9 @@ def test_agent_edit_stale_submit_fails_at_ingest_via_state_match_gate(
 
 def test_agent_edit_submit_after_accept_allows_only_volatile_reserialize_drift(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     from vibecomfy.comfy_nodes.routes import _handle_agent_edit_accept
 
     provider = _Provider(
@@ -2780,7 +2849,9 @@ def test_agent_edit_submit_after_accept_allows_only_volatile_reserialize_drift(
 
 def test_agent_edit_submit_after_accept_still_blocks_real_structural_divergence(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     from vibecomfy.comfy_nodes.routes import _handle_agent_edit_accept
 
     provider = _Provider(
@@ -2846,6 +2917,7 @@ def test_agent_edit_queue_blockers_keep_canvas_apply_true_but_queue_false(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -2899,6 +2971,7 @@ def test_agent_edit_unknown_transition_audit_failure_does_not_rollback_session_s
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     from vibecomfy.comfy_nodes import agent_audit, agent_edit as agent_edit_module
     from vibecomfy.comfy_nodes.agent_session import read_state
 
@@ -2945,7 +3018,9 @@ def test_agent_edit_unknown_transition_audit_failure_does_not_rollback_session_s
 
 def test_agent_edit_writes_unknown_transition_audit_with_unknown_turn_state(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     from vibecomfy.comfy_nodes.agent_session import read_state
 
     provider = _Provider(
@@ -2989,6 +3064,7 @@ def test_agent_edit_audit_failure_returns_exact_failure_envelope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     provider = _Provider(
         {
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
@@ -3534,7 +3610,9 @@ def test_agent_edit_action_routes_cover_replay_conflict_state_mismatch_and_audit
 
 def test_route_edit_idempotency_replays_same_request_body(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _use_legacy_full(monkeypatch)
     """Route-level same-body replay for the edit endpoint: sending the
     same payload with the same idempotency key returns the identical
     success response.

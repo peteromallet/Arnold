@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import json
+import logging
 import os
 import re
 import time
@@ -60,6 +61,8 @@ if TYPE_CHECKING:
 DeepSeekClient = Callable[[list[dict[str, str]]], dict[str, str]]
 
 _SESSION_ROOT = Path("out/editor_sessions")
+LOGGER = logging.getLogger(__name__)
+_WARNED_LEGACY_CONTRACTS: set[str] = set()
 
 
 @dataclass
@@ -551,12 +554,35 @@ def _port_issue_to_dict(issue: Any) -> dict[str, Any]:
     return {"code": type(issue).__name__, "message": str(issue), "severity": "error"}
 
 
+def _warn_legacy_contract_once(contract: str) -> None:
+    if contract in _WARNED_LEGACY_CONTRACTS:
+        return
+    _WARNED_LEGACY_CONTRACTS.add(contract)
+    LOGGER.warning(
+        "agent-edit legacy contract '%s' selected via VIBECOMFY_AGENT_EDIT_LEGACY; "
+        "this is deprecated and will be removed",
+        contract,
+    )
+
+
+def _agent_edit_contract() -> str:
+    legacy = os.getenv("VIBECOMFY_AGENT_EDIT_LEGACY")
+    if legacy in {"delta", "full"}:
+        _warn_legacy_contract_once(legacy)
+        return legacy
+    if os.getenv("VIBECOMFY_AGENT_EDIT_V2") == "1":
+        return "delta"
+    if os.getenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL") == "1":
+        return "batch_repl"
+    return "batch_repl"
+
+
 def _agent_edit_v2_enabled() -> bool:
-    return os.getenv("VIBECOMFY_AGENT_EDIT_V2") == "1"
+    return _agent_edit_contract() == "delta"
 
 
 def _agent_edit_batch_repl_enabled() -> bool:
-    return os.getenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL") == "1"
+    return _agent_edit_contract() == "batch_repl"
 
 
 def _record(context: TurnContext, result: StageResult) -> StageResult:
@@ -1907,8 +1933,10 @@ def handle_agent_edit(
     ):
         state.batch_max_consecutive_errors = int(payload["max_consecutive_errors"])
 
+    contract = _agent_edit_contract()
+
     try:
-        if _agent_edit_batch_repl_enabled():
+        if contract == "batch_repl":
             _run_stage("ingest", state, context, _stage_ingest_v2)
             _run_stage(
                 "agent_batch",
@@ -1919,7 +1947,7 @@ def handle_agent_edit(
                 route=payload.get("route") if isinstance(payload.get("route"), str) else None,
                 model=payload.get("model") if isinstance(payload.get("model"), str) else None,
             )
-        elif _agent_edit_v2_enabled():
+        elif contract == "delta":
             _run_stage("ingest", state, context, _stage_ingest_v2)
             _run_stage("project", state, context, _stage_project_v2)
             _run_stage(
@@ -1986,18 +2014,18 @@ def handle_agent_edit(
             "client_graph_hash": state.submitted_client_graph_hash,
         }
     )
-    if _agent_edit_v2_enabled():
+    if contract == "delta":
         from vibecomfy.porting.edit_ops import op_to_dict
 
         response["delta_ops"] = [op_to_dict(op) for op in state.delta_ops]
-    if _agent_edit_batch_repl_enabled():
+    if contract == "batch_repl":
         if state.batch_exit_mode == "clarify":
             response["clarification_required"] = True
             response["graph_unchanged"] = True
         elif state.batch_done_summary:
             response["done_summary"] = state.batch_done_summary
     try:
-        if _agent_edit_v2_enabled():
+        if contract == "delta":
             _record(
                 context,
                 StageResult(
@@ -2007,7 +2035,7 @@ def handle_agent_edit(
                     value={"mode": "agent_edit_v2_delta"},
                 ),
             )
-        elif _agent_edit_batch_repl_enabled():
+        elif contract == "batch_repl":
             _record(
                 context,
                 StageResult(
