@@ -18,9 +18,7 @@ from megaplan._core import (
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
-    load_debt_registry,
     read_json,
-    resolve_debt,
     save_debt_registry,
     save_flag_registry,
 )
@@ -752,9 +750,9 @@ def test_contract_context_routing_preserves_root_for_critique_and_gate(tmp_path:
         contract_context=_contract_context_payload(),
     )
 
-    assert "Known accepted debt grouped by subsystem" in critique_prompt
-    assert "timeout recovery: retry backoff remains brittle" in critique_prompt
-    assert "Escalated debt subsystems" in gate_prompt
+    assert "Known accepted debt grouped by subsystem" not in critique_prompt
+    assert "timeout recovery: retry backoff remains brittle" not in critique_prompt
+    assert "Escalated debt subsystems" not in gate_prompt
     # Deferred-verification contract language
     assert "Deferred-verification planning-pass contract context" in critique_prompt
     assert "Do NOT flag missing files" in critique_prompt
@@ -1022,7 +1020,7 @@ def test_gate_prompt_includes_loop_signals_and_preflight(tmp_path: Path) -> None
     assert "PROCEED, ITERATE, ESCALATE" in prompt
 
 
-def test_gate_prompt_includes_escalated_debt_warning_when_threshold_met(tmp_path: Path) -> None:
+def test_gate_prompt_omits_escalated_debt_registry_when_threshold_met(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path, iteration=2)
     _write_debt_registry(
         tmp_path,
@@ -1037,9 +1035,55 @@ def test_gate_prompt_includes_escalated_debt_warning_when_threshold_met(tmp_path
 
     prompt = create_codex_prompt("gate", state, plan_dir, root=tmp_path)
 
-    assert "Escalated debt subsystems" in prompt
-    assert '"total_occurrences": 4' in prompt
-    assert "holistic redesign" in prompt
+    assert "Known accepted debt grouped by subsystem" not in prompt
+    assert "Escalated debt subsystems" not in prompt
+    assert '"total_occurrences": 4' not in prompt
+    assert "retry backoff remains brittle" not in prompt
+    assert "holistic redesign" not in prompt
+
+
+def test_gate_prompt_omits_debt_fields_from_gate_signals_projection(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path, iteration=2)
+    atomic_write_json(
+        plan_dir / "gate_signals_v2.json",
+        {
+            "robustness": "standard",
+            "signals": {
+                "iteration": 2,
+                "weighted_score": 2.0,
+                "loop_summary": "Iteration summary",
+                "debt_overlaps": [
+                    {
+                        "flag_id": "FLAG-001",
+                        "debt_id": "DEBT-001",
+                        "subsystem": "timeout-recovery",
+                        "concern": "timeout recovery: retry backoff remains brittle",
+                        "debt_concern": "timeout recovery: retry backoff remains brittle",
+                        "occurrence_count": 4,
+                        "plan_ids": ["plan-a", "plan-b"],
+                    }
+                ],
+                "escalated_debt_subsystems": [
+                    {"subsystem": "timeout-recovery", "total_occurrences": 4}
+                ],
+            },
+            "warnings": [
+                "watch it",
+                "Recurring debt detected in subsystem 'timeout-recovery' (total occurrences: 4). Recommend holistic redesign rather than another point fix.",
+            ],
+        },
+    )
+
+    prompt = create_codex_prompt("gate", state, plan_dir, root=tmp_path)
+
+    assert "Iteration summary" in prompt
+    assert "watch it" in prompt
+    assert "debt_overlaps" not in prompt
+    assert "escalated_debt_subsystems" not in prompt
+    assert "DEBT-001" not in prompt
+    assert "timeout recovery: retry backoff remains brittle" not in prompt
+    assert "Recurring debt detected" not in prompt
+    assert "holistic redesign" not in prompt
 
 
 def test_review_prompt_includes_execution_and_gate(tmp_path: Path) -> None:
@@ -1161,7 +1205,7 @@ def test_critique_prompt_contains_intent_and_robustness(tmp_path: Path) -> None:
     assert "maintainability" in prompt
 
 
-def test_critique_prompt_includes_debt_context_when_registry_exists(tmp_path: Path) -> None:
+def test_critique_prompt_omits_debt_context_when_registry_exists(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     _write_debt_registry(
         tmp_path,
@@ -1176,10 +1220,52 @@ def test_critique_prompt_includes_debt_context_when_registry_exists(tmp_path: Pa
 
     prompt = create_claude_prompt("critique", state, plan_dir, root=tmp_path)
 
-    assert "Known accepted debt grouped by subsystem" in prompt
-    assert "timeout-recovery" in prompt
-    assert "retry backoff remains brittle" in prompt
-    assert "Do not re-flag them unless the current plan makes them worse" in prompt
+    assert "Known accepted debt grouped by subsystem" not in prompt
+    assert "Escalated debt subsystems" not in prompt
+    assert "timeout-recovery" not in prompt
+    assert "retry backoff remains brittle" not in prompt
+    assert "Do not re-flag them unless the current plan makes them worse" not in prompt
+
+
+def test_critique_prompt_size_not_proportional_to_debt_registry(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    prompt_without_registry = create_claude_prompt(
+        "critique",
+        state,
+        plan_dir,
+        root=tmp_path,
+    )
+    entries = [
+        _debt_entry(
+            debt_id=f"DEBT-{index:03d}",
+            subsystem=f"subsystem-{index % 12}",
+            concern=(
+                f"large deferred concern {index}: "
+                + "this accepted registry entry should stay out of prompts " * 4
+            ),
+            flag_ids=[f"FLAG-{index:03d}"],
+            plan_ids=[f"plan-{index}", f"plan-{index + 1}"],
+            occurrence_count=2,
+        )
+        for index in range(900)
+    ]
+    _write_debt_registry(tmp_path, entries)
+
+    prompt_with_registry = create_claude_prompt(
+        "critique",
+        state,
+        plan_dir,
+        root=tmp_path,
+    )
+    registry_size = len(json_dump({"entries": entries}))
+    plan_size = len(latest_plan_path(plan_dir, state).read_text(encoding="utf-8"))
+
+    assert registry_size > 150_000
+    assert prompt_with_registry == prompt_without_registry
+    assert len(prompt_with_registry) < plan_size + 20_000
+    assert "Known accepted debt grouped by subsystem" not in prompt_with_registry
+    assert "Escalated debt subsystems" not in prompt_with_registry
+    assert "large deferred concern 899" not in prompt_with_registry
 
 
 def test_critique_prompt_includes_structure_guidance_and_warnings(tmp_path: Path) -> None:
@@ -1343,7 +1429,7 @@ def test_execute_prompt_surfaces_sense_checks_and_watch_items(tmp_path: Path) ->
     assert "Check assumptions." in prompt
 
 
-def test_execute_prompt_includes_debt_watch_items(tmp_path: Path) -> None:
+def test_execute_prompt_omits_debt_watch_items(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     _write_debt_registry(
         tmp_path,
@@ -1358,23 +1444,29 @@ def test_execute_prompt_includes_debt_watch_items(tmp_path: Path) -> None:
 
     prompt = create_claude_prompt("execute", state, plan_dir, root=tmp_path)
 
-    assert "Debt watch items (do not make these worse):" in prompt
-    assert "[DEBT] timeout-recovery: timeout recovery: retry backoff remains brittle" in prompt
-    assert "flagged 3 times across 2 plans" in prompt
+    assert "Debt watch items (do not make these worse):" not in prompt
+    assert "[DEBT] timeout-recovery: timeout recovery: retry backoff remains brittle" not in prompt
+    assert "flagged 3 times across 2 plans" not in prompt
 
 
-def test_resolved_debt_no_longer_appears_in_subsequent_prompts(tmp_path: Path) -> None:
+def test_execute_batch_prompt_omits_debt_watch_items(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
-    _write_debt_registry(tmp_path, [_debt_entry()])
+    _write_debt_registry(
+        tmp_path,
+        [
+            _debt_entry(
+                concern="timeout recovery: retry backoff remains brittle",
+                occurrence_count=3,
+                plan_ids=["plan-a", "plan-b"],
+            )
+        ],
+    )
 
-    before_prompt = create_claude_prompt("execute", state, plan_dir, root=tmp_path)
-    registry = load_debt_registry(tmp_path)
-    resolve_debt(registry, "DEBT-001", "plan-fixed")
-    save_debt_registry(tmp_path, registry)
-    after_prompt = create_claude_prompt("execute", state, plan_dir, root=tmp_path)
+    prompt = _execute_batch_prompt(state, plan_dir, ["T1"], set(), root=tmp_path)
 
-    assert "retry backoff remains brittle" in before_prompt
-    assert "retry backoff remains brittle" not in after_prompt
+    assert "Debt watch items (do not make these worse):" not in prompt
+    assert "[DEBT] timeout-recovery: timeout recovery: retry backoff remains brittle" not in prompt
+    assert "flagged 3 times across 2 plans" not in prompt
 
 
 def test_execute_prompt_includes_finalize_path_and_checkpoint_instructions(tmp_path: Path) -> None:

@@ -24,7 +24,6 @@ from megaplan.prompts._projection import (
     project_execute_context,
 )
 from megaplan.prompts._shared import (
-    _debt_watch_lines,
     _gate_summary_or_skipped,
     _render_prep_block,
 )
@@ -220,8 +219,6 @@ def _execute_creative_batch_prompt(
     global_batches = compute_task_batches(all_tasks)
     batch_number = next((index + 1 for index, batch in enumerate(global_batches) if batch == batch_task_ids), 1)
     checkpoint_path = str(batch_artifact_path(plan_dir, batch_number))
-    debt_items = _debt_watch_lines(plan_dir, root)
-    debt_block = "\n".join(["Debt watch items (do not make these worse):", *[f"- {item}" for item in debt_items]]) if debt_items else "Debt watch items (do not make these worse):\n- None."
     gate_carry = _gate_summary_or_skipped(plan_dir)
     try:
         latest_plan_text = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
@@ -275,8 +272,6 @@ def _execute_creative_batch_prompt(
         {json_dump(batch_sense_checks).strip()}
 
         {execution_context}
-
-        {debt_block}
 
         {_execute_approval_note(state)}
         Robustness level: {configured_robustness(state)}.
