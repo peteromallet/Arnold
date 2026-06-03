@@ -653,8 +653,8 @@ def test_resolve_limit_default_execute() -> None:
 
 
 def test_resolve_limit_default_review() -> None:
-    """Review phase defaults to 150,000."""
-    assert _resolve_prompt_size_limit("review") == 150_000
+    """Review phase defaults to 600,000 (calibrated to premium model windows)."""
+    assert _resolve_prompt_size_limit("review") == 600_000
 
 
 def test_resolve_limit_default_unknown_phase() -> None:
@@ -675,7 +675,7 @@ def test_resolve_limit_env_phase_specific_override(monkeypatch) -> None:
     monkeypatch.setenv("MEGAPLAN_PROMPT_SIZE_LIMIT_EXECUTE", "30000")
     assert _resolve_prompt_size_limit("execute") == 30_000
     # Other phases unchanged
-    assert _resolve_prompt_size_limit("review") == 150_000
+    assert _resolve_prompt_size_limit("review") == 600_000
 
 
 def test_resolve_limit_env_phase_overrides_global(monkeypatch) -> None:

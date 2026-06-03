@@ -477,24 +477,33 @@ def project_execution_audit_context(
 # ---------------------------------------------------------------------------
 
 # Default per-phase prompt size limits (character count).
-# These are conservative; callers may override via environment variables.
+# Calibrated to the context windows of the models that actually run each phase,
+# NOT to an arbitrary floor. The reasoning phases (plan/critique/gate/revise/
+# review/finalize) run on premium models (Claude ~200K tokens ≈ 800K chars) or
+# DeepSeek-V4 (registered ~1M-token window) — a 150K-char (~37K-token) cap was
+# far too conservative and hard-failed legitimate large milestones (the relocation
+# overflows). These are set generously enough to admit a large-but-valid prompt
+# while still catching a genuine runaway (>~600K chars / ~150K tokens, under
+# Claude's window with response headroom). `execute` stays conservative because a
+# trivial (c1) task can route to DeepSeek-Flash with a smaller window. Callers may
+# still override via MEGAPLAN_PROMPT_SIZE_LIMIT[_<PHASE>].
 _DEFAULT_PHASE_LIMITS: dict[str, int] = {
-    "plan": 100_000,
-    "prep": 100_000,
-    "prep-triage": 100_000,
-    "prep-distill": 100_000,
-    "critique": 150_000,
-    "critique_evaluator": 150_000,
-    "revise": 150_000,
-    "gate": 150_000,
-    "finalize": 200_000,
+    "plan": 400_000,
+    "prep": 400_000,
+    "prep-triage": 400_000,
+    "prep-distill": 400_000,
+    "critique": 600_000,
+    "critique_evaluator": 600_000,
+    "revise": 600_000,
+    "gate": 600_000,
+    "finalize": 400_000,
     "execute": 200_000,
     "execute-batch": 200_000,
-    "review": 150_000,
-    "review-doc": 150_000,
-    "review-joke": 150_000,
-    "feedback": 100_000,
-    "rework": 150_000,
+    "review": 600_000,
+    "review-doc": 600_000,
+    "review-joke": 600_000,
+    "feedback": 200_000,
+    "rework": 600_000,
 }
 
 # Sentinel string used when no phase-specific limit is configured.
