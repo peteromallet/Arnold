@@ -205,7 +205,18 @@ const INTENT_STYLE_BY_KIND = Object.freeze({
 const LOWERED_DIFF_COLOR = "#02d4b3";
 const LOWERED_BADGE = "lowered";
 
+// ── Shared VibeComfy palette ────────────────────────────────────────────────
+// Union of both feature palettes kept in ONE block: the preview-overlay diff
+// keys (added/edited/removed/pending) and the turn-progress status-feed keys
+// (active/success/warning/error/muted + bg* tints). Each feature reads its own
+// keys; neither is broken by the merge.
 const VC_COLORS = Object.freeze({
+  // preview-overlay node/wire diff
+  added: "#4caf50",
+  edited: "#ffc107",
+  removed: "#f44336",
+  pending: "#7db6ff",
+  // turn-progress status feed
   active: "#3d8bfd",
   success: "#02d4b3",
   warning: "#ffb86c",
@@ -217,6 +228,20 @@ const VC_COLORS = Object.freeze({
   bgError: "#2a1616",
 });
 
+// ── Alpha helper ────────────────────────────────────────────────────────────
+function hexToRgba(hex, alpha) {
+  let h = String(hex || "").replace(/^#/, "").trim();
+  if (h.length === 3) {
+    h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  }
+  if (h.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(h)) {
+    return `rgba(0,0,0,${typeof alpha === "number" ? alpha : 1})`;
+  }
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${typeof alpha === "number" ? alpha : 1})`;
+}
 let agentPanel = null;
 let agentTurnEventListener = null;
 let agentTurnEventListenerRegistered = false;
@@ -2350,7 +2375,7 @@ function collectDiffRows(report) {
     rows.push({ text: `edited: ${uid}`, color: "#ffc107", title: null });
   }
   for (const uid of ce.new_auto_placed || []) {
-    rows.push({ text: `new_auto_placed: ${uid}`, color: "#4db6ff", title: null });
+    rows.push({ text: `new_auto_placed: ${uid}`, color: VC_COLORS.pending, title: null });
   }
   for (const uid of ce.removed || []) {
     rows.push({ text: `removed: ${uid}`, color: "#ff7f7f", title: null });
@@ -2392,7 +2417,7 @@ function extractChangedNodeFeedback(report) {
     items.push({ uid, kind: "edited", color: "#ffc107", label: `Edited ${uid}` });
   }
   for (const uid of ce.new_auto_placed || []) {
-    items.push({ uid, kind: "new_auto_placed", color: "#4db6ff", label: `Added ${uid}` });
+    items.push({ uid, kind: "new_auto_placed", color: VC_COLORS.pending, label: `Added ${uid}` });
   }
   for (const uid of ce.removed || []) {
     items.push({ uid, kind: "removed", color: "#ff7f7f", label: `Removed ${uid}` });
@@ -2499,7 +2524,7 @@ function invalidateCandidateState(panel) {
   }
 }
 
-function computePreviewDiff(candidateGraph, candidateReport) {
+export function computePreviewDiff(candidateGraph, candidateReport) {
   try {
     const panel = agentPanel;
     const candidateGraphHash = panel?.state?.candidateGraphHash;
@@ -2507,6 +2532,8 @@ function computePreviewDiff(candidateGraph, candidateReport) {
       candidateGraphHash
       && panel.state._previewDiffGraphHash === candidateGraphHash
       && panel.state._previewDiff
+      && Array.isArray(panel.state._previewDiff.added_links)
+      && Array.isArray(panel.state._previewDiff.removed_links)
     ) {
       return panel.state._previewDiff;
     }
@@ -2635,12 +2662,120 @@ function computePreviewDiff(candidateGraph, candidateReport) {
       console.warn("[vibecomfy] computePreviewDiff — unresolved report entries:", unresolved);
     }
 
+    // ── Link diff: normalize by endpoint UID + port name ──────────────────
+    // Build supplementary maps for link endpoint resolution.
+    const candidateNodesById = new Map();
+    for (const node of candidateNodes) {
+      if (node.id != null) {
+        candidateNodesById.set(String(node.id), node);
+      }
+    }
+    const liveNodesById = new Map();
+    for (const node of liveNodes) {
+      if (node.id != null) {
+        liveNodesById.set(String(node.id), node);
+      }
+    }
+    const liveUidById = new Map();
+    for (const node of liveNodes) {
+      const uid = getUid(node);
+      if (uid && node.id != null) {
+        liveUidById.set(String(node.id), uid);
+      }
+    }
+
+    let _unresolvableLinkWarnCount = 0;
+    const _MAX_UNRESOLVABLE_LINK_WARNS = 5;
+
+    function _resolvePortName(node, slotIndex, portsKey) {
+      const ports = Array.isArray(node?.[portsKey]) ? node[portsKey] : [];
+      const port = ports[slotIndex];
+      if (port && typeof port.name === "string" && port.name) {
+        return port.name;
+      }
+      return String(slotIndex);
+    }
+
+    function _normalizeLinkEndpoint(link, uidById, nodesById) {
+      // link may be an array [origin_id, origin_slot, target_id, target_slot, …]
+      // or an object { origin_id, origin_slot, target_id, target_slot, … }
+      const originId = Array.isArray(link) ? link[0] : link?.origin_id;
+      const originSlot = Array.isArray(link) ? link[1] : link?.origin_slot;
+      const targetId = Array.isArray(link) ? link[2] : link?.target_id;
+      const targetSlot = Array.isArray(link) ? link[3] : link?.target_slot;
+
+      const fromUid = uidById.get(String(originId));
+      const toUid = uidById.get(String(targetId));
+
+      if (!fromUid || !toUid) {
+        return null;
+      }
+
+      const fromNode = nodesById.get(String(originId));
+      const toNode = nodesById.get(String(targetId));
+
+      const fromPortName = _resolvePortName(fromNode, originSlot, "outputs");
+      const toPortName = _resolvePortName(toNode, targetSlot, "inputs");
+
+      return `${fromUid}::${fromPortName}->${toUid}::${toPortName}`;
+    }
+
+    function _collectNormalizedLinkKeys(linkEntries, uidById, nodesById) {
+      const keys = new Set();
+      for (const link of linkEntries) {
+        if (!link) continue;
+        const key = _normalizeLinkEndpoint(link, uidById, nodesById);
+        if (key) {
+          keys.add(key);
+        } else if (_unresolvableLinkWarnCount < _MAX_UNRESOLVABLE_LINK_WARNS) {
+          _unresolvableLinkWarnCount += 1;
+          console.warn("[vibecomfy] computePreviewDiff — unresolvable link endpoint:", link);
+        }
+      }
+      return keys;
+    }
+
+    // Live links: LiteGraph stores links as an object map keyed by link id.
+    const liveLinkEntries = (() => {
+      const liveGraph = getLiveGraph();
+      const raw = liveGraph?.links;
+      if (!raw || typeof raw !== "object") return [];
+      return Array.isArray(raw) ? raw : Object.values(raw);
+    })();
+    const candidateLinkEntries = Array.isArray(candidateGraph?.links) ? candidateGraph.links : [];
+
+    const liveLinkKeys = _collectNormalizedLinkKeys(
+      liveLinkEntries,
+      liveUidById,
+      liveNodesById,
+    );
+    const candidateLinkKeys = _collectNormalizedLinkKeys(
+      candidateLinkEntries,
+      candidateUidById,
+      candidateNodesById,
+    );
+
+    const added_links = [];
+    for (const key of candidateLinkKeys) {
+      if (!liveLinkKeys.has(key)) {
+        added_links.push(key);
+      }
+    }
+    const removed_links = [];
+    for (const key of liveLinkKeys) {
+      if (!candidateLinkKeys.has(key)) {
+        removed_links.push(key);
+      }
+    }
+
     const diff = {
       edited,
       added,
       removed,
       removed_named: removedNamed,
       unresolved,
+      added_links,
+      removed_links,
     };
 
     // ── Cache on panel state ──────────────────────────────────────────────
@@ -2658,6 +2793,8 @@ function computePreviewDiff(candidateGraph, candidateReport) {
       removed: [],
       removed_named: [],
       unresolved: [],
+      added_links: [],
+      removed_links: [],
     };
   }
 }
@@ -2675,14 +2812,88 @@ function getOrBuildPreviewDiff() {
   const candidateGraphHash = panel.state.candidateGraphHash;
   if (
     panel.state._previewDiff &&
-    panel.state._previewDiffGraphHash === candidateGraphHash
+    panel.state._previewDiffGraphHash === candidateGraphHash &&
+    Array.isArray(panel.state._previewDiff.added_links) &&
+    Array.isArray(panel.state._previewDiff.removed_links)
   ) {
     return panel.state._previewDiff;
   }
   return computePreviewDiff(candidateGraph, candidateReport);
 }
 
-function drawPreviewOverlay(ctx, diff) {
+// ── Ghost dimension computation (T3) ──────────────────────────────────────
+// Compute plausible width and height from node content when cn.size is
+// missing or implausible (w ≤ 40 or h ≤ 20). Uses LiteGraph constants,
+// title text, non-empty slot labels, truncated widget_values, slot counts,
+// widget rows, and padding.
+function _computeGhostDimensions(cn, ctx) {
+  var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
+  var SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
+  var WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
+  var PAD_X = 32; // room for slot circles + margins
+  var PAD_Y = 12;
+  var MIN_W = 140;
+
+  var title = (typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node";
+  var inputs = Array.isArray(cn.inputs) ? cn.inputs : [];
+  var outputs = Array.isArray(cn.outputs) ? cn.outputs : [];
+  var widgetValues = readWidgetValues(cn);
+
+  // Truncate helper — uses Unicode ellipsis (SD3).
+  var _trunc = function (text, maxChars) {
+    text = String(text || "").trim();
+    if (!text) return "";
+    return text.length > maxChars ? text.slice(0, maxChars - 1) + "\u2026" : text;
+  };
+
+  ctx.save();
+  try {
+    ctx.font = "12px Arial, sans-serif";
+    ctx.textBaseline = "top";
+
+    var titleW = ctx.measureText(_trunc(title, 40)).width;
+
+    var maxSlotW = 0;
+    for (var s = 0; s < inputs.length; s += 1) {
+      var lbl = inputs[s] && inputs[s].name;
+      if (lbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(lbl, 30)).width);
+    }
+    for (var t = 0; t < outputs.length; t += 1) {
+      var olbl = outputs[t] && outputs[t].name;
+      if (olbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(olbl, 30)).width);
+    }
+
+    var maxWidgetW = 0;
+    for (var wi = 0; wi < widgetValues.length; wi += 1) {
+      var wvText = _trunc(widgetValuePreviewText(widgetValues[wi]), 35);
+      if (wvText) maxWidgetW = Math.max(maxWidgetW, ctx.measureText(wvText).width);
+    }
+
+    var contentW = Math.max(titleW, maxSlotW, maxWidgetW);
+    var gw = Math.max(MIN_W, Math.ceil(contentW + PAD_X));
+
+    var inCount = inputs.length;
+    var outCount = outputs.length;
+    var wRows = widgetValues.length;
+    var slotRows = Math.max(inCount, outCount);
+    var gh = TITLE_H + slotRows * SLOT_H + wRows * WIDGET_H + PAD_Y;
+
+    return { w: gw, h: gh };
+  } finally {
+    ctx.restore();
+  }
+}
+
+// ── Widget-value preview text (T3) ────────────────────────────────────────
+function widgetValuePreviewText(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return "[…]";
+  return "{…}";
+}
+
+export function drawPreviewOverlay(ctx, diff) {
   if (!ctx || !diff) {
     return;
   }
@@ -2692,23 +2903,25 @@ function drawPreviewOverlay(ctx, diff) {
       ctx.setLineDash([]);
     }
 
-    const editedColor = "#ffc107";
-    const addedColor = "#4caf50";
-    const addedFill = "rgba(76, 175, 80, 0.18)";
-    const removedColor = "#f44336";
-    const lineWidth = 3;
-    const TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
-    const SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
+    var editedColor = VC_COLORS.edited;
+    var addedColor = VC_COLORS.added;
+    var addedFill = hexToRgba(VC_COLORS.added, 0.18);
+    var addedTextColor = hexToRgba(VC_COLORS.added, 0.92);
+    var removedColor = VC_COLORS.removed;
+    var lineWidth = 3;
+    var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
+    var SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
+    var WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
 
-    const drawBadge = function (bx, by, text, color) {
+    var _drawBadge = function (bx, by, text, color) {
       ctx.save();
       if (ctx.setLineDash) {
         ctx.setLineDash([]);
       }
       ctx.font = "bold 12px sans-serif";
-      const padX = 5;
-      const bw = ctx.measureText(text).width + padX * 2;
-      const bh = 18;
+      var padX = 5;
+      var bw = ctx.measureText(text).width + padX * 2;
+      var bh = 18;
       ctx.fillStyle = color;
       ctx.fillRect(bx, by - bh, bw, bh);
       ctx.fillStyle = "#000000";
@@ -2717,53 +2930,65 @@ function drawPreviewOverlay(ctx, diff) {
       ctx.restore();
     };
 
+    // ── Truncation helper (Unicode ellipsis, SD3) ────────────────────────
+    var _trunc = function (text, maxChars) {
+      text = String(text || "").trim();
+      if (!text) return "";
+      return text.length > maxChars ? text.slice(0, maxChars - 1) + "\u2026" : text;
+    };
+
     // ── Edited nodes (amber outline) ────────────────────────────────────
-    for (const item of diff.edited || []) {
-      const node = lookupLiveNodeByUid(item.uid);
-      if (!node || !node.pos) {
+    for (var _ei = 0; _ei < (diff.edited || []).length; _ei += 1) {
+      var eitem = diff.edited[_ei];
+      var enode = lookupLiveNodeByUid(eitem.uid);
+      if (!enode || !enode.pos) {
         continue;
       }
-      const x = node.pos[0];
-      const y = node.pos[1];
-      const w = Array.isArray(node.size) ? node.size[0] : 200;
-      const h = Array.isArray(node.size) ? node.size[1] : 100;
+      var ex = enode.pos[0];
+      var ey = enode.pos[1];
+      var ew = Array.isArray(enode.size) ? enode.size[0] : 200;
+      var eh = Array.isArray(enode.size) ? enode.size[1] : 100;
       ctx.setLineDash([]);
       ctx.strokeStyle = editedColor;
       ctx.lineWidth = lineWidth;
-      ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+      ctx.strokeRect(ex - 2, ey - 2, ew + 4, eh + 4);
       // Tint the changed widget rows (approximate LiteGraph row geometry:
       // widgets render below the title and the node's input slots).
-      const inCount = Array.isArray(node.inputs) ? node.inputs.length : 0;
-      const rowsTop = y + TITLE_H + inCount * SLOT_H;
-      ctx.fillStyle = "rgba(255, 193, 7, 0.22)";
-      for (const wi of item.changedWidgetIndices || []) {
-        ctx.fillRect(x, rowsTop + wi * SLOT_H, w, SLOT_H - 2);
+      var inCount = Array.isArray(enode.inputs) ? enode.inputs.length : 0;
+      var rowsTop = ey + TITLE_H + inCount * SLOT_H;
+      ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.22);
+      for (var _wi = 0; _wi < (eitem.changedWidgetIndices || []).length; _wi += 1) {
+        ctx.fillRect(ex, rowsTop + eitem.changedWidgetIndices[_wi] * SLOT_H, ew, SLOT_H - 2);
       }
     }
 
     // ── Removed nodes (red outline + "− will be removed" badge) ─────────
-    const removedItems = (diff.removed || []).concat(diff.removed_named || []);
-    for (const item of removedItems) {
-      const node = lookupLiveNodeByUid(item.uid);
-      if (!node || !node.pos) {
+    var removedItems = (diff.removed || []).concat(diff.removed_named || []);
+    for (var _ri = 0; _ri < removedItems.length; _ri += 1) {
+      var ritem = removedItems[_ri];
+      var rnode = lookupLiveNodeByUid(ritem.uid);
+      if (!rnode || !rnode.pos) {
         continue;
       }
-      const x = node.pos[0];
-      const y = node.pos[1];
-      const w = Array.isArray(node.size) ? node.size[0] : 200;
-      const h = Array.isArray(node.size) ? node.size[1] : 100;
+      var rx = rnode.pos[0];
+      var ry = rnode.pos[1];
+      var rw = Array.isArray(rnode.size) ? rnode.size[0] : 200;
+      var rh = Array.isArray(rnode.size) ? rnode.size[1] : 100;
       ctx.setLineDash([]);
       ctx.strokeStyle = removedColor;
       ctx.lineWidth = lineWidth;
-      ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
-      drawBadge(x - 2, y - 2, "− will be removed", removedColor);
+      ctx.strokeRect(rx - 2, ry - 2, rw + 4, rh + 4);
+      _drawBadge(rx + rw - 2 - 140, ry + rh - 2, "\u2212 will be removed", removedColor);
     }
 
     // ── Added nodes (translucent green ghost + "+ new" badge; candidate pos) ─
-    const candidateGraph = agentPanel?.state?.candidateGraph;
+    var candidateGraph = (diff && diff._candidateGraph) || (agentPanel && agentPanel.state && agentPanel.state.candidateGraph);
     if (candidateGraph && diff.added && diff.added.length > 0) {
-      const addedByUid = new Map(diff.added.map(function (a) { return [a.uid, a]; }));
-      const candidateNodes = Array.isArray(candidateGraph.nodes)
+      var addedByUid = new Map();
+      for (var _ai = 0; _ai < diff.added.length; _ai += 1) {
+        addedByUid.set(diff.added[_ai].uid, diff.added[_ai]);
+      }
+      var candidateNodes = Array.isArray(candidateGraph.nodes)
         ? candidateGraph.nodes
         : [];
       for (var i = 0; i < candidateNodes.length; i += 1) {
@@ -2779,8 +3004,26 @@ function drawPreviewOverlay(ctx, diff) {
         }
         var cx = pos[0];
         var cy = pos[1];
-        var cw = Array.isArray(cn.size) ? cn.size[0] : 200;
-        var ch = Array.isArray(cn.size) ? cn.size[1] : 100;
+
+        // ── Dimension resolution: use cn.size only when plausible ────────
+        var sizeValid = false;
+        var cw, ch;
+        if (Array.isArray(cn.size)) {
+          var rawW = cn.size[0];
+          var rawH = cn.size[1];
+          if (typeof rawW === "number" && typeof rawH === "number" && rawW > 40 && rawH > 20) {
+            cw = rawW;
+            ch = rawH;
+            sizeValid = true;
+          }
+        }
+        if (!sizeValid) {
+          var dims = _computeGhostDimensions(cn, ctx);
+          cw = dims.w;
+          ch = dims.h;
+        }
+
+        // ── Ghost fill + dashed border ───────────────────────────────────
         ctx.fillStyle = addedFill;
         ctx.fillRect(cx - 2, cy - 2, cw + 4, ch + 4);
         ctx.strokeStyle = addedColor;
@@ -2788,12 +3031,63 @@ function drawPreviewOverlay(ctx, diff) {
         ctx.setLineDash([6, 3]);
         ctx.strokeRect(cx - 2, cy - 2, cw + 4, ch + 4);
         ctx.setLineDash([]);
-        drawBadge(cx - 2, cy - 2, "+ new", addedColor);
+
+        // ── Render ghost content: title, slot labels, widget rows ────────
+        ctx.save();
+        try {
+          ctx.font = "12px Arial, sans-serif";
+          ctx.textBaseline = "top";
+
+          // Title
+          var titleText = (typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node";
+          var displayTitle = _trunc(titleText, 40);
+          ctx.fillStyle = addedTextColor;
+          ctx.fillText(displayTitle, cx + 10, cy + (TITLE_H - 14) / 2);
+
+          // Slot labels
+          var inputs = Array.isArray(cn.inputs) ? cn.inputs : [];
+          var outputs = Array.isArray(cn.outputs) ? cn.outputs : [];
+          var widgetValues = readWidgetValues(cn);
+          var maxSlots = Math.max(inputs.length, outputs.length);
+
+          for (var si = 0; si < maxSlots; si += 1) {
+            var slotY = cy + TITLE_H + si * SLOT_H + 2;
+            // Input label (left side)
+            if (si < inputs.length && inputs[si] && inputs[si].name) {
+              ctx.fillStyle = addedTextColor;
+              ctx.textAlign = "left";
+              ctx.fillText(_trunc(inputs[si].name, 30), cx + 16, slotY);
+            }
+            // Output label (right side)
+            if (si < outputs.length && outputs[si] && outputs[si].name) {
+              ctx.fillStyle = addedTextColor;
+              ctx.textAlign = "right";
+              ctx.fillText(_trunc(outputs[si].name, 30), cx + cw - 16, slotY);
+            }
+          }
+
+          // Widget-value rows (below slots)
+          ctx.textAlign = "left";
+          ctx.fillStyle = hexToRgba(VC_COLORS.added, 0.55);
+          var widgetTop = cy + TITLE_H + maxSlots * SLOT_H;
+          for (var wri = 0; wri < widgetValues.length; wri += 1) {
+            var wvPreview = widgetValuePreviewText(widgetValues[wri]);
+            if (wvPreview) {
+              ctx.fillText(_trunc(wvPreview, 35), cx + 10, widgetTop + wri * WIDGET_H + 2);
+            }
+          }
+        } finally {
+          ctx.restore();
+        }
+
+        // ── "+ new" badge at bottom-right ────────────────────────────────
+        _drawBadge(cx + cw - 2 - 64, cy + ch - 2, "+ new", addedColor);
+
         // Red dot on each unwired required input port of the added node.
-        const addedEntry = addedByUid.get(uid);
-        const unwired = (addedEntry && addedEntry.unwiredRequiredInputs) || [];
+        var addedEntry = addedByUid.get(uid);
+        var unwired = (addedEntry && addedEntry.unwiredRequiredInputs) || [];
         if (unwired.length > 0) {
-          const cinputs = Array.isArray(cn.inputs) ? cn.inputs : [];
+          var cinputs = Array.isArray(cn.inputs) ? cn.inputs : [];
           ctx.fillStyle = removedColor;
           for (var si = 0; si < cinputs.length; si += 1) {
             var inm = cinputs[si] && cinputs[si].name;
@@ -2805,6 +3099,168 @@ function drawPreviewOverlay(ctx, diff) {
           }
         }
       }
+    }
+
+    // ── Wire overlay: removed (dashed red) then added (solid green) ──────
+    // Uses VC_COLORS for palette consistency.  Resolves link endpoints by
+    // port name to slot indexes at draw time.  Live nodes prefer
+    // node.getConnectionPos(isInput, slotIndex); ghost (candidate-only)
+    // nodes use geometry derived from ghost rect slot rows.
+    if (candidateGraph && ((diff.removed_links && diff.removed_links.length > 0) || (diff.added_links && diff.added_links.length > 0))) {
+      // Build candidate-by-uid map once for ghost endpoint lookups.
+      var _candByUid = new Map();
+      var _candNodes = Array.isArray(candidateGraph.nodes) ? candidateGraph.nodes : [];
+      for (var _ci = 0; _ci < _candNodes.length; _ci += 1) {
+        var _candNode = _candNodes[_ci];
+        var _candUid = _candNode && _candNode.properties ? _candNode.properties.vibecomfy_uid : undefined;
+        if (_candUid) _candByUid.set(_candUid, _candNode);
+      }
+
+      var _unresWarn = 0;
+      var _MAX_UNRES_WARN = 5;
+
+      // Parse link key "fromUid::fromPortName->toUid::toPortName"
+      function _parseKey(k) {
+        var m = k.match(/^(.+?)::(.+?)->(.+?)::(.+?)$/);
+        if (!m) return null;
+        return { fromUid: m[1], fromPort: m[2], toUid: m[3], toPort: m[4] };
+      }
+
+      // Slot index by port name
+      function _slotIdx(node, portName, portsKey) {
+        var ports = Array.isArray(node && node[portsKey]) ? node[portsKey] : [];
+        for (var _pi = 0; _pi < ports.length; _pi += 1) {
+          if (ports[_pi] && ports[_pi].name === portName) return _pi;
+        }
+        return -1;
+      }
+
+      // Connection position: live node.getConnectionPos, then geometry fallback
+      function _connPos(node, isInput, slotIdx, ghostPos, ghostW) {
+        if (node && typeof node.getConnectionPos === 'function') {
+          try {
+            return node.getConnectionPos(isInput, slotIdx);
+          } catch (_ignored) { /* fall through */ }
+        }
+        // Live geometry
+        if (node && node.pos && Array.isArray(node.pos) && node.pos.length >= 2) {
+          var _nx = node.pos[0];
+          var _ny = node.pos[1];
+          var _nw = Array.isArray(node.size) ? node.size[0] : 200;
+          if (isInput) return [_nx, _ny + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
+          return [_nx + _nw, _ny + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
+        }
+        // Ghost geometry (candidate-only node)
+        if (ghostPos && Array.isArray(ghostPos) && ghostPos.length >= 2) {
+          var _gx = ghostPos[0];
+          var _gy = ghostPos[1];
+          if (isInput) return [_gx, _gy + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
+          return [_gx + ghostW, _gy + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
+        }
+        return null;
+      }
+
+      // Bezier wire stroke helper
+      function _strokeWire(x1, y1, x2, y2, color, dashed) {
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        if (ctx.setLineDash) ctx.setLineDash(dashed ? [8, 4] : []);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        var _dx = Math.abs(x2 - x1) * 0.5;
+        ctx.bezierCurveTo(x1 + _dx, y1, x2 - _dx, y2, x2, y2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Ghost dimension helper (mirrors added-node logic)
+      function _ghostDims(cn) {
+        if (Array.isArray(cn.size)) {
+          var _rw = cn.size[0], _rh = cn.size[1];
+          if (typeof _rw === 'number' && typeof _rh === 'number' && _rw > 40 && _rh > 20) {
+            return { w: _rw, h: _rh };
+          }
+        }
+        return _computeGhostDimensions(cn, ctx);
+      }
+
+      // ── Removed wires: dashed red beziers (drawn first) ──────────────
+      var _remLinks = diff.removed_links || [];
+      for (var _rli = 0; _rli < _remLinks.length; _rli += 1) {
+        var _p = _parseKey(_remLinks[_rli]);
+        if (!_p) continue;
+
+        var _fNode = lookupLiveNodeByUid(_p.fromUid);
+        var _tNode = lookupLiveNodeByUid(_p.toUid);
+
+        var _fSlot = _slotIdx(_fNode, _p.fromPort, 'outputs');
+        var _tSlot = _slotIdx(_tNode, _p.toPort, 'inputs');
+
+        if (_fSlot < 0 || _tSlot < 0) {
+          if (_unresWarn < _MAX_UNRES_WARN) { _unresWarn += 1; console.warn('[vibecomfy] drawPreviewOverlay — unresolvable removed-wire endpoint:', _remLinks[_rli]); }
+          continue;
+        }
+
+        var _fp = _connPos(_fNode, false, _fSlot, null, 0);
+        var _tp = _connPos(_tNode, true, _tSlot, null, 0);
+        if (_fp && _tp) {
+          _strokeWire(_fp[0], _fp[1], _tp[0], _tp[1], removedColor, true);
+        } else if (_unresWarn < _MAX_UNRES_WARN) {
+          _unresWarn += 1; console.warn('[vibecomfy] drawPreviewOverlay — could not resolve removed-wire endpoint positions:', _remLinks[_rli]);
+        }
+      }
+
+      // ── Added wires: solid green beziers (drawn second) ───────────────
+      var _addLinks = diff.added_links || [];
+      for (var _ali = 0; _ali < _addLinks.length; _ali += 1) {
+        var _p2 = _parseKey(_addLinks[_ali]);
+        if (!_p2) continue;
+
+        var _fNode2 = lookupLiveNodeByUid(_p2.fromUid);
+        var _tNode2 = lookupLiveNodeByUid(_p2.toUid);
+
+        // Ghost fallback for endpoints not in the live graph
+        var _fGhostPos = null, _fGhostW = 0;
+        if (!_fNode2) {
+          var _fc = _candByUid.get(_p2.fromUid);
+          if (_fc && _fc.pos && Array.isArray(_fc.pos) && _fc.pos.length >= 2) {
+            _fGhostPos = _fc.pos;
+            _fGhostW = _ghostDims(_fc).w;
+          }
+        }
+        var _tGhostPos = null, _tGhostW = 0;
+        if (!_tNode2) {
+          var _tc = _candByUid.get(_p2.toUid);
+          if (_tc && _tc.pos && Array.isArray(_tc.pos) && _tc.pos.length >= 2) {
+            _tGhostPos = _tc.pos;
+            _tGhostW = _ghostDims(_tc).w;
+          }
+        }
+
+        // Resolve port → slot on whichever node we have (live or candidate)
+        var _fNodeR = _fNode2 || _candByUid.get(_p2.fromUid) || null;
+        var _tNodeR = _tNode2 || _candByUid.get(_p2.toUid) || null;
+
+        var _fSlot2 = _slotIdx(_fNodeR, _p2.fromPort, 'outputs');
+        var _tSlot2 = _slotIdx(_tNodeR, _p2.toPort, 'inputs');
+
+        if (_fSlot2 < 0 || _tSlot2 < 0) {
+          if (_unresWarn < _MAX_UNRES_WARN) { _unresWarn += 1; console.warn('[vibecomfy] drawPreviewOverlay — unresolvable added-wire endpoint:', _addLinks[_ali]); }
+          continue;
+        }
+
+        var _fp2 = _connPos(_fNode2, false, _fSlot2, _fGhostPos, _fGhostW);
+        var _tp2 = _connPos(_tNode2, true, _tSlot2, _tGhostPos, _tGhostW);
+        if (_fp2 && _tp2) {
+          _strokeWire(_fp2[0], _fp2[1], _tp2[0], _tp2[1], addedColor, false);
+        } else if (_unresWarn < _MAX_UNRES_WARN) {
+          _unresWarn += 1; console.warn('[vibecomfy] drawPreviewOverlay — could not resolve added-wire endpoint positions:', _addLinks[_ali]);
+        }
+      }
+
+      // Restore dash state
+      if (ctx.setLineDash) ctx.setLineDash([]);
     }
   } finally {
     ctx.restore();
@@ -2870,7 +3326,7 @@ function announceChangedNodes(panel, items) {
     });
     node.color = "#fff5c4";
     node.bgcolor = item.kind === "new_auto_placed" ? "#1d3f56" : "#574313";
-    node.boxcolor = item.kind === "new_auto_placed" ? "#4db6ff" : "#ffc107";
+    node.boxcolor = item.kind === "new_auto_placed" ? VC_COLORS.pending : VC_COLORS.edited;
     feedback.highlighted.push(item);
   }
 
@@ -3519,6 +3975,7 @@ async function submitAgentEdit(panel) {
     panel.state.sessionId = result.session_id || panel.state.sessionId;
     panel.state.turnId = result.turn_id || null;
     panel.state.baselineTurnId = result.baseline_turn_id || null;
+    invalidateCandidateState(panel);
     panel.state.candidateGraph = result.graph || null;
     panel.state.candidateGraphHash = candidateGraphHash;
     panel.state.candidateReport = result.report || null;
@@ -3763,11 +4220,7 @@ async function applyAgentCandidate(panel) {
     panel.state.phase = PANEL_STATE.IDLE;
     panel.state.baselineTurnId = accepted.baseline_turn_id || panel.state.turnId || panel.state.baselineTurnId;
     panel.state.auditRef = accepted.audit_ref || panel.state.auditRef;
-    clearCandidatePreviewState(panel);
-    panel.state.candidateGraph = null;
-    panel.state.candidateGraphHash = null;
-    panel.state.candidateReport = null;
-    panel.state.serverSubmitGraphHash = null;
+    invalidateCandidateState(panel);
     panel.state.message = "Candidate accepted and applied locally.";
     setQueueGuardContext({
       sessionId: panel.state.sessionId,
@@ -3881,11 +4334,7 @@ async function rejectAgentCandidate(panel) {
     raw_payload: rejected,
   });
   panel.state.phase = PANEL_STATE.IDLE;
-  clearCandidatePreviewState(panel);
-  panel.state.candidateGraph = null;
-  panel.state.candidateGraphHash = null;
-  panel.state.candidateReport = null;
-  panel.state.serverSubmitGraphHash = null;
+  invalidateCandidateState(panel);
   panel.state.message = "Candidate rejected and cleared from the panel.";
   panel.state.failure = null;
   panel.state.auditRef = rejected.audit_ref || panel.state.auditRef;

@@ -2506,3 +2506,228 @@ test("VibeComfy agent-edit turn progress: client_id submit body, batch_turns fal
     await harness.dispose();
   }
 });
+
+test("VibeComfy preview diff computes named-port link deltas and drawPreviewOverlay renders ghost nodes with wire beziers, badges, and text without mutating the live graph", async () => {
+  const liveGraph = {
+    nodes: [
+      {
+        id: 1,
+        type: "LoadImage",
+        pos: [100, 200],
+        size: [240, 100],
+        properties: { vibecomfy_uid: "uid-1" },
+        inputs: [],
+        outputs: [{ name: "IMAGE" }],
+      },
+      {
+        id: 2,
+        type: "SaveImage",
+        pos: [400, 200],
+        size: [240, 100],
+        properties: { vibecomfy_uid: "uid-2" },
+        inputs: [{ name: "images" }],
+        outputs: [],
+      },
+    ],
+    links: [[1, 0, 2, 0, "IMAGE"]],
+  };
+
+  const candidateGraph = {
+    nodes: [
+      {
+        id: 1,
+        type: "LoadImage",
+        pos: [100, 200],
+        size: [240, 100],
+        properties: { vibecomfy_uid: "uid-1" },
+        inputs: [],
+        outputs: [{ name: "IMAGE" }],
+      },
+      {
+        id: 3,
+        type: "PreviewImage",
+        pos: [400, 200],
+        size: [240, 124],
+        properties: { vibecomfy_uid: "uid-3" },
+        inputs: [{ name: "images" }],
+        outputs: [],
+        widgets_values: ["preview_val"],
+      },
+    ],
+    links: [[1, 0, 3, 0, "IMAGE"]],
+  };
+
+  const candidateReport = {
+    change: {
+      content_edits: {
+        preserved: ["uid-1"],
+        edited: [],
+        removed_named: [],
+      },
+    },
+    recovery: [],
+  };
+
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    // Capture the live graph state before preview rendering
+    const liveGraphBefore = harness.getCurrentGraph();
+    const liveNodesBefore = harness.getLiveNodes().map((n) => ({
+      id: n.id,
+      type: n.type,
+      pos: [...n.pos],
+    }));
+
+    // ── Compute the preview diff ──────────────────────────────────────
+    const diff = extensionModule.computePreviewDiff(candidateGraph, candidateReport);
+
+    // Assert diff shape has all required keys
+    assert.ok(Array.isArray(diff.added_links), "added_links must be an array");
+    assert.ok(Array.isArray(diff.removed_links), "removed_links must be an array");
+    assert.ok(Array.isArray(diff.added), "added must be an array");
+    assert.ok(Array.isArray(diff.removed), "removed must be an array");
+    assert.ok(Array.isArray(diff.edited), "edited must be an array");
+    assert.ok(Array.isArray(diff.removed_named), "removed_named must be an array");
+    assert.ok(Array.isArray(diff.unresolved), "unresolved must be an array");
+
+    // ── Assert added_links keyed by endpoint UID + port name ──────────
+    assert.equal(diff.added_links.length, 1, "one added link expected");
+    assert.match(
+      diff.added_links[0],
+      /^uid-1::IMAGE->uid-3::images$/,
+      "added link key format: fromUid::fromPortName->toUid::toPortName",
+    );
+
+    // ── Assert removed_links keyed by endpoint UID + port name ────────
+    assert.equal(diff.removed_links.length, 1, "one removed link expected");
+    assert.match(
+      diff.removed_links[0],
+      /^uid-1::IMAGE->uid-2::images$/,
+      "removed link key format: fromUid::fromPortName->toUid::toPortName",
+    );
+
+    // ── Assert added/removed node entries ────────────────────────────
+    assert.equal(diff.added.length, 1);
+    assert.equal(diff.added[0].uid, "uid-3");
+    assert.equal(diff.added[0].class_type, "PreviewImage");
+    assert.equal(diff.removed.length, 1);
+    assert.equal(diff.removed[0].uid, "uid-2");
+    assert.equal(diff.removed[0].class_type, "SaveImage");
+
+    // ── Draw the preview overlay and capture canvas operations ────────
+    // Embed the candidate graph so drawPreviewOverlay can render ghosts/wires
+    // without depending on the module-scoped agentPanel state.
+    const diffWithCandidate = { ...diff, _candidateGraph: candidateGraph };
+    const drawOps = await harness.drawPreviewOverlay(diffWithCandidate);
+
+    // Helper: find ops of a given kind
+    const opsByKind = (kind) => drawOps.filter((op) => op.kind === kind);
+
+    // ── Solid green added bezier ────────────────────────────────────
+    // The wire drawing path sets strokeStyle to '#4caf50' (green) and
+    // calls beginPath → moveTo → bezierCurveTo → stroke with no dash.
+    const greenStrokeStyles = opsByKind("strokeStyle").filter(
+      (op) => op.args[0] === "#4caf50",
+    );
+    assert.ok(greenStrokeStyles.length > 0, "green (#4caf50) strokeStyle must be set for added bezier");
+
+    // Look for a solid (non-dashed) bezier drawn after green style
+    let foundSolidGreenBezier = false;
+    let lastStrokeStyle = null;
+    let lastLineDash = null;
+    for (const op of drawOps) {
+      if (op.kind === "strokeStyle") lastStrokeStyle = op.args[0];
+      if (op.kind === "setLineDash") lastLineDash = op.args[0];
+      if (
+        op.kind === "bezierCurveTo" &&
+        lastStrokeStyle === "#4caf50" &&
+        Array.isArray(lastLineDash) &&
+        lastLineDash.length === 0
+      ) {
+        foundSolidGreenBezier = true;
+        break;
+      }
+    }
+    assert.ok(foundSolidGreenBezier, "must contain a solid green bezierCurveTo");
+
+    // ── Dashed red removed bezier ───────────────────────────────────
+    const redStrokeStyles = opsByKind("strokeStyle").filter(
+      (op) => op.args[0] === "#f44336",
+    );
+    assert.ok(redStrokeStyles.length > 0, "red (#f44336) strokeStyle must be set for removed bezier");
+
+    let foundDashedRedBezier = false;
+    lastStrokeStyle = null;
+    lastLineDash = null;
+    for (const op of drawOps) {
+      if (op.kind === "strokeStyle") lastStrokeStyle = op.args[0];
+      if (op.kind === "setLineDash") lastLineDash = op.args[0];
+      if (
+        op.kind === "bezierCurveTo" &&
+        lastStrokeStyle === "#f44336" &&
+        Array.isArray(lastLineDash) &&
+        lastLineDash.length === 2 &&
+        lastLineDash[0] === 8 &&
+        lastLineDash[1] === 4
+      ) {
+        foundDashedRedBezier = true;
+        break;
+      }
+    }
+    assert.ok(foundDashedRedBezier, "must contain a dashed red bezierCurveTo with [8,4] dash");
+
+    // ── Ghost title text ────────────────────────────────────────────
+    const titleTextOps = opsByKind("fillText").filter(
+      (op) => op.args[0] === "PreviewImage",
+    );
+    assert.ok(titleTextOps.length > 0, "must contain ghost title fillText('PreviewImage', ...)");
+
+    // ── At least one widget value text ──────────────────────────────
+    const widgetTextOps = opsByKind("fillText").filter(
+      (op) => op.args[0] === "preview_val",
+    );
+    assert.ok(widgetTextOps.length > 0, "must contain widget value fillText('preview_val', ...)");
+
+    // ── Bottom-right badge drawing: "+ new" ─────────────────────────
+    const newBadgeOps = opsByKind("fillText").filter(
+      (op) => op.args[0] === "+ new",
+    );
+    assert.ok(newBadgeOps.length > 0, "must contain badge fillText('+ new', ...)");
+
+    // The badge also has a fillRect with green background
+    const badgeFillRects = opsByKind("fillRect").filter(
+      () => true,
+    );
+    assert.ok(badgeFillRects.length > 0, "must contain fillRect for badge background");
+
+    // ── Preview rendering does NOT mutate the live graph ────────────
+    const liveGraphAfter = harness.getCurrentGraph();
+    assert.deepEqual(liveGraphAfter, liveGraphBefore, "live graph must not change after preview rendering");
+
+    const liveNodesAfter = harness.getLiveNodes().map((n) => ({
+      id: n.id,
+      type: n.type,
+      pos: [...n.pos],
+    }));
+    assert.deepEqual(liveNodesAfter, liveNodesBefore, "live nodes must not change after preview rendering");
+
+    // Canvas configure/clear/loadGraphData should NOT have been called
+    assert.equal(harness.graphConfigureCalls.length, 0, "graph.configure must not be called during preview");
+    assert.equal(harness.loadGraphDataCalls.length, 0, "loadGraphData must not be called during preview");
+    assert.equal(harness.graphClearCalls.length, 0, "graph.clear must not be called during preview");
+  } finally {
+    await harness.dispose();
+  }
+});

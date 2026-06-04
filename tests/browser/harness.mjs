@@ -11,6 +11,72 @@ function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+// ── Mock canvas context with draw-operation capture (T5) ──────────────────
+export function createMockCanvasContext() {
+  const operations = [];
+  let _strokeStyle = "#000000";
+  let _fillStyle = "#000000";
+  let _lineWidth = 1;
+  let _font = "12px Arial, sans-serif";
+  let _textBaseline = "alphabetic";
+  let _textAlign = "start";
+  let _lineDash = [];
+  let _saveDepth = 0;
+
+  function _op(kind, ...args) {
+    operations.push({ kind, args });
+  }
+
+  const ctx = {
+    _getOperations() { return operations; },
+    _reset() { operations.length = 0; },
+
+    save() { _saveDepth += 1; _op("save"); },
+    restore() { _saveDepth = Math.max(0, _saveDepth - 1); _op("restore"); },
+
+    get strokeStyle() { return _strokeStyle; },
+    set strokeStyle(v) { _strokeStyle = String(v || "#000000"); _op("strokeStyle", _strokeStyle); },
+
+    get fillStyle() { return _fillStyle; },
+    set fillStyle(v) { _fillStyle = String(v || "#000000"); _op("fillStyle", _fillStyle); },
+
+    get lineWidth() { return _lineWidth; },
+    set lineWidth(v) { _lineWidth = Number(v) || 1; _op("lineWidth", _lineWidth); },
+
+    get font() { return _font; },
+    set font(v) { _font = String(v || ""); _op("font", _font); },
+
+    get textBaseline() { return _textBaseline; },
+    set textBaseline(v) { _textBaseline = String(v || "alphabetic"); _op("textBaseline", _textBaseline); },
+
+    get textAlign() { return _textAlign; },
+    set textAlign(v) { _textAlign = String(v || "start"); _op("textAlign", _textAlign); },
+
+    setLineDash(arr) { _lineDash = Array.isArray(arr) ? [...arr] : []; _op("setLineDash", _lineDash); },
+
+    beginPath() { _op("beginPath"); },
+    moveTo(x, y) { _op("moveTo", Number(x) || 0, Number(y) || 0); },
+    bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y) {
+      _op("bezierCurveTo", Number(cp1x) || 0, Number(cp1y) || 0, Number(cp2x) || 0, Number(cp2y) || 0, Number(x) || 0, Number(y) || 0);
+    },
+    stroke() { _op("stroke"); },
+    fill() { _op("fill"); },
+    fillText(text, x, y) { _op("fillText", String(text || ""), Number(x) || 0, Number(y) || 0); },
+    strokeRect(x, y, w, h) { _op("strokeRect", Number(x) || 0, Number(y) || 0, Number(w) || 0, Number(h) || 0); },
+    fillRect(x, y, w, h) { _op("fillRect", Number(x) || 0, Number(y) || 0, Number(w) || 0, Number(h) || 0); },
+    arc(x, y, r, startAngle, endAngle) {
+      _op("arc", Number(x) || 0, Number(y) || 0, Number(r) || 0, Number(startAngle) || 0, Number(endAngle) || 0);
+    },
+
+    measureText(text) {
+      _op("measureText", String(text || ""));
+      return { width: String(text || "").length * 6.5 };
+    },
+  };
+
+  return ctx;
+}
+
 class FakeElement {
   constructor(ownerDocument, tagName) {
     this.ownerDocument = ownerDocument;
@@ -148,14 +214,42 @@ export async function createBrowserHarness({
     },
   );
 
+  var TITLE_H = (globalThis.window?.LiteGraph?.NODE_TITLE_HEIGHT) || 30;
+  var SLOT_H = (globalThis.window?.LiteGraph?.NODE_SLOT_HEIGHT) || 20;
+
+  function _buildLiveLinkMap(linksArray) {
+    var map = {};
+    if (Array.isArray(linksArray)) {
+      for (var _li = 0; _li < linksArray.length; _li += 1) {
+        var link = linksArray[_li];
+        if (Array.isArray(link)) {
+          map[_li] = link;
+        } else if (link && typeof link === 'object') {
+          map[_li] = link;
+        }
+      }
+    }
+    return map;
+  }
+
   function syncLiveGraphNodes() {
     app.canvas.graph._vibecomfyLiveCanvasToken = `rev:${liveCanvasRevision}`;
+    app.canvas.graph.links = _buildLiveLinkMap(currentGraph?.links);
     app.canvas.graph._nodes = (currentGraph?.nodes || []).map((node) => ({
       id: node.id,
       type: node.type,
       properties: clone(node.properties || {}),
       inputs: clone(node.inputs || []),
       outputs: clone(node.outputs || []),
+      pos: Array.isArray(node.pos) ? [...node.pos] : [0, 0],
+      size: Array.isArray(node.size) ? [...node.size] : [200, 100],
+      getConnectionPos(isInput, slotIndex) {
+        var nx = (Array.isArray(node.pos) ? node.pos[0] : 0) || 0;
+        var ny = (Array.isArray(node.pos) ? node.pos[1] : 0) || 0;
+        var nw = Array.isArray(node.size) ? (node.size[0] || 200) : 200;
+        if (isInput) return [nx, ny + TITLE_H + slotIndex * SLOT_H + SLOT_H / 2];
+        return [nx + nw, ny + TITLE_H + slotIndex * SLOT_H + SLOT_H / 2];
+      },
     }));
   }
 
@@ -428,6 +522,19 @@ export async function createBrowserHarness({
     },
     getCurrentGraph() {
       return clone(currentGraph);
+    },
+    async drawPreviewOverlay(diff) {
+      const mod = await loadExtension();
+      const ctx = createMockCanvasContext();
+      try {
+        mod.drawPreviewOverlay(ctx, diff);
+      } catch (e) {
+        consoleCapture.warn.push(`[harness] drawPreviewOverlay threw: ${e}`);
+      }
+      return ctx._getOperations();
+    },
+    getLiveNodes() {
+      return app.canvas.graph._nodes;
     },
     async dispose() {
       if (originalDocument === undefined) delete globalThis.document;
