@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from argparse import Namespace
 from importlib.resources import files
 from pathlib import Path
@@ -467,6 +468,45 @@ def test_handle_init_persists_deepseek_provider_in_state(
     state = json.loads(state_path.read_text(encoding="utf-8"))
 
     assert state["config"]["deepseek_provider"] == "direct"
+
+
+def test_handle_init_persists_routing_degradations_in_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    response = megaplan.handle_init(
+        root,
+        _init_args(
+            project_dir,
+            profile="partnered",
+            vendor="codex",
+            name="routing-degradation-state",
+        ),
+    )
+    state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    degradations = state["config"]["routing_degradations"]
+    assert {
+        "phase": "execute",
+        "tier": 4,
+        "from": "codex:gpt-5.4",
+        "to": DEEPSEEK_DIRECT,
+        "reason": (
+            "no premium credential or CLI route detected for vendor=codex; "
+            "no premium credential or CLI route detected for vendor=claude; "
+            "using DeepSeek credential floor"
+        ),
+    } in degradations
 
 
 def test_profile_expansion_resolves_prep_models_with_canonical_fallback_trace(
@@ -1871,6 +1911,7 @@ def test_partnered_profile_flips_all_premium_under_vendor_codex(
 def test_partnered_vendor_codex_execute_keeps_codex_tiers_with_cli_auth_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """No OpenAI/Anthropic env keys must not degrade Codex-reachable execute tiers."""
     _isolate_user_config(tmp_path, monkeypatch)
@@ -1887,7 +1928,8 @@ def test_partnered_vendor_codex_execute_keeps_codex_tiers_with_cli_auth_only(
         vendor="codex",
         deepseek_provider="fireworks",
     )
-    apply_profile_expansion(args, None)
+    with caplog.at_level(logging.WARNING, logger="megaplan"):
+        apply_profile_expansion(args, None)
 
     tier_models = getattr(args, "tier_models", None)
     assert tier_models is not None
@@ -1895,31 +1937,67 @@ def test_partnered_vendor_codex_execute_keeps_codex_tiers_with_cli_auth_only(
     assert tier_models["execute"][5] == "codex:gpt-5.5"
     assert tier_models["execute"][4] == tier_models["critique"][4]
     assert tier_models["execute"][5] == tier_models["critique"][5]
+    assert getattr(args, "routing_degradations", []) == []
+    assert "M_WARN_ROUTING_DEGRADED" not in caplog.text
 
 
 def test_partnered_vendor_codex_execute_degrades_when_no_premium_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """With no env-key or CLI-backed premium route, the DeepSeek floor remains."""
     _isolate_user_config(tmp_path, monkeypatch)
     _clear_model_credentials(monkeypatch)
     _disable_premium_cli_routes(monkeypatch)
-    monkeypatch.setenv("FIREWORKS_API_KEY", "fw-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
 
     args = _worker_args(
         profile="partnered",
         vendor="codex",
-        deepseek_provider="fireworks",
     )
-    apply_profile_expansion(args, None)
+    with caplog.at_level(logging.WARNING, logger="megaplan"):
+        apply_profile_expansion(args, None)
 
     tier_models = getattr(args, "tier_models", None)
     assert tier_models is not None
-    assert tier_models["execute"][4] == DEEPSEEK
-    assert tier_models["execute"][5] == DEEPSEEK
+    assert tier_models["execute"][4] == DEEPSEEK_DIRECT
+    assert tier_models["execute"][5] == DEEPSEEK_DIRECT
     assert tier_models["critique"][4] == "codex:gpt-5.4"
     assert tier_models["critique"][5] == "codex:gpt-5.5"
+
+    degradations = getattr(args, "routing_degradations", None)
+    assert isinstance(degradations, list)
+    execute_degradations = [
+        item for item in degradations if item["phase"] == "execute" and item["tier"] in {4, 5}
+    ]
+    assert execute_degradations == [
+        {
+            "phase": "execute",
+            "tier": 4,
+            "from": "codex:gpt-5.4",
+            "to": DEEPSEEK_DIRECT,
+            "reason": (
+                "no premium credential or CLI route detected for vendor=codex; "
+                "no premium credential or CLI route detected for vendor=claude; "
+                "using DeepSeek credential floor"
+            ),
+        },
+        {
+            "phase": "execute",
+            "tier": 5,
+            "from": "codex:gpt-5.5",
+            "to": DEEPSEEK_DIRECT,
+            "reason": (
+                "no premium credential or CLI route detected for vendor=codex; "
+                "no premium credential or CLI route detected for vendor=claude; "
+                "using DeepSeek credential floor"
+            ),
+        },
+    ]
+    assert "M_WARN_ROUTING_DEGRADED" in caplog.text
+    assert "execute tier 4,5 -> hermes:deepseek:deepseek-v4-pro" in caplog.text
+    assert "no premium credential or CLI route detected for vendor=codex" in caplog.text
 
 
 def test_partnered_critic_kimi_overrides_critique_and_review(

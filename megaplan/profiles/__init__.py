@@ -1561,6 +1561,18 @@ def apply_deepseek_provider_rewrite(
     }
 
 
+def _apply_deepseek_provider_to_degradations(
+    degradations: list[dict[str, Any]],
+    provider: str,
+) -> None:
+    if not degradations:
+        return
+    for item in degradations:
+        to_spec = item.get("to")
+        if isinstance(to_spec, str):
+            item["to"] = _swap_deepseek_provider_spec(to_spec, provider)
+
+
 _PREMIUM_CREDENTIAL_ENV: dict[str, str] = {
     "claude": "ANTHROPIC_API_KEY",
     "codex": "OPENAI_API_KEY",
@@ -1608,34 +1620,116 @@ def _deepseek_credential_configured() -> bool:
     return _credential_configured("DEEPSEEK_API_KEY") or _credential_configured("FIREWORKS_API_KEY")
 
 
-def _best_available_floor_spec(spec: str) -> str:
+def _best_available_floor_spec_with_reason(spec: str) -> tuple[str, str | None]:
     parsed = parse_agent_spec(spec)
     if parsed.agent not in _PREMIUM_VENDORS:
-        return spec
+        return spec, None
     if _premium_credential_configured(parsed.agent):
-        return spec
+        return spec, None
+    reason = f"no premium credential or CLI route detected for vendor={parsed.agent}"
     other = "codex" if parsed.agent == "claude" else "claude"
     if _premium_credential_configured(other):
-        return _swap_premium_spec(spec, other)
+        return _swap_premium_spec(spec, other), f"{reason}; using premium route vendor={other}"
     if _deepseek_credential_configured():
-        return FIREWORKS_DEEPSEEK_V4_PRO_SPEC
-    return spec
+        return (
+            FIREWORKS_DEEPSEEK_V4_PRO_SPEC,
+            f"{reason}; no premium credential or CLI route detected for vendor={other}; "
+            "using DeepSeek credential floor",
+        )
+    return spec, None
+
+
+def _best_available_floor_spec(spec: str) -> str:
+    resolved, _reason = _best_available_floor_spec_with_reason(spec)
+    return resolved
+
+
+def _append_routing_degradation(
+    degradations: list[dict[str, Any]] | None,
+    *,
+    phase: str,
+    tier: int | None,
+    from_spec: str,
+    to_spec: str,
+    reason: str | None,
+) -> None:
+    if degradations is None or reason is None or from_spec == to_spec:
+        return
+    degradations.append(
+        {
+            "phase": phase,
+            "tier": tier,
+            "from": from_spec,
+            "to": to_spec,
+            "reason": reason,
+        }
+    )
+
+
+def _format_routing_degradation_summary(degradations: list[dict[str, Any]]) -> str:
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for item in degradations:
+        phase = str(item.get("phase") or "?")
+        to_spec = str(item.get("to") or "?")
+        reason = str(item.get("reason") or "unknown reason")
+        tier = item.get("tier")
+        tier_label = str(tier) if tier is not None else ""
+        grouped.setdefault((phase, to_spec, reason), []).append(tier_label)
+
+    parts: list[str] = []
+    for (phase, to_spec, reason), tiers in grouped.items():
+        tier_values = [tier for tier in tiers if tier]
+        if tier_values:
+            tier_text = ",".join(tier_values)
+            parts.append(f"{phase} tier {tier_text} -> {to_spec} ({reason})")
+        else:
+            parts.append(f"{phase} -> {to_spec} ({reason})")
+    return "; ".join(parts)
+
+
+def _warn_routing_degradations(degradations: list[dict[str, Any]]) -> None:
+    if not degradations:
+        return
+    log.warning(
+        "M_WARN_ROUTING_DEGRADED profile model floor degraded routing: %s",
+        _format_routing_degradation_summary(degradations),
+    )
 
 
 def apply_available_model_floor(
     profile: dict[str, str],
     *,
     tier_models: dict[str, dict[int, str]] | None = None,
+    routing_degradations: list[dict[str, Any]] | None = None,
 ) -> dict[str, str]:
     """Degrade finalize / execute premium floor specs when premium keys are absent."""
     result = dict(profile)
     if "finalize" in result:
-        result["finalize"] = _best_available_floor_spec(result["finalize"])
+        original = result["finalize"]
+        resolved, reason = _best_available_floor_spec_with_reason(original)
+        result["finalize"] = resolved
+        _append_routing_degradation(
+            routing_degradations,
+            phase="finalize",
+            tier=None,
+            from_spec=original,
+            to_spec=resolved,
+            reason=reason,
+        )
     if tier_models is not None:
         execute_tiers = tier_models.get("execute")
         if isinstance(execute_tiers, dict):
             for tier_int, spec in execute_tiers.items():
-                execute_tiers[tier_int] = _best_available_floor_spec(spec)
+                resolved, reason = _best_available_floor_spec_with_reason(spec)
+                execute_tiers[tier_int] = resolved
+                _append_routing_degradation(
+                    routing_degradations,
+                    phase="execute",
+                    tier=tier_int,
+                    from_spec=spec,
+                    to_spec=resolved,
+                    reason=reason,
+                )
     return result
 
 
@@ -1869,8 +1963,19 @@ def apply_profile_expansion(
             # --depth is still applied to author phases.
             resolved = apply_depth_rewrite(resolved, effective_depth_flag, tier_models=tier_models)
 
-        resolved = apply_available_model_floor(resolved, tier_models=tier_models)
+        routing_degradations: list[dict[str, Any]] = []
+        resolved = apply_available_model_floor(
+            resolved,
+            tier_models=tier_models,
+            routing_degradations=routing_degradations,
+        )
         resolved = apply_deepseek_provider_rewrite(resolved, effective_deepseek_provider_flag, tier_models=tier_models)
+        _apply_deepseek_provider_to_degradations(
+            routing_degradations,
+            effective_deepseek_provider_flag,
+        )
+        args.routing_degradations = routing_degradations
+        _warn_routing_degradations(routing_degradations)
 
         _validate_named_profile_invariants(profile_name, resolved, tier_models=tier_models)
 
