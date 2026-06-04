@@ -18,7 +18,7 @@ from megaplan._core import (
     unresolved_significant_flags,
 )
 from megaplan.flags import flag_resolution_summary
-from megaplan.audits.iteration import compute_iteration_pressure, render_pressure_table
+from arnold.pipelines.megaplan.audits.iteration import compute_iteration_pressure, render_pressure_table
 from megaplan.types import FlagRegistry, PlanState
 
 from ._shared import _gate_debt_block

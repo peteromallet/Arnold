@@ -11,7 +11,7 @@ from megaplan._core.state import write_plan_state
 from megaplan.blocker_recovery import quality_blocker_id
 from megaplan.orchestration.phase_result import BlockedTask, Deviation
 from megaplan.quality_resolutions import build_quality_resolution_event
-from megaplan.types import STATE_AWAITING_HUMAN
+from megaplan.planning.state import STATE_AWAITING_HUMAN
 from megaplan.user_actions import build_resolution_event
 from tests.conftest import PlanFixture, load_state, make_fake_phase_result
 from tests.oracles.replay_oracle import (

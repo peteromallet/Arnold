@@ -6,7 +6,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from megaplan.orchestration.phase_result import BlockedTask, Deviation
+from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
 from megaplan.quality_resolutions import (
     ADVANCE_WITH_DEBT,
     RERUN_REQUIRED,

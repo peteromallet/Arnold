@@ -3,52 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
+if TYPE_CHECKING:
+    from megaplan.planning.state import PlanCurrentState
 
 # ---------------------------------------------------------------------------
 # States
 # ---------------------------------------------------------------------------
-
-STATE_INITIALIZED = "initialized"
-STATE_PREPPED = "prepped"
-STATE_PLANNED = "planned"
-STATE_CRITIQUED = "critiqued"
-STATE_GATED = "gated"
-STATE_FINALIZED = "finalized"
-STATE_EXECUTED = "executed"
-STATE_REVIEWED = "reviewed"
-STATE_DONE = "done"
-STATE_ABORTED = "aborted"
-STATE_FAILED = "failed"
-STATE_BLOCKED = "blocked"
-STATE_PAUSED = "paused"
-STATE_CANCELLED = "cancelled"
-STATE_AWAITING_PR_MERGE = "awaiting_pr_merge"
-STATE_AWAITING_HUMAN_VERIFY = "awaiting_human_verify"
-STATE_AWAITING_HUMAN = STATE_AWAITING_HUMAN_VERIFY
-STATE_TIEBREAKER_PENDING = "tiebreaker_pending"
-STATE_TIEBREAKER_READY = "tiebreaker_ready"
-PlanCurrentState = Literal[
-    "initialized",
-    "prepped",
-    "planned",
-    "critiqued",
-    "gated",
-    "finalized",
-    "executed",
-    "reviewed",
-    "done",
-    "aborted",
-    "failed",
-    "blocked",
-    "paused",
-    "cancelled",
-    "awaiting_pr_merge",
-    "awaiting_human_verify",
-    "tiebreaker_pending",
-    "tiebreaker_ready",
-]
 DriverOutcomeStatus = Literal[
     "done",
     "finalized",
@@ -68,43 +30,6 @@ DriverOutcomeStatus = Literal[
     "tiebreaker_pending",
     "tiebreaker_ready",
 ]
-CANONICAL_PLAN_STATES: frozenset[str] = frozenset(
-    {
-        STATE_INITIALIZED,
-        STATE_PREPPED,
-        STATE_PLANNED,
-        STATE_CRITIQUED,
-        STATE_GATED,
-        STATE_FINALIZED,
-        STATE_EXECUTED,
-        STATE_REVIEWED,
-        STATE_DONE,
-        STATE_ABORTED,
-        STATE_FAILED,
-        STATE_BLOCKED,
-        STATE_PAUSED,
-        STATE_CANCELLED,
-        STATE_AWAITING_PR_MERGE,
-        STATE_AWAITING_HUMAN_VERIFY,
-        STATE_TIEBREAKER_PENDING,
-        STATE_TIEBREAKER_READY,
-    }
-)
-TERMINAL_STATES = {STATE_DONE, STATE_ABORTED, STATE_FAILED, STATE_BLOCKED, STATE_CANCELLED}
-AUTOMATION_TERMINAL_STATES = TERMINAL_STATES | {
-    STATE_PAUSED,
-    STATE_AWAITING_HUMAN_VERIFY,
-    STATE_TIEBREAKER_PENDING,
-    STATE_TIEBREAKER_READY,
-}
-
-
-def validate_plan_current_state(value: Any) -> str:
-    """Return a canonical plan state or raise for invalid persisted state."""
-
-    if value not in CANONICAL_PLAN_STATES:
-        raise ValueError(f"invalid current_state {value!r}")
-    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +159,7 @@ class LastGateRecord(TypedDict, total=False):
 class PlanState(TypedDict):
     name: str
     idea: str
-    current_state: PlanCurrentState
+    current_state: "PlanCurrentState"
     iteration: int
     created_at: str
     config: PlanConfig
@@ -290,48 +215,6 @@ class SettledDecisionFromDoc(TypedDict, total=False):
     decision: str
     rationale: str
     load_bearing: bool
-
-
-class TiebreakerDecision(TypedDict, total=False):
-    fuzzy_group_id: str
-    flag_ids: list[str]
-    question: str
-    researcher_pick: str
-    challenger_pick: str
-    human_pick: str
-    action: str
-    rationale: str
-    timestamp: str
-
-
-class GatePayload(TypedDict):
-    recommendation: str
-    rationale: str
-    signals_assessment: str
-    warnings: list[str]
-    settled_decisions: list[SettledDecision]
-
-
-class GateArtifact(TypedDict, total=False):
-    passed: bool
-    criteria_check: dict[str, Any]
-    preflight_results: dict[str, bool]
-    unresolved_flags: list[FlagRecord]
-    recommendation: str
-    rationale: str
-    signals_assessment: str
-    warnings: list[str]
-    settled_decisions: list[SettledDecision]
-    override_forced: bool
-    orchestrator_guidance: str
-    robustness: str
-    signals: dict[str, Any]
-
-
-class GateSignals(TypedDict, total=False):
-    robustness: str
-    signals: dict[str, Any]
-    warnings: list[str]
 
 
 class StepResponse(TypedDict, total=False):
@@ -411,54 +294,6 @@ FLAG_VALID_STATUSES = {
 }
 DEBT_ESCALATION_THRESHOLD = 3
 MOCK_ENV_VAR = "MEGAPLAN_MOCK_WORKERS"
-
-DEFAULT_AGENT_ROUTING: dict[str, str] = {
-    "plan": "claude",
-    "prep": "hermes",
-    "critique": "codex",
-    "critique_evaluator": "claude",
-    "revise": "claude",
-    "gate": "claude",
-    "feedback": "claude:low",
-    "finalize": "claude",
-    "execute": "codex",
-    "loop_plan": "claude",
-    "loop_execute": "codex",
-    "review": "codex",
-    "tiebreaker_researcher": "codex",
-    "tiebreaker_challenger": "codex",
-}
-KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
-# Canonical robustness names — match docs/megaplan-prep.md.
-ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
-# Legacy → canonical alias map. Old names remain accepted on the CLI and
-# in stored state for backward compatibility; ``normalize_robustness``
-# resolves them. The canonical name set above is what internal code
-# (set comparisons, etc.) should always compare against.
-ROBUSTNESS_ALIASES: dict[str, str] = {
-    "tiny": "bare",
-    "standard": "full",
-    "robust": "thorough",
-    "superrobust": "extreme",
-}
-# All accepted spellings on the CLI / config layer (canonical + legacy).
-ROBUSTNESS_ACCEPTED = tuple(ROBUSTNESS_LEVELS) + tuple(ROBUSTNESS_ALIASES.keys())
-
-
-def normalize_robustness(value: Any) -> str:
-    """Return the canonical robustness name for ``value``.
-
-    Accepts canonical names (``bare|light|full|thorough|extreme``) and
-    the legacy ``tiny|light|standard|robust|superrobust`` aliases. Any
-    other input — including ``None`` — falls back to the canonical
-    default (``"full"``).
-    """
-    if isinstance(value, str):
-        if value in ROBUSTNESS_LEVELS:
-            return value
-        if value in ROBUSTNESS_ALIASES:
-            return ROBUSTNESS_ALIASES[value]
-    return "full"
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +529,31 @@ def format_agent_spec(spec: AgentSpec) -> str:
     return base
 
 
+# ---------------------------------------------------------------------------
+# Exception
+# ---------------------------------------------------------------------------
+
+class CliError(Exception):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        valid_next: list[str] | None = None,
+        extra: dict[str, Any] | None = None,
+        exit_code: int = 1,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.valid_next = valid_next or []
+        self.extra = extra or {}
+        self.exit_code = exit_code
+
+
+from megaplan.profiles.policy import ROBUSTNESS_ACCEPTED as _ROBUSTNESS_ACCEPTED  # noqa: E402
+
+
 def legacy_agent_model(spec: AgentSpec) -> tuple[str, str | None]:
     """Return ``(agent, model)`` from an AgentSpec for legacy callers.
 
@@ -867,7 +727,7 @@ _SETTABLE_BOOL = {
 }
 
 _SETTABLE_ENUM = {
-    "execution.robustness": ROBUSTNESS_ACCEPTED,
+    "execution.robustness": _ROBUSTNESS_ACCEPTED,
     "execution.critic_model": CRITIC_MODEL_CHOICES,
     "execution.completion_contract_mode": ("off", "shadow", "warn", "enforce"),
 }
@@ -888,28 +748,6 @@ _SETTABLE_NUMERIC = {
 _SETTABLE_STRING = {
     "execution.test_command",
 }
-
-
-# ---------------------------------------------------------------------------
-# Exception
-# ---------------------------------------------------------------------------
-
-class CliError(Exception):
-    def __init__(
-        self,
-        code: str,
-        message: str,
-        *,
-        valid_next: list[str] | None = None,
-        extra: dict[str, Any] | None = None,
-        exit_code: int = 1,
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.valid_next = valid_next or []
-        self.extra = extra or {}
-        self.exit_code = exit_code
 
 
 class AdaptiveCritiqueMisconfiguredError(RuntimeError):

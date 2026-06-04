@@ -23,14 +23,11 @@ creative keys and pass the form id through stage params/state.
 from __future__ import annotations
 
 from megaplan.forms import available_form_ids
+from megaplan._pipeline.types import Edge, Pipeline, Stage
 from megaplan.types import CliError
 
-# M3a: Edge / Pipeline / Stage migrated to Arnold neutral shapes.
-from arnold.pipeline import Edge, Pipeline, Stage
+from megaplan.pipelines.creative.prompts import CREATIVE_PROMPT_BUNDLE
 from megaplan.pipelines.creative.steps import CreativeStep
-
-# Import the prompts sub-package for its register_pipeline_prompt side-effects.
-from megaplan.pipelines.creative import prompts as _prompts  # noqa: F401, E402
 
 
 # ── Module-level metadata surfaced via PipelineRegistry ────────────────
@@ -134,7 +131,9 @@ def build_pipeline(
         for name, prompt_key, next_label in STAGE_SPECS
     }
 
-    return Pipeline(stages=stages, entry="prep")
+    pipeline = Pipeline(stages=stages, entry="prep")
+    object.__setattr__(pipeline, "resource_bundles", (CREATIVE_PROMPT_BUNDLE,))
+    return pipeline
 
 
 __all__ = [

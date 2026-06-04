@@ -1,7 +1,6 @@
-"""Creative-pipeline prompt registry wiring.
+"""Creative-pipeline prompt bundle wiring.
 
-Registers the canonical creative-pipeline stage prompts under the
-``creative`` pipeline namespace via :func:`register_pipeline_prompt`,
+Owns the canonical creative-pipeline stage prompts in a bundle-scoped mapping,
 with generic slots for non-joke forms and joke-specific slots so
 ``megaplan run creative --form joke`` resolves joke-specific prompts.
 
@@ -16,9 +15,8 @@ Pipeline-scoped registrations:
     creative/critique_creative:joke            → joke-form critique
     creative/revise_creative:joke              → joke-form revise
 
-The ``:joke`` slot uses the ``mode`` parameter of
-:func:`register_pipeline_prompt` per the
-``<pipeline>/<key>:<mode>`` precedence in :class:`PromptRegistry`. The
+The ``:joke`` slot uses the bundle's
+``<pipeline>/<key>:<mode>`` precedence. The
 creative pipeline's stage shells (``megaplan.pipelines.creative``)
 carry generic prompt keys for non-joke forms and ``:joke`` prompt keys
 for the default joke form. Non-joke forms pass form metadata through
@@ -27,10 +25,11 @@ state/params while resolving the generic slots.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any, Mapping, cast
 
-from megaplan._pipeline.prompts import register_pipeline_prompt
+from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
 from megaplan._pipeline.types import StepContext
 from megaplan.forms import get_form
 from megaplan.types import PlanState
@@ -59,57 +58,61 @@ def _adapt(builder):
     def renderer(ctx: StepContext, params: Mapping[str, Any]) -> str:
         del params
         state = cast(PlanState, dict(ctx.state) if ctx.state else {})
-        return builder(state, Path(ctx.plan_dir))
+        plan_root = getattr(ctx, "plan_dir", None) or getattr(ctx, "artifact_root")
+        return builder(state, Path(plan_root))
 
     renderer.__name__ = getattr(builder, "__name__", "renderer")
     return renderer
 
 
-# ── Generic creative-form registrations ──────────────────────────────
+# ── Bundle-owned creative-form prompt mappings ───────────────────────
 
-_GENERIC_RENDERERS = {
+_GENERIC_RENDERERS: dict[str, Any] = {
     "prep": creative_prep_prompt,
     "execute_creative": creative_execute_prompt,
     "critique_creative": creative_critique_prompt,
     "revise_creative": creative_revise_prompt,
 }
 
-for _key, _renderer in _GENERIC_RENDERERS.items():
-    register_pipeline_prompt("creative", _key, _renderer)
+_BUNDLE_PROMPTS: dict[str, Any] = {
+    f"creative/{key}": renderer for key, renderer in _GENERIC_RENDERERS.items()
+}
 
 
 # ── Joke-form specialised slots (``:joke``) ───────────────────────────
 #
-# The ``mode='joke'`` kwarg lands these at ``creative/<key>:joke`` so
+# These land at ``creative/<key>:joke`` so
 # the creative pipeline's stage ``prompt_key`` values
 # (``prep:joke`` / ``execute_creative:joke`` / etc.) resolve correctly.
-# Belt-and-braces: also register the literal form-baked keys so a
-# resolve against the raw stage prompt_key (no separate mode/pipeline
-# kwargs) still hits a renderer.
-
-register_pipeline_prompt("creative", "prep", _adapt(_prep_joke_prompt), mode="joke")
-register_pipeline_prompt(
-    "creative", "execute_creative", creative_joke_execute_prompt, mode="joke"
-)
-register_pipeline_prompt(
-    "creative", "critique_creative", creative_joke_critique_prompt, mode="joke"
-)
-register_pipeline_prompt(
-    "creative", "revise_creative", creative_joke_revise_prompt, mode="joke"
+_BUNDLE_PROMPTS.update(
+    {
+        "creative/prep:joke": _adapt(_prep_joke_prompt),
+        "creative/execute_creative:joke": creative_joke_execute_prompt,
+        "creative/critique_creative:joke": creative_joke_critique_prompt,
+        "creative/revise_creative:joke": creative_joke_revise_prompt,
+    }
 )
 
-# Literal form-baked keys (match the stage's prompt_key directly).
-register_pipeline_prompt("creative", "prep:joke", _adapt(_prep_joke_prompt))
-register_pipeline_prompt(
-    "creative", "execute_creative:joke", creative_joke_execute_prompt
+CREATIVE_PROMPT_BUNDLE = PipelineResourceBundle.from_module(
+    __file__,
+    prompts=_BUNDLE_PROMPTS,
 )
-register_pipeline_prompt(
-    "creative", "critique_creative:joke", creative_joke_critique_prompt
-)
-register_pipeline_prompt("creative", "revise_creative:joke", creative_joke_revise_prompt)
+
+
+def render_prompt(
+    key: str,
+    ctx: StepContext,
+    params: Mapping[str, Any] | None = None,
+) -> str:
+    """Render a creative-pipeline prompt from the canonical bundle."""
+    inputs = dict(ctx.inputs) if isinstance(ctx.inputs, Mapping) else {}
+    inputs.setdefault("_pipeline", "creative")
+    scoped_ctx = dataclasses.replace(ctx, inputs=inputs)
+    return resolve_bundle_prompt(CREATIVE_PROMPT_BUNDLE, key, scoped_ctx, params=params)
 
 
 __all__ = [
+    "CREATIVE_PROMPT_BUNDLE",
     "_adapt",
     "_critique_creative_prompt",
     "_critique_joke_prompt",
@@ -127,5 +130,6 @@ __all__ = [
     "creative_joke_revise_prompt",
     "creative_prep_prompt",
     "creative_revise_prompt",
+    "render_prompt",
     "single_check_critique_joke_prompt",
 ]

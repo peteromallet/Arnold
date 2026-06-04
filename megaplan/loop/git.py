@@ -167,11 +167,39 @@ def _discover_nested_git_repos(project_dir: Path, claimed_paths: set[str]) -> li
     return sorted(repos, key=lambda path: path.as_posix())
 
 
+def _collect_committed_range_paths(repo_dir: Path) -> set[str]:
+    """Paths changed in the committed milestone range ``base...HEAD``."""
+    from megaplan._core.io import _branch_diff_base
+
+    base = _branch_diff_base(repo_dir)
+    if not base:
+        return set()
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--name-only", f"{base}...HEAD"],
+            cwd=str(repo_dir),
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return set()
+    if proc.returncode != 0:
+        return set()
+    paths: set[str] = set()
+    for line in proc.stdout.splitlines():
+        cleaned = line.strip().strip('"')
+        if cleaned:
+            paths.add(_normalize_repo_path(cleaned))
+    return paths
+
+
 def _collect_git_status_paths_with_nested_repos(
     project_dir: Path,
     *,
     claimed_paths: set[str],
     untracked_mode: str = "normal",
+    include_committed: bool = False,
 ) -> tuple[set[str], str | None]:
     paths, error = _run_git_status_paths(project_dir, untracked_mode=untracked_mode)
     if error is not None:
@@ -190,4 +218,6 @@ def _collect_git_status_paths_with_nested_repos(
         except (OSError, ValueError):
             continue
         paths.update(f"{prefix}/{path}" for path in nested_paths)
+    if include_committed:
+        paths.update(_collect_committed_range_paths(project_dir))
     return paths, None

@@ -18,8 +18,8 @@ from megaplan.types import (
     PlanState,
     PlanVersionRecord,
     SessionInfo,
-    validate_plan_current_state,
 )
+from megaplan.planning.state import validate_plan_current_state
 
 from .base import HomeBackend, NormalizedDict, NormalizedStringList, StorageModel, utc_now
 

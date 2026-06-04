@@ -1,39 +1,7 @@
-from __future__ import annotations
+"""Thin facade for the canonical execute core module."""
 
-"""Compatibility facade for legacy ``megaplan.execute.core`` imports."""
+import sys
 
-from megaplan._core import load_config
-from megaplan.execute.aggregation import (
-    _build_aggregate_execution_payload,
-    _compute_execute_scope_drift,
-)
-from megaplan.execute.batch import (
-    BatchResult,
-    _has_code_task_advisory_evidence,
-    _resolve_tier_spec,
-    _run_and_merge_batch,
-    build_monitor_hint,
-    handle_execute_auto_loop,
-    handle_execute_one_batch,
-)
-from megaplan.execute.merge import _merge_batch_results
-from megaplan.execute.quality import (
-    _capture_git_status_snapshot,
-    _capture_git_status_snapshot_recursive,
-)
+from arnold.pipelines.megaplan.execute import core as _canonical
 
-__all__ = [
-    "_build_aggregate_execution_payload",
-    "_merge_batch_results",
-    "BatchResult",
-    "handle_execute_auto_loop",
-    "handle_execute_one_batch",
-    "_has_code_task_advisory_evidence",
-    "_capture_git_status_snapshot",
-    "_capture_git_status_snapshot_recursive",
-    "_compute_execute_scope_drift",
-    "_resolve_tier_spec",
-    "_run_and_merge_batch",
-    "load_config",
-    "build_monitor_hint",
-]
+sys.modules[__name__] = _canonical

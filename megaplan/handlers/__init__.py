@@ -1,6 +1,6 @@
-from megaplan.audits.robustness import validate_critique_checks
-from megaplan.review.mechanical import run_pre_checks
-from megaplan.review.parallel import run_parallel_review
+from arnold.pipelines.megaplan.audits.robustness import validate_critique_checks
+from arnold.pipelines.megaplan.review.mechanical import run_pre_checks
+from arnold.pipelines.megaplan.review.parallel import run_parallel_review
 from megaplan.flags import update_flags_after_review
 from megaplan.workers import resolve_agent_mode
 

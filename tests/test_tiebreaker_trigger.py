@@ -15,13 +15,13 @@ from megaplan._core.workflow import _transition_matches
 from megaplan.orchestration.plan_audit import load_tiebreaker_audit, record_tiebreaker_audit
 from megaplan.handlers import _apply_gate_outcome, handle_tiebreaker_decide
 from megaplan.prompts.critique import _settled_decisions_block
-from megaplan.types import (
+from megaplan.types import PlanState
+from megaplan.planning.state import (
     STATE_AWAITING_HUMAN_VERIFY,
     STATE_CRITIQUED,
     STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
-    PlanState,
 )
 
 

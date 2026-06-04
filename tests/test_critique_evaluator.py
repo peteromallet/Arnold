@@ -29,7 +29,7 @@ from megaplan.audits.critique_evaluator import (
     validate_evaluator_verdict,
 )
 from megaplan.audits.robustness import CRITIQUE_CHECKS
-from megaplan.types import ROBUSTNESS_LEVELS
+from megaplan.profiles import ROBUSTNESS_LEVELS
 from megaplan.workers import WorkerResult
 from tests.conftest import PlanFixture
 

@@ -11,7 +11,8 @@ import megaplan.cli as cli_module
 import megaplan._core.io as io_module
 import megaplan.profiles as profiles_module
 from megaplan._core import get_effective
-from megaplan.types import CliError, DEFAULT_AGENT_ROUTING, DEFAULTS
+from megaplan.profiles import DEFAULT_AGENT_ROUTING
+from megaplan.types import CliError, DEFAULTS
 
 
 @pytest.fixture
@@ -379,7 +380,7 @@ def test_handle_config_use_profile_unknown_profile_raises(
 
 def test_config_accepts_shannon_as_agent() -> None:
     """Config agent overrides accept 'shannon'."""
-    from megaplan.types import KNOWN_AGENTS
+    from megaplan.profiles import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
 
 

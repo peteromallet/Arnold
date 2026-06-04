@@ -1,11 +1,18 @@
 """Neutral prompt-resource primitives for the Arnold pipeline boundary.
 
 This module provides a lightweight bundle abstraction
-(:class:`PipelineResourceBundle`) and a :func:`resolve_prompt` function
-that dispatches on :data:`PromptSource` values — inline strings, ``.md``
-file references, or callables.  The global :class:`PromptRegistry` and
-:func:`register_prompt` remain in ``megaplan/_pipeline/prompts.py`` as an
-M3a bridge; they are NOT duplicated here.
+(:class:`PipelineResourceBundle`) plus helpers for two distinct prompt
+resolution paths:
+
+* :func:`resolve_prompt` dispatches on concrete :data:`PromptSource`
+  values (inline strings, ``.md`` file references, or callables).
+* :func:`resolve_bundle_prompt` resolves a ``prompt_key`` through a
+  bundle-owned prompt mapping using the same pipeline/mode precedence as
+  the legacy prompt registry.
+
+The global prompt registration surface in ``megaplan/_pipeline/prompts.py``
+remains only as a legacy migration bridge for demos; bundle-owned prompt
+maps are the canonical Arnold-side contract.
 
 Boundary discipline
 -------------------
@@ -48,6 +55,7 @@ class PipelineResourceBundle:
     base_dir: Path
     prompt_dir: Path
     resources: Mapping[str, Any] = field(default_factory=dict)
+    prompts: Mapping[str, "PromptSource"] = field(default_factory=dict)
 
     @classmethod
     def from_module(
@@ -56,6 +64,7 @@ class PipelineResourceBundle:
         *,
         prompt_dir: str = "prompts",
         resources: Mapping[str, Any] | None = None,
+        prompts: Mapping[str, "PromptSource"] | None = None,
     ) -> "PipelineResourceBundle":
         """Create a bundle rooted at *module_file*'s parent directory.
 
@@ -70,6 +79,7 @@ class PipelineResourceBundle:
             base_dir=base,
             prompt_dir=base / prompt_dir,
             resources=dict(resources or {}),
+            prompts=dict(prompts or {}),
         )
 
     def resolve_prompt_path(self, source: str) -> Path:
@@ -79,6 +89,86 @@ class PipelineResourceBundle:
         before reading.
         """
         return self.prompt_dir / source
+
+    def prompt_candidates(
+        self,
+        key: str,
+        *,
+        mode: str | None = None,
+        pipeline: str | None = None,
+    ) -> tuple[str, ...]:
+        """Return prompt lookup candidates in precedence order."""
+        return prompt_lookup_candidates(key, mode=mode, pipeline=pipeline)
+
+    def resolve_prompt_source(
+        self,
+        key: str,
+        *,
+        mode: str | None = None,
+        pipeline: str | None = None,
+    ) -> PromptSource:
+        """Resolve *key* against bundle-owned prompt mappings.
+
+        Precedence matches the legacy prompt registry exactly:
+
+        1. ``"<pipeline>/<key>:<mode>"``
+        2. ``"<pipeline>/<key>"``
+        3. ``"<key>:<mode>"``
+        4. ``"<key>"``
+        """
+        for candidate in self.prompt_candidates(key, mode=mode, pipeline=pipeline):
+            if candidate in self.prompts:
+                return self.prompts[candidate]
+        raise KeyError(
+            f"no prompt registered for key={key!r} mode={mode!r} pipeline={pipeline!r}"
+        )
+
+    def render_prompt(
+        self,
+        key: str,
+        ctx: StepContext,
+        params: Mapping[str, Any] | None = None,
+    ) -> str:
+        """Resolve *key* from the bundle and render it to text."""
+        return resolve_bundle_prompt(self, key, ctx, params=params)
+
+
+def prompt_lookup_candidates(
+    key: str,
+    *,
+    mode: str | None = None,
+    pipeline: str | None = None,
+) -> tuple[str, ...]:
+    """Return prompt lookup candidates in legacy precedence order."""
+    candidates: list[str] = []
+    if pipeline and mode:
+        candidates.append(f"{pipeline}/{key}:{mode}")
+    if pipeline:
+        candidates.append(f"{pipeline}/{key}")
+    if mode:
+        candidates.append(f"{key}:{mode}")
+    candidates.append(key)
+    return tuple(candidates)
+
+
+def resolve_bundle_prompt(
+    bundle: PipelineResourceBundle,
+    key: str,
+    ctx: StepContext,
+    params: Mapping[str, Any] | None = None,
+) -> str:
+    """Resolve *key* through *bundle* and render the resulting source."""
+    pipeline = None
+    if isinstance(ctx.inputs, Mapping):
+        pipeline_value = ctx.inputs.get("_pipeline")
+        if isinstance(pipeline_value, str):
+            pipeline = pipeline_value
+    source = bundle.resolve_prompt_source(key, mode=ctx.mode, pipeline=pipeline)
+    if isinstance(source, str) and source.endswith(".md"):
+        source_path = Path(source)
+        if not source_path.is_absolute():
+            source = str(bundle.resolve_prompt_path(source))
+    return resolve_prompt(source, ctx, params=params)
 
 
 def resolve_prompt(

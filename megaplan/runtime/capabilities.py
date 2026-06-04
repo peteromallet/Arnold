@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from megaplan.types import DEFAULT_AGENT_ROUTING
+from megaplan.profiles import DEFAULT_AGENT_ROUTING
 
 CONTAINER_CAPABILITIES: frozenset[str] = frozenset({
     "run_shell",

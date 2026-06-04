@@ -257,7 +257,7 @@ def _megaplan_override_catalog() -> dict[str, object]:
     try:
         return override_catalog_for("megaplan")
     except RuntimeError:
-        from megaplan.pipelines.planning.operations import override_catalog
+        from megaplan.planning.operations import override_catalog
 
         return override_catalog()
 

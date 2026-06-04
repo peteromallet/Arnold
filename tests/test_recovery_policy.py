@@ -709,4 +709,3 @@ def test_null_policy_classify_arnold_returns_unset():
     assert decision.status == "unset"
     assert decision.action == ""
     assert "No recovery policy registered" in decision.reason
-ENDOFFILE; __hermes_rc=$?; printf '__HERMES_FENCE_a9f7b3__'; exit $__hermes_rc

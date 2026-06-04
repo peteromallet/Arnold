@@ -16,11 +16,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import (
-    CliError,
-    PlanState,
-    ROBUSTNESS_LEVELS,
-    normalize_robustness,
+from megaplan.profiles.policy import ROBUSTNESS_LEVELS, normalize_robustness
+from megaplan.types import CliError, PlanState
+from megaplan.planning.state import (
     STATE_ABORTED,
     STATE_AWAITING_HUMAN_VERIFY,
     STATE_CRITIQUED,

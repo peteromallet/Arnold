@@ -8,7 +8,7 @@ from pathlib import Path
 from jsonschema import Draft7Validator
 
 from megaplan._core.io import _enforce_openai_strict_mode
-from megaplan.schemas import SCHEMAS, strict_schema
+from megaplan.schemas import GateArtifact, GatePayload, GateSignals, SCHEMAS, TiebreakerDecision, strict_schema
 
 
 def _review_disk_schema() -> dict[str, object]:
@@ -34,6 +34,35 @@ def _minimal_review_payload() -> dict[str, object]:
 def test_schema_registry_matches_5_step_workflow() -> None:
     required = {"plan.json", "prep.json", "revise.json", "gate.json", "critique.json", "finalize.json", "execution.json", "review.json"}
     assert required.issubset(set(SCHEMAS))
+
+
+def test_planning_schema_contracts_export_from_schema_package() -> None:
+    gate_payload: GatePayload = {
+        "recommendation": "PROCEED",
+        "rationale": "Ready.",
+        "signals_assessment": "clear",
+        "warnings": [],
+        "settled_decisions": [],
+    }
+    gate_artifact: GateArtifact = {
+        "passed": True,
+        "criteria_check": {},
+        "preflight_results": {},
+        "unresolved_flags": [],
+        "recommendation": "PROCEED",
+        "rationale": "Ready.",
+        "signals_assessment": "clear",
+        "warnings": [],
+        "settled_decisions": [],
+        "signals": {},
+    }
+    gate_signals: GateSignals = {"signals": {}, "warnings": []}
+    tiebreaker_decision: TiebreakerDecision = {"action": "pick"}
+
+    assert gate_payload["recommendation"] == "PROCEED"
+    assert gate_artifact["passed"] is True
+    assert gate_signals["warnings"] == []
+    assert tiebreaker_decision["action"] == "pick"
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,7 @@ import megaplan
 import megaplan.profiles as profiles_module
 from megaplan._core.workflow import _workflow_for_robustness
 from megaplan.profiles import apply_profile_expansion
-from megaplan.types import STATE_INITIALIZED
+from megaplan.planning.state import STATE_INITIALIZED
 
 
 DEEPSEEK = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"

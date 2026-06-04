@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold.pipeline import StepContext, StepResult
+from arnold.pipeline import StepContext
+from megaplan._pipeline.types import StepResult
 
-from megaplan._pipeline.prompts import resolve_prompt  # bridge: global prompt registry
 from megaplan._pipeline.step_helpers import next_version  # bridge: different signature
+from megaplan.pipelines.creative.prompts import render_prompt
 
 
 def _root_dir(ctx: StepContext) -> Path:
@@ -118,9 +119,9 @@ def _render_prompt(ctx: StepContext, step: CreativeStep) -> str:
             lines.extend(f"- {name}: {path}" for name, path in sorted(previous.items()))
             return "\n".join(lines)
         return "Finalize the creative run."
-    return resolve_prompt(
-        ctx,
+    return render_prompt(
         step.prompt_key,
+        ctx,
         params={
             "stage": step.name,
             "form": step.form,

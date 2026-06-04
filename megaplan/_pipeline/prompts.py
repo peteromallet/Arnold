@@ -1,4 +1,4 @@
-"""Pluggable prompt registry for ``_pipeline`` Steps.
+"""Legacy prompt-registration bridge for ``_pipeline`` Steps.
 
 Each Step carries a ``prompt_key`` (declared on the frozen ``Step``
 Protocol in ``megaplan/_pipeline/types.py``). At dispatch time the
@@ -8,10 +8,10 @@ template; the Step's ``run`` calls
 string. A new mode (joke/doc/etc.) just registers an alternate
 template under the same key — no Step subclassing.
 
-Defaults are deliberately minimal — production handlers under
-``megaplan/handlers/`` keep their own per-phase prompts and ignore
-this registry. The registry exists for demo + Sprint-3-follow-up
-Steps that want a single source for their prompt text.
+Defaults are deliberately minimal. Production prompt ownership is moving
+toward bundle-owned mappings via ``arnold.pipeline.resources``; this
+module remains only as a non-canonical bridge for legacy demos and
+tests that still register prompts globally during migration.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
+from arnold.pipeline.resources import prompt_lookup_candidates
 from megaplan._pipeline.types import StepContext
 
 
@@ -54,20 +55,11 @@ class PromptRegistry:
         mode: str | None = None,
         pipeline: str | None = None,
     ) -> PromptRenderer:
-        if pipeline and mode:
-            candidate = f"{pipeline}/{key}:{mode}"
+        for candidate in prompt_lookup_candidates(
+            key, mode=mode, pipeline=pipeline
+        ):
             if candidate in self.renderers:
                 return self.renderers[candidate]
-        if pipeline:
-            candidate = f"{pipeline}/{key}"
-            if candidate in self.renderers:
-                return self.renderers[candidate]
-        if mode:
-            candidate = f"{key}:{mode}"
-            if candidate in self.renderers:
-                return self.renderers[candidate]
-        if key in self.renderers:
-            return self.renderers[key]
         raise KeyError(
             f"no prompt registered for key={key!r} mode={mode!r} pipeline={pipeline!r}"
         )
@@ -87,16 +79,20 @@ class PromptRegistry:
         return renderer(ctx, params or {})
 
 
+# Internal-only compatibility bridge. New runtime prompt resolution should
+# prefer bundle-owned mappings on PipelineResourceBundle.
 _GLOBAL_REGISTRY = PromptRegistry()
 
 
 def register_prompt(key: str, renderer: PromptRenderer) -> None:
+    """Register a prompt in the legacy global bridge registry."""
     _GLOBAL_REGISTRY.register(key, renderer)
 
 
 def resolve_prompt(
     ctx: StepContext, key: str, params: Mapping[str, Any] | None = None
 ) -> str:
+    """Resolve a prompt through the legacy global bridge registry."""
     return _GLOBAL_REGISTRY.render(ctx, key, params)
 
 
@@ -109,8 +105,9 @@ def register_pipeline_prompt(
 ) -> None:
     """Register a prompt scoped to a specific pipeline (and optionally mode).
 
-    Lets two pipelines share a Step class but use different prompts
-    for it. Equivalent to ``register_prompt(f'{pipeline}/{key}[:{mode}]', renderer)``
+    Internal bridge helper for legacy demo code during prompt migration.
+
+    Equivalent to ``register_prompt(f'{pipeline}/{key}[:{mode}]', renderer)``
     but explicit about the scope.
     """
 

@@ -1211,7 +1211,7 @@ def test_run_shannon_execute_repairs_truncated_envelope(
 
 def test_shannon_accepted_in_agent_choice_surfaces() -> None:
     """All --agent choice surfaces accept 'shannon'."""
-    from megaplan.types import KNOWN_AGENTS
+    from megaplan.profiles import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
 
 

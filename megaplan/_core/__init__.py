@@ -185,7 +185,8 @@ from .scheduler.topo import schedule_batches
 from .scheduler.types import Reduce
 
 # -- workflow.py: state machine, transitions ---------------------------------
-from megaplan.types import ROBUSTNESS_LEVELS, STATE_EXECUTED, STATE_REVIEWED, STATE_DONE  # noqa: F401 — accessed by tests via megaplan._core
+from megaplan.profiles.policy import ROBUSTNESS_LEVELS  # noqa: F401 — accessed by tests via megaplan._core
+from megaplan.planning.state import STATE_DONE, STATE_EXECUTED, STATE_REVIEWED  # noqa: F401 — accessed by tests via megaplan._core
 
 from .workflow import (
     WORKFLOW,

@@ -28,7 +28,7 @@ from megaplan._pipeline.flags import control_interface_routing_on
 from megaplan.auto import drive as drive_auto
 from megaplan.control_interface import ControlTransition, RunStateView, apply_transition
 from megaplan.handlers import handle_init, handle_override
-from megaplan.orchestration.progress import ProgressContext, ProgressEmitter
+from arnold.pipelines.megaplan.orchestration.progress import ProgressContext, ProgressEmitter
 from megaplan.schemas import ControlMessage, Sprint
 from megaplan.store import Store
 from megaplan.types import CliError

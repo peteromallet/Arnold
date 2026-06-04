@@ -20,7 +20,7 @@ then assembly:
   ``executor.py:218-220`` (a ``halt``-labelled edge would be
   unreachable; the assembly Stage carries no halt edge).
 
-Per-stage prompt files are registered under
+Per-stage prompt files are bundled under
 ``megaplan/pipelines/doc/prompts/``. The public Step shells in
 ``megaplan.pipelines.doc.steps`` carry the canonical ``prompt_key`` slots
 (``outline_doc`` / ``execute_doc`` / ``critique_doc`` / ``revise_doc``
@@ -35,6 +35,7 @@ from megaplan._pipeline.types import (
     Pipeline,
     Stage,
 )
+from megaplan.pipelines.doc.prompts import DOC_PROMPT_BUNDLE
 from megaplan.pipelines.doc.steps import (
     AssemblyStep,
     CritiqueStep,
@@ -44,10 +45,6 @@ from megaplan.pipelines.doc.steps import (
     SectionDraftStep,
     concat_sections_join,
 )
-
-# Import the prompts sub-package for its register_pipeline_prompt side-effects.
-from megaplan.pipelines.doc import prompts as _prompts  # noqa: F401
-
 
 # ── Module-level metadata surfaced via PipelineRegistry ────────────────
 
@@ -116,7 +113,9 @@ def build_pipeline() -> Pipeline:
         ),
     }
 
-    return Pipeline(stages=stages, entry="outline")
+    pipeline = Pipeline(stages=stages, entry="outline")
+    object.__setattr__(pipeline, "resource_bundles", (DOC_PROMPT_BUNDLE,))
+    return pipeline
 
 
 __all__ = [

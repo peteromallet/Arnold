@@ -19,7 +19,7 @@ from megaplan.orchestration.completion_contract import (
     normalize_contract_mode,
 )
 from megaplan.orchestration.suite_runner import SuiteRunResult, append_suite_run
-from megaplan.types import STATE_CRITIQUED
+from megaplan.planning.state import STATE_CRITIQUED
 
 
 # ---------------------------------------------------------------------------

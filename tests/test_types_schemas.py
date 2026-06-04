@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 import megaplan
+import megaplan.types as megaplan_types
 from megaplan.schemas.sprint1 import Plan
 from megaplan._core import ensure_runtime_layout, load_plan
 
@@ -233,6 +234,11 @@ def test_strict_schema_non_object_untouched() -> None:
     assert strict_schema(42) == 42
     assert strict_schema("hello") == "hello"
     assert strict_schema([1, 2]) == [1, 2]
+
+
+def test_planning_schema_contracts_no_longer_export_from_megaplan_types() -> None:
+    for name in ("TiebreakerDecision", "GatePayload", "GateArtifact", "GateSignals"):
+        assert not hasattr(megaplan_types, name)
 
 
 def test_codex_uses_same_prompt_builders_for_shared_steps(plan_fixture: PlanFixture) -> None:
@@ -558,7 +564,8 @@ def test_parse_agent_spec_accepts_every_spec_in_loaded_profiles() -> None:
 
 def test_parse_agent_spec_accepts_default_routing_specs() -> None:
     """DEFAULT_AGENT_ROUTING values must all parse."""
-    from megaplan.types import DEFAULT_AGENT_ROUTING, parse_agent_spec
+    from megaplan.profiles import DEFAULT_AGENT_ROUTING
+    from megaplan.types import parse_agent_spec
 
     for spec in set(DEFAULT_AGENT_ROUTING.values()):
         parse_agent_spec(spec)

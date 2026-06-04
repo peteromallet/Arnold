@@ -10,7 +10,7 @@ from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-    from megaplan.orchestration.phase_result import BlockedTask, Deviation
+    from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
 
 from megaplan.auto import DEFAULT_MAX_BLOCKED_RETRIES
 

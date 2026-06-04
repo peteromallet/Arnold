@@ -74,7 +74,8 @@ from megaplan.profiles import (
     _resolve_default_vendor,
     load_profile_metadata,
 )
-from megaplan.types import CliError, STATE_AWAITING_PR_MERGE, STATE_EXECUTED, STATE_FINALIZED
+from megaplan.types import CliError
+from megaplan.planning.state import STATE_AWAITING_PR_MERGE, STATE_EXECUTED, STATE_FINALIZED
 from . import spec as chain_spec
 
 APEX_EXTREME_RETRY_CAP = chain_spec.APEX_EXTREME_RETRY_CAP

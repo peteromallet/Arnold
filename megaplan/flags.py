@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan._core import load_flag_registry, save_flag_registry
-from megaplan.orchestration.critique_status import is_unverifiable_check
+from arnold.pipelines.megaplan.orchestration.critique_status import is_unverifiable_check
 from megaplan.types import FlagRecord, FlagRegistry
 
 
@@ -218,7 +218,7 @@ def update_flags_after_critique(
     iteration: int,
     skip_flag_ids: frozenset[str] | None = None,
 ) -> FlagRegistry:
-    from megaplan.audits.robustness import build_check_category_map, get_check_by_id
+    from arnold.pipelines.megaplan.audits.robustness import build_check_category_map, get_check_by_id
 
     critique.setdefault("flags", []).extend(
         _synthesize_flags_from_checks(
@@ -238,7 +238,7 @@ def update_flags_after_critique(
 
 
 def update_flags_after_review(plan_dir: Path, review_payload: dict[str, Any], *, iteration: int) -> FlagRegistry:
-    from megaplan.review.checks import build_check_category_map, get_check_by_id
+    from arnold.pipelines.megaplan.review.checks import build_check_category_map, get_check_by_id
 
     payload_for_registry = dict(review_payload)
     payload_for_registry["flags"] = [*list(review_payload.get("flags", [])), *(

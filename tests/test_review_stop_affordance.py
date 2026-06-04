@@ -5,7 +5,7 @@ from pathlib import Path
 
 from megaplan._core import atomic_write_json, read_json
 from megaplan.handlers.review import _resolve_review_outcome
-from megaplan.types import STATE_DONE, STATE_FINALIZED
+from megaplan.planning.state import STATE_DONE, STATE_FINALIZED
 
 
 def _write_finalize(plan_dir: Path, *, requested: bool) -> None:

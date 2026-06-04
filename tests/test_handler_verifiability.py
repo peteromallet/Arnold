@@ -8,8 +8,8 @@ import pytest
 
 from megaplan.handlers.verifiability import get_human_verification_status, handle_verify_human
 from megaplan.run_outcome import RunOutcome
-from megaplan.types import (
-    CliError,
+from megaplan.types import CliError
+from megaplan.planning.state import (
     STATE_AWAITING_HUMAN,
     STATE_AWAITING_HUMAN_VERIFY,
     STATE_DONE,

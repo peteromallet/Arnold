@@ -15,7 +15,7 @@ _MODULE_EXPORTS = {
 _SYMBOL_EXPORTS = {
     "ALL_CAPABILITIES": "megaplan.runtime.capabilities",
     "CONTAINER_CAPABILITIES": "megaplan.runtime.capabilities",
-    "DEFAULT_AGENT_ROUTING": "megaplan.runtime.capabilities",
+    "DEFAULT_AGENT_ROUTING": "megaplan.profiles.policy",
     "DEFAULT_CONTAINER_CAPABILITIES": "megaplan.runtime.capabilities",
     "DEFAULT_HUMAN_CAPABILITIES": "megaplan.runtime.capabilities",
     "HUMAN_CAPABILITIES": "megaplan.runtime.capabilities",

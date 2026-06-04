@@ -7,9 +7,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import CliError, STATE_DONE, STATE_REVIEWED, StepResponse
+from megaplan.types import CliError, StepResponse
+from megaplan.planning.state import STATE_DONE, STATE_REVIEWED
 from megaplan._core import active_plan_dirs, load_plan, save_state
-from megaplan.orchestration.phase_result import ExitKind, _emit_phase_result
+from arnold.pipelines.megaplan.orchestration.phase_result import ExitKind, _emit_phase_result
 from .roots import _collect_megaplan_roots
 
 
@@ -36,7 +37,7 @@ def _collect_feedback_rows(
     """
 
     from megaplan._core.io import read_json
-    from megaplan.orchestration.feedback import feedback_path, load_feedback
+    from arnold.pipelines.megaplan.orchestration.feedback import feedback_path, load_feedback
 
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -215,7 +216,7 @@ def _parse_ai_feedback(payload: Any, raw_output: str) -> Any:
     Returns None when neither source yields a parseable feedback structure.
     Reads ``overall.rating/comment`` and ``stages.<name>.rating/comment``.
     """
-    from megaplan.orchestration.feedback import PlanFeedback, StageFeedback
+    from arnold.pipelines.megaplan.orchestration.feedback import PlanFeedback, StageFeedback
 
     data: Any = payload if isinstance(payload, dict) and payload else None
     if data is None:
@@ -263,7 +264,7 @@ def _merge_feedback(existing: Any, ai_fb: Any) -> Any:
     Either or both may be None. User ``rating`` / ``comment`` always win; AI
     fields are taken from ``ai_fb`` when present, else fall back to existing.
     """
-    from megaplan.orchestration.feedback import PlanFeedback, StageFeedback
+    from arnold.pipelines.megaplan.orchestration.feedback import PlanFeedback, StageFeedback
 
     merged = PlanFeedback()
 
@@ -351,7 +352,7 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
     import subprocess
 
     from megaplan._core.io import atomic_write_text
-    from megaplan.orchestration.feedback import (
+    from arnold.pipelines.megaplan.orchestration.feedback import (
         FEEDBACK_FILENAME,
         PlanFeedback,
         feedback_path,

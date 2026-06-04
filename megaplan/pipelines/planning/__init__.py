@@ -40,9 +40,8 @@ from __future__ import annotations
 from arnold.pipelines.megaplan import (  # noqa: E402, F401
     build_pipeline,
     compile_planning_pipeline,
-    operation_registry,
-    override_catalog,
 )
+from megaplan.planning.operations import operation_registry, override_catalog
 
 # ── Module-level metadata surfaced via PipelineRegistry ────────────────
 

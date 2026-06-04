@@ -7,7 +7,7 @@ from pathlib import Path
 from megaplan._core.state import resolve_plan_dir
 from megaplan._core.workflow import workflow_next
 from megaplan.cli import _build_status_payload, handle_list
-from megaplan.types import (
+from megaplan.planning.state import (
     AUTOMATION_TERMINAL_STATES,
     STATE_BLOCKED,
     STATE_CANCELLED,

@@ -5,8 +5,8 @@ from typing import Any
 
 from arnold.runtime.operations import OperationKind, OperationRequest
 from megaplan.control_interface import ControlTransitionRequest, RunStateView
+from megaplan.planning.operations import profile_validate_operation, resume_phase_args
 from megaplan.pipelines.planning import operation_registry, override_catalog
-from megaplan.pipelines.planning.operations import resume_phase_args
 
 
 def test_planning_operation_registry_supports_all_six_operation_kinds() -> None:
@@ -54,7 +54,7 @@ def test_run_phase_dispatch_returns_exit_code_stdout_and_stderr(monkeypatch) -> 
         return 0, "phase stdout", "phase stderr"
 
     monkeypatch.setattr(
-        "megaplan.pipelines.planning.operations._pipeline",
+        "megaplan.planning.operations._pipeline",
         lambda: type("P", (), {"run_phase": staticmethod(fake_run_phase)})(),
     )
 
@@ -95,7 +95,7 @@ def test_run_phase_dispatch_ignores_unknown_carrier_keys(monkeypatch) -> None:
         return 0, "", ""
 
     monkeypatch.setattr(
-        "megaplan.pipelines.planning.operations._pipeline",
+        "megaplan.planning.operations._pipeline",
         lambda: type("P", (), {"run_phase": staticmethod(fake_run_phase)})(),
     )
 
@@ -219,7 +219,7 @@ def test_override_apply_builds_transition_request_from_flat_payload(monkeypatch)
             return _FakeResult()
 
     monkeypatch.setattr(
-        "megaplan.pipelines.planning.operations.planning_control_binding",
+        "megaplan.planning.operations.planning_control_binding",
         lambda: _FakeBinding(),
     )
 
@@ -268,7 +268,7 @@ def test_profile_validate_reuses_existing_preflight_inputs(monkeypatch) -> None:
         captured["profile_name"] = profile_name
 
     monkeypatch.setattr(
-        "megaplan.pipelines.planning.operations.preflight_or_raise",
+        "megaplan.planning.validation.preflight_or_raise",
         fake_preflight,
     )
 
@@ -285,6 +285,35 @@ def test_profile_validate_reuses_existing_preflight_inputs(monkeypatch) -> None:
 
     assert result.ok is True
     assert result.payload == {"validated": True}
+    assert captured == {
+        "profile": {"plan": "claude:gpt-5"},
+        "pipeline_name": "megaplan",
+        "profile_name": "default",
+    }
+
+
+def test_profile_validate_operation_calls_observed_megaplan_preflight(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_preflight(profile, *, pipeline_name="", profile_name=""):  # noqa: ANN001
+        captured["profile"] = dict(profile)
+        captured["pipeline_name"] = pipeline_name
+        captured["profile_name"] = profile_name
+
+    monkeypatch.setattr(
+        "megaplan._pipeline.preflight.preflight_or_raise",
+        fake_preflight,
+    )
+
+    result = profile_validate_operation(
+        {
+            "profile": {"plan": "claude:gpt-5"},
+            "pipeline_name": "megaplan",
+            "profile_name": "default",
+        }
+    )
+
+    assert result.ok is True
     assert captured == {
         "profile": {"plan": "claude:gpt-5"},
         "pipeline_name": "megaplan",

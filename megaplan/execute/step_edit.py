@@ -31,12 +31,9 @@ from megaplan.orchestration.evaluation import (
 from megaplan.types import (
     CliError,
     PlanState,
-    STATE_CRITIQUED,
-    STATE_FINALIZED,
-    STATE_GATED,
-    STATE_PLANNED,
     StepResponse,
 )
+from megaplan.planning.state import STATE_CRITIQUED, STATE_FINALIZED, STATE_GATED, STATE_PLANNED
 
 
 STEP_EDIT_ALLOWED_STATES = {STATE_PLANNED, STATE_CRITIQUED, STATE_GATED, STATE_FINALIZED}

@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import STATE_BLOCKED, StepResponse
+from megaplan.types import StepResponse
+from megaplan.planning.state import STATE_BLOCKED
 from megaplan.user_actions import FALLBACK, OMIT
 from megaplan._core import (
     active_phase_name,
@@ -26,7 +27,7 @@ from megaplan.blocker_recovery import (
     command_blocker_details,
     evaluate_blocker_recovery,
 )
-from megaplan.orchestration.phase_result import (
+from arnold.pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     read_phase_result,
 )

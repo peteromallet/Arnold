@@ -650,7 +650,7 @@ def _doctor_adaptive_critique() -> int:
     """Probe the adaptive critique wiring. Returns 0 if every probe passes,
     1 otherwise. Pure read-only — no LLM calls, no plan-dir state.
     """
-    from megaplan.audits.critique_evaluator import probe_adaptive_critique_wiring
+    from arnold.pipelines.megaplan.audits.critique_evaluator import probe_adaptive_critique_wiring
 
     results = probe_adaptive_critique_wiring()
     has_failure = False

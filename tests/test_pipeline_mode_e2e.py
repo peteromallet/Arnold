@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
 from megaplan._pipeline import (
     Edge,
     Pipeline,
@@ -31,12 +32,17 @@ from megaplan._pipeline import (
 )
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.profile import Profile, empty_profile, load_profile
-from megaplan._pipeline.prompts import register_demo_prompts, register_prompt, resolve_prompt
 
 
 # ---------------------------------------------------------------------------
 # Generic two-stage critic + reviser that the mode tests reuse.
 # ---------------------------------------------------------------------------
+
+
+_TEST_PROMPT_BUNDLE = PipelineResourceBundle(
+    base_dir=Path("/tmp"),
+    prompt_dir=Path("/tmp/prompts"),
+)
 
 
 @dataclass
@@ -50,7 +56,7 @@ class GenericCritic:
     def run(self, ctx: StepContext) -> StepResult:
         state = ctx.state if isinstance(ctx.state, dict) else {}
         iteration = int(state.get("iter", 0))
-        prompt = resolve_prompt(ctx, self.prompt_key)
+        prompt = resolve_bundle_prompt(_TEST_PROMPT_BUNDLE, self.prompt_key, ctx)
         profile: Profile = ctx.profile
         model = profile.model_for(self.slot, default="mock") if isinstance(profile, Profile) else "mock"
 
@@ -82,7 +88,12 @@ class GenericReviser:
     def run(self, ctx: StepContext) -> StepResult:
         state = ctx.state if isinstance(ctx.state, dict) else {}
         iteration = int(state.get("iter", 0))
-        prompt = resolve_prompt(ctx, self.prompt_key, params={"flags": ["auto"]})
+        prompt = resolve_bundle_prompt(
+            _TEST_PROMPT_BUNDLE,
+            self.prompt_key,
+            ctx,
+            params={"flags": ["auto"]},
+        )
         profile: Profile = ctx.profile
         model = profile.model_for(self.slot, default="mock") if isinstance(profile, Profile) else "mock"
 
@@ -118,20 +129,28 @@ def _build_loop_pipeline(max_iter: int = 3) -> Pipeline:
 
 
 def _register_per_mode_prompts() -> None:
-    # Register the default critique/revise prompts first (no longer
-    # done at import time), then layer on the mode-specific overrides.
-    register_demo_prompts()
-    register_prompt(
-        "critique:joke",
-        lambda ctx, params: "Rate this joke: setup-payoff tightness, surprise.",
-    )
-    register_prompt(
-        "critique:doc",
-        lambda ctx, params: "Review this doc: clarity, navigability, lede.",
-    )
-    register_prompt(
-        "critique:plan",
-        lambda ctx, params: "Critique this plan: completeness, risk, scope.",
+    _TEST_PROMPT_BUNDLE.prompts.clear()
+    _TEST_PROMPT_BUNDLE.prompts.update(
+        {
+            "critique": (
+                "You are a document critic. Rate this draft on: clarity, "
+                "concreteness, brevity."
+            ),
+            "revise": lambda ctx, params: (
+                "Revise the draft below to resolve these flags: "
+                + "; ".join(str(f) for f in params.get("flags", []))
+                + ". Preserve voice. Output the full revised draft."
+            ),
+            "critique:joke": lambda ctx, params: (
+                "Rate this joke: setup-payoff tightness, surprise."
+            ),
+            "critique:doc": lambda ctx, params: (
+                "Review this doc: clarity, navigability, lede."
+            ),
+            "critique:plan": lambda ctx, params: (
+                "Critique this plan: completeness, risk, scope."
+            ),
+        }
     )
 
 

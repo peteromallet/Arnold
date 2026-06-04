@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from megaplan._core.scheduler.types import Reduce
 from megaplan.execute import _blocked_task_reason, build_blocking_reasons
 from megaplan.execute.merge import _is_blocking_deviation
-from megaplan.types import STATE_EXECUTED
+from megaplan.planning.state import STATE_EXECUTED
 
 if TYPE_CHECKING:
     from megaplan.execute.batch import BatchResult

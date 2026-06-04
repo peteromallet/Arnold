@@ -10,7 +10,9 @@ from megaplan.artifacts import markdown_body
 from megaplan.runtime.doc_assembly import extract_settled_decisions
 from megaplan.forms import available_form_ids
 from megaplan.profiles import apply_profile_expansion, load_profile_metadata
-from megaplan.types import ROBUSTNESS_LEVELS, CliError, PlanState, STATE_INITIALIZED, StepResponse, normalize_robustness
+from megaplan.profiles import ROBUSTNESS_LEVELS, normalize_robustness
+from megaplan.types import CliError, PlanState, StepResponse
+from megaplan.planning.state import STATE_INITIALIZED
 from megaplan._core import (
     append_history,
     ensure_runtime_layout,
@@ -152,7 +154,7 @@ def _build_state_config(
     # KeyError'd inside the critique handler under a broad except. Probing at
     # init means a misconfigured profile is rejected before any planning cost.
     if adaptive_critique:
-        from megaplan.audits.critique_evaluator import assert_adaptive_critique_wired
+        from arnold.pipelines.megaplan.audits.critique_evaluator import assert_adaptive_critique_wired
 
         assert_adaptive_critique_wired()
 

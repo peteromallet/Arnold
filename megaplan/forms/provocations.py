@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from megaplan._core import creative_form_id, is_creative_mode, latest_plan_path
-from megaplan.audits.robustness import checks_for_robustness
+from arnold.pipelines.megaplan.audits.robustness import checks_for_robustness
 from megaplan.forms import Form, Provocation, ProvocateurVoice, get_form
-from megaplan.types import PlanState, normalize_robustness
+from megaplan.profiles import normalize_robustness
+from megaplan.types import PlanState
 
 
 def select_provocateur_voice(

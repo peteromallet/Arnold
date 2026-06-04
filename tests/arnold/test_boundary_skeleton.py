@@ -38,7 +38,10 @@ import pytest
 
 _PIPELINE_PKG = Path(__file__).resolve().parent.parent.parent / "arnold" / "pipeline"
 
-FORBIDDEN_IMPORT_PREFIXES = ("import megaplan", "from megaplan")
+FORBIDDEN_POLICY_IMPORT_ROOTS = (
+    "megaplan",
+    "arnold.pipelines.megaplan",
+)
 FORBIDDEN_STRING_LITERALS = frozenset(
     {"planning", "proceed", "iterate", "tiebreaker", "escalate"}
 )
@@ -65,13 +68,19 @@ def _ast_import_violations(file_path: Path) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.split(".")[0] == "megaplan":
+                if any(
+                    alias.name == root or alias.name.startswith(f"{root}.")
+                    for root in FORBIDDEN_POLICY_IMPORT_ROOTS
+                ):
                     violations.append(
                         f"{file_path}:{node.lineno}: forbidden import — "
                         f"`import {alias.name}`"
                     )
         elif isinstance(node, ast.ImportFrom):
-            if node.module is not None and node.module.split(".")[0] == "megaplan":
+            if node.module is not None and any(
+                node.module == root or node.module.startswith(f"{root}.")
+                for root in FORBIDDEN_POLICY_IMPORT_ROOTS
+            ):
                 names = ", ".join(a.name for a in node.names)
                 violations.append(
                     f"{file_path}:{node.lineno}: forbidden import — "
@@ -104,7 +113,7 @@ def _ast_string_literal_violations(file_path: Path) -> list[str]:
 
 
 class TestStaticGateForbiddenImports:
-    """No source file under ``arnold/pipeline/`` may import from megaplan."""
+    """No source file under ``arnold/pipeline/`` may import Megaplan policy."""
 
     def test_no_megaplan_imports_in_pipeline_sources(self) -> None:
         violations: list[str] = []
@@ -112,7 +121,7 @@ class TestStaticGateForbiddenImports:
             violations.extend(_ast_import_violations(source_file))
         if violations:
             pytest.fail(
-                f"{len(violations)} forbidden import(s) found:\n"
+                f"{len(violations)} forbidden policy import(s) found:\n"
                 + "\n".join(f"  • {v}" for v in violations)
             )
 
@@ -522,13 +531,18 @@ def _arnold_init_allowed_imports_violations() -> list[str]:
 
 
 def _arnold_pipelines_import_violations(scan_root: Path) -> list[str]:
-    """Scan arnold/pipelines/ for ANY megaplan imports — all are forbidden.
-    If the directory does not exist, returns an empty list trivially."""
+    """Scan neutral arnold/pipelines/ modules for legacy megaplan imports.
+
+    ``arnold/pipelines/megaplan/`` is the intentional plugin home in M5b and is
+    therefore excluded from this neutral-boundary check.
+    """
     violations: list[str] = []
     if not scan_root.exists():
         return violations
     for source_file in sorted(scan_root.rglob("*.py")):
         if "__pycache__" in source_file.parts:
+            continue
+        if source_file.is_relative_to(scan_root / "megaplan"):
             continue
         try:
             tree = ast.parse(source_file.read_text(), filename=str(source_file))
@@ -557,7 +571,7 @@ def _arnold_pipelines_import_violations(scan_root: Path) -> list[str]:
 
 class TestM4PluginBoundary:
     """M4: arnold/__init__.py is allowed a version import; arnold/pipelines/
-    must NOT import from megaplan."""
+    neutral modules must NOT import from megaplan."""
 
     def test_arnold_init_only_allows_version_import(self) -> None:
         """arnold/__init__.py may only import __version__ from megaplan."""
@@ -570,14 +584,15 @@ class TestM4PluginBoundary:
             )
 
     def test_arnold_pipelines_no_megaplan_imports(self) -> None:
-        """No file under arnold/pipelines/ may import from megaplan.
-        This is a forward-looking gate — the directory does not exist yet,
-        so the test trivially passes; once populated (T4/T5), it actively
-        guards against forbidden stage/handler imports."""
+        """Non-plugin arnold/pipelines/ files may not import from megaplan.
+
+        The M5b plugin subtree under ``arnold/pipelines/megaplan/`` is excluded
+        because it is the canonical home for Megaplan policy code.
+        """
         violations = _arnold_pipelines_import_violations(_ARNOLD_PIPELINES_ROOT)
         if violations:
             pytest.fail(
-                f"arnold/pipelines/ has {len(violations)} forbidden import(s):\n"
+                f"neutral arnold/pipelines/ has {len(violations)} forbidden import(s):\n"
                 + "\n".join(f"  • {v}" for v in violations)
             )
 

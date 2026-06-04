@@ -183,7 +183,7 @@ def handle_quality_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         evaluate_blocker_recovery,
     )
     from megaplan.handlers.shared import _append_to_meta
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     from megaplan.quality_resolutions import (
         VALID_RESOLUTIONS,
         build_quality_resolution_event,

@@ -48,6 +48,18 @@ from arnold.pipeline.pattern_joins import majority_vote, weighted_vote
 from arnold.pipeline.pattern_select import select, threshold, top_1, top_k
 from arnold.pipeline.pattern_stops import LoopState, max_iters, no_improvement, plateau, threshold_reached
 from arnold.pipeline.pattern_types import JoinFn, PromoteFn
+from arnold.pipeline.profiles import (
+    AgentSpecShape,
+    ProfileLoadError,
+    load_profile_metadata,
+    load_profile_sources,
+    load_profiles,
+    merge_profile_layers,
+    parse_agent_spec_shape,
+    parse_profiles_doc,
+    resolve_default_profile,
+    validate_declared_stage_keys,
+)
 from arnold.pipeline.registry import PipelineRegistry
 from arnold.pipeline.state import StateDelta, apply_delta
 from arnold.pipeline.types import (
@@ -85,6 +97,7 @@ __all__ = [
     "PipelineBuilder",
     "PipelineRegistry",
     "PipelineVerdict",
+    "ProfileLoadError",
     "Port",
     "PortRef",
     "PromoteFn",
@@ -103,9 +116,15 @@ __all__ = [
     "derive_tenant_id",
     "is_legal_coercion",
     "legal_coercions",
+    "load_profile_metadata",
+    "load_profile_sources",
+    "load_profiles",
     "majority_vote",
     "max_iters",
+    "merge_profile_layers",
     "no_improvement",
+    "parse_agent_spec_shape",
+    "parse_profiles_doc",
     "plateau",
     "read_manifest",
     "register_schema",
@@ -115,5 +134,8 @@ __all__ = [
     "threshold",
     "top_1",
     "top_k",
+    "resolve_default_profile",
+    "validate_declared_stage_keys",
     "weighted_vote",
+    "AgentSpecShape",
 ]

@@ -21,8 +21,8 @@ from megaplan._core import (
     latest_plan_path,
     read_json,
 )
-from megaplan.audits.robustness import CRITIQUE_CHECKS
-from megaplan.audits.critique_evaluator import MAX_OTHER_AREAS
+from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+from arnold.pipelines.megaplan.audits.critique_evaluator import MAX_OTHER_AREAS
 from megaplan.types import PlanState
 
 
@@ -33,7 +33,7 @@ def _render_differential_section(
     iteration: int,
 ) -> str:
     """Render the revise-loop differential context block for iteration N >= 2."""
-    from megaplan.audits.iteration import render_pressure_table
+    from arnold.pipelines.megaplan.audits.iteration import render_pressure_table
 
     flags = flag_lifecycle.get("flags", [])
     verified = [f for f in flags if f.get("status") == "verified"]

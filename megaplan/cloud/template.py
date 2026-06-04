@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from string import Template
 
 from megaplan.cloud.spec import CloudSpec, RepoSpec, ToolchainSpec
-from megaplan.types import DEFAULT_AGENT_ROUTING
+from megaplan.profiles import DEFAULT_AGENT_ROUTING
 
 
 PLACEHOLDERS = (

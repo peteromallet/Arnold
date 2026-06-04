@@ -14,7 +14,8 @@ from typing import Any
 
 from megaplan.chain import ChainSpec
 from megaplan.profiles import apply_profile_expansion
-from megaplan.types import DEFAULT_AGENT_ROUTING, parse_agent_spec
+from megaplan.profiles import DEFAULT_AGENT_ROUTING
+from megaplan.types import parse_agent_spec
 
 
 AGENTS_DEFAULT_WARNING = (

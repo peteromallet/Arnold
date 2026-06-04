@@ -22,7 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PLANNING_IMPLEMENTATION_FILES = {
     "megaplan/planning/__init__.py",
     "megaplan/planning/control_binding.py",
-    "megaplan/pipelines/planning/operations.py",
+    "megaplan/planning/operations.py",
 }
 
 MIGRATED_CONSUMER_FILES = {

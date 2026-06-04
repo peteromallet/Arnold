@@ -53,6 +53,7 @@ from .models import (
     WarrantSourceProjection,
     utc_now,
 )
+from .planning import GateArtifact, GatePayload, GateSignals, TiebreakerDecision
 from .runtime import (
     SCHEMAS,
     STANCE_SCHEMA,
@@ -84,6 +85,9 @@ __all__ = [
     "ExecutionLease",
     "ExternalRequest",
     "Feedback",
+    "GateArtifact",
+    "GatePayload",
+    "GateSignals",
     "HomeBackend",
     "Image",
     "Message",
@@ -101,6 +105,7 @@ __all__ = [
     "STOP_SIGNAL_SCHEMA",
     "StorageModel",
     "SystemLog",
+    "TiebreakerDecision",
     "Ticket",
     "TicketEpicLink",
     "ToolCall",

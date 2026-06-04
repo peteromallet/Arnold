@@ -31,7 +31,7 @@ from megaplan.control_interface import (
     read_valid_targets,
     synthesize_artifacts,
 )
-from megaplan.types import STATE_INITIALIZED
+from megaplan.planning.state import STATE_INITIALIZED
 
 
 class _Binding:
