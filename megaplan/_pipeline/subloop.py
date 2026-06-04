@@ -1,11 +1,24 @@
 """Subloop primitive.
 
 A :class:`SubloopStep` is the executor-level primitive: it carries a
-nested :class:`Pipeline`, runs it as a child via
-:func:`run_pipeline`, and then promotes the child's final state into
-a :class:`PipelineVerdict` on the parent. The parent's PipelineVerdict.recommendation
-is set from the child pipeline's terminal stage by a configurable
-:attr:`promote` callable.
+nested :class:`Pipeline`, runs it as a child via the Megaplan executor
+(:func:`megaplan._pipeline.executor.run_pipeline`), normalises the result
+into a :class:`arnold.pipeline.subpipeline.ChildRunResult`, and then
+promotes the child's final state into a :class:`PipelineVerdict` on the
+parent.
+
+Two promotion modes are supported:
+
+* **Legacy** :attr:`promote` — ``Callable[[dict], RoutingKey|str]`` —
+  maps the child's final state dict to a routing key for the parent's
+  PipelineVerdict.  This preserves full backward compatibility with
+  tiebreaker, pattern_topology, and builder consumers.
+
+* **Opt-in** :meth:`promote_delta` — ``Callable[[ChildRunResult, StepContext], StateDelta]`` —
+  returns a neutral :class:`~arnold.pipeline.state.StateDelta` that the
+  caller applies to parent state.  When set, the ``state_patch`` keys
+  ``subloop:<name>:recommendation`` and ``subloop:<name>:state`` are
+  still emitted for backward compatibility.
 
 Relationships:
 
@@ -34,7 +47,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
+
+from arnold.pipeline.state import StateDelta
+from arnold.pipeline.subpipeline import ChildRunResult
 
 from megaplan._pipeline._forward_m2_m3 import RoutingKey  # TODO(M2/M3)
 from megaplan._pipeline.types import (
@@ -48,6 +64,8 @@ from megaplan._pipeline.types import (
 
 from megaplan._pipeline.pattern_types import PromoteFn
 
+# Opt-in promote_delta signature
+PromoteDeltaFn = Callable[[ChildRunResult, StepContext], StateDelta]
 
 _DEFAULT_PROMOTE: PromoteFn = lambda state: RoutingKey(name="proceed", kind="advance")
 
@@ -59,6 +77,11 @@ class SubloopStep:
     ``child_pipeline``: the inner pipeline to run.
     ``promote``: callable that maps the child's final state dict to a
     :class:`RoutingKey` for the parent's PipelineVerdict.
+    ``promote_delta``: optional callable that maps the
+    :class:`~arnold.pipeline.subpipeline.ChildRunResult` and parent context
+    to a neutral :class:`~arnold.pipeline.state.StateDelta`.  When set,
+    the delta is computed *in addition to* the legacy promote path; both
+    results are merged into the final ``StepResult.state_patch``.
     ``artifact_subdir``: subdir under ``ctx.plan_dir`` where the child
     pipeline's state.json + per-stage artifacts land. Defaults to the
     Step's name.
@@ -70,6 +93,7 @@ class SubloopStep:
     slot: str | None = None
     child_pipeline: Pipeline | None = None
     promote: PromoteFn = field(default=_DEFAULT_PROMOTE)
+    promote_delta: PromoteDeltaFn | None = None
     artifact_subdir: str | None = None
     produces: tuple[Port, ...] = field(default_factory=tuple)
     consumes: tuple[PortRef, ...] = field(default_factory=tuple)
@@ -90,6 +114,16 @@ class SubloopStep:
         result = run_pipeline(self.child_pipeline, child_ctx, artifact_root=child_root)
         child_state: dict[str, Any] = result.get("state", {})
 
+        # Normalise the Megaplan executor result into Arnold ChildRunResult
+        child_run_result = ChildRunResult(
+            final_state=child_state,
+            final_stage=result.get("final_stage"),
+            artifacts=result.get("artifacts", {}),
+            status=result.get("status", "completed"),
+            status_detail=result.get("status_detail"),
+        )
+
+        # ── Legacy promote path ──────────────────────────────────────
         recommendation = self.promote(child_state)
         _name = getattr(recommendation, 'name', recommendation)
         verdict = PipelineVerdict(
@@ -101,12 +135,23 @@ class SubloopStep:
             },
         )
 
+        # ── Build state_patch ────────────────────────────────────────
+        state_patch: dict[str, Any] = {
+            f"subloop:{self.name}:recommendation": _name,
+            f"subloop:{self.name}:state": child_state,
+        }
+
+        # ── Opt-in promote_delta path ────────────────────────────────
+        if self.promote_delta is not None:
+            delta = self.promote_delta(child_run_result, ctx)
+            if isinstance(delta, StateDelta):
+                for patch in delta.patches:
+                    if isinstance(patch, dict):
+                        state_patch.update(patch)
+
         return StepResult(
             outputs={},
             verdict=verdict,
             next=_name,  # textual fallback if no kind="gate" edge matches
-            state_patch={
-                f"subloop:{self.name}:recommendation": _name,
-                f"subloop:{self.name}:state": child_state,
-            },
+            state_patch=state_patch,
         )

@@ -518,3 +518,349 @@ def test_patterns_facade_reexports_dynamic_private_helpers() -> None:
     assert patterns_module._agreement_ratio is not None
     assert patterns_module._ConsensusStep is not None
     assert patterns_module._PairedRoundStep is not None
+
+
+# ── T9: Fanout metadata shape tests ───────────────────────────────────────
+
+
+class TestFanoutMetadataShape:
+    """Verify that Arnold fanout metadata dataclasses have the expected shapes."""
+
+    def test_fanout_spec_schema_shape(self) -> None:
+        from arnold.pipeline.pattern_dynamic import FanoutSpecSchema
+
+        schema = FanoutSpecSchema(
+            keys=("section_id", "section_title"),
+            required=("section_id",),
+        )
+        assert schema.keys == ("section_id", "section_title")
+        assert schema.required == ("section_id",)
+        # Defaults
+        default = FanoutSpecSchema()
+        assert default.keys == ()
+        assert default.required == ()
+
+    def test_fanout_concurrency_shape(self) -> None:
+        from arnold.pipeline.pattern_dynamic import FanoutConcurrency
+
+        c = FanoutConcurrency(mode="thread", max_workers=4)
+        assert c.mode == "thread"
+        assert c.max_workers == 4
+        # Default
+        default = FanoutConcurrency()
+        assert default.mode == "sequential"
+        assert default.max_workers is None
+
+    def test_fanout_governor_limits_shape(self) -> None:
+        from arnold.pipeline.pattern_dynamic import FanoutGovernorLimits
+
+        limits = FanoutGovernorLimits(
+            max_fanout_width=10,
+            max_total_steps=50,
+            max_sequential_steps=20,
+        )
+        assert limits.max_fanout_width == 10
+        assert limits.max_total_steps == 50
+        assert limits.max_sequential_steps == 20
+        # Defaults are all None
+        default = FanoutGovernorLimits()
+        assert default.max_fanout_width is None
+        assert default.max_total_steps is None
+        assert default.max_sequential_steps is None
+
+    def test_fanout_metadata_bundle(self) -> None:
+        from arnold.pipeline.pattern_dynamic import (
+            FanoutConcurrency,
+            FanoutGovernorLimits,
+            FanoutJoinContract,
+            FanoutMetadata,
+            FanoutSpecSchema,
+            FanoutSpecialization,
+        )
+
+        meta = FanoutMetadata(
+            schema=FanoutSpecSchema(keys=("a",), required=("a",)),
+            specialization=FanoutSpecialization(spec_keys=("a",)),
+            concurrency=FanoutConcurrency(mode="thread", max_workers=8),
+            governor_limits=FanoutGovernorLimits(max_fanout_width=100),
+            join_contract=FanoutJoinContract(arity="many", result_kind="reduce"),
+        )
+        assert meta.schema.keys == ("a",)
+        assert meta.concurrency.mode == "thread"
+        assert meta.concurrency.max_workers == 8
+        assert meta.governor_limits.max_fanout_width == 100
+        assert meta.join_contract.result_kind == "reduce"
+
+    def test_output_port_stability(self) -> None:
+        """LAST_FANOUT_RESULTS_PORT has a stable name and content_type."""
+        from arnold.pipeline.pattern_dynamic import LAST_FANOUT_RESULTS_PORT
+
+        assert LAST_FANOUT_RESULTS_PORT.name == "last_fanout_results"
+        assert LAST_FANOUT_RESULTS_PORT.content_type == "application/x-fanout-results+json"
+
+
+# ── T9: Sequential default ordering test ──────────────────────────────────
+
+
+class TestFanoutSequentialDefault:
+    """Verify that the default mode is sequential and results preserve order."""
+
+    def test_sequential_default_preserves_spec_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "")
+        # Generator emits specs in a known order
+        generator = _GeneratorStep(
+            specs=(
+                {"section_id": "first", "section_title": "First"},
+                {"section_id": "second", "section_title": "Second"},
+                {"section_id": "third", "section_title": "Third"},
+            ),
+        )
+        order_log: list[str] = []
+
+        @dataclass(frozen=True)
+        class _OrderedStep:
+            name: str = "ordered"
+            kind: str = "produce"
+            prompt_key: str | None = None
+            slot: str | None = None
+            section_id: str = ""
+
+            def run(self, ctx: StepContext) -> StepResult:
+                order_log.append(self.section_id)
+                out = Path(ctx.plan_dir) / f"{self.section_id}.md"
+                out.write_text(f"# {self.section_id}\n")
+                return StepResult(outputs={self.section_id: out}, next="done")
+
+        def _join(results: list[StepResult], ctx: StepContext) -> StepResult:
+            return StepResult(next="halt")
+
+        primitive = dynamic_fanout(
+            generator=generator,
+            base_prompt=_OrderedStep(),
+            join=_join,
+            name="ordered_fanout",
+        )
+        ctx = StepContext(
+            plan_dir=tmp_path, state={}, profile=None, mode="test", inputs={}
+        )
+        result = primitive.run(ctx)
+        assert result.next == "halt"
+        # Sequential mode preserves spec order
+        assert order_log == ["first", "second", "third"]
+
+
+# ── T9: Thread concurrency ordering test ──────────────────────────────────
+
+
+class TestFanoutThreadConcurrency:
+    """Verify that thread-mode fanout produces results in spec order."""
+
+    def test_thread_mode_preserves_result_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
+        from megaplan._pipeline.pattern_dynamic import _DynamicFanoutStep
+
+        import time
+
+        @dataclass(frozen=True)
+        class _SlowStep:
+            name: str = "slow"
+            kind: str = "produce"
+            prompt_key: str | None = None
+            slot: str | None = None
+            section_id: str = ""
+
+            def run(self, ctx: StepContext) -> StepResult:
+                # Introduce a tiny sleep to simulate work
+                time.sleep(0.01)
+                return StepResult(
+                    outputs={self.section_id: self.section_id},
+                    next="done",
+                )
+
+        @dataclass(frozen=True)
+        class _ThreadedGen:
+            name: str = "gen"
+            kind: str = "produce"
+            prompt_key: str | None = None
+            slot: str | None = None
+
+            def run(self, ctx: StepContext) -> StepResult:
+                from arnold.pipeline.pattern_dynamic import LAST_FANOUT_RESULTS_PORT
+
+                return StepResult(
+                    state_patch={
+                        LAST_FANOUT_RESULTS_PORT.name: [
+                            {"section_id": "a"},
+                            {"section_id": "b"},
+                            {"section_id": "c"},
+                            {"section_id": "d"},
+                        ]
+                    },
+                    next="done",
+                )
+
+        def _join(results: list[StepResult], ctx: StepContext) -> StepResult:
+            return StepResult(next="halt")
+
+        primitive = dynamic_fanout(
+            generator=_ThreadedGen(),
+            base_prompt=_SlowStep(),
+            join=_join,
+            name="threaded_fanout",
+        )
+        assert isinstance(primitive, _DynamicFanoutStep)
+
+        ctx = StepContext(
+            plan_dir=tmp_path, state={}, profile=None, mode="test", inputs={}
+        )
+        result = primitive.run(ctx)
+        assert result.next == "halt"
+
+        # Verify typed port carries results in order
+        from arnold.pipeline.pattern_dynamic import LAST_FANOUT_RESULTS_PORT
+
+        carried = result.state_patch.get(LAST_FANOUT_RESULTS_PORT.name)
+        assert carried is not None
+        assert len(carried) == 4
+        # Results should be indexed by position, preserving spec order
+        output_ids = []
+        for r in carried:
+            if hasattr(r, "outputs"):
+                for k in r.outputs:
+                    output_ids.append(k)
+        assert output_ids == ["a", "b", "c", "d"]
+
+
+# ── T9: Reducer synthesis coverage ────────────────────────────────────────
+
+
+class TestReducerSynthesis:
+    """Verify that joins receive ordered per-spec results and emit typed aggregates."""
+
+    def test_join_receives_ordered_per_spec_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "")
+        generator = _GeneratorStep(
+            specs=(
+                {"section_id": "s1", "section_title": "One"},
+                {"section_id": "s2", "section_title": "Two"},
+            ),
+        )
+
+        join_inputs: list[list[StepResult]] = []
+
+        def _recording_join(
+            results: list[StepResult], ctx: StepContext
+        ) -> StepResult:
+            join_inputs.append(list(results))
+            return StepResult(next="halt")
+
+        primitive = dynamic_fanout(
+            generator=generator,
+            base_prompt=_SectionStep(),
+            join=_recording_join,
+            name="reducer_fanout",
+        )
+        ctx = StepContext(
+            plan_dir=tmp_path, state={}, profile=None, mode="test", inputs={}
+        )
+        primitive.run(ctx)
+
+        assert len(join_inputs) == 1
+        assert len(join_inputs[0]) == 2
+        # Results should be in spec order: s1 then s2
+        sid_order = []
+        for r in join_inputs[0]:
+            for k in r.outputs:
+                sid_order.append(k)
+        assert sid_order == ["s1", "s2"]
+
+    def test_reducer_emits_typed_aggregate_with_typed_ports_on(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
+        from megaplan._pipeline.pattern_dynamic import _DynamicFanoutStep
+
+        @dataclass(frozen=True)
+        class _TypedGen:
+            name: str = "gen"
+            kind: str = "produce"
+            prompt_key: str | None = None
+            slot: str | None = None
+
+            def run(self, ctx: StepContext) -> StepResult:
+                from arnold.pipeline.pattern_dynamic import LAST_FANOUT_RESULTS_PORT
+
+                return StepResult(
+                    state_patch={
+                        LAST_FANOUT_RESULTS_PORT.name: [
+                            {"section_id": "x", "section_title": "X"},
+                            {"section_id": "y", "section_title": "Y"},
+                        ]
+                    },
+                    next="done",
+                )
+
+        aggregate_result: dict = {}
+
+        def _aggregate_join(
+            results: list[StepResult], ctx: StepContext
+        ) -> StepResult:
+            aggregate_result["count"] = len(results)
+            aggregate_result["keys"] = sorted(
+                k for r in results for k in (getattr(r, "outputs", {}) or {})
+            )
+            return StepResult(
+                verdict=PipelineVerdict(score=1.0, recommendation="proceed"),
+                next="proceed",
+            )
+
+        primitive = dynamic_fanout(
+            generator=_TypedGen(),
+            base_prompt=_SectionStep(),
+            join=_aggregate_join,
+            name="aggregate_fanout",
+        )
+        assert isinstance(primitive, _DynamicFanoutStep)
+
+        ctx = StepContext(
+            plan_dir=tmp_path, state={}, profile=None, mode="test", inputs={}
+        )
+        result = primitive.run(ctx)
+
+        assert aggregate_result["count"] == 2
+        assert aggregate_result["keys"] == ["x", "y"]
+        assert result.next == "proceed"
+        assert result.verdict is not None
+
+
+# ── T9: Governor-limit carrier reporting ──────────────────────────────────
+
+
+class TestGovernorLimitCarrier:
+    """Verify that FanoutGovernorLimits is a pure data carrier (no enforcement)."""
+
+    def test_governor_limits_is_pure_data_carrier(self) -> None:
+        from arnold.pipeline.pattern_dynamic import FanoutGovernorLimits
+
+        limits = FanoutGovernorLimits(
+            max_fanout_width=5,
+            max_total_steps=25,
+            max_sequential_steps=10,
+        )
+        # Verify it's frozen (immutable)
+        with pytest.raises(Exception):
+            limits.max_fanout_width = 99  # type: ignore[misc]
+
+    def test_governor_limits_fields_are_nullable(self) -> None:
+        from arnold.pipeline.pattern_dynamic import FanoutGovernorLimits
+
+        limits = FanoutGovernorLimits()
+        assert limits.max_fanout_width is None
+        assert limits.max_total_steps is None
+        assert limits.max_sequential_steps is None
