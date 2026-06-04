@@ -701,6 +701,7 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "return json" in prompt_text
     assert "Output format:" in prompt_text
+    assert env["MEGAPLAN_SHANNON_PROMPT_FILE"] == str(prompt_file.resolve())
     ledger_path = run_dir / "tmux_session.json"
     assert ledger_path.is_relative_to(run_dir)
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
@@ -1603,8 +1604,8 @@ def test_run_shannon_step_read_only_uses_tool_restrictions_without_bypass_flags(
     assert result.payload == payload
 
 
-def test_vendored_shannon_current_launch_and_paste_contracts() -> None:
-    """Pin wrapper-owned native launch and stdin-backed paste before hardening."""
+def test_vendored_shannon_current_launch_and_file_reference_contracts() -> None:
+    """Pin wrapper-owned native launch and file-reference prompt submission."""
     from megaplan.workers.shannon import VENDORED_SHANNON_PATH
 
     src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
@@ -1616,17 +1617,28 @@ def test_vendored_shannon_current_launch_and_paste_contracts() -> None:
     assert '"tmux",\n      "new-session",' in src
     assert "...claudeLaunchArgs," in src
     # The user prompt is not threaded into the inner Claude argv; sendPrompt
-    # waits for readiness and delivers prompt bytes through tmux paste instead.
+    # waits for readiness and delivers the prepared submission through tmux.
     launch_block = src[src.index("const claudeLaunchArgs = [") : src.index("void maybeSendStartupEnterKeys")]
     assert "options.prompt" not in launch_block
     assert "prompt" not in launch_block
     assert "await waitUntilReadyToSend(tmuxSession);" in src
-    assert "await sendPrompt(tmuxSession, prompt);" in src
+    assert "await sendPrompt(tmuxSession, submission.submittedPrompt);" in src
 
-    # Long/main prompt delivery stays stdin-backed with an opaque tmux buffer:
-    # load-buffer reads from "-", prompt bytes are written to stdin, then
-    # paste-buffer -p and Enter submit. The temporary buffer is cleaned up
-    # without naming the worker/session/cwd in tmux global buffer state.
+    # Long/main prompt delivery writes or reuses a prompt file, then submits a
+    # tiny file-read instruction through tmux. This avoids pasting the full
+    # phase prompt into the pane under load (ticket 01KT7NAQYG).
+    assert "preparePromptSubmission(prompt, options.cwd)" in src
+    assert "fileReferenceInstruction(promptPath)" in src
+    assert "MEGAPLAN_SHANNON_PROMPT_FILE" in src
+    assert "Read the file at ${JSON.stringify(promptPath)} in full" in src
+    assert "submission.submittedPrompt" in src
+    assert "submission.transcriptPrompt" in src
+    assert "rowContainsPromptAfter(row, prompt, promptSentAt" in src
+    assert "await waitForAssistantReply(" in src
+
+    # The tmux implementation still uses an opaque temporary buffer for the
+    # short submitted instruction and cleans it up without naming the worker,
+    # session, or cwd in tmux global buffer state.
     assert "const _mpBuf = randomUUID();" in src
     assert "const _mpBuf = `shannon-${tmuxSession}`;" not in src
     assert 'Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"]' in src
@@ -1638,8 +1650,7 @@ def test_vendored_shannon_current_launch_and_paste_contracts() -> None:
 
     # Optional short-turn typing is a narrow env-gated branch: by default the
     # threshold is zero, typed prompts must fit the threshold and contain no
-    # newline/control characters, and the branch uses tmux send-keys -l before
-    # falling through to the unchanged paste-buffer path for every other turn.
+    # newline/control characters, and the branch uses tmux send-keys -l.
     assert "const TYPE_PROMPT_MAX_CHARS = Number(Bun.env.SHANNON_TYPE_PROMPT_MAX_CHARS ?? 0);" in src
     assert "function canTypePromptLiterally(prompt: string)" in src
     assert "TYPE_PROMPT_MAX_CHARS > 0" in src
@@ -2488,6 +2499,8 @@ def test_native_prompt_handoff_delivers_prompt_via_stdin_by_default(
     assert msg["type"] == "user"
     assert "DO THE REAL TASK" in msg["message"]["content"]
     assert captured["env"]["MEGAPLAN_SHANNON_PASTE_FIRST_TURN"] == "1"
+    prompt_file = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon" / "plan_v1_shannon_prompt.txt"
+    assert captured["env"]["MEGAPLAN_SHANNON_PROMPT_FILE"] == str(prompt_file.resolve())
 
 
 def test_native_prompt_handoff_can_be_disabled_for_legacy_launcher(
@@ -2532,6 +2545,7 @@ def test_native_prompt_handoff_can_be_disabled_for_legacy_launcher(
     assert "--input-format=stream-json" not in command
     assert captured["stdin"] is None
     assert (captured["env"] or {}).get("MEGAPLAN_SHANNON_PASTE_FIRST_TURN") != "1"
+    assert "MEGAPLAN_SHANNON_PROMPT_FILE" not in (captured["env"] or {})
 
 
 def test_plan_session_seeded_reproducibility() -> None:
@@ -2813,6 +2827,21 @@ def test_run_turn_builds_resume_and_session_id_args(tmp_path: Path) -> None:
         "type": "user",
         "message": {"role": "user", "content": "the real prompt"},
     }
+
+    # (4) stdin + prompt_file → wrapper receives the staged file path to
+    # convert the full body into a short tmux file-reference instruction.
+    staged_prompt = ctx.run_dir / "execute_shannon_prompt.txt"
+    staged_prompt.parent.mkdir(parents=True, exist_ok=True)
+    staged_prompt.write_text("the real prompt", encoding="utf-8")
+    turn_file = Turn(
+        session_id="sid-file", resume=False, body="the real prompt",
+        delivery="stdin", expect="envelope", timeout=7200, pre_sleep_s=0.0,
+        prompt_file=staged_prompt,
+    )
+    with patch("megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(turn_file, ctx)
+    assert rc.call_args.kwargs["env"]["MEGAPLAN_SHANNON_PROMPT_FILE"] == str(staged_prompt.resolve())
+    assert "MEGAPLAN_SHANNON_PROMPT_FILE" not in ctx.env
 
 
 def test_run_turn_enables_typed_env_only_for_short_control_turns(tmp_path: Path) -> None:

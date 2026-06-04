@@ -587,6 +587,7 @@ class Turn:
     expect: str
     timeout: int
     pre_sleep_s: float
+    prompt_file: Path | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1030,9 +1031,18 @@ def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
         launch_command = command
 
     run_env = ctx.env
+    if turn.prompt_file is not None:
+        prompt_file = turn.prompt_file.resolve()
+        if not prompt_file.exists():
+            raise CliError(
+                "worker_error",
+                f"Shannon prompt file does not exist before launch: {prompt_file}",
+                extra={"prompt_file": str(prompt_file)},
+            )
+        run_env = {**run_env, "MEGAPLAN_SHANNON_PROMPT_FILE": str(prompt_file)}
     typed_env = _typed_control_prompt_env(turn)
     if typed_env is not None:
-        run_env = {**ctx.env, **typed_env}
+        run_env = {**run_env, **typed_env}
 
     try:
         result = run_command(
@@ -2206,6 +2216,7 @@ def run_shannon_step(
         plan.main,
         body=(prompt if paste_mode else launcher_prompt),
         delivery=("stdin" if paste_mode else "argv"),
+        prompt_file=(prompt_path if paste_mode else None),
     )
     print(
         f"[megaplan] shannon session strategy for {step}: {plan.kind} "
