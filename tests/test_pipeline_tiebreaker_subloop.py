@@ -9,7 +9,7 @@ the parent flow has to thread.
 
 from __future__ import annotations
 
-from megaplan._pipeline.stages.tiebreaker import (
+from arnold.pipelines.megaplan.stages.tiebreaker import (
     TiebreakerStep,
     _build_tiebreaker_child_pipeline,
     _promote_from_child_state,

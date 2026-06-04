@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from megaplan._core.state import write_plan_state
-from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 from megaplan._pipeline.types import StepContext
 
 

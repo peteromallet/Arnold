@@ -1,16 +1,25 @@
-"""Compile the canonical planning :class:`Pipeline`.
+"""Canonical Megaplan planning :class:`Pipeline` assembly.
 
-The planning pipeline is keyed by phase name:
+This module is the **single source of truth** for the Megaplan planning
+pipeline graph.  It imports stage implementations from the plugin-local
+``arnold.pipelines.megaplan.stages`` package and uses routing helpers
+from ``arnold.pipelines.megaplan.routing`` so every dependency stays
+inside the Arnold plugin boundary.
+
+Stage layout::
+
+    prep → plan → critique → gate
+                              ├─ proceed → finalize → execute → review → halt
+                              ├─ iterate → revise → critique  (loop)
+                              ├─ tiebreaker → tiebreaker → critique
+                              └─ escalate → (override edges)
+
+No feedback stage — exactly 9 stages:
 ``prep / plan / critique / gate / revise / finalize / execute / review /
-tiebreaker``. Gate recommendations are represented as typed
-``kind=\"gate\"`` edges on the ``gate`` stage. User-facing override
-command labels remain as normal fallback edges because the live gate
-handler still emits and reports those commands.
+tiebreaker``.
 """
 
 from __future__ import annotations
-
-import os
 
 from megaplan._pipeline.patterns import (
     critique_revise_gate_loop,
@@ -22,25 +31,20 @@ from megaplan._pipeline.types import (
     Stage,
 )
 
-
-def _discovered_planning_enabled() -> bool:
-    """Whether the planning compiler should route through the discovered package."""
-
-    return os.environ.get("MEGAPLAN_M6_DISCOVERED_PLANNING", "1") == "1"
-
-
-def compile_planning_pipeline() -> Pipeline:
-    """Return the canonical, runnable planning :class:`Pipeline`."""
-
-    if _discovered_planning_enabled():
-        from arnold.pipelines.megaplan import build_pipeline
-
-        return build_pipeline()
-    return _compile_legacy_planning_pipeline()
+# ── Local stage imports ──────────────────────────────────────────────────
+from arnold.pipelines.megaplan.stages.prep import PrepStep
+from arnold.pipelines.megaplan.stages.plan import PlanStep
+from arnold.pipelines.megaplan.stages.critique import CritiqueStep
+from arnold.pipelines.megaplan.stages.gate import GateStep
+from arnold.pipelines.megaplan.stages.revise import ReviseStep
+from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
+from arnold.pipelines.megaplan.stages.execute import ExecuteStep
+from arnold.pipelines.megaplan.stages.review import ReviewStep
+from arnold.pipelines.megaplan.stages.tiebreaker import TiebreakerStep
 
 
-def _compile_legacy_planning_pipeline() -> Pipeline:
-    """Return the legacy planning compiler body.
+def build_pipeline() -> Pipeline:
+    """Return the canonical Megaplan planning :class:`Pipeline`.
 
     Sprint 5 Chunk A: this is the only canonical compile target. Stage
     keys are phase names (``prep / plan / critique / gate / revise /
@@ -56,16 +60,6 @@ def _compile_legacy_planning_pipeline() -> Pipeline:
                                   ├─ tiebreaker → tiebreaker → critique
                                   └─ escalate → (override edges)
     """
-
-    from arnold.pipelines.megaplan.stages.prep import PrepStep
-    from arnold.pipelines.megaplan.stages.plan import PlanStep
-    from arnold.pipelines.megaplan.stages.critique import CritiqueStep
-    from arnold.pipelines.megaplan.stages.gate import GateStep
-    from arnold.pipelines.megaplan.stages.revise import ReviseStep
-    from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
-    from arnold.pipelines.megaplan.stages.execute import ExecuteStep
-    from arnold.pipelines.megaplan.stages.review import ReviewStep
-    from arnold.pipelines.megaplan.stages.tiebreaker import TiebreakerStep
 
     # Phase 0: prep gate via patterns.phase_zero_gate.
     prep_stage = phase_zero_gate(
@@ -138,3 +132,8 @@ def _compile_legacy_planning_pipeline() -> Pipeline:
         ),
     }
     return Pipeline(stages=stages, entry="prep")
+
+
+# Backwards-compatible alias so callers importing ``compile_planning_pipeline``
+# from this package get the canonical implementation directly.
+compile_planning_pipeline = build_pipeline

@@ -34,7 +34,7 @@ import megaplan
 from megaplan._pipeline.executor import run_pipeline_with_policy
 from megaplan._pipeline.planning import compile_planning_pipeline
 from megaplan._pipeline.runtime import policy_from_cli_args
-from megaplan._pipeline.stages.inprocess_step import (
+from arnold.pipelines.megaplan.stages.inprocess_step import (
     build_inprocess_planning_steps,
     build_revise_step,
     build_review_step,

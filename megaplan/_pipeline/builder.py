@@ -192,7 +192,7 @@ class PipelineBuilder(_BasePipelineBuilder):
 
         Delegates to :func:`~megaplan.pipelines.planning.routing.planning_gate_edges`
         so edge construction stays in one place."""
-        from megaplan.pipelines.planning.routing import planning_gate_edges
+        from arnold.pipelines.megaplan.routing import planning_gate_edges
 
         gate_edges = planning_gate_edges(
             on_proceed=on_proceed,
@@ -281,8 +281,8 @@ class PipelineBuilder(_BasePipelineBuilder):
         so edge construction stays in one place."""
         # Imported lazily to avoid a hard handlers-package dependency at
         # builder import time.
-        from megaplan._pipeline.stages.tiebreaker import TiebreakerStep
-        from megaplan.pipelines.planning.routing import tiebreaker_edges
+        from arnold.pipelines.megaplan.stages.tiebreaker import TiebreakerStep
+        from arnold.pipelines.megaplan.routing import tiebreaker_edges
 
         step = TiebreakerStep(name=name)
         tb_edges = tiebreaker_edges(

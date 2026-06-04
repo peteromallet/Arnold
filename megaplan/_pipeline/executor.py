@@ -179,7 +179,7 @@ def _is_safe_for_parallel(parallel_stage: ParallelStage) -> bool:
     are safe: they call worker functions that write to per-reviewer output
     directories and do not touch shared state.
     """
-    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+    from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
     return not any(
         isinstance(step, InProcessHandlerStep) for step in parallel_stage.steps
@@ -197,7 +197,7 @@ def _run_parallel_stage(node: ParallelStage, ctx: StepContext) -> StepResult:
     * Results are collected in declaration order (not completion order)
       and joined via ``node.join(results, ctx)``.
     """
-    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+    from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
     # Guard: reject InProcessHandlerStep before any handler executes.
     for step in node.steps:

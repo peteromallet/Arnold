@@ -29,23 +29,20 @@ This package is the canonical discovered ``megaplan`` pipeline.
 Its physical package path remains ``megaplan.pipelines.planning`` so the
 legacy ``planning`` import path keeps working while registry discovery
 publishes the canonical ``megaplan`` identity.
-``build_pipeline()`` owns the full stage wiring; ``megaplan._pipeline.planning``
-is a thin shim that re-exports ``compile_planning_pipeline`` for backwards
-compatibility.
+
+As of M4, this module is a thin compatibility facade — the canonical
+implementation lives in ``arnold.pipelines.megaplan``.
 """
 
 from __future__ import annotations
 
-from megaplan._pipeline.patterns import (
-    critique_revise_gate_loop,
-    phase_zero_gate,
+# ── Re-export the canonical implementation from the Arnold plugin ──────
+from arnold.pipelines.megaplan import (  # noqa: E402, F401
+    build_pipeline,
+    compile_planning_pipeline,
+    operation_registry,
+    override_catalog,
 )
-from megaplan._pipeline.types import (
-    Edge,
-    Pipeline,
-    Stage,
-)
-
 
 # ── Module-level metadata surfaced via PipelineRegistry ────────────────
 
@@ -62,127 +59,6 @@ driver: tuple[str, str] = ("subprocess_isolated", "graph+loop-node")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("plan", "execute", "review")
-
-
-# ── Pipeline assembly ──────────────────────────────────────────────────
-
-
-def build_pipeline(**kwargs) -> Pipeline:  # type: ignore[no-untyped-def]
-    """Return the canonical megaplan :class:`Pipeline`.
-
-    Sprint 5 Chunk A: this is the only canonical compile target. Stage
-    keys are phase names (``prep / plan / critique / gate / revise /
-    finalize / execute / review / tiebreaker``); the gate Step's
-    recommendation edges sit directly on the ``gate`` stage so the
-    executor's typed-verdict dispatch resolves cleanly.
-
-    Stage layout::
-
-        prep → plan → critique → gate
-                                  ├─ proceed → finalize → execute → review → halt
-                                  ├─ iterate → revise → critique  (loop)
-                                  ├─ tiebreaker → tiebreaker → critique
-                                  └─ escalate → (override edges)
-    """
-
-    from megaplan._pipeline.stages.prep import PrepStep
-    from megaplan._pipeline.stages.plan import PlanStep
-    from megaplan._pipeline.stages.critique import CritiqueStep
-    from megaplan._pipeline.stages.gate import GateStep
-    from megaplan._pipeline.stages.revise import ReviseStep
-    from megaplan._pipeline.stages.finalize import FinalizeStep
-    from megaplan._pipeline.stages.execute import ExecuteStep
-    from megaplan._pipeline.stages.review import ReviewStep
-    from megaplan._pipeline.stages.tiebreaker import TiebreakerStep
-
-    # Phase 0: prep gate via patterns.phase_zero_gate.
-    prep_stage = phase_zero_gate(
-        PrepStep(),
-        name="prep",
-        on_pass="plan",
-        on_fail="halt",
-    )
-
-    # critique → gate → revise cycle assembled via the pattern library.
-    # gate_extra_edges carry the non-recommendation fallback/override
-    # labels that the live gate handler reports; critique_fallback_edges
-    # carry the label-fallback edges the existing CritiqueStep emits.
-    cycle = critique_revise_gate_loop(
-        CritiqueStep(),
-        GateStep(),
-        ReviseStep(),
-        on_proceed="finalize",
-        on_iterate="revise",
-        on_tiebreaker="tiebreaker",
-        on_escalate="finalize",
-        critique_fallback_edges=(
-            Edge(label="gate_unset:gate", target="gate"),
-            Edge(label="gate", target="gate"),
-        ),
-        gate_extra_edges=(
-            Edge(label="revise", target="revise"),
-            Edge(label="gate", target="finalize"),
-            Edge(label="override force-proceed", target="finalize"),
-            Edge(label="override abort", target="halt"),
-        ),
-        revise_target="critique",
-    )
-
-    stages: dict[str, Stage] = {
-        "prep": prep_stage,
-        "plan": Stage(
-            name="plan", step=PlanStep(),
-            edges=(Edge(label="critique", target="critique"),),
-        ),
-        "critique": cycle["critique"],
-        "gate": cycle["gate"],
-        "revise": cycle["revise"],
-        "finalize": Stage(
-            name="finalize", step=FinalizeStep(),
-            edges=(Edge(label="execute", target="execute"),),
-        ),
-        "execute": Stage(
-            name="execute", step=ExecuteStep(),
-            edges=(Edge(label="review", target="review"),),
-        ),
-        "review": Stage(
-            name="review", step=ReviewStep(),
-            edges=(Edge(label="review", target="halt"),
-                   Edge(label="halt", target="halt")),
-        ),
-        # T11 LOAD-BEARING: TiebreakerStep is a SubloopStep that emits a
-        # PipelineVerdict with a typed recommendation. The three kind='decision' edges
-        # below replace the legacy label-only edges; the legacy 'escalate
-        # folds into the finalize branch' semantics are preserved via
-        # escalate→finalize (anti-scope: no new pipeline branches this
-        # sprint).
-        "tiebreaker": Stage(
-            name="tiebreaker", step=TiebreakerStep(),
-            edges=(
-                Edge(label="iterate", target="critique", kind="decision"),
-                Edge(label="proceed", target="finalize", kind="decision"),
-                Edge(label="escalate", target="finalize", kind="decision"),
-            ),
-        ),
-    }
-    return Pipeline(stages=stages, entry="prep")
-
-
-# Backwards-compatible alias: callers importing compile_planning_pipeline
-# from this package get the canonical implementation directly.
-compile_planning_pipeline = build_pipeline
-
-
-def operation_registry():
-    from .operations import operation_registry as _operation_registry
-
-    return _operation_registry()
-
-
-def override_catalog():
-    from .operations import override_catalog as _override_catalog
-
-    return _override_catalog()
 
 
 __all__ = [

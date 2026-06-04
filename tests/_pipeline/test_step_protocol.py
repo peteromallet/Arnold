@@ -18,16 +18,16 @@ def _step_classes():
         _PanelFromArtifactStep,
         _DynamicFanoutStep,
     )
-    from megaplan._pipeline.stages.critique import CritiqueStep
-    from megaplan._pipeline.stages.revise import ReviseStep
-    from megaplan._pipeline.stages.gate import GateStep
-    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
-    from megaplan._pipeline.stages.tiebreaker import TiebreakerStep
-    from megaplan._pipeline.stages.plan import PlanStep
-    from megaplan._pipeline.stages.prep import PrepStep
-    from megaplan._pipeline.stages.execute import ExecuteStep
-    from megaplan._pipeline.stages.finalize import FinalizeStep
-    from megaplan._pipeline.stages.review import ReviewStep
+    from arnold.pipelines.megaplan.stages.critique import CritiqueStep
+    from arnold.pipelines.megaplan.stages.revise import ReviseStep
+    from arnold.pipelines.megaplan.stages.gate import GateStep
+    from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
+    from arnold.pipelines.megaplan.stages.tiebreaker import TiebreakerStep
+    from arnold.pipelines.megaplan.stages.plan import PlanStep
+    from arnold.pipelines.megaplan.stages.prep import PrepStep
+    from arnold.pipelines.megaplan.stages.execute import ExecuteStep
+    from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
+    from arnold.pipelines.megaplan.stages.review import ReviewStep
     from megaplan._pipeline.demo_judges import (
         JudgeClarity,
         JudgeConcreteness,

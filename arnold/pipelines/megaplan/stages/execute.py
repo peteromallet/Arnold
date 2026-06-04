@@ -10,7 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+from arnold.pipelines.megaplan.handlers import handle_execute
+from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 from megaplan._pipeline.types import StepContext, StepResult
 
 
@@ -27,17 +28,13 @@ class ExecuteStep:
     prompt_key: str | None = "execute"
     slot: str | None = "execute"
     arg_overrides: Mapping[str, Any] = field(default_factory=lambda: dict(_DEFAULTS))
-    produces: tuple = field(default_factory=tuple)
-    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
-        import megaplan
-
         merged = {**_DEFAULTS, **self.arg_overrides}
         return InProcessHandlerStep(
             name=self.name,
             kind=self.kind,
-            handler=megaplan.handle_execute,
+            handler=handle_execute,
             prompt_key=self.prompt_key,
             slot=self.slot,
             arg_overrides=merged,

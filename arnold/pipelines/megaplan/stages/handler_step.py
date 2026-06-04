@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
 
 def build_planning_steps() -> dict[str, Any]:
@@ -23,13 +23,16 @@ def build_planning_steps() -> dict[str, Any]:
     Sprint 5 Chunk A.
     """
 
-    import megaplan
-    from megaplan._pipeline.stages.prep import PrepStep
-    from megaplan._pipeline.stages.plan import PlanStep
-    from megaplan._pipeline.stages.critique import CritiqueStep
-    from megaplan._pipeline.stages.gate import GateStep
-    from megaplan._pipeline.stages.finalize import FinalizeStep
-    from megaplan._pipeline.stages.execute import ExecuteStep
+    from arnold.pipelines.megaplan.handlers.tiebreaker import (
+        handle_tiebreaker_run,
+        handle_tiebreaker_decide,
+    )
+    from arnold.pipelines.megaplan.stages.prep import PrepStep
+    from arnold.pipelines.megaplan.stages.plan import PlanStep
+    from arnold.pipelines.megaplan.stages.critique import CritiqueStep
+    from arnold.pipelines.megaplan.stages.gate import GateStep
+    from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
+    from arnold.pipelines.megaplan.stages.execute import ExecuteStep
 
     return {
         "prepped": PrepStep(),
@@ -42,12 +45,12 @@ def build_planning_steps() -> dict[str, Any]:
             name="tiebreaker_run",
             kind="subloop",
             slot="tiebreaker_researcher",
-            handler=megaplan.handlers.tiebreaker.handle_tiebreaker_run,
+            handler=handle_tiebreaker_run,
         ),
         "tiebreaker_ready": InProcessHandlerStep(
             name="tiebreaker_decide",
             kind="subloop",
             slot="tiebreaker_challenger",
-            handler=megaplan.handlers.tiebreaker.handle_tiebreaker_decide,
+            handler=handle_tiebreaker_decide,
         ),
     }
