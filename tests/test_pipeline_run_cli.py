@@ -396,6 +396,7 @@ def test_run_pipeline_injects_pipeline_context_without_persisting_internal_input
 ) -> None:
     from megaplan._pipeline import executor as executor_module
     from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline import registry as registry_module
     from megaplan._pipeline.run_cli import cli_run
 
     captured = {}
@@ -409,6 +410,15 @@ def test_run_pipeline_injects_pipeline_context_without_persisting_internal_input
         preflight_module,
         "preflight_or_raise",
         lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "pipeline_metadata",
+        lambda name: {
+            "supported_modes": ("plan",),
+            "default_profile": None,
+            "manifest_hash": "sha256:test-manifest",
+        },
     )
     monkeypatch.setattr(executor_module, "run_pipeline", fake_run_pipeline)
 
@@ -584,6 +594,15 @@ def test_run_uses_profile_validate_operation_when_advertised(
         "supported_operations_for",
         lambda name: frozenset({OperationKind.PROFILE_VALIDATE}),
     )
+    monkeypatch.setattr(
+        registry_module,
+        "pipeline_metadata",
+        lambda name: {
+            "supported_modes": ("plan",),
+            "default_profile": None,
+            "manifest_hash": "sha256:test-manifest",
+        },
+    )
 
     def fake_dispatch(plugin_id, request):  # noqa: ANN001
         calls.append((plugin_id, request))
@@ -633,6 +652,15 @@ def test_run_preserves_generic_preflight_fallback_when_profile_validate_not_adve
     monkeypatch.setattr(registry_module, "supported_operations_for", lambda name: frozenset())
     monkeypatch.setattr(
         registry_module,
+        "pipeline_metadata",
+        lambda name: {
+            "supported_modes": ("plan",),
+            "default_profile": None,
+            "manifest_hash": "sha256:test-manifest",
+        },
+    )
+    monkeypatch.setattr(
+        registry_module,
         "dispatch_operation_for",
         lambda plugin_id, request: (_ for _ in ()).throw(
             AssertionError("PROFILE_VALIDATE dispatch should not run")
@@ -657,6 +685,94 @@ def test_run_preserves_generic_preflight_fallback_when_profile_validate_not_adve
     assert rc == 0
     assert calls
     assert calls[0]["pipeline_name"] == "megaplan"
+
+
+def test_run_loads_non_megaplan_profiles_via_arnold_loader_without_megaplan_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import arnold.pipeline.profiles as arnold_profiles_module
+    from megaplan._pipeline import executor as executor_module
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline import registry as registry_module
+    from megaplan._pipeline import run_cli as run_cli_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    loaded_calls: list[dict[str, object]] = []
+    resolve_calls: list[dict[str, object]] = []
+    profiles = {"standard": {"panel_review": "claude:low", "revise": "claude:medium"}}
+    metadata = {"standard": {"default": True}}
+
+    monkeypatch.setattr(
+        preflight_module,
+        "preflight_or_raise",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("Megaplan preflight fallback should not run for non-Megaplan pipelines")
+        ),
+    )
+    monkeypatch.setattr(registry_module, "supported_operations_for", lambda name: frozenset())
+    monkeypatch.setattr(
+        registry_module,
+        "dispatch_operation_for",
+        lambda plugin_id, request: (_ for _ in ()).throw(
+            AssertionError("PROFILE_VALIDATE dispatch should not run when not advertised")
+        ),
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "pipeline_metadata",
+        lambda name: {
+            "supported_modes": ("polish",),
+            "default_profile": "@writing-panel-strict:standard",
+            "manifest_hash": "sha256:test-manifest",
+            "source_path": str(tmp_path / "writing_panel_strict.py"),
+        },
+    )
+
+    def fake_load_profiles(**kwargs):  # noqa: ANN003
+        loaded_calls.append(dict(kwargs))
+        return dict(profiles)
+
+    def fake_load_profile_metadata(**kwargs):  # noqa: ANN003
+        return dict(metadata)
+
+    def fake_resolve_default_profile(profile_map, **kwargs):  # noqa: ANN001, ANN003
+        resolve_calls.append({"profile_map": dict(profile_map), **kwargs})
+        return "standard", dict(profile_map["standard"])
+
+    monkeypatch.setattr(arnold_profiles_module, "load_profiles", fake_load_profiles)
+    monkeypatch.setattr(arnold_profiles_module, "load_profile_metadata", fake_load_profile_metadata)
+    monkeypatch.setattr(arnold_profiles_module, "resolve_default_profile", fake_resolve_default_profile)
+    monkeypatch.setattr(
+        executor_module,
+        "run_pipeline",
+        lambda pipeline, ctx, *, artifact_root: {
+            "final_stage": getattr(pipeline, "entry", "panel_review"),
+            "state": dict(ctx.state),
+            "profile": dict(ctx.profile),
+        },
+    )
+    monkeypatch.setattr(
+        run_cli_module,
+        "_build_pipeline_for_run",
+        lambda args: SimpleNamespace(
+            entry="panel_review",
+            stages={"panel_review": object(), "revise": object(), "human_decide": object()},
+        ),
+    )
+
+    rc = cli_run(
+        _run_args(pipeline_name="writing-panel-strict", plan_dir=tmp_path / "arnold-profile-load")
+    )
+
+    assert rc == 0
+    assert loaded_calls
+    assert loaded_calls[0]["declared_stage_keys"] == frozenset(
+        {"panel_review", "revise", "human_decide"}
+    )
+    assert loaded_calls[0]["metadata_keys"] == frozenset({"default", "extends"})
+    assert resolve_calls
+    assert resolve_calls[0]["default_name"] == "standard"
 
 
 def test_cli_run_list_includes_epic_blitz(capsys) -> None:

@@ -24,7 +24,7 @@ from megaplan._core.workflow import (
     _transition_matches,
     _workflow_for_robustness,
 )
-from megaplan.types import CANONICAL_PLAN_STATES
+from megaplan.planning.state import CANONICAL_PLAN_STATES
 
 FIXTURE_PATH = ROOT / "tests" / "parity" / "fixtures" / "workflow_next_matrix.json"
 LABEL = "control-flow parity, NOT drift-provably-zero"

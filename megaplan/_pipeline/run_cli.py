@@ -178,8 +178,6 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     from megaplan._pipeline.types import StepContext
     from megaplan.profiles import (
         apply_vendor_rewrite,
-        load_profile_metadata,
-        load_profiles,
         resolve_pipeline_profile,
     )
 
@@ -211,17 +209,16 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         _print_cli_error(error)
         return error.exit_code
 
-    # Profile resolution (4-layer order).
     cli_profile = getattr(args, "profile", None)
-    system_profiles = load_profiles()
-    system_metadata = load_profile_metadata()
     try:
-        resolved_profile = resolve_pipeline_profile(
-            cli_profile,
+        pipeline = pipeline or _build_pipeline_for_run(args)
+        resolved_profile = _resolve_profile_for_run(
             pipeline_name=pipeline_name,
-            system_profiles=system_profiles,
-            system_metadata=system_metadata,
+            metadata=metadata,
+            pipeline=pipeline,
+            cli_profile=cli_profile,
             default_profile=default_profile,
+            megaplan_resolver=resolve_pipeline_profile,
         )
     except Exception as exc:  # noqa: BLE001 — surface as CLI error
         print(f"Error resolving profile: {exc}", file=sys.stderr)
@@ -404,6 +401,125 @@ def _validate_run_parameters(args: argparse.Namespace) -> None:
             )
 
 
+def _resolve_profile_for_run(
+    *,
+    pipeline_name: str,
+    metadata: dict[str, Any],
+    pipeline: Any,
+    cli_profile: str | None,
+    default_profile: str | None,
+    megaplan_resolver: Any,
+) -> dict[str, str]:
+    from arnold.pipeline.profiles import (
+        ProfileLoadError,
+        load_profile_metadata,
+        load_profiles,
+        resolve_default_profile,
+    )
+    from megaplan._pipeline.registry import canonical_pipeline_name
+
+    if canonical_pipeline_name(pipeline_name) == "megaplan":
+        return megaplan_resolver(
+            cli_profile,
+            pipeline_name=pipeline_name,
+            default_profile=default_profile,
+        )
+
+    declared_stage_keys = frozenset(str(name) for name in getattr(pipeline, "stages", {}).keys())
+    if not declared_stage_keys:
+        return {}
+
+    built_in_paths = _pipeline_profile_paths(pipeline_name, metadata)
+    profiles = load_profiles(
+        built_in_paths=built_in_paths,
+        declared_stage_keys=declared_stage_keys,
+        metadata_keys=frozenset({"default", "extends"}),
+    )
+    if not profiles:
+        if cli_profile or default_profile:
+            requested = cli_profile or default_profile or ""
+            raise ProfileLoadError(
+                "unknown_profile",
+                f"Pipeline '{pipeline_name}' does not define any local profiles for {requested!r}.",
+            )
+        return {}
+
+    metadata_map = load_profile_metadata(
+        built_in_paths=built_in_paths,
+        declared_stage_keys=declared_stage_keys,
+        metadata_keys=frozenset({"default", "extends"}),
+    )
+    profile_name = _selected_pipeline_profile_name(
+        cli_profile or default_profile,
+        pipeline_name=pipeline_name,
+    )
+    _resolved_name, stage_map = resolve_default_profile(
+        profiles,
+        metadata=metadata_map,
+        default_name=profile_name,
+    )
+    return stage_map
+
+
+def _selected_pipeline_profile_name(
+    profile_ref: str | None,
+    *,
+    pipeline_name: str,
+) -> str | None:
+    from arnold.pipeline.profiles import ProfileLoadError
+
+    if not profile_ref:
+        return None
+    if not profile_ref.startswith("@"):
+        return profile_ref
+
+    reference = profile_ref[1:]
+    if ":" not in reference:
+        return reference or None
+
+    ref_pipeline, ref_profile = reference.split(":", 1)
+    if ref_pipeline and ref_pipeline != pipeline_name:
+        raise ProfileLoadError(
+            "unknown_profile",
+            f"Profile {profile_ref!r} targets pipeline '{ref_pipeline}', "
+            f"but run_cli only loads local profiles for '{pipeline_name}'.",
+        )
+    return ref_profile or None
+
+
+def _pipeline_profile_paths(pipeline_name: str, metadata: dict[str, Any]) -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    source_path = metadata.get("source_path")
+    if isinstance(source_path, str) and source_path:
+        source = Path(source_path)
+        profile_dirs = []
+        if source.name == "__init__.py":
+            profile_dirs.append(source.parent / "profiles")
+        profile_dirs.extend(
+            (
+                source.parent / pipeline_name / "profiles",
+                source.parent / source.stem.replace("_", "-") / "profiles",
+            )
+        )
+        for profile_dir in profile_dirs:
+            if profile_dir.is_dir():
+                candidates.extend(sorted(profile_dir.glob("*.toml")))
+
+    home_dir = Path.home() / ".megaplan" / "pipelines" / pipeline_name / "profiles"
+    if home_dir.is_dir():
+        candidates.extend(sorted(home_dir.glob("*.toml")))
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(candidate)
+    return tuple(deduped)
+
+
 def _validate_profile_for_run(
     *,
     pipeline_name: str,
@@ -413,6 +529,7 @@ def _validate_profile_for_run(
     from arnold.runtime.operations import OperationKind, OperationRequest
     from megaplan._pipeline import preflight as preflight_module
     from megaplan._pipeline.registry import (
+        canonical_pipeline_name,
         dispatch_operation_for,
         supported_operations_for,
     )
@@ -436,6 +553,9 @@ def _validate_profile_for_run(
         if isinstance(exit_code, int):
             return exit_code
         return 1
+
+    if canonical_pipeline_name(pipeline_name) != "megaplan":
+        return None
 
     try:
         preflight_module.preflight_or_raise(

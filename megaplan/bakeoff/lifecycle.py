@@ -18,7 +18,8 @@ from megaplan.bakeoff.state import (
     save_bakeoff_state,
 )
 from megaplan.bakeoff.worktree import mark_crashed, remove_worktree
-from megaplan.types import AUTOMATION_TERMINAL_STATES, CliError
+from megaplan.types import CliError
+from megaplan.planning.state import AUTOMATION_TERMINAL_STATES
 
 
 def resume_bakeoff(root: Path, exp_id: str) -> int:

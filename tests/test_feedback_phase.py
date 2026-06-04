@@ -771,7 +771,7 @@ class TestRouting:
 
     def test_default_agent_routing_has_feedback(self) -> None:
         """DEFAULT_AGENT_ROUTING includes 'feedback' key."""
-        from megaplan.types import DEFAULT_AGENT_ROUTING
+        from megaplan.profiles import DEFAULT_AGENT_ROUTING
         assert "feedback" in DEFAULT_AGENT_ROUTING
         assert DEFAULT_AGENT_ROUTING["feedback"] == "claude:low"
 

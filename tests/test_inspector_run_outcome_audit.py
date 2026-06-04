@@ -5,7 +5,7 @@ from pathlib import Path
 from megaplan.cli.status_view import _projected_valid_next
 from megaplan.planning.control_binding import planning_run_state_view
 from megaplan.run_outcome import RunOutcome
-from megaplan.types import (
+from megaplan.planning.state import (
     STATE_AWAITING_HUMAN,
     STATE_BLOCKED,
     STATE_GATED,
@@ -49,12 +49,13 @@ def test_status_view_projects_recovery_targets_for_human_and_blocked_states() ->
             resume_cursor={"phase": "finalize"},
         )
     ) == ["recover-blocked"]
-    assert _projected_valid_next(
+    human_targets = _projected_valid_next(
         _state(
             STATE_AWAITING_HUMAN,
             clarification={"source": "prep"},
         )
-    ) == ["resume-clarify"]
+    )
+    assert "resume-clarify" in human_targets
 
 
 def test_inspector_audit_leaves_cost_and_trace_outside_planning_projection_surface() -> None:

@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import KNOWN_AGENTS
+from megaplan.profiles import KNOWN_AGENTS
 from megaplan._core import (
     atomic_write_json,
     atomic_write_text,
@@ -310,7 +310,7 @@ def run_tiebreaker_cli(root: Path, args: argparse.Namespace) -> int:
 
 def _run_tiebreaker_audit(root: Path, plan_name: str | None) -> int:
     try:
-        from megaplan.audits.audit_engine import (
+        from arnold.pipelines.megaplan.audits.audit_engine import (
             aggregate_tiebreaker_audit,
             load_tiebreaker_audit,
             render_audit_report,
@@ -321,7 +321,7 @@ def _run_tiebreaker_audit(root: Path, plan_name: str | None) -> int:
     if plan_name:
         plan_dir = resolve_plan_dir(root, plan_name)
         records = load_tiebreaker_audit(plan_dir)
-        from megaplan.audits.audit_engine import _compute_totals
+        from arnold.pipelines.megaplan.audits.audit_engine import _compute_totals
         data = {"plans": [{"plan_dir": plan_dir.name, "tiebreaker_count": len(records),
                            "tokens_spent": sum(r.get("tokens_spent", 0) for r in records),
                            "time_seconds": sum(r.get("time_seconds", 0) for r in records),

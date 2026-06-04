@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from megaplan.execute.batch import (
+from arnold.pipelines.megaplan.execute.batch import (
     handle_execute_auto_loop,
     handle_execute_one_batch,
 )
@@ -12,13 +12,15 @@ from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
     CliError,
     PlanState,
+    StepResponse,
+)
+from megaplan.planning.state import (
     STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FAILED,
     STATE_FINALIZED,
-    StepResponse,
 )
 from megaplan.store import PlanRepository
 from megaplan._core import (
@@ -38,7 +40,7 @@ from megaplan._core.io import read_plan_state_cached
 from megaplan.workers import validate_payload, warn_if_work_dir_differs_from_project_dir
 
 from .shared import _agent_mode_parts, _emit_phase_notice, attach_agent_fallback, worker_module
-from megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from arnold.pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
 
 
 def _is_rework_reexecution(state: PlanState) -> bool:
@@ -217,8 +219,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 response.pop("next_step_runtime", None)
                 attach_agent_fallback(response, args)
                 return response
-            from megaplan.audits.capabilities import get_worker_capabilities
-            from megaplan.orchestration.verifiability import classify_criteria
+            from arnold.pipelines.megaplan.audits.capabilities import get_worker_capabilities
+            from arnold.pipelines.megaplan.orchestration.verifiability import classify_criteria
 
             plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
             success_criteria = plan_meta.get("success_criteria", [])

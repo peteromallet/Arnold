@@ -9,7 +9,7 @@ import megaplan
 from megaplan._core import atomic_write_json, atomic_write_text, read_json
 from megaplan.execute.core import _build_aggregate_execution_payload
 from megaplan.handlers.review import _resolve_review_outcome
-from megaplan.types import STATE_DONE
+from megaplan.planning.state import STATE_DONE
 
 
 def _init_args(project_dir: Path, *, name: str) -> Namespace:

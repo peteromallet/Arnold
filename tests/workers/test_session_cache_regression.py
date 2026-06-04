@@ -9,7 +9,7 @@ import pytest
 
 import megaplan
 from megaplan._core import atomic_write_json, sha256_file
-from megaplan.types import STATE_CRITIQUED
+from megaplan.planning.state import STATE_CRITIQUED
 from megaplan.workers import WorkerResult, _build_mock_payload, run_step_with_worker
 from tests.conftest import PlanFixture, load_state, read_json
 

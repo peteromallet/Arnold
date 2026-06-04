@@ -572,14 +572,18 @@ class TestDiscoveryBoundary:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
-                        assert not alias.name.startswith("megaplan"), (
-                            f"manifest.py imports megaplan: {alias.name!r}"
+                        assert not (
+                            alias.name.startswith("megaplan")
+                            or alias.name.startswith("arnold.pipelines.megaplan")
+                        ), (
+                            f"manifest.py imports Megaplan policy: {alias.name!r}"
                         )
                 else:
-                    assert node.module is None or not node.module.startswith(
-                        "megaplan"
+                    assert node.module is None or not (
+                        node.module.startswith("megaplan")
+                        or node.module.startswith("arnold.pipelines.megaplan")
                     ), (
-                        f"manifest.py imports from megaplan: {node.module!r}"
+                        f"manifest.py imports from Megaplan policy: {node.module!r}"
                     )
 
     def test_discovery_trust_has_no_megaplan_import(self) -> None:
@@ -598,14 +602,18 @@ class TestDiscoveryBoundary:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
-                        assert not alias.name.startswith("megaplan"), (
-                            f"trust.py imports megaplan: {alias.name!r}"
+                        assert not (
+                            alias.name.startswith("megaplan")
+                            or alias.name.startswith("arnold.pipelines.megaplan")
+                        ), (
+                            f"trust.py imports Megaplan policy: {alias.name!r}"
                         )
                 else:
-                    assert node.module is None or not node.module.startswith(
-                        "megaplan"
+                    assert node.module is None or not (
+                        node.module.startswith("megaplan")
+                        or node.module.startswith("arnold.pipelines.megaplan")
                     ), (
-                        f"trust.py imports from megaplan: {node.module!r}"
+                        f"trust.py imports from Megaplan policy: {node.module!r}"
                     )
 
     def test_discovery_init_has_no_megaplan_import(self) -> None:
@@ -624,14 +632,18 @@ class TestDiscoveryBoundary:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
-                        assert not alias.name.startswith("megaplan"), (
-                            f"__init__.py imports megaplan: {alias.name!r}"
+                        assert not (
+                            alias.name.startswith("megaplan")
+                            or alias.name.startswith("arnold.pipelines.megaplan")
+                        ), (
+                            f"__init__.py imports Megaplan policy: {alias.name!r}"
                         )
                 else:
-                    assert node.module is None or not node.module.startswith(
-                        "megaplan"
+                    assert node.module is None or not (
+                        node.module.startswith("megaplan")
+                        or node.module.startswith("arnold.pipelines.megaplan")
                     ), (
-                        f"__init__.py imports from megaplan: {node.module!r}"
+                        f"__init__.py imports from Megaplan policy: {node.module!r}"
                     )
 
 

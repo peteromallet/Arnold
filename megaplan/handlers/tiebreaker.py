@@ -4,14 +4,17 @@ import argparse
 from pathlib import Path
 
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
+from megaplan.schemas.planning import TiebreakerDecision
 from megaplan.types import (
     CliError,
     PlanState,
+    StepResponse,
+)
+from megaplan.planning.state import (
     STATE_AWAITING_HUMAN_VERIFY,
     STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
-    StepResponse,
 )
 from megaplan._core import atomic_write_json, load_flag_registry, load_plan_locked, now_utc, read_json, require_state, save_flag_registry
 
@@ -96,7 +99,6 @@ def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepRespon
         researcher_data = read_json(researcher_files[-1]) if researcher_files else {}
         challenger_data = read_json(challenger_files[-1]) if challenger_files else {}
 
-        from megaplan.types import TiebreakerDecision
         decision: TiebreakerDecision = {
             "fuzzy_group_id": fuzzy_group_id,
             "flag_ids": flag_ids,
@@ -116,7 +118,7 @@ def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepRespon
         existing.append(decision)
         atomic_write_json(decisions_path, existing)
 
-        from megaplan.audits.audit_engine import record_tiebreaker_audit
+        from arnold.pipelines.megaplan.audits.audit_engine import record_tiebreaker_audit
         record_tiebreaker_audit(plan_dir, decision, researcher_data, challenger_data)
 
         if action == "pick" and flag_ids:

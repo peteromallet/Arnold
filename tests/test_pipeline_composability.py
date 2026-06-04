@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 
+from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
 from megaplan._pipeline import (
     Edge,
     ParallelStage,
@@ -35,44 +36,53 @@ from megaplan._pipeline import (
     PipelineVerdict,
 )
 from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.prompts import (
-    PromptRegistry,
-    register_demo_prompts,
-    register_prompt,
-    resolve_prompt,
-)
+from megaplan._pipeline.prompts import PromptRegistry
 
 
 # -----------------------------------------------------------------------
 # Claim 1: new workflow types reuse the same Step set; prompts register.
 # -----------------------------------------------------------------------
 
+
+_TEST_PROMPT_BUNDLE = PipelineResourceBundle(
+    base_dir=Path("/tmp"),
+    prompt_dir=Path("/tmp/prompts"),
+)
+
 def test_new_mode_registers_a_prompt_without_subclassing_step() -> None:
-    register_prompt(
-        "critique:scientific-paper",
-        lambda ctx, params: "You are a peer reviewer. Be technical.",
+    _TEST_PROMPT_BUNDLE.prompts.clear()
+    _TEST_PROMPT_BUNDLE.prompts.update(
+        {
+            "critique:scientific-paper": (
+                lambda ctx, params: "You are a peer reviewer. Be technical."
+            )
+        }
     )
 
     ctx = StepContext(
         plan_dir=Path("/tmp"), state={}, profile=None,
         mode="scientific-paper", inputs={},
     )
-    prompt = resolve_prompt(ctx, "critique")
+    prompt = resolve_bundle_prompt(_TEST_PROMPT_BUNDLE, "critique", ctx)
     assert "peer reviewer" in prompt
 
 
 def test_unregistered_mode_falls_back_to_default_prompt() -> None:
-    # Demo prompts are no longer registered at import time — call
-    # register_demo_prompts() explicitly so the default 'critique'
-    # entry exists for this test.
-    register_demo_prompts()
+    _TEST_PROMPT_BUNDLE.prompts.clear()
+    _TEST_PROMPT_BUNDLE.prompts.update(
+        {
+            "critique": (
+                "You are a document critic. Rate this draft on clarity and review quality."
+            )
+        }
+    )
 
     ctx = StepContext(
         plan_dir=Path("/tmp"), state={}, profile=None,
         mode="some-unregistered-mode", inputs={},
     )
     # Should fall back to the default 'critique' registration.
-    prompt = resolve_prompt(ctx, "critique")
+    prompt = resolve_bundle_prompt(_TEST_PROMPT_BUNDLE, "critique", ctx)
     assert "critic" in prompt.lower() or "review" in prompt.lower()
 
 
@@ -230,13 +240,12 @@ def test_five_iteration_loop_is_a_tiny_diff(tmp_path: Path) -> None:
 # -----------------------------------------------------------------------
 
 def test_prompt_key_resolution_is_runtime_not_construction(tmp_path: Path) -> None:
-    register_prompt(
-        "panel-rubric",
-        lambda ctx, params: f"Panel-default for mode={ctx.mode}",
-    )
-    register_prompt(
-        "panel-rubric:strict",
-        lambda ctx, params: "Panel-strict override",
+    _TEST_PROMPT_BUNDLE.prompts.clear()
+    _TEST_PROMPT_BUNDLE.prompts.update(
+        {
+            "panel-rubric": lambda ctx, params: f"Panel-default for mode={ctx.mode}",
+            "panel-rubric:strict": lambda ctx, params: "Panel-strict override",
+        }
     )
 
     ctx_default = StepContext(
@@ -247,8 +256,12 @@ def test_prompt_key_resolution_is_runtime_not_construction(tmp_path: Path) -> No
     )
 
     # Same key, mode-aware resolution returns the override.
-    assert "default for mode=code" in resolve_prompt(ctx_default, "panel-rubric")
-    assert "Panel-strict override" == resolve_prompt(ctx_strict, "panel-rubric")
+    assert "default for mode=code" in resolve_bundle_prompt(
+        _TEST_PROMPT_BUNDLE, "panel-rubric", ctx_default
+    )
+    assert "Panel-strict override" == resolve_bundle_prompt(
+        _TEST_PROMPT_BUNDLE, "panel-rubric", ctx_strict
+    )
 
 
 # -----------------------------------------------------------------------

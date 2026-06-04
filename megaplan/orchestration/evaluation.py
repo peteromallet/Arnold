@@ -1,10 +1,13 @@
-"""Compatibility facade for orchestration evaluation helpers."""
+"""Compatibility facade for orchestration evaluation helpers.
+
+Canonical implementations: :mod:`arnold.pipelines.megaplan.orchestration.*`
+"""
 
 from __future__ import annotations
 
 import subprocess  # kept as module attribute for monkeypatch compatibility
-from megaplan.orchestration.execution_evidence import validate_execution_evidence
-from megaplan.orchestration.gate_checks import (
+from arnold.pipelines.megaplan.orchestration.execution_evidence import validate_execution_evidence
+from arnold.pipelines.megaplan.orchestration.gate_checks import (
     AGENT_AVAILABILITY_PREFLIGHT_CHECKS,
     build_gate_artifact,
     build_orchestrator_guidance,
@@ -12,13 +15,13 @@ from megaplan.orchestration.gate_checks import (
     only_agent_availability_preflight_failed,
     run_gate_checks,
 )
-from megaplan.orchestration.gate_signals import (
+from arnold.pipelines.megaplan.orchestration.gate_signals import (
     build_gate_signals,
     compute_plan_delta_percent,
     compute_recurring_critiques,
     flag_weight,
 )
-from megaplan.orchestration.plan_structure import (
+from arnold.pipelines.megaplan.orchestration.plan_structure import (
     PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
     PlanSection,
     _strip_fenced_blocks,
@@ -27,7 +30,7 @@ from megaplan.orchestration.plan_structure import (
     renumber_steps,
     validate_plan_structure,
 )
-from megaplan.orchestration.rubber_stamp import is_rubber_stamp
+from arnold.pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
 
 
 from megaplan.loop.git import (  # noqa: E402

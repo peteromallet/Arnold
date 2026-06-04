@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import CliError, STATE_AWAITING_HUMAN_VERIFY, STATE_DONE, StepResponse
+from megaplan.types import CliError, StepResponse
+from megaplan.planning.state import STATE_AWAITING_HUMAN_VERIFY, STATE_DONE
 from megaplan._core import atomic_write_json, latest_plan_meta_path, load_plan, now_utc, read_json, save_state_merge_meta
 from .shared import _warn_read_fallback
 
@@ -31,7 +32,7 @@ def get_human_verification_status(
 
     # --- classify deferred human criteria -----------------------------------
     if worker_caps is not None:
-        from megaplan.orchestration.verifiability import classify_criteria
+        from arnold.pipelines.megaplan.orchestration.verifiability import classify_criteria
         _, human_deferred = classify_criteria(success_criteria, worker_caps)
     else:
         # Without worker caps we cannot classify – treat everything as
@@ -264,7 +265,7 @@ def handle_verify_human(root: Path, args: argparse.Namespace) -> StepResponse:
     atomic_write_json(verifications_path, verifications)
 
     # Use the shared helper with latest-verdict semantics.
-    from megaplan.audits.capabilities import get_worker_capabilities
+    from arnold.pipelines.megaplan.audits.capabilities import get_worker_capabilities
     worker_caps = get_worker_capabilities(state)
     hv_status = get_human_verification_status(
         plan_dir, plan_meta, worker_caps=worker_caps
@@ -300,8 +301,8 @@ def handle_audit_verifiability(root: Path, args: argparse.Namespace) -> StepResp
     plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
     success_criteria = plan_meta.get("success_criteria", [])
 
-    from megaplan.audits.capabilities import get_worker_capabilities
-    from megaplan.orchestration.verifiability import audit_criteria, validate_requires
+    from arnold.pipelines.megaplan.audits.capabilities import get_worker_capabilities
+    from arnold.pipelines.megaplan.orchestration.verifiability import audit_criteria, validate_requires
 
     worker_caps = get_worker_capabilities(state)
     audits = audit_criteria(success_criteria, worker_caps)

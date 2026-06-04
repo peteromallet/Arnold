@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-from megaplan.types import CliError, MOCK_ENV_VAR, STATE_AWAITING_HUMAN, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED, StepResponse
+from megaplan.types import CliError, MOCK_ENV_VAR, StepResponse
+from megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED
 from megaplan._core import load_plan_locked, require_state
 
 from .shared import (
@@ -143,7 +144,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                     artifact_hash=artifact_hash,
                     response_fields={"iteration": state["iteration"]},
                 )
-            from megaplan.orchestration.prep_research import (
+            from arnold.pipelines.megaplan.orchestration.prep_research import (
                 run_prep_orchestration,
             )
 
@@ -185,8 +186,8 @@ def _build_verifiability_flags(
     success_criteria: list[dict[str, Any]],
     worker_caps: dict[str, set[str]],
 ) -> list[dict[str, Any]]:
-    from megaplan.audits.capabilities import ALL_CAPABILITIES
-    from megaplan.orchestration.verifiability import audit_criteria, validate_requires
+    from arnold.pipelines.megaplan.audits.capabilities import ALL_CAPABILITIES
+    from arnold.pipelines.megaplan.orchestration.verifiability import audit_criteria, validate_requires
 
     flags: list[dict[str, Any]] = []
     issues = validate_requires(success_criteria)

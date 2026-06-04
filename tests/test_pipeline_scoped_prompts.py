@@ -6,12 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.prompts import (
-    PromptRegistry,
-    register_pipeline_prompt,
-    register_prompt,
-    resolve_prompt,
-)
+from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
 from megaplan._pipeline.types import StepContext
 
 
@@ -25,35 +20,65 @@ def _ctx(pipeline_name: str | None = None, mode: str = "code") -> StepContext:
     )
 
 
-def test_pipeline_scoped_prompt_wins_over_global() -> None:
-    register_prompt("scoped-test-key", lambda ctx, p: "GLOBAL")
-    register_pipeline_prompt("alpha", "scoped-test-key", lambda ctx, p: "ALPHA-SCOPED")
+def _bundle(prompts: dict[str, object]) -> PipelineResourceBundle:
+    return PipelineResourceBundle(
+        base_dir=Path("/tmp"),
+        prompt_dir=Path("/tmp/prompts"),
+        prompts=prompts,
+    )
 
-    assert resolve_prompt(_ctx()) if False else True  # placeholder for linter
-    assert resolve_prompt(_ctx(pipeline_name="alpha"), "scoped-test-key") == "ALPHA-SCOPED"
-    assert resolve_prompt(_ctx(pipeline_name="beta"), "scoped-test-key") == "GLOBAL"
+
+def test_pipeline_scoped_prompt_wins_over_global() -> None:
+    bundle = _bundle(
+        {
+            "scoped-test-key": lambda ctx, p: "GLOBAL",
+            "alpha/scoped-test-key": lambda ctx, p: "ALPHA-SCOPED",
+        }
+    )
+
+    assert (
+        resolve_bundle_prompt(bundle, "scoped-test-key", _ctx(pipeline_name="alpha"))
+        == "ALPHA-SCOPED"
+    )
+    assert (
+        resolve_bundle_prompt(bundle, "scoped-test-key", _ctx(pipeline_name="beta"))
+        == "GLOBAL"
+    )
 
 
 def test_pipeline_mode_scoped_prompt_wins_over_pipeline_default() -> None:
-    register_prompt("mode-test-key", lambda ctx, p: "FALLBACK")
-    register_pipeline_prompt("gamma", "mode-test-key", lambda ctx, p: "GAMMA-DEFAULT")
-    register_pipeline_prompt("gamma", "mode-test-key", lambda ctx, p: "GAMMA-DOC", mode="doc")
+    bundle = _bundle(
+        {
+            "mode-test-key": lambda ctx, p: "FALLBACK",
+            "gamma/mode-test-key": lambda ctx, p: "GAMMA-DEFAULT",
+            "gamma/mode-test-key:doc": lambda ctx, p: "GAMMA-DOC",
+        }
+    )
 
-    assert resolve_prompt(_ctx(pipeline_name="gamma")) if False else True
-    assert resolve_prompt(_ctx(pipeline_name="gamma"), "mode-test-key") == "GAMMA-DEFAULT"
-    assert resolve_prompt(_ctx(pipeline_name="gamma", mode="doc"), "mode-test-key") == "GAMMA-DOC"
+    assert (
+        resolve_bundle_prompt(bundle, "mode-test-key", _ctx(pipeline_name="gamma"))
+        == "GAMMA-DEFAULT"
+    )
+    assert (
+        resolve_bundle_prompt(
+            bundle,
+            "mode-test-key",
+            _ctx(pipeline_name="gamma", mode="doc"),
+        )
+        == "GAMMA-DOC"
+    )
 
 
 def test_resolve_falls_back_to_global_when_pipeline_unspecified() -> None:
-    register_prompt("global-only", lambda ctx, p: "G")
+    bundle = _bundle({"global-only": lambda ctx, p: "G"})
     # No pipeline in ctx → global lookup.
-    assert resolve_prompt(_ctx(), "global-only") == "G"
+    assert resolve_bundle_prompt(bundle, "global-only", _ctx()) == "G"
 
 
 def test_resolve_falls_back_to_global_when_pipeline_unknown() -> None:
-    register_prompt("only-global", lambda ctx, p: "G")
+    bundle = _bundle({"only-global": lambda ctx, p: "G"})
     # Unknown pipeline → global fallback.
-    assert resolve_prompt(_ctx(pipeline_name="unknown"), "only-global") == "G"
+    assert resolve_bundle_prompt(bundle, "only-global", _ctx(pipeline_name="unknown")) == "G"
 
 
 def test_run_by_name_injects_pipeline_into_ctx(tmp_path: Path) -> None:

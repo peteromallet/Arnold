@@ -503,7 +503,7 @@ def _phase_namespace(
 ) -> Any:
     import argparse
 
-    from megaplan.orchestration.progress import ProgressEmitter
+    from arnold.pipelines.megaplan.orchestration.progress import ProgressEmitter
 
     overrides = _phase_arg_overrides(phase, argv=argv)
     operation = "edit"

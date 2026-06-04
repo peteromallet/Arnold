@@ -477,7 +477,7 @@ def test_default_agent_routing_prep_is_hermes_flat_phase_models_preserved(
     The ``flat_agent == 'codex'`` resolver exception (variable-codex
     triage/distill) is preserved this sprint per SD2.
     """
-    from megaplan.types import DEFAULT_AGENT_ROUTING
+    from megaplan.profiles import DEFAULT_AGENT_ROUTING
 
     # prep is a valid phase key in the routing table
     assert "prep" in DEFAULT_AGENT_ROUTING
@@ -2355,7 +2355,7 @@ def test_shannon_rejected_when_misspelled() -> None:
 
 
 def test_known_agents_includes_shannon() -> None:
-    from megaplan.types import KNOWN_AGENTS
+    from megaplan.profiles import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
 
 

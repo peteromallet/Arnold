@@ -19,7 +19,8 @@ import megaplan.handlers.critique as critique_handler
 import megaplan.workers
 from megaplan._core import WORKFLOW, _ROBUSTNESS_OVERRIDES, clear_active_step, save_state, set_active_step, workflow_next
 from megaplan.orchestration.evaluation import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
-from megaplan.types import STATE_PREPPED, CliError
+from megaplan.types import CliError
+from megaplan.planning.state import STATE_PREPPED
 from megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import (
     PlanFixture,

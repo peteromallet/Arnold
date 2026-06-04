@@ -39,7 +39,10 @@ import pytest
 
 _RUNTIME_PKG = Path(__file__).resolve().parent.parent.parent.parent / "arnold" / "runtime"
 
-FORBIDDEN_IMPORT_PREFIXES: tuple[str, ...] = ("import megaplan", "from megaplan")
+FORBIDDEN_POLICY_IMPORT_ROOTS: tuple[str, ...] = (
+    "megaplan",
+    "arnold.pipelines.megaplan",
+)
 
 # Forbidden Megaplan-phase-names and override-action literals that must not
 # appear as string constants in any ``arnold/runtime/**.py`` source file.
@@ -75,8 +78,9 @@ def _python_source_files(root: Path) -> list[Path]:
 def _ast_import_violations(file_path: Path) -> list[str]:
     """Return a list of human-readable violation strings for forbidden imports.
 
-    Scans for ``import megaplan`` and ``from megaplan`` at the AST level
-    so that even commented-out or conditional imports are flagged.
+    Scans for old-path ``megaplan.*`` imports and canonical plugin-local
+    ``arnold.pipelines.megaplan.*`` imports at the AST level so that even
+    commented-out or conditional imports are flagged.
     """
     violations: list[str] = []
     try:
@@ -88,13 +92,19 @@ def _ast_import_violations(file_path: Path) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.split(".")[0] == "megaplan":
+                if any(
+                    alias.name == root or alias.name.startswith(f"{root}.")
+                    for root in FORBIDDEN_POLICY_IMPORT_ROOTS
+                ):
                     violations.append(
                         f"{file_path}:{node.lineno}: forbidden import — "
                         f"`import {alias.name}`"
                     )
         elif isinstance(node, ast.ImportFrom):
-            if node.module is not None and node.module.split(".")[0] == "megaplan":
+            if node.module is not None and any(
+                node.module == root or node.module.startswith(f"{root}.")
+                for root in FORBIDDEN_POLICY_IMPORT_ROOTS
+            ):
                 names = ", ".join(a.name for a in node.names)
                 violations.append(
                     f"{file_path}:{node.lineno}: forbidden import — "
@@ -127,7 +137,7 @@ def _ast_string_literal_violations(file_path: Path) -> list[str]:
 
 
 class TestStaticGateNoMegaplanImports:
-    """No source file under ``arnold/runtime/`` may import from megaplan."""
+    """No source file under ``arnold/runtime/`` may import Megaplan policy."""
 
     def test_no_megaplan_imports_in_runtime_sources(self) -> None:
         violations: list[str] = []
@@ -135,7 +145,7 @@ class TestStaticGateNoMegaplanImports:
             violations.extend(_ast_import_violations(source_file))
         if violations:
             pytest.fail(
-                f"{len(violations)} forbidden import(s) found in arnold/runtime/:\n"
+                f"{len(violations)} forbidden policy import(s) found in arnold/runtime/:\n"
                 + "\n".join(f"  • {v}" for v in violations)
             )
 
@@ -187,7 +197,7 @@ class TestStaticGateNoMegaplanLiterals:
 
 
 class TestNoTransitiveMegaplanImport:
-    """Importing ``arnold.runtime`` must not pull ``megaplan`` into sys.modules."""
+    """Importing ``arnold.runtime`` must not pull policy modules into sys.modules."""
 
     def test_arnold_runtime_does_not_pull_megaplan_into_sys_modules(self) -> None:
         """Hermetic subprocess check: import arnold first, then arnold.runtime.
@@ -196,14 +206,20 @@ class TestNoTransitiveMegaplanImport:
         ``before`` snapshot so that the pre-existing
         ``arnold/__init__.py::from megaplan import __version__`` lands in the
         baseline rather than the delta.  The boundary invariant is that
-        ``arnold.runtime`` itself adds zero megaplan modules.
+        ``arnold.runtime`` itself adds zero Megaplan policy modules.
         """
         check_script = (
             "import sys; "
             "import arnold; "
-            "before = {k for k in sys.modules if k.startswith('megaplan')}; "
+            "before = {"
+            "k for k in sys.modules "
+            "if k.startswith('megaplan') or k.startswith('arnold.pipelines.megaplan')"
+            "}; "
             "import arnold.runtime; "
-            "after = {k for k in sys.modules if k.startswith('megaplan')}; "
+            "after = {"
+            "k for k in sys.modules "
+            "if k.startswith('megaplan') or k.startswith('arnold.pipelines.megaplan')"
+            "}; "
             "delta = after - before; "
             "print('DELTA:' + ','.join(sorted(delta)) if delta else 'DELTA:none')"
         )
@@ -225,7 +241,7 @@ class TestNoTransitiveMegaplanImport:
                 if delta_str != "none":
                     modules = delta_str.split(",") if delta_str else []
                     pytest.fail(
-                        f"Importing arnold.runtime pulled megaplan modules "
+                        f"Importing arnold.runtime pulled Megaplan policy modules "
                         f"into sys.modules: {modules}"
                     )
                 return

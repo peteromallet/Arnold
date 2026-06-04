@@ -127,7 +127,7 @@ def test_predecessors_match_reverse_legacy(config: RunTopologyConfig) -> None:
 def test_successors_condition_filter() -> None:
     graph = build_topology(RunTopologyConfig(robustness="extreme"))
     # STATE_CRITIQUED has all 6 gate conditions.
-    from megaplan.types import STATE_CRITIQUED
+    from megaplan.planning.state import STATE_CRITIQUED
 
     gate_proceed_edges = graph.successors(STATE_CRITIQUED, condition="gate_proceed")
     assert len(gate_proceed_edges) == 1
@@ -136,7 +136,7 @@ def test_successors_condition_filter() -> None:
 
 def test_has_edge_step_and_condition_filter() -> None:
     graph = build_topology(RunTopologyConfig(robustness="extreme"))
-    from megaplan.types import STATE_CRITIQUED, STATE_GATED
+    from megaplan.planning.state import STATE_CRITIQUED, STATE_GATED
 
     assert has_edge(graph, STATE_CRITIQUED, STATE_GATED, condition="gate_proceed")
     assert has_edge(graph, STATE_CRITIQUED, STATE_GATED, step="gate")
@@ -145,7 +145,7 @@ def test_has_edge_step_and_condition_filter() -> None:
 
 def test_module_level_helpers_match_method_calls() -> None:
     graph = build_topology(RunTopologyConfig(robustness="extreme"))
-    from megaplan.types import STATE_PLANNED
+    from megaplan.planning.state import STATE_PLANNED
 
     assert successors(graph, STATE_PLANNED) == graph.successors(STATE_PLANNED)
     assert predecessors(graph, STATE_PLANNED) == graph.predecessors(STATE_PLANNED)

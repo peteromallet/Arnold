@@ -1452,7 +1452,7 @@ def run_hermes_step(
             # Emit llm_call_error
             _emit_llm_error(plan_dir, step, str(exc))
             provider = (model or "").split(":", 1)[0] if model else "unknown"
-            from megaplan.orchestration.phase_result import ExternalError
+            from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
             external_error = ExternalError.from_exception(exc, provider=provider)
             # Report 429 to key pool so it cools down this key
             exc_str = str(exc)
@@ -1772,7 +1772,7 @@ def _normalize_nested_aliases(payload: dict, schema: dict) -> None:
     "concern", "detail" instead of "evidence"). This applies the alias mapping
     from merge._FIELD_ALIASES to nested objects in arrays.
     """
-    from megaplan.execute.merge import _FIELD_ALIASES
+    from arnold.pipelines.megaplan.execute.merge import _FIELD_ALIASES
 
     properties = schema.get("properties", {})
     for field, prop in properties.items():

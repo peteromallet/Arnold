@@ -43,16 +43,18 @@ from megaplan._core.state import write_plan_state
 from megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
 from megaplan.runtime.process import kill_group, spawn
 from megaplan.observability.events import emit as emit_event, EventKind
-from megaplan.orchestration.phase_result import (
+from arnold.pipelines.megaplan.orchestration.phase_result import (
     ExitKind,
     PhaseResult,
     read_phase_result,
 )
-from megaplan.orchestration.recovery_policy import RecoveryPolicy
+from arnold.pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
 from megaplan.store import PlanRepository
 from megaplan.types import (
-    AUTOMATION_TERMINAL_STATES,
     CliError,
+)
+from megaplan.planning.state import (
+    AUTOMATION_TERMINAL_STATES,
     STATE_ABORTED,
     STATE_AWAITING_HUMAN,
     STATE_AWAITING_HUMAN_VERIFY,
@@ -1196,7 +1198,7 @@ def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] |
             state_data = json.load(handle)
         if not isinstance(state_data, dict):
             return {"reconciled": False, "reason": "state payload was not an object"}
-        from megaplan.execute.merge import reconcile_latest_execution_batch
+        from arnold.pipelines.megaplan.execute.merge import reconcile_latest_execution_batch
 
         return reconcile_latest_execution_batch(plan_dir, state_data)
     except Exception as error:
@@ -1683,7 +1685,7 @@ def drive(
     plan_dir = _resolve_plan_dir(plan, cwd)
     if plan_dir is not None:
         emit_event(EventKind.INIT, plan_dir=plan_dir, payload={"plan_name": plan})
-    from megaplan.orchestration.progress import ProgressEmitter
+    from arnold.pipelines.megaplan.orchestration.progress import ProgressEmitter
     progress_emitter = ProgressEmitter.from_env(progress_env)
     last_review_marker = _get_review_marker(plan_dir)
     rework_cycles_observed = 0
@@ -3205,7 +3207,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 def run_auto(root: Path, args: argparse.Namespace) -> int:
     """CLI entry point. Returns a POSIX exit code suitable for ``sys.exit``."""
-    from megaplan.orchestration.progress import ProgressContext
+    from arnold.pipelines.megaplan.orchestration.progress import ProgressContext
 
     progress_context = ProgressContext.from_env()
     progress_env = progress_context.to_env() if progress_context is not None else None

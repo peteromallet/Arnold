@@ -23,7 +23,7 @@ from megaplan.planning.control_binding import (
     planning_run_state_view,
     planning_supervisor_run_state_view,
 )
-from megaplan.types import (
+from megaplan.planning.state import (
     STATE_AWAITING_HUMAN,
     STATE_BLOCKED,
     STATE_CRITIQUED,

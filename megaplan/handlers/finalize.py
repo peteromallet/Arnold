@@ -17,7 +17,8 @@ from megaplan.calibration import (
     query_route_if_enabled,
     write_capability_claim,
 )
-from megaplan.types import MOCK_ENV_VAR, PlanState, STATE_FINALIZED, STATE_GATED, STATE_PLANNED, StepResponse
+from megaplan.types import MOCK_ENV_VAR, PlanState, StepResponse
+from megaplan.planning.state import STATE_FINALIZED, STATE_GATED, STATE_PLANNED
 from megaplan.workers import WorkerResult
 from megaplan._core import (
     atomic_write_json,

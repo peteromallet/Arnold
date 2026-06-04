@@ -10,7 +10,7 @@ from megaplan.handlers.review import (
     _format_review_success_summary,
     _synthesize_review_rework_items,
 )
-from megaplan.types import STATE_EXECUTED
+from megaplan.planning.state import STATE_EXECUTED
 from megaplan.workers import WorkerResult
 
 

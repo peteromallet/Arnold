@@ -1,13 +1,22 @@
-"""Compatibility facade — delegates to arnold.pipelines.megaplan.operations.
+"""REMOVED — planning operation dispatch has been relocated.
 
-M4: The planning operation registry adapter has moved to
-``arnold.pipelines.megaplan.operations``.  This module re-exports everything
-from the canonical location so legacy importers continue to work.
+The canonical home for Megaplan planning operation dispatch is now:
+
+    from megaplan.planning.operations import (
+        operation_registry,
+        override_catalog,
+        SUPPORTED_OPERATIONS,
+        profile_validate_operation,
+        resume_phase_args,
+        preflight_or_raise,
+    )
+
+This file was a compatibility facade (re-export shim) during the M5a
+migration and has been replaced with failing guidance.  Update your
+imports to the canonical path above.
 """
 
-from arnold.pipelines.megaplan.operations import *  # noqa: F401, F403
-
-# Re-export __all__ from the canonical location for IDEs and linters.
-from arnold.pipelines.megaplan.operations import __all__ as __ops_all__  # noqa: F401
-
-__all__ = list(__ops_all__)  # type: ignore[name-defined]
+raise ImportError(
+    "megaplan.pipelines.planning.operations has been removed. "
+    "Use megaplan.planning.operations instead."
+)

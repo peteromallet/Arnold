@@ -18,8 +18,8 @@ from megaplan.auto import _clear_orphaned_active_step
 from megaplan.bakeoff.merge import _rewrite_project_dir
 from megaplan.chain import _mark_blocked_execute_as_executed
 from megaplan.store.plan_repository import PlanRepository
-from megaplan.types import CliError, STATE_INITIALIZED, STATE_PLANNED
-from megaplan.types import STATE_EXECUTED, STATE_FINALIZED
+from megaplan.types import CliError
+from megaplan.planning.state import STATE_EXECUTED, STATE_FINALIZED, STATE_INITIALIZED, STATE_PLANNED
 
 
 def _state(**overrides):

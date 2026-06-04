@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from megaplan.types import CliError, PlanState
 from megaplan._core import configured_robustness, latest_plan_meta_path, read_json
-from megaplan.audits.robustness import build_empty_template
+from arnold.pipelines.megaplan.audits.robustness import build_empty_template
 from megaplan.forms.provocations import select_active_checks
 
 

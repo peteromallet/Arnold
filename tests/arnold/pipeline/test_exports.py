@@ -62,6 +62,30 @@ class TestArnoldPipelinePublicExports:
         assert ReduceResult is not None
         assert SelectionResult is not None
 
+    def test_profile_symbols_importable(self) -> None:
+        from arnold.pipeline import (
+            AgentSpecShape,
+            ProfileLoadError,
+            load_profile_metadata,
+            load_profile_sources,
+            load_profiles,
+            merge_profile_layers,
+            parse_agent_spec_shape,
+            parse_profiles_doc,
+            resolve_default_profile,
+            validate_declared_stage_keys,
+        )
+        assert AgentSpecShape is not None
+        assert ProfileLoadError is not None
+        assert load_profile_metadata is not None
+        assert load_profile_sources is not None
+        assert load_profiles is not None
+        assert merge_profile_layers is not None
+        assert parse_agent_spec_shape is not None
+        assert parse_profiles_doc is not None
+        assert resolve_default_profile is not None
+        assert validate_declared_stage_keys is not None
+
 
 class TestBridgeImports:
     """Bridge re-exports from megaplan must still resolve."""

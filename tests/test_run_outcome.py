@@ -7,7 +7,7 @@ from megaplan.run_outcome import (
     run_metadata_from_batch_outcome,
     run_outcome_from_batch_outcome,
 )
-from megaplan.types import STATE_AWAITING_HUMAN, STATE_AWAITING_HUMAN_VERIFY
+from megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_AWAITING_HUMAN_VERIFY
 
 
 def test_run_outcome_values_are_exact() -> None:

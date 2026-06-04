@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from megaplan.types import (
+from megaplan.planning.state import (
     STATE_ABORTED,
     STATE_AWAITING_HUMAN,
     STATE_AWAITING_HUMAN_VERIFY,

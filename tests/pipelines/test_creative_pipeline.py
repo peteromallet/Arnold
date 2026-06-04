@@ -9,7 +9,7 @@ Required assertions (per the batch sense check, SC9):
 
 (a) Form dispatch wires joke-specific prompts when ``--form joke`` —
     the stage shells carry ``prompt_key=f"<base>:joke"`` and those
-    slots are registered against the PromptRegistry. ``--form poem``
+    slots are owned by the creative prompt bundle. ``--form poem``
     routes to the generic creative slots while carrying poem metadata
     in state/params.
 (b) Provocations sidecar + stance validation are wired in via the
@@ -94,14 +94,12 @@ def test_creative_form_poem_dispatches_generic_prompt_keys() -> None:
 
 
 def test_creative_pipeline_registers_generic_and_joke_prompt_slots() -> None:
-    """The creative prompt modules register generic and joke slots only."""
+    """The creative prompt bundle owns generic and joke slots only."""
 
-    # Force registration by importing the creative package.
-    import megaplan.pipelines.creative  # noqa: F401
-    from megaplan._pipeline.prompts import registered_keys
+    from megaplan.pipelines.creative.prompts import CREATIVE_PROMPT_BUNDLE
     from megaplan.forms import available_form_ids
 
-    keys = set(registered_keys())
+    keys = set(CREATIVE_PROMPT_BUNDLE.prompts)
     for base in ("prep", "execute_creative", "critique_creative", "revise_creative"):
         # Generic form (rule-2 fallback when no mode is set).
         assert f"creative/{base}" in keys, (
@@ -126,8 +124,7 @@ def test_creative_pipeline_registers_generic_and_joke_prompt_slots() -> None:
 def test_generic_creative_poem_prompts_render_from_fresh_state(
     tmp_path: Path,
 ) -> None:
-    import megaplan.pipelines.creative  # noqa: F401
-    from megaplan._pipeline.prompts import resolve_prompt
+    from megaplan.pipelines.creative.prompts import render_prompt
     from megaplan._pipeline.types import StepContext
 
     project_dir = tmp_path / "project"
@@ -165,9 +162,9 @@ def test_generic_creative_poem_prompts_render_from_fresh_state(
             inputs={"_pipeline": "creative"},
         )
         assert ctx.inputs["_pipeline"] == "creative"
-        rendered[stage_name] = resolve_prompt(
-            ctx,
+        rendered[stage_name] = render_prompt(
             stage_name,
+            ctx,
             params={
                 "stage": stage_name,
                 "form": "poem",
@@ -194,8 +191,7 @@ def test_generic_creative_poem_prompts_render_from_fresh_state(
 def test_joke_specific_prompts_render_from_fresh_state_without_planning_artifacts(
     tmp_path: Path,
 ) -> None:
-    import megaplan.pipelines.creative  # noqa: F401
-    from megaplan._pipeline.prompts import resolve_prompt
+    from megaplan.pipelines.creative.prompts import render_prompt
     from megaplan._pipeline.types import StepContext
 
     project_dir = tmp_path / "project"
@@ -234,9 +230,9 @@ def test_joke_specific_prompts_render_from_fresh_state_without_planning_artifact
             state={**state, "_creative_artifacts": artifacts},
             inputs={"_pipeline": "creative"},
         )
-        rendered[prompt_key] = resolve_prompt(
-            ctx,
+        rendered[prompt_key] = render_prompt(
             prompt_key,
+            ctx,
             params={
                 "stage": prompt_key.split(":", 1)[0],
                 "form": "joke",

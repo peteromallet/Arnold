@@ -5,7 +5,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import DEFAULT_AGENT_ROUTING, CliError, StepResponse
+from megaplan.profiles import DEFAULT_AGENT_ROUTING
+from megaplan.types import CliError, StepResponse
 from megaplan._core import (
     atomic_write_text,
     detect_available_agents,

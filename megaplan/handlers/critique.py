@@ -8,25 +8,28 @@ from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-from megaplan.audits.robustness import validate_critique_checks
+from arnold.pipelines.megaplan.audits.robustness import validate_critique_checks
 from megaplan.forms.provocations import select_active_checks
 from megaplan.forms.directors_notes import update_directors_notes_at_aggregate
-from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_signals, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
-from megaplan.orchestration.critique_status import (
+from arnold.pipelines.megaplan.orchestration.gate_checks import build_gate_artifact, build_orchestrator_guidance
+from arnold.pipelines.megaplan.orchestration.gate_signals import build_gate_signals, compute_plan_delta_percent, compute_recurring_critiques
+from arnold.pipelines.megaplan.orchestration.critique_status import (
     annotate_unverifiable_checks,
     build_unverifiable_warnings,
 )
-from megaplan.orchestration.parallel_critique import run_parallel_critique
+from arnold.pipelines.megaplan.orchestration.parallel_critique import run_parallel_critique
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
     CliError,
     FLAG_BLOCKING_STATUSES,
     PlanState,
+    StepResponse,
+)
+from megaplan.planning.state import (
     STATE_CRITIQUED,
     STATE_GATED,
     STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
-    StepResponse,
 )
 from megaplan.workers import WorkerResult, validate_payload
 from megaplan._core import (
@@ -94,7 +97,7 @@ def _apply_adaptive_critique_routing(
     if not isinstance(_critique_tiers, dict) or not _critique_tiers:
         return None
 
-    from megaplan.execute.batch import _resolve_tier_spec
+    from arnold.pipelines.megaplan.execute.batch import _resolve_tier_spec
     from megaplan.types import AgentMode as _TierAgentMode
 
     _complexity_cache: dict[int, _TierAgentMode] = {}
@@ -153,8 +156,8 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         _verified_flag_ids_set: set[str] = set()
         _selection_why: dict[str, str] = {}
         if adaptive_path:
-            from megaplan.audits.critique_evaluator import validate_evaluator_verdict
-            from megaplan.audits.robustness import CRITIQUE_CHECKS
+            from arnold.pipelines.megaplan.audits.critique_evaluator import validate_evaluator_verdict
+            from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
 
             from megaplan.types import AgentMode as _AgentMode
 
@@ -211,7 +214,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     "prep_metrics": _prep_metrics,
                 }
             if iteration >= 2:
-                from megaplan.audits.iteration import compute_iteration_pressure as _compute_iteration_pressure
+                from arnold.pipelines.megaplan.audits.iteration import compute_iteration_pressure as _compute_iteration_pressure
                 from megaplan.prompts.critique import _plan_version_unified_diff
 
                 _registry = load_flag_registry(plan_dir)
@@ -447,7 +450,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             # running under whatever agent the `critique` slot resolved to, or
             # (b) falling through to OpenRouter for an unprefixed DeepSeek name.
             # DeepSeek critics route to DeepSeek's direct API.
-            from megaplan.audits.critique_evaluator import roster_dispatch_spec
+            from arnold.pipelines.megaplan.audits.critique_evaluator import roster_dispatch_spec
             from megaplan.types import parse_agent_spec
 
             _override_parsed = parse_agent_spec(roster_dispatch_spec(critic_model_override))
@@ -561,7 +564,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         for _warning in unverifiable_warnings:
             print(f"[megaplan] WARNING: {_warning}", file=sys.stderr, flush=True)
 
-        from megaplan.audits.capabilities import get_worker_capabilities
+        from arnold.pipelines.megaplan.audits.capabilities import get_worker_capabilities
 
         plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
         success_criteria = plan_meta.get("success_criteria", [])
@@ -794,7 +797,7 @@ def _validate_tiebreaker(
     root: Path,
 ) -> tuple[str, str, str]:
     """Validate a TIEBREAKER gate recommendation. Returns (result, next_step, summary)."""
-    from megaplan.audits.iteration import compute_iteration_pressure, has_mechanical_recurrence
+    from arnold.pipelines.megaplan.audits.iteration import compute_iteration_pressure, has_mechanical_recurrence
 
     config = state.get("config", {})
     summary_base = f"Gate recommendation TIEBREAKER: {gate_summary['rationale']}"

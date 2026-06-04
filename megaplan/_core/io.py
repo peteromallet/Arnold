@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from megaplan.schemas import SCHEMAS, strict_schema
-from megaplan.types import KNOWN_AGENTS
+from megaplan.profiles.policy import KNOWN_AGENTS
 
 
 # ---------------------------------------------------------------------------

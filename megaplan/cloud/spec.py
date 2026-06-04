@@ -14,7 +14,8 @@ except ImportError as exc:  # pragma: no cover - import guard
         "megaplan cloud requires PyYAML. Install with `pip install pyyaml`."
     ) from exc
 
-from megaplan.types import CliError, DEFAULT_AGENT_ROUTING, KNOWN_AGENTS
+from megaplan.profiles import DEFAULT_AGENT_ROUTING, KNOWN_AGENTS
+from megaplan.types import CliError
 
 
 VALID_MODES = ("auto", "chain", "idle")

@@ -20,7 +20,7 @@ import pytest
 import megaplan
 from megaplan._core import now_utc
 from megaplan.orchestration.phase_result import BlockedTask, ExternalError
-from megaplan.types import STATE_AWAITING_HUMAN, STATE_PREPPED
+from megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_PREPPED
 from megaplan.user_actions import build_resolution_event
 from tests.conftest import PlanFixture, load_state
 from tests.conftest import make_fake_phase_result

@@ -51,7 +51,7 @@ from megaplan.orchestration.completion_contract import (
     extract_green_suite_info,
     normalize_contract_mode,
 )
-from megaplan.types import STATE_CRITIQUED
+from megaplan.planning.state import STATE_CRITIQUED
 
 # ---------------------------------------------------------------------------
 # Helpers

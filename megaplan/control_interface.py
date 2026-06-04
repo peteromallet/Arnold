@@ -320,6 +320,10 @@ def read_valid_targets(
             control_status_result_from_operation_result,
             dispatch_operation_for,
         )
+        from megaplan.planning.control_binding import (
+            planning_control_binding,
+            planning_run_state_view,
+        )
 
         result = dispatch_operation_for(
             binding,
@@ -334,12 +338,24 @@ def read_valid_targets(
                 },
             ),
         )
-        payload = control_status_result_from_operation_result(
-            result,
-            require_recover_targets=recovery,
-            require_valid_targets=not recovery,
+        if result.ok:
+            payload = control_status_result_from_operation_result(
+                result,
+                require_recover_targets=recovery,
+                require_valid_targets=not recovery,
+            )
+            targets = payload["recover_targets"] if recovery else payload["valid_targets"]
+            return _projection_from_targets(tuple(targets), recovery=recovery)
+
+        direct_state = (
+            run_state if isinstance(run_state, RunStateView) else planning_run_state_view(dict(run_state))
         )
-        targets = payload["recover_targets"] if recovery else payload["valid_targets"]
+        direct_binding = planning_control_binding()
+        targets = (
+            direct_binding.recover_targets(direct_state)
+            if recovery
+            else direct_binding.valid_targets(direct_state)
+        )
         return _projection_from_targets(tuple(targets), recovery=recovery)
 
     run_state, binding = _resolve_binding_and_state(run_state, binding)

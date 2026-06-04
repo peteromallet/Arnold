@@ -11,7 +11,9 @@ import pytest
 from arnold.pipeline.resources import (
     PipelineResourceBundle,
     PromptSource,
+    prompt_lookup_candidates,
     resolve_prompt,
+    resolve_bundle_prompt,
 )
 from arnold.pipeline.types import StepContext
 
@@ -56,6 +58,7 @@ class TestPipelineResourceBundle:
             prompt_dir=Path("/tmp/prompts"),
         )
         assert bundle.resources == {}
+        assert bundle.prompts == {}
 
     def test_from_module_resolves_relative_prompt_dir(self) -> None:
         bundle = PipelineResourceBundle.from_module(
@@ -70,9 +73,11 @@ class TestPipelineResourceBundle:
             "/some/pkg/pipeline.py",
             prompt_dir="my_prompts",
             resources={"key": "val"},
+            prompts={"critique": "Be sharp."},
         )
         assert bundle.prompt_dir == Path("/some/pkg/my_prompts")
         assert bundle.resources == {"key": "val"}
+        assert bundle.prompts == {"critique": "Be sharp."}
 
     def test_resolve_prompt_path(self) -> None:
         bundle = PipelineResourceBundle(
@@ -143,6 +148,110 @@ class TestResolvePrompt:
         # is defensive.
         result = resolve_prompt(42, _ctx())  # type: ignore[arg-type]
         assert result == "42"
+
+
+class TestBundlePromptResolution:
+    def test_prompt_lookup_candidates_match_legacy_precedence(self) -> None:
+        assert prompt_lookup_candidates(
+            "critique", mode="doc", pipeline="alpha"
+        ) == (
+            "alpha/critique:doc",
+            "alpha/critique",
+            "critique:doc",
+            "critique",
+        )
+
+    def test_resolve_prompt_source_prefers_pipeline_and_mode(self) -> None:
+        bundle = PipelineResourceBundle(
+            base_dir=Path("/tmp/base"),
+            prompt_dir=Path("/tmp/base/prompts"),
+            prompts={
+                "alpha/critique:doc": "PIPELINE+MODE",
+                "alpha/critique": "PIPELINE",
+                "critique:doc": "MODE",
+                "critique": "DEFAULT",
+            },
+        )
+
+        source = bundle.resolve_prompt_source(
+            "critique", mode="doc", pipeline="alpha"
+        )
+        assert source == "PIPELINE+MODE"
+
+    def test_resolve_prompt_source_falls_through_precedence(self) -> None:
+        bundle = PipelineResourceBundle(
+            base_dir=Path("/tmp/base"),
+            prompt_dir=Path("/tmp/base/prompts"),
+            prompts={
+                "alpha/critique": "PIPELINE",
+                "critique:doc": "MODE",
+                "critique": "DEFAULT",
+            },
+        )
+
+        assert (
+            bundle.resolve_prompt_source("critique", mode="doc", pipeline="alpha")
+            == "PIPELINE"
+        )
+        assert (
+            bundle.resolve_prompt_source("critique", mode="doc", pipeline="beta")
+            == "MODE"
+        )
+        assert bundle.resolve_prompt_source("critique", mode="code") == "DEFAULT"
+
+    def test_resolve_bundle_prompt_renders_callable_from_bundle(self) -> None:
+        bundle = PipelineResourceBundle(
+            base_dir=Path("/tmp/base"),
+            prompt_dir=Path("/tmp/base/prompts"),
+            prompts={
+                "alpha/revise:doc": lambda ctx, params: (
+                    f"{ctx.mode}:{params.get('flag', 'none')}"
+                )
+            },
+        )
+        ctx = _ctx(mode="doc", inputs={"_pipeline": "alpha"})
+
+        rendered = resolve_bundle_prompt(
+            bundle,
+            "revise",
+            ctx,
+            params={"flag": "tighten"},
+        )
+        assert rendered == "doc:tighten"
+
+    def test_resolve_bundle_prompt_reads_markdown_relative_to_bundle(
+        self, tmp_path: Path
+    ) -> None:
+        prompt_dir = tmp_path / "prompts"
+        prompt_dir.mkdir()
+        (prompt_dir / "critique.md").write_text(
+            "Bundle markdown prompt", encoding="utf-8"
+        )
+        bundle = PipelineResourceBundle(
+            base_dir=tmp_path,
+            prompt_dir=prompt_dir,
+            prompts={"critique": "critique.md"},
+        )
+        ctx = _ctx()
+        rendered = resolve_bundle_prompt(bundle, "critique", ctx)
+        assert rendered == "Bundle markdown prompt"
+
+    def test_render_prompt_method_uses_bundle_mapping(self) -> None:
+        bundle = PipelineResourceBundle(
+            base_dir=Path("/tmp/base"),
+            prompt_dir=Path("/tmp/base/prompts"),
+            prompts={"critique": "Bundle default"},
+        )
+
+        assert bundle.render_prompt("critique", _ctx()) == "Bundle default"
+
+    def test_missing_bundle_prompt_key_raises(self) -> None:
+        bundle = PipelineResourceBundle(
+            base_dir=Path("/tmp/base"),
+            prompt_dir=Path("/tmp/base/prompts"),
+        )
+        with pytest.raises(KeyError, match="no prompt registered"):
+            bundle.resolve_prompt_source("unknown", mode="doc", pipeline="alpha")
 
 
 # ---------------------------------------------------------------------------

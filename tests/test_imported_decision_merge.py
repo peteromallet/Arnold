@@ -9,7 +9,7 @@ import pytest
 import megaplan
 import megaplan.handlers
 from megaplan.handlers import _merge_imported_decision_criteria
-from megaplan.types import STATE_CRITIQUED
+from megaplan.planning.state import STATE_CRITIQUED
 from megaplan.workers import WorkerResult
 
 

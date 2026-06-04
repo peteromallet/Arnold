@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan._pipeline.flags import supervisor_tier_routing_on
-from megaplan.types import CliError, ROBUSTNESS_LEVELS
+from megaplan.profiles import ROBUSTNESS_LEVELS
+from megaplan.types import CliError
 
 
 BAKEOFF_SUPPORTED_MODES = ("code", "doc")

@@ -31,7 +31,16 @@ from megaplan._core import (
 )
 from megaplan._core.workflow import _with_feedback_from_state, _workflow_for_robustness
 from megaplan._core.topology import predecessors as _topology_predecessors
-from megaplan.types import STATE_INITIALIZED, STATE_PLANNED, STATE_GATED, STATE_FINALIZED, STATE_PREPPED, STATE_CRITIQUED, CliError, normalize_robustness
+from megaplan.profiles import normalize_robustness
+from megaplan.types import CliError
+from megaplan.planning.state import (
+    STATE_CRITIQUED,
+    STATE_FINALIZED,
+    STATE_GATED,
+    STATE_INITIALIZED,
+    STATE_PLANNED,
+    STATE_PREPPED,
+)
 
 # ---------------------------------------------------------------------------
 # (a) Workflow shape — ``workflow_includes_step`` at every robustness level

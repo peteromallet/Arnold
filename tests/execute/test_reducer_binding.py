@@ -22,7 +22,7 @@ from megaplan.execute._binding.reducer import (
     reduce_batch,
 )
 from megaplan.execute.batch import BatchResult
-from megaplan.types import STATE_EXECUTED
+from megaplan.planning.state import STATE_EXECUTED
 from megaplan.workers import WorkerResult
 
 

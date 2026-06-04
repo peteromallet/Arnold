@@ -1791,7 +1791,7 @@ def test_cap_with_significant_flag_halts_via_status_path(
     assert "revise" not in (status.get("valid_next") or [])
     assert status.get("next_step") != "revise"
     # BLOCKED is terminal with no recoverable next step -> auto halts.
-    from megaplan.types import AUTOMATION_TERMINAL_STATES
+    from megaplan.planning.state import AUTOMATION_TERMINAL_STATES
     assert status["state"] in AUTOMATION_TERMINAL_STATES
     assert not (status.get("valid_next") or [])
 

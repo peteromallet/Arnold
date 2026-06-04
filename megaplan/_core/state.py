@@ -31,11 +31,13 @@ import fcntl
 
 from megaplan.types import (
     ActivePhase,
-    CANONICAL_PLAN_STATES,
     CliError,
     HistoryEntry,
     PlanState,
     PlanVersionRecord,
+)
+from megaplan.planning.state import (
+    CANONICAL_PLAN_STATES,
     STATE_CRITIQUED,
     STATE_INITIALIZED,
     TERMINAL_STATES,
@@ -1057,7 +1059,7 @@ def set_active_step(
         if isinstance(session_id, str) and session_id:
             active_step["session_id"] = session_id
     state["active_step"] = active_step
-    from megaplan.orchestration.phase_result import generate_invocation_id
+    from arnold.pipelines.megaplan.orchestration.phase_result import generate_invocation_id
 
     state.setdefault("meta", {})["current_invocation_id"] = generate_invocation_id()
     return resolved_run_id
