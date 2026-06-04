@@ -3898,11 +3898,9 @@ def test_agent_status_and_credentials_cover_provider_unavailable_redaction_and_s
         "route_options": {
             "auto": {
                 "requested_route": "auto",
-                "normalized_route": "arnold",
-                "browser_api_key_allowed": False,
-                "guidance": "Use local Arnold/Hermes setup for this route. Configure "
-                "ARNOLD_API_KEY or HERMES_API_KEY locally; browser-submitted API keys "
-                "are not stored.",
+                "normalized_route": "deepseek",
+                "browser_api_key_allowed": True,
+                "guidance": "DeepSeek browser key submission is supported and stored locally.",
                 "tos_acknowledgement_required": False,
             },
             "deepseek": {
