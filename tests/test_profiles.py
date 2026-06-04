@@ -1031,6 +1031,14 @@ def _clear_model_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(env_var, raising=False)
 
 
+def _disable_premium_cli_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        profiles_module,
+        "_premium_cli_route_available",
+        lambda vendor: False,
+    )
+
+
 def test_vendor_codex_flips_premium_slots_on_all_claude(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1731,6 +1739,7 @@ def test_solo_profile_deepseek_only_falls_back_for_finalize_and_execute_prefligh
 
     _isolate_user_config(tmp_path, monkeypatch)
     _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
 
     args = _worker_args(profile="solo")
@@ -1754,6 +1763,7 @@ def test_solo_profile_is_noop_under_vendor_codex(
     """
     _isolate_user_config(tmp_path, monkeypatch)
     _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
 
     baseline = _worker_args(profile="solo")
@@ -1856,6 +1866,60 @@ def test_partnered_profile_flips_all_premium_under_vendor_codex(
     tiers = args.tier_models["execute"]
     assert tiers[4] == "codex:gpt-5.4"
     assert tiers[5] == "codex:gpt-5.5"
+
+
+def test_partnered_vendor_codex_execute_keeps_codex_tiers_with_cli_auth_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No OpenAI/Anthropic env keys must not degrade Codex-reachable execute tiers."""
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    monkeypatch.setenv("FIREWORKS_API_KEY", "fw-test")
+    monkeypatch.setattr(
+        profiles_module,
+        "_premium_cli_route_available",
+        lambda vendor: vendor == "codex",
+    )
+
+    args = _worker_args(
+        profile="partnered",
+        vendor="codex",
+        deepseek_provider="fireworks",
+    )
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    assert tier_models["execute"][4] == "codex:gpt-5.4"
+    assert tier_models["execute"][5] == "codex:gpt-5.5"
+    assert tier_models["execute"][4] == tier_models["critique"][4]
+    assert tier_models["execute"][5] == tier_models["critique"][5]
+
+
+def test_partnered_vendor_codex_execute_degrades_when_no_premium_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no env-key or CLI-backed premium route, the DeepSeek floor remains."""
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("FIREWORKS_API_KEY", "fw-test")
+
+    args = _worker_args(
+        profile="partnered",
+        vendor="codex",
+        deepseek_provider="fireworks",
+    )
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    assert tier_models["execute"][4] == DEEPSEEK
+    assert tier_models["execute"][5] == DEEPSEEK
+    assert tier_models["critique"][4] == "codex:gpt-5.4"
+    assert tier_models["critique"][5] == "codex:gpt-5.5"
 
 
 def test_partnered_critic_kimi_overrides_critique_and_review(

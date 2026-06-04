@@ -1567,16 +1567,45 @@ _PREMIUM_CREDENTIAL_ENV: dict[str, str] = {
 }
 
 
+def _credential_configured(env_var: str) -> bool:
+    if os.environ.get(env_var, "").strip():
+        return True
+    try:
+        from megaplan.runtime.key_pool import _get_api_credential
+
+        return bool(_get_api_credential(env_var))
+    except Exception:
+        return False
+
+
 def _premium_credential_configured(vendor: str) -> bool:
     env_var = _PREMIUM_CREDENTIAL_ENV.get(vendor)
-    return bool(env_var and os.environ.get(env_var, "").strip())
+    if env_var and _credential_configured(env_var):
+        return True
+    return _premium_cli_route_available(vendor)
+
+
+def _premium_cli_route_available(vendor: str) -> bool:
+    """Return whether premium dispatch can use a local CLI-backed route.
+
+    Codex and Claude/Shannon own their subscription/OAuth auth checks at
+    dispatch time. The profile floor only needs to know whether that route is
+    available; otherwise it can falsely degrade premium tiers just because API
+    key env vars are absent.
+    """
+    if vendor not in _PREMIUM_VENDORS:
+        return False
+    try:
+        from megaplan.workers._impl import _is_agent_available
+    except Exception:
+        return False
+    if vendor == "claude":
+        return _is_agent_available("claude") or _is_agent_available("shannon")
+    return _is_agent_available(vendor)
 
 
 def _deepseek_credential_configured() -> bool:
-    return bool(
-        os.environ.get("DEEPSEEK_API_KEY", "").strip()
-        or os.environ.get("FIREWORKS_API_KEY", "").strip()
-    )
+    return _credential_configured("DEEPSEEK_API_KEY") or _credential_configured("FIREWORKS_API_KEY")
 
 
 def _best_available_floor_spec(spec: str) -> str:
