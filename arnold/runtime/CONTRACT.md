@@ -1,10 +1,12 @@
-# Arnold Runtime Contract (M2a)
+# Arnold Runtime Contract (M2a + M3d)
 
-This document is the normative reference for the M2a runtime surface:
-operation kinds, the run envelope, the step-level driver protocol,
-settings categories and precedence, and the legacy-resume migration
-sequence.  It also contains the M2b migration checklist and the full
-IN-SCOPE / DEFERRED table for all ten cross-cutting concerns.
+This document is the normative reference for the M2a and M3d runtime
+surface: operation kinds, the run envelope, the step-level driver
+protocol, settings categories and precedence, the legacy-resume
+migration sequence, batch carriers, canonical deadline/cancellation
+rules, and unsupported-mechanic declarations.  It also contains the
+M2b migration checklist and the full IN-SCOPE / DEFERRED table for
+all ten cross-cutting concerns.
 
 ---
 
@@ -218,9 +220,50 @@ scopes.
 |---------------------------|-------------------------------------------------------------|
 | `unknown_stage_key`       | `stage_id` not in `pipeline_stages`.                       |
 | `idle_exceeds_wall_timeout`| `idle_timeout_s > wall_timeout_s` in resolved settings.   |
-| `negative_timeout`        | Any timeout key resolves to a negative value.               |
+| `negative_timeout`        | Any timeout key (`wall_timeout_s`, `idle_timeout_s`, `heartbeat_interval_s`, `poll_cadence_s`) resolves to a negative value. |
 | `isolation_mode_invalid`  | Resolved `isolation_mode` not in `ISOLATION_MODES`.         |
 | `max_workers_nonpositive` | Resolved `max_workers` <= 0.                                |
+| `deadline_negative`       | Resolved `deadline_epoch_s` < 0 (SD3; positive expired deadline is a runtime concern, not a validation error). |
+| `cost_cap_negative`       | Resolved `cost_cap_usd` < 0.                                |
+| `heartbeat_nonpositive`   | `heartbeat_interval_s` is set and <= 0.                     |
+| `poll_cadence_nonpositive`| `poll_cadence_s` is set and <= 0.                           |
+
+### 4.5 Canonical deadline and cancellation (SD1, SD2)
+
+**`deadline_epoch_s: float | None`** (in `InheritableSettings`) is the
+only canonical deadline for runtime comparisons.  Arnold batch runners
+and timeout supervisors compare `time.time()` against
+`deadline_epoch_s` — a numeric, epoch-seconds value.
+
+`CrossCuttingEnvelope.deadline: str | None` is **metadata only**.  It
+carries an ISO-8601 string for human-readability and audit trails but
+is **never parsed** by Arnold batch runners or timeout supervisors
+(SD1).
+
+**`GloballyAggregatedSettings.cancellation: bool`** is the canonical
+cancellation request.  Arnold batch runners check this boolean to
+decide whether to stop processing new units.
+
+`CrossCuttingEnvelope.cancellation: str | None` is **opaque metadata**
+(token/reason string).  It carries context for humans and audit trails
+but is never evaluated by Arnold mechanics (SD2).
+
+### 4.6 Negative vs expired deadlines (SD3)
+
+A **negative** `deadline_epoch_s` is a configuration error:
+`deadline_negative` in the resolver.  An **already-expired positive**
+deadline is a valid runtime condition that produces a neutral
+`deadline_expired` outcome — the caller (Megaplan) decides whether to
+retry, escalate, or halt.
+
+### 4.7 Unsupported mechanics (SD4)
+
+`idle_timeout_s` and `heartbeat_interval_s` are declared contract
+fields on `InheritableSettings` but are **unsupported mechanics in
+M3d**.  Arnold dry-run output annotates both keys with
+`(unsupported)`.  Batch runners never enforce idle-output polling or
+heartbeat emission.  Full implementation is deferred to a later
+milestone.
 
 ---
 
@@ -317,8 +360,191 @@ it and a later milestone owns the semantics.
 | prompt/context              | DEFERRED  | No prompt construction or context-window management; those remain Megaplan concerns.       | M5a |
 | artifact/dataflow           | DEFERRED  | `artifact_root` is carried as an opaque path.  Artifact schema, content-hash policy, and dataflow graph are out of scope. | M3c |
 | control/resume              | IN SCOPE  | `ResumeCursorRef`, `TrustTransition`, `migrate_legacy_resume()`, and the `RESUME` operation kind are all landed.  The `resume` method on `StepwiseDriver` is defined. | — |
-| recovery/failure            | IN SCOPE  | `InheritableSettings.retry_budget`, `cost_cap_usd`, and the five validation rules provide the structural recovery envelope.  Per-step retry semantics are M2b driver responsibility. | — |
-| resource/security           | IN SCOPE  | `wall_timeout_s`, `idle_timeout_s`, `heartbeat_interval_s`, `poll_cadence_s`, `deadline_epoch_s`, `cost_cap_usd` are all in `InheritableSettings`.  Trust-state labels provide the quarantine hook. | — |
+| recovery/failure            | IN SCOPE  | `InheritableSettings.retry_budget`, `cost_cap_usd`, and the nine validation rules (including `deadline_negative`, `cost_cap_negative`, `heartbeat_nonpositive`, `poll_cadence_nonpositive`) provide the structural recovery envelope.  Per-step retry semantics are M2b driver responsibility. | — |
+| resource/security           | IN SCOPE  | `wall_timeout_s`, `idle_timeout_s` (unsupported in M3d), `heartbeat_interval_s` (unsupported in M3d), `poll_cadence_s`, `deadline_epoch_s`, `cost_cap_usd` are all in `InheritableSettings`.  Canonical deadline/cancellation per SD1/SD2.  Trust-state labels provide the quarantine hook. | — |
 | isolation/environment       | IN SCOPE  | `ISOLATION_MODES` + `IsolationSettings.isolation_mode` define the two supported isolation boundaries.  Subprocess-launch knobs (image, env injection, resource limits) are reserved for a later milestone. | — |
 | observability/audit         | DEFERRED  | No event emission, structured logging, or audit trails in `arnold/runtime/`.              | M7 |
 | composition/subpipeline policy | DEFERRED | Fan-out semantics, nesting rules, and sub-pipeline composition policy are out of scope. `ParallelStage` in the executor raises `NotImplementedError` as a deliberate M2b placeholder. | M3c |
+
+---
+
+## 8. Batch Outcome Mechanics (M3d)
+
+Arnold batch runners (`scatter_gather_threaded` and
+`scatter_gather_processes`) classify every run into exactly one
+**neutral outcome kind** drawn from `BATCH_OUTCOME_KINDS`.  The
+runners detect these conditions and emit the corresponding
+`BatchRunResult.outcome_kind` — they **never** raise exceptions for
+operational conditions.  Callers (Megaplan adapters) translate each
+outcome into domain-appropriate actions.
+
+### 8.1 Neutral outcome kinds detected by Arnold
+
+| Outcome kind            | Detected by Arnold when …                                                                    |
+|-------------------------|---------------------------------------------------------------------------------------------|
+| `completed`             | All units finished within resource bounds — the default.                                    |
+| `wall_timeout`          | The per-unit wall-clock timeout expired and the unit was terminated / killed.  Siblings     |
+|                         | continue unaffected.  The timed-out unit produces a sentinel result via `on_unit_error`.   |
+| `deadline_expired`      | `deadline_epoch_s` is set and `time.time() > deadline_epoch_s`.  **Process runner**:        |
+|                         | detected pre-launch (returns immediately without spawning children).  **Thread runner**:    |
+|                         | detected post-execution (all submitted units complete, then outcome is classified).         |
+| `cancelled`             | `cancellation_requested` is `True`.  **Process runner**: detected pre-launch.               |
+|                         | **Thread runner**: detected post-execution.                                                 |
+| `idle_unsupported`      | `idle_timeout_s` is set (non-`None`) — Arnold annotates but does **not** enforce            |
+|                         | idle-output polling.  This is a declared-but-unsupported mechanic in M3d.                   |
+| `heartbeat_unsupported` | `heartbeat_interval_s` is set (non-`None`) — Arnold annotates but does **not** enforce      |
+|                         | heartbeat emission.  This is a declared-but-unsupported mechanic in M3d.                    |
+| `error`                 | Every unit produced an error result (process runner only).                                  |
+
+### 8.2 Unsupported mechanics (idle / heartbeat)
+
+`idle_timeout_s` and `heartbeat_interval_s` are **declared contract
+fields** on `InheritableSettings` and `BatchRuntimeSettings` but are
+**unsupported in M3d**.  Arnold dry-run output annotates both keys with
+`(unsupported)`.  Arnold batch runners do **not** implement
+idle-output polling or heartbeat emission.  Full implementation is
+deferred to a later milestone.
+
+When either field is non-`None`, the process runner returns
+`idle_unsupported` / `heartbeat_unsupported` immediately (pre-launch).
+The thread runner does not inspect these fields.
+
+### 8.3 Megaplan outcome translation (M3d adapters)
+
+Megaplan adapters (`hermes_fanout.scatter_gather`,
+`hermes_fanout.scatter_gather_processes`, and future worker-fanout
+adapters) translate Arnold's neutral `BatchRunResult.outcome_kind`
+into Megaplan-appropriate actions:
+
+| Arnold outcome         | Megaplan adapter action                                                                    |
+|------------------------|-------------------------------------------------------------------------------------------|
+| `completed`            | Return `GenericScatterResult` with ordered results, totals, and side results.             |
+| `wall_timeout`         | Timed-out units appear as sentinel error results via `on_unit_error`; completed siblings  |
+|                        | are included in ordered results.  Total cost/tokens reflect completed units only.         |
+| `deadline_expired`     | Process adapter: if `on_unit_error` was provided, produce sentinel results for all        |
+|                        | pending units; otherwise raise `CliError(\"worker_error\", …)`.  Thread adapter:            |
+|                        | all units already completed; the outcome is informational only.                           |
+| `cancelled`            | Same as `deadline_expired` — sentinel results via `on_unit_error` when available,         |
+|                        | otherwise `CliError`.                                                                      |
+| `idle_unsupported`     | Raise `CliError(\"worker_error\", …)` — the caller configured an unsupported mechanic.      |
+| `heartbeat_unsupported`| Same as `idle_unsupported`.                                                               |
+| `error`                | All units failed; results are propagated as-is.  Callers may treat the full-error          |
+|                        | condition as a retry / escalation signal at the orchestration layer.                      |
+
+This mapping is **intentionally owned by the Megaplan adapter layer**,
+not by Arnold.  Arnold remains policy-free: it classifies the outcome
+and returns a neutral `BatchRunResult`; the adapter decides whether to
+retry, escalate, or halt.
+
+---
+
+## 9. M5b Extraction Map
+
+This section is the normative extraction map for **M5b** ("Move Execute,
+Review, And Orchestration Policy Into The Plugin").  It enumerates three
+sets of boundaries settled during M3d implementation so that M5b can
+depend on Arnold mechanics without re-litigating design decisions.
+
+### 9.1 Megaplan-owned policy (must remain in Megaplan for M5b)
+
+These policy concerns are **not moved into Arnold** by M3d.  They remain
+in `megaplan/execute/`, `megaplan/review/`, `megaplan/orchestration/`,
+and their callers.  M5b relocates them into the Megaplan plugin package;
+Arnold never encodes their meanings or defaults.
+
+| #  | Policy concern                     | Current home (representative)                                | Notes                                                                 |
+|----|------------------------------------|--------------------------------------------------------------|-----------------------------------------------------------------------|
+| 1  | Destructive confirmation           | `megaplan/execute/core.py`, `batch.py`                       | User-acknowledged irreversible actions; gating before execution.      |
+| 2  | Review-mode approval               | `megaplan/review/checks.py`, `parallel.py`                   | Approval gating tied to review verdicts; plugin-owned semantics.      |
+| 3  | Blocked lifecycle                  | `megaplan/execute/core.py`, `orchestration/recovery_policy.py`| Blocked-task state machine: detect, retry, escalate, or halt.         |
+| 4  | Retry-blocked-tasks                | `megaplan/orchestration/recovery_policy.py`                  | Policy decision to retry tasks that are blocked (vs fresh or external).|
+| 5  | Batch transitions                  | `megaplan/execute/batch.py`                                  | How execute moves from one batch to the next (size, ordering, gates). |
+| 6  | Timeout checkpoint recovery        | `megaplan/execute/timeout.py`                                | Merging checkpointed partial results after a timeout; evidence reset. |
+| 7  | Evidence attribution               | `megaplan/orchestration/execution_evidence.py`               | Which step produced which evidence; evidence sufficiency checks.      |
+| 8  | Task complexity / tier selection   | `megaplan/execute/_binding/tier.py`                          | Model-tier assignment based on task complexity; cost/quality tradeoff.|
+| 9  | Review checks                      | `megaplan/review/checks.py`, `mechanical.py`                 | Incomplete verdicts, empty evidence, rework staying in review,        |
+|    |                                    |                                                              | batch-by-batch review, blocked-status acceptance.                     |
+| 10 | Execute policy (general)           | `megaplan/execute/` broadly                                  | Task batching, prerequisites, history entries, approval mode,         |
+|    |                                    |                                                              | evidence validation, final-plan artifact assembly.                    |
+| 11 | Orchestration policy (general)     | `megaplan/orchestration/` broadly                            | Gate checks, plan audit, tiebreaker support, iteration pressure,      |
+|    |                                    |                                                              | completion contracts, critique status, verifiability, suite running.  |
+| 12 | Recovery defaults & vocabularies   | `megaplan/orchestration/recovery_policy.py`                  | `retry_fresh`, `retry_transient`, `halt`, `escalate`, budget defaults,|
+|    |                                    |                                                              | external retry phase lists — all remain Megaplan vocabulary.          |
+| 13 | Megaplan phase vocabulary          | All `megaplan/` modules                                      | Phase names (`planning`, `critique`, `finalize`, `tiebreaker`,        |
+|    |                                    |                                                              | `escalate`), override action labels, gate labels — never in Arnold.   |
+
+### 9.2 Arnold-owned mechanics available for M5b
+
+These mechanics were extracted or created during M3d and are **neutral,
+policy-free, and importable from `arnold.runtime` or `arnold.pipeline`**.
+M5b code may depend on them freely — they carry no Megaplan defaults.
+
+| #  | Mechanic                                       | Module                                  | Notes                                                              |
+|----|------------------------------------------------|-----------------------------------------|--------------------------------------------------------------------|
+| 1  | Batch carriers                                 | `arnold.runtime.batch`                  | `BatchUnit`, `BatchUnitResult`, `BatchRunResult`,                   |
+|    |                                                |                                         | `BatchRuntimeSettings`, `BatchOutcomeKind`, hook Protocol types.    |
+| 2  | Runtime settings normalization                 | `arnold.runtime.batch_settings`         | `build_batch_runtime_settings()` — maps resolved settings into      |
+|    |                                                |                                         | `BatchRuntimeSettings` without parsing envelope strings.            |
+| 3  | Neutral wall / deadline / cancellation detection| `arnold.runtime.batch`                  | `wall_timeout`, `deadline_expired`, `cancelled` outcomes detected   |
+|    |                                                |                                         | by `scatter_gather_threaded` and `scatter_gather_processes`.        |
+| 4  | Thread-pool scatter-gather                     | `arnold.runtime.batch`                  | `scatter_gather_threaded()` — deterministic ordered results,        |
+|    |                                                |                                         | side-task aggregation, cost/token totals, tolerant `on_unit_error`. |
+| 5  | Process-pool scatter-gather                    | `arnold.runtime.batch`                  | `scatter_gather_processes()` — spawn context, wall-timeout kill,    |
+|    |                                                |                                         | hard-kill grace, deadline/cancellation pre-flight checks.           |
+| 6  | Recovery classifier Protocol                   | `arnold.runtime.recovery`               | `ArnoldRecoveryPolicy` Protocol with `classify(error, context)`;    |
+|    |                                                |                                         | `RecoveryContext`, `RecoveryDecision` frozen carriers.              |
+| 7  | Null recovery policy                           | `arnold.runtime.recovery`               | `NullRecoveryPolicy` — returns `status='unset'`; no silent fallback |
+|    |                                                |                                         | to Megaplan defaults.                                               |
+| 8  | Settings validation                            | `arnold.runtime.settings` / `_resolver`  | Nine validation rules (incl. `deadline_negative`, `cost_cap_negative`,|
+|    |                                                |                                         | `heartbeat_nonpositive`, `poll_cadence_nonpositive`).               |
+| 9  | Dry-run source reporting                       | `arnold.runtime.dry_run`                | `dry_run_report()` — annotates every effective setting with its      |
+|    |                                                |                                         | source layer and `(unsupported)` tags for idle/heartbeat.           |
+| 10 | Pipeline fan-out `max_workers` fallback        | `arnold.pipeline.executor`              | `_run_parallel_stage()` and `run_fanout()` accept inherited          |
+|    |                                                | `arnold.pipeline.pattern_dynamic`       | `max_workers`; explicit stage/concurrency settings win.             |
+| 11 | Subprocess driver deadline capping             | `megaplan/drivers/subprocess_isolated.py`| Accepts `batch_settings` (`BatchRuntimeSettings`); computes          |
+|    |                                                |                                         | `min(wall_cap, wall_timeout_s, deadline_remaining_s)` at run time.  |
+| 12 | Operation registry & run envelope              | `arnold.runtime.operations`             | `OperationKind`, `OperationRequest`/`OperationResult`,               |
+|    |                                                | `arnold.runtime.envelope`               | `RuntimeEnvelope`, `CrossCuttingEnvelope` — all neutral carriers.   |
+| 13 | StepwiseDriver Protocol                        | `arnold.runtime.driver`                 | `StepwiseDriver`, `ISOLATION_MODES`, `AdvanceOutcome`,               |
+|    |                                                |                                         | `CheckpointOutcome` — driver contract for M5b to implement.         |
+| 14 | Legacy-resume migration                        | `arnold.runtime.resume`                 | `migrate_legacy_resume()` — pure function; callers own persistence. |
+| 15 | Canonical deadline / cancellation rules        | `arnold.runtime.settings`               | SD1: `deadline_epoch_s` (float|None) canonical; envelope deadline    |
+|    |                                                | `arnold.runtime.CONTRACT.md` §4.5       | is metadata.  SD2: `cancellation` (bool) canonical; envelope string |
+|    |                                                |                                         | is opaque token/reason.                                             |
+| 16 | Settings categories & precedence               | `arnold.runtime.settings` / `_resolver` | Four categories (Inheritable, GloballyAggregated, StageLocal,        |
+|    |                                                |                                         | Isolation); five-layer precedence chain; `EffectiveSetting` wrapper. |
+
+### 9.3 Explicit M3d deferrals (M5b must not depend on)
+
+These mechanics are **declared but not implemented** in M3d.  M5b must
+either avoid them, implement them first, or accept that they are absent.
+
+| #  | Deferred mechanic                     | Status in M3d                                        | Target milestone |
+|----|---------------------------------------|------------------------------------------------------|------------------|
+| 1  | Idle-output supervision               | `idle_timeout_s` is a declared field on              | Later (post-M5b) |
+|    |                                       | `BatchRuntimeSettings` but triggers `idle_unsupported`|
+|    |                                       | outcome in process runner; thread runner ignores it. |
+| 2  | Heartbeat emission / checking         | `heartbeat_interval_s` is a declared field but       | Later (post-M5b) |
+|    |                                       | triggers `heartbeat_unsupported` outcome in process  |
+|    |                                       | runner; thread runner ignores it.                    |
+| 3  | Full subprocess supervisor extraction | `_supervise_subprocess` remains in Megaplan          | Later (post-M5b) |
+|    |                                       | (`megaplan/drivers/subprocess_isolated.py`). Only    |
+|    |                                       | deadline capping was threaded through in M3d.        |
+| 4  | Moving execute / review /             | These policy modules are **untouched** by M3d.       | M5b              |
+|    | orchestration policy                  | Their relocation is the M5b deliverable.             |
+| 5  | Output polling infrastructure         | No polling loop, event emission, or structured       | Later (post-M5b) |
+|    |                                       | logging exists in `arnold/runtime/`.                 |
+| 6  | Per-step retry semantics              | Retry budget envelope exists in `InheritableSettings`| M2b / M5b driver |
+|    |                                       | but per-step retry logic is driver/adapter concern.  | responsibility   |
+
+### 9.4 How to read this map
+
+- **§9.1 items** are Megaplan policy.  M5b moves them into the plugin
+  (`arnold/pipelines/megaplan/` or equivalent).  Arnold never imports or
+  references them.
+- **§9.2 items** are Arnold mechanics.  M5b code may `import` them
+  directly from `arnold.runtime` or `arnold.pipeline`.  They carry no
+  opinion about execute, review, or orchestration meanings.
+- **§9.3 items** are gaps.  If M5b needs idle-output polling, heartbeat
+  infrastructure, or a fully extracted subprocess supervisor, it must
+  build them before depending on them — or defer them further.

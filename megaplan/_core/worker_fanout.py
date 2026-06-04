@@ -375,12 +375,34 @@ def scatter_worker_units(
                 "args": args,
             }
         )
+    def _worker_metadata(index: int, packed: dict[str, Any]) -> dict[str, Any]:
+        """Enrich BatchUnit metadata with WorkerUnit fields."""
+        resolved: Any = packed.get("resolved")
+        mode_labels: dict[str, Any] = {}
+        if resolved is not None:
+            mode_labels = {
+                "agent": getattr(resolved, "agent", None),
+                "mode": getattr(resolved, "mode", None),
+                "model": getattr(resolved, "model", None),
+                "resolved_model": getattr(resolved, "resolved_model", None),
+                "effort": getattr(resolved, "effort", None),
+            }
+        return {
+            "step": packed.get("step"),
+            "read_only": packed.get("read_only"),
+            "extra": packed.get("extra"),
+            "mode_labels": mode_labels,
+            "role": packed.get("role"),
+            "original_index": packed.get("original_index"),
+        }
+
     raw = scatter_gather_processes(
         units=packed_units,
         run_unit_fn=_scatter_worker_unit_from_packed,
         max_concurrent=max_concurrent,
         timeout_seconds=timeout_seconds,
         on_unit_error=on_unit_error,
+        metadata_fn=_worker_metadata,
     )
 
     def _default_parse(item: Any) -> Any:

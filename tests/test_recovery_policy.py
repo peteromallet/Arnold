@@ -237,3 +237,476 @@ def test_recovery_decision_is_frozen():
     d = RecoveryDecision(action="escalate")
     with pytest.raises(Exception):
         d.action = "halt"  # type: ignore[misc]
+
+
+# ===================================================================
+# Arnold adapter parity tests: classify_arnold
+# ===================================================================
+# These tests exercise the classify_arnold bridge that maps an Arnold
+# RecoveryContext -> Megaplan classify() args -> Arnold RecoveryDecision.
+# They verify that pre-adapter decisions (context / external / blocked /
+# timeout / unclassified) are faithfully preserved through the adapter.
+
+
+def _arnold_context(**metadata):
+    """Build a minimal Arnold RecoveryContext for adapter parity tests."""
+    from arnold.runtime.recovery import RecoveryContext as ArnoldCtx
+
+    return ArnoldCtx(error="test-error", metadata=metadata)
+
+
+# --- context exhaustion paths ---
+
+
+def test_classify_arnold_context_exhausted_retry_under_budget():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        context_retries_used=0,
+    )
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.context_exhausted), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "retry_fresh"
+    assert decision.budget_consumed["budget_kind"] == "context"
+    assert decision.budget_consumed["budget_delta"] == 1
+
+
+def test_classify_arnold_context_exhausted_halt_at_cap():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        context_retries_used=DEFAULT_MAX_CONTEXT_RETRIES,
+    )
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.context_exhausted), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "context_retry_exhausted"
+    assert decision.budget_consumed["budget_kind"] == "context"
+
+
+def test_classify_arnold_context_exhausted_via_message():
+    p = RecoveryPolicy()
+    err = _err(message="model ran out of room in the model's context window")
+    ctx = _arnold_context(layer="phase", context_retries_used=0)
+    decision = p.classify_arnold(err, ctx)
+    assert decision.action == "retry_fresh"
+    assert decision.budget_consumed["budget_kind"] == "context"
+
+
+# --- transient external paths ---
+
+
+def test_classify_arnold_external_transient_retry_under_budget():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        external_retries_used=0,
+        phase="plan",
+    )
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "retry_transient"
+    assert decision.budget_consumed["budget_kind"] == "external"
+    assert decision.budget_consumed["budget_delta"] == 1
+
+
+def test_classify_arnold_external_transient_halt_at_cap():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        external_retries_used=DEFAULT_MAX_EXTERNAL_RETRIES,
+        phase="plan",
+    )
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "external_retry_exhausted"
+
+
+def test_classify_arnold_external_permanent_halts():
+    p = RecoveryPolicy()
+    err = _err(
+        exit_kind=ExitKind.external_error,
+        error_kind="auth",
+        message="bad key",
+    )
+    ctx = _arnold_context(layer="phase", phase="plan")
+    decision = p.classify_arnold(err, ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "permanent_external"
+
+
+def test_classify_arnold_external_on_execute_phase_halts():
+    """execute is NOT in EXTERNAL_RETRYABLE_PHASES -> permanent."""
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase", phase="execute")
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "permanent_external"
+
+
+# --- blocked paths ---
+
+
+@pytest.mark.parametrize("kind", [ExitKind.blocked_by_quality, ExitKind.blocked_by_prereq])
+def test_classify_arnold_blocked_retry_under_budget(kind):
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase", blocked_retries_used=0)
+    decision = p.classify_arnold(_err(exit_kind=kind), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "retry_fresh"
+    assert decision.budget_consumed["budget_kind"] == "blocked"
+    assert decision.budget_consumed["budget_delta"] == 1
+
+
+def test_classify_arnold_blocked_halt_at_cap():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        blocked_retries_used=DEFAULT_MAX_BLOCKED_RETRIES,
+    )
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.blocked_by_quality), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "blocked_retry_exhausted"
+
+
+# --- escalate paths (timeout / internal_error) ---
+
+
+@pytest.mark.parametrize("kind", [ExitKind.timeout, ExitKind.internal_error])
+def test_classify_arnold_escalate_on_timeout_and_internal(kind):
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase")
+    decision = p.classify_arnold(_err(exit_kind=kind), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "escalate"
+    assert "budget_kind" not in decision.budget_consumed
+    assert "halt_kind" not in decision.budget_consumed
+
+
+# --- unclassified path ---
+
+
+def test_classify_arnold_unclassified_halts():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase")
+    decision = p.classify_arnold(_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "unclassified"
+
+
+# --- metadata mapping and defaults ---
+
+
+def test_classify_arnold_metadata_defaults():
+    """When metadata is empty, defaults should be used."""
+    p = RecoveryPolicy()
+    # Without phase, external transient should NOT be retryable
+    ctx = _arnold_context()  # empty metadata -> phase="" -> not in EXTERNAL_RETRYABLE_PHASES
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "permanent_external"
+
+
+def test_classify_arnold_layer_defaults_to_phase():
+    """When layer is not in metadata, it defaults to 'phase'."""
+    p = RecoveryPolicy()
+    ctx = _arnold_context(context_retries_used=0)
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.context_exhausted), ctx)
+    assert decision.action == "retry_fresh"
+
+
+def test_classify_arnold_budget_consumed_carries_reason():
+    """reason from Megaplan decision is propagated as-is."""
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase", external_retries_used=0, phase="plan")
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.reason == "transient external"
+
+
+def test_classify_arnold_budget_consumed_is_dict():
+    """budget_consumed is always a dict even when empty."""
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase")
+    # Unclassified error -> halt with halt_kind only, no budget_kind or delta
+    decision = p.classify_arnold(_err(), ctx)
+    assert isinstance(decision.budget_consumed, dict)
+    assert decision.budget_consumed["halt_kind"] == "unclassified"
+
+
+def test_classify_arnold_side_effect_freedom():
+    """classify_arnold must not mutate the caller's RecoveryContext."""
+    p = RecoveryPolicy()
+    meta = {
+        "layer": "phase",
+        "context_retries_used": 0,
+    }
+    ctx = _arnold_context(**meta)
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.context_exhausted), ctx)
+    # The original dict must be unchanged
+    assert meta["context_retries_used"] == 0
+    assert decision.budget_consumed["budget_delta"] == 1
+
+
+# ===================================================================
+# Regression: NullRecoveryPolicy produces unsupported/unset
+# ===================================================================
+
+
+def test_null_policy_classify_arnold_returns_unset():
+    """When no Megaplan policy is available, NullRecoveryPolicy returns unset.
+
+    This is a regression test verifying that the no-plugin-recovery-policy
+    path produces an explicit unsupported/unset signal rather than silently
+    falling back to Megaplan defaults.
+    """
+    from arnold.runtime.recovery import NullRecoveryPolicy, RecoveryContext as ArnoldCtx
+
+    np = NullRecoveryPolicy()
+    ctx = ArnoldCtx(error="timeout", metadata={"layer": "phase"})
+    decision = np.classify("timeout", ctx)
+    assert decision.status == "unset"
+    assert decision.action == ""
+    assert "No recovery policy registered" in decision.reason
+
+
+# ===================================================================
+# Arnold adapter parity tests: classify_arnold
+# ===================================================================
+# These tests exercise the classify_arnold bridge that maps an Arnold
+# RecoveryContext -> Megaplan classify() args -> Arnold RecoveryDecision.
+# They verify that pre-adapter decisions (context / external / blocked /
+# timeout / unclassified) are faithfully preserved through the adapter.
+
+
+def _arnold_context(**metadata):
+    """Build a minimal Arnold RecoveryContext for adapter parity tests."""
+    from arnold.runtime.recovery import RecoveryContext as ArnoldCtx
+
+    return ArnoldCtx(error="test-error", metadata=metadata)
+
+
+# --- context exhaustion paths ---
+
+
+def test_classify_arnold_context_exhausted_retry_under_budget():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        context_retries_used=0,
+    )
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.context_exhausted), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "retry_fresh"
+    assert decision.budget_consumed["budget_kind"] == "context"
+    assert decision.budget_consumed["budget_delta"] == 1
+
+
+def test_classify_arnold_context_exhausted_halt_at_cap():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        context_retries_used=DEFAULT_MAX_CONTEXT_RETRIES,
+    )
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.context_exhausted), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "context_retry_exhausted"
+    assert decision.budget_consumed["budget_kind"] == "context"
+
+
+def test_classify_arnold_context_exhausted_via_message():
+    p = RecoveryPolicy()
+    err = _err(message="model ran out of room in the model's context window")
+    ctx = _arnold_context(layer="phase", context_retries_used=0)
+    decision = p.classify_arnold(err, ctx)
+    assert decision.action == "retry_fresh"
+    assert decision.budget_consumed["budget_kind"] == "context"
+
+
+# --- transient external paths ---
+
+
+def test_classify_arnold_external_transient_retry_under_budget():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        external_retries_used=0,
+        phase="plan",
+    )
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "retry_transient"
+    assert decision.budget_consumed["budget_kind"] == "external"
+    assert decision.budget_consumed["budget_delta"] == 1
+
+
+def test_classify_arnold_external_transient_halt_at_cap():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        external_retries_used=DEFAULT_MAX_EXTERNAL_RETRIES,
+        phase="plan",
+    )
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "external_retry_exhausted"
+
+
+def test_classify_arnold_external_permanent_halts():
+    p = RecoveryPolicy()
+    err = _err(
+        exit_kind=ExitKind.external_error,
+        error_kind="auth",
+        message="bad key",
+    )
+    ctx = _arnold_context(layer="phase", phase="plan")
+    decision = p.classify_arnold(err, ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "permanent_external"
+
+
+def test_classify_arnold_external_on_execute_phase_halts():
+    """execute is NOT in EXTERNAL_RETRYABLE_PHASES -> permanent."""
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase", phase="execute")
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "permanent_external"
+
+
+# --- blocked paths ---
+
+
+@pytest.mark.parametrize("kind", [ExitKind.blocked_by_quality, ExitKind.blocked_by_prereq])
+def test_classify_arnold_blocked_retry_under_budget(kind):
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase", blocked_retries_used=0)
+    decision = p.classify_arnold(_err(exit_kind=kind), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "retry_fresh"
+    assert decision.budget_consumed["budget_kind"] == "blocked"
+    assert decision.budget_consumed["budget_delta"] == 1
+
+
+def test_classify_arnold_blocked_halt_at_cap():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(
+        layer="phase",
+        blocked_retries_used=DEFAULT_MAX_BLOCKED_RETRIES,
+    )
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.blocked_by_quality), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "blocked_retry_exhausted"
+
+
+# --- escalate paths (timeout / internal_error) ---
+
+
+@pytest.mark.parametrize("kind", [ExitKind.timeout, ExitKind.internal_error])
+def test_classify_arnold_escalate_on_timeout_and_internal(kind):
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase")
+    decision = p.classify_arnold(_err(exit_kind=kind), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "escalate"
+    assert "budget_kind" not in decision.budget_consumed
+    assert "halt_kind" not in decision.budget_consumed
+
+
+# --- unclassified path ---
+
+
+def test_classify_arnold_unclassified_halts():
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase")
+    decision = p.classify_arnold(_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "unclassified"
+
+
+# --- metadata mapping and defaults ---
+
+
+def test_classify_arnold_metadata_defaults():
+    """When metadata is empty, defaults should be used."""
+    p = RecoveryPolicy()
+    # Without phase, external transient should NOT be retryable
+    ctx = _arnold_context()  # empty metadata -> phase="" -> not in EXTERNAL_RETRYABLE_PHASES
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.status == "decided"
+    assert decision.action == "halt"
+    assert decision.budget_consumed["halt_kind"] == "permanent_external"
+
+
+def test_classify_arnold_layer_defaults_to_phase():
+    """When layer is not in metadata, it defaults to 'phase'."""
+    p = RecoveryPolicy()
+    ctx = _arnold_context(context_retries_used=0)
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.context_exhausted), ctx)
+    assert decision.action == "retry_fresh"
+
+
+def test_classify_arnold_budget_consumed_carries_reason():
+    """reason from Megaplan decision is propagated as-is."""
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase", external_retries_used=0, phase="plan")
+    decision = p.classify_arnold(_transient_err(), ctx)
+    assert decision.reason == "transient external"
+
+
+def test_classify_arnold_budget_consumed_is_dict():
+    """budget_consumed is always a dict even when empty."""
+    p = RecoveryPolicy()
+    ctx = _arnold_context(layer="phase")
+    # Unclassified error -> halt with halt_kind only, no budget_kind or delta
+    decision = p.classify_arnold(_err(), ctx)
+    assert isinstance(decision.budget_consumed, dict)
+    assert decision.budget_consumed["halt_kind"] == "unclassified"
+
+
+def test_classify_arnold_side_effect_freedom():
+    """classify_arnold must not mutate the caller's RecoveryContext."""
+    p = RecoveryPolicy()
+    meta = {
+        "layer": "phase",
+        "context_retries_used": 0,
+    }
+    ctx = _arnold_context(**meta)
+    decision = p.classify_arnold(_err(exit_kind=ExitKind.context_exhausted), ctx)
+    # The original dict must be unchanged
+    assert meta["context_retries_used"] == 0
+    assert decision.budget_consumed["budget_delta"] == 1
+
+
+# ===================================================================
+# Regression: NullRecoveryPolicy produces unsupported/unset
+# ===================================================================
+
+
+def test_null_policy_classify_arnold_returns_unset():
+    """When no Megaplan policy is available, NullRecoveryPolicy returns unset.
+
+    This is a regression test verifying that the no-plugin-recovery-policy
+    path produces an explicit unsupported/unset signal rather than silently
+    falling back to Megaplan defaults.
+    """
+    from arnold.runtime.recovery import NullRecoveryPolicy, RecoveryContext as ArnoldCtx
+
+    np = NullRecoveryPolicy()
+    ctx = ArnoldCtx(error="timeout", metadata={"layer": "phase"})
+    decision = np.classify("timeout", ctx)
+    assert decision.status == "unset"
+    assert decision.action == ""
+    assert "No recovery policy registered" in decision.reason
+ENDOFFILE; __hermes_rc=$?; printf '__HERMES_FENCE_a9f7b3__'; exit $__hermes_rc

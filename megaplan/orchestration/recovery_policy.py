@@ -284,6 +284,62 @@ class RecoveryPolicy:
                 return True
         return False
 
+    # ------------------------------------------------------------------
+    # Arnold adapter — bridges the Arnold RecoveryPolicy Protocol
+    # ------------------------------------------------------------------
+
+    def classify_arnold(
+        self,
+        error: Any,
+        context: Any,  # arnold.runtime.recovery.RecoveryContext (Protocol)
+    ) -> Any:  # arnold.runtime.recovery.RecoveryDecision
+        """Arnold :class:`~arnold.runtime.recovery.ArnoldRecoveryPolicy` adapter.
+
+        Maps the Arnold ``classify(error, RecoveryContext)`` Protocol onto
+        the source-compatible ``classify(error, layer, *, …)`` signature.
+
+        ``RecoveryContext.metadata`` carries the Megaplan keyword arguments:
+        ``layer`` (default ``\"phase\"``), ``context_retries_used``,
+        ``external_retries_used``, ``blocked_retries_used``, and ``phase``.
+
+        The Megaplan :class:`RecoveryDecision` is translated into an Arnold
+        :class:`~arnold.runtime.recovery.RecoveryDecision` with
+        ``status=\"decided\"``, opaque ``action`` / ``reason``, and
+        ``budget_consumed`` carrying the budget kind, delta, and halt kind.
+        """
+        from arnold.runtime.recovery import RecoveryDecision as ArnoldDecision
+
+        meta = getattr(context, "metadata", {}) or {}
+        layer = meta.get("layer", "phase")
+        ctx_used = meta.get("context_retries_used", 0)
+        ext_used = meta.get("external_retries_used", 0)
+        blk_used = meta.get("blocked_retries_used", 0)
+        phase = meta.get("phase", "")
+
+        megaplan_decision = self.classify(
+            error,
+            layer,
+            context_retries_used=ctx_used,
+            external_retries_used=ext_used,
+            blocked_retries_used=blk_used,
+            phase=phase,
+        )
+
+        budget_consumed: dict[str, Any] = {}
+        if megaplan_decision.budget_kind:
+            budget_consumed["budget_kind"] = megaplan_decision.budget_kind
+        if megaplan_decision.budget_delta:
+            budget_consumed["budget_delta"] = megaplan_decision.budget_delta
+        if megaplan_decision.halt_kind:
+            budget_consumed["halt_kind"] = megaplan_decision.halt_kind
+
+        return ArnoldDecision(
+            status="decided",
+            action=megaplan_decision.action,
+            reason=megaplan_decision.reason,
+            budget_consumed=budget_consumed,
+        )
+
 
 __all__ = [
     "Action",
