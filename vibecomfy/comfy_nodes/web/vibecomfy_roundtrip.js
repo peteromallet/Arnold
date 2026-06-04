@@ -478,7 +478,7 @@ function installAgentPreviewOverlay() {
   // LiteGraph is currently rendering.
   const overlayDraw = function (ctx) {
     const panel = agentPanel;
-    if (!panel || !panel.state.previewEnabled) {
+    if (!panel) {
       return;
     }
     if (panel.state.phase !== PANEL_STATE.AWAITING_REVIEW) {
@@ -1429,40 +1429,8 @@ function createAgentPanel() {
   footer.appendChild(undoBtn);
   footer.appendChild(closeBtn);
 
-  const previewToggleLabel = el("label", "");
-  Object.assign(previewToggleLabel.style, {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    cursor: "pointer",
-    fontFamily: "monospace",
-    fontSize: "12px",
-    color: "#edf2f7",
-    margin: "0",
-  });
-  const previewToggleInput = el("input");
-  previewToggleInput.type = "checkbox";
-  previewToggleInput.id = PANEL_IDS.previewToggle;
-  previewToggleLabel.appendChild(previewToggleInput);
-  previewToggleLabel.appendChild(document.createTextNode("Preview changes"));
-  footer.appendChild(previewToggleLabel);
-
-  previewToggleInput.addEventListener("change", function () {
-    const panel = agentPanel;
-    if (!panel) {
-      return;
-    }
-    panel.state.previewEnabled = this.checked;
-    if (this.checked) {
-      getOrBuildPreviewDiff();
-    }
-    if (app?.canvas?.setDirty) {
-      app.canvas.setDirty(true, true);
-    }
-    if (app?.canvas?.draw) {
-      app.canvas.draw(true, true);
-    }
-  });
+  // Preview is ALWAYS-ON: no toggle. The overlay draws automatically whenever a
+  // candidate is pending (AWAITING_REVIEW). (Previously a "Preview changes" checkbox.)
 
   shell.appendChild(header);
   shell.appendChild(metaRow);
@@ -1488,7 +1456,6 @@ function createAgentPanel() {
       reject: rejectBtn,
       undo: undoBtn,
       close: closeBtn,
-      previewToggle: previewToggleInput,
       settingsSave,
       settingsTest,
     },
@@ -1838,18 +1805,27 @@ function computePreviewDiff(candidateGraph, candidateReport) {
     const candidateNodes = Array.isArray(candidateGraph?.nodes) ? candidateGraph.nodes : [];
 
     // ── Index by uid ──────────────────────────────────────────────────────
-    const liveByUid = new Map();
-    for (const node of liveNodes) {
-      const uid = getUid(node);
-      if (uid) {
-        liveByUid.set(uid, node);
-      }
-    }
+    // The candidate (server round-trip) stamps vibecomfy_uid on every node, but a
+    // live canvas node may have none yet (a stock graph before any Apply). Map
+    // candidate uid by LiteGraph node id so a uid-less live node can recover its
+    // uid from its id — otherwise EVERY candidate node falsely looks "added".
     const candidateByUid = new Map();
+    const candidateUidById = new Map();
     for (const node of candidateNodes) {
       const uid = getUid(node);
       if (uid) {
         candidateByUid.set(uid, node);
+        if (node.id != null) {
+          candidateUidById.set(String(node.id), uid);
+        }
+      }
+    }
+    const liveByUid = new Map();
+    for (const node of liveNodes) {
+      const uid = getUid(node)
+        || (node.id != null ? candidateUidById.get(String(node.id)) : null);
+      if (uid) {
+        liveByUid.set(uid, node);
       }
     }
 
@@ -2561,14 +2537,9 @@ function renderAgentPanel(panel) {
   panel.buttons.settingsSave.disabled = submitting || applying;
   panel.buttons.settingsTest.disabled = submitting || applying;
 
-  const canPreview = reviewing && panel.state.candidateGraph;
-  if (!canPreview) {
-    panel.state.previewEnabled = false;
-  }
-  if (panel.buttons.previewToggle) {
-    panel.buttons.previewToggle.disabled = !canPreview;
-    panel.buttons.previewToggle.checked = panel.state.previewEnabled && canPreview;
-  }
+  // Always-on preview (no toggle): previewEnabled simply tracks whether there is
+  // a pending candidate to preview.
+  panel.state.previewEnabled = !!(reviewing && panel.state.candidateGraph);
 
   setButtonEmphasis(panel.buttons.submit, canSubmit || submitting, "primary");
   setButtonEmphasis(panel.buttons.apply, reviewing || applying, "primary");

@@ -771,7 +771,10 @@ def run_agent_turn_batch(
         "response_contract": "batch_repl",
     }
     last_malformed: MalformedModelJSON | None = None
-    for attempt in range(2):
+    # 1 initial + 2 retries: DeepSeek intermittently returns an empty / no-fence
+    # response that parses as MalformedModelJSON; the same prompt usually succeeds
+    # on a later attempt.
+    for attempt in range(3):
         attempt_messages = messages if attempt == 0 else [*messages, {"role": "system", "content": _BATCH_RETRY_NUDGE}]
         try:
             response = _call_batch_runtime(
@@ -798,7 +801,7 @@ def run_agent_turn_batch(
         except TimeoutError:
             raise
         except MalformedModelJSON as exc:
-            if attempt == 0:
+            if attempt < 2:
                 last_malformed = exc
                 LOGGER.warning(
                     "Retrying batch_repl agent turn after malformed model response: %s",
