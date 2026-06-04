@@ -364,12 +364,14 @@ def _resolve_agent_route(route: str | None) -> AgentRouteDescriptor:
         requested = "openai-codex"
 
     if requested == "auto":
-        # "auto" must pick a provider that actually has credentials in THIS
-        # environment. arnold (Claude via OpenRouter/Anthropic/local OAuth) is the
-        # historical target, but when no arnold-family key is configured and a
-        # DeepSeek key IS present, prefer DeepSeek — otherwise a fresh panel fails
-        # with a ProviderError on the keyless arnold path on every submit.
-        if _deepseek_key_present() and not _arnold_creds_present():
+        # "auto" picks the provider that actually works for agent-edit here.
+        # DeepSeek is the validated, reliable agent-edit backend, so prefer it
+        # whenever a DeepSeek key is present — even if an arnold-family key is ALSO
+        # set (an interactive shell commonly inherits ANTHROPIC/OPENROUTER/HERMES
+        # keys, and the arnold/Claude batch path has been observed to return an
+        # empty response here, surfacing as MalformedModelJSON on every submit).
+        # Fall back to arnold only when no DeepSeek key is available.
+        if _deepseek_key_present():
             return AgentRouteDescriptor(
                 requested_route=requested,
                 normalized_route="deepseek",
