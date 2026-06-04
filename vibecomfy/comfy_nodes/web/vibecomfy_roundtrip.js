@@ -2636,7 +2636,14 @@ async function submitAgentEdit(panel) {
     return panel.state.inFlightSubmit;
   }
   panel.state.inFlightSubmit = (async () => {
-    const task = panel.fields.prompt.value.trim();
+    // Re-resolve the prompt element from the live DOM at submit time: a durable
+    // panel re-render can replace the textarea, leaving panel.fields.prompt as a
+    // stale, detached reference whose .value reads empty — a false "MissingTask".
+    const promptEl = document.getElementById(PANEL_IDS.prompt) || panel.fields.prompt;
+    if (promptEl && promptEl !== panel.fields.prompt) {
+      panel.fields.prompt = promptEl;
+    }
+    const task = (promptEl && typeof promptEl.value === "string" ? promptEl.value : "").trim();
     if (!task) {
       panel.state.phase = PANEL_STATE.ERROR;
       panel.state.failure = agentPanelFailure("MissingTask", "Enter an edit instruction before submitting.", {
