@@ -112,7 +112,7 @@ class AgentEditState:
     batch_turns: list[dict[str, Any]] = field(default_factory=list)
     batch_budget_state: dict[str, Any] = field(default_factory=dict)
     batch_turn_count: int = 0
-    batch_max_turns: int = 5
+    batch_max_turns: int = 20
     batch_max_consecutive_errors: int = 3
     batch_feedback: str = ""
     batch_final_summary: str = ""
@@ -941,6 +941,7 @@ def _stage_agent_batch_repl(
     consecutive_errors = 0
     total_landed = 0
     done_noop_nudges = 0
+    done_error_nudges = 0
     request_log: list[dict[str, Any]] = []
     response_log: list[dict[str, Any]] = []
 
@@ -1137,35 +1138,54 @@ def _stage_agent_batch_repl(
             item.ok and str(item.op_kind or "") == "done"
             for item in batch_result.statements
         )
-        # Don't honor a premature done(): if the model called done() but NOTHING
-        # has ever landed, committing would produce an empty no-op. Two common
-        # causes: (1) it guessed a node signature wrong so the add failed; (2) it
-        # only ran a read-only search() and done()'d without ever constructing the
-        # node. Either way, feed guidance back and let it self-correct. Bounded by
-        # done_noop_nudges so a genuinely-no-change request still commits.
+        # Don't honor a premature done(): feed guidance back and let the model
+        # self-correct. Two distinct cases, each separately bounded so a genuine
+        # no-change request still commits and we can't loop forever:
+        #  (1) NOTHING ever landed — committing would be an empty no-op. Causes:
+        #      a wrong node signature, or a read-only search() then done().
+        #  (2) Something landed but THIS (final) batch errored — some intended
+        #      statements failed to land (e.g. a wrong output-slot name), so the
+        #      edit is half-applied and likely broken (floating node / dangling
+        #      wire). The diagnostics name the fix; force one more turn.
+        refuse_done = False
+        hint = ""
         if (
             done_requested
-            and total_landed == 0
-            and done_noop_nudges < 2
             and (turn_number + 1) < max_batches
+            and consecutive_errors < max_consecutive_errors
         ):
-            done_noop_nudges += 1
-            if turn_has_errors:
+            if total_landed == 0 and done_noop_nudges < 2:
+                done_noop_nudges += 1
+                refuse_done = True
+                if turn_has_errors:
+                    hint = (
+                        "your edit statement(s) did NOT land (see the diagnostics above)"
+                        " and nothing has been applied. Fix the failed statement — correct"
+                        " the wrong field name or supply the required input;"
+                        " call search(focus_types=[\"ClassName\"]) for the exact signature —"
+                        " then call done()."
+                    )
+                else:
+                    hint = (
+                        "you called done() without making any edit, so nothing was applied."
+                        " A search() is read-only and does NOT change the graph. Now CONSTRUCT"
+                        " and wire the node(s) the request needs (e.g. `up = NodeType(...)` then"
+                        " `consumer.input = up.OUTPUT`), then call done(). If the graph"
+                        " genuinely needs no change, call done() again to confirm."
+                    )
+            elif turn_has_errors and done_error_nudges < 2:
+                done_error_nudges += 1
+                refuse_done = True
                 hint = (
-                    "your edit statement(s) did NOT land (see the diagnostics above)"
-                    " and nothing has been applied. Fix the failed statement — correct"
-                    " the wrong field name or supply the required input;"
-                    " call search(focus_types=[\"ClassName\"]) for the exact signature —"
-                    " then call done()."
+                    "some of your edit statements did NOT land (see the diagnostics above),"
+                    " so the edit is INCOMPLETE — nodes the request needs may be left"
+                    " unconnected or a consumer's input left dangling. Do NOT stop here."
+                    " Fix ONLY the failed statement(s): use the exact output-slot/field names"
+                    " the diagnostics list (e.g. an output is `.UPSCALE_MODEL`, not `.model`),"
+                    " drop any kwarg the node does not declare, re-wire the consumer, then"
+                    " call done()."
                 )
-            else:
-                hint = (
-                    "you called done() without making any edit, so nothing was applied."
-                    " A search() is read-only and does NOT change the graph. Now CONSTRUCT"
-                    " and wire the node(s) the request needs (e.g. `up = NodeType(...)` then"
-                    " `consumer.input = up.OUTPUT`), then call done(). If the graph"
-                    " genuinely needs no change, call done() again to confirm."
-                )
+        if refuse_done:
             last_report = last_report + "\n\nNOTE: done() was NOT accepted — " + hint
             continue
         if done_requested:

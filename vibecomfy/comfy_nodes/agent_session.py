@@ -15,6 +15,11 @@ from .agent_contracts import FailureEnvelope, FailureKind, TurnContext, failure_
 STATE_FILE_NAME = "session_state.json"
 LOCK_FILE_NAME = ".session_state.lock"
 STATE_SCHEMA_VERSION = 1
+# Bumped whenever `structural_graph_projection` changes shape. A baseline hash
+# stored by an older version is recomputed from the on-disk accepted graph on
+# read, so a projection change never strands an open session on a stale baseline
+# it can no longer match (the StaleStateMismatch-on-every-submit failure mode).
+STRUCTURAL_PROJECTION_VERSION = 2
 DEFAULT_LOCK_TIMEOUT_SECONDS = 10.0
 LOCK_POLL_SECONDS = 0.025
 
@@ -140,13 +145,25 @@ def read_state(session_dir: Path) -> dict[str, Any]:
         baseline_turn = merged["turns"].get(merged["baseline_turn_id"])
         if isinstance(baseline_turn, dict):
             structural_hash = baseline_turn.get("candidate_structural_graph_hash")
-            if not isinstance(structural_hash, str):
-                structural_hash = _candidate_structural_hash_from_turn_dir(
+            stored_version = baseline_turn.get("candidate_structural_graph_hash_version")
+            # Recompute when the hash is missing OR was produced by an older
+            # projection version. Recomputing from the on-disk accepted candidate
+            # re-runs the CURRENT projection, so a session opened across a code
+            # change heals its baseline instead of mismatching on every submit.
+            if (
+                not isinstance(structural_hash, str)
+                or stored_version != STRUCTURAL_PROJECTION_VERSION
+            ):
+                recomputed = _candidate_structural_hash_from_turn_dir(
                     session_dir=path.parent,
                     turn_id=merged["baseline_turn_id"],
                 )
-                if isinstance(structural_hash, str):
-                    baseline_turn["candidate_structural_graph_hash"] = structural_hash
+                if isinstance(recomputed, str):
+                    structural_hash = recomputed
+                    baseline_turn["candidate_structural_graph_hash"] = recomputed
+                    baseline_turn[
+                        "candidate_structural_graph_hash_version"
+                    ] = STRUCTURAL_PROJECTION_VERSION
             if isinstance(structural_hash, str):
                 merged["baseline_graph_hash"] = structural_hash
                 merged["baseline_graph_hash_kind"] = "structural"
@@ -189,6 +206,14 @@ def _normalize_structural_widget_value(value: Any) -> Any:
             for key, entry in sorted(value.items(), key=lambda item: str(item[0]))
             if not _is_preview_like_key(key)
         }
+    # Canonicalise integral floats to ints so the hash matches what the browser
+    # round-trips. JS `JSON.stringify(2.0)` emits `2`, so the backend's float
+    # widget value (e.g. scale_by=2.0) and the canvas's resubmitted `2` are the
+    # same graph and must hash identically. (bool is an int subclass — leave it.)
+    if isinstance(value, float) and not isinstance(value, bool):
+        if value == value and value not in (float("inf"), float("-inf")):
+            if value.is_integer():
+                return int(value)
     return value
 
 
@@ -206,30 +231,50 @@ def _normalize_structural_link(value: Any) -> Any:
 def structural_graph_projection(graph: Any) -> dict[str, Any]:
     if not isinstance(graph, Mapping):
         return {"nodes": [], "links": []}
+    raw_nodes = graph.get("nodes") if isinstance(graph.get("nodes"), list) else []
+    # Per-node slot-index -> name maps, so links can be projected by NAME. This
+    # makes the hash invariant to ComfyUI materialising declared-but-unwired input
+    # slots on apply (which shifts later inputs' slot indices and would otherwise
+    # change the hash for a graph whose actual wiring is unchanged).
+    input_names: dict[Any, list[Any]] = {}
+    output_names: dict[Any, list[Any]] = {}
+    for node in raw_nodes:
+        if not isinstance(node, Mapping):
+            continue
+        nid = node.get("id")
+        input_names[nid] = [
+            (i.get("name") if isinstance(i, Mapping) else None)
+            for i in (node.get("inputs") if isinstance(node.get("inputs"), list) else [])
+        ]
+        output_names[nid] = [
+            (o.get("name") if isinstance(o, Mapping) else None)
+            for o in (node.get("outputs") if isinstance(node.get("outputs"), list) else [])
+        ]
     nodes: list[dict[str, Any]] = []
-    for node in graph.get("nodes") if isinstance(graph.get("nodes"), list) else []:
+    for node in raw_nodes:
         if not isinstance(node, Mapping):
             node = {}
-        inputs = []
-        for input_ in node.get("inputs") if isinstance(node.get("inputs"), list) else []:
-            if not isinstance(input_, Mapping):
-                input_ = {}
-            inputs.append({"name": input_.get("name"), "link": input_.get("link")})
-        outputs = []
-        for output in node.get("outputs") if isinstance(node.get("outputs"), list) else []:
-            if not isinstance(output, Mapping):
-                output = {}
-            output_links = output.get("links")
-            if isinstance(output_links, list):
-                output_links = sorted(output_links, key=lambda entry: str(entry))
-            outputs.append({"name": output.get("name"), "links": output_links})
+        # Only WIRED input names — an unwired slot ComfyUI adds on apply is not
+        # meaningful graph state and must not change the hash.
+        wired_inputs = sorted(
+            str(i.get("name"))
+            for i in (node.get("inputs") if isinstance(node.get("inputs"), list) else [])
+            if isinstance(i, Mapping)
+            and i.get("link") is not None
+            and i.get("name") is not None
+        )
+        live_outputs = sorted(
+            str(o.get("name"))
+            for o in (node.get("outputs") if isinstance(node.get("outputs"), list) else [])
+            if isinstance(o, Mapping) and o.get("links") and o.get("name") is not None
+        )
         nodes.append(
             {
                 "id": node.get("id"),
                 "type": node.get("type"),
                 "mode": node.get("mode"),
-                "inputs": inputs,
-                "outputs": outputs,
+                "inputs": wired_inputs,
+                "outputs": live_outputs,
                 "widgets_values": _normalize_structural_widget_value(
                     node.get("widgets_values", [])
                 ),
@@ -238,11 +283,35 @@ def structural_graph_projection(graph: Any) -> dict[str, Any]:
     nodes.sort(
         key=lambda node: (_natural_id_key(node.get("id")), str(node.get("type") or ""))
     )
-    links = (
-        [_normalize_structural_link(link) for link in graph.get("links")]
-        if isinstance(graph.get("links"), list)
-        else []
-    )
+
+    def _slot_name(names: list[Any], slot: Any) -> Any:
+        if isinstance(slot, int) and 0 <= slot < len(names):
+            return names[slot]
+        return slot
+
+    # Project links by endpoint NAME (not slot index or link id) so they survive
+    # slot reordering and link renumbering across the apply round-trip.
+    links: list[dict[str, Any]] = []
+    for link in (graph.get("links") if isinstance(graph.get("links"), list) else []):
+        if isinstance(link, list) and len(link) >= 6:
+            o_id, o_slot, t_id, t_slot, l_type = (
+                link[1], link[2], link[3], link[4], link[5],
+            )
+        elif isinstance(link, Mapping):
+            o_id, o_slot = link.get("origin_id"), link.get("origin_slot")
+            t_id, t_slot = link.get("target_id"), link.get("target_slot")
+            l_type = link.get("type")
+        else:
+            continue
+        links.append(
+            {
+                "from": o_id,
+                "out": _slot_name(output_names.get(o_id, []), o_slot),
+                "to": t_id,
+                "in": _slot_name(input_names.get(t_id, []), t_slot),
+                "type": l_type,
+            }
+        )
     links.sort(
         key=lambda link: json.dumps(
             link, sort_keys=True, separators=(",", ":"), ensure_ascii=False
@@ -496,6 +565,9 @@ def record_idempotent_response(
                 if isinstance(turn_record, dict):
                     turn_record["candidate_graph_hash"] = candidate_graph_hash
                     turn_record["candidate_structural_graph_hash"] = candidate_structural_graph_hash
+                    turn_record[
+                        "candidate_structural_graph_hash_version"
+                    ] = STRUCTURAL_PROJECTION_VERSION
                     turn_record["agent_edit_protocol"] = agent_edit_protocol
                     write_state_atomic(session_dir, state)
         return None
@@ -625,13 +697,21 @@ def _mutate_turn_state(
                 },
             )
         candidate_structural_graph_hash = turn_record.get("candidate_structural_graph_hash")
-        if not isinstance(candidate_structural_graph_hash, str):
-            candidate_structural_graph_hash = _candidate_structural_hash_from_turn_dir(
+        stored_struct_version = turn_record.get("candidate_structural_graph_hash_version")
+        if (
+            not isinstance(candidate_structural_graph_hash, str)
+            or stored_struct_version != STRUCTURAL_PROJECTION_VERSION
+        ):
+            recomputed = _candidate_structural_hash_from_turn_dir(
                 session_dir=session_dir,
                 turn_id=turn_id,
             )
-            if isinstance(candidate_structural_graph_hash, str):
-                turn_record["candidate_structural_graph_hash"] = candidate_structural_graph_hash
+            if isinstance(recomputed, str):
+                candidate_structural_graph_hash = recomputed
+                turn_record["candidate_structural_graph_hash"] = recomputed
+                turn_record[
+                    "candidate_structural_graph_hash_version"
+                ] = STRUCTURAL_PROJECTION_VERSION
         if not isinstance(candidate_structural_graph_hash, str):
             return failure_envelope(
                 FailureKind.STALE_STATE_MISMATCH,
