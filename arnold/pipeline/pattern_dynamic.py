@@ -206,6 +206,7 @@ def run_fanout(
     *,
     metadata: FanoutMetadata | None = None,
     typed_ports: bool = True,
+    max_workers: int | None = None,
 ) -> Any:
     """Neutral dynamic fan-out core.
 
@@ -236,6 +237,10 @@ def run_fanout(
         When ``True`` (default), specs are read from the typed port
         channel and the joined result emits ``LAST_FANOUT_RESULTS_PORT``.
         When ``False``, the untyped ``specs`` channel is used instead.
+    max_workers:
+        Fallback worker count when ``metadata.concurrency.max_workers``
+        is ``None``.  Precedence: ``concurrency.max_workers`` (explicit)
+        > *max_workers* (inherited) > ``None`` (unbounded default).
 
     Returns
     -------
@@ -262,7 +267,11 @@ def run_fanout(
     # 4. Run per-spec steps
     concurrency = metadata.concurrency
     if concurrency.mode == "thread" and len(steps) > 1:
-        results = _run_concurrent(steps, ctx, concurrency.max_workers)
+        # Precedence: concurrency.max_workers > max_workers > None (unbounded)
+        effective_workers = concurrency.max_workers
+        if effective_workers is None:
+            effective_workers = max_workers
+        results = _run_concurrent(steps, ctx, effective_workers)
     else:
         results = [step.run(ctx) for step in steps]
 

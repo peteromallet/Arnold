@@ -12,6 +12,12 @@ recovery/failure           IN SCOPE     ``InheritableSettings.retry_budget`` and
                                         ``InheritableSettings.cost_cap_usd``.
 resource/security          IN SCOPE     Timeouts, deadline, cost-cap; all in
                                         ``InheritableSettings``.
+                                        Canonical deadline: ``deadline_epoch_s``
+                                        (float|None); ``CrossCuttingEnvelope.deadline``
+                                        string is metadata only (SD1).
+                                        Canonical cancellation: ``cancellation``
+                                        bool; ``CrossCuttingEnvelope.cancellation``
+                                        string is opaque metadata (SD2).
 isolation/environment      IN SCOPE     ``IsolationSettings.isolation_mode``; subprocess-
                                         launch knobs are reserved for later population.
 identity/discovery         DEFERRED     Beyond ``plugin_id``/``manifest_hash``;

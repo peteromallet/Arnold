@@ -93,6 +93,9 @@ def dry_run_report(resolved: ResolvedSettings) -> str:
 
     effective = resolved.effective
 
+    # Keys that are declared but unsupported in M3d (SD4).
+    _UNSUPPORTED_KEYS: frozenset[str] = frozenset({"idle_timeout_s", "heartbeat_interval_s"})
+
     for key in _SUPPORTED_KEYS:
         es = effective.get(key)
         if es is not None:
@@ -101,6 +104,8 @@ def dry_run_report(resolved: ResolvedSettings) -> str:
         else:
             val_str = "---"
             src_str = "---"
+        if key in _UNSUPPORTED_KEYS:
+            val_str = f"{val_str} (unsupported)"
         lines.append(f"{key:<24s}  {val_str:<20s}  {src_str:<20s}")
 
     # Stage-effective block (if any)
@@ -119,6 +124,8 @@ def dry_run_report(resolved: ResolvedSettings) -> str:
                 else:
                     val_str = "---"
                     src_str = "---"
+                if key in _UNSUPPORTED_KEYS:
+                    val_str = f"{val_str} (unsupported)"
                 lines.append(f"    {key:<22s}  {val_str:<18s}  {src_str:<20s}")
             lines.append("")
 
@@ -137,6 +144,8 @@ def dry_run_report(resolved: ResolvedSettings) -> str:
                 else:
                     val_str = "---"
                     src_str = "---"
+                if key in _UNSUPPORTED_KEYS:
+                    val_str = f"{val_str} (unsupported)"
                 lines.append(f"    {key:<22s}  {val_str:<18s}  {src_str:<20s}")
             lines.append("")
 

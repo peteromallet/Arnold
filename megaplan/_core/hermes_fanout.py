@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import multiprocessing as mp
-import queue
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, NamedTuple
 
 from .io import get_effective
@@ -223,7 +220,17 @@ def scatter_gather(
 
     max_concurrent=None is resolved to get_effective('orchestration',
     'max_critique_concurrency') inside this helper, before the min() cap.
+
+    Internally delegates to :func:`arnold.runtime.batch.scatter_gather_threaded`
+    after resolving Megaplan config at the boundary.
     """
+    from arnold.runtime.batch import (
+        BatchRuntimeSettings,
+        BatchUnit,
+        BatchUnitResult,
+        scatter_gather_threaded,
+    )
+
     if unpack_unit_result is None:
         unpack_unit_result = lambda result: result
     if unpack_side_result is None:
@@ -247,61 +254,140 @@ def scatter_gather(
         )
     concurrency = min(effective_max, total_futures)
 
-    results: list[Any | None] = [None] * num_units
-    side_results: list[Any] = [None] * len(_side)
-    total_cost = 0.0
-    total_prompt_tokens = 0
-    total_completion_tokens = 0
-    total_tokens = 0
+    # Pre-submit all futures; scatter_gather_threaded resolves them.
+    submit_executor = ThreadPoolExecutor(max_workers=concurrency)
+    try:
+        unit_futures = submit_unit_fn(submit_executor)
+        side_futures = [task(submit_executor) for task in _side]
 
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        unit_futures = submit_unit_fn(executor)
-        side_futures = [task(executor) for task in _side]
         side_future_to_idx = {f: i for i, f in enumerate(side_futures)}
-        unit_future_to_idx: dict[Any, int] = {}
+        unit_future_map: dict[Any, int] = {}
         for future in unit_futures:
             try:
                 idx = int(getattr(future, "_megaplan_unit_index"))
             except Exception:
-                idx = len(unit_future_to_idx)
-            unit_future_to_idx[future] = idx
-        all_futures = list(unit_futures) + side_futures
+                idx = len(unit_future_map)
+            unit_future_map[future] = idx
 
-        for future in as_completed(all_futures):
-            if future in side_future_to_idx:
-                result = future.result()
-                idx = side_future_to_idx[future]
-                payload, cost_usd, pt, ct, tt = unpack_side_result(result)
-                side_results[idx] = result
-            else:
-                idx = unit_future_to_idx[future]
-                try:
-                    result = future.result()
-                    index, payload, cost_usd, pt, ct, tt = unpack_unit_result(result)
-                except Exception as exc:
-                    if on_unit_error is None:
-                        raise
-                    payload, cost_usd, pt, ct, tt = on_unit_error(idx, exc)
-                    index = idx
-                results[index] = payload
-            total_cost += cost_usd
-            total_prompt_tokens += pt
-            total_completion_tokens += ct
-            total_tokens += tt
+        # Build BatchUnits: each resolves one pre-submitted future
+        units: list[BatchUnit] = []
+        for future in unit_futures:
+            idx = unit_future_map[future]
+            units.append(BatchUnit(
+                unit_id="u{}".format(idx),
+                payload=(future, "unit", idx),
+                metadata={"kind": "unit", "index": idx},
+            ))
+        for future in side_futures:
+            idx = side_future_to_idx[future]
+            units.append(BatchUnit(
+                unit_id="s{}".format(idx),
+                payload=(future, "side", idx),
+                metadata={"kind": "side", "index": idx},
+            ))
 
-    ordered_results: list[Any] = []
-    for item in results:
-        if item is None:
+        settings = BatchRuntimeSettings(max_workers=concurrency)
+
+        # Shared state for cost/token aggregation and payload storage.
+        _side_store: dict[str, tuple[float, int, int, int]] = {}
+        _agg_cost = 0.0
+        _agg_pt = 0
+        _agg_ct = 0
+        _agg_tt = 0
+
+        def _run_unit(unit: BatchUnit, _settings: BatchRuntimeSettings) -> Any:
+            future, _kind, _idx = unit.payload
+            return future.result()
+
+        def _parse_result(
+            raw: Any, unit: BatchUnit, _settings: BatchRuntimeSettings,
+        ) -> Any:
+            nonlocal _agg_cost, _agg_pt, _agg_ct, _agg_tt
+            kind = unit.metadata["kind"]
+            if kind == "side":
+                payload, cost_usd, pt, ct, tt = unpack_side_result(raw)
+                _agg_cost += cost_usd
+                _agg_pt += pt
+                _agg_ct += ct
+                _agg_tt += tt
+                _side_store[unit.unit_id] = (cost_usd, pt, ct, tt)
+                return raw
+            _index, payload, cost_usd, pt, ct, tt = unpack_unit_result(raw)
+            _agg_cost += cost_usd
+            _agg_pt += pt
+            _agg_ct += ct
+            _agg_tt += tt
+            _side_store[unit.unit_id] = (cost_usd, pt, ct, tt)
+            return payload
+
+        def _on_unit_error(
+            unit: BatchUnit, exc: BaseException, _settings: BatchRuntimeSettings,
+        ) -> BatchUnitResult:
+            nonlocal _agg_cost, _agg_pt, _agg_ct, _agg_tt
+            kind = unit.metadata["kind"]
+            idx = unit.metadata["index"]
+            if kind == "side":
+                return BatchUnitResult(
+                    unit_id=unit.unit_id,
+                    error=str(exc),
+                )
+            if on_unit_error is None:
+                raise exc
+            payload, cost_usd, pt, ct, tt = on_unit_error(idx, Exception(str(exc)))
+            _agg_cost += cost_usd
+            _agg_pt += pt
+            _agg_ct += ct
+            _agg_tt += tt
+            return BatchUnitResult(
+                unit_id=unit.unit_id,
+                result=payload,
+                cost_usd=cost_usd,
+                tokens=pt + ct,
+            )
+
+        batch_result = scatter_gather_threaded(
+            units=units,
+            settings=settings,
+            run_unit=_run_unit,
+            parse_result=_parse_result,
+            on_unit_error=_on_unit_error if on_unit_error is not None else None,
+            max_workers=concurrency,
+        )
+    finally:
+        submit_executor.shutdown(wait=False)
+
+    # Translate BatchRunResult -> GenericScatterResult
+    ordered: list[Any] = [None] * num_units
+    side_list: list[Any] = []
+    total_cost = _agg_cost
+    total_pt = _agg_pt
+    total_ct = _agg_ct
+    total_tt = _agg_tt
+
+    for ur in batch_result.ordered_results:
+        sid = ur.unit_id
+        if sid.startswith("s"):
+            if ur.result is not None:
+                side_list.append(ur.result)
+        else:
+            try:
+                idx = int(sid[1:])
+            except (ValueError, IndexError):
+                idx = len([x for x in ordered if x is not None])
+            if idx < num_units:
+                ordered[idx] = ur.result if ur.result is not None else ur.error
+
+    for i in range(num_units):
+        if ordered[i] is None:
             raise CliError("worker_error", "Parallel fan-out did not return all unit results")
-        ordered_results.append(item)
 
     return GenericScatterResult(
-        ordered_results=ordered_results,
+        ordered_results=ordered,
         total_cost=total_cost,
-        total_prompt_tokens=total_prompt_tokens,
-        total_completion_tokens=total_completion_tokens,
-        total_tokens=total_tokens,
-        side_results=side_results,
+        total_prompt_tokens=total_pt,
+        total_completion_tokens=total_ct,
+        total_tokens=total_tt,
+        side_results=side_list,
     )
 
 
@@ -313,6 +399,7 @@ def scatter_gather_processes(
     on_unit_error: Callable[[int, Exception], tuple[Any, float, int, int, int]] | None = None,
     timeout_seconds: float | None = None,
     hard_kill_grace_seconds: float = 5.0,
+    metadata_fn: Callable[[int, Any], dict[str, Any]] | None = None,
 ) -> GenericScatterResult:
     """Process-isolated scatter/gather for research units.
 
@@ -323,16 +410,31 @@ def scatter_gather_processes(
 
     When ``timeout_seconds`` is supplied, each unit gets its own deadline. A
     child that exceeds the deadline is terminated, then killed if it is still
-    alive after ``hard_kill_grace_seconds``. This helper owns the child
-    processes directly so a timed-out unit can be cleaned up without cancelling
-    siblings or using a nested process pool.
+    alive after ``hard_kill_grace_seconds``.
+
+    Internally delegates to ``arnold.runtime.batch.scatter_gather_processes``
+    after resolving Megaplan config at the boundary.
     """
+    from arnold.runtime.batch import (
+        BatchRuntimeSettings,
+        BatchUnit,
+        BatchUnitResult,
+        scatter_gather_processes as _arnold_scatter_gather,
+    )
+
+    # ------------------------------------------------------------------
+    # Input validation (preserve legacy error behavior)
+    # ------------------------------------------------------------------
     if not units:
         return GenericScatterResult([], 0.0, 0, 0, 0, [])
     if timeout_seconds is not None and timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     if hard_kill_grace_seconds < 0:
         raise ValueError("hard_kill_grace_seconds must be non-negative")
+
+    # ------------------------------------------------------------------
+    # Resolve max_concurrent at Megaplan boundary
+    # ------------------------------------------------------------------
     effective_max = (
         max_concurrent
         if max_concurrent is not None
@@ -341,136 +443,137 @@ def scatter_gather_processes(
     concurrency = min(effective_max, len(units))
     if concurrency <= 0:
         raise ValueError("max_concurrent must be positive")
-    results: list[Any | None] = [None] * len(units)
-    total_cost = 0.0
-    total_prompt_tokens = 0
-    total_completion_tokens = 0
-    total_tokens = 0
 
-    ctx = mp.get_context("spawn")
-    pending = list(enumerate(units))
-    active: dict[int, dict[str, Any]] = {}
+    # ------------------------------------------------------------------
+    # Shared aggregation state (GIL-dependent, same pattern as scatter_gather)
+    # ------------------------------------------------------------------
+    _agg_cost = 0.0
+    _agg_pt = 0
+    _agg_ct = 0
+    _agg_tt = 0
 
-    def _launch_next() -> None:
-        if not pending:
-            return
-        index, unit = pending.pop(0)
-        out_queue: Any = ctx.Queue()
-        proc = ctx.Process(
-            target=_run_process_unit_child,
-            args=(run_unit_fn, index, unit, out_queue),
-        )
-        proc.start()
-        active[index] = {
-            "process": proc,
-            "queue": out_queue,
-            "started_at": time.monotonic(),
-            "terminating_since": None,
-        }
+    # ------------------------------------------------------------------
+    # Build BatchUnits and settings
+    # ------------------------------------------------------------------
+    settings = BatchRuntimeSettings(max_workers=concurrency)
+    batch_units: list[BatchUnit] = []
+    for i, unit in enumerate(units):
+        meta: dict[str, Any] = {"index": i}
+        if metadata_fn is not None:
+            meta.update(metadata_fn(i, unit))
+        batch_units.append(BatchUnit(unit_id=str(i), payload=unit, metadata=meta))
 
-    def _record(idx: int, payload: Any, cost_usd: float, pt: int, ct: int, tt: int) -> None:
-        nonlocal total_cost, total_prompt_tokens, total_completion_tokens, total_tokens
-        results[idx] = payload
-        total_cost += cost_usd
-        total_prompt_tokens += pt
-        total_completion_tokens += ct
-        total_tokens += tt
+    # ------------------------------------------------------------------
+    # Picklable run_unit adapter
+    # ------------------------------------------------------------------
+    _run_adapter = _ProcessRunUnitAdapter(run_unit_fn)
 
-    def _sentinel(idx: int, exc: Exception) -> None:
+    # ------------------------------------------------------------------
+    # Parse result: extract payload and aggregate cost/tokens
+    # ------------------------------------------------------------------
+    def _parse_result(raw: Any, _unit: BatchUnit, _settings: BatchRuntimeSettings) -> Any:
+        nonlocal _agg_cost, _agg_pt, _agg_ct, _agg_tt
+        _index, payload, cost_usd, pt, ct, tt = raw
+        _agg_cost += cost_usd
+        _agg_pt += pt
+        _agg_ct += ct
+        _agg_tt += tt
+        return payload
+
+    # ------------------------------------------------------------------
+    # on_unit_error bridge
+    # ------------------------------------------------------------------
+    def _on_unit_error(
+        batch_unit: BatchUnit, exc: BaseException, _settings: BatchRuntimeSettings,
+    ) -> BatchUnitResult:
+        nonlocal _agg_cost, _agg_pt, _agg_ct, _agg_tt
         if on_unit_error is None:
             raise exc
-        payload, cost_usd, pt, ct, tt = on_unit_error(idx, exc)
-        _record(idx, payload, cost_usd, pt, ct, tt)
+        idx = batch_unit.metadata["index"]
+        payload, cost_usd, pt, ct, tt = on_unit_error(idx, Exception(str(exc)))
+        _agg_cost += cost_usd
+        _agg_pt += pt
+        _agg_ct += ct
+        _agg_tt += tt
+        return BatchUnitResult(
+            unit_id=batch_unit.unit_id,
+            result=payload,
+            cost_usd=cost_usd,
+            tokens=pt + ct,
+        )
 
-    def _cleanup_active() -> None:
-        for item in active.values():
-            proc = item["process"]
-            if proc.is_alive():
-                proc.terminate()
-        for item in active.values():
-            proc = item["process"]
-            proc.join(hard_kill_grace_seconds)
-            if proc.is_alive():
-                proc.kill()
-                proc.join()
+    # ------------------------------------------------------------------
+    # Delegate to Arnold
+    # ------------------------------------------------------------------
+    batch_result = _arnold_scatter_gather(
+        units=batch_units,
+        settings=settings,
+        run_unit=_run_adapter,
+        parse_result=_parse_result,
+        on_unit_error=_on_unit_error if on_unit_error is not None else None,
+        max_workers=concurrency,
+        wall_timeout_s=timeout_seconds,
+        hard_kill_grace_seconds=hard_kill_grace_seconds,
+    )
 
-    for _ in range(concurrency):
-        _launch_next()
+    # ------------------------------------------------------------------
+    # Translate BatchRunResult → GenericScatterResult
+    # ------------------------------------------------------------------
+    outcome = batch_result.outcome_kind
 
-    try:
-        while active:
-            now = time.monotonic()
-            completed: list[int] = []
-            for idx, item in list(active.items()):
-                proc = item["process"]
-                out_queue = item["queue"]
-                try:
-                    message = out_queue.get_nowait()
-                except queue.Empty:
-                    message = None
+    if outcome in ("deadline_expired", "cancelled", "idle_unsupported", "heartbeat_unsupported"):
+        # Arnold returned a neutral preflight outcome — no units were executed.
+        if on_unit_error is not None:
+            # Produce sentinel results for all units via on_unit_error.
+            ordered: list[Any] = []
+            for i, unit in enumerate(units):
+                exc_msg = batch_result.errors[0] if batch_result.errors else outcome
+                payload, cost_usd, pt, ct, tt = on_unit_error(
+                    i, RuntimeError(str(exc_msg)),
+                )
+                ordered.append(payload)
+                _agg_cost += cost_usd
+                _agg_pt += pt
+                _agg_ct += ct
+                _agg_tt += tt
+        else:
+            raise CliError(
+                "worker_error",
+                f"Process fan-out: {outcome} — "
+                f"{batch_result.errors[0] if batch_result.errors else 'unknown'}",
+            )
+    else:
+        # completed / error: extract ordered results
+        ordered = [ur.result for ur in batch_result.ordered_results]
+        for i, item in enumerate(ordered):
+            if item is None:
+                raise CliError(
+                    "worker_error",
+                    "Process fan-out did not return all unit results",
+                )
 
-                if message is not None:
-                    proc.join()
-                    if message.get("ok"):
-                        index, payload, cost_usd, pt, ct, tt = message["result"]
-                        _record(index, payload, cost_usd, pt, ct, tt)
-                    else:
-                        exc = _ProcessUnitFailure(str(message.get("error", "")))
-                        _sentinel(idx, exc)
-                    completed.append(idx)
-                    continue
-
-                if (
-                    timeout_seconds is not None
-                    and item["terminating_since"] is None
-                    and now - item["started_at"] >= timeout_seconds
-                ):
-                    item["terminating_since"] = now
-                    if proc.is_alive():
-                        proc.terminate()
-
-                terminating_since = item["terminating_since"]
-                if terminating_since is not None:
-                    if proc.is_alive() and now - terminating_since >= hard_kill_grace_seconds:
-                        proc.kill()
-                    proc.join(0)
-                    if not proc.is_alive():
-                        _sentinel(
-                            idx,
-                            _ProcessUnitTimeout(
-                                f"process unit {idx} timed out after {timeout_seconds:.3f}s"
-                            ),
-                        )
-                        completed.append(idx)
-                    continue
-
-                if not proc.is_alive():
-                    proc.join()
-                    _sentinel(
-                        idx,
-                        _ProcessUnitFailure(f"process unit {idx} exited without a result"),
-                    )
-                    completed.append(idx)
-
-            for idx in completed:
-                active.pop(idx, None)
-                _launch_next()
-            if active:
-                time.sleep(0.01)
-    except Exception:
-        _cleanup_active()
-        raise
-
-    ordered_results: list[Any] = []
-    for item in results:
-        if item is None:
-            raise CliError("worker_error", "Process fan-out did not return all unit results")
-        ordered_results.append(item)
     return GenericScatterResult(
-        ordered_results=ordered_results,
-        total_cost=total_cost,
-        total_prompt_tokens=total_prompt_tokens,
-        total_completion_tokens=total_completion_tokens,
-        total_tokens=total_tokens,
+        ordered_results=ordered,
+        total_cost=_agg_cost,
+        total_prompt_tokens=_agg_pt,
+        total_completion_tokens=_agg_ct,
+        total_tokens=_agg_tt,
         side_results=[],
     )
+
+
+class _ProcessRunUnitAdapter:
+    """Picklable adapter from Megaplan ``run_unit_fn`` to Arnold ``RunUnitHook``.
+
+    Defined at module level so ``multiprocessing`` spawn can pickle it.
+    """
+
+    __slots__ = ("_run_unit_fn",)
+
+    def __init__(self, run_unit_fn: Callable) -> None:
+        self._run_unit_fn = run_unit_fn
+
+    def __call__(self, batch_unit: Any, _settings: Any) -> Any:
+        idx = batch_unit.metadata["index"]
+        unit = batch_unit.payload
+        return self._run_unit_fn(idx, unit)

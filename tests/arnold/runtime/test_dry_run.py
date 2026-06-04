@@ -63,6 +63,32 @@ class TestDryRunReportRender:
         assert "30.0" in report
         assert "arnold_default" in report
 
+    def test_batch_runtime_keys_with_source_attribution(self) -> None:
+        """Batch runtime settings (deadline_epoch_s, cost_cap_usd, cancellation)
+        must appear in dry-run with their resolved value and source."""
+        import time
+
+        now = time.time()
+        future_deadline = now + 3600.0
+        result = resolve_settings(
+            plugin_defaults={
+                "deadline_epoch_s": future_deadline,
+                "cost_cap_usd": 10.0,
+                "cancellation": False,
+            },
+        )
+        report = dry_run_report(result)
+
+        # All three batch runtime keys must appear
+        assert "deadline_epoch_s" in report
+        assert "cost_cap_usd" in report
+        assert "cancellation" in report
+
+        # Each must show its source
+        assert "plugin_default" in report
+        assert "10.0" in report
+        assert "false" in report
+
     def test_unset_key_shows_placeholder(self) -> None:
         """A key with no resolved value shows '---' for value and source."""
         result = resolve_settings(
@@ -154,8 +180,8 @@ class TestDryRunSnapshot:
             "key                       value                 source              \n"
             "---                       ---                   ---                 \n"
             "wall_timeout_s            90.0                  run_override        \n"
-            "idle_timeout_s            10.0                  arnold_default      \n"
-            "heartbeat_interval_s      5.0                   arnold_default      \n"
+            "idle_timeout_s            10.0 (unsupported)    arnold_default      \n"
+            "heartbeat_interval_s      5.0 (unsupported)     arnold_default      \n"
             "poll_cadence_s            1.0                   arnold_default      \n"
             "deadline_epoch_s          ---                   ---                 \n"
             "retry_budget              ---                   ---                 \n"
@@ -168,8 +194,8 @@ class TestDryRunSnapshot:
             "======================================================================\n"
             "  [build]\n"
             "    wall_timeout_s          120.0               run_override        \n"
-            "    idle_timeout_s          10.0                arnold_default      \n"
-            "    heartbeat_interval_s    5.0                 arnold_default      \n"
+            "    idle_timeout_s          10.0 (unsupported)  arnold_default      \n"
+            "    heartbeat_interval_s    5.0 (unsupported)   arnold_default      \n"
             "    poll_cadence_s          1.0                 arnold_default      \n"
             "    deadline_epoch_s        ---                 ---                 \n"
             "    retry_budget            ---                 ---                 \n"
@@ -180,8 +206,8 @@ class TestDryRunSnapshot:
             "\n"
             "  [test]\n"
             "    wall_timeout_s          90.0                run_override        \n"
-            "    idle_timeout_s          20.0                run_override        \n"
-            "    heartbeat_interval_s    5.0                 arnold_default      \n"
+            "    idle_timeout_s          20.0 (unsupported)  run_override        \n"
+            "    heartbeat_interval_s    5.0 (unsupported)   arnold_default      \n"
             "    poll_cadence_s          1.0                 arnold_default      \n"
             "    deadline_epoch_s        ---                 ---                 \n"
             "    retry_budget            ---                 ---                 \n"
@@ -194,8 +220,8 @@ class TestDryRunSnapshot:
             "======================================================================\n"
             "  [panels]\n"
             "    wall_timeout_s          90.0                run_override        \n"
-            "    idle_timeout_s          10.0                arnold_default      \n"
-            "    heartbeat_interval_s    5.0                 arnold_default      \n"
+            "    idle_timeout_s          10.0 (unsupported)  arnold_default      \n"
+            "    heartbeat_interval_s    5.0 (unsupported)   arnold_default      \n"
             "    poll_cadence_s          1.0                 arnold_default      \n"
             "    deadline_epoch_s        ---                 ---                 \n"
             "    retry_budget            ---                 ---                 \n"

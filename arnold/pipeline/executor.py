@@ -183,12 +183,21 @@ def _run_parallel_stage(
     state: Any,
     envelope: RuntimeEnvelope,
     parallel_safe: ParallelSafePredicate,
+    *,
+    max_workers: int | None = None,
 ) -> StepResult:
     """Fan-out *stage* across its steps concurrently, then join.
 
     Each step receives an isolated :class:`StepContext` snapshot.
     Results are collected in submission order (the order of
     ``stage.steps``).
+
+    Parameters
+    ----------
+    max_workers:
+        Fallback worker count when ``stage.max_workers`` is ``None``.
+        Precedence: ``stage.max_workers`` (explicit) > *max_workers*
+        (inherited) > ``len(steps)`` (unbounded default).
     """
     steps = stage.steps
 
@@ -208,13 +217,16 @@ def _run_parallel_stage(
         for _ in steps
     ]
 
-    max_workers = stage.max_workers
-    if max_workers is None:
-        max_workers = max(1, len(steps))
+    # Precedence: explicit stage.max_workers > inherited max_workers > len(steps)
+    effective_workers = stage.max_workers
+    if effective_workers is None:
+        effective_workers = max_workers
+    if effective_workers is None:
+        effective_workers = max(1, len(steps))
 
     results: list[StepResult] = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=effective_workers) as pool:
         future_to_index: dict[concurrent.futures.Future[StepResult], int] = {}
         for idx, (step, ctx) in enumerate(zip(steps, contexts)):
             future = pool.submit(step.run, ctx)

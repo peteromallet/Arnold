@@ -5,7 +5,7 @@ Walks five input layers in ascending priority order and produces one
 **returned** in :attr:`ResolvedSettings.errors` — never raised — so callers
 decide whether any failure is fatal.
 
-Five validation rules
+Nine validation rules
 ---------------------
 
 1. **unknown_stage_key** — a ``stage_id`` in ``stage_local`` is not a member
@@ -18,6 +18,12 @@ Five validation rules
 4. **isolation_mode_invalid** — the resolved ``isolation_mode`` is not a
    member of :data:`~arnold.runtime.driver.ISOLATION_MODES`.
 5. **max_workers_nonpositive** — the resolved ``max_workers`` is <= 0.
+6. **deadline_negative** — ``deadline_epoch_s`` resolves to a negative value
+   (distinct from ``negative_timeout``; SD3: negative deadline is malformed,
+   positive expired deadline is a runtime concern).
+7. **cost_cap_negative** — ``cost_cap_usd`` resolves to a negative value.
+8. **heartbeat_nonpositive** — ``heartbeat_interval_s`` is set and <= 0.
+9. **poll_cadence_nonpositive** — ``poll_cadence_s`` is set and <= 0.
 
 Boundary discipline
 -------------------
@@ -218,6 +224,46 @@ def resolve_settings(
             ValidationError(
                 code="max_workers_nonpositive",
                 message=f"max_workers must be >= 1, got {mw!r}",
+            )
+        )
+
+    # Rule 6: deadline_epoch_s < 0 (distinct from negative_timeout).
+    dl = vals.get("deadline_epoch_s")
+    if dl is not None and dl < 0:
+        errors.append(
+            ValidationError(
+                code="deadline_negative",
+                message=f"deadline_epoch_s must not be negative, got {dl!r}",
+            )
+        )
+
+    # Rule 7: cost_cap_usd < 0.
+    cc = vals.get("cost_cap_usd")
+    if cc is not None and cc < 0:
+        errors.append(
+            ValidationError(
+                code="cost_cap_negative",
+                message=f"cost_cap_usd must not be negative, got {cc!r}",
+            )
+        )
+
+    # Rule 8: heartbeat_interval_s set and <= 0.
+    hb = vals.get("heartbeat_interval_s")
+    if hb is not None and hb <= 0:
+        errors.append(
+            ValidationError(
+                code="heartbeat_nonpositive",
+                message=f"heartbeat_interval_s must be > 0 when set, got {hb!r}",
+            )
+        )
+
+    # Rule 9: poll_cadence_s set and <= 0.
+    pc = vals.get("poll_cadence_s")
+    if pc is not None and pc <= 0:
+        errors.append(
+            ValidationError(
+                code="poll_cadence_nonpositive",
+                message=f"poll_cadence_s must be > 0 when set, got {pc!r}",
             )
         )
 
