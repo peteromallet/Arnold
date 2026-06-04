@@ -59,11 +59,10 @@ class ValidationOptions:
     cycle detection and flag unguarded cycles.
     """
 
-    decision_vocabulary_fallback: frozenset[str] | None = field(
-        default_factory=lambda: frozenset(
-            {"proceed", "iterate", "tiebreaker", "escalate"}
-        )
-    )
+    # M4 neutralization: the neutral validator must not ship Megaplan decision
+    # vocabulary (boundary gate forbids these literals). Plugins declare their own
+    # decision_vocabulary; default suppresses fallback (see docstring).
+    decision_vocabulary_fallback: frozenset[str] | None = None
     override_vocabulary_fallback: frozenset[str] | None = None
     detect_cycles: bool = True
 

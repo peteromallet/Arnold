@@ -21,7 +21,7 @@ import pytest
 import megaplan
 
 from megaplan._pipeline.planning import compile_planning_pipeline
-from megaplan._pipeline.stages.inprocess_step import (
+from arnold.pipelines.megaplan.stages.inprocess_step import (
     InProcessHandlerStep,
     _read_state,
     build_inprocess_planning_steps,

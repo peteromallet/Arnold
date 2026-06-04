@@ -17,13 +17,15 @@ from argparse import Namespace
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+from arnold.pipelines.megaplan.handlers.tiebreaker import (
+    handle_tiebreaker_run,
+    handle_tiebreaker_decide,
+)
+from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 from megaplan._pipeline.subloop import SubloopStep
 from megaplan._pipeline.types import (
     Edge,
     Pipeline,
-    Port,
-    PortRef,
     Stage,
     StepContext,
     StepResult,
@@ -31,17 +33,15 @@ from megaplan._pipeline.types import (
 
 
 def _build_tiebreaker_child_pipeline() -> Pipeline:
-    import megaplan
-
     run_step = InProcessHandlerStep(
         name="tiebreaker_run", kind="produce",
         slot="tiebreaker_researcher",
-        handler=megaplan.handlers.tiebreaker.handle_tiebreaker_run,
+        handler=handle_tiebreaker_run,
     )
     decide_step = InProcessHandlerStep(
         name="tiebreaker_decide", kind="produce",
         slot="tiebreaker_challenger",
-        handler=megaplan.handlers.tiebreaker.handle_tiebreaker_decide,
+        handler=handle_tiebreaker_decide,
     )
 
     stages: dict[str, Stage] = {
@@ -59,10 +59,6 @@ def _promote_from_child_state(state: dict[str, Any]) -> str:
     The child writes to ``current_state``; after a successful
     tiebreaker run+decide the state transitions back to ``critiqued``
     (the tiebreaker decision flows through the standard gate loop).
-
-    Returns a :class:`RoutingKey` bridged from the legacy
-    recommendation literal via
-    :func:`_bridge_recommendation_to_routing_key`.  # TODO(M2/M3)
     """
     final = state.get("current_state", "")
     if final == "critiqued":
@@ -81,8 +77,6 @@ class TiebreakerStep:
     prompt_key: str | None = None
     slot: str | None = "tiebreaker_researcher"
     arg_overrides: Mapping[str, Any] = field(default_factory=dict)
-    produces: tuple[Port, ...] = field(default_factory=tuple)
-    consumes: tuple[PortRef, ...] = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         subloop = SubloopStep(

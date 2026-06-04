@@ -23,7 +23,7 @@ Two promotion modes are supported:
 Relationships:
 
 * :class:`SubloopStep` (this module) is the **primitive**.
-* :class:`megaplan._pipeline.stages.tiebreaker.TiebreakerStep` is the
+* :class:`arnold.pipelines.megaplan.stages.tiebreaker.TiebreakerStep` is the
   concrete planning use — it collapses the legacy two-state
   tiebreaker pair into a single Step whose child Pipeline runs
   researcher → challenger → synthesis.

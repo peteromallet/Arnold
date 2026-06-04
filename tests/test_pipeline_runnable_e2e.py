@@ -130,14 +130,14 @@ def test_runnable_pipeline_iterates_on_gate(
 def test_runnable_pipeline_uses_named_step_classes() -> None:
     """Every primary stage uses a named Step class, not a generic
     handler placeholder."""
-    from megaplan._pipeline.stages.prep import PrepStep
-    from megaplan._pipeline.stages.plan import PlanStep
-    from megaplan._pipeline.stages.critique import CritiqueStep
-    from megaplan._pipeline.stages.gate import GateStep
-    from megaplan._pipeline.stages.revise import ReviseStep
-    from megaplan._pipeline.stages.finalize import FinalizeStep
-    from megaplan._pipeline.stages.execute import ExecuteStep
-    from megaplan._pipeline.stages.review import ReviewStep
+    from arnold.pipelines.megaplan.stages.prep import PrepStep
+    from arnold.pipelines.megaplan.stages.plan import PlanStep
+    from arnold.pipelines.megaplan.stages.critique import CritiqueStep
+    from arnold.pipelines.megaplan.stages.gate import GateStep
+    from arnold.pipelines.megaplan.stages.revise import ReviseStep
+    from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
+    from arnold.pipelines.megaplan.stages.execute import ExecuteStep
+    from arnold.pipelines.megaplan.stages.review import ReviewStep
 
     pipeline = compile_planning_pipeline()
     expected = {

@@ -85,7 +85,7 @@ def critique_revise_gate_loop(
     # decision literals live ONLY in megaplan.pipelines.planning.routing).
     # Lazy import to avoid circular dependency (planning/__init__.py imports
     # from megaplan._pipeline.patterns).
-    from megaplan.pipelines.planning.routing import critique_revise_gate_routing as _routing
+    from arnold.pipelines.megaplan.routing import critique_revise_gate_routing as _routing
 
     routing = _routing(
         on_proceed=on_proceed,
@@ -350,7 +350,7 @@ def escalate_if(
 
     del condition  # consumed by host Step
 
-    from megaplan.pipelines.planning.routing import PLAN_ESCALATE as _ESC
+    from arnold.pipelines.megaplan.routing import PLAN_ESCALATE as _ESC
 
     escape_edge = Edge(
         label=_ESC,

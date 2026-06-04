@@ -267,7 +267,7 @@ def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline(
     message must name the stage and the unsafe step.
     """
     from megaplan._pipeline.executor import run_pipeline
-    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+    from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
     # A handler that raises if called — proves the guard fires first.
     def _must_not_run(_root: Path, _args: Any) -> dict[str, Any]:
@@ -314,7 +314,7 @@ def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline_wit
     """run_pipeline_with_policy also rejects unsafe ParallelStage before any handler runs."""
     from megaplan._pipeline.executor import run_pipeline_with_policy
     from megaplan._pipeline.runtime import RuntimePolicy
-    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+    from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
     def _must_not_run(_root: Path, _args: Any) -> dict[str, Any]:
         raise AssertionError("handler must not be called — guard should reject first")

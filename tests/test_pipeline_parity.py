@@ -28,7 +28,7 @@ import pytest
 
 import megaplan
 
-from megaplan._pipeline.stages.inprocess_step import (
+from arnold.pipelines.megaplan.stages.inprocess_step import (
     build_inprocess_planning_steps,
     build_revise_step,
     build_review_step,

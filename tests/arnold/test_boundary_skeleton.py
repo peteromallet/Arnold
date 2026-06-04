@@ -475,3 +475,125 @@ class TestStepStructuralSubtyping:
         from arnold.pipeline import Step
         with pytest.raises(TypeError, match="Protocols cannot be instantiated"):
             Step()  # type: ignore[abstract]
+
+
+# ---------------------------------------------------------------------------
+# M4 plugin boundary: allow arnold/__init__.py version import, forbid
+# megaplan imports in arnold/pipelines/ (stage/handler files).
+# ---------------------------------------------------------------------------
+
+# Paths relative to the repo root.
+_ARNOLD_INIT = Path(__file__).resolve().parent.parent.parent / "arnold" / "__init__.py"
+_ARNOLD_PIPELINES_ROOT = Path(__file__).resolve().parent.parent.parent / "arnold" / "pipelines"
+
+
+def _arnold_init_allowed_imports_violations() -> list[str]:
+    """Check arnold/__init__.py — only ``from megaplan import __version__``
+    (or aliased *__version__*) is allowed; any other megaplan import is
+    forbidden."""
+    violations: list[str] = []
+    try:
+        tree = ast.parse(_ARNOLD_INIT.read_text(), filename=str(_ARNOLD_INIT))
+    except (SyntaxError, FileNotFoundError):
+        return violations
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module is not None and node.module.split(".")[0] == "megaplan":
+                for alias in node.names:
+                    # Allow ONLY '__version__' (or aliased version imports)
+                    if alias.name == "__version__":
+                        continue
+                    # Any other import from megaplan is forbidden
+                    violations.append(
+                        f"{_ARNOLD_INIT}:{node.lineno}: forbidden import — "
+                        f"`from {node.module} import {alias.name}` "
+                        f"(only `from megaplan import __version__` is allowed in arnold/__init__.py)"
+                    )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] == "megaplan":
+                    violations.append(
+                        f"{_ARNOLD_INIT}:{node.lineno}: forbidden import — "
+                        f"`import {alias.name}` "
+                        f"(only `from megaplan import __version__` is allowed in arnold/__init__.py)"
+                    )
+    return violations
+
+
+def _arnold_pipelines_import_violations(scan_root: Path) -> list[str]:
+    """Scan arnold/pipelines/ for ANY megaplan imports — all are forbidden.
+    If the directory does not exist, returns an empty list trivially."""
+    violations: list[str] = []
+    if not scan_root.exists():
+        return violations
+    for source_file in sorted(scan_root.rglob("*.py")):
+        if "__pycache__" in source_file.parts:
+            continue
+        try:
+            tree = ast.parse(source_file.read_text(), filename=str(source_file))
+        except SyntaxError as exc:
+            violations.append(f"{source_file}: syntax error — {exc}")
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] == "megaplan":
+                        violations.append(
+                            f"{source_file}:{node.lineno}: forbidden import — "
+                            f"`import {alias.name}` "
+                            f"(arnold/pipelines/ modules must not import from megaplan)"
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                if node.module is not None and node.module.split(".")[0] == "megaplan":
+                    names = ", ".join(a.name for a in node.names)
+                    violations.append(
+                        f"{source_file}:{node.lineno}: forbidden import — "
+                        f"`from {node.module} import {names}` "
+                        f"(arnold/pipelines/ modules must not import from megaplan)"
+                    )
+    return violations
+
+
+class TestM4PluginBoundary:
+    """M4: arnold/__init__.py is allowed a version import; arnold/pipelines/
+    must NOT import from megaplan."""
+
+    def test_arnold_init_only_allows_version_import(self) -> None:
+        """arnold/__init__.py may only import __version__ from megaplan."""
+        violations = _arnold_init_allowed_imports_violations()
+        if violations:
+            pytest.fail(
+                f"arnold/__init__.py has {len(violations)} forbidden import(s) "
+                f"(only `from megaplan import __version__` is allowed):\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+    def test_arnold_pipelines_no_megaplan_imports(self) -> None:
+        """No file under arnold/pipelines/ may import from megaplan.
+        This is a forward-looking gate — the directory does not exist yet,
+        so the test trivially passes; once populated (T4/T5), it actively
+        guards against forbidden stage/handler imports."""
+        violations = _arnold_pipelines_import_violations(_ARNOLD_PIPELINES_ROOT)
+        if violations:
+            pytest.fail(
+                f"arnold/pipelines/ has {len(violations)} forbidden import(s):\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+    def test_arnold_init_version_import_is_present(self) -> None:
+        """Characterization: arnold/__init__.py currently imports __version__
+        from megaplan — this test documents the allowed import."""
+        tree = ast.parse(_ARNOLD_INIT.read_text(), filename=str(_ARNOLD_INIT))
+        found_version_import = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.module == "megaplan":
+                    for alias in node.names:
+                        if alias.name == "__version__":
+                            found_version_import = True
+                            break
+        assert found_version_import, (
+            "arnold/__init__.py is expected to import __version__ from megaplan; "
+            "it is the single allowed megaplan import at this boundary."
+        )

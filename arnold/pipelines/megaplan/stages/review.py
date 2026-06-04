@@ -1,31 +1,28 @@
-"""PlanStep — Sprint 4 Chunk B real handler port for the plan phase."""
+"""ReviewStep — Sprint 4 Chunk B real handler port for the review phase."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+from arnold.pipelines.megaplan.handlers import handle_review
+from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 from megaplan._pipeline.types import StepContext, StepResult
 
 
 @dataclass(frozen=True)
-class PlanStep:
-    name: str = "plan"
-    kind: str = "produce"
-    prompt_key: str | None = "plan"
-    slot: str | None = "plan"
+class ReviewStep:
+    name: str = "review"
+    kind: str = "judge"
+    prompt_key: str | None = "review"
+    slot: str | None = "review"
     arg_overrides: Mapping[str, Any] = field(default_factory=dict)
-    produces: tuple = field(default_factory=tuple)
-    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
-        import megaplan
-
         return InProcessHandlerStep(
             name=self.name,
             kind=self.kind,
-            handler=megaplan.handle_plan,
+            handler=handle_review,
             prompt_key=self.prompt_key,
             slot=self.slot,
             arg_overrides=self.arg_overrides,

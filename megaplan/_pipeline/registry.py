@@ -115,7 +115,7 @@ def make_megaplan_registry() -> ArnoldPipelineRegistry:
 
     return ArnoldPipelineRegistry(
         scan_roots=_scan_roots,
-        package_prefixes=("megaplan.pipelines",),
+        package_prefixes=("arnold.pipelines", "megaplan.pipelines"),
         alias_map=dict(LEGACY_PIPELINE_ALIASES),
         discovery_hook=_discovery_hook,
     )
@@ -176,8 +176,11 @@ def canonical_pipeline_name(name: str) -> str:
 
 def _package_prefix_for_module_file(module_file: Path) -> str | None:
     normalised = str(module_file.resolve()).replace("\\", "/")
-    fragment = "/megaplan/pipelines/"
-    if fragment in normalised or normalised.endswith("/megaplan/pipelines"):
+    arnold_fragment = "/arnold/pipelines/"
+    if arnold_fragment in normalised or normalised.endswith("/arnold/pipelines"):
+        return "arnold.pipelines"
+    megaplan_fragment = "/megaplan/pipelines/"
+    if megaplan_fragment in normalised or normalised.endswith("/megaplan/pipelines"):
         return "megaplan.pipelines"
     return None
 
@@ -350,8 +353,8 @@ class PipelineRegistry:
                 if name in self.builders:
                     continue
                 # Resolve package_prefix for deferred import (same logic as
-                # _get_scan_roots): in_tree → "megaplan.pipelines", else None.
-                package_prefix = "megaplan.pipelines" if d.origin == "in_tree" else None
+                # _get_scan_roots): in_tree → derived from path, else None.
+                package_prefix = _package_prefix_for_module_file(d.path)
                 self.builders[name] = _make_deferred_builder(
                     d.path, package_prefix=package_prefix, cli_name=name,
                 )
@@ -807,7 +810,7 @@ def _discovered_cli_name(
     """Return the CLI-visible name for a discovered pipeline entry."""
 
     if (
-        package_prefix == "megaplan.pipelines"
+        package_prefix in ("arnold.pipelines", "megaplan.pipelines")
         and entry.is_dir()
         and entry.name == "planning"
         and (entry / "__init__.py").exists()
@@ -965,6 +968,7 @@ def _module_metadata(module: Any, *, source_path: Path | None = None) -> dict[st
 
 
 _SCAN_ROOTS: list[tuple[Path, str | None]] = [
+    (Path(__file__).resolve().parent.parent.parent / "arnold" / "pipelines", "arnold.pipelines"),
     (Path(__file__).resolve().parent.parent / "pipelines", "megaplan.pipelines"),
 ]
 
@@ -1003,7 +1007,7 @@ def scan_python_pipelines() -> list[Disposition]:
         return dispositions
 
     for pipelines_dir, package_prefix in roots:
-        origin = "in_tree" if package_prefix == "megaplan.pipelines" else "user"
+        origin = "in_tree" if package_prefix in ("arnold.pipelines", "megaplan.pipelines") else "user"
 
         try:
             dir_entries = list(_scan_dir_for_pipeline_modules(
@@ -1149,7 +1153,7 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
         for d in dispositions:
             if d.status != "discovered" or d.cli_name is None or d.manifest is None:
                 continue
-            package_prefix = "megaplan.pipelines" if d.origin == "in_tree" else None
+            package_prefix = _package_prefix_for_module_file(d.path)
             builder = _make_deferred_builder(
                 d.path, package_prefix=package_prefix, cli_name=d.cli_name,
             )

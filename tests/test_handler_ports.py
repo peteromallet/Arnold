@@ -18,7 +18,7 @@ import megaplan._core
 import megaplan._core.io as io_module
 import megaplan.cli
 
-from megaplan._pipeline.stages import (
+from arnold.pipelines.megaplan.stages import (
     CritiqueStep,
     ExecuteStep,
     FinalizeStep,
