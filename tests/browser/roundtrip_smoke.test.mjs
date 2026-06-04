@@ -1895,6 +1895,161 @@ test("VibeComfy turn history tracks pending/candidate/applied/rejected/failed st
   }
 });
 
+test("VibeComfy agent turn websocket listener ignores closed or foreign sessions and reconciles authoritative batch_turns from the submit response", async () => {
+  let resolveSubmit;
+  const submitBodies = [];
+  const candidateGraph = {
+    nodes: [
+      { id: 1, type: "Input", properties: { vibecomfy_uid: "uid-1" } },
+      { id: 2, type: "SaveImage", properties: { vibecomfy_uid: "uid-2" } },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph: {
+      nodes: [{ id: 1, type: "Input", properties: { vibecomfy_uid: "uid-1" } }],
+      links: [],
+    },
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "arnold",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "arnold", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+            anthropic: { requested_route: "anthropic", normalized_route: "arnold", browser_api_key_allowed: false, tos_acknowledgement_required: true },
+            "openai-codex": { requested_route: "openai-codex", normalized_route: "arnold", browser_api_key_allowed: false },
+          },
+        },
+      },
+      "/vibecomfy/agent-edit": async ({ options }) => {
+        submitBodies.push(JSON.parse(options.body));
+        return new Promise((resolve) => {
+          resolveSubmit = resolve;
+        });
+      },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    assert.equal(harness.apiEventListeners["vibecomfy/agent-edit/turn"]?.length || 0, 1);
+
+    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+      session_id: "closed-session",
+      turn_number: 0,
+      status: "in_progress",
+      message: "ignored while closed",
+    });
+
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+    assert.doesNotMatch(harness.textDump(), /ignored while closed/);
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "live batch turn";
+    const submitPromise = harness.clickButton("Submit");
+    await waitFor(() => typeof resolveSubmit === "function");
+
+    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+      session_id: "other-session",
+      turn_number: 0,
+      status: "in_progress",
+      message: "foreign session turn",
+    });
+    assert.doesNotMatch(harness.textDump(), /foreign session turn/);
+
+    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+      session_id: "session-live",
+      turn_number: 0,
+      status: "in_progress",
+      message: "ignored before session bind",
+      statement_count: 1,
+    });
+    assert.doesNotMatch(harness.textDump(), /ignored before session bind/);
+
+    resolveSubmit({
+      status: 200,
+      body: {
+        ok: true,
+        session_id: "session-live",
+        turn_id: "0001",
+        baseline_turn_id: null,
+        canvas_apply_allowed: true,
+        apply_allowed: true,
+        queue_allowed: false,
+        message: "Candidate after batch replay.",
+        graph: candidateGraph,
+        report: { change: { content_edits: { preserved: ["uid-1"], edited: ["uid-2"], removed_named: [] } }, recovery: [] },
+        done_summary: "Authoritative summary.",
+        batch_turns: [
+          {
+            session_id: "session-live",
+            turn_number: 0,
+            message: "authoritative response step",
+            statement_count: 2,
+            batch_ok: true,
+            statements: [{ op_kind: "assign", target: "saveimage.filename_prefix" }],
+          },
+          {
+            session_id: "session-live",
+            turn_number: 1,
+            message: "authoritative done step",
+            statement_count: 1,
+            statements: [{ op_kind: "done" }],
+          },
+        ],
+      },
+    });
+    await submitPromise;
+
+    const text = harness.textDump();
+    assert.equal(submitBodies[0].client_id, harness.api.clientId);
+    assert.match(text, /Candidate after batch replay\./);
+    assert.match(text, /authoritative response step/);
+    assert.match(text, /authoritative done step/);
+    assert.doesNotMatch(text, /ignored before session bind/);
+
+    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+      session_id: "session-live",
+      turn_number: 2,
+      status: "in_progress",
+      message: "post-response websocket step",
+      statement_count: 1,
+    });
+    await waitFor(() => /post-response websocket step/.test(harness.textDump()));
+
+    const liveListener = harness.apiEventListeners["vibecomfy/agent-edit/turn"][0];
+    liveListener({
+      session_id: "session-live",
+      turn_number: 3,
+      status: "done",
+      message: "direct payload step",
+      statement_count: 1,
+      done_summary: "temporary summary",
+    });
+    await waitFor(() => /direct payload step/.test(harness.textDump()));
+
+    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+      session_id: "wrong-after-bind",
+      turn_number: 4,
+      status: "done",
+      message: "ignored after session bind",
+    });
+    assert.doesNotMatch(harness.textDump(), /ignored after session bind/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy lowered recovery entries are informational and do not block queue, while graph-scan fallback still blocks unlowered intent nodes", async () => {
   const loweredCandidateGraph = {
     nodes: [
@@ -2095,6 +2250,258 @@ test("VibeComfy graph-scan fallback still blocks unlowered intent nodes like vib
     // graph-scan fallback detects the unlowered intent node
     assert.match(text, /Node 2 \(vibecomfy\.code\) is an editor-only intent node/);
     assert.match(text, /intent_node_queue_blocker/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy agent-edit turn progress: client_id submit body, batch_turns fallback rendering, out-of-order live upsert with session filtering, expand/collapse diagnostics with landed count, no raw diff/source/audit paths in details, and Apply/Reject controls remain rendered and clickable after batch turns", async () => {
+  const candidateGraph = {
+    nodes: [
+      { id: 1, type: "Input", properties: { vibecomfy_uid: "uid-1" } },
+      { id: 2, type: "SaveImage", properties: { vibecomfy_uid: "uid-2" } },
+    ],
+    links: [],
+  };
+
+  let resolveSubmit;
+  const submitBodies = [];
+
+  const harness = await createBrowserHarness({
+    graph: {
+      nodes: [{ id: 1, type: "Input", properties: { vibecomfy_uid: "uid-1" } }],
+      links: [],
+    },
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "arnold",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "arnold", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+            anthropic: { requested_route: "anthropic", normalized_route: "arnold", browser_api_key_allowed: false, tos_acknowledgement_required: true },
+            "openai-codex": { requested_route: "openai-codex", normalized_route: "arnold", browser_api_key_allowed: false },
+          },
+        },
+      },
+      "/vibecomfy/agent-edit": async ({ options }) => {
+        submitBodies.push(JSON.parse(options.body));
+        return new Promise((resolve) => {
+          resolveSubmit = resolve;
+        });
+      },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+
+    // ── Part 1: client_id is sent in submit body ──────────────────────
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "batch turn progress";
+    const submitPromise = harness.clickButton("Submit");
+    await waitFor(() => typeof resolveSubmit === "function");
+
+    assert.equal(submitBodies.length, 1);
+    assert.equal(submitBodies[0].client_id, harness.api.clientId);
+    assert(typeof submitBodies[0].client_id === "string" && submitBodies[0].client_id.length > 0);
+
+    // ── Part 2: batch_turns fallback renders without any websocket events ──
+    resolveSubmit({
+      status: 200,
+      body: {
+        ok: true,
+        session_id: "session-batch-fallback",
+        turn_id: "0001",
+        baseline_turn_id: null,
+        canvas_apply_allowed: true,
+        apply_allowed: true,
+        queue_allowed: false,
+        message: "Candidate with authoritative batch_turns fallback.",
+        graph: candidateGraph,
+        report: { change: { content_edits: { preserved: ["uid-1"], edited: ["uid-2"], removed_named: [] } }, recovery: [] },
+        done_summary: "Final reasoning summary for the batch REPL.",
+        batch_turns: [
+          {
+            session_id: "session-batch-fallback",
+            turn_number: 0,
+            message: "analyzing the graph for editable nodes and connections",
+            statement_count: 3,
+            batch_ok: true,
+            statements: [
+              { op_kind: "assign", target: "saveimage.filename_prefix", landed: true, statement_index: 0 },
+              { op_kind: "delete", target: "unused_node", landed: true, ok: true, statement_index: 1, diagnostics: [{ code: "STMT_DELETE_OK", message: "node removed cleanly" }] },
+              { op_kind: "connect", target: "IMAGE link", landed: false, ok: false, statement_index: 2, diagnostics: [{ code: "WIRE_FAIL", message: "target slot occupied" }] },
+            ],
+            exit_mode: "step_continue",
+            budget: { remaining_batches: 4, total_used: 1 },
+          },
+          {
+            session_id: "session-batch-fallback",
+            turn_number: 1,
+            message: "finalizing edits and validating the graph",
+            statement_count: 2,
+            statements: [
+              { op_kind: "validate", landed: true, statement_index: 0 },
+              { op_kind: "done", landed: true, statement_index: 1, diagnostics: [{ code: "DONE", message: "batch completed successfully" }] },
+            ],
+            batch_ok: true,
+            exit_mode: "done",
+            budget: { remaining_batches: 3, total_used: 2 },
+            diagnostics: [{ code: "BATCH_OK", message: "all turns succeeded" }],
+          },
+        ],
+      },
+    });
+    await submitPromise;
+
+    // Verify batch_turns rendered from the response without any websocket events
+    let text = harness.textDump();
+    assert.match(text, /Candidate with authoritative batch_turns fallback\./);
+    assert.match(text, /analyzing the graph/);
+    assert.match(text, /finalizing edits/);
+    assert.match(text, /Turn 1/);
+    assert.match(text, /Turn 2/);
+
+    // Collapsed view shows truncated messages and status color
+    const historyRegion = harness.document.getElementById("vibecomfy-agent-panel-region-history");
+    const batchRows = historyRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-row");
+    assert.equal(batchRows.length, 2);
+
+    // Status colors are set via borderLeft
+    assert(batchRows[0].style.borderLeft && batchRows[0].style.borderLeft.includes("#"));
+    assert(batchRows[1].style.borderLeft && batchRows[1].style.borderLeft.includes("#"));
+
+    // ── Part 3: out-of-order websocket events and session filtering ──
+    // Dispatch turn 3 out of order (before turn 2 via websocket)
+    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+      session_id: "session-batch-fallback",
+      turn_number: 3,
+      status: "in_progress",
+      message: "third turn running out of order",
+      statement_count: 1,
+    });
+    await waitFor(() => /third turn running out of order/.test(harness.textDump()));
+
+    // Now dispatch turn 2 (should upsert into position, newest first among batch rows)
+    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+      session_id: "session-batch-fallback",
+      turn_number: 2,
+      status: "in_progress",
+      message: "second turn arrives after third",
+      statement_count: 2,
+    });
+    await waitFor(() => /second turn arrives after third/.test(harness.textDump()));
+
+    text = harness.textDump();
+    assert.match(text, /Turn 4/);  // turn_number 3 → "Turn 4"
+    assert.match(text, /Turn 3/);  // turn_number 2 → "Turn 3"
+    // Verify newest-first ordering: Turn 4 text appears before Turn 3
+    const turn4Index = text.indexOf("Turn 4");
+    const turn3Index = text.indexOf("Turn 3");
+    assert(turn4Index < turn3Index, "Turn 4 (newest) should appear before Turn 3 in sorted order");
+
+    // Session filtering: dispatch event for a different session (should be ignored)
+    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+      session_id: "foreign-session-xyz",
+      turn_number: 0,
+      status: "in_progress",
+      message: "foreign session event must be filtered",
+    });
+    assert.doesNotMatch(harness.textDump(), /foreign session event must be filtered/);
+
+    // In-progress dot indicator is present on Turn 3 (in_progress status)
+    const progressDots = historyRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-progress-dot");
+    assert(progressDots.length >= 1, "in_progress dot should be rendered");
+
+    // ── Part 4: expand/collapse with statement diagnostics and landed count ──
+    // Re-query batch rows fresh because the DOM was re-rendered by websocket dispatches.
+    // Batch rows are sorted newest-first: Turn 4, Turn 3, Turn 2, Turn 1.
+    // Turn 1 (turn_number=0) is the last row and has the statements + diagnostics.
+    let freshRows = historyRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-row");
+    assert(freshRows.length >= 4, "should have at least 4 batch rows after live events");
+    let turn1Row = freshRows[freshRows.length - 1];
+    turn1Row.click();
+    await waitFor(() => {
+      const expanded = harness.document.body.querySelectorAll((node) => node.className === "vibecomfy-batch-expanded");
+      return expanded.length >= 1;
+    });
+
+    text = harness.textDump();
+    // Statement bullets with landed ✓ badges
+    assert.match(text, /assign/);
+    assert.match(text, /saveimage\.filename_prefix/);
+    // Landed badge icon ✓ (checkmark) present
+    assert.match(text, /\u2713/);
+    // Failed badge icon ✗ present for the failed statement
+    assert.match(text, /\u2717/);
+    // Statement diagnostics
+    assert.match(text, /STMT_DELETE_OK/);
+    assert.match(text, /node removed cleanly/);
+    assert.match(text, /WIRE_FAIL/);
+    assert.match(text, /target slot occupied/);
+    // Outcome footer (Turn 1 has "exit: step_continue · budget: 4 left · ok")
+    assert.match(text, /exit: step_continue/);
+    assert.match(text, /budget: 4 left/);
+    // Reasoning toggle text
+    assert.match(text, /Final reasoning summary/);
+
+    // ── Part 5: absence of raw diff/source/audit paths in batch details ──
+    // Also verify the collapsed Turn 2 row has the expected outcome when expanded.
+    // Expand Turn 2 (freshRows[freshRows.length - 2]) to verify its footer and diagnostics
+    let turn2Row = freshRows[freshRows.length - 2];
+    turn2Row.click();
+    await waitFor(() => {
+      const expanded = harness.document.body.querySelectorAll((node) => node.className === "vibecomfy-batch-expanded");
+      return expanded.length >= 2;
+    });
+    text = harness.textDump();
+    assert.match(text, /exit: done/);
+    // Turn-level diagnostics from Turn 2
+    assert.match(text, /BATCH_OK/);
+    assert.match(text, /all turns succeeded/);
+
+    // These sensitive/internal fields should NOT appear in the batch row rendering
+    const expandedText = harness.textDump();
+    assert.doesNotMatch(expandedText, /\bdiff\b/i);
+    assert.doesNotMatch(expandedText, /raw_batch/i);
+    assert.doesNotMatch(expandedText, /raw_source/i);
+    assert.doesNotMatch(expandedText, /provider_metadata/i);
+    assert.doesNotMatch(expandedText, /raw_json/i);
+
+    // Click both rows again to collapse
+    turn1Row.click();
+    turn2Row.click();
+    await waitFor(() => {
+      const expanded = harness.document.body.querySelectorAll((node) => node.className === "vibecomfy-batch-expanded");
+      return expanded.length === 0;
+    });
+
+    // ── Part 6: Apply/Reject controls remain rendered and clickable after batch turns ──
+    const applyButton = harness.document.getElementById("vibecomfy-agent-panel-apply");
+    const rejectButton = harness.document.getElementById("vibecomfy-agent-panel-reject");
+    const undoButton = harness.document.getElementById("vibecomfy-agent-panel-undo");
+    assert(applyButton, "Apply button should exist");
+    assert(rejectButton, "Reject button should exist");
+    assert(undoButton, "Undo button should exist");
+    assert.equal(applyButton.disabled, false, "Apply button should be enabled");
+    assert.equal(rejectButton.disabled, false, "Reject button should be enabled");
+    assert.match(applyButton.textContent, /Apply/);
+    assert.match(rejectButton.textContent, /Reject/);
+
+    // After all operations, batch turns are still visible in history
+    assert.match(harness.textDump(), /analyzing the graph/);
   } finally {
     await harness.dispose();
   }

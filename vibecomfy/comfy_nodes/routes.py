@@ -236,6 +236,7 @@ def _handle_agent_edit(
     schema_provider: Any = None,
     deepseek_client: Any = None,
     session_root: Any = None,
+    client_id: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return failure_envelope(
@@ -249,6 +250,7 @@ def _handle_agent_edit(
             schema_provider=schema_provider,
             deepseek_client=deepseek_client,
             session_root=session_root,
+            client_id=client_id,
         )
     except Exception as exc:
         stage = "ingest" if isinstance(exc, ValueError) else "route"
@@ -287,7 +289,8 @@ try:
                 ).to_dict(),
                 status=400,
             )
-        result = _handle_agent_edit(payload)
+        client_id = payload.get("client_id") if isinstance(payload.get("client_id"), str) and payload.get("client_id").strip() else None
+        result = _handle_agent_edit(payload, client_id=client_id)
         if result.get("ok") is False:
             status = 500 if result.get("stage") == "route" else 400
             return _web.json_response(result, status=status)

@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 
 // ── VibeComfy Contract (S2 — Durable Frontend Panel) ─────────────────────
 // This file captures the frontend↔backend contract before feature work.
@@ -204,7 +205,21 @@ const INTENT_STYLE_BY_KIND = Object.freeze({
 const LOWERED_DIFF_COLOR = "#02d4b3";
 const LOWERED_BADGE = "lowered";
 
+const VC_COLORS = Object.freeze({
+  active: "#3d8bfd",
+  success: "#02d4b3",
+  warning: "#ffb86c",
+  error: "#ff6c6c",
+  muted: "#8d93a1",
+  bgActive: "#1a2436",
+  bgSuccess: "#0f2a26",
+  bgWarning: "#2a1f14",
+  bgError: "#2a1616",
+});
+
 let agentPanel = null;
+let agentTurnEventListener = null;
+let agentTurnEventListenerRegistered = false;
 let changedNodeFeedbackTimer = null;
 let changedNodeFeedbackVisuals = [];
 let queueGuardHook = null;
@@ -213,6 +228,7 @@ let queueGuardFallbackWarning = null;
 let queueGuardFallbackWarned = false;
 let queueGuardBlockNotice = null;
 let queueGuardBlockedTurnKeys = new Set();
+let _progressPulseInjected = false;
 
 function isIntentClassType(classType) {
   return INTENT_NODE_CLASS_TYPES.has(String(classType || "").trim());
@@ -683,9 +699,12 @@ function buildAuditEnvelope(turnEntry) {
     frontend_source: "vibecomfy_roundtrip.js",
     turn: turnEntry
       ? {
+          entry_type: turnEntry.entry_type || null,
+          turn_key: turnEntry.turn_key || null,
           status: turnEntry.status || "unknown",
           session_id: turnEntry.session_id || null,
           turn_id: turnEntry.turn_id || null,
+          turn_number: Number.isFinite(turnEntry.turn_number) ? turnEntry.turn_number : null,
           baseline_turn_id: turnEntry.baseline_turn_id || null,
           task: turnEntry.task || null,
           timestamp: turnEntry.timestamp || null,
@@ -1494,6 +1513,7 @@ function createAgentPanel() {
       lastAppliedChanges: null,
       queueGuard: getQueueGuardStateForPanel(),
       previewEnabled: false,
+      expandedTurnKeys: {},
     },
   };
 }
@@ -1538,8 +1558,60 @@ function pushHistory(panel, kind, message) {
   panel.state.history = panel.state.history.slice(0, 8);
 }
 
+const PANEL_TURN_LIMIT = 64;
+const BATCH_SOURCE_PRIORITY = {
+  websocket: 1,
+  response: 2,
+};
+const BATCH_TERMINAL_STATUSES = new Set(["clarify", "done", "budget_exhausted"]);
+
+function stableTurnSessionId(value) {
+  return typeof value === "string" && value ? value : "none";
+}
+
+function batchTurnKey(sessionId, turnNumber) {
+  return `batch:${stableTurnSessionId(sessionId)}:${turnNumber}`;
+}
+
+function durableTurnKey(entry) {
+  const sessionId = stableTurnSessionId(entry?.session_id);
+  const status = entry?.status || "unknown";
+  if (entry?.turn_id) {
+    return `durable:${sessionId}:${entry.turn_id}:${status}`;
+  }
+  const fallback =
+    entry?.timestamp
+    || entry?.message
+    || entry?.task
+    || entry?.failure_kind
+    || "pending";
+  return `durable:${sessionId}:${status}:${fallback}`;
+}
+
+function sortPanelTurns(turns) {
+  const durable = [];
+  const batch = [];
+  const other = [];
+  for (const entry of Array.isArray(turns) ? turns : []) {
+    if (entry?.entry_type === "durable") {
+      durable.push(entry);
+    } else if (entry?.entry_type === "batch") {
+      batch.push(entry);
+    } else {
+      other.push(entry);
+    }
+  }
+  batch.sort((left, right) => {
+    const leftNumber = Number.isFinite(left?.turn_number) ? left.turn_number : -1;
+    const rightNumber = Number.isFinite(right?.turn_number) ? right.turn_number : -1;
+    return rightNumber - leftNumber;
+  });
+  return [...durable, ...batch, ...other].slice(0, PANEL_TURN_LIMIT);
+}
+
 function pushTurnStatus(panel, status, extra = {}) {
   const entry = {
+    entry_type: "durable",
     status,
     session_id: extra.session_id || panel.state.sessionId || null,
     turn_id: extra.turn_id || panel.state.turnId || null,
@@ -1552,10 +1624,240 @@ function pushTurnStatus(panel, status, extra = {}) {
     audit_ref: extra.audit_ref || null,
     raw_payload: extra.raw_payload || null,
   };
+  entry.turn_key = durableTurnKey(entry);
   panel.state.turns.unshift(entry);
-  // Keep the last 16 turns; old history stays scrollable in the panel
-  panel.state.turns = panel.state.turns.slice(0, 16);
+  panel.state.turns = sortPanelTurns(panel.state.turns);
   return entry;
+}
+
+function normalizeBatchTurn(payload, { source = "response", sessionId = null, status = null } = {}) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const resolvedSessionId =
+    typeof payload.session_id === "string" && payload.session_id
+      ? payload.session_id
+      : (typeof sessionId === "string" && sessionId ? sessionId : null);
+  const rawTurnNumber = payload.turn_number;
+  const turnNumber =
+    Number.isInteger(rawTurnNumber)
+      ? rawTurnNumber
+      : (typeof rawTurnNumber === "number" && Number.isFinite(rawTurnNumber)
+        ? Math.trunc(rawTurnNumber)
+        : null);
+  if (!resolvedSessionId || turnNumber == null) {
+    return null;
+  }
+  const normalizedStatus =
+    status
+    || (typeof payload.status === "string" && payload.status)
+    || (payload.clarification_required ? "clarify" : "in_progress");
+  return {
+    entry_type: "batch",
+    turn_key: batchTurnKey(resolvedSessionId, turnNumber),
+    session_id: resolvedSessionId,
+    turn_id: typeof payload.turn_id === "string" && payload.turn_id ? payload.turn_id : null,
+    turn_number: turnNumber,
+    status: normalizedStatus,
+    message: typeof payload.message === "string" ? payload.message : null,
+    timestamp: typeof payload.timestamp === "string" ? payload.timestamp : null,
+    clarification_required: Boolean(payload.clarification_required),
+    clarification_message:
+      typeof payload.clarification_message === "string" ? payload.clarification_message : null,
+    batch_ok: typeof payload.batch_ok === "boolean" ? payload.batch_ok : null,
+    statement_count:
+      typeof payload.statement_count === "number" && Number.isFinite(payload.statement_count)
+        ? payload.statement_count
+        : null,
+    landed_op_count:
+      typeof payload.landed_op_count === "number" && Number.isFinite(payload.landed_op_count)
+        ? payload.landed_op_count
+        : null,
+    statements: Array.isArray(payload.statements) ? payload.statements : null,
+    diagnostics: Array.isArray(payload.diagnostics) ? payload.diagnostics : null,
+    budget: payload.budget && typeof payload.budget === "object" ? payload.budget : null,
+    exit_mode: typeof payload.exit_mode === "string" ? payload.exit_mode : null,
+    done_summary: typeof payload.done_summary === "string" ? payload.done_summary : null,
+    audit_ref: payload.audit_ref && typeof payload.audit_ref === "object" ? payload.audit_ref : null,
+    raw_payload: source === "response" ? payload : null,
+    source,
+    source_priority: BATCH_SOURCE_PRIORITY[source] || 0,
+  };
+}
+
+function mergeBatchTurnEntry(existing, incoming) {
+  if (!existing) {
+    return incoming;
+  }
+  const existingPriority = existing.source_priority || 0;
+  const incomingPriority = incoming.source_priority || 0;
+  const keepExistingStatus =
+    existingPriority > incomingPriority
+    && BATCH_TERMINAL_STATUSES.has(existing.status)
+    && !BATCH_TERMINAL_STATUSES.has(incoming.status);
+  return {
+    ...existing,
+    ...incoming,
+    status: keepExistingStatus ? existing.status : incoming.status,
+    statements:
+      Array.isArray(incoming.statements) && incoming.statements.length
+        ? incoming.statements
+        : (Array.isArray(existing.statements) ? existing.statements : null),
+    diagnostics:
+      Array.isArray(incoming.diagnostics) && incoming.diagnostics.length
+        ? incoming.diagnostics
+        : (Array.isArray(existing.diagnostics) ? existing.diagnostics : null),
+    budget:
+      incoming.budget && typeof incoming.budget === "object"
+        ? incoming.budget
+        : (existing.budget && typeof existing.budget === "object" ? existing.budget : null),
+    raw_payload: incoming.raw_payload || existing.raw_payload || null,
+    source_priority: Math.max(existingPriority, incomingPriority),
+  };
+}
+
+function captureExpandedTurnKeys(panel) {
+  if (!panel?.state || !panel.state.expandedTurnKeys || typeof panel.state.expandedTurnKeys !== "object") {
+    return {};
+  }
+  return { ...panel.state.expandedTurnKeys };
+}
+
+function restoreExpandedTurnKeys(panel, previous) {
+  if (!panel?.state) {
+    return;
+  }
+  const restored = {};
+  for (const entry of panel.state.turns) {
+    const turnKey = entry?.turn_key;
+    if (turnKey && previous?.[turnKey]) {
+      restored[turnKey] = true;
+    }
+  }
+  panel.state.expandedTurnKeys = restored;
+}
+
+function upsertBatchTurn(panel, payload, options = {}) {
+  if (!panel || !panel.state) {
+    return null;
+  }
+  const previousExpanded = captureExpandedTurnKeys(panel);
+  const normalized = normalizeBatchTurn(payload, options);
+  if (!normalized) {
+    return null;
+  }
+  const existingIndex = panel.state.turns.findIndex(
+    (entry) => entry?.entry_type === "batch" && entry.turn_key === normalized.turn_key,
+  );
+  if (existingIndex >= 0) {
+    panel.state.turns[existingIndex] = mergeBatchTurnEntry(panel.state.turns[existingIndex], normalized);
+  } else {
+    panel.state.turns.push(normalized);
+  }
+  panel.state.turns = sortPanelTurns(panel.state.turns);
+  restoreExpandedTurnKeys(panel, previousExpanded);
+  return normalized;
+}
+
+function reconcileResponseBatchTurns(panel, result) {
+  if (!Array.isArray(result?.batch_turns)) {
+    return;
+  }
+  const previousExpanded = captureExpandedTurnKeys(panel);
+  const responseSessionId =
+    typeof result?.session_id === "string" && result.session_id
+      ? result.session_id
+      : (typeof panel?.state?.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null);
+  const nextTurns = [];
+  for (const entry of Array.isArray(panel?.state?.turns) ? panel.state.turns : []) {
+    if (entry?.entry_type !== "batch") {
+      nextTurns.push(entry);
+      continue;
+    }
+    if (responseSessionId && entry.session_id === responseSessionId) {
+      continue;
+    }
+    nextTurns.push(entry);
+  }
+  panel.state.turns = nextTurns;
+  const finalIndex = result.batch_turns.length - 1;
+  for (let index = 0; index < result.batch_turns.length; index += 1) {
+    const turn = result.batch_turns[index];
+    let status = null;
+    if (turn?.clarification_required) {
+      status = "clarify";
+    } else if (index === finalIndex && typeof result?.done_summary === "string" && result.done_summary) {
+      status = "done";
+    } else {
+      status = "in_progress";
+    }
+    upsertBatchTurn(panel, turn, {
+      source: "response",
+      sessionId: responseSessionId,
+      status,
+    });
+  }
+  restoreExpandedTurnKeys(panel, previousExpanded);
+}
+
+function getAgentTurnEventPayload(event) {
+  if (event?.detail && typeof event.detail === "object") {
+    return event.detail;
+  }
+  return event && typeof event === "object" ? event : null;
+}
+
+function shouldAcceptAgentTurnEvent(panel, payload) {
+  if (!panel?.state || panel.root?.dataset?.open !== "1") {
+    return false;
+  }
+  const payloadSessionId =
+    typeof payload?.session_id === "string" && payload.session_id ? payload.session_id : null;
+  if (!payloadSessionId) {
+    return false;
+  }
+  const currentSessionId =
+    typeof panel.state.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null;
+  if (currentSessionId) {
+    return currentSessionId === payloadSessionId;
+  }
+  const batchSessionIds = new Set(
+    (Array.isArray(panel.state.turns) ? panel.state.turns : [])
+      .filter((entry) => entry?.entry_type === "batch" && typeof entry.session_id === "string" && entry.session_id)
+      .map((entry) => entry.session_id),
+  );
+  if (batchSessionIds.size > 0) {
+    return batchSessionIds.size === 1 && batchSessionIds.has(payloadSessionId);
+  }
+  return false;
+}
+
+function handleAgentTurnEvent(event) {
+  const panel = agentPanel;
+  if (!panel || panel.root?.dataset?.open !== "1") {
+    return;
+  }
+  const payload = getAgentTurnEventPayload(event);
+  if (!payload || !shouldAcceptAgentTurnEvent(panel, payload)) {
+    return;
+  }
+  if (!panel.state.sessionId && typeof payload.session_id === "string" && payload.session_id) {
+    panel.state.sessionId = payload.session_id;
+  }
+  const normalized = upsertBatchTurn(panel, payload, { source: "websocket" });
+  if (!normalized) {
+    return;
+  }
+  renderAgentPanel(panel);
+}
+
+function ensureAgentTurnListener() {
+  if (agentTurnEventListenerRegistered || typeof api?.addEventListener !== "function") {
+    return;
+  }
+  agentTurnEventListener = handleAgentTurnEvent;
+  api.addEventListener("vibecomfy/agent-edit/turn", agentTurnEventListener);
+  agentTurnEventListenerRegistered = true;
 }
 
 function renderMeta(panel) {
@@ -1566,7 +1868,445 @@ function renderMeta(panel) {
   panel.metaRow.appendChild(labelValue("baseline", panel.state.baselineTurnId || "none"));
 }
 
+// ── Progress pulse animation (injected once) ──────────────────────────────
+function _injectProgressPulseStyle() {
+  if (_progressPulseInjected) return;
+  _progressPulseInjected = true;
+  const style = el("style");
+  style.textContent = `
+    @keyframes vibecomfy-progress-pulse {
+      0%, 100% { opacity: 0.35; }
+      50% { opacity: 1; }
+    }
+    .vibecomfy-batch-progress-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #3d8bfd;
+      animation: vibecomfy-progress-pulse 1.2s ease-in-out infinite;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .vibecomfy-batch-row {
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+    }
+    .vibecomfy-batch-row:hover {
+      background: #1a1d24;
+    }
+    .vibecomfy-batch-expanded {
+      margin-top: 4px;
+      padding-left: 4px;
+      border-left: 2px solid #282a32;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// ── Batch row helpers ─────────────────────────────────────────────────────
+const BATCH_STATUS_COLORS = Object.freeze({
+  in_progress: VC_COLORS.active,
+  clarify: VC_COLORS.warning,
+  done: VC_COLORS.success,
+  budget_exhausted: VC_COLORS.warning,
+});
+
+const DURABLE_STATUS_COLORS = Object.freeze({
+  pending: "#ffd36f",
+  candidate: "#7db6ff",
+  applied: "#4caf50",
+  rejected: "#ff7f7f",
+  failed: "#ff8d8d",
+});
+
+function _statusColor(status) {
+  return DURABLE_STATUS_COLORS[status] || BATCH_STATUS_COLORS[status] || VC_COLORS.muted;
+}
+
+function _truncateMessage(text, maxLen = 80) {
+  if (typeof text !== "string" || !text) return null;
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+  return cleaned.length > maxLen ? cleaned.slice(0, maxLen - 1) + "\u2026" : cleaned;
+}
+
+function _safeSummaryText(entry) {
+  // Extract a compact summary suitable for the "reasoning" toggle.
+  // Sources (in priority order): done_summary, clarification_message,
+  // aggregated teaching_hints from statements.
+  if (typeof entry.done_summary === "string" && entry.done_summary.trim()) {
+    return entry.done_summary.trim();
+  }
+  if (typeof entry.clarification_message === "string" && entry.clarification_message.trim()) {
+    return entry.clarification_message.trim();
+  }
+  const hints = [];
+  if (Array.isArray(entry.statements)) {
+    for (const stmt of entry.statements) {
+      if (stmt && typeof stmt.teaching_hint === "string" && stmt.teaching_hint.trim()) {
+        hints.push(stmt.teaching_hint.trim());
+      }
+    }
+  }
+  return hints.length ? hints.join(" | ") : null;
+}
+
+const BATCH_STATEMENT_CAP = 5;
+
+function _statementBullet(stmt, index) {
+  const row = el("div");
+  Object.assign(row.style, {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "4px",
+    fontSize: "11px",
+    lineHeight: "1.35",
+    marginBottom: "2px",
+  });
+
+  // Landed / failed badge
+  const landed = stmt.landed;
+  const ok = stmt.ok;
+  const statusIcon = landed ? "\u2713" : (ok === false ? "\u2717" : "\u25cb");
+  const statusColor = landed ? VC_COLORS.success : (ok === false ? VC_COLORS.error : VC_COLORS.muted);
+  const badge = el("span", statusIcon);
+  Object.assign(badge.style, {
+    color: statusColor,
+    fontWeight: "700",
+    minWidth: "12px",
+    textAlign: "center",
+  });
+  row.appendChild(badge);
+
+  // Op kind label
+  const kind = typeof stmt.op_kind === "string" && stmt.op_kind ? stmt.op_kind : "stmt";
+  const kindEl = el("span", `${kind}${Number.isFinite(stmt.statement_index) ? ` #${stmt.statement_index}` : ""}`);
+  kindEl.style.color = "#9da1ac";
+  row.appendChild(kindEl);
+
+  // First diagnostic (compact)
+  if (Array.isArray(stmt.diagnostics) && stmt.diagnostics.length) {
+    const firstDiag = stmt.diagnostics[0];
+    if (firstDiag && typeof firstDiag === "object") {
+      const code = typeof firstDiag.code === "string" ? firstDiag.code : "";
+      const msg = typeof firstDiag.message === "string" ? firstDiag.message : "";
+      const diagText = code && msg ? `${code}: ${msg}` : (code || msg);
+      if (diagText) {
+        const diagEl = el("span", _truncateMessage(diagText, 50) || diagText);
+        diagEl.style.color = "#8d93a1";
+        diagEl.style.fontSize = "10px";
+        diagEl.style.marginLeft = "4px";
+        row.appendChild(diagEl);
+      }
+    }
+  }
+
+  return row;
+}
+
+function _renderOutcomeFooter(entry) {
+  const parts = [];
+  if (typeof entry.exit_mode === "string" && entry.exit_mode) {
+    parts.push(`exit: ${entry.exit_mode}`);
+  }
+  if (entry.budget && typeof entry.budget === "object") {
+    if (Number.isFinite(entry.budget.remaining_batches)) {
+      parts.push(`budget: ${entry.budget.remaining_batches} left`);
+    } else if (Number.isFinite(entry.budget.consecutive_errors)) {
+      parts.push(`errors: ${entry.budget.consecutive_errors}`);
+    }
+  }
+  if (typeof entry.batch_ok === "boolean") {
+    parts.push(entry.batch_ok ? "ok" : "not ok");
+  }
+  if (!parts.length) return null;
+  const footer = el("div", parts.join(" \u00b7 "));
+  Object.assign(footer.style, {
+    fontSize: "10px",
+    color: "#8d93a1",
+    marginTop: "4px",
+    fontStyle: "italic",
+  });
+  return footer;
+}
+
+function _renderBatchTurnRow(body, panel, entry, index) {
+  const turnKey = entry.turn_key;
+  const expanded = !!(panel.state.expandedTurnKeys && panel.state.expandedTurnKeys[turnKey]);
+  const isInProgress = entry.status === "in_progress";
+  const statusColor = _statusColor(entry.status);
+  const turnLabel = Number.isFinite(entry.turn_number)
+    ? `Turn ${entry.turn_number + 1}`
+    : (typeof entry.turn_id === "string" && entry.turn_id ? `turn ${entry.turn_id}` : "batch turn");
+
+  const row = el("div");
+  row.className = "vibecomfy-batch-row";
+  Object.assign(row.style, {
+    borderLeft: `3px solid ${statusColor}`,
+    paddingLeft: "8px",
+    marginBottom: "6px",
+    display: "grid",
+    gap: "3px",
+  });
+  row.onclick = function () {
+    if (!panel.state.expandedTurnKeys || typeof panel.state.expandedTurnKeys !== "object") {
+      panel.state.expandedTurnKeys = {};
+    }
+    if (panel.state.expandedTurnKeys[turnKey]) {
+      delete panel.state.expandedTurnKeys[turnKey];
+    } else {
+      panel.state.expandedTurnKeys[turnKey] = true;
+    }
+    renderHistory(panel);
+  };
+
+  // ── Collapsed view (always visible) ──────────────────────────────────
+  const collapsedLine = el("div");
+  Object.assign(collapsedLine.style, {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    flexWrap: "wrap",
+    fontSize: "12px",
+  });
+
+  // In-progress indicator
+  if (isInProgress) {
+    const dot = el("span");
+    dot.className = "vibecomfy-batch-progress-dot";
+    collapsedLine.appendChild(dot);
+  }
+
+  // Turn label
+  const labelEl = el("span", turnLabel);
+  labelEl.style.color = statusColor;
+  labelEl.style.fontWeight = "700";
+  collapsedLine.appendChild(labelEl);
+
+  // Status badge
+  const statusEl = el("span", entry.status || "unknown");
+  Object.assign(statusEl.style, {
+    color: statusColor,
+    fontSize: "9px",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    fontWeight: "600",
+  });
+  collapsedLine.appendChild(statusEl);
+
+  // Truncated message
+  const shortMsg = _truncateMessage(entry.message || entry.done_summary, 80);
+  if (shortMsg) {
+    const msgEl = el("span", shortMsg);
+    msgEl.style.color = "#9da1ac";
+    msgEl.style.fontSize = "11px";
+    msgEl.style.flex = "1 1 auto";
+    msgEl.style.minWidth = "0";
+    msgEl.style.overflow = "hidden";
+    msgEl.style.textOverflow = "ellipsis";
+    msgEl.style.whiteSpace = "nowrap";
+    collapsedLine.appendChild(msgEl);
+  }
+
+  // Expand chevron
+  const chevron = el("span", expanded ? "\u25bc" : "\u25b6");
+  chevron.style.color = "#8d93a1";
+  chevron.style.fontSize = "9px";
+  collapsedLine.appendChild(chevron);
+
+  row.appendChild(collapsedLine);
+
+  // ── Expanded view ────────────────────────────────────────────────────
+  if (expanded) {
+    const expandedBox = el("div");
+    expandedBox.className = "vibecomfy-batch-expanded";
+    Object.assign(expandedBox.style, {
+      display: "grid",
+      gap: "4px",
+      marginTop: "3px",
+    });
+
+    // Audit download for expanded batch rows
+    const auditBtnRow = el("div");
+    Object.assign(auditBtnRow.style, {
+      display: "flex",
+      justifyContent: "flex-end",
+    });
+    const auditBtn = button("Audit \u2193", (e) => {
+      e.stopPropagation();
+      downloadTurnAudit(panel, index);
+    });
+    auditBtn.style.fontSize = "10px";
+    auditBtn.style.padding = "2px 5px";
+    auditBtnRow.appendChild(auditBtn);
+    expandedBox.appendChild(auditBtnRow);
+
+    // Reasoning toggle
+    const summary = _safeSummaryText(entry);
+    if (summary) {
+      const reasoningRow = el("div");
+      const reasoningToggle = el("span", "\u25b6 Reasoning");
+      Object.assign(reasoningToggle.style, {
+        color: "#9ed0ff",
+        fontSize: "11px",
+        cursor: "pointer",
+        userSelect: "none",
+      });
+      let reasoningShown = false;
+      const reasoningBody = el("div");
+      Object.assign(reasoningBody.style, {
+        display: "none",
+        fontSize: "11px",
+        color: "#c4ccd6",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        marginTop: "2px",
+        paddingLeft: "12px",
+        borderLeft: "2px solid #282a32",
+      });
+      reasoningBody.textContent = summary;
+      reasoningToggle.onclick = function (e) {
+        e.stopPropagation();
+        reasoningShown = !reasoningShown;
+        reasoningToggle.textContent = reasoningShown ? "\u25bc Reasoning" : "\u25b6 Reasoning";
+        reasoningBody.style.display = reasoningShown ? "block" : "none";
+      };
+      reasoningRow.appendChild(reasoningToggle);
+      reasoningRow.appendChild(reasoningBody);
+      expandedBox.appendChild(reasoningRow);
+    }
+
+    // Statement bullets (up to BATCH_STATEMENT_CAP)
+    const stmts = Array.isArray(entry.statements) ? entry.statements : [];
+    const showStmts = stmts.slice(0, BATCH_STATEMENT_CAP);
+    const moreCount = stmts.length - BATCH_STATEMENT_CAP;
+    if (showStmts.length) {
+      const stmtsHeader = el("div", "Statements:");
+      stmtsHeader.style.fontSize = "10px";
+      stmtsHeader.style.color = "#9da1ac";
+      stmtsHeader.style.textTransform = "uppercase";
+      stmtsHeader.style.letterSpacing = "0.04em";
+      expandedBox.appendChild(stmtsHeader);
+      for (let s = 0; s < showStmts.length; s += 1) {
+        expandedBox.appendChild(_statementBullet(showStmts[s], s));
+      }
+      // Capped-more line
+      if (moreCount > 0) {
+        const moreLine = el("div", `+${moreCount} more statement${moreCount !== 1 ? "s" : ""}\u2026`);
+        moreLine.style.fontSize = "10px";
+        moreLine.style.color = "#8d93a1";
+        moreLine.style.fontStyle = "italic";
+        expandedBox.appendChild(moreLine);
+      }
+    } else if (Number.isFinite(entry.statement_count) && entry.statement_count > 0) {
+      const stmtsNote = el("div", `${entry.statement_count} statement${entry.statement_count !== 1 ? "s" : ""} (details unavailable)`);
+      stmtsNote.style.fontSize = "10px";
+      stmtsNote.style.color = "#8d93a1";
+      expandedBox.appendChild(stmtsNote);
+    }
+
+    // Outcome footer
+    const footer = _renderOutcomeFooter(entry);
+    if (footer) {
+      expandedBox.appendChild(footer);
+    }
+
+    // Turn-level diagnostics (compact)
+    if (Array.isArray(entry.diagnostics) && entry.diagnostics.length) {
+      const diagHeader = el("div", "Diagnostics:");
+      diagHeader.style.fontSize = "10px";
+      diagHeader.style.color = "#9da1ac";
+      diagHeader.style.textTransform = "uppercase";
+      diagHeader.style.letterSpacing = "0.04em";
+      expandedBox.appendChild(diagHeader);
+      const maxDiags = Math.min(entry.diagnostics.length, 5);
+      for (let d = 0; d < maxDiags; d += 1) {
+        const diag = entry.diagnostics[d];
+        if (diag && typeof diag === "object") {
+          const code = typeof diag.code === "string" ? diag.code : "";
+          const msg = typeof diag.message === "string" ? diag.message : "";
+          const diagText = code && msg ? `${code}: ${msg}` : (code || msg);
+          if (diagText) {
+            const diagLine = el("div", diagText);
+            diagLine.style.fontSize = "10px";
+            diagLine.style.color = "#8d93a1";
+            expandedBox.appendChild(diagLine);
+          }
+        }
+      }
+    }
+
+    // Timestamp
+    if (typeof entry.timestamp === "string" && entry.timestamp) {
+      const tsLine = el("div", entry.timestamp);
+      tsLine.style.fontSize = "9px";
+      tsLine.style.color = "#6b7080";
+      expandedBox.appendChild(tsLine);
+    }
+
+    row.appendChild(expandedBox);
+  }
+
+  body.appendChild(row);
+}
+
+function _renderDurableTurnRow(body, panel, entry, index) {
+  const turnCard = el("div");
+  turnCard.style.borderLeft = "3px solid #3d8bfd";
+  turnCard.style.paddingLeft = "8px";
+  turnCard.style.marginBottom = "8px";
+  turnCard.style.display = "grid";
+  turnCard.style.gap = "4px";
+
+  const statusColor = _statusColor(entry.status);
+
+  const headerRow = el("div");
+  headerRow.style.display = "flex";
+  headerRow.style.justifyContent = "space-between";
+  headerRow.style.alignItems = "center";
+  headerRow.style.gap = "8px";
+
+  const statusBadge = el("span", entry.status || "unknown");
+  statusBadge.style.color = statusColor;
+  statusBadge.style.fontWeight = "700";
+  statusBadge.style.textTransform = "uppercase";
+  statusBadge.style.fontSize = "10px";
+  statusBadge.style.letterSpacing = "0.05em";
+  headerRow.appendChild(statusBadge);
+
+  const downloadBtn = button("Audit \u2193", () => downloadTurnAudit(panel, index));
+  downloadBtn.style.fontSize = "10px";
+  downloadBtn.style.padding = "3px 6px";
+  headerRow.appendChild(downloadBtn);
+
+  turnCard.appendChild(headerRow);
+
+  if (entry.turn_id) {
+    appendTextLine(turnCard, `turn ${entry.turn_id}`, "#8d93a1");
+  }
+  if (entry.task) {
+    appendTextLine(turnCard, entry.task, "#edf2f7");
+  }
+  if (entry.failure_kind) {
+    appendTextLine(turnCard, `${entry.failure_kind}${entry.failure_stage ? ` @ ${entry.failure_stage}` : ""}`, "#ffb86c");
+  }
+  if (entry.message) {
+    appendTextLine(turnCard, entry.message, "#9da1ac");
+  }
+  if (entry.audit_ref?.path) {
+    appendCodeLine(turnCard, `audit: ${entry.audit_ref.path}`, "#9ed0ff");
+  }
+  if (entry.timestamp) {
+    appendTextLine(turnCard, entry.timestamp, "#8d93a1");
+  }
+
+  body.appendChild(turnCard);
+}
+
 function renderHistory(panel) {
+  _injectProgressPulseStyle();
   const body = panel.sections.history;
   clearNode(body);
   if (!panel.state.turns.length && !panel.state.history.length) {
@@ -1574,66 +2314,13 @@ function renderHistory(panel) {
     return;
   }
 
-  // Render structured turns with status badges
   for (let index = 0; index < panel.state.turns.length; index += 1) {
     const entry = panel.state.turns[index];
-    const turnCard = el("div");
-    turnCard.style.borderLeft = "3px solid #3d8bfd";
-    turnCard.style.paddingLeft = "8px";
-    turnCard.style.marginBottom = "8px";
-    turnCard.style.display = "grid";
-    turnCard.style.gap = "4px";
-
-    const statusColors = {
-      pending: "#ffd36f",
-      candidate: "#7db6ff",
-      applied: "#4caf50",
-      rejected: "#ff7f7f",
-      failed: "#ff8d8d",
-    };
-    const statusColor = statusColors[entry.status] || "#9da1ac";
-
-    const headerRow = el("div");
-    headerRow.style.display = "flex";
-    headerRow.style.justifyContent = "space-between";
-    headerRow.style.alignItems = "center";
-    headerRow.style.gap = "8px";
-
-    const statusBadge = el("span", entry.status || "unknown");
-    statusBadge.style.color = statusColor;
-    statusBadge.style.fontWeight = "700";
-    statusBadge.style.textTransform = "uppercase";
-    statusBadge.style.fontSize = "10px";
-    statusBadge.style.letterSpacing = "0.05em";
-    headerRow.appendChild(statusBadge);
-
-    const downloadBtn = button("Audit \u2193", () => downloadTurnAudit(panel, index));
-    downloadBtn.style.fontSize = "10px";
-    downloadBtn.style.padding = "3px 6px";
-    headerRow.appendChild(downloadBtn);
-
-    turnCard.appendChild(headerRow);
-
-    if (entry.turn_id) {
-      appendTextLine(turnCard, `turn ${entry.turn_id}`, "#8d93a1");
+    if (entry && entry.entry_type === "batch") {
+      _renderBatchTurnRow(body, panel, entry, index);
+    } else {
+      _renderDurableTurnRow(body, panel, entry, index);
     }
-    if (entry.task) {
-      appendTextLine(turnCard, entry.task, "#edf2f7");
-    }
-    if (entry.failure_kind) {
-      appendTextLine(turnCard, `${entry.failure_kind}${entry.failure_stage ? ` @ ${entry.failure_stage}` : ""}`, "#ffb86c");
-    }
-    if (entry.message) {
-      appendTextLine(turnCard, entry.message, "#9da1ac");
-    }
-    if (entry.audit_ref?.path) {
-      appendCodeLine(turnCard, `audit: ${entry.audit_ref.path}`, "#9ed0ff");
-    }
-    if (entry.timestamp) {
-      appendTextLine(turnCard, entry.timestamp, "#8d93a1");
-    }
-
-    body.appendChild(turnCard);
   }
 
   // Also render legacy history entries that don't have turn counterparts
@@ -1779,13 +2466,36 @@ function clearCandidatePreviewState(panel) {
     if (graph) {
       if (typeof graph.setDirtyCanvas === "function") {
         graph.setDirtyCanvas(true, true);
-      } else if (app?.canvas?.setDirty) {
-        app.canvas.setDirty(true, true);
       }
     }
-    app?.canvas?.draw?.(true, true);
-  } catch (_e) {
-    // Best-effort canvas repaint — diff cache is already cleared.
+  } catch (e) {
+    // Best-effort: a failed dirty-canvas call should not block cleanup.
+    console.warn("[vibecomfy] clearCandidatePreviewState canvas dirty failed:", e);
+  }
+}
+
+function invalidateCandidateState(panel) {
+  if (!panel) {
+    return;
+  }
+  // Clear candidate review fields
+  panel.state.candidateGraph = null;
+  panel.state.candidateGraphHash = null;
+  panel.state.candidateReport = null;
+  panel.state.serverSubmitGraphHash = null;
+  // Clear preview diff caches (same as clearCandidatePreviewState)
+  delete panel.state._previewDiff;
+  delete panel.state._previewDiffGraphHash;
+  // Preserve repaint behavior
+  try {
+    const graph = getLiveGraph();
+    if (graph) {
+      if (typeof graph.setDirtyCanvas === "function") {
+        graph.setDirtyCanvas(true, true);
+      }
+    }
+  } catch (e) {
+    // Best-effort
   }
 }
 
@@ -2641,6 +3351,7 @@ async function submitAgentEdit(panel) {
     }
 
     panel.state.phase = PANEL_STATE.SUBMITTING;
+    invalidateCandidateState(panel);
     panel.state.failure = null;
     panel.state.lastAppliedChanges = null;
     clearChangedNodeFeedbackVisuals();
@@ -2677,6 +3388,7 @@ async function submitAgentEdit(panel) {
         route: snapshot.route,
         model: snapshot.model || undefined,
         session_id: panel.state.sessionId || undefined,
+        client_id: api?.clientId || undefined,
         client_graph_hash: snapshot.graphHash,
         client_structural_graph_hash: snapshot.structuralHash,
         client_live_canvas_token: snapshot.liveCanvasToken,
@@ -2818,6 +3530,7 @@ async function submitAgentEdit(panel) {
     panel.state.queueAllowed = Boolean(result.queue_allowed);
     panel.state.auditRef = result.audit_ref || null;
     panel.state.queueGuard = getQueueGuardStateForPanel();
+    reconcileResponseBatchTurns(panel, result);
     panel.state.debugPayload = {
       ...result,
       last_submit: panel.state.lastSubmit,
@@ -3412,6 +4125,7 @@ app.registerExtension({
     installAgentPreviewOverlay();
     decorateLiveIntentNodes();
     installQueueGuard();
+    ensureAgentTurnListener();
     const proto = window.LiteGraph?.LGraphCanvas?.prototype;
     if (proto && !proto.__vibecomfyRoundtripPatched) {
       proto.__vibecomfyRoundtripPatched = true;

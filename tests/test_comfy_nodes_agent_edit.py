@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import re
+import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,10 +14,16 @@ import pytest
 from vibecomfy.comfy_nodes.agent_edit import (
     AgentEditState,
     _agent_edit_contract,
+    _agent_edit_turn_event_payload,
+    _ws_send,
     handle_agent_edit,
 )
-from vibecomfy.comfy_nodes.agent_contracts import FailureKind, StageResult
-from vibecomfy.comfy_nodes.agent_session import payload_hash, structural_graph_hash
+from vibecomfy.comfy_nodes.agent_contracts import FailureKind, StageResult, TurnContext
+from vibecomfy.comfy_nodes.agent_session import (
+    payload_hash,
+    structural_graph_hash,
+    turn_dir_for,
+)
 from vibecomfy.porting.convert import ConversionWriteError
 from vibecomfy.porting.lowering import LoweringDiagnostic, LoweringEvidence, LoweringResult
 from vibecomfy.porting.refuse import EditorAheadError, RefusedEmit
@@ -50,6 +60,25 @@ def _schema(class_type: str, outputs: list[OutputSpec] | None = None) -> NodeSch
         outputs=outputs or [],
         source_provider="test",
         confidence=1.0,
+    )
+
+
+def _batch_repl_provider() -> _Provider:
+    return _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={
+                    "images": InputSpec("IMAGE", required=True),
+                    "filename_prefix": InputSpec("STRING"),
+                },
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
     )
 
 
@@ -239,6 +268,231 @@ def _assert_failure_defaults(
         assert result["audit_ref"]["path"]
     else:
         assert result["audit_ref"] is None
+
+
+def test_ws_send_prefers_send_sync_and_targets_sid(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str, dict[str, object], str | None]] = []
+
+    class _PromptServerInstance:
+        def send_sync(self, event, payload, sid=None):
+            calls.append(("sync", event, payload, sid))
+
+        def send_json(self, event, payload, sid=None):
+            calls.append(("json", event, payload, sid))
+
+    server_module = types.ModuleType("server")
+    server_module.PromptServer = types.SimpleNamespace(instance=_PromptServerInstance())
+    monkeypatch.setitem(sys.modules, "server", server_module)
+
+    payload = {"ok": True}
+    _ws_send("vibecomfy.agent_edit.turn", payload, client_id="client-sync")
+
+    assert calls == [("sync", "vibecomfy.agent_edit.turn", payload, "client-sync")]
+
+
+def test_ws_send_falls_back_to_send_json_and_swallows_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str, dict[str, object], str | None]] = []
+
+    class _JsonOnlyPromptServerInstance:
+        send_sync = None
+
+        def send_json(self, event, payload, sid=None):
+            calls.append(("json", event, payload, sid))
+
+    json_only_module = types.ModuleType("server")
+    json_only_module.PromptServer = types.SimpleNamespace(instance=_JsonOnlyPromptServerInstance())
+    monkeypatch.setitem(sys.modules, "server", json_only_module)
+
+    payload = {"status": "ok"}
+    _ws_send("vibecomfy.agent_edit.turn", payload, client_id="client-json")
+    assert calls == [("json", "vibecomfy.agent_edit.turn", payload, "client-json")]
+
+    class _ExplodingPromptServerInstance:
+        def send_sync(self, event, payload, sid=None):
+            raise RuntimeError("boom")
+
+    exploding_module = types.ModuleType("server")
+    exploding_module.PromptServer = types.SimpleNamespace(instance=_ExplodingPromptServerInstance())
+    monkeypatch.setitem(sys.modules, "server", exploding_module)
+    _ws_send("vibecomfy.agent_edit.turn", {"status": "boom"}, client_id="client-error")
+
+
+def test_agent_edit_turn_event_payload_compacts_and_excludes_sensitive_fields(
+    tmp_path: Path,
+) -> None:
+    state = AgentEditState(
+        task="tighten the save behavior",
+        graph={},
+        request_payload={},
+        schema_provider=None,
+        baseline_graph_hash=None,
+        submit_graph_hash=None,
+        submit_structural_graph_hash=None,
+        submitted_client_graph_hash=None,
+        submitted_client_structural_graph_hash=None,
+        session_dir=tmp_path,
+        turn_dir=tmp_path,
+        request_path=tmp_path / "request.json",
+        original_ui_path=tmp_path / "original.ui.json",
+        before_py_path=tmp_path / "before.py",
+        after_py_path=tmp_path / "after.py",
+        projection_path=tmp_path / "projection.txt",
+        model_request_path=tmp_path / "model_request.json",
+        model_response_path=tmp_path / "model_response.json",
+        candidate_ui_path=tmp_path / "candidate.ui.json",
+        messages_path=tmp_path / "messages.jsonl",
+    )
+    state.batch_exit_mode = "done"
+    state.batch_done_summary = "Gate A passed: applied the save prefix rename."
+    state.batch_budget_state = {
+        "remaining_batches": 2,
+        "consecutive_errors": 0,
+    }
+    context = TurnContext(session_id="batch-compact", turn_id="0007")
+    turn_record = {
+        "turn_number": 3,
+        "batch": 'saveimage.filename_prefix = "after"',
+        "message": "Adjusted the save prefix.",
+        "provider_metadata": {"token_usage": {"prompt": 123}},
+        "batch_ok": True,
+        "statement_count": 1,
+        "landed_op_count": 1,
+        "diagnostics": [
+            {
+                "code": "unknown_target_field",
+                "message": "bad field",
+                "detail": {"path": "/tmp/secret.json"},
+            }
+        ],
+        "statements": [
+            {
+                "statement_index": 0,
+                "ok": True,
+                "landed": True,
+                "op_kind": "set_node_field",
+                "teaching_hint": "Use describe(name) to confirm the field name.",
+                "dependency_cause": "blocked by earlier failure",
+                "diagnostics": [
+                    {
+                        "code": "unknown_target_field",
+                        "message": "bad field",
+                        "detail": {"raw_source": "secret"},
+                    }
+                ],
+                "touched_uids": ["save-1"],
+                "raw_source": "saveimage.filename_prefix = 'after'",
+            }
+        ],
+        "diff": "--- private diff ---",
+        "report": "private report",
+    }
+
+    payload = _agent_edit_turn_event_payload(
+        state,
+        context,
+        turn_record,
+        status="done",
+    )
+
+    assert payload["session_id"] == "batch-compact"
+    assert payload["turn_id"] == "0007"
+    assert payload["turn_number"] == 3
+    assert payload["status"] == "done"
+    assert payload["statement_count"] == 1
+    assert payload["landed_op_count"] == 1
+    assert payload["done_summary"] == state.batch_done_summary
+    assert payload["budget"] == {
+        "remaining_batches": 2,
+        "consecutive_errors": 0,
+    }
+    assert payload["diagnostics"] == [
+        {"code": "unknown_target_field", "message": "bad field"}
+    ]
+    assert payload["statements"] == [
+        {
+            "statement_index": 0,
+            "ok": True,
+            "landed": True,
+            "op_kind": "set_node_field",
+            "teaching_hint": "Use describe(name) to confirm the field name.",
+            "dependency_cause": "blocked by earlier failure",
+            "diagnostics": [
+                {"code": "unknown_target_field", "message": "bad field"}
+            ],
+            "touched_uids": ["save-1"],
+        }
+    ]
+    assert "batch" not in payload
+    assert "diff" not in payload
+    assert "report" not in payload
+    assert "provider_metadata" not in payload
+    assert "raw_source" not in json.dumps(payload, sort_keys=True)
+    assert "/tmp/secret.json" not in json.dumps(payload, sort_keys=True)
+
+
+def test_agent_edit_route_extracts_only_non_empty_string_client_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    routes = importlib.import_module("vibecomfy.comfy_nodes.routes")
+    real_aiohttp = sys.modules.get("aiohttp")
+    real_server = sys.modules.get("server")
+
+    class _Routes:
+        def post(self, _path):
+            return lambda fn: fn
+
+        def get(self, _path):
+            return lambda fn: fn
+
+    server_module = types.ModuleType("server")
+    server_module.PromptServer = types.SimpleNamespace(instance=types.SimpleNamespace(routes=_Routes()))
+
+    aiohttp_module = types.ModuleType("aiohttp")
+    aiohttp_module.web = types.SimpleNamespace(
+        json_response=lambda body, status=200: {"status": status, "body": body},
+        Response=lambda **kwargs: kwargs,
+    )
+
+    monkeypatch.setitem(sys.modules, "server", server_module)
+    monkeypatch.setitem(sys.modules, "aiohttp", aiohttp_module)
+    routes = importlib.reload(routes)
+
+    captured: list[tuple[dict, str | None]] = []
+    monkeypatch.setattr(
+        routes,
+        "_handle_agent_edit",
+        lambda payload, **kwargs: captured.append((payload, kwargs.get("client_id"))) or {"ok": True},
+    )
+
+    class _Request:
+        def __init__(self, payload):
+            self._payload = payload
+
+        async def json(self):
+            return self._payload
+
+    try:
+        response = asyncio.run(routes.agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": "client-123"})))
+        assert response["status"] == 200
+        assert captured[-1][1] == "client-123"
+
+        response = asyncio.run(routes.agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": 99})))
+        assert response["status"] == 200
+        assert captured[-1][1] is None
+
+        response = asyncio.run(routes.agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": "   "})))
+        assert response["status"] == 200
+        assert captured[-1][1] is None
+    finally:
+        if real_aiohttp is not None:
+            sys.modules["aiohttp"] = real_aiohttp
+        else:
+            sys.modules.pop("aiohttp", None)
+        if real_server is not None:
+            sys.modules["server"] = real_server
+        else:
+            sys.modules.pop("server", None)
+        importlib.reload(routes)
 
 
 def test_agent_edit_state_exposes_explicit_lowering_fields(tmp_path: Path) -> None:
@@ -1301,10 +1555,18 @@ def test_handle_agent_edit_batch_repl_returns_successful_non_commit_clarificatio
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = _Provider(
-        {"LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")])}
-    )
+    provider = _batch_repl_provider()
     monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    events: list[tuple[str, dict[str, object], str | None]] = []
+
+    def _capture_ws_send(event: str, payload: dict[str, object], *, client_id: str | None = None) -> None:
+        turn_dir = turn_dir_for(tmp_path, "batch-clarify", str(payload["turn_id"]))
+        assert (turn_dir / "candidate.ui.json").is_file()
+        assert (turn_dir / "model_response.json").is_file()
+        assert (turn_dir / "messages.jsonl").is_file()
+        events.append((event, payload, client_id))
+
+    monkeypatch.setattr("vibecomfy.comfy_nodes.agent_edit._ws_send", _capture_ws_send)
 
     def _fake_batch_client(_messages):
         return {
@@ -1322,6 +1584,7 @@ def test_handle_agent_edit_batch_repl_returns_successful_non_commit_clarificatio
         schema_provider=provider,
         deepseek_client=_fake_batch_client,
         session_root=tmp_path,
+        client_id="client-clarify",
     )
 
     assert result["ok"] is True
@@ -1333,6 +1596,39 @@ def test_handle_agent_edit_batch_repl_returns_successful_non_commit_clarificatio
     assert '"before"' in json.dumps(result["graph"], sort_keys=True)
     assert '"after"' not in json.dumps(result["graph"], sort_keys=True)
     assert "done_summary" not in result
+    assert len(result["batch_turns"]) == 1
+    assert result["batch_turns"][0]["turn_number"] == 0
+    assert result["batch_turns"][0]["batch"] == 'clarify("before or after the face restoration?")'
+    assert result["batch_turns"][0]["message"] == "I need one detail before continuing."
+    assert result["batch_turns"][0]["clarification_required"] is True
+    assert result["batch_turns"][0]["clarification_message"] == "before or after the face restoration?"
+    assert events == [
+        (
+            "vibecomfy.agent_edit.turn",
+            {
+                "session_id": "batch-clarify",
+                "turn_id": events[0][1]["turn_id"],
+                "turn_number": 0,
+                "entry_type": "batch",
+                "status": "clarify",
+                "message": "I need one detail before continuing.",
+                "clarification_required": True,
+                "clarification_message": "before or after the face restoration?",
+                "statements": [
+                    {
+                        "clarification": True,
+                        "message": "before or after the face restoration?",
+                    }
+                ],
+                "exit_mode": "clarify",
+                "budget": {
+                    "remaining_batches": 2,
+                    "consecutive_errors": 0,
+                },
+            },
+            "client-clarify",
+        )
+    ]
 
     audit = json.loads(Path(result["audit_ref"]["path"]).read_text(encoding="utf-8"))
     assert audit["metadata"]["batch_repl"]["exit_mode"] == "clarify"
@@ -1343,23 +1639,13 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    provider = _Provider(
-        {
-            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
-            "SaveImage": NodeSchema(
-                class_type="SaveImage",
-                pack=None,
-                inputs={
-                    "images": InputSpec("IMAGE", required=True),
-                    "filename_prefix": InputSpec("STRING"),
-                },
-                outputs=[],
-                source_provider="test",
-                confidence=1.0,
-            ),
-        }
-    )
+    provider = _batch_repl_provider()
     monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    events: list[tuple[str, dict[str, object], str | None]] = []
+    monkeypatch.setattr(
+        "vibecomfy.comfy_nodes.agent_edit._ws_send",
+        lambda event, payload, *, client_id=None: events.append((event, payload, client_id)),
+    )
     responses = iter(
         [
             {
@@ -1384,6 +1670,7 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
         schema_provider=provider,
         deepseek_client=lambda _messages: next(responses),
         session_root=tmp_path,
+        client_id="client-done",
     )
 
     assert result["ok"] is True
@@ -1395,6 +1682,16 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert "Set saveimage.filename_prefix" in result["done_summary"]
     assert "after" in result["done_summary"]
     assert result["report"]["done_summary"] == result["done_summary"]
+    assert len(result["batch_turns"]) == 2
+    assert result["batch_turns"][0]["turn_number"] == 0
+    assert result["batch_turns"][0]["batch_ok"] is True
+    assert result["batch_turns"][0]["statement_count"] == 1
+    assert result["batch_turns"][0]["landed_op_count"] == 1
+    assert result["batch_turns"][0]["diff"]
+    assert result["batch_turns"][0]["report"]
+    assert result["batch_turns"][1]["turn_number"] == 1
+    assert result["batch_turns"][1]["statements"][0]["op_kind"] == "done"
+    assert result["batch_turns"][1]["message"] == "Ready to commit the candidate."
 
     graph_text = json.dumps(result["graph"], sort_keys=True)
     assert "after" in graph_text
@@ -1403,6 +1700,72 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     audit = json.loads(Path(result["audit_ref"]["path"]).read_text(encoding="utf-8"))
     assert audit["metadata"]["batch_repl"]["exit_mode"] == "done"
     assert audit["metadata"]["batch_repl"]["done_summary"] == result["done_summary"]
+    assert [payload["status"] for _, payload, _ in events] == ["in_progress", "done"]
+    assert all(event == "vibecomfy.agent_edit.turn" for event, _, _ in events)
+    assert all(client_id == "client-done" for _, _, client_id in events)
+    assert events[0][1]["turn_number"] == 0
+    assert events[0][1]["batch_ok"] is True
+    assert events[0][1]["landed_op_count"] == 1
+    assert events[1][1]["turn_number"] == 1
+    assert events[1][1]["exit_mode"] == "done"
+    assert events[1][1]["done_summary"] == result["done_summary"]
+
+
+def test_handle_agent_edit_batch_repl_refused_done_skips_emit_and_budget_failure_emits_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    events: list[tuple[str, dict[str, object], str | None]] = []
+    monkeypatch.setattr(
+        "vibecomfy.comfy_nodes.agent_edit._ws_send",
+        lambda event, payload, *, client_id=None: events.append((event, payload, client_id)),
+    )
+    responses = iter(
+        [
+            {
+                "batch": "done()",
+                "message": "No changes needed.",
+            },
+            {
+                "batch": 'saveimage.filename_prefix = "after"',
+                "message": "Applied the requested rename.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "rename the save prefix",
+            "session_id": "batch-refused-done-budget",
+            "max_batches": 2,
+            "max_consecutive_errors": 2,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+        client_id="client-budget",
+    )
+
+    _assert_failure_defaults(
+        result,
+        kind=FailureKind.MODEL_MISTAKE.value,
+        stage="agent_batch",
+        audit_ref_expected=True,
+    )
+    issue = result["agent_failure_context"]["issues"][0]
+    assert issue["code"] == "batch_budget_exhausted"
+    assert [payload["status"] for _, payload, _ in events] == [
+        "in_progress",
+        "budget_exhausted",
+    ]
+    assert [payload["turn_number"] for _, payload, _ in events] == [1, 1]
+    assert all(event == "vibecomfy.agent_edit.turn" for event, _, _ in events)
+    assert all(client_id == "client-budget" for _, _, client_id in events)
+    assert events[0][1]["message"] == "Applied the requested rename."
+    assert events[1][1]["message"] == "Applied the requested rename."
 
 
 def test_handle_agent_edit_batch_repl_applies_assignment_add_and_rewire(

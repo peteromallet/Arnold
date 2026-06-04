@@ -900,6 +900,7 @@ def _stage_agent_batch_repl(
     deepseek_client: DeepSeekClient | None = None,
     route: str | None = None,
     model: str | None = None,
+    client_id: str | None = None,
 ) -> StageResult:
     from vibecomfy.porting.edit_session import EditSession
 
@@ -1047,6 +1048,13 @@ def _stage_agent_batch_repl(
                 "candidate_ui": str(state.candidate_ui_path),
                 "messages": str(state.messages_path),
             }
+            _emit_agent_edit_turn_event(
+                state,
+                _context,
+                turn_record,
+                client_id=client_id,
+                status="clarify",
+            )
             return StageResult(
                 stage="agent_batch",
                 ok=True,
@@ -1242,6 +1250,13 @@ def _stage_agent_batch_repl(
                 "candidate_ui": str(state.candidate_ui_path),
                 "messages": str(state.messages_path),
             }
+            _emit_agent_edit_turn_event(
+                state,
+                _context,
+                turn_record,
+                client_id=client_id,
+                status="done",
+            )
             return StageResult(
                 stage="agent_batch",
                 ok=True,
@@ -1266,6 +1281,13 @@ def _stage_agent_batch_repl(
                     "state_match_ok": True,
                 },
             )
+        _emit_agent_edit_turn_event(
+            state,
+            _context,
+            turn_record,
+            client_id=client_id,
+            status="in_progress",
+        )
         if consecutive_errors >= max_consecutive_errors:
             break
 
@@ -1274,6 +1296,14 @@ def _stage_agent_batch_repl(
         f"Stopped after {state.batch_turn_count} batch turn(s); "
         f"{state.batch_budget_state.get('remaining_batches', 0)} batch(es) remaining."
     )
+    if state.batch_turns:
+        _emit_agent_edit_turn_event(
+            state,
+            _context,
+            state.batch_turns[-1],
+            client_id=client_id,
+            status="budget_exhausted",
+        )
     return StageResult(
         stage="agent_batch",
         ok=False,
@@ -1863,6 +1893,7 @@ def handle_agent_edit(
     schema_provider: Any = None,
     deepseek_client: DeepSeekClient | None = None,
     session_root: Path | None = None,
+    client_id: str | None = None,
 ) -> dict[str, Any]:
     """Convert current UI JSON to Python, ask the agent to edit it, emit UI JSON."""
     from vibecomfy.schema import get_schema_provider
@@ -2000,6 +2031,7 @@ def handle_agent_edit(
                 deepseek_client=deepseek_client,
                 route=payload.get("route") if isinstance(payload.get("route"), str) else None,
                 model=payload.get("model") if isinstance(payload.get("model"), str) else None,
+                client_id=client_id,
             )
         elif contract == "delta":
             _run_stage("ingest", state, context, _stage_ingest_v2)
@@ -2078,6 +2110,7 @@ def handle_agent_edit(
             response["graph_unchanged"] = True
         elif state.batch_done_summary:
             response["done_summary"] = state.batch_done_summary
+        response["batch_turns"] = _json_safe(state.batch_turns)
     try:
         if contract == "delta":
             _record(
@@ -2122,6 +2155,178 @@ def handle_agent_edit(
         turn_id=context.turn_id,
     )
     return response
+
+
+# ── WebSocket event helpers (best-effort, compact) ──────────────────────────
+
+
+def _ws_send(event: str, payload: dict[str, Any], *, client_id: str | None = None) -> None:
+    """Send a websocket event to a client, preferring send_sync, falling back to send_json.
+
+    This is a best-effort adapter: failures are logged and swallowed so websocket issues
+    never block the agent-edit control flow.
+    """
+    try:
+        from server import PromptServer  # noqa: PLC0415
+    except ImportError:
+        return  # not running inside ComfyUI (tests, CLI, etc.)
+    try:
+        if hasattr(PromptServer.instance, "send_sync") and callable(
+            PromptServer.instance.send_sync
+        ):
+            PromptServer.instance.send_sync(event, payload, sid=client_id)
+        elif hasattr(PromptServer.instance, "send_json") and callable(
+            PromptServer.instance.send_json
+        ):
+            PromptServer.instance.send_json(event, payload, sid=client_id)
+    except Exception:
+        LOGGER.debug("websocket send for event %r to client %r failed (best-effort)", event, client_id, exc_info=True)
+
+
+def _brief_batch_statements(turn_record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return a compact, privacy-safe list of statement summaries from a batch turn record.
+
+    Excludes: diff, raw batch/source, report text, provider metadata, and any raw JSON dumps.
+    """
+    if not isinstance(turn_record, dict):
+        return []
+
+    # Clarification turns have a different shape
+    if turn_record.get("clarification_required"):
+        return [
+            {
+                "clarification": True,
+                "message": turn_record.get("clarification_message", ""),
+            }
+        ]
+
+    statements = turn_record.get("statements")
+    if not isinstance(statements, list) or not statements:
+        # Fallback: build a minimal summary from turn-level fields
+        return [
+            {
+                "ok": bool(turn_record.get("batch_ok")),
+                "statement_count": int(turn_record.get("statement_count", 0)),
+                "landed": int(turn_record.get("landed_op_count", 0)),
+                "diagnostic_count": len(turn_record.get("diagnostics") or []),
+            }
+        ]
+
+    brief: list[dict[str, Any]] = []
+    for stmt in statements:
+        if not isinstance(stmt, dict):
+            continue
+        compact: dict[str, Any] = {
+            "statement_index": stmt.get("statement_index"),
+            "ok": stmt.get("ok"),
+            "landed": stmt.get("landed"),
+            "op_kind": stmt.get("op_kind"),
+        }
+        # Only include teaching_hint if present (it's compact guidance, not raw source)
+        if stmt.get("teaching_hint"):
+            compact["teaching_hint"] = stmt["teaching_hint"]
+        if stmt.get("dependency_cause"):
+            compact["dependency_cause"] = stmt["dependency_cause"]
+        # Compact diagnostics: only code + message, no raw detail blobs
+        diags = stmt.get("diagnostics")
+        if isinstance(diags, list) and diags:
+            compact["diagnostics"] = [
+                {"code": d.get("code"), "message": d.get("message")}
+                for d in diags
+                if isinstance(d, dict)
+            ][:5]
+        # Touched uids are small identifiers, safe to include
+        if stmt.get("touched_uids"):
+            compact["touched_uids"] = list(stmt["touched_uids"])[:10]
+        brief.append(compact)
+    return brief
+
+
+def _agent_edit_turn_event_payload(
+    state: "AgentEditState",
+    context: "TurnContext",
+    turn_record: dict[str, Any],
+    *,
+    entry_type: str = "batch",
+    status: str = "progress",
+) -> dict[str, Any]:
+    """Build a compact websocket event payload for a batch turn.
+
+    Excludes: diff, raw batch/source text, file paths, provider metadata,
+    and raw JSON blobs.  Only includes fields safe for wire transport.
+    """
+    payload: dict[str, Any] = {
+        "session_id": context.session_id,
+        "turn_id": context.turn_id,
+        "turn_number": turn_record.get("turn_number"),
+        "entry_type": entry_type,
+        "status": status,
+    }
+
+    # Include a bounded user-facing message
+    message = turn_record.get("message")
+    if isinstance(message, str) and message:
+        payload["message"] = message[:500] if len(message) > 500 else message
+
+    if turn_record.get("clarification_required"):
+        payload["clarification_required"] = True
+        cm = turn_record.get("clarification_message")
+        if isinstance(cm, str) and cm:
+            payload["clarification_message"] = cm[:500] if len(cm) > 500 else cm
+    else:
+        payload["batch_ok"] = bool(turn_record.get("batch_ok"))
+        payload["statement_count"] = int(turn_record.get("statement_count", 0))
+        payload["landed_op_count"] = int(turn_record.get("landed_op_count", 0))
+
+    # Compact statement summaries (privacy-safe)
+    statements = _brief_batch_statements(turn_record)
+    if statements:
+        payload["statements"] = statements
+
+    # Turn-level diagnostics (compact: code + message only)
+    diags = turn_record.get("diagnostics")
+    if isinstance(diags, list) and diags:
+        payload["diagnostics"] = [
+            {"code": d.get("code"), "message": d.get("message")}
+            for d in diags
+            if isinstance(d, dict)
+        ][:5]
+
+    # Exit mode info when present
+    exit_mode = getattr(state, "batch_exit_mode", "")
+    if exit_mode:
+        payload["exit_mode"] = exit_mode
+    if exit_mode == "done" and getattr(state, "batch_done_summary", ""):
+        payload["done_summary"] = str(state.batch_done_summary)[:500]
+
+    # Budget snapshot
+    budget = getattr(state, "batch_budget_state", None)
+    if isinstance(budget, dict) and budget:
+        payload["budget"] = {
+            "remaining_batches": budget.get("remaining_batches"),
+            "consecutive_errors": budget.get("consecutive_errors"),
+        }
+
+    return payload
+
+
+def _emit_agent_edit_turn_event(
+    state: "AgentEditState",
+    context: "TurnContext",
+    turn_record: dict[str, Any],
+    *,
+    client_id: str | None = None,
+    entry_type: str = "batch",
+    status: str = "progress",
+) -> None:
+    """Emit a compact websocket event for a batch turn.  Best-effort; never raises."""
+    try:
+        payload = _agent_edit_turn_event_payload(
+            state, context, turn_record, entry_type=entry_type, status=status
+        )
+        _ws_send("vibecomfy.agent_edit.turn", payload, client_id=client_id)
+    except Exception:
+        LOGGER.debug("emit agent-edit turn event failed (best-effort)", exc_info=True)
 
 
 __all__ = [

@@ -95,6 +95,7 @@ class FakeElement {
 
 class FakeDocument {
   constructor() {
+    this.head = new FakeElement(this, "head");
     this.body = new FakeElement(this, "body");
   }
 
@@ -262,7 +263,35 @@ export async function createBrowserHarness({
   await mkdir(scriptsRoot, { recursive: true });
   await writeFile(path.join(comfyRoot, "package.json"), '{ "type": "module" }\n');
   await writeFile(path.join(scriptsRoot, "app.js"), "export const app = globalThis.__VIBECOMFY_BROWSER_APP__;\n");
+  await writeFile(path.join(scriptsRoot, "api.js"), "export const api = globalThis.__VIBECOMFY_BROWSER_API__;\n");
   await writeFile(path.join(webRoot, "vibecomfy_roundtrip.js"), await readFile(EXTENSION_SOURCE, "utf8"));
+
+  const apiEventListeners = {};
+  const mockApi = {
+    clientId: `test-client-${Date.now()}`,
+    addEventListener(event, listener) {
+      if (!apiEventListeners[event]) {
+        apiEventListeners[event] = [];
+      }
+      apiEventListeners[event].push(listener);
+    },
+    removeEventListener(event, listener) {
+      const listeners = apiEventListeners[event] || [];
+      apiEventListeners[event] = listeners.filter((entry) => entry !== listener);
+    },
+  };
+
+  function dispatchApiEvent(event, data) {
+    const listeners = apiEventListeners[event] || [];
+    const detail = data != null ? { detail: data } : {};
+    for (const listener of listeners) {
+      try {
+        listener(detail);
+      } catch (_err) {
+        // Best-effort: event listener errors must not break dispatch.
+      }
+    }
+  }
 
   const originalDocument = globalThis.document;
   const originalWindow = globalThis.window;
@@ -270,6 +299,7 @@ export async function createBrowserHarness({
   const originalConsole = globalThis.console;
   const originalURL = globalThis.URL;
   const originalApp = globalThis.__VIBECOMFY_BROWSER_APP__;
+  const originalApi = globalThis.__VIBECOMFY_BROWSER_API__;
   const hadCrypto = "crypto" in globalThis;
 
   const blobUrls = [];
@@ -291,6 +321,7 @@ export async function createBrowserHarness({
   globalThis.window = { document, LiteGraph: { LGraphCanvas: LiteGraphCanvas } };
   globalThis.fetch = fetchImpl;
   globalThis.__VIBECOMFY_BROWSER_APP__ = app;
+  globalThis.__VIBECOMFY_BROWSER_API__ = mockApi;
   if (!hadCrypto) {
     globalThis.crypto = (await import("node:crypto")).webcrypto;
   }
@@ -325,6 +356,9 @@ export async function createBrowserHarness({
 
   return {
     app,
+    api: mockApi,
+    apiEventListeners,
+    dispatchApiEvent,
     document,
     window: globalThis.window,
     requests,
@@ -406,6 +440,8 @@ export async function createBrowserHarness({
       else globalThis.URL = originalURL;
       if (originalApp === undefined) delete globalThis.__VIBECOMFY_BROWSER_APP__;
       else globalThis.__VIBECOMFY_BROWSER_APP__ = originalApp;
+      if (originalApi === undefined) delete globalThis.__VIBECOMFY_BROWSER_API__;
+      else globalThis.__VIBECOMFY_BROWSER_API__ = originalApi;
       if (!hadCrypto) delete globalThis.crypto;
       globalThis.console = originalConsole;
       await rm(tempRoot, { recursive: true, force: true });
