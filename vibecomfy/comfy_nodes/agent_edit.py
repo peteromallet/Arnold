@@ -939,6 +939,7 @@ def _stage_agent_batch_repl(
     last_diff = ""
     last_report = ""
     consecutive_errors = 0
+    total_landed = 0
     request_log: list[dict[str, Any]] = []
     response_log: list[dict[str, Any]] = []
 
@@ -1067,6 +1068,7 @@ def _stage_agent_batch_repl(
         write_json_artifact(state.candidate_ui_path, state.ui_payload)
 
         turn_has_errors = (not batch_result.ok) or bool(batch_result.diagnostics)
+        total_landed += len(batch_result.landed_ops)
         consecutive_errors = consecutive_errors + 1 if turn_has_errors else 0
         diff_text = _render_batch_diff(current_render, next_render)
         report_text = _format_batch_report(
@@ -1134,6 +1136,27 @@ def _stage_agent_batch_repl(
             item.ok and str(item.op_kind or "") == "done"
             for item in batch_result.statements
         )
+        # Don't honor a premature done(): if the model called done() but its edits
+        # failed and NOTHING has ever landed, committing would produce an empty
+        # no-op (the model often guesses a node signature wrong on the first try).
+        # Instead, feed the diagnostics back and let it self-correct on a remaining
+        # batch (bounded by max_batches and the consecutive-error cap).
+        if (
+            done_requested
+            and total_landed == 0
+            and turn_has_errors
+            and len(batch_result.landed_ops) == 0
+            and (turn_number + 1) < max_batches
+        ):
+            last_report = (
+                last_report
+                + "\n\nNOTE: done() was NOT accepted — your edit statement(s) did not"
+                " land (see the diagnostics above) and nothing has been applied yet."
+                " Fix the failed statement (correct the wrong field name or supply the"
+                " required input; call search(focus_types=[\"ClassName\"]) to get the"
+                " exact signature) and only call done() AFTER at least one edit lands."
+            )
+            continue
         if done_requested:
             done_result = session.done()
             state.batch_turn_count = turn_number + 1
