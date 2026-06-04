@@ -151,6 +151,127 @@ class TestStaticGateForbiddenStringLiterals:
 
 
 # ---------------------------------------------------------------------------
+# Per-module boundary checks for new Arnold modules (M3c T16)
+# ---------------------------------------------------------------------------
+
+_NEW_MODULE_NAMES: tuple[str, ...] = (
+    "validator.py",
+    "pattern_dynamic.py",
+    "subpipeline.py",
+)
+
+# Forbidden Megaplan policy literals that must never appear in Arnold
+# modules.  Excludes 'proceed' / 'iterate' / 'tiebreaker' / 'escalate'
+# because the Arnold validator carries them as neutral *fallback* defaults
+# (they are not runtime policy).  The existing TestStaticGateForbiddenStringLiterals
+# already gate-checks the full arnold/pipeline/ tree for those four literals.
+_FORBIDDEN_POLICY_LITERALS: frozenset[str] = frozenset(
+    {
+        # Megaplan phase names
+        "planning",
+        "critique",
+        "finalize",
+        # Megaplan override actions
+        "force_proceed",
+        "abort",
+        "replan",
+        "add_note",
+        # Megaplan infrastructure concepts
+        "plan_dir",
+        "governor",
+        "budget",
+        "profile",
+        "envelope",
+        # Megaplan feature flags
+        "typed_ports_on",
+        "typed_ports_off",
+        # Direct megaplan package reference as a string literal
+        "megaplan",
+    }
+)
+
+
+def _new_module_path(name: str) -> Path:
+    """Return the absolute path to a named module under ``arnold/pipeline/``."""
+    return _PIPELINE_PKG / name
+
+
+class TestNewModuleNoMegaplanImports:
+    """Each new Arnold module must contain zero megaplan import statements."""
+
+    def test_validator_has_no_megaplan_imports(self) -> None:
+        violations = _ast_import_violations(_new_module_path("validator.py"))
+        if violations:
+            pytest.fail(
+                f"validator.py has {len(violations)} forbidden import(s):\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+    def test_pattern_dynamic_has_no_megaplan_imports(self) -> None:
+        violations = _ast_import_violations(_new_module_path("pattern_dynamic.py"))
+        if violations:
+            pytest.fail(
+                f"pattern_dynamic.py has {len(violations)} forbidden import(s):\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+    def test_subpipeline_has_no_megaplan_imports(self) -> None:
+        violations = _ast_import_violations(_new_module_path("subpipeline.py"))
+        if violations:
+            pytest.fail(
+                f"subpipeline.py has {len(violations)} forbidden import(s):\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+
+class TestNewModuleNoForbiddenPolicyLiterals:
+    """Each new Arnold module must contain zero forbidden Megaplan policy literals."""
+
+    def test_validator_has_no_policy_literals(self) -> None:
+        violations: list[str] = []
+        for v in _ast_string_literal_violations(_new_module_path("validator.py")):
+            for literal in _FORBIDDEN_POLICY_LITERALS:
+                if f"'{literal}'" in v or f'"{literal}"' in v:
+                    violations.append(v)
+                    break
+        if violations:
+            pytest.fail(
+                f"validator.py has {len(violations)} forbidden policy literal(s):\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+    def test_pattern_dynamic_has_no_policy_literals(self) -> None:
+        violations: list[str] = []
+        for v in _ast_string_literal_violations(
+            _new_module_path("pattern_dynamic.py")
+        ):
+            for literal in _FORBIDDEN_POLICY_LITERALS:
+                if f"'{literal}'" in v or f'"{literal}"' in v:
+                    violations.append(v)
+                    break
+        if violations:
+            pytest.fail(
+                f"pattern_dynamic.py has {len(violations)} "
+                f"forbidden policy literal(s):\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+    def test_subpipeline_has_no_policy_literals(self) -> None:
+        violations: list[str] = []
+        for v in _ast_string_literal_violations(_new_module_path("subpipeline.py")):
+            for literal in _FORBIDDEN_POLICY_LITERALS:
+                if f"'{literal}'" in v or f'"{literal}"' in v:
+                    violations.append(v)
+                    break
+        if violations:
+            pytest.fail(
+                f"subpipeline.py has {len(violations)} "
+                f"forbidden policy literal(s):\n"
+                + "\n".join(f"  • {v}" for v in violations)
+            )
+
+
+# ---------------------------------------------------------------------------
 # Concrete Step implementation for structural subtyping test
 # ---------------------------------------------------------------------------
 

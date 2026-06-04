@@ -36,6 +36,7 @@ class Edge:
     label: str
     target: str
     kind: str = "normal"
+    recommendation: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +164,11 @@ class Stage:
     edges: tuple[Edge, ...] = ()
     decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
     override_vocabulary: frozenset[str] = field(default_factory=frozenset)
+    reads: tuple["ReadRef", ...] = field(default_factory=tuple)
+    writes: tuple["WriteRef", ...] = field(default_factory=tuple)
+    produces: tuple["Port", ...] = field(default_factory=tuple)
+    consumes: tuple["PortRef", ...] = field(default_factory=tuple)
+    loop_condition: Callable[[Any], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -187,6 +193,11 @@ class ParallelStage:
     max_workers: int | None = None
     decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
     override_vocabulary: frozenset[str] = field(default_factory=frozenset)
+    reads: tuple["ReadRef", ...] = field(default_factory=tuple)
+    writes: tuple["WriteRef", ...] = field(default_factory=tuple)
+    produces: tuple["Port", ...] = field(default_factory=tuple)
+    consumes: tuple["PortRef", ...] = field(default_factory=tuple)
+    loop_condition: Callable[[Any], bool] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +221,8 @@ class Pipeline:
 
     stages: Mapping[str, Stage | ParallelStage]
     entry: str
+    binding_map: dict | None = None
+    resource_bundles: tuple[Any, ...] = field(default_factory=tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +270,62 @@ class RoutingKey:
     """
 
     key: str
+
+
+# ---------------------------------------------------------------------------
+# Dataflow reference wrappers (neutral carriers)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReadRef:
+    """A reference to data read by a stage.
+
+    ``name`` identifies the data artifact.  ``optional`` means the
+    stage can proceed if the data is absent.  ``external`` marks data
+    sourced from outside the pipeline (e.g. user-provided files).
+    ``late_bound`` means the referent is resolved at runtime rather
+    than at construction time.
+    """
+
+    name: str
+    optional: bool = False
+    external: bool = False
+    late_bound: bool = False
+
+
+@dataclass(frozen=True)
+class WriteRef:
+    """A reference to data written by a stage.
+
+    ``name`` identifies the data artifact.  ``optional`` means the
+    write is best-effort (the pipeline can continue if it fails).
+    ``external`` marks an output destined for a consumer outside the
+    pipeline.  ``late_bound`` means the referent is resolved at
+    runtime rather than at construction time.
+    """
+
+    name: str
+    optional: bool = False
+    external: bool = False
+    late_bound: bool = False
+
+
+@dataclass(frozen=True)
+class BindingRef:
+    """A reference to a typed-port binding between stages.
+
+    ``name`` identifies the binding.  ``optional`` means the binding
+    may be elided when the target port is absent.  ``external`` marks
+    a binding that crosses a pipeline boundary.  ``late_bound`` means
+    the binding target is resolved at runtime rather than at
+    construction time.
+    """
+
+    name: str
+    optional: bool = False
+    external: bool = False
+    late_bound: bool = False
 
 
 # ---------------------------------------------------------------------------

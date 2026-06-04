@@ -104,12 +104,26 @@ class PipelineBuilder:
                     join=stage.join,
                     edges=stage.edges + new_edges,
                     max_workers=stage.max_workers,
+                    decision_vocabulary=stage.decision_vocabulary,
+                    override_vocabulary=stage.override_vocabulary,
+                    reads=stage.reads,
+                    writes=stage.writes,
+                    produces=stage.produces,
+                    consumes=stage.consumes,
+                    loop_condition=stage.loop_condition,
                 )
             else:
                 self._stages[src_name] = Stage(
                     name=stage.name,
                     step=stage.step,
                     edges=stage.edges + new_edges,
+                    decision_vocabulary=stage.decision_vocabulary,
+                    override_vocabulary=stage.override_vocabulary,
+                    reads=stage.reads,
+                    writes=stage.writes,
+                    produces=stage.produces,
+                    consumes=stage.consumes,
+                    loop_condition=stage.loop_condition,
                 )
         return self
 
@@ -139,6 +153,8 @@ class PipelineBuilder:
         return Pipeline(
             stages=dict(self._stages),
             entry=self._entry,
+            binding_map=None,
+            resource_bundles=tuple(self.resource_bundles),
         )
 
     # ── internals ─────────────────────────────────────────────────────
@@ -163,12 +179,26 @@ class PipelineBuilder:
                         join=prev.join,
                         edges=prev.edges + (new_edge,),
                         max_workers=prev.max_workers,
+                        decision_vocabulary=prev.decision_vocabulary,
+                        override_vocabulary=prev.override_vocabulary,
+                        reads=prev.reads,
+                        writes=prev.writes,
+                        produces=prev.produces,
+                        consumes=prev.consumes,
+                        loop_condition=prev.loop_condition,
                     )
                 else:
                     self._stages[self._last_stage] = Stage(
                         name=prev.name,
                         step=prev.step,
                         edges=prev.edges + (new_edge,),
+                        decision_vocabulary=prev.decision_vocabulary,
+                        override_vocabulary=prev.override_vocabulary,
+                        reads=prev.reads,
+                        writes=prev.writes,
+                        produces=prev.produces,
+                        consumes=prev.consumes,
+                        loop_condition=prev.loop_condition,
                     )
 
     def _set_entry_and_last(
