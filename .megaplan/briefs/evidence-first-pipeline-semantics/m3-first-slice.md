@@ -1,4 +1,4 @@
-# M1: Vertical First Slice — execute -> review -> done
+# M3: Vertical First Slice — execute -> review -> done
 
 Source ticket: `01KT50AZRMK5X890TQ565DDB5V`
 

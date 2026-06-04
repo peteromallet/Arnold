@@ -1,3 +1,69 @@
+# Evidence-First Pipeline Semantics — v2 proposal (for approval before brief rewrites)
+
+Status: PROPOSAL. Does not modify the live m0–m10 briefs or chain.yaml. Product of
+review by 4 per-milestone reviewers (GPT-5.5), 4 adversarial/cost/contrarian/slice
+lenses (DeepSeek), and 2 frontier direction + cost-of-simplification reviews
+(GPT-5.5 + Opus, run independently). Two cross-checks converged on the same verdict.
+
+## What changed from v1 and why (one page)
+
+**Reframe (the organizing idea).** Not "compute more evidence" but an **authority
+kernel**: define *who is allowed to make each kind of truth* (dispatch, transition,
+config-resolution, workspace-mutation, reset), and let evidence *support* those
+boundaries. Success metric = **convert every silent proceed into a loud, named,
+operator-visible halt-or-waive**, on the surface of *all authority increases* (not
+all reads — status may be eventually consistent; transitions may not). The four
+dogfood failures were *unsurfaced* signals, not *uncomputed* ones.
+
+**Prevent at the source before verifying after the fact.** Two subtractive moves
+from the contrarian, adopted because they remove failure classes instead of
+detecting them:
+- **Engine/Target Isolation becomes the FIRST milestone** (pulled from deferred
+  ticket `01KS3DCH9Y…`). Both frontier reviewers' #1 change. Prevents the entire
+  contamination class m10 only detected, and removes the dogfood-shadow trap.
+- **Routing is recomputed from pinned inputs, never frozen** (the m9 thesis),
+  folded into the transition validator.
+
+**Shrink the over-built; keep the invariant.** m7's grand all-readers *projection*
+is dropped (it was "a sixth store by another name"), but its load-bearing
+*invariant* is restored as a first-class early milestone: a corroborated-`done`
+predicate every authority-increasing reader must consult. This is the ONE
+non-negotiable add-back both cost-reviews demanded.
+
+**Touch m0–m6 surgically** (locked ≠ frozen-into-contradiction): m6 gains an
+unattended-deadlock fallback (the "enforcement-killer" guardrail); m5 gains
+reset/reconcile + config-reroute coverage and routing-recompute; objective gates
+go async/per-milestone and robustness-gated (cost). Concurrency/TOCTOU discipline
+(lease/lock + compare-and-swap-on-inputs + record-the-checked-SHA) applies to every
+authority-increasing path.
+
+**Validate against itself.** A post-merge re-baseline deliverable rebuilds the
+frozen engine from the merged result, so the epic is tested against the very
+failure class that motivated it.
+
+Net: ~same milestone count as v1, reshaped prevention-first, smaller per-milestone,
+and validated. No new stores; every add-back is a predicate / record / assertion.
+
+## v1 → v2 milestone map
+
+| v2 | source | change |
+|----|--------|--------|
+| m0 engine/target isolation | deferred ticket | NEW, first; prevention |
+| m1 evidence contract + corroborated-`done` predicate | v1 m0 | + `is_task_satisfied(...)` |
+| m2 authority-reader migration | v1 m7 (invariant only) | the mandatory add-back, pulled early |
+| m3 execute→review→done slice | v1 m1 | unchanged |
+| m4 review evidence service | v1 m2 | unchanged |
+| m5 objective gates | v1 m3 | + async/per-milestone + robustness-gated |
+| m6 provenance + workspace assertions | v1 m4 + reduced m10 | cheap HEAD+dirty-set+checked-SHA at authority transitions (no per-boundary tree hash) |
+| m7 transition validator + routing recompute | v1 m5 + folded m9 | + reset/reconcile/config-reroute + recompute-from-pinned + `routing_resolution_decision` + TOCTOU |
+| m8 capability dispatch gate | v1 m8 | kept; tighten: actual-vs-adjudicated-tier, auth-proven availability, batch-level |
+| m9 atomic reset + reconcile | v1 m7 (reset half) | recovery ops through m7's writer; fenced/archived |
+| m10 rollout to enforcement | v1 m6 | + unattended-deadlock fallback + protect all-authority-increases + robustness-gating |
+| m11 post-merge re-baseline | NEW | validate epic against its own failure class |
+
+## Proposed chain.yaml
+
+```yaml
 base_branch: working-branch
 
 milestones:
@@ -84,3 +150,9 @@ driver:
   auto_approve: true
   max_iterations: 80
   poll_sleep: 8.0
+```
+
+## Open decisions for the operator
+1. Approve the renumber/reorder (isolation first; authority-readers before enforce), or keep v1 numbering and accept the noted contradictions?
+2. m0 isolation: in-repo worktree separation vs container — and the local-dev waiver policy.
+3. Is m11 re-baseline a milestone, or a release-gate checklist item outside the chain?
