@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
-// MEGAPLAN_SHANNON_VENDORED v1 — patches: P1..P15
+// MEGAPLAN_SHANNON_VENDORED v1 — patches: P1..P17
 
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Command } from "commander";
 
@@ -74,7 +75,15 @@ const TURN_TIMEOUT_MS = Number(Bun.env.SHANNON_TURN_TIMEOUT_MS ?? 900_000);
 const WEB_SEARCH_COST_USD = 0.01;
 const SEND_DELAY_MIN_MS = Number(Bun.env.SHANNON_SEND_DELAY_MIN_MS ?? 350);
 const SEND_DELAY_MAX_MS = Number(Bun.env.SHANNON_SEND_DELAY_MAX_MS ?? 2500);
+// Settle window between a bracketed paste and the Enter that submits it. Claude
+// Code >=2.1.x collapses a fast bracketed paste into a "[Pasted text #N +K lines]"
+// attachment chip; an Enter sent in the same instant races chip-creation and is
+// swallowed, leaving the prompt UNSUBMITTED (no transcript row → discovery
+// timeout). A short settle before Enter makes the submit reliable.
+const PASTE_SUBMIT_DELAY_MS = Number(Bun.env.SHANNON_PASTE_SUBMIT_DELAY_MS ?? 500);
 const TYPE_PROMPT_MAX_CHARS = Number(Bun.env.SHANNON_TYPE_PROMPT_MAX_CHARS ?? 0);
+const FILE_REFERENCE_PROMPT_MIN_CHARS = Number(Bun.env.SHANNON_FILE_REFERENCE_PROMPT_MIN_CHARS ?? 2_048);
+const PROMPT_FILE_ENV = "MEGAPLAN_SHANNON_PROMPT_FILE";
 
 type ModelPricing = {
   inputPerMTok: number;
@@ -846,8 +855,9 @@ export async function runShannon(options: CliOptions) {
       promptCount += 1;
 
       await waitUntilReadyToSend(tmuxSession);
+      const submission = await preparePromptSubmission(prompt, options.cwd);
       const promptSentAt = Date.now();
-      await sendPrompt(tmuxSession, prompt);
+      await sendPrompt(tmuxSession, submission.submittedPrompt);
 
       if (options.replayUserMessages && options.outputFormat === "stream-json") {
         emitJson(toUserReplay(prompt));
@@ -859,7 +869,7 @@ export async function runShannon(options: CliOptions) {
           before,
           tmuxSession,
           options.cwd,
-          prompt,
+          submission.transcriptPrompt,
           promptSentAt,
         );
         meta = discovery.meta;
@@ -894,7 +904,7 @@ export async function runShannon(options: CliOptions) {
 
       const assistant = await waitForAssistantReply(
         meta.transcriptPath,
-        prompt,
+        submission.transcriptPrompt,
         startedAt,
         transcriptRowCount,
       );
@@ -1147,7 +1157,15 @@ export function classifyClaudeStartupBlocker(pane: string): StartupBlocker | und
 
 export function paneLooksReadyForUserMessage(pane: string) {
   const lines = pane.split(/\r?\n/).map((line) => line.trimEnd());
-  const recent = lines.slice(-12);
+  // Claude Code >=2.1.x renders its composer box and then pads the rest of the
+  // pane height with blank lines, so the visible `❯` prompt can sit ABOVE many
+  // trailing blank rows. A fixed `lines.slice(-12)` then only sees blank tail
+  // rows and never matches a visibly-ready prompt, so Shannon's readiness probe
+  // times out forever (manifesting as "Timed out waiting for Claude prompt").
+  // Trim trailing blank lines first, THEN inspect the meaningful tail.
+  let end = lines.length;
+  while (end > 0 && lines[end - 1].trim() === "") end -= 1;
+  const recent = lines.slice(Math.max(0, end - 12), end);
   return recent.some((line) => {
     // Legacy: a bare prompt marker at end of line ("❯" / "│ ❯").
     if (/(^|\s)[❯>]\s*$/.test(line)) return true;
@@ -1175,6 +1193,61 @@ function randomSendDelayMs() {
   return Math.floor(min + Math.random() * (max - min + 1));
 }
 
+type PromptSubmission = {
+  submittedPrompt: string;
+  transcriptPrompt: string;
+  promptPath?: string;
+};
+
+export async function preparePromptSubmission(prompt: string, cwd: string): Promise<PromptSubmission> {
+  if (!shouldSubmitPromptByFile(prompt)) {
+    return { submittedPrompt: prompt, transcriptPrompt: prompt };
+  }
+
+  const promptPath = await promptFileForSubmission(prompt, cwd);
+  const instruction = fileReferenceInstruction(promptPath);
+  return {
+    submittedPrompt: instruction,
+    transcriptPrompt: instruction,
+    promptPath,
+  };
+}
+
+function shouldSubmitPromptByFile(prompt: string) {
+  if (megaplanSlashCommand(prompt)) return false;
+  if (Bun.env[PROMPT_FILE_ENV]) return true;
+  return (
+    Number.isFinite(FILE_REFERENCE_PROMPT_MIN_CHARS)
+    && FILE_REFERENCE_PROMPT_MIN_CHARS > 0
+    && prompt.length >= FILE_REFERENCE_PROMPT_MIN_CHARS
+  );
+}
+
+async function promptFileForSubmission(prompt: string, cwd: string) {
+  const configuredPath = Bun.env[PROMPT_FILE_ENV];
+  if (configuredPath) {
+    const promptPath = resolve(cwd, configuredPath);
+    if (!(await Bun.file(promptPath).exists())) {
+      throw new Error(`${PROMPT_FILE_ENV} points to a missing prompt file: ${promptPath}`);
+    }
+    return promptPath;
+  }
+
+  const promptDir = resolve(cwd, ".megaplan", "shannon", "submitted-prompts");
+  await mkdir(promptDir, { recursive: true });
+  const promptPath = join(promptDir, `${Date.now()}-${randomUUID()}-shannon_prompt.txt`);
+  await Bun.write(promptPath, prompt);
+  if (!(await Bun.file(promptPath).exists())) {
+    throw new Error(`Failed to stage Shannon prompt file: ${promptPath}`);
+  }
+  return promptPath;
+}
+
+export function fileReferenceInstruction(promptPath: string) {
+  // megaplan ticket 01KT7NAQYG: keep tmux paste tiny; Claude reads the real prompt from disk.
+  return `Read the file at ${JSON.stringify(promptPath)} in full and follow its instructions exactly; respond exactly as it specifies.`;
+}
+
 async function sendPrompt(tmuxSession: string, prompt: string) {
   if (canTypePromptLiterally(prompt)) {
     await runCommand(["tmux", "send-keys", "-t", tmuxSession, "-l", prompt]);
@@ -1192,6 +1265,10 @@ async function sendPrompt(tmuxSession: string, prompt: string) {
       throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);
     }
     await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
+    // Let Claude Code finish ingesting the bracketed paste before submitting,
+    // otherwise the Enter races the "[Pasted text]" chip collapse and is dropped
+    // (prompt never submits → transcript discovery times out). See P17.
+    if (PASTE_SUBMIT_DELAY_MS > 0) await sleep(PASTE_SUBMIT_DELAY_MS);
     await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
   } catch (error) {
     primaryError = error;
