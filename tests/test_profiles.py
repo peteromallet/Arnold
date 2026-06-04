@@ -273,6 +273,42 @@ def test_apply_profile_expansion_persisted_cli_override_beats_profile_default_on
     )
 
 
+def test_apply_profile_expansion_latest_persisted_phase_override_wins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later persisted override must beat an older persisted profile pin.
+
+    This protects in-flight set-vendor/set-model recovery when state contains
+    both an old profile-expanded phase entry and the newly recorded override.
+    """
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: tmp_path / ".config" / "megaplan",
+    )
+    persisted_state = {
+        "config": {
+            "profile": "partnered",
+            "phase_model": [
+                "plan=claude:low",
+                "plan=codex:low",
+            ],
+        }
+    }
+
+    step_args = _worker_args(profile=None, phase_model=[])
+    apply_profile_expansion(step_args, None, state=persisted_state)
+
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("plan", step_args)
+    assert agent == "codex"
+    assert model is None
+
+    plan_entries = [pm for pm in step_args.phase_model if pm.startswith("plan=")]
+    assert plan_entries[0] == "plan=codex:low"
+
+
 def test_apply_profile_expansion_falls_back_to_state_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
