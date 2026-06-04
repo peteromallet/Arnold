@@ -11,12 +11,15 @@ Covers:
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
 import megaplan
 from megaplan._core import now_utc
+from megaplan.profiles import apply_profile_expansion
+from megaplan.workers import resolve_agent_mode
 from tests.conftest import (
     PlanFixture,
     _make_plan_fixture_with_robustness,
@@ -512,6 +515,59 @@ def test_set_vendor_swaps_claude_to_codex_with_concrete_display(
     phase_models = state["config"].get("phase_model") or []
     assert any(pm.startswith("plan=codex") for pm in phase_models)
     assert not any("plan=premium" in pm for pm in phase_models)
+
+
+def test_set_vendor_plan_override_resolves_to_codex_on_fresh_phase_args(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """set-vendor must affect the next phase invocation, not only state.json."""
+    monkeypatch.setattr(
+        "megaplan.workers._impl._is_agent_available",
+        lambda *_args, **_kwargs: True,
+    )
+    megaplan.handle_plan(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name, agent=None),
+    )
+    megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            override_action="set-vendor",
+            phase="plan",
+            vendor="codex",
+            reason="ticket 01KT7NAR82 runtime routing",
+            agent=None,
+        ),
+    )
+
+    state = load_state(plan_fixture.plan_dir)
+    phase_args = Namespace(
+        plan=plan_fixture.plan_name,
+        project_dir=None,
+        profile=None,
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+        agent=None,
+        hermes=None,
+        phase_model=[],
+        ephemeral=False,
+        fresh=False,
+        persist=False,
+        confirm_self_review=False,
+    )
+    apply_profile_expansion(
+        phase_args,
+        Path(state["config"]["project_dir"]),
+        state=state,
+    )
+
+    resolved = resolve_agent_mode("plan", phase_args)
+    assert resolved.agent == "codex"
+    assert resolved.resolved_model == "gpt-5.5"
 
 
 def test_set_vendor_swaps_codex_to_claude_with_concrete_display(

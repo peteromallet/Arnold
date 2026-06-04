@@ -1905,10 +1905,21 @@ def apply_profile_expansion(
             if isinstance(entry, str) and "=" in entry:
                 _ps, _pv = entry.split("=", 1)
                 profile_default_specs.setdefault(_ps, _pv)
-        for pm in persisted:
+        # Ticket 01KT7NAR82: override set-model/set-vendor must be honored at
+        # runtime even if state already contains an older profile/default entry
+        # for the same phase. Treat the latest persisted entry as the effective
+        # persisted override before merging it ahead of profile defaults.
+        latest_persisted_index_by_step = {
+            pm.split("=", 1)[0]: index
+            for index, pm in enumerate(persisted)
+            if isinstance(pm, str) and "=" in pm
+        }
+        for index, pm in enumerate(persisted):
             if "=" not in pm:
                 continue
             step = pm.split("=", 1)[0]
+            if latest_persisted_index_by_step.get(step) != index:
+                continue
             persisted_spec = pm.split("=", 1)[1]
             if step in cli_steps:
                 # Live CLI already covers this phase on the current invocation.
