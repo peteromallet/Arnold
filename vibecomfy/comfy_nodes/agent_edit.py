@@ -940,6 +940,7 @@ def _stage_agent_batch_repl(
     last_report = ""
     consecutive_errors = 0
     total_landed = 0
+    done_noop_nudges = 0
     request_log: list[dict[str, Any]] = []
     response_log: list[dict[str, Any]] = []
 
@@ -1136,26 +1137,36 @@ def _stage_agent_batch_repl(
             item.ok and str(item.op_kind or "") == "done"
             for item in batch_result.statements
         )
-        # Don't honor a premature done(): if the model called done() but its edits
-        # failed and NOTHING has ever landed, committing would produce an empty
-        # no-op (the model often guesses a node signature wrong on the first try).
-        # Instead, feed the diagnostics back and let it self-correct on a remaining
-        # batch (bounded by max_batches and the consecutive-error cap).
+        # Don't honor a premature done(): if the model called done() but NOTHING
+        # has ever landed, committing would produce an empty no-op. Two common
+        # causes: (1) it guessed a node signature wrong so the add failed; (2) it
+        # only ran a read-only search() and done()'d without ever constructing the
+        # node. Either way, feed guidance back and let it self-correct. Bounded by
+        # done_noop_nudges so a genuinely-no-change request still commits.
         if (
             done_requested
             and total_landed == 0
-            and turn_has_errors
-            and len(batch_result.landed_ops) == 0
+            and done_noop_nudges < 2
             and (turn_number + 1) < max_batches
         ):
-            last_report = (
-                last_report
-                + "\n\nNOTE: done() was NOT accepted — your edit statement(s) did not"
-                " land (see the diagnostics above) and nothing has been applied yet."
-                " Fix the failed statement (correct the wrong field name or supply the"
-                " required input; call search(focus_types=[\"ClassName\"]) to get the"
-                " exact signature) and only call done() AFTER at least one edit lands."
-            )
+            done_noop_nudges += 1
+            if turn_has_errors:
+                hint = (
+                    "your edit statement(s) did NOT land (see the diagnostics above)"
+                    " and nothing has been applied. Fix the failed statement — correct"
+                    " the wrong field name or supply the required input;"
+                    " call search(focus_types=[\"ClassName\"]) for the exact signature —"
+                    " then call done()."
+                )
+            else:
+                hint = (
+                    "you called done() without making any edit, so nothing was applied."
+                    " A search() is read-only and does NOT change the graph. Now CONSTRUCT"
+                    " and wire the node(s) the request needs (e.g. `up = NodeType(...)` then"
+                    " `consumer.input = up.OUTPUT`), then call done(). If the graph"
+                    " genuinely needs no change, call done() again to confirm."
+                )
+            last_report = last_report + "\n\nNOTE: done() was NOT accepted — " + hint
             continue
         if done_requested:
             done_result = session.done()
