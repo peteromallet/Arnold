@@ -2814,9 +2814,9 @@ def test_build_batch_messages_turn_zero_includes_full_python_scoped_catalog_and_
     assert "Envelope" in system
     assert "Prose + exactly one" in system
     assert "```batch" in system
-    assert "ImageScaleBy(image=vaedecodetiled.IMAGE" in system
-    assert "Only signatures for nodes already in the graph are shown" in system
-    assert "search()" in system
+    assert "ImageScaleBy(image=<decode_var>.IMAGE" in system
+    assert "do NOT search for them" in system
+    assert "search(" in system
     # Size ceiling: system prompt must stay under 2600 chars
     assert len(system) < 2600, f"system prompt is {len(system)} chars, expected <2600"
     # No execution-semantics phrasing
@@ -3105,7 +3105,7 @@ def test_megaplan_runtime_batch_turn_uses_batch_repl_worker_contract(monkeypatch
     assert calls[0]["response_contract"] == "batch_repl"
     assert calls[0]["system_msg"] == "system batch prompt"
     assert calls[0]["user_msg"] == "user batch prompt"
-    assert calls[0]["agent_kwargs"]["model"] == "deepseek-chat"
+    assert calls[0]["agent_kwargs"]["model"] == "deepseek-v4-pro"
 
 
 def test_run_agent_turn_batch_rejects_missing_fence(monkeypatch) -> None:

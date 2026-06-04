@@ -42,8 +42,20 @@ _TURN_TIMEOUT_SECONDS = float(os.getenv("VIBECOMFY_AGENT_TURN_TIMEOUT", "180"))
 _WORKER_PATH = str(Path(__file__).with_name("megaplan_worker.py"))
 
 # DeepSeek direct endpoint defaults (OpenAI-compatible chat-completions).
+# Use deepseek-v4-pro: the advanced, reasoning-capable variant. The legacy
+# `deepseek-chat` alias now maps to deepseek-v4-flash in NON-thinking mode — a
+# non-reasoning model that cannot plan multi-step structural graph edits and
+# spirals on read-only search() calls without ever committing an edit.
+_DEEPSEEK_MODEL = os.getenv("VIBECOMFY_DEEPSEEK_MODEL", "deepseek-v4-pro")
 _DEEPSEEK_BASE_URL = os.getenv("VIBECOMFY_DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-_DEEPSEEK_MODEL = os.getenv("VIBECOMFY_DEEPSEEK_MODEL", "deepseek-chat")
+# v4-pro is a THINKING model: reasoning_tokens are billed against max_tokens.
+# With no cap (the AIAgent default), a hard edit turn's reasoning exhausts the
+# budget before any `content` is emitted — the response comes back empty, with
+# no ```batch fence, and the turn fails as MalformedModelJSON. Set the model's
+# true output ceiling so reasoning + the (small) batch block both fit. The
+# DeepSeek API reports the valid range for deepseek-v4-pro as [1, 393216]; this
+# is only a ceiling — billing is on tokens actually generated, not the cap.
+_DEEPSEEK_MAX_TOKENS = int(os.getenv("VIBECOMFY_DEEPSEEK_MAX_TOKENS", "393216"))
 
 # Arnold/Hermes (Claude etc.) default model when a non-DeepSeek route is used.
 _ARNOLD_MODEL = os.getenv("VIBECOMFY_ARNOLD_MODEL", "anthropic/claude-opus-4.6")
@@ -117,6 +129,7 @@ def _build_agent_kwargs(route: str) -> dict[str, Any]:
             api_key=_resolve_deepseek_key(),
             base_url=_DEEPSEEK_BASE_URL,
             provider="deepseek",
+            max_tokens=_DEEPSEEK_MAX_TOKENS,
             **common,
         )
     # arnold / auto / anthropic / openai-codex -> let AIAgent resolve creds.

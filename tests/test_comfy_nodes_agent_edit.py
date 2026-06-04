@@ -317,6 +317,35 @@ def test_ws_send_falls_back_to_send_json_and_swallows_errors(monkeypatch: pytest
     _ws_send("vibecomfy.agent_edit.turn", {"status": "boom"}, client_id="client-error")
 
 
+def test_turn_event_name_matches_between_backend_emit_and_frontend_listener() -> None:
+    """The live turn feed only works if the backend emit string and the frontend
+    addEventListener string are byte-identical. They were silently divergent
+    (`vibecomfy.agent_edit.turn` vs `vibecomfy/agent-edit/turn`), which delivered
+    zero live events. Pin them together so the two sides can never drift again."""
+    repo_root = Path(__file__).resolve().parents[1]
+    backend_src = (repo_root / "vibecomfy" / "comfy_nodes" / "agent_edit.py").read_text(
+        encoding="utf-8"
+    )
+    frontend_src = (
+        repo_root / "vibecomfy" / "comfy_nodes" / "web" / "vibecomfy_roundtrip.js"
+    ).read_text(encoding="utf-8")
+
+    backend_match = re.search(r'_ws_send\(\s*"([^"]+)"', backend_src)
+    assert backend_match, "could not find the backend _ws_send(...) emit string"
+    backend_event = backend_match.group(1)
+
+    frontend_match = re.search(
+        r'addEventListener\(\s*"([^"]+)"\s*,\s*agentTurnEventListener', frontend_src
+    )
+    assert frontend_match, "could not find the frontend turn-event addEventListener"
+    frontend_event = frontend_match.group(1)
+
+    assert backend_event == frontend_event == "vibecomfy.agent_edit.turn", (
+        f"turn-event name drift: backend emits {backend_event!r}, "
+        f"frontend listens for {frontend_event!r}"
+    )
+
+
 def test_agent_edit_turn_event_payload_compacts_and_excludes_sensitive_fields(
     tmp_path: Path,
 ) -> None:
@@ -1358,9 +1387,9 @@ def test_handle_agent_edit_batch_repl_turn0_catalog_is_scoped_and_search_first(
     assert "def SaveImage" in catalog
     assert "def ImageScaleBy" not in catalog
     assert "ImageScaleBy" in names
-    assert "Only signatures for nodes already in the graph are shown" in system
+    assert "do NOT search for them" in system
     assert "Search first" in system
-    assert "Call `search()` for any other type before constructing it" in system
+    assert "for a NEW node TYPE you want to ADD" in system
 
 
 def test_batch_repl_search_query_output_is_in_next_turn_report() -> None:

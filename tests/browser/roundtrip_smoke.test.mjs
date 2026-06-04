@@ -602,6 +602,87 @@ test("VibeComfy blocks stale response arrivals before review and leaves candidat
   }
 });
 
+test("VibeComfy renders a clarify turn as a question, not a no-op candidate", async () => {
+  const initialGraph = {
+    nodes: [{ id: 1, type: "CheckpointLoaderSimple", properties: { vibecomfy_uid: "uid-1" } }],
+    links: [],
+  };
+  const clarifyQuestion = "Please provide the current graph nodes or specify which existing nodes to replace with SD3 equivalents.";
+  const harness = await createBrowserHarness({
+    graph: initialGraph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent-edit": {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: "session-clarify",
+          turn_id: "0001",
+          baseline_turn_id: null,
+          // The backend honestly reports: no edits landed, graph unchanged,
+          // nothing applyable, and a clarification question.
+          clarification_required: true,
+          graph_unchanged: true,
+          canvas_apply_allowed: false,
+          apply_allowed: false,
+          queue_allowed: false,
+          message: clarifyQuestion,
+          // The backend still echoes the (unchanged) graph in the envelope; the
+          // frontend must NOT treat that as a candidate to apply.
+          graph: { nodes: [{ id: 1, type: "CheckpointLoaderSimple", properties: { vibecomfy_uid: "uid-1" } }], links: [] },
+          report: { clarification_required: true },
+          audit_ref: { path: "/tmp/clarify-audit.json" },
+        },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+    },
+  });
+
+  let submitPromise;
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "USe SD3 instead";
+    submitPromise = harness.clickButton("Submit");
+    await submitPromise;
+
+    // Status banner reflects a clarify turn, NOT a candidate review.
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-status")?.textContent, "NEEDS YOUR INPUT");
+    assert.doesNotMatch(harness.textDump(), /AWAITING_REVIEW/);
+    // The clarification question is surfaced to the user.
+    assert.match(harness.textDump(), /replace with SD3 equivalents/);
+    // No candidate exists, so Apply/Reject must stay disabled (the original no-op bug
+    // was an enabled-looking "Apply Candidate" over a byte-identical graph).
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled, true);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-reject")?.disabled, true);
+    // The prompt stays open for the answer (Submit re-enabled), and no graph was mutated.
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled, false);
+    assert.equal(harness.loadGraphDataCalls.length, 0);
+    assert.equal(harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-edit/accept").length, 0);
+  } finally {
+    await Promise.allSettled([submitPromise].filter(Boolean));
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy agent panel renders rich candidate and failure states without mutating the canvas on failed or malformed responses", async () => {
   const responses = [
     {
@@ -980,6 +1061,15 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
     prompt.value = "allowed";
     await harness.clickButton("Submit");
     assert.equal(applyButton.disabled, false);
+    // The always-on candidate preview overlay must be cleared from the canvas
+    // whenever a candidate is invalidated (the earlier reject + this re-submit),
+    // which legitimately repaints via invalidateCandidateState -> setDirtyCanvas.
+    // Those repaints are not what the redraw-count assertion below checks. Scope
+    // the dirty/draw assertion to the Apply action itself so it still proves
+    // "in-place configure triggers exactly one [true,true] repaint" while
+    // tolerating the legitimate overlay-clearing repaints from invalidation.
+    harness.graphDirtyCanvasCalls.length = 0;
+    harness.canvasDrawCalls.length = 0;
     const operationCountBeforeApply = harness.operationLog.length;
     const applyPromise = harness.clickButton("Apply Candidate");
     await applyPromise;
@@ -1942,9 +2032,9 @@ test("VibeComfy agent turn websocket listener ignores closed or foreign sessions
   try {
     await harness.loadExtension();
     await harness.setup();
-    assert.equal(harness.apiEventListeners["vibecomfy/agent-edit/turn"]?.length || 0, 1);
+    assert.equal(harness.apiEventListeners["vibecomfy.agent_edit.turn"]?.length || 0, 1);
 
-    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
       session_id: "closed-session",
       turn_number: 0,
       status: "in_progress",
@@ -1959,7 +2049,7 @@ test("VibeComfy agent turn websocket listener ignores closed or foreign sessions
     const submitPromise = harness.clickButton("Submit");
     await waitFor(() => typeof resolveSubmit === "function");
 
-    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
       session_id: "other-session",
       turn_number: 0,
       status: "in_progress",
@@ -1967,7 +2057,7 @@ test("VibeComfy agent turn websocket listener ignores closed or foreign sessions
     });
     assert.doesNotMatch(harness.textDump(), /foreign session turn/);
 
-    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
       session_id: "session-live",
       turn_number: 0,
       status: "in_progress",
@@ -2018,7 +2108,7 @@ test("VibeComfy agent turn websocket listener ignores closed or foreign sessions
     assert.match(text, /authoritative done step/);
     assert.doesNotMatch(text, /ignored before session bind/);
 
-    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
       session_id: "session-live",
       turn_number: 2,
       status: "in_progress",
@@ -2027,7 +2117,7 @@ test("VibeComfy agent turn websocket listener ignores closed or foreign sessions
     });
     await waitFor(() => /post-response websocket step/.test(harness.textDump()));
 
-    const liveListener = harness.apiEventListeners["vibecomfy/agent-edit/turn"][0];
+    const liveListener = harness.apiEventListeners["vibecomfy.agent_edit.turn"][0];
     liveListener({
       session_id: "session-live",
       turn_number: 3,
@@ -2038,7 +2128,7 @@ test("VibeComfy agent turn websocket listener ignores closed or foreign sessions
     });
     await waitFor(() => /direct payload step/.test(harness.textDump()));
 
-    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
       session_id: "wrong-after-bind",
       turn_number: 4,
       status: "done",
@@ -2385,7 +2475,7 @@ test("VibeComfy agent-edit turn progress: client_id submit body, batch_turns fal
 
     // ── Part 3: out-of-order websocket events and session filtering ──
     // Dispatch turn 3 out of order (before turn 2 via websocket)
-    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
       session_id: "session-batch-fallback",
       turn_number: 3,
       status: "in_progress",
@@ -2395,7 +2485,7 @@ test("VibeComfy agent-edit turn progress: client_id submit body, batch_turns fal
     await waitFor(() => /third turn running out of order/.test(harness.textDump()));
 
     // Now dispatch turn 2 (should upsert into position, newest first among batch rows)
-    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
       session_id: "session-batch-fallback",
       turn_number: 2,
       status: "in_progress",
@@ -2413,7 +2503,7 @@ test("VibeComfy agent-edit turn progress: client_id submit body, batch_turns fal
     assert(turn4Index < turn3Index, "Turn 4 (newest) should appear before Turn 3 in sorted order");
 
     // Session filtering: dispatch event for a different session (should be ignored)
-    harness.dispatchApiEvent("vibecomfy/agent-edit/turn", {
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
       session_id: "foreign-session-xyz",
       turn_number: 0,
       status: "in_progress",
@@ -2727,6 +2817,102 @@ test("VibeComfy preview diff computes named-port link deltas and drawPreviewOver
     assert.equal(harness.graphConfigureCalls.length, 0, "graph.configure must not be called during preview");
     assert.equal(harness.loadGraphDataCalls.length, 0, "loadGraphData must not be called during preview");
     assert.equal(harness.graphClearCalls.length, 0, "graph.clear must not be called during preview");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy edited-node overlay box encloses the title bar (LiteGraph pos[1] is body-top, title sits above)", async () => {
+  // In LiteGraph node.pos[1] is the top of the BODY; the title bar is drawn
+  // ABOVE it and node.size excludes the title. The amber edited-node box must
+  // therefore start at pos[1] - NODE_TITLE_HEIGHT and be size[1] + TITLE_HEIGHT
+  // tall, or it clips the title ("the box doesn't go around the whole item").
+  const TITLE_H = 30; // LiteGraph.NODE_TITLE_HEIGHT in this frontend build
+  const NODE_POS = [120, 240];
+  const NODE_SIZE = [260, 120];
+
+  const liveGraph = {
+    nodes: [
+      {
+        id: 7,
+        type: "KSampler",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-edit" },
+        inputs: [{ name: "model" }],
+        outputs: [{ name: "LATENT" }],
+        widgets_values: [42, "fixed"],
+      },
+    ],
+    links: [],
+  };
+  const candidateGraph = {
+    nodes: [
+      {
+        id: 7,
+        type: "KSampler",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-edit" },
+        inputs: [{ name: "model" }],
+        outputs: [{ name: "LATENT" }],
+        widgets_values: [99, "fixed"], // first widget value changed
+      },
+    ],
+    links: [],
+  };
+  const candidateReport = {
+    change: { content_edits: { preserved: [], edited: ["uid-edit"], removed_named: [] } },
+    recovery: [],
+  };
+
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const diff = extensionModule.computePreviewDiff(candidateGraph, candidateReport);
+    assert.equal(diff.edited.length, 1, "one edited node expected");
+    assert.equal(diff.edited[0].uid, "uid-edit");
+    assert.ok(
+      diff.edited[0].changedWidgetIndices.includes(0),
+      "the changed first widget must be flagged",
+    );
+
+    const drawOps = await harness.drawPreviewOverlay({ ...diff, _candidateGraph: candidateGraph });
+
+    // Find the amber (#ffc107) edited box: a strokeStyle set followed by strokeRect.
+    let lastStroke = null;
+    let editedRect = null;
+    for (const op of drawOps) {
+      if (op.kind === "strokeStyle") lastStroke = op.args[0];
+      if (op.kind === "strokeRect" && lastStroke === "#ffc107") {
+        editedRect = op.args; // [x, y, w, h]
+        break;
+      }
+    }
+    assert.ok(editedRect, "must stroke an amber (#ffc107) rect for the edited node");
+    const [rx, ry, rw, rh] = editedRect;
+    // Top edge must be at or above pos[1] - TITLE_H (encloses the title bar).
+    assert.ok(
+      ry <= NODE_POS[1] - TITLE_H,
+      `box top ${ry} must sit at/above body-top-minus-title ${NODE_POS[1] - TITLE_H}`,
+    );
+    // Height must cover body + title (not just the body).
+    assert.ok(
+      rh >= NODE_SIZE[1] + TITLE_H,
+      `box height ${rh} must cover body+title (>= ${NODE_SIZE[1] + TITLE_H})`,
+    );
+    // And the box bottom must reach the body bottom.
+    assert.ok(ry + rh >= NODE_POS[1] + NODE_SIZE[1], "box must reach the body bottom");
+    // Width tracks the node width.
+    assert.ok(rw >= NODE_SIZE[0], "box width must cover the node width");
   } finally {
     await harness.dispose();
   }

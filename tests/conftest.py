@@ -5,6 +5,7 @@ pytest_plugins = ("pytester",)
 
 import importlib.util
 import pathlib
+import sys
 import warnings
 
 import pytest
@@ -38,6 +39,40 @@ def _reset_workflow_context_var() -> None:
     _CURRENT_WORKFLOW.set(None)
     yield
     _CURRENT_WORKFLOW.set(None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_comfyui_import_state() -> None:
+    """Keep optional live-ComfyUI imports from leaking across tests."""
+    sys_path_before = list(sys.path)
+    modules_before = set(sys.modules)
+    yield
+
+    sys.path[:] = sys_path_before
+
+    try:
+        from vibecomfy import comfy_backend
+
+        comfy_backend.reset_cache()
+    except Exception:
+        pass
+
+    try:
+        from vibecomfy.comfy_nodes import agent_edit
+
+        agent_edit._RUNTIME_OBJECT_INFO_PATH.clear()
+    except Exception:
+        pass
+
+    for name in tuple(sys.modules):
+        if name in modules_before:
+            continue
+        if (
+            name == "comfy"
+            or name.startswith("comfy.")
+            or name in {"nodes", "folder_paths", "execution", "latent_preview"}
+        ):
+            sys.modules.pop(name, None)
 
 
 def pytest_configure(config: pytest.Config) -> None:

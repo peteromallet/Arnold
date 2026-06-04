@@ -207,3 +207,7 @@ tests/test_wrapper_codegen.py::test_render_round_trip_to_api_json
 # Pre-existing order-dependent test pollution from T9b/T11 stdout-sharing (documented in T14a/T16/T18c/T20 executor notes)
 tests/test_cli_port.py::test_port_export_recovery_report_text_and_json
 tests/test_walking_skeleton.py::test_proof_d_edit_invariance_position_survives_widget_edit
+
+# Pre-existing by-design-red baseline carried in via the preview-fidelity/turn-progress
+# merges (2026-06; empty-content malformed handling is reworked in chat-epic M2).
+tests/test_comfy_nodes_agent_backend_spine.py::test_run_agent_turn_batch_empty_content_is_malformed

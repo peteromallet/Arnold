@@ -99,6 +99,10 @@ const PANEL_STATE = Object.freeze({
   SUBMITTING: "SUBMITTING",
   AWAITING_REVIEW: "AWAITING_REVIEW",
   APPLYING: "APPLYING",
+  // CLARIFY — the agent asked a question instead of producing a candidate.
+  // There is NO candidate to review (the graph is byte-identical), so we never
+  // enter AWAITING_REVIEW for these turns; the prompt stays open for the answer.
+  CLARIFY: "CLARIFY",
   ERROR: "ERROR",
 });
 
@@ -1430,16 +1434,19 @@ function createAgentPanel() {
   settingsRegion.body.appendChild(settingsStatus);
   settingsRegion.body.appendChild(settingsGuidance);
 
-  const historyRegion = panelSection(PANEL_IDS.historyRegion, "History");
+  const historyRegion = panelSection(PANEL_IDS.historyRegion, "Activity");
   const candidateRegion = panelSection(PANEL_IDS.candidateRegion, "Candidate");
   const failureRegion = panelSection(PANEL_IDS.failureRegion, "Failure");
   const queueRegion = panelSection(PANEL_IDS.queueRegion, "Queue");
   const auditRegion = panelSection(PANEL_IDS.auditRegion, "Audit");
   const debugRegion = panelSection(PANEL_IDS.debugRegion, "Debug");
 
+  // History carries the LIVE turn feed during a run, so it sits directly below
+  // the prompt (the "chat box") — the user reads progress right where they typed.
+  // Settings drops below it.
   body.appendChild(promptRegion.section);
-  body.appendChild(settingsRegion.section);
   body.appendChild(historyRegion.section);
+  body.appendChild(settingsRegion.section);
   body.appendChild(candidateRegion.section);
   body.appendChild(failureRegion.section);
   body.appendChild(queueRegion.section);
@@ -1846,6 +1853,10 @@ function shouldAcceptAgentTurnEvent(panel, payload) {
   if (currentSessionId) {
     return currentSessionId === payloadSessionId;
   }
+  // No bound session yet (fresh first run — the server assigns the session_id):
+  // intentionally drop live events rather than risk binding a foreign session.
+  // The authoritative batch_turns in the submit response reconcile the feed at
+  // completion, and every run after the first is fully live once bound.
   const batchSessionIds = new Set(
     (Array.isArray(panel.state.turns) ? panel.state.turns : [])
       .filter((entry) => entry?.entry_type === "batch" && typeof entry.session_id === "string" && entry.session_id)
@@ -1881,7 +1892,8 @@ function ensureAgentTurnListener() {
     return;
   }
   agentTurnEventListener = handleAgentTurnEvent;
-  api.addEventListener("vibecomfy/agent-edit/turn", agentTurnEventListener);
+  // Event name MUST match the backend emit string in agent_edit.py (_ws_send).
+  api.addEventListener("vibecomfy.agent_edit.turn", agentTurnEventListener);
   agentTurnEventListenerRegistered = true;
 }
 
@@ -2499,7 +2511,7 @@ function clearCandidatePreviewState(panel) {
   }
 }
 
-function invalidateCandidateState(panel) {
+function invalidateCandidateState(panel, { repaint = true } = {}) {
   if (!panel) {
     return;
   }
@@ -2511,16 +2523,22 @@ function invalidateCandidateState(panel) {
   // Clear preview diff caches (same as clearCandidatePreviewState)
   delete panel.state._previewDiff;
   delete panel.state._previewDiffGraphHash;
-  // Preserve repaint behavior
-  try {
-    const graph = getLiveGraph();
-    if (graph) {
-      if (typeof graph.setDirtyCanvas === "function") {
-        graph.setDirtyCanvas(true, true);
+  // Repaint to clear the always-on candidate preview overlay from the canvas.
+  // Callers that have ALREADY repainted (e.g. the post-Apply path, which just
+  // ran applyGraphInPlaceWithIntentDecoration -> setDirtyCanvas and is now IDLE
+  // so the overlay can't draw anyway) pass { repaint: false } to avoid a second,
+  // redundant repaint of the same frame.
+  if (repaint) {
+    try {
+      const graph = getLiveGraph();
+      if (graph) {
+        if (typeof graph.setDirtyCanvas === "function") {
+          graph.setDirtyCanvas(true, true);
+        }
       }
+    } catch (e) {
+      // Best-effort
     }
-  } catch (e) {
-    // Best-effort
   }
 }
 
@@ -2938,6 +2956,10 @@ export function drawPreviewOverlay(ctx, diff) {
     };
 
     // ── Edited nodes (amber outline) ────────────────────────────────────
+    // LiteGraph: node.pos[1] is the top of the node BODY; the title bar is drawn
+    // ABOVE it (getBounding() top = pos[1] - NODE_TITLE_HEIGHT) and node.size is
+    // the body size, excluding the title. So the full visual box is
+    // [pos[0], pos[1]-TITLE_H, size[0], size[1]+TITLE_H].
     for (var _ei = 0; _ei < (diff.edited || []).length; _ei += 1) {
       var eitem = diff.edited[_ei];
       var enode = lookupLiveNodeByUid(eitem.uid);
@@ -2947,18 +2969,46 @@ export function drawPreviewOverlay(ctx, diff) {
       var ex = enode.pos[0];
       var ey = enode.pos[1];
       var ew = Array.isArray(enode.size) ? enode.size[0] : 200;
-      var eh = Array.isArray(enode.size) ? enode.size[1] : 100;
+      var collapsed = !!(enode.flags && enode.flags.collapsed);
+      var eh = collapsed ? 0 : (Array.isArray(enode.size) ? enode.size[1] : 100);
       ctx.setLineDash([]);
       ctx.strokeStyle = editedColor;
       ctx.lineWidth = lineWidth;
-      ctx.strokeRect(ex - 2, ey - 2, ew + 4, eh + 4);
-      // Tint the changed widget rows (approximate LiteGraph row geometry:
-      // widgets render below the title and the node's input slots).
+      // Box the WHOLE node: title bar (above pos[1]) + body.
+      ctx.strokeRect(ex - 2, ey - TITLE_H - 2, ew + 4, eh + TITLE_H + 4);
+      if (collapsed) {
+        continue; // no widget rows to tint when collapsed
+      }
+      // Tint the changed widget rows. Prefer the live node's own per-widget
+      // geometry (widget.last_y, set by LiteGraph each draw in body-local
+      // coords) for pixel-faithful placement; fall back to computed row
+      // geometry below the slot area when last_y is unavailable.
+      var widgets = Array.isArray(enode.widgets) ? enode.widgets : [];
       var inCount = Array.isArray(enode.inputs) ? enode.inputs.length : 0;
-      var rowsTop = ey + TITLE_H + inCount * SLOT_H;
+      var outCount = Array.isArray(enode.outputs) ? enode.outputs.length : 0;
+      var slotRows = Math.max(inCount, outCount);
+      var computedRowsTop = ey + slotRows * SLOT_H;
       ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.22);
       for (var _wi = 0; _wi < (eitem.changedWidgetIndices || []).length; _wi += 1) {
-        ctx.fillRect(ex, rowsTop + eitem.changedWidgetIndices[_wi] * SLOT_H, ew, SLOT_H - 2);
+        var widx = eitem.changedWidgetIndices[_wi];
+        var w = widgets[widx];
+        var rowTop;
+        var rowH = WIDGET_H;
+        if (w && typeof w.last_y === "number") {
+          // last_y is body-local (relative to pos[1]).
+          rowTop = ey + w.last_y;
+          if (typeof w.computeSize === "function") {
+            try {
+              var cs = w.computeSize(ew);
+              if (cs && typeof cs[1] === "number" && cs[1] > 0) {
+                rowH = cs[1];
+              }
+            } catch (e) { /* fall back to WIDGET_H */ }
+          }
+        } else {
+          rowTop = computedRowsTop + widx * WIDGET_H;
+        }
+        ctx.fillRect(ex, rowTop, ew, Math.max(rowH - 2, 4));
       }
     }
 
@@ -3447,6 +3497,24 @@ function renderCandidate(panel) {
   const body = panel.sections.candidate;
   clearNode(body);
   if (!panel.state.candidateGraph) {
+    // Clarify turn: the agent asked a question and produced no candidate. Show the
+    // question as the headline (not "No candidate yet") and point the user at the
+    // prompt box, which is open for their answer in the same session.
+    if (panel.state.phase === PANEL_STATE.CLARIFY && panel.state.clarification?.message) {
+      const q = el("div", "❓ The agent needs your input:");
+      q.style.color = "#ffc107";
+      q.style.fontWeight = "600";
+      body.appendChild(q);
+      const msg = el("div", panel.state.clarification.message);
+      msg.style.whiteSpace = "pre-wrap";
+      msg.style.color = "#edf2f7";
+      msg.style.borderLeft = "2px solid #ffc107";
+      msg.style.paddingLeft = "8px";
+      msg.style.margin = "4px 0";
+      body.appendChild(msg);
+      body.appendChild(muted("Answer in the prompt box above and submit — it continues this session."));
+      return;
+    }
     const feedback = panel.state.lastAppliedChanges;
     if (feedback?.items?.length) {
       appendTextLine(
@@ -3633,15 +3701,32 @@ function renderAudit(panel) {
 function renderDebug(panel) {
   const body = panel.sections.debug;
   clearNode(body);
+  // Tuck the raw envelope behind a collapsed <details>. It is a developer aid;
+  // left always-open it dumps the full response (incl. batch_turns) as a wall of
+  // JSON that buries the Activity feed. Collapsed by default — click to expand.
+  const details = el("details");
+  details.open = !!panel.state.debugExpanded;
+  details.ontoggle = function () {
+    panel.state.debugExpanded = details.open;
+  };
+  const summary = el("summary", "Raw response (debug)");
+  Object.assign(summary.style, {
+    cursor: "pointer",
+    color: "#8d93a1",
+    fontSize: "11px",
+    userSelect: "none",
+  });
+  details.appendChild(summary);
   const pre = el("pre", safeJson(panel.state.debugPayload || { state: panel.state.phase }));
   Object.assign(pre.style, {
-    margin: "0",
+    margin: "6px 0 0",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     color: "#b9ffcc",
     fontSize: "11px",
   });
-  body.appendChild(pre);
+  details.appendChild(pre);
+  body.appendChild(details);
 }
 
 function renderSettings(panel) {
@@ -3672,7 +3757,7 @@ function renderAgentPanel(panel) {
   renderMeta(panel);
 
   const phase = panel.state.phase;
-  panel.status.textContent = phase;
+  panel.status.textContent = phase === PANEL_STATE.CLARIFY ? "NEEDS YOUR INPUT" : phase;
   panel.status.style.color =
     phase === PANEL_STATE.ERROR
       ? "#ff8d8d"
@@ -3680,7 +3765,9 @@ function renderAgentPanel(panel) {
         ? "#7db6ff"
         : phase === PANEL_STATE.SUBMITTING
           ? "#ffd36f"
-          : "#9da1ac";
+          : phase === PANEL_STATE.CLARIFY
+            ? "#ffc107"
+            : "#9da1ac";
 
   renderHistory(panel);
   renderSettings(panel);
@@ -3693,7 +3780,7 @@ function renderAgentPanel(panel) {
   const submitting = phase === PANEL_STATE.SUBMITTING;
   const reviewing = phase === PANEL_STATE.AWAITING_REVIEW;
   const applying = phase === PANEL_STATE.APPLYING;
-  const canSubmit = phase === PANEL_STATE.IDLE || phase === PANEL_STATE.ERROR;
+  const canSubmit = phase === PANEL_STATE.IDLE || phase === PANEL_STATE.ERROR || phase === PANEL_STATE.CLARIFY;
 
   panel.buttons.submit.disabled = submitting;
   panel.buttons.submit.textContent = submitting ? "Submitting..." : "Submit";
@@ -3902,6 +3989,59 @@ async function submitAgentEdit(panel) {
       return;
     } finally {
       panel.state.inFlightSubmit = null;
+    }
+
+    // Clarify terminal: the agent ended the turn with `clarify("...")` instead of
+    // landing edits. The backend honestly reports clarification_required + a
+    // byte-identical graph (graph_unchanged) + canvas_apply_allowed:false. Branch
+    // out BEFORE the candidate path so we never store result.graph as a candidate
+    // or enter AWAITING_REVIEW — doing so would render an "Apply Candidate" button
+    // over an unchanged graph that does nothing (the original no-op bug). Instead
+    // surface the question and leave the prompt open so the user can answer in the
+    // same session (session_id is preserved for the follow-up turn).
+    if (result.clarification_required === true) {
+      const clarifyMessage =
+        (typeof result.clarification_message === "string" && result.clarification_message.trim())
+          ? result.clarification_message.trim()
+          : (typeof result.message === "string" && result.message.trim())
+            ? result.message.trim()
+            : "The agent needs clarification before it can edit the graph.";
+      panel.state.phase = PANEL_STATE.CLARIFY;
+      panel.state.sessionId = result.session_id || panel.state.sessionId;
+      panel.state.turnId = result.turn_id || null;
+      panel.state.baselineTurnId = result.baseline_turn_id || null;
+      invalidateCandidateState(panel);
+      panel.state.clarification = {
+        message: clarifyMessage,
+        turn_id: result.turn_id || null,
+        session_id: result.session_id || null,
+      };
+      panel.state.message = clarifyMessage;
+      panel.state.failure = null;
+      panel.state.canvasApplyAllowed = false;
+      panel.state.applyAllowed = false;
+      panel.state.queueAllowed = false;
+      panel.state.auditRef = result.audit_ref || null;
+      panel.state.queueGuard = getQueueGuardStateForPanel();
+      reconcileResponseBatchTurns(panel, result);
+      panel.state.debugPayload = {
+        ...result,
+        last_submit: panel.state.lastSubmit,
+      };
+      pushHistory(panel, "clarify", clarifyMessage);
+      pushTurnStatus(panel, "clarify", {
+        session_id: result.session_id,
+        turn_id: result.turn_id,
+        baseline_turn_id: result.baseline_turn_id,
+        task,
+        message: clarifyMessage,
+        clarification_required: true,
+        clarification_message: clarifyMessage,
+        audit_ref: result.audit_ref,
+        raw_payload: result,
+      });
+      renderAgentPanel(panel);
+      return;
     }
 
     let arrivalSnapshot;
@@ -4220,7 +4360,9 @@ async function applyAgentCandidate(panel) {
     panel.state.phase = PANEL_STATE.IDLE;
     panel.state.baselineTurnId = accepted.baseline_turn_id || panel.state.turnId || panel.state.baselineTurnId;
     panel.state.auditRef = accepted.audit_ref || panel.state.auditRef;
-    invalidateCandidateState(panel);
+    // applyGraphInPlaceWithIntentDecoration already repainted the canvas above and
+    // the panel is now IDLE (overlay won't draw), so skip the redundant repaint.
+    invalidateCandidateState(panel, { repaint: false });
     panel.state.message = "Candidate accepted and applied locally.";
     setQueueGuardContext({
       sessionId: panel.state.sessionId,
