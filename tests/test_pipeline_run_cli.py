@@ -135,6 +135,26 @@ def test_registered_pipelines_does_not_expose_demo_pipelines() -> None:
     )
 
 
+def test_global_registry_restores_builtin_after_mutation() -> None:
+    """Long-lived processes recover if the global registry singleton is damaged."""
+    import arnold.pipelines.megaplan._pipeline.registry as registry_mod
+
+    original = registry_mod._GLOBAL_REGISTRY
+    try:
+        damaged = registry_mod.PipelineRegistry()
+        damaged._discovered = True
+        registry_mod._GLOBAL_REGISTRY = damaged
+
+        names = registry_mod.registered_pipelines()
+
+        assert "megaplan" in names
+        assert "planning" not in names
+        assert registry_mod.describe_pipeline("planning")
+        assert registry_mod.read_pipeline_skill_md("megaplan") is not None
+    finally:
+        registry_mod._GLOBAL_REGISTRY = original
+
+
 def test_describe_pipeline_writing_panel_strict(capsys) -> None:
     """_describe_pipeline for writing-panel-strict prints metadata."""
     from arnold.pipelines.megaplan._pipeline.run_cli import _describe_pipeline

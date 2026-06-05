@@ -14,7 +14,7 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | # | SHA / item | one-line description | category | remapped target path(s) | STATUS | comment |
 | ---: | --- | --- | --- | --- | --- | --- |
 | 1 | `008a5970` | Revert old Arnold merge | DISCARD | n/a | rejected | Reject: would undo the cleanup direction. |
-| 2 | `b09d780a` | Restore planning pipeline registration defensively | PORT | `arnold/pipelines/megaplan/_pipeline/registry.py`, tests | pending | Live re-derived commit. |
+| 2 | `b09d780a` | Restore planning pipeline registration defensively | PORT | `arnold/pipelines/megaplan/_pipeline/registry.py`, tests | verified | Re-derived for Arnold canonical `megaplan` registry: global lookup helpers reassert the built-in after singleton mutation; focused and registry discovery suites passed. |
 | 3 | `c5b11eec` | Align verify-human list with worker capabilities | PORT | `arnold/pipelines/megaplan/workers`, docs/tests | pending | Live re-derived commit. |
 | 4 | `0f2b2f79` | Recoverably rerun review for unroutable execute rework | PORT | `arnold/pipelines/megaplan/execute`, `review`, tests | pending | Live re-derived commit. |
 | 5 | `0d8992e0` | Cloud chain git-refresh tolerates divergence | PORT | `arnold/pipelines/megaplan/chain`, `cloud`, tests | pending | Live re-derived commit. |
