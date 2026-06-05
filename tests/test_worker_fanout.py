@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan._core.worker_fanout import (
+from arnold.pipelines.megaplan._core.worker_fanout import (
     WorkerUnit,
     WorkerUnitResult,
     _scatter_worker_unit_from_packed,
@@ -22,10 +22,10 @@ from megaplan._core.worker_fanout import (
     scatter_worker_unit,
     scatter_worker_units,
 )
-from megaplan.agent_runtime import AgentRequest, AgentResult
-from megaplan._core.hermes_fanout import GenericScatterResult
-from megaplan.types import AgentMode
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.agent_runtime import AgentRequest, AgentResult
+from arnold.pipelines.megaplan._core.hermes_fanout import GenericScatterResult
+from arnold.pipelines.megaplan.types import AgentMode
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
@@ -337,7 +337,7 @@ class TestWorkerUnitToAgentRequest:
         assert request.metadata["fanout"]["timeout_seconds"] == 45.5
         assert request.metadata["fanout"]["isolation"] == "process"
         assert request.attestation == {
-            "adapter": "megaplan._core.worker_fanout._worker_unit_to_agent_request",
+            "adapter": "arnold.pipelines.megaplan._core.worker_fanout._worker_unit_to_agent_request",
             "legacy_worker_entrypoint": "scatter_worker_unit",
         }
 
@@ -389,7 +389,7 @@ class TestScatterWorkerUnit:
         )
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "hermes", "creative", False),
         ) as mock_run:
             result = scatter_worker_unit(
@@ -422,7 +422,7 @@ class TestScatterWorkerUnit:
         )
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "claude", "prose", False),
         ) as mock_run:
             scatter_worker_unit(
@@ -462,7 +462,7 @@ class TestScatterWorkerUnit:
         )
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "hermes", "persistent", False),
         ) as mock_run:
             scatter_worker_unit(
@@ -488,7 +488,7 @@ class TestScatterWorkerUnit:
         )
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "hermes", "creative", False),
         ) as mock_run:
             scatter_worker_unit(
@@ -514,7 +514,7 @@ class TestScatterWorkerUnit:
         )
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "hermes", "creative", False),
         ) as mock_run:
             scatter_worker_unit(
@@ -554,7 +554,7 @@ class TestScatterWorkerUnit:
             output_path=tmp_path / "out.json",
         )
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "hermes", "creative", False),
         ):
             scatter_worker_unit(
@@ -575,7 +575,7 @@ class TestScatterWorkerUnit:
             output_path=tmp_path / "out.json",
         )
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "hermes", "creative", False),
         ):
             scatter_worker_unit(
@@ -596,7 +596,7 @@ class TestScatterWorkerUnit:
             output_path=tmp_path / "out.json",
         )
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             side_effect=RuntimeError("worker exploded"),
         ):
             with pytest.raises(RuntimeError, match="worker exploded"):
@@ -627,7 +627,7 @@ class TestScatterWorkerUnit:
         )
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(wr, "hermes", "creative", False),
         ):
             result = scatter_worker_unit(
@@ -670,7 +670,7 @@ class TestScatterWorkerUnit:
         )
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(worker, "codex", "read", False),
         ) as mock_run:
             result = scatter_worker_unit(
@@ -763,7 +763,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ) as mock_sgp:
             result = scatter_worker_units(
@@ -807,7 +807,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ):
             result = scatter_worker_units(
@@ -843,7 +843,7 @@ class TestScatterWorkerUnits:
             return f"unit-{unit.extra['index']}-v{result.payload['v']}"
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ):
             result = scatter_worker_units(
@@ -883,7 +883,7 @@ class TestScatterWorkerUnits:
             return result.payload
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ):
             scatter_worker_units(
@@ -927,7 +927,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ) as mock_sgp:
             result = scatter_worker_units(
@@ -974,7 +974,7 @@ class TestScatterWorkerUnits:
             return f"side-{index}-{result.payload['v']}"
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ):
             result = scatter_worker_units(
@@ -1007,7 +1007,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ) as mock_sgp:
             result = scatter_worker_units(
@@ -1031,7 +1031,7 @@ class TestScatterWorkerUnits:
         side_units = [self._unit(40, tmp_path)]
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             side_effect=RuntimeError("side worker failed"),
         ):
             with pytest.raises(RuntimeError, match="side worker failed"):
@@ -1062,7 +1062,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ):
             result = scatter_worker_units(
@@ -1096,7 +1096,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ) as mock_sgp:
             scatter_worker_units(
@@ -1124,7 +1124,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ) as mock_sgp:
             scatter_worker_units(
@@ -1167,7 +1167,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ) as mock_sgp:
             scatter_worker_units(
@@ -1202,7 +1202,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ) as mock_sgp:
             scatter_worker_units(
@@ -1230,7 +1230,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ) as mock_sgp:
             scatter_worker_units(
@@ -1258,7 +1258,7 @@ class TestScatterWorkerUnits:
         )
 
         with patch(
-            "megaplan._core.worker_fanout.scatter_gather_processes",
+            "arnold.pipelines.megaplan._core.worker_fanout.scatter_gather_processes",
             return_value=raw,
         ) as mock_sgp:
             scatter_worker_units(
@@ -1319,7 +1319,7 @@ class TestScatterWorkerUnitFromPacked:
         )
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "hermes", "creative", False),
         ) as mock_run:
             _scatter_worker_unit_from_packed(5, packed)
@@ -1335,7 +1335,7 @@ class TestScatterWorkerUnitFromPacked:
         del packed["read_only"]
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "hermes", "creative", False),
         ) as mock_run:
             _scatter_worker_unit_from_packed(0, packed)
@@ -1348,7 +1348,7 @@ class TestScatterWorkerUnitFromPacked:
         del packed["extra"]
 
         with patch(
-            "megaplan.workers.run_step_with_worker",
+            "arnold.pipelines.megaplan.workers.run_step_with_worker",
             return_value=(_worker_result(), "hermes", "creative", False),
         ):
             # Should not raise — extra defaults to {}

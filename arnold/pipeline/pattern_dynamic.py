@@ -207,6 +207,7 @@ def run_fanout(
     metadata: FanoutMetadata | None = None,
     typed_ports: bool = True,
     max_workers: int | None = None,
+    before_run_steps: Callable[[list[Any]], None] | None = None,
 ) -> Any:
     """Neutral dynamic fan-out core.
 
@@ -263,6 +264,8 @@ def run_fanout(
 
     # 3. Specialise base step per spec
     steps = [_specialize_step(base_step, spec) for spec in specs]
+    if before_run_steps is not None:
+        before_run_steps(steps)
 
     # 4. Run per-spec steps
     concurrency = metadata.concurrency

@@ -1,7 +1,7 @@
 """T3c — verify test-local Step subclasses satisfy Step Protocol."""
 from __future__ import annotations
 
-from megaplan._pipeline.types import Step
+from arnold.pipelines.megaplan._pipeline.types import Step
 
 
 def test_prep_finalize_satisfy_step():

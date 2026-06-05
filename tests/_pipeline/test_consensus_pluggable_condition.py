@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan._pipeline.pattern_dynamic import _ConsensusStep
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.pattern_dynamic import _ConsensusStep
+from arnold.pipelines.megaplan._pipeline.types import (
     PipelineVerdict,
     StepContext,
     StepResult,

@@ -12,12 +12,12 @@ import sys
 import textwrap
 from pathlib import Path
 
-from megaplan._pipeline import registry as registry_mod
+from arnold.pipelines.megaplan._pipeline import registry as registry_mod
 
 
 def _run_cli(cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", "megaplan", "pipelines", "doctor"],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "pipelines", "doctor"],
         capture_output=True,
         text=True,
         cwd=cwd,

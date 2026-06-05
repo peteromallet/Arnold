@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.state import load_plan_from_dir
+from arnold.pipelines.megaplan._core.state import load_plan_from_dir
 
 _FIXTURE_ROOT = Path(__file__).parent
 

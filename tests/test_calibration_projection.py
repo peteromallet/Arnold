@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.calibration.ledger import (
+from arnold.pipelines.megaplan.calibration.ledger import (
     CapabilityClaim,
     EvaluandRef,
     ModelIdentity,
@@ -15,8 +15,8 @@ from megaplan.calibration.ledger import (
     project_claimed_complexity,
     project_tier_models,
 )
-import megaplan.profiles as profiles_module
-from megaplan.profiles import apply_profile_expansion
+import arnold.pipelines.megaplan.profiles as profiles_module
+from arnold.pipelines.megaplan.profiles import apply_profile_expansion
 
 
 def _write_profiles(path: Path, content: str) -> None:

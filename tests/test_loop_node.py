@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._pipeline.loop_node import LoopNode
-from megaplan._pipeline.pattern_stops import LoopState
+from arnold.pipelines.megaplan._pipeline.loop_node import LoopNode
+from arnold.pipelines.megaplan._pipeline.pattern_stops import LoopState
 
 
 def _ls(iteration: int = 0, state=None, last=None) -> LoopState:
@@ -193,8 +193,8 @@ def test_no_teardown_callable_is_safe() -> None:
 
 
 def test_iterate_until_constructs_loopnode_under_the_hood() -> None:
-    from megaplan._pipeline.pattern_topology import iterate_until
-    from megaplan._pipeline.types import Edge, Stage, Step, StepContext, StepResult
+    from arnold.pipelines.megaplan._pipeline.pattern_topology import iterate_until
+    from arnold.pipelines.megaplan._pipeline.types import Edge, Stage, Step, StepContext, StepResult
     from dataclasses import dataclass, field
 
     @dataclass(frozen=True)
@@ -221,8 +221,8 @@ def test_iterate_until_constructs_loopnode_under_the_hood() -> None:
 
 
 def test_iterate_until_custom_condition_still_works_as_callable() -> None:
-    from megaplan._pipeline.pattern_topology import iterate_until
-    from megaplan._pipeline.types import Edge, Stage, StepContext, StepResult
+    from arnold.pipelines.megaplan._pipeline.pattern_topology import iterate_until
+    from arnold.pipelines.megaplan._pipeline.types import Edge, Stage, StepContext, StepResult
     from dataclasses import dataclass, field
 
     @dataclass(frozen=True)
@@ -245,7 +245,7 @@ def test_iterate_until_custom_condition_still_works_as_callable() -> None:
 
 
 def test_subloopstep_shim_still_importable_and_constructible() -> None:
-    from megaplan._pipeline.subloop import SubloopStep
+    from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
 
     step = SubloopStep(name="sub")
     # SubloopStep is a frozen dataclass; smoke-check that the surface is intact.

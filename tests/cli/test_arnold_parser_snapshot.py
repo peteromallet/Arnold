@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from megaplan.cli import arnold, build_parser
+from arnold.pipelines.megaplan.cli import arnold, build_parser
 
 
 EXPECTED_SURFACE = {

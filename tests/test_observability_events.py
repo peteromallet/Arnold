@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.io import atomic_write_text
-from megaplan.observability.events import (
+from arnold.pipelines.megaplan._core.io import atomic_write_text
+from arnold.pipelines.megaplan.observability.events import (
     EventKind,
     EventWriter,
     _ALL_EVENT_KINDS,
@@ -234,7 +234,7 @@ def test_atomic_write_text_logs_warning_when_artifact_emit_fails(
     def _raise_emit(*args, **kwargs):
         raise RuntimeError("emit broke")
 
-    monkeypatch.setattr("megaplan.observability.events.emit", _raise_emit)
+    monkeypatch.setattr("arnold.pipelines.megaplan.observability.events.emit", _raise_emit)
     caplog.set_level("WARNING", logger="megaplan")
 
     atomic_write_text(target, "payload", _plan_dir=plan_dir)

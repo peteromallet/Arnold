@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     Pipeline,
     Stage,
@@ -21,8 +21,8 @@ from megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan._pipeline.runtime import (
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+from arnold.pipelines.megaplan._pipeline.runtime import (
     BlockedRetry,
     ContextRetry,
     CostTracker,
@@ -32,7 +32,7 @@ from megaplan._pipeline.runtime import (
     pipeline_runtime_enabled,
     policy_from_cli_args,
 )
-from megaplan import auto as auto_module
+from arnold.pipelines.megaplan import auto as auto_module 
 
 
 def test_stall_detector_increments_on_repeat_state() -> None:
@@ -137,7 +137,7 @@ def test_run_planning_phase_uses_canonical_megaplan_pipeline(
             payload={"exit_code": 0, "stdout": "ok", "stderr": ""},
         )
 
-    monkeypatch.setattr("megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch)
+    monkeypatch.setattr("arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch)
 
     code, stdout, stderr = auto_module._run_planning_phase(
         ["execute", "--plan", "demo"],

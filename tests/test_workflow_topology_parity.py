@@ -9,7 +9,7 @@ import itertools
 
 import pytest
 
-from megaplan._core.workflow import (
+from arnold.pipelines.megaplan._core.workflow import (
     _STEP_CONTEXT_STATES,
     _transition_matches,
     _workflow_for_robustness,
@@ -17,7 +17,7 @@ from megaplan._core.workflow import (
     workflow_next,
     workflow_transition,
 )
-from megaplan._core.workflow_data import Transition
+from arnold.pipelines.megaplan._core.workflow_data import Transition
 
 ROBUSTNESS_LEVELS = ("extreme", "thorough", "full", "light", "bare")
 FLAG_COMBOS = (

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.types import (
     ParallelStage,
     Port,
     PortRef,

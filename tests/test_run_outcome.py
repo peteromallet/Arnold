@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import megaplan
-from megaplan.execute._binding.reducer import BatchOutcome
-from megaplan.run_outcome import (
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan.execute._binding.reducer import BatchOutcome
+from arnold.pipelines.megaplan.run_outcome import (
     RunOutcome,
     run_metadata_from_batch_outcome,
     run_outcome_from_batch_outcome,
 )
-from megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_AWAITING_HUMAN_VERIFY
+from arnold.pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_AWAITING_HUMAN_VERIFY
 
 
 def test_run_outcome_values_are_exact() -> None:

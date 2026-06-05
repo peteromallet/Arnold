@@ -19,7 +19,7 @@ SD1 corpus-shape note:
   corpus trace.  Real-run capture is deferred to M1 (accepted debt).
 """
 
-from megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan.auto import DriverOutcome
 
 CORPUS_DIR = "tests/fixtures/corpus"
 

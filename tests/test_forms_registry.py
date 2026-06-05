@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from megaplan.forms import get_form
+from arnold.pipelines.megaplan.forms import get_form
 
 
 def test_joke_and_poem_forms_are_registered() -> None:

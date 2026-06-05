@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.orchestration.evaluation import validate_plan_structure
-from megaplan.types import CliError
-from megaplan.workers import _build_mock_payload, validate_payload
+from arnold.pipelines.megaplan.orchestration.evaluation import validate_plan_structure
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers import _build_mock_payload, validate_payload
 from tests._workers_helpers import _mock_state
 
 
 def test_mock_plan_returns_valid_payload(tmp_path: Path) -> None:
-    from megaplan.workers import mock_worker_output
+    from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("plan", state, plan_dir)
     assert "plan" in result.payload
@@ -23,7 +23,7 @@ def test_mock_plan_returns_valid_payload(tmp_path: Path) -> None:
     assert validate_plan_structure(result.payload["plan"]) == []
 
 def test_mock_prep_returns_valid_payload(tmp_path: Path) -> None:
-    from megaplan.workers import mock_worker_output
+    from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("prep", state, plan_dir)
     assert "task_summary" in result.payload
@@ -68,14 +68,14 @@ def test_build_mock_payload_execute_scopes_batch_from_prompt_override(tmp_path: 
     assert [item["sense_check_id"] for item in payload["sense_check_acknowledgments"]] == ["SC2"]
 
 def test_mock_critique_returns_valid_payload(tmp_path: Path) -> None:
-    from megaplan.workers import mock_worker_output
+    from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("critique", state, plan_dir)
     assert "flags" in result.payload
     assert isinstance(result.payload["flags"], list)
 
 def test_mock_revise_returns_valid_payload(tmp_path: Path) -> None:
-    from megaplan.workers import mock_worker_output
+    from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("revise", state, plan_dir)
     assert "plan" in result.payload
@@ -87,7 +87,7 @@ def test_mock_revise_returns_valid_payload(tmp_path: Path) -> None:
     assert validate_plan_structure(result.payload["plan"]) == []
 
 def test_mock_gate_returns_valid_payload(tmp_path: Path) -> None:
-    from megaplan.workers import mock_worker_output
+    from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("gate", state, plan_dir)
     assert "recommendation" in result.payload
@@ -100,7 +100,7 @@ def test_mock_gate_returns_valid_payload(tmp_path: Path) -> None:
     assert "accepted_tradeoffs" in result.payload
 
 def test_mock_finalize_returns_valid_payload(tmp_path: Path) -> None:
-    from megaplan.workers import mock_worker_output
+    from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("finalize", state, plan_dir)
     validate_payload("finalize", result.payload)
@@ -123,7 +123,7 @@ def test_mock_finalize_returns_valid_payload(tmp_path: Path) -> None:
     assert isinstance(validation["plan_steps_covered"], list)
 
 def test_mock_execute_returns_valid_payload(tmp_path: Path) -> None:
-    from megaplan.workers import mock_worker_output
+    from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("execute", state, plan_dir)
     assert "output" in result.payload
@@ -135,7 +135,7 @@ def test_mock_execute_returns_valid_payload(tmp_path: Path) -> None:
     assert result.payload["task_updates"][0]["task_id"] == "T1"
 
 def test_mock_review_returns_valid_payload(tmp_path: Path) -> None:
-    from megaplan.workers import mock_worker_output
+    from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("review", state, plan_dir)
     assert result.payload["review_verdict"] == "approved"
@@ -152,7 +152,7 @@ def test_mock_review_returns_valid_payload(tmp_path: Path) -> None:
     assert result.payload["rework_items"] == []
 
 def test_mock_unsupported_step_raises(tmp_path: Path) -> None:
-    from megaplan.workers import mock_worker_output
+    from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     with pytest.raises(CliError, match="does not support"):
         mock_worker_output("nonexistent", state, plan_dir)

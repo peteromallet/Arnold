@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.types import PlanState
-from megaplan._core import (
+from arnold.pipelines.megaplan.types import PlanState
+from arnold.pipelines.megaplan._core import (
     atomic_write_json,
     atomic_write_text,
     collect_git_diff_summary,
@@ -23,16 +23,16 @@ from megaplan._core import (
     save_debt_registry,
     save_flag_registry,
 )
-from megaplan.prompts.review import (
+from arnold.pipelines.megaplan.prompts.review import (
     _review_prompt,
     _settled_decisions_block,
     _settled_decisions_instruction,
     parallel_criteria_review_prompt,
 )
-from megaplan.prompts.tiebreaker_challenger import challenger_prompt
-from megaplan.prompts.tiebreaker_researcher import researcher_prompt
-from megaplan.prompts._shared import _gate_summary_or_skipped
-from megaplan.prompts import (
+from arnold.pipelines.megaplan.prompts.tiebreaker_challenger import challenger_prompt
+from arnold.pipelines.megaplan.prompts.tiebreaker_researcher import researcher_prompt
+from arnold.pipelines.megaplan.prompts._shared import _gate_summary_or_skipped
+from arnold.pipelines.megaplan.prompts import (
     _execute_batch_prompt,
     _execute_doc_batch_prompt,
     _execute_doc_prompt,
@@ -45,10 +45,10 @@ from megaplan.prompts import (
     create_claude_prompt,
     create_codex_prompt,
 )
-from megaplan.prompts.execute import _execute_approval_note, _execute_prompt
-from megaplan.prompts.review_doc import _review_doc_prompt
-from megaplan.prompts.review_joke import _review_joke_prompt
-from megaplan.workers import _build_mock_payload
+from arnold.pipelines.megaplan.prompts.execute import _execute_approval_note, _execute_prompt
+from arnold.pipelines.megaplan.prompts.review_doc import _review_doc_prompt
+from arnold.pipelines.megaplan.prompts.review_joke import _review_joke_prompt
+from arnold.pipelines.megaplan.workers import _build_mock_payload
 
 
 def _state(project_dir: Path, *, iteration: int = 1) -> PlanState:
@@ -765,8 +765,8 @@ def test_critique_evaluator_prompt_unchanged_without_contract_context(tmp_path: 
 
 
 def test_critique_prompts_include_unverifiable_escape_hatch(tmp_path: Path) -> None:
-    from megaplan.audits.robustness import checks_for_robustness
-    from megaplan.prompts.critique import (
+    from arnold.pipelines.megaplan.audits.robustness import checks_for_robustness
+    from arnold.pipelines.megaplan.prompts.critique import (
         single_check_critique_prompt,
         write_single_check_template,
     )
@@ -911,7 +911,7 @@ def test_prep_distill_prompt_preserves_compatible_prep_contract(tmp_path: Path) 
                 "status": "partial",
                 "findings": ["One caller still uses the old shape."],
                 "files": ["megaplan/workers.py"],
-                "code_refs": ["megaplan.workers.handle_prep"],
+                "code_refs": ["arnold.pipelines.megaplan.workers.handle_prep"],
                 "confidence": "medium",
                 "error": "",
             }
@@ -1591,7 +1591,7 @@ def test_parallel_criteria_review_prompt_uses_issue_anchored_context_only(
         },
     )
     monkeypatch.setattr(
-        "megaplan.prompts.review.collect_git_diff_patch",
+        "arnold.pipelines.megaplan.prompts.review.collect_git_diff_patch",
         lambda project_dir: "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n+print('patched')\n",
     )
 
@@ -2168,7 +2168,7 @@ def test_execute_batch_prompt_has_harness_framing_no_loop(tmp_path: Path) -> Non
 
 def test_plan_template_has_no_megaplan_path_references() -> None:
     """PLAN_TEMPLATE must use neutral example paths (e.g. src/), not megaplan/."""
-    from megaplan.prompts.planning import PLAN_TEMPLATE
+    from arnold.pipelines.megaplan.prompts.planning import PLAN_TEMPLATE
 
     lines = PLAN_TEMPLATE.split("\n")
     offending = [

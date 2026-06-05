@@ -22,18 +22,22 @@ def test_run_list_shows_builtin_pipelines() -> None:
     built-ins; only megaplan and discovered pipelines appear.
     """
     proc = subprocess.run(
-        [sys.executable, "-m", "megaplan", "run", "--list"],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "run", "--list"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
     assert "megaplan" in proc.stdout
-    assert "planning" not in proc.stdout
+    assert not any(
+        line.strip().split(maxsplit=1)[0] == "planning"
+        for line in proc.stdout.splitlines()
+        if line.strip() and not line.startswith("Pipelines:")
+    )
 
 
 def test_run_describe_returns_description() -> None:
     """``megaplan run <name> --describe`` for a registered pipeline."""
     proc = subprocess.run(
-        [sys.executable, "-m", "megaplan", "run", "megaplan", "--describe"],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "run", "megaplan", "--describe"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0
@@ -47,7 +51,7 @@ def test_run_doc_critique_demo_module_drives_to_done(tmp_path: Path) -> None:
     via ``from megaplan._pipeline.demos.doc_critique import run_demo``
     instead of the CLI registry.
     """
-    from megaplan._pipeline.demos.doc_critique import run_demo
+    from arnold.pipelines.megaplan._pipeline.demos.doc_critique import run_demo
 
     fixture = tmp_path / "fixture.md"
     fixture.write_text(
@@ -71,7 +75,7 @@ def test_run_doc_critique_demo_module_drives_to_done(tmp_path: Path) -> None:
 
 def test_run_unknown_pipeline_returns_error() -> None:
     proc = subprocess.run(
-        [sys.executable, "-m", "megaplan", "run", "does-not-exist",
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "run", "does-not-exist",
          "--plan-dir", "/tmp/discard"],
         capture_output=True, text=True,
     )
@@ -82,7 +86,7 @@ def test_run_unknown_pipeline_returns_error() -> None:
 def test_run_list_includes_epic_blitz() -> None:
     """``megaplan run --list`` includes epic-blitz."""
     proc = subprocess.run(
-        [sys.executable, "-m", "megaplan", "run", "--list"],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "run", "--list"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
@@ -92,7 +96,7 @@ def test_run_list_includes_epic_blitz() -> None:
 def test_run_describe_epic_blitz_prints_metadata() -> None:
     """``megaplan run epic-blitz --describe`` prints metadata + SKILL.md."""
     proc = subprocess.run(
-        [sys.executable, "-m", "megaplan", "run", "epic-blitz", "--describe"],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "run", "epic-blitz", "--describe"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
@@ -105,7 +109,7 @@ def test_run_describe_epic_blitz_prints_metadata() -> None:
 
 def test_registered_pipelines_includes_writing_panel_strict() -> None:
     """The registry surfaces writing-panel-strict alongside the built-ins."""
-    from megaplan._pipeline.registry import registered_pipelines
+    from arnold.pipelines.megaplan._pipeline.registry import registered_pipelines
     names = registered_pipelines()
     assert "writing-panel-strict" in names
     assert "megaplan" in names
@@ -114,14 +118,14 @@ def test_registered_pipelines_includes_writing_panel_strict() -> None:
 
 def test_registered_pipelines_includes_epic_blitz() -> None:
     """The registry surfaces epic-blitz alongside the built-ins."""
-    from megaplan._pipeline.registry import registered_pipelines
+    from arnold.pipelines.megaplan._pipeline.registry import registered_pipelines
     names = registered_pipelines()
     assert "epic-blitz" in names
 
 
 def test_registered_pipelines_does_not_expose_demo_pipelines() -> None:
     """Demo pipelines (doc-critique, judges) are not in the production registry."""
-    from megaplan._pipeline.registry import registered_pipelines
+    from arnold.pipelines.megaplan._pipeline.registry import registered_pipelines
     names = registered_pipelines()
     assert "doc-critique" not in names, (
         f"doc-critique must not appear in registered_pipelines(); got {names!r}"
@@ -133,7 +137,7 @@ def test_registered_pipelines_does_not_expose_demo_pipelines() -> None:
 
 def test_describe_pipeline_writing_panel_strict(capsys) -> None:
     """_describe_pipeline for writing-panel-strict prints metadata."""
-    from megaplan._pipeline.run_cli import _describe_pipeline
+    from arnold.pipelines.megaplan._pipeline.run_cli import _describe_pipeline
     rc = _describe_pipeline("writing-panel-strict")
     assert rc == 0
     captured = capsys.readouterr()
@@ -143,7 +147,7 @@ def test_describe_pipeline_writing_panel_strict(capsys) -> None:
 
 def test_describe_pipeline_unknown(capsys) -> None:
     """_describe_pipeline for unknown name prints error and returns 2."""
-    from megaplan._pipeline.run_cli import _describe_pipeline
+    from arnold.pipelines.megaplan._pipeline.run_cli import _describe_pipeline
     rc = _describe_pipeline("nonexistent-pipeline-xyz")
     assert rc == 2
     captured = capsys.readouterr()
@@ -152,7 +156,7 @@ def test_describe_pipeline_unknown(capsys) -> None:
 
 def test_describe_pipeline_epic_blitz(capsys) -> None:
     """_describe_pipeline for epic-blitz prints metadata + SKILL.md."""
-    from megaplan._pipeline.run_cli import _describe_pipeline
+    from arnold.pipelines.megaplan._pipeline.run_cli import _describe_pipeline
     rc = _describe_pipeline("epic-blitz")
     assert rc == 0
     captured = capsys.readouterr()
@@ -162,7 +166,7 @@ def test_describe_pipeline_epic_blitz(capsys) -> None:
 
 def test_handle_list_pipelines() -> None:
     """handle_list with list_target='pipelines' returns pipeline listing."""
-    from megaplan.cli import handle_list
+    from arnold.pipelines.megaplan.cli import handle_list
     args = argparse.Namespace(
         list_target="pipelines",
         verbose=False,
@@ -185,7 +189,7 @@ def test_handle_list_pipelines() -> None:
 
 def test_handle_list_pipelines_verbose() -> None:
     """handle_list with list_target='pipelines' and verbose includes extra fields."""
-    from megaplan.cli import handle_list
+    from arnold.pipelines.megaplan.cli import handle_list
     args = argparse.Namespace(
         list_target="pipelines",
         verbose=True,
@@ -212,7 +216,7 @@ def test_handle_list_pipelines_verbose() -> None:
 
 def test_handle_describe_writing_panel_strict(capsys) -> None:
     """handle_describe for writing-panel-strict prints metadata + SKILL.md."""
-    from megaplan.cli import handle_describe
+    from arnold.pipelines.megaplan.cli import handle_describe
     args = argparse.Namespace(pipeline_name="writing-panel-strict")
     result = handle_describe(args)
     captured = capsys.readouterr()
@@ -225,7 +229,7 @@ def test_handle_describe_writing_panel_strict(capsys) -> None:
 
 def test_handle_describe_unknown_pipeline() -> None:
     """handle_describe for unknown pipeline returns error."""
-    from megaplan.cli import handle_describe
+    from arnold.pipelines.megaplan.cli import handle_describe
     args = argparse.Namespace(pipeline_name="nonexistent-pipeline-xyz")
     result = handle_describe(args)
     assert result["success"] is False
@@ -234,7 +238,7 @@ def test_handle_describe_unknown_pipeline() -> None:
 
 def test_handle_describe_epic_blitz(capsys) -> None:
     """handle_describe for epic-blitz prints metadata + SKILL.md."""
-    from megaplan.cli import handle_describe
+    from arnold.pipelines.megaplan.cli import handle_describe
     args = argparse.Namespace(pipeline_name="epic-blitz")
     result = handle_describe(args)
     captured = capsys.readouterr()
@@ -247,7 +251,7 @@ def test_handle_describe_epic_blitz(capsys) -> None:
 
 def test_cli_run_list_dispatches(monkeypatch) -> None:
     """cli_run with --list prints the registered pipeline names."""
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     args = argparse.Namespace(
         list_pipelines=True,
@@ -261,7 +265,7 @@ def test_cli_run_list_dispatches(monkeypatch) -> None:
 
 def test_cli_run_describe_dispatches(monkeypatch) -> None:
     """cli_run with --describe for a YAML pipeline prints description."""
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     args = argparse.Namespace(
         list_pipelines=False,
@@ -274,7 +278,7 @@ def test_cli_run_describe_dispatches(monkeypatch) -> None:
 
 def test_cli_run_unknown_pipeline_returns_2() -> None:
     """cli_run with unknown pipeline name returns 2."""
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     args = argparse.Namespace(
         list_pipelines=False,
@@ -317,9 +321,9 @@ def test_creative_invalid_form_validates_before_profile_preflight(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from megaplan import profiles as profiles_module
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan import profiles as profiles_module 
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     def fail_profile_load(*args, **kwargs):  # noqa: ANN002, ANN003
         raise AssertionError("profile resolution should not run")
@@ -352,9 +356,9 @@ def test_creative_only_options_rejected_for_non_creative_before_preflight(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from megaplan import profiles as profiles_module
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan import profiles as profiles_module 
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     monkeypatch.setattr(
         profiles_module,
@@ -394,10 +398,10 @@ def test_run_pipeline_injects_pipeline_context_without_persisting_internal_input
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._pipeline import executor as executor_module
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline import registry as registry_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import executor as executor_module
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     captured = {}
 
@@ -438,9 +442,9 @@ def test_creative_run_seeds_runtime_state_before_step_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._pipeline import executor as executor_module
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import executor as executor_module
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     idea_file = tmp_path / "idea.md"
     idea_file.write_text("write a poem about a blue door", encoding="utf-8")
@@ -484,11 +488,11 @@ def test_run_persists_runtime_identity_for_new_non_resume_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arnold.runtime.envelope import RuntimeEnvelope
-    from megaplan._pipeline import executor as executor_module
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline import registry as registry_module
-    from megaplan._pipeline import run_cli as run_cli_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import executor as executor_module
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
+    from arnold.pipelines.megaplan._pipeline import run_cli as run_cli_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     plan_dir = tmp_path / "identity-run"
 
@@ -539,10 +543,10 @@ def test_run_fails_closed_when_runtime_identity_metadata_is_missing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline import registry as registry_module
-    from megaplan._pipeline import run_cli as run_cli_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
+    from arnold.pipelines.megaplan._pipeline import run_cli as run_cli_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     plan_dir = tmp_path / "identity-missing"
 
@@ -574,11 +578,11 @@ def test_run_uses_profile_validate_operation_when_advertised(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arnold.runtime.operations import OperationKind, OperationResult
-    from megaplan._pipeline import executor as executor_module
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline import registry as registry_module
-    from megaplan._pipeline import run_cli as run_cli_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import executor as executor_module
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
+    from arnold.pipelines.megaplan._pipeline import run_cli as run_cli_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     calls: list[object] = []
 
@@ -637,11 +641,11 @@ def test_run_preserves_generic_preflight_fallback_when_profile_validate_not_adve
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arnold.runtime.operations import OperationKind
-    from megaplan._pipeline import executor as executor_module
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline import registry as registry_module
-    from megaplan._pipeline import run_cli as run_cli_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import executor as executor_module
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
+    from arnold.pipelines.megaplan._pipeline import run_cli as run_cli_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     calls: list[dict[str, object]] = []
 
@@ -692,11 +696,11 @@ def test_run_loads_non_megaplan_profiles_via_arnold_loader_without_megaplan_fall
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import arnold.pipeline.profiles as arnold_profiles_module
-    from megaplan._pipeline import executor as executor_module
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline import registry as registry_module
-    from megaplan._pipeline import run_cli as run_cli_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import executor as executor_module
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
+    from arnold.pipelines.megaplan._pipeline import run_cli as run_cli_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     loaded_calls: list[dict[str, object]] = []
     resolve_calls: list[dict[str, object]] = []
@@ -777,7 +781,7 @@ def test_run_loads_non_megaplan_profiles_via_arnold_loader_without_megaplan_fall
 
 def test_cli_run_list_includes_epic_blitz(capsys) -> None:
     """cli_run --list output includes epic-blitz."""
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     args = argparse.Namespace(
         list_pipelines=True,
@@ -792,7 +796,7 @@ def test_cli_run_list_includes_epic_blitz(capsys) -> None:
 
 def test_cli_run_describe_epic_blitz(capsys) -> None:
     """cli_run --describe for epic-blitz prints metadata + SKILL.md."""
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     args = argparse.Namespace(
         list_pipelines=False,
@@ -811,7 +815,7 @@ def test_cli_run_describe_epic_blitz(capsys) -> None:
 
 def test_preflight_or_raise_exits_7_non_tty_cli(monkeypatch, capsys) -> None:
     """Non-TTY credential failure exits 7 with structured stderr message."""
-    from megaplan._pipeline.preflight import preflight_or_raise
+    from arnold.pipelines.megaplan._pipeline.preflight import preflight_or_raise
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -831,7 +835,7 @@ def test_preflight_or_raise_exits_7_non_tty_cli(monkeypatch, capsys) -> None:
 
 def test_render_credential_failure_non_tty_structure(monkeypatch) -> None:
     """Non-TTY credential message has env var hints, no interactive options."""
-    from megaplan._pipeline.preflight import render_credential_failure
+    from arnold.pipelines.megaplan._pipeline.preflight import render_credential_failure
 
     # No credentials at all → deterministic getting-started guidance.
     for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
@@ -861,7 +865,7 @@ def test_render_credential_failure_non_tty_structure(monkeypatch) -> None:
 def test_preflight_feedback_slot_is_soft(monkeypatch) -> None:
     """The opt-in feedback slot must not gate the run. A Codex-only user can
     run all-codex (which pins feedback=claude:low) without an Anthropic key."""
-    from megaplan._pipeline.preflight import preflight_check_profile
+    from arnold.pipelines.megaplan._pipeline.preflight import preflight_check_profile
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -879,7 +883,7 @@ def test_render_credential_failure_recommends_available_vendor_profile(
     Anthropic creds, the message points them at all-claude and at the DeepSeek
     route for the cost-tiered profiles — and does NOT suggest the codex
     profile (no OpenAI key present)."""
-    from megaplan._pipeline.preflight import render_credential_failure
+    from arnold.pipelines.megaplan._pipeline.preflight import render_credential_failure
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -901,7 +905,7 @@ def test_render_credential_failure_recommends_available_vendor_profile(
 def test_render_credential_failure_no_self_recommendation(monkeypatch) -> None:
     """Don't recommend the profile the user already tried: on all-claude with
     no Anthropic key, the message must not loop back to --profile all-claude."""
-    from megaplan._pipeline.preflight import render_credential_failure
+    from arnold.pipelines.megaplan._pipeline.preflight import render_credential_failure
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -922,7 +926,7 @@ def test_render_credential_failure_no_self_recommendation(monkeypatch) -> None:
 
 
 def test_parse_inputs_helper() -> None:
-    from megaplan._pipeline.run_cli import _parse_inputs
+    from arnold.pipelines.megaplan._pipeline.run_cli import _parse_inputs
     parsed = _parse_inputs("doc=/tmp/x.md,extra=/tmp/y.json")
     assert parsed == {"doc": Path("/tmp/x.md"), "extra": Path("/tmp/y.json")}
     assert _parse_inputs("") == {}

@@ -21,11 +21,13 @@ tiebreaker``.
 
 from __future__ import annotations
 
-from megaplan._pipeline.patterns import (
+import dataclasses
+
+from arnold.pipelines.megaplan._pipeline.patterns import (
     critique_revise_gate_loop,
     phase_zero_gate,
 )
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Stage,
@@ -41,6 +43,34 @@ from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
 from arnold.pipelines.megaplan.stages.execute import ExecuteStep
 from arnold.pipelines.megaplan.stages.review import ReviewStep
 from arnold.pipelines.megaplan.stages.tiebreaker import TiebreakerStep
+from arnold.pipelines.megaplan.routing import (
+    PLANNING_DECISIONS,
+    PLAN_ESCALATE,
+    PLAN_ITERATE,
+    PLAN_PROCEED,
+    tiebreaker_edges,
+)
+
+
+def _planning_loop_should_halt(loop_state: object) -> bool:
+    """Return whether an explicitly capped planning loop should stop."""
+
+    state = getattr(loop_state, "state", {}) or {}
+    config = state.get("config", {}) if isinstance(state, dict) else {}
+    raw_limit = None
+    if isinstance(state, dict):
+        raw_limit = state.get("max_gate_iterations") or state.get("max_iterations")
+    if raw_limit is None and isinstance(config, dict):
+        raw_limit = config.get("max_gate_iterations") or config.get("max_iterations")
+    if raw_limit in (None, ""):
+        return False
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return False
+    if limit <= 0:
+        return False
+    return int(getattr(loop_state, "iteration", 0) or 0) >= limit
 
 
 def build_pipeline() -> Pipeline:
@@ -117,21 +147,41 @@ def build_pipeline() -> Pipeline:
                    Edge(label="halt", target="halt")),
         ),
         # T11 LOAD-BEARING: TiebreakerStep is a SubloopStep that emits a
-        # PipelineVerdict with a typed recommendation. The three kind='gate' edges
-        # below replace the legacy label-only edges; the legacy 'escalate
-        # folds into the finalize branch' semantics are preserved via
-        # escalate→finalize (anti-scope: no new pipeline branches this
-        # sprint).
+        # PipelineVerdict with a typed recommendation. The three decision edges
+        # preserve the legacy "escalate folds into finalize" semantics via
+        # escalate→finalize.
         "tiebreaker": Stage(
             name="tiebreaker", step=TiebreakerStep(),
-            edges=(
-                Edge(label="", target="critique", kind="gate", recommendation="iterate"),
-                Edge(label="", target="finalize", kind="gate", recommendation="proceed"),
-                Edge(label="", target="finalize", kind="gate", recommendation="escalate"),
+            edges=tiebreaker_edges(
+                on_iterate="critique",
+                on_proceed="finalize",
+                on_escalate="finalize",
+            ),
+            decision_vocabulary=frozenset(
+                {PLAN_ITERATE, PLAN_PROCEED, PLAN_ESCALATE}
             ),
         ),
     }
-    return Pipeline(stages=stages, entry="prep")
+    stages["gate"] = dataclasses.replace(
+        stages["gate"],
+        decision_vocabulary=frozenset(PLANNING_DECISIONS),
+        loop_condition=_planning_loop_should_halt,
+    )
+    return Pipeline(
+        stages=stages,
+        entry="prep",
+        resource_bundles=(
+            "prep",
+            "plan",
+            "critique",
+            "gate",
+            "revise",
+            "finalize",
+            "execute",
+            "review",
+            "tiebreaker",
+        ),
+    )
 
 
 # Backwards-compatible alias so callers importing ``compile_planning_pipeline``

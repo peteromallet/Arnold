@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan._core import intent_brief_reference
-from megaplan.types import PlanState
+from arnold.pipelines.megaplan._core import intent_brief_reference
+from arnold.pipelines.megaplan.types import PlanState
 
 
 def _state(idea: str, *, intent_summary: str | None = None) -> PlanState:
@@ -64,7 +64,7 @@ def test_intent_brief_reference_truncates_at_200() -> None:
 
 
 def test_downstream_prompt_modules_use_slim_reference() -> None:
-    prompt_dir = Path("megaplan/prompts")
+    prompt_dir = Path("arnold/pipelines/megaplan/prompts")
     downstream_modules = [
         "critique.py",
         "execute.py",
@@ -85,7 +85,7 @@ def test_downstream_prompt_modules_use_slim_reference() -> None:
 
 def test_verbose_intent_stays_scoped_to_plan_and_prep() -> None:
     callers = []
-    for path in sorted(Path("megaplan/prompts").glob("*.py")):
+    for path in sorted(Path("arnold/pipelines/megaplan/prompts").glob("*.py")):
         source = path.read_text(encoding="utf-8")
         if "intent_and_notes_block(state)" in source:
             callers.append(path.name)
@@ -95,7 +95,7 @@ def test_verbose_intent_stays_scoped_to_plan_and_prep() -> None:
 
 def test_prep_block_stays_scoped_to_plan_and_main_execute() -> None:
     callers = []
-    for path in sorted(Path("megaplan/prompts").glob("*.py")):
+    for path in sorted(Path("arnold/pipelines/megaplan/prompts").glob("*.py")):
         source = path.read_text(encoding="utf-8")
         if "_render_prep_block(plan_dir)" in source:
             callers.append(path.name)
@@ -105,7 +105,7 @@ def test_prep_block_stays_scoped_to_plan_and_main_execute() -> None:
 
 def test_plan_template_stays_scoped_to_plan() -> None:
     callers = []
-    for path in sorted(Path("megaplan/prompts").glob("*.py")):
+    for path in sorted(Path("arnold/pipelines/megaplan/prompts").glob("*.py")):
         source = path.read_text(encoding="utf-8")
         if "PLAN_TEMPLATE" in source and path.name != "__init__.py":
             callers.append(path.name)

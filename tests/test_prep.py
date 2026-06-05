@@ -8,16 +8,17 @@ from unittest.mock import patch
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
-from megaplan.orchestration.prep_research import PrepOrchestrationResult
-from megaplan.handlers import handle_plan, handle_prep
-from megaplan.prompts import create_claude_prompt
-from megaplan.prompts._shared import _render_prep_block
-from megaplan.receipts.extractors import load_and_extract
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan._core.io as io_module
+import arnold.pipelines.megaplan.cli as megaplan_cli
+from arnold.pipelines.megaplan.orchestration.prep_research import PrepOrchestrationResult
+from arnold.pipelines.megaplan.handlers import handle_plan, handle_prep
+from arnold.pipelines.megaplan.prompts import create_claude_prompt
+from arnold.pipelines.megaplan.prompts._shared import _render_prep_block
+from arnold.pipelines.megaplan.receipts.extractors import load_and_extract
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 from tests.conftest import make_args_factory
 
@@ -98,8 +99,8 @@ def test_handle_prep_zero_area_triage_writes_skip_artifacts_and_skips_fanout(
     )
 
     with (
-        patch("megaplan.orchestration.prep_research.run_prep_triage", return_value=triage_worker),
-        patch("megaplan.orchestration.prep_research.run_research_fanout") as fanout,
+        patch("arnold.pipelines.megaplan.orchestration.prep_research.run_prep_triage", return_value=triage_worker),
+        patch("arnold.pipelines.megaplan.orchestration.prep_research.run_research_fanout") as fanout,
     ):
         response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
 
@@ -140,6 +141,7 @@ def test_handle_prep_zero_area_triage_writes_skip_artifacts_and_skips_fanout(
         "existing_files": [],
         "missing_files": [],
         "shared_files": [],
+        "to_be_built_files": [],
     }
     assert metrics["stage_metrics"] == {
         "triage": {
@@ -211,8 +213,8 @@ def test_handle_prep_uses_dedicated_orchestration_runner(tmp_path: Path, monkeyp
     )
 
     with (
-        patch("megaplan.orchestration.prep_research.run_prep_orchestration", return_value=orchestration) as runner,
-        patch("megaplan.handlers._run_worker") as legacy_worker,
+        patch("arnold.pipelines.megaplan.orchestration.prep_research.run_prep_orchestration", return_value=orchestration) as runner,
+        patch("arnold.pipelines.megaplan.handlers._run_worker") as legacy_worker,
     ):
         response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
 
@@ -270,7 +272,7 @@ def test_mocked_prep_orchestration_feeds_plan_prompt_without_changing_plan_artif
                 "status": "complete",
                 "findings": ["found the planner entrypoint"],
                 "files": ["megaplan/handlers/plan.py"],
-                "code_refs": ["megaplan.handlers.plan.handle_plan"],
+                "code_refs": ["arnold.pipelines.megaplan.handlers.plan.handle_plan"],
                 "confidence": "high",
                 "error": "",
             },
@@ -280,7 +282,7 @@ def test_mocked_prep_orchestration_feeds_plan_prompt_without_changing_plan_artif
                 "status": "partial",
                 "findings": ["plan artifacts stay on the normal path"],
                 "files": ["megaplan/handlers/shared.py"],
-                "code_refs": ["megaplan.handlers.shared._finish_step"],
+                "code_refs": ["arnold.pipelines.megaplan.handlers.shared._finish_step"],
                 "confidence": "medium",
                 "error": "",
             },
@@ -315,14 +317,14 @@ def test_mocked_prep_orchestration_feeds_plan_prompt_without_changing_plan_artif
                 "status": "complete",
                 "elapsed_time_ms": 30,
                 "files": ["megaplan/handlers/plan.py"],
-                "code_refs": ["megaplan.handlers.plan.handle_plan"],
+                "code_refs": ["arnold.pipelines.megaplan.handlers.plan.handle_plan"],
             },
             {
                 "area": "a1",
                 "status": "partial",
                 "elapsed_time_ms": 40,
                 "files": ["megaplan/handlers/shared.py"],
-                "code_refs": ["megaplan.handlers.shared._finish_step"],
+                "code_refs": ["arnold.pipelines.megaplan.handlers.shared._finish_step"],
             },
             {
                 "area": "a2",
@@ -392,9 +394,9 @@ def test_mocked_prep_orchestration_feeds_plan_prompt_without_changing_plan_artif
     )
 
     with (
-        patch("megaplan.orchestration.prep_research.run_prep_triage", return_value=triage_worker),
-        patch("megaplan.orchestration.prep_research.run_research_fanout", return_value=fanout_result),
-        patch("megaplan.orchestration.prep_research.distill_prep", return_value=distill_worker),
+        patch("arnold.pipelines.megaplan.orchestration.prep_research.run_prep_triage", return_value=triage_worker),
+        patch("arnold.pipelines.megaplan.orchestration.prep_research.run_research_fanout", return_value=fanout_result),
+        patch("arnold.pipelines.megaplan.orchestration.prep_research.distill_prep", return_value=distill_worker),
     ):
         prep_response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
 
@@ -426,7 +428,7 @@ def test_mocked_prep_orchestration_feeds_plan_prompt_without_changing_plan_artif
     assert "Plan artifacts are still written through _finish_step." in prompt
     assert "plan_v1.md" not in prompt
 
-    with patch("megaplan.handlers._run_worker", return_value=(plan_worker, "codex", "ephemeral", True)):
+    with patch("arnold.pipelines.megaplan.handlers._run_worker", return_value=(plan_worker, "codex", "ephemeral", True)):
         plan_response = handle_plan(root, _make_args(plan_name, project_dir, plan=plan_name))
 
     assert plan_response["state"] == "planned"
@@ -503,7 +505,7 @@ def test_prep_blocking_question_halts_at_awaiting_human(
     ]
     worker = _make_prep_worker(open_questions=blocking)
 
-    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+    with patch("arnold.pipelines.megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
         response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
 
     assert response["state"] == "awaiting_human_verify"
@@ -551,7 +553,7 @@ def test_prep_blocking_question_no_prep_clarify_proceeds_to_prepped(
     blocking = [{"severity": "blocking", "question": "Which auth library should we use?"}]
     worker = _make_prep_worker(open_questions=blocking)
 
-    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+    with patch("arnold.pipelines.megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
         response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
 
     assert response["state"] == "prepped"
@@ -598,7 +600,7 @@ def test_prep_assume_and_proceed_never_halts(
     ]
     worker = _make_prep_worker(open_questions=assume_items)
 
-    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+    with patch("arnold.pipelines.megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
         response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
 
     assert response["state"] == "prepped"
@@ -630,7 +632,7 @@ def test_prep_mixed_severity_only_blocking_gates(
     ]
     worker = _make_prep_worker(open_questions=mixed)
 
-    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+    with patch("arnold.pipelines.megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
         response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
 
     assert response["state"] == "awaiting_human_verify"
@@ -662,7 +664,7 @@ def test_override_resume_clarify_from_prep_source_succeeds(
     blocking = [{"severity": "blocking", "question": "Which auth library?"}]
     worker = _make_prep_worker(open_questions=blocking)
 
-    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+    with patch("arnold.pipelines.megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
         handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
 
     state = megaplan._core.read_json(plan_dir / "state.json")

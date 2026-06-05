@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.run_outcome import RunOutcome
-from megaplan.supervisor.model import (
+from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.pipelines.megaplan.supervisor.model import (
     BakeoffParallelGroup,
     DependencyAssertion,
     RunNode,
@@ -14,14 +14,14 @@ from megaplan.supervisor.model import (
     SupervisorVariantKind,
     dependency_assertions_for_nodes,
 )
-from megaplan.supervisor.state import (
+from arnold.pipelines.megaplan.supervisor.state import (
     load_supervisor_state,
     save_supervisor_state,
     supervisor_state_path,
     supervisor_state_root,
     validate_supervisor_state,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _chain_state(*, depends_on: tuple[str, ...] = ("seed",)) -> SupervisorState:
@@ -71,7 +71,7 @@ def test_save_supervisor_state_uses_atomic_write_json(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}", encoding="utf-8")
 
-    monkeypatch.setattr("megaplan.supervisor.state.atomic_write_json", _fake_atomic_write_json)
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.state.atomic_write_json", _fake_atomic_write_json)
 
     saved_path = save_supervisor_state(tmp_path, "chain-spec.yaml", state)
 

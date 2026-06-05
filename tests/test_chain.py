@@ -11,9 +11,9 @@ from unittest.mock import ANY, patch
 import pytest
 import yaml
 
-from megaplan.auto import DriverOutcome
-from megaplan import chain as chain_module
-from megaplan.chain import (
+from arnold.pipelines.megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan import chain as chain_module 
+from arnold.pipelines.megaplan.chain import (
     ChainState,
     MilestoneSpec,
     _commit_and_push_phase,
@@ -30,8 +30,8 @@ from megaplan.chain import (
     run_chain_cli,
     save_chain_state,
 )
-from megaplan.supervisor.state import load_supervisor_state
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.supervisor.state import load_supervisor_state
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _write_spec(tmp_path: Path, spec_dict: dict, *, name: str = "chain.yaml") -> Path:
@@ -1100,9 +1100,9 @@ def test_run_chain_executes_milestones_in_order(tmp_path: Path) -> None:
         drive_calls.append(plan)
         return _fake_outcome(plan, "done")
 
-    with patch("megaplan.chain._init_plan", side_effect=fake_init), \
-         patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=fake_init), \
+         patch("arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive), \
+         patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
@@ -1146,9 +1146,9 @@ def test_run_chain_passes_milestone_rubric_knobs_to_init(tmp_path: Path) -> None
         init_kwargs.update(kwargs)
         return "plan-m1"
 
-    with patch("megaplan.chain._init_plan", side_effect=fake_init), \
-         patch("megaplan.chain.auto_drive", return_value=_fake_outcome("plan-m1", "done")), \
-         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=fake_init), \
+         patch("arnold.pipelines.megaplan.chain.auto_drive", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
@@ -1176,9 +1176,9 @@ def test_run_chain_one_pauses_after_single_milestone(tmp_path: Path) -> None:
     def fake_drive(plan, **_kwargs):
         return _fake_outcome(plan, "done")
 
-    with patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
-         patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
+         patch("arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive), \
+         patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None, one=True)
 
     assert result["status"] == "paused"
@@ -1210,7 +1210,7 @@ def test_chain_start_invokes_driver(
         calls.append((spec_path_arg, root, no_git_refresh))
         return {"status": "done", "reason": "", "chain_state": {}, "events": []}
 
-    with patch("megaplan.chain.run_chain", side_effect=fake_run_chain):
+    with patch("arnold.pipelines.megaplan.chain.run_chain", side_effect=fake_run_chain):
         start_args = argparse.Namespace(
             chain_action="start",
             spec=str(spec_path),
@@ -1269,7 +1269,7 @@ def test_chain_start_routes_to_supervisor_only_when_flag_on(
 
     monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
     monkeypatch.setattr(chain_module, "run_chain", fake_legacy_run_chain)
-    monkeypatch.setattr("megaplan.supervisor.chain_runner.run_chain", fake_supervisor_run_chain)
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.chain_runner.run_chain", fake_supervisor_run_chain)
 
     rc = run_chain_cli(
         tmp_path,
@@ -1305,7 +1305,7 @@ def test_chain_override_stays_on_legacy_path_when_supervisor_flag_on(
         raise AssertionError("supervisor chain runner should not handle override")
 
     monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
-    monkeypatch.setattr("megaplan.supervisor.chain_runner.run_chain", fail_if_supervisor_called)
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.chain_runner.run_chain", fail_if_supervisor_called)
 
     rc = run_chain_cli(
         tmp_path,
@@ -1343,7 +1343,7 @@ def test_chain_status_stays_on_legacy_path_when_supervisor_flag_on(
         raise AssertionError("supervisor chain runner should not handle status")
 
     monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
-    monkeypatch.setattr("megaplan.supervisor.chain_runner.run_chain", fail_if_supervisor_called)
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.chain_runner.run_chain", fail_if_supervisor_called)
     monkeypatch.setattr(chain_module.chain_spec, "load_spec", lambda _path: fake_spec)
     monkeypatch.setattr(chain_module.chain_spec, "load_chain_state", lambda _path: fake_state)
     monkeypatch.setattr(chain_module.chain_spec, "load_runtime_policy", lambda _path: {})
@@ -1391,16 +1391,16 @@ def test_chain_start_supervisor_flag_on_smoke_uses_fakes_and_persists_serial_dep
 
     monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
     monkeypatch.setattr(
-        "megaplan.supervisor.chain_runner.DefaultRunDriver",
+        "arnold.pipelines.megaplan.supervisor.chain_runner.DefaultRunDriver",
         lambda: driver,
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.chain_runner.ChainMilestonePackRunner",
+        "arnold.pipelines.megaplan.supervisor.chain_runner.ChainMilestonePackRunner",
         lambda: pack_runner,
     )
-    monkeypatch.setattr("megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._run_command",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._run_command",
         lambda _root, argv, **_kwargs: subprocess.CompletedProcess(
             argv,
             0,
@@ -1409,11 +1409,11 @@ def test_chain_start_supervisor_flag_on_smoke_uses_fakes_and_persists_serial_dep
         ),
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
         lambda root, pr_number, *, writer: ready_calls.append((root, pr_number)),
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
         lambda root, pr_number, *, writer: merge_calls.append((root, pr_number)) or "open",
     )
 
@@ -1457,9 +1457,9 @@ def test_run_chain_stops_on_failure(tmp_path: Path) -> None:
         drive_calls.append(plan)
         return _fake_outcome(plan, "failed")
 
-    with patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
-         patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
+         patch("arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive), \
+         patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "stopped"
@@ -1497,10 +1497,10 @@ def test_run_chain_recovers_blocked_execute_when_latest_batch_tasks_done(
         return _fake_outcome(plan, "done")
 
     with patch(
-        "megaplan.chain._init_plan",
+        "arnold.pipelines.megaplan.chain._init_plan",
         side_effect=lambda root, idea_path, **_k: f"plan-for-{Path(idea_path).stem}",
-    ), patch("megaplan.chain.auto_drive", side_effect=fake_drive), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ), patch("arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive), patch(
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         result = run_chain(spec_path, tmp_path, writer=messages.append)
 
@@ -1536,10 +1536,10 @@ def test_run_chain_treats_blocked_execute_with_pending_tasks_as_failure(
         return _fake_outcome(plan, "blocked")
 
     with patch(
-        "megaplan.chain._init_plan",
+        "arnold.pipelines.megaplan.chain._init_plan",
         side_effect=lambda root, idea_path, **_k: f"plan-for-{Path(idea_path).stem}",
-    ), patch("megaplan.chain.auto_drive", side_effect=fake_drive), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ), patch("arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive), patch(
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         result = run_chain(spec_path, tmp_path, writer=messages.append)
 
@@ -1590,9 +1590,9 @@ def test_run_chain_resumes_from_chain_state(tmp_path: Path) -> None:
     def fake_drive(plan, **_kwargs):
         return _fake_outcome(plan, "done")
 
-    with patch("megaplan.chain._init_plan", side_effect=fake_init), \
-         patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=fake_init), \
+         patch("arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive), \
+         patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     # Only the second idea (m1a) should have been init'd; m1 is skipped.
@@ -1634,10 +1634,10 @@ def test_run_chain_with_seed_drives_seed_first(tmp_path: Path) -> None:
         drive_calls.append(plan)
         return _fake_outcome(plan, "done")
 
-    with patch("megaplan.chain._plan_state", side_effect=fake_plan_state), \
-         patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
-         patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+    with patch("arnold.pipelines.megaplan.chain._plan_state", side_effect=fake_plan_state), \
+         patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
+         patch("arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive), \
+         patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
@@ -1653,10 +1653,10 @@ def test_run_chain_with_seed_drives_seed_first(tmp_path: Path) -> None:
 
 def test_no_git_refresh_suppresses_subprocess_calls(tmp_path: Path) -> None:
     """With no_git_refresh=True, _refresh_base_branch must not invoke any subprocess."""
-    from megaplan.chain import _refresh_base_branch
+    from arnold.pipelines.megaplan.chain import _refresh_base_branch
 
     msgs: list[str] = []
-    with patch("megaplan.chain.subprocess.run") as mock_run:
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run") as mock_run:
         _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append, no_git_refresh=True)
     assert mock_run.call_count == 0
     assert any("skipping git refresh" in m for m in msgs)
@@ -1664,12 +1664,12 @@ def test_no_git_refresh_suppresses_subprocess_calls(tmp_path: Path) -> None:
 
 def test_refresh_base_branch_default_invokes_git(tmp_path: Path) -> None:
     """Default behavior (no_git_refresh=False) still issues the git commands."""
-    from megaplan.chain import _refresh_base_branch
+    from arnold.pipelines.megaplan.chain import _refresh_base_branch
 
     class _Proc:
         returncode = 0
 
-    with patch("megaplan.chain.subprocess.run", return_value=_Proc()) as mock_run:
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", return_value=_Proc()) as mock_run:
         _refresh_base_branch(tmp_path, "setup/cloud", writer=lambda _m: None)
     # fetch + checkout + pull
     assert mock_run.call_count == 3
@@ -1681,7 +1681,7 @@ def test_refresh_base_branch_default_invokes_git(tmp_path: Path) -> None:
 
 def test_refresh_base_branch_aborts_on_git_failure(tmp_path: Path) -> None:
     """A failed checkout/pull must stop the chain before stale work executes."""
-    from megaplan.chain import _refresh_base_branch
+    from arnold.pipelines.megaplan.chain import _refresh_base_branch
 
     calls = [
         subprocess.CompletedProcess(
@@ -1699,7 +1699,7 @@ def test_refresh_base_branch_aborts_on_git_failure(tmp_path: Path) -> None:
     ]
     msgs: list[str] = []
 
-    with patch("megaplan.chain.subprocess.run", side_effect=calls):
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", side_effect=calls):
         with pytest.raises(CliError) as excinfo:
             _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append)
 
@@ -1713,15 +1713,15 @@ def test_plan_state_uses_module_launcher(tmp_path: Path) -> None:
         returncode = 0
         stdout = '{"state": "planned"}'
 
-    with patch("megaplan.chain.subprocess.run", return_value=_Proc()) as mock_run:
-        from megaplan.chain import _plan_state
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", return_value=_Proc()) as mock_run:
+        from arnold.pipelines.megaplan.chain import _plan_state
 
         assert _plan_state(tmp_path, "demo-plan", timeout=5) == "planned"
 
     assert mock_run.call_args.args[0] == [
         sys.executable,
         "-m",
-        "megaplan",
+        "arnold.pipelines.megaplan",
         "status",
         "--plan",
         "demo-plan",
@@ -1737,8 +1737,8 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
         stderr="",
     )
 
-    with patch("megaplan.chain.subprocess.run", return_value=proc) as mock_run:
-        from megaplan.chain import _init_plan
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", return_value=proc) as mock_run:
+        from arnold.pipelines.megaplan.chain import _init_plan
 
         assert _init_plan(
             tmp_path,
@@ -1759,7 +1759,7 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
     assert mock_run.call_args.args[0] == [
         sys.executable,
         "-m",
-        "megaplan",
+        "arnold.pipelines.megaplan",
         "init",
         "--project-dir",
         str(tmp_path),
@@ -1797,9 +1797,9 @@ def test_init_plan_warns_when_vendor_ignored_by_locked_profile(tmp_path: Path) -
     )
     messages: list[str] = []
 
-    with patch("megaplan.chain.subprocess.run", return_value=proc), \
-         patch("megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}):
-        from megaplan.chain import _init_plan
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", return_value=proc), \
+         patch("arnold.pipelines.megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}):
+        from arnold.pipelines.megaplan.chain import _init_plan
 
         _init_plan(
             tmp_path,
@@ -1826,10 +1826,10 @@ def test_init_plan_warns_when_inherited_vendor_ignored_by_locked_profile(tmp_pat
     )
     messages: list[str] = []
 
-    with patch("megaplan.chain.subprocess.run", return_value=proc), \
-         patch("megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}), \
-         patch("megaplan.chain._resolve_default_vendor", return_value="codex"):
-        from megaplan.chain import _init_plan
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", return_value=proc), \
+         patch("arnold.pipelines.megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}), \
+         patch("arnold.pipelines.megaplan.chain._resolve_default_vendor", return_value="codex"):
+        from arnold.pipelines.megaplan.chain import _init_plan
 
         _init_plan(
             tmp_path,
@@ -1847,7 +1847,7 @@ def test_init_plan_warns_when_inherited_vendor_ignored_by_locked_profile(tmp_pat
 
 
 def test_vendor_lock_profile_metadata_load_failure_raises(tmp_path: Path) -> None:
-    with patch("megaplan.chain.load_profile_metadata", side_effect=RuntimeError("metadata offline")):
+    with patch("arnold.pipelines.megaplan.chain.load_profile_metadata", side_effect=RuntimeError("metadata offline")):
         with pytest.raises(CliError, match="M3B_HALT_VENDOR_LOCK_PROFILE_LOAD"):
             chain_module._warn_vendor_ignored_for_locked_profile(
                 tmp_path,
@@ -1860,7 +1860,7 @@ def test_vendor_lock_profile_metadata_load_failure_raises(tmp_path: Path) -> Non
 def test_vendor_lock_with_no_profile_and_no_vendor_is_noop(tmp_path: Path) -> None:
     writer_calls: list[str] = []
 
-    with patch("megaplan.chain.load_profile_metadata") as load_metadata:
+    with patch("arnold.pipelines.megaplan.chain.load_profile_metadata") as load_metadata:
         chain_module._warn_vendor_ignored_for_locked_profile(
             tmp_path,
             profile=None,
@@ -1873,8 +1873,8 @@ def test_vendor_lock_with_no_profile_and_no_vendor_is_noop(tmp_path: Path) -> No
 
 
 def test_vendor_lock_default_vendor_resolution_failure_raises(tmp_path: Path) -> None:
-    with patch("megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}), \
-         patch("megaplan.chain._resolve_default_vendor", side_effect=RuntimeError("no default vendor")):
+    with patch("arnold.pipelines.megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}), \
+         patch("arnold.pipelines.megaplan.chain._resolve_default_vendor", side_effect=RuntimeError("no default vendor")):
         with pytest.raises(CliError, match="M3B_HALT_VENDOR_LOCK_RESOLVE"):
             chain_module._warn_vendor_ignored_for_locked_profile(
                 tmp_path,
@@ -1893,8 +1893,8 @@ def test_init_plan_forwards_prep_direction_flag(tmp_path: Path) -> None:
         stderr="",
     )
 
-    with patch("megaplan.chain.subprocess.run", return_value=proc) as mock_run:
-        from megaplan.chain import _init_plan
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", return_value=proc) as mock_run:
+        from arnold.pipelines.megaplan.chain import _init_plan
 
         _init_plan(
             tmp_path,
@@ -1919,8 +1919,8 @@ def test_init_plan_omits_prep_direction_when_none(tmp_path: Path) -> None:
         stderr="",
     )
 
-    with patch("megaplan.chain.subprocess.run", return_value=proc) as mock_run:
-        from megaplan.chain import _init_plan
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", return_value=proc) as mock_run:
+        from arnold.pipelines.megaplan.chain import _init_plan
 
         _init_plan(
             tmp_path,
@@ -1946,9 +1946,9 @@ def test_run_chain_no_git_refresh_skips_refresh(tmp_path: Path) -> None:
     def fake_drive(plan, **_kwargs):
         return _fake_outcome(plan, "done")
 
-    with patch("megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
-         patch("megaplan.chain.auto_drive", side_effect=fake_drive), \
-         patch("megaplan.chain._refresh_base_branch", side_effect=fake_refresh):
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}"), \
+         patch("arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive), \
+         patch("arnold.pipelines.megaplan.chain._refresh_base_branch", side_effect=fake_refresh):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None, no_git_refresh=True)
 
     assert result["status"] == "done"
@@ -1964,11 +1964,11 @@ def test_run_chain_no_push_skips_branch_pr_lifecycle(tmp_path: Path) -> None:
     )
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
 
-    with patch("megaplan.chain._init_plan", return_value="plan-m1"), \
-         patch("megaplan.chain.auto_drive", return_value=_fake_outcome("plan-m1", "done")), \
-         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
-         patch("megaplan.chain._checkout_milestone_branch") as checkout, \
-         patch("megaplan.chain._ensure_milestone_pr") as ensure_pr:
+    with patch("arnold.pipelines.megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("arnold.pipelines.megaplan.chain.auto_drive", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch") as checkout, \
+         patch("arnold.pipelines.megaplan.chain._ensure_milestone_pr") as ensure_pr:
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None, no_push=True)
 
     assert result["status"] == "done"
@@ -1977,7 +1977,7 @@ def test_run_chain_no_push_skips_branch_pr_lifecycle(tmp_path: Path) -> None:
 
 
 def test_commit_and_push_phase_skips_empty_diff(tmp_path: Path) -> None:
-    from megaplan.chain import _commit_and_push_phase
+    from arnold.pipelines.megaplan.chain import _commit_and_push_phase
 
     commands: list[list[str]] = []
 
@@ -1990,8 +1990,8 @@ def test_commit_and_push_phase_skips_empty_diff(tmp_path: Path) -> None:
         assert cmd == ["git", "diff", "--cached", "--quiet"]
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-    with patch("megaplan.chain._run_command", side_effect=fake_run_command), \
-         patch("megaplan.chain.subprocess.run", side_effect=fake_run):
+    with patch("arnold.pipelines.megaplan.chain._run_command", side_effect=fake_run_command), \
+         patch("arnold.pipelines.megaplan.chain.subprocess.run", side_effect=fake_run):
         _commit_and_push_phase(
             tmp_path,
             "mp/m1",
@@ -2004,12 +2004,12 @@ def test_commit_and_push_phase_skips_empty_diff(tmp_path: Path) -> None:
 
 
 def test_ensure_milestone_pr_skips_when_gh_missing(tmp_path: Path) -> None:
-    from megaplan.chain import _ensure_milestone_pr
+    from arnold.pipelines.megaplan.chain import _ensure_milestone_pr
 
     messages: list[str] = []
-    with patch("megaplan.chain.shutil.which", return_value=None), \
-         patch("megaplan.chain._list_open_pr_for_branch") as list_pr, \
-         patch("megaplan.chain._run_command") as run_command:
+    with patch("arnold.pipelines.megaplan.chain.shutil.which", return_value=None), \
+         patch("arnold.pipelines.megaplan.chain._list_open_pr_for_branch") as list_pr, \
+         patch("arnold.pipelines.megaplan.chain._run_command") as run_command:
         pr_number = _ensure_milestone_pr(
             tmp_path,
             MilestoneSpec(label="m1", idea="idea.txt", branch="mp/m1"),
@@ -2085,7 +2085,7 @@ def test_run_command_retries_gh_auth_failure_without_env_tokens(
         assert "GITHUB_TOKEN" not in env
         return subprocess.CompletedProcess(cmd, 0, '{"state":"MERGED"}', "")
 
-    with patch("megaplan.chain.subprocess.run", side_effect=fake_run):
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", side_effect=fake_run):
         proc = _run_command(
             tmp_path,
             ["gh", "pr", "view", "1"],
@@ -2098,7 +2098,7 @@ def test_run_command_retries_gh_auth_failure_without_env_tokens(
 
 
 def test_checkout_milestone_branch_starts_from_configured_base_branch(tmp_path: Path) -> None:
-    from megaplan.chain import _checkout_milestone_branch
+    from arnold.pipelines.megaplan.chain import _checkout_milestone_branch
 
     commands: list[list[str]] = []
 
@@ -2107,8 +2107,8 @@ def test_checkout_milestone_branch_starts_from_configured_base_branch(tmp_path: 
         commands.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
-    with patch("megaplan.chain._remote_branch_exists", return_value=False), \
-         patch("megaplan.chain._run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.chain._remote_branch_exists", return_value=False), \
+         patch("arnold.pipelines.megaplan.chain._run_command", side_effect=fake_run_command):
         _checkout_milestone_branch(
             tmp_path,
             "mp/m1",
@@ -2123,7 +2123,7 @@ def test_checkout_milestone_branch_starts_from_configured_base_branch(tmp_path: 
 
 
 def test_ensure_milestone_pr_uses_configured_base_branch(tmp_path: Path) -> None:
-    from megaplan.chain import _ensure_milestone_pr
+    from arnold.pipelines.megaplan.chain import _ensure_milestone_pr
 
     commands: list[list[str]] = []
 
@@ -2132,9 +2132,9 @@ def test_ensure_milestone_pr_uses_configured_base_branch(tmp_path: Path) -> None
         commands.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, "https://github.com/acme/app/pull/42\n", "")
 
-    with patch("megaplan.chain.shutil.which", return_value="/usr/bin/gh"), \
-         patch("megaplan.chain._list_open_pr_for_branch", return_value=None), \
-         patch("megaplan.chain._run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.chain.shutil.which", return_value="/usr/bin/gh"), \
+         patch("arnold.pipelines.megaplan.chain._list_open_pr_for_branch", return_value=None), \
+         patch("arnold.pipelines.megaplan.chain._run_command", side_effect=fake_run_command):
         number = _ensure_milestone_pr(
             tmp_path,
             MilestoneSpec(label="m1", idea="idea.txt", branch="mp/m1"),
@@ -2166,15 +2166,15 @@ def test_run_chain_branch_pr_commit_and_auto_merge(tmp_path: Path) -> None:
         on_phase_complete("execute", 0, "", "")
         return _fake_outcome(plan, "done")
 
-    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
-         patch("megaplan.chain._checkout_milestone_branch") as checkout, \
-         patch("megaplan.chain._ensure_milestone_pr", return_value=17) as ensure_pr, \
-         patch("megaplan.chain._init_plan", return_value="plan-m1"), \
-         patch("megaplan.chain._drive_plan", side_effect=fake_drive), \
-         patch("megaplan.chain._commit_and_push_phase", side_effect=lambda root, branch, plan, phase, **_kwargs: commits.append((branch, plan, phase))), \
-         patch("megaplan.chain._pr_state", return_value="open"), \
-         patch("megaplan.chain._mark_pr_ready") as ready, \
-         patch("megaplan.chain._enable_auto_merge", return_value="open") as merge:
+    with patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch") as checkout, \
+         patch("arnold.pipelines.megaplan.chain._ensure_milestone_pr", return_value=17) as ensure_pr, \
+         patch("arnold.pipelines.megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("arnold.pipelines.megaplan.chain._drive_plan", side_effect=fake_drive), \
+         patch("arnold.pipelines.megaplan.chain._commit_and_push_phase", side_effect=lambda root, branch, plan, phase, **_kwargs: commits.append((branch, plan, phase))), \
+         patch("arnold.pipelines.megaplan.chain._pr_state", return_value="open"), \
+         patch("arnold.pipelines.megaplan.chain._mark_pr_ready") as ready, \
+         patch("arnold.pipelines.megaplan.chain._enable_auto_merge", return_value="open") as merge:
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
@@ -2218,14 +2218,14 @@ def test_run_chain_resume_milestone_pr_uses_base_branch(tmp_path: Path) -> None:
         ChainState(current_milestone_index=0, current_plan_name="plan-m1", last_state=None),
     )
 
-    with patch("megaplan.chain._plan_state", return_value="planned"), \
-         patch("megaplan.chain._checkout_milestone_branch") as checkout, \
-         patch("megaplan.chain._ensure_milestone_pr", return_value=17) as ensure_pr, \
-         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
-         patch("megaplan.chain._commit_and_push_phase"), \
-         patch("megaplan.chain._pr_state", return_value="merged"), \
-         patch("megaplan.chain._mark_pr_ready"), \
-         patch("megaplan.chain._enable_auto_merge"):
+    with patch("arnold.pipelines.megaplan.chain._plan_state", return_value="planned"), \
+         patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch") as checkout, \
+         patch("arnold.pipelines.megaplan.chain._ensure_milestone_pr", return_value=17) as ensure_pr, \
+         patch("arnold.pipelines.megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("arnold.pipelines.megaplan.chain._commit_and_push_phase"), \
+         patch("arnold.pipelines.megaplan.chain._pr_state", return_value="merged"), \
+         patch("arnold.pipelines.megaplan.chain._mark_pr_ready"), \
+         patch("arnold.pipelines.megaplan.chain._enable_auto_merge"):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
@@ -2258,7 +2258,7 @@ def test_enable_auto_merge_falls_back_when_repo_disallows_auto_merge(tmp_path: P
             )
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    with patch("megaplan.chain._run_command", side_effect=fake_run):
+    with patch("arnold.pipelines.megaplan.chain._run_command", side_effect=fake_run):
         state = _enable_auto_merge(tmp_path, 7, writer=messages.append)
 
     assert calls == [
@@ -2279,7 +2279,7 @@ def test_enable_auto_merge_records_immediate_auto_merge(tmp_path: Path) -> None:
             return subprocess.CompletedProcess(argv, 0, '{"state":"MERGED"}', "")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    with patch("megaplan.chain._run_command", side_effect=fake_run):
+    with patch("arnold.pipelines.megaplan.chain._run_command", side_effect=fake_run):
         state = _enable_auto_merge(tmp_path, 7, writer=lambda _m: None)
 
     assert state == "merged"
@@ -2304,8 +2304,8 @@ def test_pr_state_retries_transient_gh_failures(tmp_path: Path) -> None:
             )
         return subprocess.CompletedProcess(argv, 0, '{"state":"OPEN"}', "")
 
-    with patch("megaplan.chain._run_command", side_effect=fake_run), \
-         patch("megaplan.chain.time.sleep") as sleep:
+    with patch("arnold.pipelines.megaplan.chain._run_command", side_effect=fake_run), \
+         patch("arnold.pipelines.megaplan.chain.time.sleep") as sleep:
         state = _pr_state(tmp_path, 11, writer=messages.append)
 
     assert state == "open"
@@ -2326,8 +2326,8 @@ def test_pr_state_retries_graphql_timeout_until_attempts_exhausted(tmp_path: Pat
             extra={"stderr": "GraphQL: timeout while checking pull request state"},
         )
 
-    with patch("megaplan.chain._run_command", side_effect=fake_run), \
-         patch("megaplan.chain.time.sleep") as sleep:
+    with patch("arnold.pipelines.megaplan.chain._run_command", side_effect=fake_run), \
+         patch("arnold.pipelines.megaplan.chain.time.sleep") as sleep:
         with pytest.raises(CliError) as exc_info:
             _pr_state(tmp_path, 11, writer=lambda _m: None)
 
@@ -2348,8 +2348,8 @@ def test_pr_state_does_not_retry_non_transient_gh_failures(tmp_path: Path) -> No
             extra={"stderr": "GraphQL: Could not resolve to a PullRequest with the number of 11."},
         )
 
-    with patch("megaplan.chain._run_command", side_effect=fake_run), \
-         patch("megaplan.chain.time.sleep") as sleep:
+    with patch("arnold.pipelines.megaplan.chain._run_command", side_effect=fake_run), \
+         patch("arnold.pipelines.megaplan.chain.time.sleep") as sleep:
         with pytest.raises(CliError) as exc_info:
             _pr_state(tmp_path, 11, writer=lambda _m: None)
 
@@ -2366,15 +2366,15 @@ def test_run_chain_advances_when_pr_already_merged(tmp_path: Path) -> None:
     )
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
 
-    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
-         patch("megaplan.chain._checkout_milestone_branch"), \
-         patch("megaplan.chain._ensure_milestone_pr", return_value=17), \
-         patch("megaplan.chain._init_plan", return_value="plan-m1"), \
-         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
-         patch("megaplan.chain._commit_and_push_phase"), \
-         patch("megaplan.chain._pr_state", return_value="merged"), \
-         patch("megaplan.chain._mark_pr_ready") as ready, \
-         patch("megaplan.chain._enable_auto_merge") as merge:
+    with patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch"), \
+         patch("arnold.pipelines.megaplan.chain._ensure_milestone_pr", return_value=17), \
+         patch("arnold.pipelines.megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("arnold.pipelines.megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("arnold.pipelines.megaplan.chain._commit_and_push_phase"), \
+         patch("arnold.pipelines.megaplan.chain._pr_state", return_value="merged"), \
+         patch("arnold.pipelines.megaplan.chain._mark_pr_ready") as ready, \
+         patch("arnold.pipelines.megaplan.chain._enable_auto_merge") as merge:
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
@@ -2400,14 +2400,14 @@ def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Pat
     )
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
 
-    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
-         patch("megaplan.chain._checkout_milestone_branch"), \
-         patch("megaplan.chain._ensure_milestone_pr", return_value=23), \
-         patch("megaplan.chain._init_plan", return_value="plan-m1"), \
-         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
-         patch("megaplan.chain._commit_and_push_phase"), \
-         patch("megaplan.chain._pr_state", return_value="open"), \
-         patch("megaplan.chain._mark_pr_ready"):
+    with patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch"), \
+         patch("arnold.pipelines.megaplan.chain._ensure_milestone_pr", return_value=23), \
+         patch("arnold.pipelines.megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("arnold.pipelines.megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("arnold.pipelines.megaplan.chain._commit_and_push_phase"), \
+         patch("arnold.pipelines.megaplan.chain._pr_state", return_value="open"), \
+         patch("arnold.pipelines.megaplan.chain._mark_pr_ready"):
         first = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert first["status"] == "awaiting_pr_merge"
@@ -2416,15 +2416,15 @@ def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Pat
     assert waiting.pr_number == 23
     assert waiting.pr_state == "awaiting_merge"
 
-    with patch("megaplan.chain._pr_state", return_value="open"):
+    with patch("arnold.pipelines.megaplan.chain._pr_state", return_value="open"):
         second = run_chain(spec_path, tmp_path, writer=lambda _m: None)
     assert second["status"] == "awaiting_pr_merge"
     assert load_chain_state(spec_path).current_milestone_index == 0
 
-    with patch("megaplan.chain._pr_state", return_value="merged"), \
-         patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
-         patch("megaplan.chain._init_plan", return_value="plan-m2"), \
-         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m2", "done")):
+    with patch("arnold.pipelines.megaplan.chain._pr_state", return_value="merged"), \
+         patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("arnold.pipelines.megaplan.chain._init_plan", return_value="plan-m2"), \
+         patch("arnold.pipelines.megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m2", "done")):
         final = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert final["status"] == "done"
@@ -2457,7 +2457,7 @@ def test_run_chain_reconciles_terminal_completed_pr_state(tmp_path: Path) -> Non
         ),
     )
 
-    with patch("megaplan.chain._pr_state", return_value="merged") as pr_state:
+    with patch("arnold.pipelines.megaplan.chain._pr_state", return_value="merged") as pr_state:
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None, one=True)
 
     assert result["status"] == "done"
@@ -2491,7 +2491,7 @@ def test_run_chain_terminal_pr_reconcile_failure_is_non_fatal(tmp_path: Path) ->
     messages: list[str] = []
 
     with patch(
-        "megaplan.chain._pr_state",
+        "arnold.pipelines.megaplan.chain._pr_state",
         side_effect=CliError("gh_pr_view_failed", "gh failed"),
     ):
         result = run_chain(spec_path, tmp_path, writer=messages.append, one=True)
@@ -2709,13 +2709,13 @@ def test_initialized_plan_receives_chain_policy_metadata(
     }
     (plan_dir / "state.json").write_text(json.dumps(stub_state), encoding="utf-8")
 
-    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
-         patch("megaplan.chain._checkout_milestone_branch"), \
-         patch("megaplan.chain._ensure_milestone_pr", return_value=1), \
-         patch("megaplan.chain._init_plan", return_value="plan-stub-20260520"), \
-         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-stub-20260520", "done")), \
-         patch("megaplan.chain._commit_and_push_phase"), \
-         patch("megaplan.chain._pr_state", return_value="merged"):
+    with patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch"), \
+         patch("arnold.pipelines.megaplan.chain._ensure_milestone_pr", return_value=1), \
+         patch("arnold.pipelines.megaplan.chain._init_plan", return_value="plan-stub-20260520"), \
+         patch("arnold.pipelines.megaplan.chain._drive_plan", return_value=_fake_outcome("plan-stub-20260520", "done")), \
+         patch("arnold.pipelines.megaplan.chain._commit_and_push_phase"), \
+         patch("arnold.pipelines.megaplan.chain._pr_state", return_value="merged"):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"
@@ -2758,13 +2758,13 @@ def test_initialized_plan_respects_runtime_override_source(
     }
     (plan_dir / "state.json").write_text(json.dumps(stub_state), encoding="utf-8")
 
-    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
-         patch("megaplan.chain._checkout_milestone_branch"), \
-         patch("megaplan.chain._ensure_milestone_pr", return_value=1), \
-         patch("megaplan.chain._init_plan", return_value="plan-stub-20260520"), \
-         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-stub-20260520", "done")), \
-         patch("megaplan.chain._commit_and_push_phase"), \
-         patch("megaplan.chain._pr_state", return_value="merged"):
+    with patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch"), \
+         patch("arnold.pipelines.megaplan.chain._ensure_milestone_pr", return_value=1), \
+         patch("arnold.pipelines.megaplan.chain._init_plan", return_value="plan-stub-20260520"), \
+         patch("arnold.pipelines.megaplan.chain._drive_plan", return_value=_fake_outcome("plan-stub-20260520", "done")), \
+         patch("arnold.pipelines.megaplan.chain._commit_and_push_phase"), \
+         patch("arnold.pipelines.megaplan.chain._pr_state", return_value="merged"):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "done"

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from megaplan._core.canonical import (
+from arnold.pipelines.megaplan._core.canonical import (
     canonical_projection_bytes,
     canonical_projection_sha256,
     canonical_projection_sha256_uri,
@@ -15,16 +15,16 @@ from megaplan._core.canonical import (
     sign_canonical_projection,
     verify_canonical_projection_signature,
 )
-from megaplan._core.config_resolver import ConfigResolver
-from megaplan.schemas import WarrantSignature
-from megaplan.store.warrant import (
+from arnold.pipelines.megaplan._core.config_resolver import ConfigResolver
+from arnold.pipelines.megaplan.schemas import WarrantSignature
+from arnold.pipelines.megaplan.store.warrant import (
     WarrantError,
     build_warrant,
     verify_warrant,
     warrant_signed_envelope,
 )
-from megaplan.store.warrant_sources import build_warrant_source_projection
-from megaplan.store.warrant_sources import inventory_warrant_sources
+from arnold.pipelines.megaplan.store.warrant_sources import build_warrant_source_projection
+from arnold.pipelines.megaplan.store.warrant_sources import inventory_warrant_sources
 
 
 def _projection() -> dict[str, object]:

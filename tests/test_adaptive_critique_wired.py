@@ -35,15 +35,15 @@ from typing import Any
 
 import pytest
 
-import megaplan
-import megaplan.cli as cli_module
-import megaplan._core.io as io_module
-from megaplan.audits.critique_evaluator import (
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.cli as cli_module
+import arnold.pipelines.megaplan._core.io as io_module
+from arnold.pipelines.megaplan.audits.critique_evaluator import (
     assert_adaptive_critique_wired,
     probe_adaptive_critique_wiring,
 )
-from megaplan.profiles import load_profile_metadata
-from megaplan.types import AdaptiveCritiqueMisconfiguredError
+from arnold.pipelines.megaplan.profiles import load_profile_metadata
+from arnold.pipelines.megaplan.types import AdaptiveCritiqueMisconfiguredError
 
 
 @pytest.fixture
@@ -99,7 +99,7 @@ def test_assert_adaptive_critique_wired_raises_when_step_missing(
     recurs (someone removes the schema/dispatch entry), this test fires
     immediately at PR time.
     """
-    from megaplan.workers import _impl as worker_impl
+    from arnold.pipelines.megaplan.workers import _impl as worker_impl
 
     patched = dict(worker_impl.STEP_SCHEMA_FILENAMES)
     patched.pop("critique_evaluator", None)
@@ -118,7 +118,7 @@ def test_assert_adaptive_critique_wired_raises_when_schema_missing(
     """The gate must raise when the dispatch points at a schema filename that
     isn't in the SCHEMAS dict. This catches the half-fixed case where someone
     registers the step but forgets the schema entry."""
-    from megaplan import schemas as schemas_module
+    from arnold.pipelines.megaplan import schemas as schemas_module 
 
     patched = dict(schemas_module.SCHEMAS)
     patched.pop("critique_evaluator.json", None)
@@ -199,7 +199,7 @@ def test_handle_init_refuses_adaptive_critique_when_wiring_broken(
     Without the init-time gate, the bug surfaces only at critique time —
     after planning cost has been paid and after the plan looks committed.
     """
-    from megaplan.workers import _impl as worker_impl
+    from arnold.pipelines.megaplan.workers import _impl as worker_impl
 
     patched = dict(worker_impl.STEP_SCHEMA_FILENAMES)
     patched.pop("critique_evaluator", None)

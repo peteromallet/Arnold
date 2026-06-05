@@ -6,9 +6,9 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan.schemas import GateArtifact, GatePayload
-from megaplan.types import GateCheckResult, PlanState
-from megaplan._core import latest_plan_meta_path, load_flag_registry, read_json, unresolved_significant_flags
+from arnold.pipelines.megaplan.schemas import GateArtifact, GatePayload
+from arnold.pipelines.megaplan.types import GateCheckResult, PlanState
+from arnold.pipelines.megaplan._core import latest_plan_meta_path, load_flag_registry, read_json, unresolved_significant_flags
 
 
 AGENT_AVAILABILITY_PREFLIGHT_CHECKS = frozenset({"claude_available", "codex_available"})

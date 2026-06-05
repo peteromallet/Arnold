@@ -56,6 +56,7 @@ def _manifest_with_rows(rows: list[dict[str, object]]) -> dict[str, object]:
         "rows": rows,
         "parity_gates": [],
         "runtime_settings_gates": [],
+        "deferral_ledger": [],
     }
 
 

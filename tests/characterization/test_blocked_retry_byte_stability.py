@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.orchestration.phase_result import ExitKind
+from arnold.pipelines.megaplan.orchestration.phase_result import ExitKind
 from tests.characterization._golden_recorders.blocked_retry_golden import (
     GOLDEN_TRACE_DEFAULT,
     record_blocked_retry_trace,

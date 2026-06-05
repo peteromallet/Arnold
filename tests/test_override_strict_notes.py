@@ -17,11 +17,11 @@ from typing import Any
 
 import pytest
 
-import megaplan
-from megaplan._core import now_utc
-from megaplan.orchestration.phase_result import BlockedTask, ExternalError
-from megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_PREPPED
-from megaplan.user_actions import build_resolution_event
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import now_utc
+from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask, ExternalError
+from arnold.pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_PREPPED
+from arnold.pipelines.megaplan.user_actions import build_resolution_event
 from tests.conftest import PlanFixture, load_state
 from tests.conftest import make_fake_phase_result
 
@@ -333,7 +333,7 @@ def _capture_override_events(
         events.append(event)
         return event
 
-    monkeypatch.setattr("megaplan.observability.events.emit", _emit)
+    monkeypatch.setattr("arnold.pipelines.megaplan.observability.events.emit", _emit)
     return events
 
 

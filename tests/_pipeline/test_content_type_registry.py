@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.types import (
     CONTENT_TYPES,
     ContentTypeRegistry,
     Port,

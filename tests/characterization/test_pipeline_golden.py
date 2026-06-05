@@ -29,17 +29,17 @@ from typing import Any
 
 import pytest
 
-import megaplan
+import arnold.pipelines.megaplan as megaplan
 
-from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan._pipeline.planning import compile_planning_pipeline
-from megaplan._pipeline.runtime import policy_from_cli_args
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.runtime import policy_from_cli_args
 from arnold.pipelines.megaplan.stages.inprocess_step import (
     build_inprocess_planning_steps,
     build_revise_step,
     build_review_step,
 )
-from megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 from tests.conftest import PlanFixture, _make_plan_fixture_with_robustness
 
 _UUID_RE = re.compile(

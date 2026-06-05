@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._pipeline.pattern_stops import (
+from arnold.pipelines.megaplan._pipeline.pattern_stops import (
     LoopState,
     max_iters,
     no_improvement,

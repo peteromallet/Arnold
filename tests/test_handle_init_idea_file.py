@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan.auto import DriverOutcome
-from megaplan.types import CliError
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _args(project_dir: Path, **overrides: object) -> Namespace:
@@ -138,7 +138,7 @@ def test_init_auto_start_invokes_drive(
             events=[{"msg": "auto advanced"}],
         )
 
-    monkeypatch.setattr("megaplan.auto.drive", fake_drive)
+    monkeypatch.setattr("arnold.pipelines.megaplan.auto.drive", fake_drive)
 
     response = megaplan.handle_init(
         root,

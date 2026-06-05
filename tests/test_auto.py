@@ -17,9 +17,9 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan import auto
-from megaplan.auto import DriverOutcome, drive
-from megaplan.types import CliError
+from arnold.pipelines.megaplan import auto 
+from arnold.pipelines.megaplan.auto import DriverOutcome, drive
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
@@ -822,7 +822,7 @@ def test_run_planning_phase_dispatches_through_registry(tmp_path: Path) -> None:
             payload={"exit_code": 0, "stdout": "{}", "stderr": ""},
         )
 
-    with patch("megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch):
+    with patch("arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch):
         code, out, err = auto._run_planning_phase(
             ["execute", "--plan", "demo"], cwd=tmp_path, timeout=5
         )
@@ -834,7 +834,7 @@ def test_run_planning_phase_reports_unsupported_operation_nonzero() -> None:
     from arnold.runtime.operations import OperationResult
 
     with patch(
-        "megaplan._pipeline.registry.dispatch_operation_for",
+        "arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for",
         lambda plugin_id, request: OperationResult(
             ok=False,
             payload={},
@@ -852,7 +852,7 @@ def test_run_planning_phase_reports_incomplete_operation_result_nonzero() -> Non
     from arnold.runtime.operations import OperationResult
 
     with patch(
-        "megaplan._pipeline.registry.dispatch_operation_for",
+        "arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for",
         lambda plugin_id, request: OperationResult(ok=True, payload={"exit_code": 0}),
     ):
         code, out, err = auto._run_planning_phase(["execute", "--plan", "demo"])
@@ -884,10 +884,10 @@ def test_run_override_command_dispatches_apply_through_registry(tmp_path: Path) 
             },
         )
 
-    with patch("megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch), \
-         patch("megaplan.handlers.override._override_abort", side_effect=AssertionError), \
-         patch("megaplan.handlers.override._override_force_proceed", side_effect=AssertionError), \
-         patch("megaplan.handlers.override.handle_override", side_effect=AssertionError):
+    with patch("arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch), \
+         patch("arnold.pipelines.megaplan.handlers.override._override_abort", side_effect=AssertionError), \
+         patch("arnold.pipelines.megaplan.handlers.override._override_force_proceed", side_effect=AssertionError), \
+         patch("arnold.pipelines.megaplan.handlers.override.handle_override", side_effect=AssertionError):
         code, out, err = auto._run_override_command(
             ["override", "abort", "--plan", "demo", "--reason", "stop"],
             cwd=tmp_path,
@@ -913,7 +913,7 @@ def test_run_override_command_dispatches_list_through_registry(tmp_path: Path) -
         assert request.kind.value == "override_list"
         return OperationResult(ok=True, payload={"catalog": {"abort": {"kind": "termination"}}})
 
-    with patch("megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch):
+    with patch("arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch):
         code, out, err = auto._run_override_command(
             ["override", "list", "--plan", "demo"],
             cwd=tmp_path,
@@ -1081,7 +1081,7 @@ def test_run_auto_without_outcome_file_preserves_stdout_only_behavior(
 
 
 def test_run_auto_passes_progress_env_to_driver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from megaplan.orchestration.progress import ProgressContext
+    from arnold.pipelines.megaplan.orchestration.progress import ProgressContext
 
     captured: dict[str, dict[str, str] | None] = {}
     env = ProgressContext(
@@ -1333,8 +1333,7 @@ def test_cli_rejects_negative_max_context_retries() -> None:
     proc = subprocess.run(
         [
             sys.executable,
-            "-m",
-            "megaplan",
+            "-m", "arnold.pipelines.megaplan",
             "auto",
             "--plan",
             "x",
@@ -1479,8 +1478,7 @@ def test_cli_rejects_negative_max_cost_usd() -> None:
     proc = subprocess.run(
         [
             sys.executable,
-            "-m",
-            "megaplan",
+            "-m", "arnold.pipelines.megaplan",
             "auto",
             "--plan",
             "x",
@@ -1529,7 +1527,7 @@ def test_sum_history_cost_usd_handles_missing_corrupt_and_bad_entries(
 
 def test_auto_help_surfaces_cost_and_context_retry_flags() -> None:
     proc = subprocess.run(
-        [sys.executable, "-m", "megaplan", "auto", "--help"],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "auto", "--help"],
         capture_output=True,
         text=True,
         check=False,
@@ -1559,7 +1557,7 @@ def _write_blocked_execute_history(plan_dir: Path, deviations: list[str] | None 
 def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) -> None:
     plan = "worker-blocked-cap"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    from megaplan.orchestration.phase_result import Deviation
+    from arnold.pipelines.megaplan.orchestration.phase_result import Deviation
     from tests.conftest import fake_run_with_phase_result
 
     # Also write execution_batch for last_artifact assertion
@@ -1648,7 +1646,7 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     """
     plan = "execute-blocked-awaiting-human"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    from megaplan.orchestration.phase_result import BlockedTask
+    from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask
     from tests.conftest import fake_run_with_phase_result
 
     _write_blocked_task_update_batch(plan_dir)
@@ -2250,7 +2248,7 @@ def test_drive_escalates_to_force_proceed_after_max_add_note_attempts(
 
 
 def test_drive_surfaces_external_error_distinctly(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import fake_run_with_phase_result
 
     plan = "external-error-plan"
@@ -2294,7 +2292,7 @@ def test_drive_surfaces_external_error_distinctly(tmp_path: Path) -> None:
 
 
 def test_drive_auto_retries_stream_stall_once_for_non_execute_phase(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import make_fake_phase_result
 
     plan = "critique-stream-stall-recovers"
@@ -2359,7 +2357,7 @@ def test_drive_auto_retries_stream_stall_once_for_non_execute_phase(tmp_path: Pa
 
 
 def test_drive_blocks_after_retryable_external_error_fails_twice(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import make_fake_phase_result
 
     plan = "critique-stream-stall-twice"
@@ -2417,12 +2415,12 @@ def test_drive_blocks_after_retryable_external_error_fails_twice(tmp_path: Path)
     assert latest_failure["metadata"]["content_chunk_count"] == 182
     assert latest_failure["metadata"]["external_retries_used"] == 1
     assert latest_failure["metadata"]["suggested_recovery_commands"] == [
-        f"python -m megaplan resume --plan {plan}"
+        f"python -m arnold.pipelines.megaplan resume --plan {plan}"
     ]
 
 
 def test_drive_does_not_auto_retry_permanent_external_errors(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import make_fake_phase_result
 
     plan = "critique-auth-failure"
@@ -2471,7 +2469,7 @@ def test_drive_does_not_auto_retry_permanent_external_errors(tmp_path: Path) -> 
 
 
 def test_drive_does_not_auto_retry_execute_external_stream_stall(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import make_fake_phase_result
 
     plan = "execute-stream-stall"

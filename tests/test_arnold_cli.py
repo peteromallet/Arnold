@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from megaplan.cli import arnold
+from arnold.pipelines.megaplan.cli import arnold
 
 
 def test_arnold_pipelines_list_wraps_discovery_and_lists_first_class_modules(
@@ -65,7 +65,7 @@ def test_arnold_usage_uses_canonical_megaplan(capsys) -> None:
 
 def test_arnold_console_module_entry_lists_pipelines() -> None:
     proc = subprocess.run(
-        [sys.executable, "-m", "megaplan.cli.arnold", "pipelines", "list"],
+        [sys.executable, "-m", "arnold.pipelines.megaplan.cli.arnold", "pipelines", "list"],
         capture_output=True,
         text=True,
         check=False,

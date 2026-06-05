@@ -20,8 +20,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from megaplan.orchestration.phase_result import ExitKind
-from megaplan.orchestration.recovery_policy import (
+from arnold.pipelines.megaplan.orchestration.phase_result import ExitKind
+from arnold.pipelines.megaplan.orchestration.recovery_policy import (
     DEFAULT_MAX_BLOCKED_RETRIES,
     DEFAULT_MAX_CONTEXT_RETRIES,
     DEFAULT_MAX_EXTERNAL_RETRIES,
@@ -209,11 +209,12 @@ def test_classify_returns_budget_delta_without_side_effects():
 def test_non_planning_consumer_classifies_without_importing_auto(monkeypatch):
     # Wipe a previously-imported auto from sys.modules so we can prove the
     # classifier does not pull it back in.
-    for mod in [m for m in list(sys.modules) if m == "megaplan.auto" or m.startswith("megaplan.auto.")]:
+    auto_prefix = "arnold.pipelines.megaplan.auto"
+    for mod in [m for m in list(sys.modules) if m == auto_prefix or m.startswith(auto_prefix + ".")]:
         monkeypatch.delitem(sys.modules, mod, raising=False)
 
     # Re-import recovery_policy in isolation — must NOT drag auto.py in.
-    rp_mod = importlib.import_module("megaplan.orchestration.recovery_policy")
+    rp_mod = importlib.import_module("arnold.pipelines.megaplan.orchestration.recovery_policy")
     Policy = rp_mod.RecoveryPolicy
 
     decision = Policy().classify(
@@ -224,8 +225,8 @@ def test_non_planning_consumer_classifies_without_importing_auto(monkeypatch):
     )
     assert decision.action == "retry_transient"
     assert decision.budget_kind == "external"
-    # The classify call must NOT have lazily imported megaplan.auto.
-    assert "megaplan.auto" not in sys.modules
+    # The classify call must NOT have lazily imported auto.py.
+    assert auto_prefix not in sys.modules
 
 
 # ---------------------------------------------------------------------------

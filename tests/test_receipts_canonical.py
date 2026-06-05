@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import megaplan
-from megaplan._core import read_json
-from megaplan.prompts import create_hermes_prompt
-from megaplan.receipts.canonical import hash_prompts
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import read_json
+from arnold.pipelines.megaplan.prompts import create_hermes_prompt
+from arnold.pipelines.megaplan.receipts.canonical import hash_prompts
 
 
 def test_hash_prompts_canonicalizes_transient_fields(tmp_path: Path) -> None:

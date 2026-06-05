@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from megaplan._core.state import write_plan_state
-from megaplan._core.workflow import workflow_next
-from megaplan.control_interface import (
+from arnold.pipelines.megaplan._core.state import write_plan_state
+from arnold.pipelines.megaplan._core.workflow import workflow_next
+from arnold.pipelines.megaplan.control_interface import (
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
     CONTROL_TARGET_RECOVER_FROM_STUCK,
@@ -18,12 +18,12 @@ from megaplan.control_interface import (
     apply_transition,
     read_valid_targets,
 )
-from megaplan.planning import PlanningControlBinding, planning_control_binding
-from megaplan.planning.control_binding import (
+from arnold.pipelines.megaplan.planning import PlanningControlBinding, planning_control_binding
+from arnold.pipelines.megaplan.planning.control_binding import (
     planning_run_state_view,
     planning_supervisor_run_state_view,
 )
-from megaplan.planning.state import (
+from arnold.pipelines.megaplan.planning.state import (
     STATE_AWAITING_HUMAN,
     STATE_BLOCKED,
     STATE_CRITIQUED,
@@ -317,7 +317,7 @@ def test_supervisor_projection_leaves_awaiting_human_without_neutral_recovery_ta
 
 
 def test_planning_binding_module_does_not_route_through_legacy_planning_bindings() -> None:
-    import megaplan.planning.control_binding as planning_control_binding_module
+    import arnold.pipelines.megaplan.planning.control_binding as planning_control_binding_module
 
     source = inspect.getsource(planning_control_binding_module)
 
@@ -427,7 +427,7 @@ def test_neutral_recover_from_stuck_maps_to_recover_blocked(tmp_path: Path) -> N
     )
     with (
         patch(
-            "megaplan.planning.control_binding.read_phase_result",
+            "arnold.pipelines.megaplan.planning.control_binding.read_phase_result",
             return_value=type(
                 "_PhaseResult",
                 (),
@@ -435,7 +435,7 @@ def test_neutral_recover_from_stuck_maps_to_recover_blocked(tmp_path: Path) -> N
             )(),
         ),
         patch(
-            "megaplan.planning.control_binding.evaluate_blocker_recovery",
+            "arnold.pipelines.megaplan.planning.control_binding.evaluate_blocker_recovery",
             return_value=type(
                 "_Eval",
                 (),
@@ -449,7 +449,7 @@ def test_neutral_recover_from_stuck_maps_to_recover_blocked(tmp_path: Path) -> N
             )(),
         ),
         patch(
-            "megaplan.planning.control_binding.command_blocker_details",
+            "arnold.pipelines.megaplan.planning.control_binding.command_blocker_details",
             return_value=(
                 {
                     "blocker_id": "prereq:ua1:T1",

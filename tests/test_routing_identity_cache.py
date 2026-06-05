@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan.routing import cache_get, cache_set, compute_identity, params_hash
-from megaplan.store import FileStore
+from arnold.pipelines.megaplan.routing import cache_get, cache_set, compute_identity, params_hash
+from arnold.pipelines.megaplan.store import FileStore
 
 
 def test_params_hash_covers_model_side_params_only() -> None:

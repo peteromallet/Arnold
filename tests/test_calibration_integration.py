@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan.calibration import (
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan.calibration import (
     CapabilityClaim,
     EvaluandRef,
     ModelIdentity,
@@ -15,11 +15,11 @@ from megaplan.calibration import (
     resolve_evaluand,
     write_capability_claim,
 )
-from megaplan.calibration.ledger import _canonical_json
-from megaplan.handlers.execute import _extract_execute_tier_map
-from megaplan.handlers.finalize import _write_finalize_artifacts
-from megaplan.execute.batch import _batch_task_signature, _calibration_tier_spec
-from megaplan.observability.evaluand import EvaluandRecord, write_evaluand_event
+from arnold.pipelines.megaplan.calibration.ledger import _canonical_json
+from arnold.pipelines.megaplan.handlers.execute import _extract_execute_tier_map
+from arnold.pipelines.megaplan.handlers.finalize import _write_finalize_artifacts
+from arnold.pipelines.megaplan.execute.batch import _batch_task_signature, _calibration_tier_spec
+from arnold.pipelines.megaplan.observability.evaluand import EvaluandRecord, write_evaluand_event
 from tests.conftest import bootstrap_fixture, load_state, make_args_factory, read_json
 
 

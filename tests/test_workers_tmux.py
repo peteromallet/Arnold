@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests._workers_helpers import _mock_state
 
 
@@ -42,7 +42,7 @@ def _require_tmux_session_support() -> None:
 def test_tmux_session_create_exists_teardown_idempotent() -> None:
     """TmuxSession exists() → teardown() → exists() → second teardown() safe."""
     import uuid
-    from megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
 
     _require_tmux_session_support()
 
@@ -66,7 +66,7 @@ def test_tmux_session_create_exists_teardown_idempotent() -> None:
         assert session.exists() is True
 
         # pane_pids must return non-empty list.
-        from megaplan.runtime.process import pane_pids
+        from arnold.pipelines.megaplan.runtime.process import pane_pids
 
         pids = pane_pids(name)
         assert len(pids) > 0
@@ -92,7 +92,7 @@ def test_wedge_regression_teardown_reaps_orphaned_session_pids_dead() -> None:
     session, SIGKILL the subprocess that launched it, then assert TmuxSession
     teardown reaps the now-orphaned session by name and captured PIDs are dead."""
     import uuid
-    from megaplan.runtime.process import TmuxSession, pane_pids
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession, pane_pids
 
     _require_tmux_session_support()
 
@@ -159,7 +159,7 @@ def test_wedge_regression_teardown_reaps_orphaned_session_pids_dead() -> None:
                 pass
 
         # detect_orphans with this plan's pattern must return clean.
-        from megaplan.runtime.process import detect_orphans
+        from arnold.pipelines.megaplan.runtime.process import detect_orphans
         orphans = detect_orphans("megaplan-wedge-*")
         assert name not in orphans
     finally:
@@ -176,10 +176,10 @@ def test_reconcile_reaps_residual_same_name_session_and_proceeds(
 ) -> None:
     """Residual same-(plan,step) session → reconcile reaps it and
     run_shannon_step PROCEEDS (no raise)."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
-    from megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "0")
@@ -230,9 +230,9 @@ def test_reconcile_reaps_residual_same_name_session_and_proceeds(
         duration_ms=100,
     )
 
-    with patch("megaplan.workers.shannon.TmuxSession", FakeTmuxSession), \
-         patch("megaplan.workers.shannon.pane_pids", fake_pane_pids), \
-         patch("megaplan.workers.shannon.run_command", return_value=fake_result):
+    with patch("arnold.pipelines.megaplan.workers.shannon.TmuxSession", FakeTmuxSession), \
+         patch("arnold.pipelines.megaplan.workers.shannon.pane_pids", fake_pane_pids), \
+         patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result):
         result = run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
 
     # reconcile must have called teardown (reaping the residual).
@@ -248,9 +248,9 @@ def test_backstop_unkillable_session_raises_orphan_detected(
 ) -> None:
     """Monkeypatch teardown to no-op while exists() stays True →
     OrphanDetectedError (wrapped in CliError) raised."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.types import CliError
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "0")
@@ -271,8 +271,8 @@ def test_backstop_unkillable_session_raises_orphan_detected(
     def fake_pane_pids(session_name: str) -> list[str]:
         return ["99999"]
 
-    with patch("megaplan.workers.shannon.TmuxSession", UnkillableTmuxSession), \
-         patch("megaplan.workers.shannon.pane_pids", fake_pane_pids):
+    with patch("arnold.pipelines.megaplan.workers.shannon.TmuxSession", UnkillableTmuxSession), \
+         patch("arnold.pipelines.megaplan.workers.shannon.pane_pids", fake_pane_pids):
         with pytest.raises(CliError) as exc_info:
             run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
 
@@ -287,9 +287,9 @@ def test_different_plan_name_session_not_touched_no_backstop(
 ) -> None:
     """A session with a different-plan-name is NOT touched by reconcile and
     does NOT trigger OrphanDetectedError (backstop is plan-scoped only)."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "0")
@@ -332,9 +332,9 @@ def test_different_plan_name_session_not_touched_no_backstop(
         duration_ms=100,
     )
 
-    with patch("megaplan.workers.shannon.TmuxSession", SpyTmuxSession), \
-         patch("megaplan.workers.shannon.pane_pids", fake_pane_pids), \
-         patch("megaplan.workers.shannon.run_command", return_value=fake_result):
+    with patch("arnold.pipelines.megaplan.workers.shannon.TmuxSession", SpyTmuxSession), \
+         patch("arnold.pipelines.megaplan.workers.shannon.pane_pids", fake_pane_pids), \
+         patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result):
         result = run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
 
     # reconcile always calls teardown on the plan's own session (idempotent,
@@ -352,45 +352,45 @@ def test_different_plan_name_session_not_touched_no_backstop(
 
 def test_detect_orphans_degrade_on_file_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     """detect_orphans returns [] when tmux binary is missing."""
-    from megaplan.runtime.process import detect_orphans
+    from arnold.pipelines.megaplan.runtime.process import detect_orphans
 
     def fake_run(*args: object, **kwargs: object) -> None:
         raise FileNotFoundError("tmux not found")
 
-    with patch("megaplan.runtime.process.subprocess.run", fake_run):
+    with patch("arnold.pipelines.megaplan.runtime.process.subprocess.run", fake_run):
         result = detect_orphans("megaplan-*")
     assert result == []
 
 def test_pane_pids_degrade_on_file_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     """pane_pids returns [] when tmux binary is missing."""
-    from megaplan.runtime.process import pane_pids
+    from arnold.pipelines.megaplan.runtime.process import pane_pids
 
     def fake_run(*args: object, **kwargs: object) -> None:
         raise FileNotFoundError("tmux not found")
 
-    with patch("megaplan.runtime.process.subprocess.run", fake_run):
+    with patch("arnold.pipelines.megaplan.runtime.process.subprocess.run", fake_run):
         result = pane_pids("any-session")
     assert result == []
 
 def test_tmux_session_exists_degrade_on_file_not_found() -> None:
     """TmuxSession.exists() returns False when tmux is missing."""
-    from megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
 
     def fake_run(*args: object, **kwargs: object) -> None:
         raise FileNotFoundError("tmux not found")
 
-    with patch("megaplan.runtime.process.subprocess.run", fake_run):
+    with patch("arnold.pipelines.megaplan.runtime.process.subprocess.run", fake_run):
         session = TmuxSession("any-session")
         assert session.exists() is False
 
 def test_tmux_session_teardown_degrade_on_file_not_found() -> None:
     """TmuxSession.teardown() does not raise when tmux is missing."""
-    from megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
 
     def fake_run(*args: object, **kwargs: object) -> None:
         raise FileNotFoundError("tmux not found")
 
-    with patch("megaplan.runtime.process.subprocess.run", fake_run):
+    with patch("arnold.pipelines.megaplan.runtime.process.subprocess.run", fake_run):
         session = TmuxSession("any-session")
         # Must not raise.
         session.teardown()
@@ -400,9 +400,9 @@ def test_both_run_command_sites_receive_tmux_session(
 ) -> None:
     """Spy on run_command to assert BOTH the readiness-probe call and the
     main call receive the same tmux_session object."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "0")
@@ -435,7 +435,7 @@ def test_both_run_command_sites_receive_tmux_session(
         run_command_calls.append(kwargs)
         return fake_result
 
-    with patch("megaplan.workers.shannon.run_command", spy_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", spy_run_command):
         result = run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
 
     assert isinstance(result, WorkerResult)
@@ -473,7 +473,7 @@ def test_both_run_command_sites_receive_tmux_session(
 
 
 def test_shannon_success_result_detector_accepts_jsonl_success() -> None:
-    from megaplan.workers.shannon import _raw_contains_success_result
+    from arnold.pipelines.megaplan.workers.shannon import _raw_contains_success_result
 
     raw = "\n".join(
         [
@@ -494,7 +494,7 @@ def test_shannon_success_result_detector_accepts_jsonl_success() -> None:
 
 
 def test_shannon_success_result_detector_rejects_error_jsonl() -> None:
-    from megaplan.workers.shannon import _raw_contains_success_result
+    from arnold.pipelines.megaplan.workers.shannon import _raw_contains_success_result
 
     raw = json.dumps(
         {

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._pipeline import contracts as contracts_mod
-from megaplan._pipeline.contracts import (
+from arnold.pipelines.megaplan._pipeline import contracts as contracts_mod
+from arnold.pipelines.megaplan._pipeline.contracts import (
     ContractLedger,
     coerce,
     is_legal_coercion,
     legal_coercions,
 )
-from megaplan._pipeline.types import Port
+from arnold.pipelines.megaplan._pipeline.types import Port
 
 
 class TestRegisterAndLookupByHash:

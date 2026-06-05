@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.flags import calibration_query_route_on
-from megaplan.calibration.ledger import (
+from arnold.pipelines.megaplan._pipeline.flags import calibration_query_route_on
+from arnold.pipelines.megaplan.calibration.ledger import (
     CapabilityClaim,
     EvaluandRef,
     ModelIdentity,
@@ -227,7 +227,7 @@ def test_positive_exploration_budget_is_deterministic_and_tagged(
 def test_seeded_exploration_is_stable_across_processes() -> None:
     script = """
 import json
-from megaplan.calibration.ledger import CapabilityClaim, EvaluandRef, route
+from arnold.pipelines.megaplan.calibration.ledger import CapabilityClaim, EvaluandRef, route
 ref = EvaluandRef(piece_version='p', judge_version='j', rubric_version='r', input_set_hash='i')
 claim = CapabilityClaim(outcome=ref, task_signature='sig', model_identity='model-a', predicted_tier=2, timestamp=10000.0)
 s = route('sig', claims=[claim], tier_models={'execute': {'1': 'flash', '2': 'medium', '5': 'high'}}, exploration_budget=1.0, seed=23, now=10000.0)
@@ -326,7 +326,7 @@ def test_flag_off_compute_batch_complexity_unchanged() -> None:
     it must continue to return the expected fail-safe and max-of-complexities
     behaviour regardless of ``MEGAPLAN_CALIBRATION_QUERY_ROUTE``.
     """
-    from megaplan._core import compute_batch_complexity
+    from arnold.pipelines.megaplan._core import compute_batch_complexity
 
     finalize_data = {
         "tasks": [
@@ -391,7 +391,7 @@ def test_flag_off_resolve_dispatch_spec_unchanged() -> None:
     via the TOML-derived ``tier_models`` mapping.  The calibration route
     flag does not affect it.
     """
-    from megaplan._core import resolve_dispatch_spec
+    from arnold.pipelines.megaplan._core import resolve_dispatch_spec
 
     tier_models = {
         "execute": {
@@ -440,7 +440,7 @@ def test_flag_off_tier_map_get_routing_unchanged() -> None:
     calibration route flag is off this chain must produce the same spec
     as it always has.
     """
-    from megaplan._core import compute_batch_complexity, resolve_dispatch_spec
+    from arnold.pipelines.megaplan._core import compute_batch_complexity, resolve_dispatch_spec
 
     # A realistic tier_map (matching the TOML profile shape)
     tier_map: dict[int, str] = {
@@ -491,8 +491,8 @@ def test_flag_off_finalize_complexity_validation_unchanged(
     boolean, or out-of-range complexity.  The calibration query route flag
     does not affect this validation — it must remain unchanged.
     """
-    from megaplan.handlers.finalize import _validate_finalize_payload
-    from megaplan.workers import WorkerResult
+    from arnold.pipelines.megaplan.handlers.finalize import _validate_finalize_payload
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()

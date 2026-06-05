@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.envelope import (
+from arnold.pipelines.megaplan._pipeline.envelope import (
     ENVELOPE_ENV_VAR,
     ENVELOPE_IN_FILENAME,
     ENVELOPE_OUT_FILENAME,
@@ -131,7 +131,7 @@ def test_tagged_stderr_fallback_returns_none_when_absent():
 def test_apply_envelope_handshake_in_auto(tmp_path, monkeypatch):
     """``_apply_envelope_handshake`` merges env override into progress_env when
     ``_envelope_ctx`` is set; no-op when unset."""
-    from megaplan.auto import _apply_envelope_handshake
+    from arnold.pipelines.megaplan.auto import _apply_envelope_handshake
 
     run_kwargs: dict = {}
     # No envelope set: handshake is a no-op.

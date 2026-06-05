@@ -6,7 +6,7 @@ used by existing handlers and prompt builders.
 """
 from __future__ import annotations
 
-from megaplan._core import creative_form_id, is_creative_mode, is_prose_mode
+from arnold.pipelines.megaplan._core import creative_form_id, is_creative_mode, is_prose_mode
 
 
 def test_creative_mode_helper_accepts_creative_and_joke() -> None:

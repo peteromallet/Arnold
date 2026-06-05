@@ -18,13 +18,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from megaplan._core.topology import predecessors
-from megaplan._core.workflow import (
+from arnold.pipelines.megaplan._core.topology import predecessors
+from arnold.pipelines.megaplan._core.workflow import (
     _STEP_CONTEXT_STATES,
     _transition_matches,
     _workflow_for_robustness,
 )
-from megaplan.planning.state import CANONICAL_PLAN_STATES
+from arnold.pipelines.megaplan.planning.state import CANONICAL_PLAN_STATES
 
 FIXTURE_PATH = ROOT / "tests" / "parity" / "fixtures" / "workflow_next_matrix.json"
 LABEL = "control-flow parity, NOT drift-provably-zero"

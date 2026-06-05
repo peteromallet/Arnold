@@ -10,18 +10,22 @@ from typing import Callable
 
 import pytest
 
-import megaplan
-import megaplan.cli
-import megaplan._core
-import megaplan._core.io as io_module
-from megaplan.orchestration.phase_result import (
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.cli as megaplan_cli
+import arnold.pipelines.megaplan._core as megaplan_core
+import arnold.pipelines.megaplan._core.io as io_module
+from arnold.pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExternalError,
     PhaseResult,
     atomic_write_phase_result,
 )
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.workers import WorkerResult
+
+# Backward-compat aliases for test code that accesses megaplan.cli / megaplan._core
+megaplan.cli = megaplan_cli  # type: ignore[attr-defined]
+megaplan._core = megaplan_core  # type: ignore[attr-defined]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -65,8 +69,8 @@ def isolate_worker_unit_tests_from_global_mock_env(
 @pytest.fixture(autouse=True)
 def isolate_pipeline_contextvars() -> None:
     """Prevent tree-scoped runtime ContextVars from leaking across tests."""
-    from megaplan._pipeline.envelope import _envelope_ctx, _fanout_active_ctx
-    from megaplan.runtime.governor import _governor_ctx
+    from arnold.pipelines.megaplan._pipeline.envelope import _envelope_ctx, _fanout_active_ctx
+    from arnold.pipelines.megaplan.runtime.governor import _governor_ctx
 
     env_token = _envelope_ctx.set(None)
     fanout_token = _fanout_active_ctx.set(False)
@@ -230,7 +234,7 @@ def db_store_factory(request: pytest.FixtureRequest):
     dsn = os.environ.get("SUPABASE_DB_URL")
     if not dsn:
         pytest.skip("SUPABASE_DB_URL not set")
-    from megaplan.store import DBStore, deterministic_idempotency_key
+    from arnold.pipelines.megaplan.store import DBStore, deterministic_idempotency_key
     actor_id = f"ci-actor-{uuid.uuid4().hex[:12]}"
     bootstrap = DBStore(actor_id=None, dsn=dsn)
     try:
@@ -257,7 +261,7 @@ def editorial_store(request: pytest.FixtureRequest, tmp_path: Path):
     if backend == "db":
         db_store_factory = request.getfixturevalue("db_store_factory")
         return db_store_factory()
-    from megaplan.store import FileStore
+    from arnold.pipelines.megaplan.store import FileStore
 
     return FileStore(tmp_path / "store")
 

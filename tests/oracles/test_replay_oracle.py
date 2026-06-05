@@ -5,14 +5,14 @@ import json
 
 import pytest
 
-import megaplan
-from megaplan.handlers import override as override_handler
-from megaplan._core.state import write_plan_state
-from megaplan.blocker_recovery import quality_blocker_id
-from megaplan.orchestration.phase_result import BlockedTask, Deviation
-from megaplan.quality_resolutions import build_quality_resolution_event
-from megaplan.planning.state import STATE_AWAITING_HUMAN
-from megaplan.user_actions import build_resolution_event
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan.handlers import override as override_handler
+from arnold.pipelines.megaplan._core.state import write_plan_state
+from arnold.pipelines.megaplan.blocker_recovery import quality_blocker_id
+from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
+from arnold.pipelines.megaplan.quality_resolutions import build_quality_resolution_event
+from arnold.pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN
+from arnold.pipelines.megaplan.user_actions import build_resolution_event
 from tests.conftest import PlanFixture, load_state, make_fake_phase_result
 from tests.oracles.replay_oracle import (
     assert_replay_parity,
@@ -276,8 +276,8 @@ def test_routed_simple_actions_match_legacy_replay_oracle(
 ) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     frozen_now = "2026-01-02T03:04:05Z"
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
 
     legacy = capture_legacy_action(
         plan_fixture,
@@ -299,8 +299,8 @@ def test_routed_simple_actions_match_legacy_replay_oracle(
         fresh_fixture.root,
         fresh_fixture.make_args(plan=fresh_fixture.plan_name),
     )
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
 
     routed = capture_routed_action(
         fresh_fixture,
@@ -323,8 +323,8 @@ def test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact(
     tmp_path: Path,
 ) -> None:
     frozen_now = "2026-01-02T03:04:05Z"
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
@@ -350,8 +350,8 @@ def test_routed_force_proceed_from_critiqued_matches_legacy_gate_artifact(
         monkeypatch,
         robustness="standard",
     )
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     megaplan.handle_plan(fresh_fixture.root, fresh_fixture.make_args(plan=fresh_fixture.plan_name))
     megaplan.handle_critique(fresh_fixture.root, fresh_fixture.make_args(plan=fresh_fixture.plan_name))
 
@@ -406,8 +406,8 @@ def test_routed_force_proceed_from_blocked_agent_availability_matches_legacy(
         }
         write_plan_state(fixture.plan_dir, mode="replace", state=state)
 
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_blocked(plan_fixture)
     legacy = capture_legacy_action(
         plan_fixture,
@@ -430,8 +430,8 @@ def test_routed_force_proceed_from_blocked_agent_availability_matches_legacy(
         monkeypatch,
         robustness="standard",
     )
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_blocked(fresh_fixture)
     routed = capture_routed_action(
         fresh_fixture,
@@ -475,8 +475,8 @@ def test_routed_force_proceed_strict_notes_guard_matches_legacy(
             ),
         )
 
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_strict_note(plan_fixture)
     legacy = capture_legacy_action(
         plan_fixture,
@@ -498,8 +498,8 @@ def test_routed_force_proceed_strict_notes_guard_matches_legacy(
         monkeypatch,
         robustness="standard",
     )
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_strict_note(fresh_fixture)
     routed = capture_routed_action(
         fresh_fixture,
@@ -526,8 +526,8 @@ def test_routed_recover_blocked_prereq_retry_budget_matches_legacy(
     tmp_path: Path,
 ) -> None:
     frozen_now = "2026-01-02T03:04:05Z"
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_recoverable_prereq_blocked(plan_fixture, retry_budget=2)
     legacy = capture_legacy_action(
         plan_fixture,
@@ -549,8 +549,8 @@ def test_routed_recover_blocked_prereq_retry_budget_matches_legacy(
         monkeypatch,
         robustness="standard",
     )
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_recoverable_prereq_blocked(fresh_fixture, retry_budget=2)
     routed = capture_routed_action(
         fresh_fixture,
@@ -578,8 +578,8 @@ def test_routed_recover_blocked_quality_matches_legacy(
     tmp_path: Path,
 ) -> None:
     frozen_now = "2026-01-02T03:04:05Z"
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_recoverable_quality_blocked(plan_fixture)
     legacy = capture_legacy_action(
         plan_fixture,
@@ -601,8 +601,8 @@ def test_routed_recover_blocked_quality_matches_legacy(
         monkeypatch,
         robustness="standard",
     )
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_recoverable_quality_blocked(fresh_fixture)
     routed = capture_routed_action(
         fresh_fixture,
@@ -697,8 +697,8 @@ def test_routed_resume_clarify_prep_only_matches_legacy(
         )
         write_plan_state(fixture.plan_dir, mode="replace", state=state)
 
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_prep_clarification(plan_fixture)
     legacy = capture_legacy_action(
         plan_fixture,
@@ -719,8 +719,8 @@ def test_routed_resume_clarify_prep_only_matches_legacy(
         monkeypatch,
         robustness="standard",
     )
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_prep_clarification(fresh_fixture)
     routed = capture_routed_action(
         fresh_fixture,
@@ -759,8 +759,8 @@ def test_routed_replan_matches_legacy_structural_rewrite(
             ),
         )
 
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_critiqued_with_note(plan_fixture)
     legacy = capture_legacy_action(
         plan_fixture,
@@ -783,8 +783,8 @@ def test_routed_replan_matches_legacy_structural_rewrite(
         monkeypatch,
         robustness="standard",
     )
-    monkeypatch.setattr("megaplan.handlers.override.now_utc", lambda: frozen_now)
-    monkeypatch.setattr("megaplan.planning.control_binding.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.handlers.override.now_utc", lambda: frozen_now)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.control_binding.now_utc", lambda: frozen_now)
     _prepare_critiqued_with_note(fresh_fixture)
     routed = capture_routed_action(
         fresh_fixture,
@@ -868,7 +868,7 @@ def test_routed_config_mutations_surface_stale_version_conflicts(
         return original_write_plan_state(plan_dir, *args, **kwargs)
 
     monkeypatch.setattr(
-        "megaplan.control_interface.write_plan_state",
+        "arnold.pipelines.megaplan.control_interface.write_plan_state",
         _racing_write_plan_state,
     )
 

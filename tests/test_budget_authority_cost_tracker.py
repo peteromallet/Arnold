@@ -19,8 +19,8 @@ import json
 
 import pytest
 
-from megaplan._pipeline.runtime import CostTracker
-from megaplan.runtime import budget_authority as ba
+from arnold.pipelines.megaplan._pipeline.runtime import CostTracker
+from arnold.pipelines.megaplan.runtime import budget_authority as ba
 
 
 @pytest.fixture(autouse=True)

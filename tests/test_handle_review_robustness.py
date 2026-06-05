@@ -7,11 +7,11 @@ from typing import Callable
 
 import pytest
 
-import megaplan
-import megaplan.handlers
-import megaplan.review.checks
-from megaplan._core import json_dump, load_plan, read_json, save_flag_registry, save_state
-from megaplan.workers import WorkerResult, _build_mock_payload
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+import arnold.pipelines.megaplan.review.checks as megaplan_review_checks
+from arnold.pipelines.megaplan._core import json_dump, load_plan, read_json, save_flag_registry, save_state
+from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 
 from tests.conftest import make_args_factory
 
@@ -51,7 +51,7 @@ def _make_plan_fixture(
     # ~/.config/megaplan/config.json doesn't leak into the test and drive
     # the critique handler down the adaptive-evaluator path that the mock
     # worker doesn't implement. See docs/critique.md.
-    import megaplan._core.io as _io_module
+    import arnold.pipelines.megaplan._core.io as _io_module
 
     def _config_dir(home: Path | None = None) -> Path:
         del home

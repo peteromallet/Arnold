@@ -21,7 +21,7 @@ import typing
 
 import pytest
 
-from megaplan._core.state import (
+from arnold.pipelines.megaplan._core.state import (
     PlanStateWriteMode,
     RestorableBoundaryViolation,
     _STATE_VERSIONS_DIRNAME,
@@ -194,7 +194,7 @@ def test_snapshot_and_restore_round_trip(plan_dir):
 
 def test_restore_missing_snapshot_raises(plan_dir):
     write_plan_state(plan_dir, mode="replace", state=_initial_state())
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as exc_info:
         restore(plan_dir, "deadbeef" * 4)
@@ -216,7 +216,7 @@ def test_snapshot_uses_plan_state_lock(plan_dir, tmp_path):
 
 def test_restorable_boundary_no_op_default():
     # no substrate pinned, no fanout active -> entering is fine
-    from megaplan.drivers import reset_substrate
+    from arnold.pipelines.megaplan.drivers import reset_substrate
 
     reset_substrate()
     with restorable_boundary("op_a"):
@@ -224,7 +224,7 @@ def test_restorable_boundary_no_op_default():
 
 
 def test_restorable_boundary_raises_under_subprocess_isolated(monkeypatch):
-    import megaplan.drivers as drivers
+    import arnold.pipelines.megaplan.drivers as drivers
 
     # bypass select_driver's flag gate by pinning the substrate directly
     drivers.reset_substrate()
@@ -240,8 +240,8 @@ def test_restorable_boundary_raises_under_subprocess_isolated(monkeypatch):
 
 
 def test_restorable_boundary_raises_under_active_fanout():
-    from megaplan._pipeline.envelope import _fanout_active_ctx
-    from megaplan.drivers import reset_substrate
+    from arnold.pipelines.megaplan._pipeline.envelope import _fanout_active_ctx
+    from arnold.pipelines.megaplan.drivers import reset_substrate
 
     reset_substrate()
     token = _fanout_active_ctx.set(True)
@@ -256,7 +256,7 @@ def test_restorable_boundary_raises_under_active_fanout():
 
 
 def test_restorable_boundary_in_process_substrate_ok(monkeypatch):
-    import megaplan.drivers as drivers
+    import arnold.pipelines.megaplan.drivers as drivers
 
     drivers.reset_substrate()
     monkeypatch.setattr(drivers, "_current_substrate", "in_process")
@@ -272,7 +272,7 @@ def test_restorable_boundary_check_precedes_body():
     the protected body runs. This pins the ordering invariant: the
     Governor's BudgetExceeded (raised inside the body) can only fire if
     the boundary check passed first."""
-    import megaplan.drivers as drivers
+    import arnold.pipelines.megaplan.drivers as drivers
 
     drivers._current_substrate = "subprocess_isolated"
     body_ran = False

@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan.cli as cli_module
-import megaplan._core.io as io_module
-import megaplan.profiles as profiles_module
-from megaplan._core import get_effective
-from megaplan.profiles import DEFAULT_AGENT_ROUTING
-from megaplan.types import CliError, DEFAULTS
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.cli as cli_module
+import arnold.pipelines.megaplan._core.io as io_module
+import arnold.pipelines.megaplan.profiles as profiles_module
+from arnold.pipelines.megaplan._core import get_effective
+from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING
+from arnold.pipelines.megaplan.types import CliError, DEFAULTS
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def test_max_critique_concurrency_default_covers_full_core_checks(
     # (see ticket 01KS03H13JWMVSED6V4584P1P3). Lock the default at the core
     # check count so a regression here can't quietly bring back the 25-min
     # critique grind.
-    from megaplan.audits.robustness import checks_for_robustness
+    from arnold.pipelines.megaplan.audits.robustness import checks_for_robustness
 
     full_core_checks = checks_for_robustness("full")
     default = get_effective("orchestration", "max_critique_concurrency")
@@ -217,7 +217,7 @@ def test_config_set_orchestration_mode_invalid(isolated_config_dir: Path) -> Non
 
 
 def test_build_parser_init_flags_are_tristate() -> None:
-    from megaplan.cli import build_parser
+    from arnold.pipelines.megaplan.cli import build_parser
 
     parser = build_parser()
 
@@ -380,7 +380,7 @@ def test_handle_config_use_profile_unknown_profile_raises(
 
 def test_config_accepts_shannon_as_agent() -> None:
     """Config agent overrides accept 'shannon'."""
-    from megaplan.profiles import KNOWN_AGENTS
+    from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
 
 

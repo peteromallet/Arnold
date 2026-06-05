@@ -10,18 +10,19 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan.cli
-import megaplan.execute.core
-import megaplan.handlers
-import megaplan.handlers.critique as critique_handler
-import megaplan.workers
-from megaplan._core import WORKFLOW, _ROBUSTNESS_OVERRIDES, clear_active_step, save_state, set_active_step, workflow_next
-from megaplan.orchestration.evaluation import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
-from megaplan.types import CliError
-from megaplan.planning.state import STATE_PREPPED
-from megaplan.workers import WorkerResult, _build_mock_payload
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan.cli as megaplan_cli
+import arnold.pipelines.megaplan.execute.core as megaplan_execute_core
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+import arnold.pipelines.megaplan.handlers.critique as critique_handler
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan._core import WORKFLOW, _ROBUSTNESS_OVERRIDES, clear_active_step, save_state, set_active_step, workflow_next
+from arnold.pipelines.megaplan.orchestration.evaluation import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.planning.state import STATE_PREPPED
+from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import (
     PlanFixture,
     _make_plan_fixture_with_robustness,
@@ -689,7 +690,7 @@ def test_emit_phase_notice_ignores_non_phase_commands(caplog: pytest.LogCaptureF
 
 
 def test_workflow_mock_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from megaplan.handlers import handle_prep
+    from arnold.pipelines.megaplan.handlers import handle_prep
 
     plan_fixture = _make_plan_fixture_with_robustness(tmp_path, monkeypatch, robustness="robust")
     make_args = plan_fixture.make_args

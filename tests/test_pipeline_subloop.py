@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     Pipeline,
     Stage,
@@ -17,8 +17,8 @@ from megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.subloop import SubloopStep
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
 
 
 @dataclass
@@ -61,7 +61,7 @@ def test_subloop_runs_child_and_emits_verdict(tmp_path: Path) -> None:
         stages={
             "tiebreaker": Stage(name="tiebreaker", step=subloop,
                                 edges=(
-                                    Edge(label="proceed", target="done", kind="gate", recommendation="proceed"),
+                                    Edge(label="proceed", target="done", kind="decision"),
                                 )),
             "done": Stage(name="done", step=_ChildLeaf(),
                           edges=(Edge(label="halt", target="halt"),)),
@@ -96,8 +96,8 @@ def test_subloop_promotion_callable_decides_recommendation(tmp_path: Path) -> No
         stages={
             "tb": Stage(name="tb", step=subloop,
                         edges=(
-                            Edge(label="iterate", target="iter_done", kind="gate", recommendation="iterate"),
-                            Edge(label="proceed", target="proceed_done", kind="gate", recommendation="proceed"),
+                            Edge(label="iterate", target="iter_done", kind="decision"),
+                            Edge(label="proceed", target="proceed_done", kind="decision"),
                         )),
             "iter_done": Stage(name="iter_done", step=_ChildLeaf(),
                                edges=(Edge(label="halt", target="halt"),)),

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.discovery.manifest import (
+from arnold.pipelines.megaplan._pipeline.discovery.manifest import (
     CURRENT_MAJOR,
     Manifest,
     ManifestError,

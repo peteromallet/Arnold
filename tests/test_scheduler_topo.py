@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._core.scheduler.topo import schedule_batches
+from arnold.pipelines.megaplan._core.scheduler.topo import schedule_batches
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ class TestScheduleBatchesSanity:
     def test_no_import_leak_from_execute_or_handlers(self):
         """The topo module MUST NOT import from megaplan.execute or
         megaplan.handlers."""
-        import megaplan._core.scheduler.topo as mod
+        import arnold.pipelines.megaplan._core.scheduler.topo as mod
 
         source = open(mod.__file__).read()
         assert "megaplan.execute" not in source, (

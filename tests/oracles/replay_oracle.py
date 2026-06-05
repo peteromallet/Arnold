@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-import megaplan
+import arnold.pipelines.megaplan as megaplan
 from tests.conftest import PlanFixture, load_state
 
 
@@ -53,7 +53,7 @@ def capture_events(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         events.append(event)
         return event
 
-    monkeypatch.setattr("megaplan.observability.events.emit", _emit)
+    monkeypatch.setattr("arnold.pipelines.megaplan.observability.events.emit", _emit)
     return events
 
 

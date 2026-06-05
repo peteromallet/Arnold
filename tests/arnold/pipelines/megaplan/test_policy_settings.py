@@ -16,7 +16,7 @@ from arnold.pipelines.megaplan.policy_settings import (
     SETTING_SPECS,
     describe_effective_policy_settings,
 )
-from megaplan.execute._binding.tier import select_batch_tier
+from arnold.pipelines.megaplan.execute._binding.tier import select_batch_tier
 
 
 def _by_key(entries: list[dict[str, object]]) -> dict[str, dict[str, object]]:

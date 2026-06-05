@@ -6,19 +6,21 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan._pipeline.behavioral_manifest import (
+from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
     RuntimeTopologyProjectionError,
     capsule_definition_identity_projection,
     runtime_topology_projection_for_pipeline,
 )
-from megaplan._pipeline import registry
-from megaplan._pipeline.discovery.manifest import Manifest, read_manifest
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.types import ParallelStage, PortRef, Stage, StepContext
+from arnold.pipelines.megaplan._pipeline import registry
+from arnold.pipelines.megaplan._pipeline.discovery.manifest import Manifest, read_manifest
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.types import ParallelStage, PortRef, Stage, StepContext
 
 
 PIPELINE_INIT = (
     Path(__file__).resolve().parents[2]
+    / "arnold"
+    / "pipelines"
     / "megaplan"
     / "pipelines"
     / "select-tournament"
@@ -40,7 +42,7 @@ def test_select_tournament_manifest_first_scan_defers_import() -> None:
     with patch.dict(
         "os.environ", {"MEGAPLAN_M6_MANIFEST_DISCOVERY": "1"}, clear=False
     ), patch.object(
-        registry, "_get_scan_roots", lambda: [(scan_root, "megaplan.pipelines")]
+        registry, "_get_scan_roots", lambda: [(scan_root, "arnold.pipelines.megaplan.pipelines")]
     ), patch.object(registry, "_load_module_from_path") as load_spy:
         dispositions = registry.scan_python_pipelines()
 
@@ -57,7 +59,7 @@ def test_select_tournament_declares_ports_for_every_cross_stage_boundary(
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
     pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
 
     assert pipeline.binding_map == {
@@ -85,7 +87,7 @@ def test_select_tournament_runs_through_declared_ports(monkeypatch, tmp_path) ->
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
     pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
     plan_dir = tmp_path / "select-tournament"
     ctx = StepContext(plan_dir=plan_dir, state={}, profile={}, mode="select")
@@ -107,7 +109,7 @@ def test_select_tournament_runtime_topology_projection_is_stable(monkeypatch) ->
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
     first_pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
     second_pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
 
@@ -136,7 +138,7 @@ def test_select_tournament_runtime_topology_hash_changes_for_topology_fixture(
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     import importlib
 
-    module = importlib.import_module("megaplan.pipelines.select-tournament")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
     four_candidates = module.build_pipeline(candidates=("a", "b", "c", "d"))
     five_candidates = module.build_pipeline(candidates=("a", "b", "c", "d", "e"))
 

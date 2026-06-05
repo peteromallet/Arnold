@@ -1,4 +1,4 @@
-"""Compatibility checks for canonical orchestration modules and legacy facades."""
+"""Canonical orchestration module import checks."""
 
 from __future__ import annotations
 
@@ -7,172 +7,149 @@ import importlib
 import pytest
 
 
-# ── module identity and symbol re-export ─────────────────────────────────
+# ── canonical symbol exports ─────────────────────────────────────────────
 
 @pytest.mark.parametrize(
-    ("legacy_module", "canonical_module", "symbol"),
+    ("canonical_module", "symbol"),
     [
         # phase_result / recovery / progress (T4)
         (
-            "megaplan.orchestration.phase_result",
             "arnold.pipelines.megaplan.orchestration.phase_result",
             "ExitKind",
         ),
         (
-            "megaplan.orchestration.phase_result",
             "arnold.pipelines.megaplan.orchestration.phase_result",
             "PhaseResult",
         ),
         (
-            "megaplan.orchestration.phase_result_classify",
             "arnold.pipelines.megaplan.orchestration.phase_result_classify",
             "classify_external_error_chain",
         ),
         (
-            "megaplan.orchestration.recovery_policy",
             "arnold.pipelines.megaplan.orchestration.recovery_policy",
             "RecoveryPolicy",
         ),
         # gate checks / signals / evaluation / iteration (T5)
         (
-            "megaplan.orchestration.gate_checks",
             "arnold.pipelines.megaplan.orchestration.gate_checks",
             "run_gate_checks",
         ),
         (
-            "megaplan.orchestration.gate_checks",
             "arnold.pipelines.megaplan.orchestration.gate_checks",
             "build_gate_artifact",
         ),
         (
-            "megaplan.orchestration.gate_signals",
             "arnold.pipelines.megaplan.orchestration.gate_signals",
             "build_gate_signals",
         ),
         (
-            "megaplan.orchestration.gate_signals",
             "arnold.pipelines.megaplan.orchestration.gate_signals",
             "flag_weight",
         ),
         (
-            "megaplan.orchestration.execution_evidence",
             "arnold.pipelines.megaplan.orchestration.execution_evidence",
             "validate_execution_evidence",
         ),
         (
-            "megaplan.orchestration.rubber_stamp",
             "arnold.pipelines.megaplan.orchestration.rubber_stamp",
             "is_rubber_stamp",
         ),
         (
-            "megaplan.orchestration.plan_structure",
             "arnold.pipelines.megaplan.orchestration.plan_structure",
             "validate_plan_structure",
         ),
         (
-            "megaplan.orchestration.iteration_pressure",
             "arnold.pipelines.megaplan.orchestration.iteration_pressure",
             "compute_iteration_pressure",
         ),
         (
-            "megaplan.orchestration.critique_status",
             "arnold.pipelines.megaplan.orchestration.critique_status",
             "annotate_unverifiable_checks",
         ),
         # verifiability / feedback / parallel_critique / tiebreaker (T7)
         (
-            "megaplan.orchestration.verifiability",
             "arnold.pipelines.megaplan.orchestration.verifiability",
             "audit_criteria",
         ),
         (
-            "megaplan.orchestration.feedback",
             "arnold.pipelines.megaplan.orchestration.feedback",
             "parse_feedback",
         ),
         (
-            "megaplan.orchestration.parallel_critique",
             "arnold.pipelines.megaplan.orchestration.parallel_critique",
             "run_parallel_critique",
         ),
         (
-            "megaplan.orchestration.tiebreaker",
             "arnold.pipelines.megaplan.orchestration.tiebreaker",
             "run_tiebreaker_cli",
         ),
         # prep_research (T7)
         (
-            "megaplan.orchestration.prep_research",
             "arnold.pipelines.megaplan.orchestration.prep_research",
             "run_prep_orchestration",
         ),
         # evaluation facade with subprocess monkeypatch compatibility (T5)
         (
-            "megaplan.orchestration.evaluation",
             "arnold.pipelines.megaplan.orchestration.execution_evidence",
             "validate_execution_evidence",
         ),
     ],
 )
-def test_legacy_orchestration_symbols_reexport_canonical_symbols(
-    legacy_module: str,
+def test_canonical_orchestration_symbols_exist(
     canonical_module: str,
     symbol: str,
 ) -> None:
-    """Legacy megaplan.orchestration.* module attributes resolve to canonical objects."""
-    legacy = importlib.import_module(legacy_module)
+    """Canonical arnold.pipelines.megaplan.orchestration.* module attributes resolve."""
     canonical = importlib.import_module(canonical_module)
-    assert getattr(legacy, symbol) is getattr(canonical, symbol), (
-        f"{legacy_module}.{symbol} is not {canonical_module}.{symbol}"
-    )
+    assert hasattr(canonical, symbol)
 
 
 # ── evaluation facade special-case ──────────────────────────────────────
 
 def test_evaluation_facade_reexports_gate_checks_symbols() -> None:
-    """The evaluation compatibility facade re-exports gate_checks symbols."""
-    legacy = importlib.import_module("megaplan.orchestration.evaluation")
+    """The canonical evaluation module re-exports gate_checks symbols."""
+    evaluation = importlib.import_module("arnold.pipelines.megaplan.orchestration.evaluation")
     canonical = importlib.import_module(
         "arnold.pipelines.megaplan.orchestration.gate_checks"
     )
-    assert legacy.run_gate_checks is canonical.run_gate_checks
-    assert legacy.build_gate_artifact is canonical.build_gate_artifact
-    assert legacy.build_orchestrator_guidance is canonical.build_orchestrator_guidance
+    assert evaluation.run_gate_checks is canonical.run_gate_checks
+    assert evaluation.build_gate_artifact is canonical.build_gate_artifact
+    assert evaluation.build_orchestrator_guidance is canonical.build_orchestrator_guidance
 
 
 def test_evaluation_facade_reexports_gate_signals_symbols() -> None:
-    legacy = importlib.import_module("megaplan.orchestration.evaluation")
+    evaluation = importlib.import_module("arnold.pipelines.megaplan.orchestration.evaluation")
     canonical = importlib.import_module(
         "arnold.pipelines.megaplan.orchestration.gate_signals"
     )
-    assert legacy.build_gate_signals is canonical.build_gate_signals
-    assert legacy.flag_weight is canonical.flag_weight
+    assert evaluation.build_gate_signals is canonical.build_gate_signals
+    assert evaluation.flag_weight is canonical.flag_weight
 
 
 def test_evaluation_facade_reexports_plan_structure_symbols() -> None:
-    legacy = importlib.import_module("megaplan.orchestration.evaluation")
+    evaluation = importlib.import_module("arnold.pipelines.megaplan.orchestration.evaluation")
     canonical = importlib.import_module(
         "arnold.pipelines.megaplan.orchestration.plan_structure"
     )
-    assert legacy.validate_plan_structure is canonical.validate_plan_structure
-    assert legacy.parse_plan_sections is canonical.parse_plan_sections
-    assert legacy.PlanSection is canonical.PlanSection
+    assert evaluation.validate_plan_structure is canonical.validate_plan_structure
+    assert evaluation.parse_plan_sections is canonical.parse_plan_sections
+    assert evaluation.PlanSection is canonical.PlanSection
 
 
 def test_evaluation_facade_reexports_rubber_stamp() -> None:
-    legacy = importlib.import_module("megaplan.orchestration.evaluation")
+    evaluation = importlib.import_module("arnold.pipelines.megaplan.orchestration.evaluation")
     canonical = importlib.import_module(
         "arnold.pipelines.megaplan.orchestration.rubber_stamp"
     )
-    assert legacy.is_rubber_stamp is canonical.is_rubber_stamp
+    assert evaluation.is_rubber_stamp is canonical.is_rubber_stamp
 
 
 def test_evaluation_facade_preserves_subprocess_module_attribute() -> None:
-    """The evaluation facade keeps ``subprocess`` as a module attribute for monkeypatch compat."""
+    """The evaluation module keeps ``subprocess`` as a module attribute for monkeypatching."""
     import subprocess
 
-    legacy = importlib.import_module("megaplan.orchestration.evaluation")
-    assert legacy.subprocess is subprocess, (
+    evaluation = importlib.import_module("arnold.pipelines.megaplan.orchestration.evaluation")
+    assert evaluation.subprocess is subprocess, (
         "evaluation.subprocess must reference the real subprocess module"
     )
 
@@ -191,7 +168,7 @@ def test_legacy_gate_checks_monkeypatch_visible_through_legacy_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Monkeypatching megaplan.orchestration.gate_checks is visible to importers."""
-    import megaplan.orchestration.gate_checks as legacy
+    import arnold.pipelines.megaplan.orchestration.gate_checks as legacy
 
     sentinel = object()
     monkeypatch.setattr(legacy, "run_gate_checks", sentinel)
@@ -203,7 +180,7 @@ def test_legacy_phase_result_monkeypatch_visible_through_legacy_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Monkeypatching megaplan.orchestration.phase_result is visible to importers."""
-    import megaplan.orchestration.phase_result as legacy
+    import arnold.pipelines.megaplan.orchestration.phase_result as legacy
 
     sentinel = object()
     monkeypatch.setattr(legacy, "PhaseResult", sentinel)
@@ -214,7 +191,7 @@ def test_legacy_evaluation_monkeypatch_visible_through_legacy_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Monkeypatching megaplan.orchestration.evaluation is visible to importers."""
-    import megaplan.orchestration.evaluation as legacy
+    import arnold.pipelines.megaplan.orchestration.evaluation as legacy
 
     sentinel = object()
     monkeypatch.setattr(legacy, "run_gate_checks", sentinel)

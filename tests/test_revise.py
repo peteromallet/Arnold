@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
+import arnold.pipelines.megaplan as megaplan
 from tests.conftest import PlanFixture, _make_plan_fixture_with_robustness, load_state, read_json
 
 

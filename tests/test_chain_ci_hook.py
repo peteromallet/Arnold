@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan.chain.ci_hook import (
+from arnold.pipelines.megaplan.chain.ci_hook import (
     GATE_ORDER,
     HINGE_GATE_GREEN_STAMP,
     ChainCIResult,
@@ -169,14 +169,14 @@ def test_commit_label_any_red_stamp_empty():
 def test_assert_program_md_returns_existing_file(tmp_path):
     stub = tmp_path / "PROGRAM.md"
     stub.write_text("# PROGRAM\n\n## M3\n\nstub\n\n## M3 Entry\n\n- seam: dormant\n", encoding="utf-8")
-    with patch("megaplan.chain.ci_hook._PROGRAM_MD", stub):
+    with patch("arnold.pipelines.megaplan.chain.ci_hook._PROGRAM_MD", stub):
         path = assert_program_md()
     assert path == stub
 
 
 def test_assert_program_md_recreates_when_missing(tmp_path):
     stub = tmp_path / "briefs" / "validation" / "sequencing" / "PROGRAM.md"
-    with patch("megaplan.chain.ci_hook._PROGRAM_MD", stub):
+    with patch("arnold.pipelines.megaplan.chain.ci_hook._PROGRAM_MD", stub):
         path = assert_program_md()
     assert path.exists()
     content = path.read_text(encoding="utf-8")
@@ -187,7 +187,7 @@ def test_assert_program_md_recreates_when_missing(tmp_path):
 def test_assert_program_md_appends_m3_entry_when_missing(tmp_path):
     stub = tmp_path / "PROGRAM.md"
     stub.write_text("# PROGRAM\n\n## M3\n\nstub.\n", encoding="utf-8")
-    with patch("megaplan.chain.ci_hook._PROGRAM_MD", stub):
+    with patch("arnold.pipelines.megaplan.chain.ci_hook._PROGRAM_MD", stub):
         assert_program_md()
     content = stub.read_text(encoding="utf-8")
     assert "## M3 Entry" in content
@@ -197,7 +197,7 @@ def test_assert_program_md_appends_m3_entry_when_missing(tmp_path):
 def test_assert_program_md_idempotent(tmp_path):
     stub = tmp_path / "PROGRAM.md"
     stub.write_text("# PROGRAM\n\n## M3\n\nstub.\n", encoding="utf-8")
-    with patch("megaplan.chain.ci_hook._PROGRAM_MD", stub):
+    with patch("arnold.pipelines.megaplan.chain.ci_hook._PROGRAM_MD", stub):
         assert_program_md()
         assert_program_md()
     content = stub.read_text(encoding="utf-8")
@@ -247,6 +247,6 @@ def test_failures_property_empty_when_all_green():
     "gate_supervisor_purity",
 ])
 def test_gate_callable_importable(gate_name):
-    mod = importlib.import_module("megaplan.chain.ci_hook")
+    mod = importlib.import_module("arnold.pipelines.megaplan.chain.ci_hook")
     fn = getattr(mod, gate_name, None)
     assert callable(fn), f"{gate_name} not importable or not callable"

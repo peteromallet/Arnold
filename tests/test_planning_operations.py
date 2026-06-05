@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Any
 
 from arnold.runtime.operations import OperationKind, OperationRequest
-from megaplan.control_interface import ControlTransitionRequest, RunStateView
-from megaplan.planning.operations import profile_validate_operation, resume_phase_args
-from megaplan.pipelines.planning import operation_registry, override_catalog
+from arnold.pipelines.megaplan.control_interface import ControlTransitionRequest, RunStateView
+from arnold.pipelines.megaplan.planning.operations import profile_validate_operation, resume_phase_args
+from arnold.pipelines.megaplan.pipelines.planning import operation_registry, override_catalog
 
 
 def test_planning_operation_registry_supports_all_six_operation_kinds() -> None:
@@ -54,7 +54,7 @@ def test_run_phase_dispatch_returns_exit_code_stdout_and_stderr(monkeypatch) -> 
         return 0, "phase stdout", "phase stderr"
 
     monkeypatch.setattr(
-        "megaplan.planning.operations._pipeline",
+        "arnold.pipelines.megaplan.planning.operations._pipeline",
         lambda: type("P", (), {"run_phase": staticmethod(fake_run_phase)})(),
     )
 
@@ -95,7 +95,7 @@ def test_run_phase_dispatch_ignores_unknown_carrier_keys(monkeypatch) -> None:
         return 0, "", ""
 
     monkeypatch.setattr(
-        "megaplan.planning.operations._pipeline",
+        "arnold.pipelines.megaplan.planning.operations._pipeline",
         lambda: type("P", (), {"run_phase": staticmethod(fake_run_phase)})(),
     )
 
@@ -219,7 +219,7 @@ def test_override_apply_builds_transition_request_from_flat_payload(monkeypatch)
             return _FakeResult()
 
     monkeypatch.setattr(
-        "megaplan.planning.operations.planning_control_binding",
+        "arnold.pipelines.megaplan.planning.operations.planning_control_binding",
         lambda: _FakeBinding(),
     )
 
@@ -268,7 +268,7 @@ def test_profile_validate_reuses_existing_preflight_inputs(monkeypatch) -> None:
         captured["profile_name"] = profile_name
 
     monkeypatch.setattr(
-        "megaplan.planning.validation.preflight_or_raise",
+        "arnold.pipelines.megaplan.planning.validation.preflight_or_raise",
         fake_preflight,
     )
 
@@ -301,7 +301,7 @@ def test_profile_validate_operation_calls_observed_megaplan_preflight(monkeypatc
         captured["profile_name"] = profile_name
 
     monkeypatch.setattr(
-        "megaplan._pipeline.preflight.preflight_or_raise",
+        "arnold.pipelines.megaplan._pipeline.preflight.preflight_or_raise",
         fake_preflight,
     )
 

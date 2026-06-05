@@ -26,15 +26,16 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan._core.io as io_module
+import arnold.pipelines.megaplan.cli as megaplan_cli
 
-from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan._pipeline.planning import compile_planning_pipeline
-from megaplan._pipeline.runtime import policy_from_cli_args
-from megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.runtime import policy_from_cli_args
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 
 
 EXPECTED_PHASE_STAGES = {

@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.types import StepContext, StepResult
-from megaplan.drivers.in_process import InProcessDriver
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan.drivers.in_process import InProcessDriver
 
 
 # ---------------------------------------------------------------------------

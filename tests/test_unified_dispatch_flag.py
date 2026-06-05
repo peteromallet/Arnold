@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import pytest
 
-import megaplan._pipeline.flags as _flags
+import arnold.pipelines.megaplan._pipeline.flags as _flags
 
 
 # ---------------------------------------------------------------------------

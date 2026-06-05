@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.faults import (
+from arnold.pipelines.megaplan._pipeline.faults import (
     Fault,
     FaultIterationEntry,
     FaultRegistry,

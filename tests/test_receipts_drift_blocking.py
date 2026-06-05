@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-import megaplan
-import megaplan.execute.aggregation
-import megaplan.execute.batch
-import megaplan.execute.core
-import megaplan.workers
-from megaplan._core import compute_global_batches
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.execute.aggregation as megaplan_execute_aggregation
+import arnold.pipelines.megaplan.execute.batch as megaplan_execute_batch
+import arnold.pipelines.megaplan.execute.core as megaplan_execute_core
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan._core import compute_global_batches
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests.conftest import _make_plan_fixture_with_robustness, read_json
 
 

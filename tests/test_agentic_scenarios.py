@@ -25,8 +25,8 @@ from sisypy.runner import _load_scenario
 # Paths
 # ---------------------------------------------------------------------------
 
-SCENARIOS_DIR = Path(__file__).resolve().parent.parent / "megaplan" / "tests" / "agentic" / "scenarios"
-BRIEFS_DIR = Path(__file__).resolve().parent.parent / "megaplan" / "tests" / "agentic" / "briefs"
+SCENARIOS_DIR = Path(__file__).resolve().parent.parent / "arnold" / "pipelines" / "megaplan" / "tests" / "agentic" / "scenarios"
+BRIEFS_DIR = Path(__file__).resolve().parent.parent / "arnold" / "pipelines" / "megaplan" / "tests" / "agentic" / "briefs"
 
 EXPECTED_SCENARIOS = [
     "use_execute_simple",

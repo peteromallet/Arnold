@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan._core import (
+from arnold.pipelines.megaplan._core import (
     atomic_write_json,
     atomic_write_text,
     is_creative_mode,
@@ -13,8 +13,8 @@ from megaplan._core import (
     read_json,
     render_final_md,
 )
-from megaplan.forms.stance import validate_stance
-from megaplan.types import PlanState
+from arnold.pipelines.megaplan.forms.stance import validate_stance
+from arnold.pipelines.megaplan.types import PlanState
 
 
 # All terminal statuses an executor may report for a task. "Tracked" means
@@ -143,7 +143,7 @@ def _apply_task_update_guardrails(
         _validate_python_file_for_task(task, issues)
     for task_id in task_ids:
         task = targets_by_id.get(task_id)
-        if task is None or task.get("status") != "done":
+        if task is None or task.get("status") not in {"done", "blocked"}:
             continue
         for deviation in _task_deviation_strings(task, issues):
             matched = _is_blocking_deviation(deviation)

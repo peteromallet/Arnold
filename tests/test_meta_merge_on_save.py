@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from megaplan._core.io import atomic_write_json
-from megaplan._core.state import save_state, save_state_merge_meta
+from arnold.pipelines.megaplan._core.io import atomic_write_json
+from arnold.pipelines.megaplan._core.state import save_state, save_state_merge_meta
 
 
 def _read_state(plan_dir: Path) -> dict[str, Any]:

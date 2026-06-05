@@ -6,9 +6,9 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from .critique_status import build_unverifiable_warnings
-from megaplan.schemas import GateSignals
-from megaplan.types import FLAG_BLOCKING_STATUSES, FlagRecord, PlanState
-from megaplan._core import (
+from arnold.pipelines.megaplan.schemas import GateSignals
+from arnold.pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, FlagRecord, PlanState
+from arnold.pipelines.megaplan._core import (
     configured_robustness,
     current_iteration_artifact,
     escalated_subsystems,
@@ -116,7 +116,7 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
         previous_text = previous_plan_path.read_text(encoding="utf-8")
     plan_delta = compute_plan_delta_percent(previous_text, latest_plan_text)
     recurring = compute_recurring_critiques(plan_dir, iteration)
-    from megaplan.flags import flag_resolution_summary
+    from arnold.pipelines.megaplan.flags import flag_resolution_summary
 
     addressed_flags = [
         {

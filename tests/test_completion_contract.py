@@ -17,14 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.orchestration.completion_contract import (
+from arnold.pipelines.megaplan.orchestration.completion_contract import (
     CONTRACT_MODE_SHADOW,
     CompletionSubject,
     EvidenceStatus,
     compute_verdict,
     normalize_contract_mode,
 )
-from megaplan.orchestration.completion_io import (
+from arnold.pipelines.megaplan.orchestration.completion_io import (
     COMPLETION_VERDICT_FILENAME,
     read_completion_verdict,
     write_completion_verdict,
@@ -95,7 +95,7 @@ def test_normalize_contract_mode_defaults_to_shadow():
 def test_healthy_plan_is_accepted_in_shadow(healthy_plan, monkeypatch):
     plan_dir, project_dir, state = healthy_plan
     # Mock run_suite to return a passed result so the suite doesn't actually run.
-    from megaplan.orchestration.suite_runner import SuiteRunResult
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
     fake_result = SuiteRunResult(
         run_id="fake-run-id",
         phase="verification",
@@ -112,7 +112,7 @@ def test_healthy_plan_is_accepted_in_shadow(healthy_plan, monkeypatch):
         collections_parse_ok=True,
     )
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: fake_result,
     )
     verdict = compute_verdict(
@@ -132,9 +132,9 @@ def test_healthy_plan_is_accepted_in_shadow(healthy_plan, monkeypatch):
 
 
 def test_verdict_artifact_is_written(healthy_plan, tmp_path, monkeypatch):
-    from megaplan.orchestration.suite_runner import SuiteRunResult
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: SuiteRunResult(
             run_id="r", phase="verification", command="pytest", duration=0.1,
             collected=1, collected_ids=["t::x"], failures=[], passes=["t::x"],
@@ -160,9 +160,9 @@ def test_verdict_artifact_is_written(healthy_plan, tmp_path, monkeypatch):
 
 def test_flags_abandoned_zero_diff(tmp_path, monkeypatch):
     """Planned then quit: no diff, no batch, no waiver → flagged unsatisfied."""
-    from megaplan.orchestration.suite_runner import SuiteRunResult
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: SuiteRunResult(
             run_id="r", phase="verification", command="pytest", duration=0.1,
             collected=0, collected_ids=[], failures=[], passes=[],
@@ -203,7 +203,7 @@ def test_flags_red_suite(healthy_plan, monkeypatch):
     """A verification suite with failures is flagged in the verdict."""
     plan_dir, project_dir, state = healthy_plan
     # Mock run_suite to return a failed result.
-    from megaplan.orchestration.suite_runner import SuiteRunResult
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
     fake_result = SuiteRunResult(
         run_id="fake-run-id",
         phase="verification",
@@ -224,7 +224,7 @@ def test_flags_red_suite(healthy_plan, monkeypatch):
         collections_parse_ok=True,
     )
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: fake_result,
     )
     verdict = compute_verdict(
@@ -241,9 +241,9 @@ def test_flags_red_suite(healthy_plan, monkeypatch):
 
 
 def test_typed_noop_waiver_excuses_missing_diff(tmp_path, monkeypatch):
-    from megaplan.orchestration.suite_runner import SuiteRunResult
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: SuiteRunResult(
             run_id="r", phase="verification", command="pytest", duration=0.1,
             collected=0, collected_ids=[], failures=[], passes=[],
@@ -280,7 +280,7 @@ def test_typed_noop_waiver_excuses_missing_diff(tmp_path, monkeypatch):
 
 def test_compute_verdict_is_fail_open_on_provider_crash(tmp_path, monkeypatch):
     """A provider that raises degrades to `unknown`, never aborts the verdict."""
-    from megaplan.orchestration import completion_contract as cc
+    from arnold.pipelines.megaplan.orchestration import completion_contract as cc
 
     class _Boom:
         kind = "boom"
@@ -332,10 +332,10 @@ def _make_done_plan_dir(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def test_auto_hook_writes_verdict_and_logs(tmp_path, monkeypatch):
-    from megaplan import auto
-    from megaplan.orchestration.suite_runner import SuiteRunResult
+    from arnold.pipelines.megaplan import auto 
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: SuiteRunResult(
             run_id="r", phase="verification", command="pytest", duration=0.1,
             collected=1, collected_ids=["t::x"], failures=[], passes=["t::x"],
@@ -355,11 +355,11 @@ def test_auto_hook_writes_verdict_and_logs(tmp_path, monkeypatch):
 
 
 def test_auto_hook_off_mode_writes_verdict_without_blocking(tmp_path, monkeypatch):
-    from megaplan import auto
-    from megaplan.orchestration.suite_runner import SuiteRunResult
+    from arnold.pipelines.megaplan import auto 
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: SuiteRunResult(
             run_id="r", phase="verification", command="pytest", duration=0.1,
             collected=1, collected_ids=["t::x"], failures=["t::x"], passes=[],
@@ -381,10 +381,10 @@ def test_auto_hook_off_mode_writes_verdict_without_blocking(tmp_path, monkeypatc
 
 def test_auto_hook_is_fail_open(tmp_path, monkeypatch):
     """A broken plan dir (no state.json) must not raise."""
-    from megaplan import auto
-    from megaplan.orchestration.suite_runner import SuiteRunResult
+    from arnold.pipelines.megaplan import auto 
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: SuiteRunResult(
             run_id="r", phase="verification", command="pytest", duration=0.1,
             collected=0, collected_ids=[], failures=[], passes=[],
@@ -400,7 +400,7 @@ def test_auto_hook_is_fail_open(tmp_path, monkeypatch):
 
 
 def test_chain_state_roundtrips_completion_mode():
-    from megaplan.chain import ChainState
+    from arnold.pipelines.megaplan.chain import ChainState
 
     cs = ChainState(completion_contract_mode="warn")
     restored = ChainState.from_dict(cs.to_dict())

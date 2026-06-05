@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from megaplan._pipeline.contracts import BindResult, RepairGradient, bind
-from megaplan._pipeline.judge_manifest import (
+from arnold.pipelines.megaplan._pipeline.contracts import BindResult, RepairGradient, bind
+from arnold.pipelines.megaplan._pipeline.judge_manifest import (
     EVALUAND_RECORD_CONTENT_TYPE,
     JudgeManifestPort,
     make_judge_manifest,
 )
-from megaplan._pipeline.judge_manifest_discovery import (
+from arnold.pipelines.megaplan._pipeline.judge_manifest_discovery import (
     manifest_to_binder_ports,
     validate_manifest_bindings,
 )
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     ParallelStage,
     Pipeline,
@@ -101,14 +101,14 @@ def test_bind_schema_mismatch_emits_repair():
     # this pure binder (schemas are encoded into content types in the
     # ContractLedger), but the bind() contract enumerates "schema_mismatch"
     # as a distinct kind for downstream callers that want to remap it.
-    from megaplan._pipeline.contracts import RepairGradient as RG
+    from arnold.pipelines.megaplan._pipeline.contracts import RepairGradient as RG
 
     rg = RG(error_kind="schema_mismatch", wanted=None, candidates=())
     assert rg.error_kind == "schema_mismatch"
 
 
 def test_bind_cardinality_mismatch_repair_kind():
-    from megaplan._pipeline.contracts import RepairGradient as RG
+    from arnold.pipelines.megaplan._pipeline.contracts import RepairGradient as RG
 
     rg = RG(error_kind="cardinality_mismatch", wanted=None, candidates=())
     assert rg.error_kind == "cardinality_mismatch"

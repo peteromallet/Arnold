@@ -12,7 +12,7 @@ These tests pin the StateDelta+apply_delta substrate that
 
 import pytest
 
-from megaplan._pipeline.types import StateDelta, StateDeltaConflict, apply_delta
+from arnold.pipelines.megaplan._pipeline.types import StateDelta, StateDeltaConflict, apply_delta
 
 
 def test_replace_lww_loses_prior_value():

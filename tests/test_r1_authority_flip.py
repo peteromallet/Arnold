@@ -20,9 +20,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.io import atomic_write_json, read_plan_state_cached
-from megaplan.observability.events import EventKind, emit_state_wal
-from megaplan.observability.fold import rebuild_state_from_wal, read_events
+from arnold.pipelines.megaplan._core.io import atomic_write_json, read_plan_state_cached
+from arnold.pipelines.megaplan.observability.events import EventKind, emit_state_wal
+from arnold.pipelines.megaplan.observability.fold import rebuild_state_from_wal, read_events
 
 
 def _read_wal_kinds(plan_dir: Path) -> list[str]:
@@ -118,5 +118,5 @@ def test_unknown_mode_raises(tmp_path):
 
 
 def test_state_cache_drift_registered_in_all_event_kinds():
-    from megaplan.observability.events import _ALL_EVENT_KINDS
+    from arnold.pipelines.megaplan.observability.events import _ALL_EVENT_KINDS
     assert EventKind.STATE_CACHE_DRIFT in _ALL_EVENT_KINDS

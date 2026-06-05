@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.receipt import ReceiptDecorator
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.receipt import ReceiptDecorator
+from arnold.pipelines.megaplan._pipeline.types import (
     PipelineVerdict,
     StepContext,
     StepResult,

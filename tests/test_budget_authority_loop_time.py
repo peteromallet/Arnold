@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.loop import engine as loop_engine
-from megaplan.runtime import budget_authority as ba
+from arnold.pipelines.megaplan.loop import engine as loop_engine
+from arnold.pipelines.megaplan.runtime import budget_authority as ba
 
 
 @pytest.fixture(autouse=True)

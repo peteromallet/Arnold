@@ -13,9 +13,9 @@ from argparse import Namespace
 from pathlib import Path
 from typing import Any, Mapping
 
-from megaplan._core.state import write_plan_state
+from arnold.pipelines.megaplan._core.state import write_plan_state
 from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
-from megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 
 
 def _fake_handler(root: Path, args: Namespace) -> Mapping[str, Any]:

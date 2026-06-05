@@ -14,7 +14,7 @@ from arnold.pipelines.megaplan.stages.tiebreaker import (
     _build_tiebreaker_child_pipeline,
     _promote_from_child_state,
 )
-from megaplan._pipeline.types import Pipeline, Step
+from arnold.pipelines.megaplan._pipeline.types import Pipeline, Step
 
 
 def test_tiebreaker_step_satisfies_step_protocol() -> None:
@@ -47,7 +47,7 @@ def test_tiebreaker_is_one_node_not_two() -> None:
     # When wired into a parent pipeline, parent.stages["tiebreaker"] is
     # a single Stage. The two child stages live inside child_pipeline,
     # not on the parent graph.
-    from megaplan._pipeline.subloop import SubloopStep
+    from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
     subloop = SubloopStep(
         name="tiebreaker",
         child_pipeline=_build_tiebreaker_child_pipeline(),

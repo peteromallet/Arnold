@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import sys
 
-import megaplan.types as types
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan.types as types
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 EXPECTED_RUNTIME_ALL = {
@@ -46,7 +46,7 @@ BANNED_IMPORT_PREFIXES = (
 
 
 def test_runtime_public_surface_is_exact_and_identity_preserving() -> None:
-    import megaplan.agent_runtime as runtime
+    import arnold.pipelines.megaplan.agent_runtime as runtime
 
     assert set(runtime.__all__) == EXPECTED_RUNTIME_ALL
     assert LOWER_LEVEL_ADAPTER_NAMES.isdisjoint(runtime.__all__)
@@ -64,7 +64,7 @@ def test_runtime_import_keeps_banned_layers_out(monkeypatch) -> None:
         elif name.startswith(BANNED_IMPORT_PREFIXES):
             monkeypatch.delitem(sys.modules, name, raising=False)
 
-    import megaplan.agent_runtime  # noqa: F401
+    import arnold.pipelines.megaplan.agent_runtime as megaplan_agent_runtime # noqa: F401
 
     imported_banned = [
         name for name in sys.modules if name.startswith(BANNED_IMPORT_PREFIXES)
@@ -73,14 +73,14 @@ def test_runtime_import_keeps_banned_layers_out(monkeypatch) -> None:
 
 
 def test_agent_result_has_no_worker_conversion_methods() -> None:
-    from megaplan.agent_runtime import AgentResult
+    from arnold.pipelines.megaplan.agent_runtime import AgentResult
 
     assert not hasattr(AgentResult, "from_worker_result")
     assert not hasattr(AgentResult, "to_worker_result")
 
 
 def test_worker_result_round_trips_agent_result_losslessly() -> None:
-    from megaplan.agent_runtime import AgentResult
+    from arnold.pipelines.megaplan.agent_runtime import AgentResult
 
     worker = WorkerResult(
         payload={"ok": True, "nested": {"value": 1}},
@@ -116,7 +116,7 @@ def test_worker_result_round_trips_agent_result_losslessly() -> None:
 
 
 def test_agent_request_preserves_resolved_mode_and_metadata() -> None:
-    from megaplan.agent_runtime import AgentRequest, AgentSpec, ResultProvenance
+    from arnold.pipelines.megaplan.agent_runtime import AgentRequest, AgentSpec, ResultProvenance
 
     spec = AgentSpec("codex", model="gpt-5.5", effort="high")
     provenance = ResultProvenance(
@@ -158,9 +158,9 @@ def test_agent_request_preserves_resolved_mode_and_metadata() -> None:
 
 
 def test_adapter_protocols_are_structural_and_split_by_export_level() -> None:
-    import megaplan.agent_runtime as runtime
-    from megaplan.agent_runtime import adapters
-    from megaplan.agent_runtime.contracts import AgentResult
+    import arnold.pipelines.megaplan.agent_runtime as runtime
+    from arnold.pipelines.megaplan.agent_runtime import adapters
+    from arnold.pipelines.megaplan.agent_runtime.contracts import AgentResult
 
     class FakeDispatcher:
         def dispatch(self, request: runtime.AgentRequest) -> runtime.AgentResult:

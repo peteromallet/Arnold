@@ -5,11 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import PlanState
-from megaplan._core import is_prose_mode
-from megaplan.loop.git import _collect_git_status_paths_with_nested_repos, _normalize_repo_path
+from arnold.pipelines.megaplan.types import PlanState
+from arnold.pipelines.megaplan._core import is_prose_mode
+from arnold.pipelines.megaplan.loop.git import _collect_git_status_paths_with_nested_repos, _normalize_repo_path
 
 from .rubber_stamp import _is_perfunctory_ack, is_rubber_stamp
+
+
+def _is_runtime_artifact_path(path: str) -> bool:
+    normalized = path.strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized == ".megaplan" or normalized.startswith(".megaplan/")
 
 
 def validate_execution_evidence(
@@ -105,7 +112,9 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
             _normalize_repo_path(path, project_dir)
             for task in finalize_data.get("tasks", [])
             for path in task.get("files_changed", [])
-            if isinstance(path, str) and path.strip()
+            if isinstance(path, str)
+            and path.strip()
+            and not _is_runtime_artifact_path(_normalize_repo_path(path, project_dir))
         }
     )
 
@@ -136,7 +145,9 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
             "reason": status_error,
         }
 
-    files_in_diff = sorted(files_in_diff_set)
+    files_in_diff = sorted(
+        path for path in files_in_diff_set if not _is_runtime_artifact_path(path)
+    )
     claimed_set = set(files_claimed)
     diff_set = set(files_in_diff)
 
@@ -202,7 +213,8 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
             files = task.get("files_changed") or []
             commands = task.get("commands_run") or []
             if not files and not commands:
-                hollow_done_tasks.append(task_id)
+                if not notes_text or is_rubber_stamp(notes, strict=True):
+                    hollow_done_tasks.append(task_id)
                 continue
             if notes_text and is_rubber_stamp(notes, strict=True):
                 findings.append(

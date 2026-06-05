@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan.handlers
-from megaplan._core import load_plan
-from megaplan.workers import WorkerResult, _build_mock_payload
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+from arnold.pipelines.megaplan._core import load_plan
+from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import PlanFixture, read_json
 from tests.test_handle_review_robustness import (
     _advance_to_executed,

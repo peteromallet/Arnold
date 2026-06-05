@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.control_interface import (
+from arnold.pipelines.megaplan.control_interface import (
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
     CONTROL_TARGET_RECOVER_FROM_STUCK,
@@ -16,16 +16,16 @@ from megaplan.control_interface import (
     ControlTransitionResult,
     RunStateView,
 )
-from megaplan.run_outcome import RunOutcome
-from megaplan.supervisor.ladder import (
+from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.pipelines.megaplan.supervisor.ladder import (
     LadderAction,
     SupervisorLadderPolicy,
     apply_ladder,
     bump_one_tier,
     select_neutral_target,
 )
-from megaplan.supervisor.model import RunNode, SupervisorState, SupervisorVariantKind
-from megaplan.supervisor.state import load_supervisor_state
+from arnold.pipelines.megaplan.supervisor.model import RunNode, SupervisorState, SupervisorVariantKind
+from arnold.pipelines.megaplan.supervisor.state import load_supervisor_state
 
 
 class FakeBinding:
@@ -256,7 +256,7 @@ def test_blocked_outcome_selects_recovery_target_and_threads_plan_dir(
             reason=f"applied:{transition.target_id}",
         )
 
-    monkeypatch.setattr("megaplan.supervisor.ladder.apply_transition", _fake_apply_transition)
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.ladder.apply_transition", _fake_apply_transition)
 
     decision = apply_ladder(
         root=tmp_path,

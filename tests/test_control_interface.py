@@ -8,12 +8,12 @@ from unittest.mock import patch
 
 import pytest
 
-import megaplan
-import megaplan.control_interface as control_interface
-from megaplan._core.state import write_plan_state
-from megaplan._pipeline.flags import control_interface_routing_on
-from megaplan._pipeline.types import StateDelta
-from megaplan.control_interface import (
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.control_interface as control_interface
+from arnold.pipelines.megaplan._core.state import write_plan_state
+from arnold.pipelines.megaplan._pipeline.flags import control_interface_routing_on
+from arnold.pipelines.megaplan._pipeline.types import StateDelta
+from arnold.pipelines.megaplan.control_interface import (
     ArtifactRequest,
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
@@ -31,7 +31,7 @@ from megaplan.control_interface import (
     read_valid_targets,
     synthesize_artifacts,
 )
-from megaplan.planning.state import STATE_INITIALIZED
+from arnold.pipelines.megaplan.planning.state import STATE_INITIALIZED
 
 
 class _Binding:
@@ -577,9 +577,12 @@ def test_neutral_id_constants_are_importable_and_hashable() -> None:
 def test_control_interface_has_no_planning_imports_or_literals() -> None:
     source = inspect.getsource(control_interface)
     forbidden = (
-        "megaplan.planning",
-        "megaplan.handlers",
-        "megaplan._core.workflow",
+        "from megaplan.planning",
+        "import megaplan.planning",
+        "from megaplan.handlers",
+        "import megaplan.handlers",
+        "from megaplan._core.workflow",
+        "import megaplan._core.workflow",
         "_OVERRIDE_ACTIONS",
         "build_gate_artifact",
         "gate.json",

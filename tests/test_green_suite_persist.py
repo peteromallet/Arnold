@@ -19,7 +19,7 @@ from unittest import mock
 
 import pytest
 
-from megaplan.orchestration.completion_contract import (
+from arnold.pipelines.megaplan.orchestration.completion_contract import (
     CompletionContext,
     CompletionSubject,
     CompletionVerdict,
@@ -27,7 +27,7 @@ from megaplan.orchestration.completion_contract import (
     GreenSuiteProvider,
     compute_verdict,
 )
-from megaplan.orchestration.suite_runner import SuiteRunResult
+from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ def _mock_collect_deps(
     # Stub out append_suite_run (no-op).
     patches.append(
         mock.patch(
-            "megaplan.orchestration.suite_runner.append_suite_run",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
         )
     )
     # Stub out _compute_code_hash to return a stable value.
@@ -95,21 +95,21 @@ def _mock_collect_deps(
     # a fresh `from suite_runner import _compute_code_hash` each call.
     patches.append(
         mock.patch(
-            "megaplan.orchestration.suite_runner._compute_code_hash",
+            "arnold.pipelines.megaplan.orchestration.suite_runner._compute_code_hash",
             return_value="abc123",
         )
     )
     # Stub freshness_skip to return None (no cache hit).
     patches.append(
         mock.patch(
-            "megaplan.orchestration.suite_runner.freshness_skip",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.freshness_skip",
             return_value=None,
         )
     )
     # Stub out _read_finalize to return an empty dict.
     patches.append(
         mock.patch(
-            "megaplan.orchestration.completion_contract._read_finalize",
+            "arnold.pipelines.megaplan.orchestration.completion_contract._read_finalize",
             return_value={},
         )
     )
@@ -136,14 +136,14 @@ def _mock_collect_deps(
 
         patches.append(
             mock.patch(
-                "megaplan.orchestration.suite_runner.latest_run_for_phase",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.latest_run_for_phase",
                 return_value=_make_baseline_record(baseline),
             )
         )
     else:
         patches.append(
             mock.patch(
-                "megaplan.orchestration.suite_runner.latest_run_for_phase",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.latest_run_for_phase",
                 return_value=None,
             )
         )
@@ -151,7 +151,7 @@ def _mock_collect_deps(
     # Stub run_suite to return the verification result.
     patches.append(
         mock.patch(
-            "megaplan.orchestration.suite_runner.run_suite",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
             return_value=verification,
         )
     )
@@ -618,27 +618,27 @@ def test_telemetry_includes_freshness_skip_true(
         # Mock append_suite_run (no-op)
         stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.suite_runner.append_suite_run",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
             )
         )
         # Mock _compute_code_hash (at source module, see note above)
         stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.suite_runner._compute_code_hash",
+                "arnold.pipelines.megaplan.orchestration.suite_runner._compute_code_hash",
                 return_value="abc123",
             )
         )
         # Mock freshness_skip to return a cached result (cache hit!)
         stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.suite_runner.freshness_skip",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.freshness_skip",
                 return_value=cached_result,
             )
         )
         # Mock _read_finalize
         stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.completion_contract._read_finalize",
+                "arnold.pipelines.megaplan.orchestration.completion_contract._read_finalize",
                 return_value={},
             )
         )

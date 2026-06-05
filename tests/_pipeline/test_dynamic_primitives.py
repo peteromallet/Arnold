@@ -15,16 +15,16 @@ from typing import Any, Mapping
 
 import pytest
 
-import megaplan._pipeline.patterns as patterns_module
-from megaplan._pipeline.patterns import (
+import arnold.pipelines.megaplan._pipeline.patterns as patterns_module
+from arnold.pipelines.megaplan._pipeline.patterns import (
     dynamic_fanout,
     iterate_until_consensus,
     paired_round,
     panel_from_artifact,
     weighted_vote,
 )
-from megaplan._pipeline.subloop import SubloopStep
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
+from arnold.pipelines.megaplan._pipeline.types import (
     ReduceResult,
     Stage,
     StepContext,
@@ -287,7 +287,7 @@ class TestDynamicFanoutTypedPort:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
-        from megaplan._pipeline.pattern_dynamic import (
+        from arnold.pipelines.megaplan._pipeline.pattern_dynamic import (
             LAST_FANOUT_RESULTS_PORT,
             _DynamicFanoutStep,
         )
@@ -661,7 +661,7 @@ class TestFanoutThreadConcurrency:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
-        from megaplan._pipeline.pattern_dynamic import _DynamicFanoutStep
+        from arnold.pipelines.megaplan._pipeline.pattern_dynamic import _DynamicFanoutStep
 
         import time
 
@@ -784,7 +784,7 @@ class TestReducerSynthesis:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
-        from megaplan._pipeline.pattern_dynamic import _DynamicFanoutStep
+        from arnold.pipelines.megaplan._pipeline.pattern_dynamic import _DynamicFanoutStep
 
         @dataclass(frozen=True)
         class _TypedGen:

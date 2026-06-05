@@ -139,7 +139,7 @@ def _artifact_root_as_plan_dir(ctx: StepContext) -> str:
     pass the result as the ``plan_dir`` argument to the legacy
     ``StepContext`` constructor.  Example::
 
-        from megaplan._pipeline.types import StepContext as MegaplanCtx
+        from arnold.pipelines.megaplan._pipeline.types import StepContext as MegaplanCtx
 
         plan_dir = _artifact_root_as_plan_dir(arnold_ctx)
         mega_ctx = MegaplanCtx(plan_dir=Path(plan_dir), ...)

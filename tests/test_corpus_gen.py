@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan.auto import DriverOutcome
 
 # ---------------------------------------------------------------------------
 # Canonical constructors — must match _gen_corpus.py exactly

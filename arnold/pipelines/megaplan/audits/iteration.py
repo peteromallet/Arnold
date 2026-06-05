@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, TypedDict
 
-from megaplan._core.registries import _concern_word_set, _jaccard_similarity
-from megaplan._core.io import read_json
-from megaplan.types import PlanState
+from arnold.pipelines.megaplan._core.registries import _concern_word_set, _jaccard_similarity
+from arnold.pipelines.megaplan._core.io import read_json
+from arnold.pipelines.megaplan.types import PlanState
 
 
 class IterationPressureEntry(TypedDict):

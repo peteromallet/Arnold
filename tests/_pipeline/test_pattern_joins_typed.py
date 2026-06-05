@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan._pipeline.pattern_joins import majority_vote, weighted_vote
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.pattern_joins import majority_vote, weighted_vote
+from arnold.pipelines.megaplan._pipeline.types import (
     PipelineVerdict,
     ReduceResult,
     StepContext,

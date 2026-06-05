@@ -4,10 +4,10 @@ import json
 from argparse import Namespace
 from pathlib import Path
 
-from megaplan._core.state import resolve_plan_dir
-from megaplan._core.workflow import workflow_next
-from megaplan.cli import _build_status_payload, handle_list
-from megaplan.planning.state import (
+from arnold.pipelines.megaplan._core.state import resolve_plan_dir
+from arnold.pipelines.megaplan._core.workflow import workflow_next
+from arnold.pipelines.megaplan.cli import _build_status_payload, handle_list
+from arnold.pipelines.megaplan.planning.state import (
     AUTOMATION_TERMINAL_STATES,
     STATE_BLOCKED,
     STATE_CANCELLED,

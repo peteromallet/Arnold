@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
+from arnold.pipelines.megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
 
 
 def _docker_skip_reason() -> str | None:
@@ -177,7 +177,7 @@ def test_cloud_deploy_smoke_build_materializes_and_dispatches(
 
     # Replace the provider factory so we never invoke ``docker compose``.
     monkeypatch.setattr(
-        "megaplan.cloud.cli.get_provider",
+        "arnold.pipelines.megaplan.cloud.cli.get_provider",
         lambda _name, _spec: _DummyProvider(),
     )
 
@@ -217,7 +217,7 @@ def test_cloud_yaml_loads_without_docker(
     cloud_yaml_path = tmp_path / "cloud.yaml"
     _write_minimal_cloud_yaml(cloud_yaml_path)
 
-    from megaplan.cloud.spec import load_spec as load_cloud_spec
+    from arnold.pipelines.megaplan.cloud.spec import load_spec as load_cloud_spec
 
     spec = load_cloud_spec(cloud_yaml_path)
     assert spec.provider == "local"

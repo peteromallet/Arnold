@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from megaplan.execute.merge import TERMINAL_TASK_STATUSES, _validate_and_merge_batch
+from arnold.pipelines.megaplan.execute.merge import TERMINAL_TASK_STATUSES, _validate_and_merge_batch
 
 
 def _merge_task_update(

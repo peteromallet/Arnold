@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.runtime.sandbox import (
+from arnold.pipelines.megaplan.runtime.sandbox import (
     SANDBOX_CWD,
     SandboxViolation,
     _unwrap_all_for_tests,
@@ -411,9 +411,9 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
       * ``SANDBOX_CWD`` ContextVar is set to project_dir while the agent runs, AND
       * tool registry handlers are wrapped while the agent runs.
     """
-    from megaplan.workers import hermes as hw
-    from megaplan._core import atomic_write_json, atomic_write_text, schemas_root
-    from megaplan.workers import STEP_SCHEMA_FILENAMES
+    from arnold.pipelines.megaplan.workers import hermes as hw
+    from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text, schemas_root
+    from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES
 
     project_dir = tmp_path / "worktree"
     project_dir.mkdir()
@@ -523,9 +523,9 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
 
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.setattr(hw, "read_json", lambda p: {} if "schemas" in str(p) else json.loads(Path(p).read_text()))
-    monkeypatch.setattr(hw, "schemas_root", lambda root: repo_root / "megaplan" / "schemas")
+    monkeypatch.setattr(hw, "schemas_root", lambda root: repo_root / "arnold" / "pipelines" / "megaplan" / "schemas")
     # Bypass the schema-name lookup — execute schema file may not exist on disk in this minimal setup.
-    monkeypatch.setattr("megaplan.schemas.get_execution_schema_key", lambda *a, **kw: STEP_SCHEMA_FILENAMES.get("execute", "execute_v2.json"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.schemas.get_execution_schema_key", lambda *a, **kw: STEP_SCHEMA_FILENAMES.get("execute", "execute_v2.json"))
 
     monkeypatch.delenv("MEGAPLAN_MOCK", raising=False)
     monkeypatch.delenv("TERMINAL_CWD", raising=False)

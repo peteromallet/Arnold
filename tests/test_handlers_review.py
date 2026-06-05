@@ -4,14 +4,14 @@ import logging
 from argparse import Namespace
 from pathlib import Path
 
-from megaplan._core import atomic_write_json, read_json, save_state
-from megaplan.handlers.review import (
+from arnold.pipelines.megaplan._core import atomic_write_json, read_json, save_state
+from arnold.pipelines.megaplan.handlers.review import (
     _finalize_review_outcome,
     _format_review_success_summary,
     _synthesize_review_rework_items,
 )
-from megaplan.planning.state import STATE_EXECUTED
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.planning.state import STATE_EXECUTED
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 def test_rework_uses_real_task_ids() -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-from megaplan._pipeline.flags import typed_ports_on, supervisor_tier_routing_on
+from arnold.pipelines.megaplan._pipeline.flags import typed_ports_on, supervisor_tier_routing_on
 
 
 class TestTypedPortsOn:

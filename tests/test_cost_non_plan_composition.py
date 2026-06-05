@@ -2,8 +2,8 @@
 in-memory event list with no plan_dir on disk."""
 from __future__ import annotations
 
-from megaplan.observability import cost
-from megaplan.observability.events import EventKind
+from arnold.pipelines.megaplan.observability import cost
+from arnold.pipelines.megaplan.observability.events import EventKind
 
 
 def test_aggregate_runs_without_plan_dir():

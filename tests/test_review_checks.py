@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from megaplan.review.checks import REVIEW_CHECKS, checks_for_robustness, get_check_by_id, validate_review_checks
+from arnold.pipelines.megaplan.review.checks import REVIEW_CHECKS, checks_for_robustness, get_check_by_id, validate_review_checks
 
 
 def _finding(detail: str, *, flagged: bool) -> dict[str, object]:

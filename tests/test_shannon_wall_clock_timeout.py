@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from megaplan._core import ensure_runtime_layout
-from megaplan.workers import CommandResult
-from megaplan.workers.shannon import run_shannon_step
+from arnold.pipelines.megaplan._core import ensure_runtime_layout
+from arnold.pipelines.megaplan.workers import CommandResult
+from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
 
 
 def _make_state(tmp_path: Path) -> tuple[Path, dict]:
@@ -73,8 +73,8 @@ def test_main_shannon_run_command_has_wall_clock_timeout(
         duration_ms=10,
     )
 
-    with patch("megaplan.workers.shannon.pane_pids", return_value=[]), \
-         patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with patch("arnold.pipelines.megaplan.workers.shannon.pane_pids", return_value=[]), \
+         patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_shannon_step(
             "plan",
             state,

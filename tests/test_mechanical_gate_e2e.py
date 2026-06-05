@@ -28,21 +28,22 @@ from typing import Any
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
-from megaplan._pipeline.planning import compile_planning_pipeline
-from megaplan._pipeline.types import StepContext
-from megaplan._pipeline.runtime import policy_from_cli_args
-from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan.orchestration.suite_runner import (
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan._core.io as io_module
+import arnold.pipelines.megaplan.cli as megaplan_cli
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.runtime import policy_from_cli_args
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+from arnold.pipelines.megaplan.orchestration.suite_runner import (
     SuiteRunResult,
     append_suite_run,
     freshness_skip,
     latest_run_for_phase,
 )
-from megaplan.orchestration.completion_contract import (
+from arnold.pipelines.megaplan.orchestration.completion_contract import (
     CompletionVerdict,
     CompletionSubject,
     EvidenceRef,
@@ -51,7 +52,7 @@ from megaplan.orchestration.completion_contract import (
     extract_green_suite_info,
     normalize_contract_mode,
 )
-from megaplan.planning.state import STATE_CRITIQUED
+from arnold.pipelines.megaplan.planning.state import STATE_CRITIQUED
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -281,13 +282,13 @@ def test_enforce_blocks_on_newly_failing_and_routes_to_revise(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """enforce + newly_failing → state patched to revise, verdict.would_block=True."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(tmp_path, mode="enforce")
 
     # Verification: one new failure not in baseline.
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -328,7 +329,7 @@ def test_baseline_only_red_passes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A milestone leaving only pre-existing baseline failures red → accepted=True."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(
         tmp_path,
@@ -339,7 +340,7 @@ def test_baseline_only_red_passes(
 
     # Verification: same pre-existing failure, no new failures.
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_pre_existing"],
             passes=["tests/test_foo.py::test_green"],
@@ -419,7 +420,7 @@ def test_zero_tests_collected_yields_not_applicable_verdict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Zero-tests-collected repo → not_applicable verdict, NOT silent-green."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(
         tmp_path,
@@ -450,7 +451,7 @@ def test_zero_tests_collected_yields_not_applicable_verdict(
 
     # Mock run_suite to also return not_applicable (no tests collected).
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=[],
             passes=[],
@@ -509,7 +510,7 @@ def test_enforce_block_routes_to_revise_and_persists_verdict(
     plan_dir, project_dir = _make_plan_dir(tmp_path, mode="enforce")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],

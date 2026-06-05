@@ -15,12 +15,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from megaplan._pipeline.dispatch import DispatchRequest, Dispatcher
-from megaplan._pipeline.dispatch_subprocess import (
+from arnold.pipelines.megaplan._pipeline.dispatch import DispatchRequest, Dispatcher
+from arnold.pipelines.megaplan._pipeline.dispatch_subprocess import (
     SubprocessDispatchConfig,
     SubprocessDispatcher,
 )
-from megaplan._pipeline.envelope import make_envelope
+from arnold.pipelines.megaplan._pipeline.envelope import make_envelope
 
 
 @pytest.fixture(autouse=True)

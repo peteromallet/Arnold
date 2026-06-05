@@ -18,15 +18,15 @@ from typing import Any
 
 import pytest
 
-from megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Stage,
     StepContext,
     StepResult,
 )
-from megaplan._core.activation import compute_activation_id, LifecycleState
+from arnold.pipelines.megaplan._core.activation import compute_activation_id, LifecycleState
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ def test_flag_off_no_activation_events(tmp_path):
     env_keys = ["ACTIVATION_EMIT", "MEGAPLAN_UNIFIED_DISPATCH"]
     saved = {k: os.environ.pop(k, None) for k in env_keys}
     try:
-        from megaplan._pipeline.executor import run_pipeline
+        from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
         pipeline = _pipeline_one_step(_make_step("s1_step"))
         run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path / "artifacts")
         events = [e for e in _read_events(tmp_path) if e["kind"] == "activation_transitioned"]
@@ -141,7 +141,7 @@ def test_flag_off_pipeline_still_succeeds(tmp_path):
     env_keys = ["ACTIVATION_EMIT", "MEGAPLAN_UNIFIED_DISPATCH"]
     saved = {k: os.environ.pop(k, None) for k in env_keys}
     try:
-        from megaplan._pipeline.executor import run_pipeline
+        from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
         pipeline = _pipeline_one_step(_make_step("s1_step", state_patch={"x": 1}))
         result = run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path / "artifacts")
         assert result["state"]["x"] == 1
@@ -160,7 +160,7 @@ def test_flag_on_emits_three_transitions_per_step(tmp_path):
     saved = os.environ.get("MEGAPLAN_UNIFIED_DISPATCH")
     os.environ["MEGAPLAN_UNIFIED_DISPATCH"] = "1"
     try:
-        from megaplan._pipeline.executor import run_pipeline
+        from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
         pipeline = _pipeline_one_step(_make_step("s1_step"))
         run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path / "artifacts")
         events = [e for e in _read_events(tmp_path) if e["kind"] == "activation_transitioned"]
@@ -183,7 +183,7 @@ def test_flag_on_events_carry_node_and_activation_id(tmp_path):
     saved = os.environ.get("MEGAPLAN_UNIFIED_DISPATCH")
     os.environ["MEGAPLAN_UNIFIED_DISPATCH"] = "1"
     try:
-        from megaplan._pipeline.executor import run_pipeline
+        from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
         pipeline = _pipeline_one_step(_make_step("s1_step"), stage_name="my_stage")
         run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path / "artifacts")
         events = [e for e in _read_events(tmp_path) if e["kind"] == "activation_transitioned"]
@@ -205,7 +205,7 @@ def test_flag_on_three_steps_correct_event_count(tmp_path):
     saved = os.environ.get("MEGAPLAN_UNIFIED_DISPATCH")
     os.environ["MEGAPLAN_UNIFIED_DISPATCH"] = "1"
     try:
-        from megaplan._pipeline.executor import run_pipeline
+        from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
         pipeline = _pipeline_three_steps()
         run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path / "artifacts")
         events = [e for e in _read_events(tmp_path) if e["kind"] == "activation_transitioned"]
@@ -233,7 +233,7 @@ def test_flag_on_failed_step_emits_failed_transition(tmp_path):
     saved = os.environ.get("MEGAPLAN_UNIFIED_DISPATCH")
     os.environ["MEGAPLAN_UNIFIED_DISPATCH"] = "1"
     try:
-        from megaplan._pipeline.executor import run_pipeline
+        from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
         pipeline = _pipeline_one_step(_make_failing_step("bad_step"))
         with pytest.raises(RuntimeError):
             run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path / "artifacts")
@@ -270,7 +270,7 @@ def test_activation_emit_env_var_override(tmp_path):
         os.environ.pop(k, None)
     os.environ["ACTIVATION_EMIT"] = "1"
     try:
-        from megaplan._pipeline.executor import run_pipeline
+        from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
         pipeline = _pipeline_one_step(_make_step("s1_step"))
         run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path / "artifacts")
         events = [e for e in _read_events(tmp_path) if e["kind"] == "activation_transitioned"]
@@ -284,7 +284,7 @@ def test_activation_emit_env_var_off_overrides_master(tmp_path):
     os.environ["MEGAPLAN_UNIFIED_DISPATCH"] = "1"
     os.environ["ACTIVATION_EMIT"] = "0"
     try:
-        from megaplan._pipeline.executor import run_pipeline
+        from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
         pipeline = _pipeline_one_step(_make_step("s1_step"))
         run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path / "artifacts")
         events = [e for e in _read_events(tmp_path) if e["kind"] == "activation_transitioned"]

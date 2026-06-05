@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan.observability import cost
-from megaplan.observability.events import EventKind
+from arnold.pipelines.megaplan.observability import cost
+from arnold.pipelines.megaplan.observability.events import EventKind
 
 
 @pytest.fixture(autouse=True)

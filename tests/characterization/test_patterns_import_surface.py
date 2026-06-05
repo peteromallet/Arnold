@@ -10,7 +10,7 @@ from __future__ import annotations
 
 def test_every_all_name_importable() -> None:
     """Every symbol in patterns.__all__ resolves via getattr on the module."""
-    from megaplan._pipeline import patterns
+    from arnold.pipelines.megaplan._pipeline import patterns
 
     missing: list[str] = []
     for name in patterns.__all__:
@@ -27,7 +27,7 @@ def test_every_all_name_importable() -> None:
 
 def test_every_all_name_in_node_registry() -> None:
     """Every symbol in patterns.__all__ has a corresponding _NODE_REGISTRY entry."""
-    from megaplan._pipeline import patterns
+    from arnold.pipelines.megaplan._pipeline import patterns
 
     registry_keys = set(patterns._NODE_REGISTRY)
     missing = [n for n in patterns.__all__ if n not in registry_keys]
@@ -40,7 +40,7 @@ def test_every_all_name_in_node_registry() -> None:
 
 def test_node_registry_covers_no_unexpected_entries() -> None:
     """set(__all__) - set(_NODE_REGISTRY) is empty (registry has no extra keys)."""
-    from megaplan._pipeline import patterns
+    from arnold.pipelines.megaplan._pipeline import patterns
 
     all_set = set(patterns.__all__)
     registry_set = set(patterns._NODE_REGISTRY)

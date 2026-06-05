@@ -9,27 +9,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import (
+from arnold.pipelines.megaplan._core import (
     WorkerUnit,
     WorkerUnitResult,
     atomic_write_json,
     atomic_write_text,
     scatter_worker_units,
 )
-from megaplan._core.process_fanout import GenericScatterResult
-from megaplan.profiles import CANONICAL_PREP_MODELS, validate_prep_stage_provider
-from megaplan.prompts import _prep_distill_prompt, _prep_research_prompt, _prep_triage_prompt
-from megaplan.schemas import SCHEMAS
-from megaplan.types import (
+from arnold.pipelines.megaplan._core.process_fanout import GenericScatterResult
+from arnold.pipelines.megaplan.profiles import (
+    CANONICAL_PREP_MODELS,
+    normalize_robustness,
+    validate_prep_stage_provider,
+)
+from arnold.pipelines.megaplan.prompts import _prep_distill_prompt, _prep_research_prompt, _prep_triage_prompt
+from arnold.pipelines.megaplan.schemas import SCHEMAS
+from arnold.pipelines.megaplan.types import (
     AgentMode,
     AgentSpec,
     CliError,
     PlanState,
     format_agent_spec,
-    normalize_robustness,
     parse_agent_spec,
 )
-from megaplan.workers import WorkerResult, run_step_with_worker, update_session_state
+from arnold.pipelines.megaplan.workers import WorkerResult, run_step_with_worker, update_session_state
 
 _PREP_RESEARCH_STATUSES = {"complete", "partial", "timed_out", "error", "not_needed"}
 _PREP_RESEARCH_CONFIDENCE = {"high", "medium", "low"}

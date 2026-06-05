@@ -596,19 +596,9 @@ class TestM4PluginBoundary:
                 + "\n".join(f"  • {v}" for v in violations)
             )
 
-    def test_arnold_init_version_import_is_present(self) -> None:
-        """Characterization: arnold/__init__.py currently imports __version__
-        from megaplan — this test documents the allowed import."""
+    def test_arnold_init_version_is_local_not_megaplan_import(self) -> None:
+        """Clean-break characterization: arnold imports no symbols from megaplan."""
         tree = ast.parse(_ARNOLD_INIT.read_text(), filename=str(_ARNOLD_INIT))
-        found_version_import = False
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                if node.module == "megaplan":
-                    for alias in node.names:
-                        if alias.name == "__version__":
-                            found_version_import = True
-                            break
-        assert found_version_import, (
-            "arnold/__init__.py is expected to import __version__ from megaplan; "
-            "it is the single allowed megaplan import at this boundary."
-        )
+                assert node.module != "megaplan"

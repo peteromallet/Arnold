@@ -18,8 +18,8 @@ import sys
 import textwrap
 from pathlib import Path
 
-from megaplan._pipeline import registry as registry_mod
-from megaplan.cli import arnold as arnold_cli
+from arnold.pipelines.megaplan._pipeline import registry as registry_mod
+from arnold.pipelines.megaplan.cli import arnold as arnold_cli
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -52,7 +52,7 @@ def _run_megaplan(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
         }
     )
     return subprocess.run(
-        [sys.executable, "-m", "megaplan", *args],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", *args],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -76,7 +76,7 @@ def _run_arnold(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
         [
             sys.executable,
             "-c",
-            "from megaplan.cli.arnold import main; raise SystemExit(main())",
+            "from arnold.pipelines.megaplan.cli.arnold import main; raise SystemExit(main())",
             *args,
         ],
         cwd=REPO_ROOT,
@@ -152,7 +152,7 @@ def _docs_only_select_tournament_module(docs_root: Path, module_name: str) -> st
         from pathlib import Path
         from typing import Any, Mapping
 
-        from megaplan._pipeline.types import Edge, ParallelStage, Pipeline, Port, PortRef, Stage, StepContext, StepResult
+        from arnold.pipelines.megaplan._pipeline.types import Edge, ParallelStage, Pipeline, Port, PortRef, Stage, StepContext, StepResult
 
 
         name = {module_name!r}
@@ -300,6 +300,7 @@ def _docs_only_select_tournament_module(docs_root: Path, module_name: str) -> st
                     ),
                 }},
                 entry="score_candidates",
+                resource_bundles=("score_candidate", "bracket", "winner"),
             )
         """
     )
@@ -323,7 +324,7 @@ def test_external_builder_docs_only_sandbox_scaffolds_authors_and_validates(
     # harness stage, point that root at the temp scaffold output; subsequent
     # check/doctor subprocesses rediscover the same files through HOME's user
     # pipeline root.
-    monkeypatch.setattr(registry_mod, "_SCAN_ROOTS", [(scaffold_root, "megaplan.pipelines")])
+    monkeypatch.setattr(registry_mod, "_SCAN_ROOTS", [(scaffold_root, "arnold.pipelines.megaplan.pipelines")])
 
     scaffold_rc = arnold_cli.main(["pipelines", "new", module_name, "--driver", "graph"])
     assert scaffold_rc == 0
@@ -372,7 +373,7 @@ def test_external_builder_runs_docs_built_select_tournament_and_greps_builder_mo
     shutil.copytree(REPO_ROOT / "docs" / "arnold", docs_sandbox)
 
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(registry_mod, "_SCAN_ROOTS", [(scaffold_root, "megaplan.pipelines")])
+    monkeypatch.setattr(registry_mod, "_SCAN_ROOTS", [(scaffold_root, "arnold.pipelines.megaplan.pipelines")])
 
     scaffold_rc = arnold_cli.main(["pipelines", "new", module_name, "--driver", "graph"])
     assert scaffold_rc == 0

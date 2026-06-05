@@ -8,13 +8,13 @@ from typing import Any
 
 import pytest
 
-from megaplan.auto import DriverOutcome
-from megaplan.bakeoff.state import BakeoffState, load_bakeoff_state
-from megaplan.supervisor import run_supervisor_bakeoff
-import megaplan.supervisor.bakeoff_runner as runner
-from megaplan.supervisor.driver import RunRequest
-from megaplan.supervisor.state import load_supervisor_state
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan.bakeoff.state import BakeoffState, load_bakeoff_state
+from arnold.pipelines.megaplan.supervisor import run_supervisor_bakeoff
+import arnold.pipelines.megaplan.supervisor.bakeoff_runner as runner
+from arnold.pipelines.megaplan.supervisor.driver import RunRequest
+from arnold.pipelines.megaplan.supervisor.state import load_supervisor_state
+from arnold.pipelines.megaplan.types import CliError
 
 
 async def _fake_initializer(

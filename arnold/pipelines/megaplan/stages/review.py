@@ -7,11 +7,11 @@ from typing import Any, Mapping
 
 from arnold.pipelines.megaplan.handlers import handle_review
 from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
-from megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepMixinProperty, StepResult
 
 
 @dataclass(frozen=True)
-class ReviewStep:
+class ReviewStep(StepMixinProperty):
     name: str = "review"
     kind: str = "judge"
     prompt_key: str | None = "review"

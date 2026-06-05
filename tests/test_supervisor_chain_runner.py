@@ -7,21 +7,21 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.auto import DriverOutcome
-from megaplan.chain.spec import load_chain_state
-from megaplan.control_interface import (
+from arnold.pipelines.megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan.chain.spec import load_chain_state
+from arnold.pipelines.megaplan.control_interface import (
     CONTROL_TARGET_RECOVER_FROM_STUCK,
     ControlTarget,
     ControlTransitionRequest,
     ControlTransitionResult,
     RunStateView,
 )
-from megaplan.supervisor.chain_runner import SUPERVISOR_DRIVER_ESCALATE_ACTION, run_chain
-from megaplan.supervisor.driver import PackRunner, RunDriver, RunRequest
-from megaplan.supervisor.ladder import LadderAction, SupervisorLadderPolicy
-from megaplan.supervisor.model import RunNode
-from megaplan.supervisor.state import load_supervisor_state, save_supervisor_state
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.supervisor.chain_runner import SUPERVISOR_DRIVER_ESCALATE_ACTION, run_chain
+from arnold.pipelines.megaplan.supervisor.driver import PackRunner, RunDriver, RunRequest
+from arnold.pipelines.megaplan.supervisor.ladder import LadderAction, SupervisorLadderPolicy
+from arnold.pipelines.megaplan.supervisor.model import RunNode
+from arnold.pipelines.megaplan.supervisor.state import load_supervisor_state, save_supervisor_state
+from arnold.pipelines.megaplan.types import CliError
 
 
 class FakePackRunner:
@@ -376,7 +376,7 @@ def test_chain_runner_enables_auto_merge_for_green_pr_waits(tmp_path: Path, monk
     ready_calls: list[tuple[Path, int]] = []
     merge_calls: list[tuple[Path, int]] = []
 
-    monkeypatch.setattr("megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
 
     def fake_run_command(
         root: Path,
@@ -395,13 +395,13 @@ def test_chain_runner_enables_auto_merge_for_green_pr_waits(tmp_path: Path, monk
             "",
         )
 
-    monkeypatch.setattr("megaplan.supervisor.pr_merge.git_ops._run_command", fake_run_command)
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._run_command", fake_run_command)
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
         lambda root, pr_number, *, writer: ready_calls.append((root, pr_number)),
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
         lambda root, pr_number, *, writer: merge_calls.append((root, pr_number)) or "open",
     )
 
@@ -442,17 +442,17 @@ def test_chain_runner_advances_when_pr_wait_is_already_merged(
     ready_calls: list[tuple[Path, int]] = []
     merge_calls: list[tuple[Path, int]] = []
 
-    monkeypatch.setattr("megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "merged")
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "merged")
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._run_command",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._run_command",
         lambda _root, argv, **_kwargs: run_calls.append(argv) or subprocess.CompletedProcess(argv, 0, "{}", ""),
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
         lambda root, pr_number, *, writer: ready_calls.append((root, pr_number)),
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
         lambda root, pr_number, *, writer: merge_calls.append((root, pr_number)) or "merged",
     )
 
@@ -502,22 +502,22 @@ def test_chain_runner_enters_ladder_for_non_green_pr_waits(
     ready_calls: list[tuple[Path, int]] = []
     merge_calls: list[tuple[Path, int]] = []
 
-    monkeypatch.setattr("megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
 
     payload = {"state": "OPEN", "isDraft": False}
     if merge_state_status is not None:
         payload["mergeStateStatus"] = merge_state_status
 
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._run_command",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._run_command",
         lambda _root, argv, **_kwargs: subprocess.CompletedProcess(argv, 0, json.dumps(payload), ""),
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
         lambda root, pr_number, *, writer: ready_calls.append((root, pr_number)),
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
         lambda root, pr_number, *, writer: merge_calls.append((root, pr_number)) or "open",
     )
 
@@ -551,9 +551,9 @@ def test_chain_runner_enters_ladder_when_auto_merge_enablement_fails(
     spec_path = _write_spec(tmp_path)
     ready_calls: list[tuple[Path, int]] = []
 
-    monkeypatch.setattr("megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
+    monkeypatch.setattr("arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._pr_state", lambda *_a, **_k: "open")
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._run_command",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._run_command",
         lambda _root, argv, **_kwargs: subprocess.CompletedProcess(
             argv,
             0,
@@ -562,7 +562,7 @@ def test_chain_runner_enters_ladder_when_auto_merge_enablement_fails(
         ),
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._mark_pr_ready",
         lambda root, pr_number, *, writer: ready_calls.append((root, pr_number)),
     )
 
@@ -571,7 +571,7 @@ def test_chain_runner_enters_ladder_when_auto_merge_enablement_fails(
         raise CliError("gh_pr_merge_failed", "boom")
 
     monkeypatch.setattr(
-        "megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
+        "arnold.pipelines.megaplan.supervisor.pr_merge.git_ops._enable_auto_merge",
         fail_enable_auto_merge,
     )
 

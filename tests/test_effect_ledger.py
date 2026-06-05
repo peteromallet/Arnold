@@ -3,8 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from megaplan.observability.effect_ledger import Effect, ReplayClass
-from megaplan.observability.events import emit_state_wal, EventKind
+from arnold.pipelines.megaplan.observability.effect_ledger import Effect, ReplayClass
+from arnold.pipelines.megaplan.observability.events import emit_state_wal, EventKind
 
 
 def _read_events(plan_dir: Path) -> list:

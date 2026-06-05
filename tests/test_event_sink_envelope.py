@@ -7,13 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from megaplan.observability import (
+from arnold.pipelines.megaplan.observability import (
     EventEnvelope,
     EventSink,
     NdjsonBackend,
     StoreBackend,
 )
-from megaplan.observability.events import emit, read_events
+from arnold.pipelines.megaplan.observability.events import emit, read_events
 
 
 def test_event_envelope_pinned_schema_version():

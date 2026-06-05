@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.state_store import (
+from arnold.pipelines.megaplan._core.state_store import (
     EventSourcedStateStoreBackend,
     ForwardOnlyStateStoreBackend,
     ReversibleStateStoreBackend,
@@ -36,7 +36,7 @@ from megaplan._core.state_store import (
 
 def test_module_docstring_contains_distinct_from_megaplan_store():
     """The module docstring carries the literal phrase for the grep audit."""
-    import megaplan._core.state_store as m
+    import arnold.pipelines.megaplan._core.state_store as m
 
     doc = m.__doc__ or ""
     assert "distinct from megaplan.store" in doc, (

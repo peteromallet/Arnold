@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan.loop.git import (
+from arnold.pipelines.megaplan.loop.git import (
     _collect_git_status_paths_with_nested_repos,
     _parse_git_status_paths,
 )

@@ -4,13 +4,13 @@ import json
 
 import pytest
 
-import megaplan
-import megaplan.workers
-from megaplan.calibration import ModelIdentity, RouteSuggestion, read_capability_claims, route
-from megaplan.handlers.finalize import _task_execute_claim_context, _write_finalize_artifacts
-from megaplan.observability.evaluand import EvaluandRecord, write_evaluand_event
-from megaplan.observability.events import EventKind, read_events
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan.calibration import ModelIdentity, RouteSuggestion, read_capability_claims, route
+from arnold.pipelines.megaplan.handlers.finalize import _task_execute_claim_context, _write_finalize_artifacts
+from arnold.pipelines.megaplan.observability.evaluand import EvaluandRecord, write_evaluand_event
+from arnold.pipelines.megaplan.observability.events import EventKind, read_events
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests.conftest import PlanFixture, load_state, read_json
 
 
@@ -639,7 +639,7 @@ def test_after_execute_user_actions_are_handoff_artifact_not_executor_task(
 
 
 def test_finalize_snapshot_remains_pending_after_execute(plan_fixture: PlanFixture) -> None:
-    from megaplan._core import load_finalize_snapshot
+    from arnold.pipelines.megaplan._core import load_finalize_snapshot
 
     make_args = plan_fixture.make_args
     megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
@@ -669,7 +669,7 @@ def test_finalize_snapshot_remains_pending_after_execute(plan_fixture: PlanFixtu
 
 
 def test_render_final_md_pending_partially_done_and_reviewed_states() -> None:
-    from megaplan._core import render_final_md
+    from arnold.pipelines.megaplan._core import render_final_md
 
     pending = {
         "tasks": [
@@ -774,7 +774,7 @@ def test_finalize_writes_contract_json_and_keeps_empty_final_md_inert(
 
 
 def test_render_final_md_renders_contract_sections_when_present() -> None:
-    from megaplan._core import render_final_md
+    from arnold.pipelines.megaplan._core import render_final_md
 
     data = {
         "tasks": [],
@@ -823,7 +823,7 @@ def test_finalize_normalize_complexity_missing_defaults_to_4(plan_fixture: PlanF
     Tasks missing a complexity score default to 4 (Sonnet) — read-and-check
     work is well within Sonnet's capability and ~5–10× cheaper than Opus.
     """
-    from megaplan.handlers.finalize import _normalize_task_complexity
+    from arnold.pipelines.megaplan.handlers.finalize import _normalize_task_complexity
 
     payload = {
         "tasks": [
@@ -849,7 +849,7 @@ def test_finalize_normalize_complexity_missing_defaults_to_4(plan_fixture: PlanF
 
 def test_finalize_normalize_complexity_invalid_values_normalized(plan_fixture: PlanFixture) -> None:
     """Non-integer and out-of-range complexity values are normalized to 4 (Sonnet)."""
-    from megaplan.handlers.finalize import _normalize_task_complexity
+    from arnold.pipelines.megaplan.handlers.finalize import _normalize_task_complexity
 
     payload = {
         "tasks": [
@@ -873,7 +873,7 @@ def test_finalize_normalize_complexity_invalid_values_normalized(plan_fixture: P
 
 def test_finalize_normalize_complexity_valid_values_pass_through(plan_fixture: PlanFixture) -> None:
     """Valid complexity values 1-5 are left unchanged."""
-    from megaplan.handlers.finalize import _normalize_task_complexity
+    from arnold.pipelines.megaplan.handlers.finalize import _normalize_task_complexity
 
     payload = {
         "tasks": [
@@ -947,7 +947,7 @@ def test_finalize_artifacts_include_complexity_after_normalization(plan_fixture:
 
 
 def test_render_final_md_phase_marks_gaps_only_when_due() -> None:
-    from megaplan._core import render_final_md
+    from arnold.pipelines.megaplan._core import render_final_md
 
     data = {
         "tasks": [

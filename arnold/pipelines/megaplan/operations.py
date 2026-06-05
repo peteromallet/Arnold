@@ -1,22 +1,29 @@
-"""REMOVED — planning operation dispatch has been relocated.
+"""Compatibility facade for planning operation dispatch.
 
-The canonical home for Megaplan planning operation dispatch is now:
-
-    from megaplan.planning.operations import (
-        operation_registry,
-        override_catalog,
-        SUPPORTED_OPERATIONS,
-        profile_validate_operation,
-        resume_phase_args,
-        preflight_or_raise,
-    )
-
-This file was a compatibility facade (re-export shim) during the M5a
-migration and has been replaced with failing guidance.  Update your
-imports to the canonical path above.
+The canonical home for Megaplan planning operation dispatch is
+``arnold.pipelines.megaplan.planning.operations``. This module remains
+import-safe so plugin discovery and broad import sweeps do not fail on a
+deliberate migration stub.
 """
 
-raise ImportError(
-    "arnold.pipelines.megaplan.operations has been removed. "
-    "Use megaplan.planning.operations instead."
+from __future__ import annotations
+
+from arnold.pipelines.megaplan.planning.operations import (
+    PlanningOperationRegistry,
+    SUPPORTED_OPERATIONS,
+    operation_registry,
+    override_catalog,
+    preflight_or_raise,
+    profile_validate_operation,
+    resume_phase_args,
 )
+
+__all__ = [
+    "PlanningOperationRegistry",
+    "SUPPORTED_OPERATIONS",
+    "operation_registry",
+    "override_catalog",
+    "preflight_or_raise",
+    "profile_validate_operation",
+    "resume_phase_args",
+]

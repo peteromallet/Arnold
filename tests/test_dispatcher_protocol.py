@@ -9,13 +9,13 @@ from __future__ import annotations
 
 from dataclasses import fields
 
-from megaplan._pipeline.dispatch import (
+from arnold.pipelines.megaplan._pipeline.dispatch import (
     Dispatcher,
     DispatchRequest,
     DispatchResult,
 )
-from megaplan._pipeline.envelope import EMPTY_ENVELOPE
-from megaplan._pipeline import flags as F
+from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE
+from arnold.pipelines.megaplan._pipeline import flags as F
 
 
 def test_dispatch_request_carries_liveness_sink():

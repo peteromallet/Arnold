@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core import (
+from arnold.pipelines.megaplan._core import (
     WorkerUnit,
     WorkerUnitResult,
     atomic_write_json,
@@ -13,11 +13,11 @@ from megaplan._core import (
     scatter_worker_unit,
     scatter_worker_units,
 )
-from megaplan._core.hermes_fanout import GenericScatterResult
+from arnold.pipelines.megaplan._core.hermes_fanout import GenericScatterResult
 from arnold.pipelines.megaplan.review.parallel import _parse_parallel_review_result, run_parallel_review
 from arnold.pipelines.megaplan.review.checks import checks_for_robustness
-from megaplan.types import AgentMode, CliError, PlanState
-from megaplan.workers import WorkerResult, _build_mock_payload
+from arnold.pipelines.megaplan.types import AgentMode, CliError, PlanState
+from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -395,7 +395,7 @@ def test_scatter_worker_unit_forwards_review_worker_options(monkeypatch: pytest.
         assert kwargs["worker_options"] == unit.extra["worker_options"]
         return worker, "hermes", "persistent", False
 
-    monkeypatch.setattr("megaplan.workers.run_step_with_worker", fake_run_step_with_worker)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.run_step_with_worker", fake_run_step_with_worker)
 
     index, payload, cost_usd, pt, ct, tt = scatter_worker_unit(
         0,

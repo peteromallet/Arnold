@@ -1,4 +1,4 @@
-"""Compatibility checks for canonical review modules and legacy facades."""
+"""Canonical review module import checks."""
 
 from __future__ import annotations
 
@@ -7,121 +7,96 @@ import importlib
 import pytest
 
 
-# ── module identity and symbol re-export ─────────────────────────────────
+# ── canonical symbol exports ─────────────────────────────────────────────
 
 @pytest.mark.parametrize(
-    ("legacy_module", "canonical_module", "symbol"),
+    ("canonical_module", "symbol"),
     [
         (
-            "megaplan.review.checks",
             "arnold.pipelines.megaplan.review.checks",
             "ReviewCheckSpec",
         ),
         (
-            "megaplan.review.checks",
             "arnold.pipelines.megaplan.review.checks",
             "REVIEW_CHECKS",
         ),
         (
-            "megaplan.review.checks",
             "arnold.pipelines.megaplan.review.checks",
             "get_check_by_id",
         ),
         (
-            "megaplan.review.checks",
             "arnold.pipelines.megaplan.review.checks",
             "validate_review_checks",
         ),
         (
-            "megaplan.review.mechanical",
             "arnold.pipelines.megaplan.review.mechanical",
             "run_pre_checks",
         ),
         (
-            "megaplan.review.mechanical",
             "arnold.pipelines.megaplan.review.mechanical",
             "_is_diff_noise",
         ),
         (
-            "megaplan.review.parallel",
             "arnold.pipelines.megaplan.review.parallel",
             "run_parallel_review",
         ),
     ],
 )
-def test_legacy_review_symbols_reexport_canonical_symbols(
-    legacy_module: str,
+def test_canonical_review_symbols_exist(
     canonical_module: str,
     symbol: str,
 ) -> None:
-    """Legacy megaplan.review.* module attributes resolve to canonical objects."""
-    legacy = importlib.import_module(legacy_module)
+    """Canonical arnold.pipelines.megaplan.review.* module attributes resolve."""
     canonical = importlib.import_module(canonical_module)
-    assert getattr(legacy, symbol) is getattr(canonical, symbol), (
-        f"{legacy_module}.{symbol} is not {canonical_module}.{symbol}"
-    )
+    assert hasattr(canonical, symbol)
 
 
-# ── module identity: sys.modules facade IS the canonical module ─────────
+# ── module identity ─────────────────────────────────────────────────────
 
-def test_legacy_parallel_is_canonical() -> None:
-    """The parallel facade uses sys.modules aliasing; legacy module IS canonical."""
-    legacy = importlib.import_module("megaplan.review.parallel")
+def test_canonical_parallel_importable() -> None:
     canonical = importlib.import_module(
         "arnold.pipelines.megaplan.review.parallel"
     )
-    assert legacy is canonical, (
-        "megaplan.review.parallel must be sys.modules-alias to canonical"
-    )
+    assert canonical.__name__ == "arnold.pipelines.megaplan.review.parallel"
 
 
 # ── explicitly imported private helpers ──────────────────────────────────
 
-def test_legacy_mechanical_explicitly_reexports_is_diff_noise() -> None:
-    """mechanical facade explicitly imports _is_diff_noise for io consumer."""
-    legacy = importlib.import_module("megaplan.review.mechanical")
+def test_canonical_mechanical_exports_is_diff_noise() -> None:
     canonical = importlib.import_module(
         "arnold.pipelines.megaplan.review.mechanical"
     )
-    # Only _is_diff_noise is explicitly imported by the facade
-    assert legacy._is_diff_noise is canonical._is_diff_noise
+    assert callable(canonical._is_diff_noise)
 
 
-# ── monkeypatch compatibility (sys.modules aliasing) ─────────────────────
+# ── monkeypatch surface ──────────────────────────────────────────────────
 
-def test_legacy_parallel_monkeypatch_surface(
+def test_canonical_parallel_monkeypatch_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Monkeypatching megaplan.review.parallel._resolve_model must reach canonical.
-
-    The parallel facade uses sys.modules aliasing so that tests patching
-    ``megaplan.review.parallel._resolve_model`` affect the canonical
-    ``arnold.pipelines.megaplan.review.parallel`` module.
-    """
-    legacy = importlib.import_module("megaplan.review.parallel")
     canonical = importlib.import_module(
         "arnold.pipelines.megaplan.review.parallel"
     )
 
     sentinel = object()
-    monkeypatch.setattr(legacy, "_resolve_model", sentinel)
+    monkeypatch.setattr(canonical, "_resolve_model", sentinel)
     assert canonical._resolve_model is sentinel, (
-        "Monkeypatch on megaplan.review.parallel did not reach canonical module"
+        "Monkeypatch on canonical review.parallel did not stick"
     )
 
 
-def test_legacy_parallel_monkeypatch_readable_from_legacy_path(
+def test_canonical_parallel_monkeypatch_readable_from_canonical_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Existing tests patch megaplan.review.parallel._resolve_model and it works."""
-    legacy = importlib.import_module("megaplan.review.parallel")
+    canonical = importlib.import_module(
+        "arnold.pipelines.megaplan.review.parallel"
+    )
 
     sentinel = object()
-    monkeypatch.setattr(legacy, "_resolve_model", sentinel)
+    monkeypatch.setattr(canonical, "_resolve_model", sentinel)
 
-    # Re-import through the legacy path should see the patched value
-    from megaplan.review.parallel import _resolve_model
+    from arnold.pipelines.megaplan.review.parallel import _resolve_model
 
     assert _resolve_model is sentinel, (
-        "Monkeypatch on megaplan.review.parallel must be visible to importers"
+        "Monkeypatch on canonical review.parallel must be visible to importers"
     )

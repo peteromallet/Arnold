@@ -22,9 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.state import load_plan_from_dir, write_plan_state
-from megaplan.loop.engine import save_loop_state
-from megaplan.observability.fold import (
+from arnold.pipelines.megaplan._core.state import load_plan_from_dir, write_plan_state
+from arnold.pipelines.megaplan.loop.engine import save_loop_state
+from arnold.pipelines.megaplan.observability.fold import (
     assert_fold_equiv,
     fold_events,
     read_events,
@@ -117,7 +117,7 @@ def test_recorded_trace_dir_seam_is_documented_and_wired(tmp_path: Path) -> None
     # plan_dir/state.json by hand — the oracle pulls events from trace_dir
     # but compares against plan_dir/state.json.
     snapshot = {"name": "seam", "iteration": 1, "schema_version": 0}
-    from megaplan.observability.events import emit_state_wal
+    from arnold.pipelines.megaplan.observability.events import emit_state_wal
 
     emit_state_wal(trace_dir, snapshot)
     (plan_dir / "state.json").write_text(

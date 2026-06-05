@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from megaplan import auto
-from megaplan.auto import drive
+from arnold.pipelines.megaplan import auto 
+from arnold.pipelines.megaplan.auto import drive
 
 
 def _make_plan_dir(tmp_path: Path, plan: str) -> Path:

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from megaplan.bakeoff.state import (
+from arnold.pipelines.megaplan.bakeoff.state import (
     BAKEOFF_SCHEMA_VERSION,
     load_bakeoff_state,
     save_bakeoff_state,

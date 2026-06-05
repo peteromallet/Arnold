@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core import atomic_write_json, atomic_write_text
-from megaplan.prompts.critique import (
+from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text
+from arnold.pipelines.megaplan.prompts.critique import (
     _build_verification_delta_block,
     _revise_prompt,
 )
-from megaplan.orchestration.suite_runner import extract_failure_details
-from megaplan.types import PlanState
+from arnold.pipelines.megaplan.orchestration.suite_runner import extract_failure_details
+from arnold.pipelines.megaplan.types import PlanState
 
 
 # ---------------------------------------------------------------------------

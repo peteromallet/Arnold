@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from megaplan._pipeline.envelope import (
+from arnold.pipelines.megaplan._pipeline.envelope import (
     EMPTY_ENVELOPE,
     LeaseIdConflict,
     RunEnvelope,
@@ -193,27 +193,27 @@ def test_make_envelope_list_lineage_coerced():
 
 def test_step_context_default_envelope():
     from pathlib import Path
-    from megaplan._pipeline.types import StepContext
+    from arnold.pipelines.megaplan._pipeline.types import StepContext
     ctx = StepContext(plan_dir=Path("/tmp"), state={}, profile={}, mode="run")
     assert ctx.envelope == EMPTY_ENVELOPE
 
 
 def test_step_result_default_envelope():
-    from megaplan._pipeline.types import StepResult
+    from arnold.pipelines.megaplan._pipeline.types import StepResult
     result = StepResult()
     assert result.envelope == EMPTY_ENVELOPE
 
 
 def test_step_context_custom_envelope():
     from pathlib import Path
-    from megaplan._pipeline.types import StepContext
+    from arnold.pipelines.megaplan._pipeline.types import StepContext
     env = e(taint="tainted", cost=1.0)
     ctx = StepContext(plan_dir=Path("/tmp"), state={}, profile={}, mode="run", envelope=env)
     assert ctx.envelope.taint == "tainted"
 
 
 def test_step_result_custom_envelope():
-    from megaplan._pipeline.types import StepResult
+    from arnold.pipelines.megaplan._pipeline.types import StepResult
     env = e(retry_budget=1)
     result = StepResult(envelope=env)
     assert result.envelope.retry_budget == 1

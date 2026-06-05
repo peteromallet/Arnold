@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.cloud.providers.railway import RailwayProvider
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.providers.railway import RailwayProvider
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     MegaplanSpec,
@@ -17,7 +17,7 @@ from megaplan.cloud.spec import (
     RepoSpec,
     ResourcesSpec,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _spec(
@@ -50,8 +50,8 @@ def test_build_uses_docker_build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         calls.append((argv, kwargs))
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec())
     assert provider.build(tmp_path) == 0
@@ -77,8 +77,8 @@ def test_deploy_without_project_sets_variables_and_ups(monkeypatch: pytest.Monke
         calls.append((argv, kwargs))
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec(secrets=["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]))
     assert provider.deploy(
@@ -104,8 +104,8 @@ def test_deploy_with_project_links_once_before_upload(monkeypatch: pytest.Monkey
             return subprocess.CompletedProcess(argv, 0, stdout="svc\n", stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec(project="my-proj", secrets=["OPENAI_API_KEY"]))
     provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
@@ -128,8 +128,8 @@ def test_deploy_preserves_environment_scope_for_cloud_commands(monkeypatch: pyte
             return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"services": [{"name": "svc"}]}), stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec(project="my-proj", environment="prod", secrets=["OPENAI_API_KEY"]))
     provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
@@ -153,8 +153,8 @@ def test_deploy_with_project_missing_service_fails_with_one_create_command(
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, stdout="other-service\n", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec(project="my-proj", secrets=["OPENAI_API_KEY"]))
     with pytest.raises(CliError) as excinfo:
@@ -178,10 +178,10 @@ def test_project_scope_is_link_only_and_environment_scope_is_applied(monkeypatch
             return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"ok": True}), stderr="")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
     monkeypatch.setattr(
-        "megaplan.cloud.providers.railway._logs_follow",
+        "arnold.pipelines.megaplan.cloud.providers.railway._logs_follow",
         lambda argv, *, cwd=None, secret_names=(), env=None: follow_calls.append(argv) or 0,
     )
 
@@ -229,10 +229,10 @@ def test_ssh_attach_logs_and_status_payload_use_expected_argv(monkeypatch: pytes
             )
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
     monkeypatch.setattr(
-        "megaplan.cloud.providers.railway._logs_follow",
+        "arnold.pipelines.megaplan.cloud.providers.railway._logs_follow",
         lambda argv, *, cwd=None, secret_names=(), env=None: follow_calls.append(argv) or 0,
     )
 
@@ -248,8 +248,8 @@ def test_ssh_attach_logs_and_status_payload_use_expected_argv(monkeypatch: pytes
         ["/usr/bin/railway", "ssh", "--service", "svc", "--", "pwd"],
         ["/usr/bin/railway", "ssh", "--service", "svc", "--session", "ses"],
         ["/usr/bin/railway", "logs", "--service", "svc", "--lines", "200"],
-        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "cd /workspace/foo && megaplan status"],
-        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "cd /workspace/foo && megaplan status --plan P"],
+        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "cd /workspace/foo && arnold status"],
+        ["/usr/bin/railway", "ssh", "--service", "svc", "--", "cd /workspace/foo && arnold status --plan P"],
     ]
     assert follow_calls == [["/usr/bin/railway", "logs", "--service", "svc"]]
     assert calls[1][1]["capture_output"] is False
@@ -265,8 +265,8 @@ def test_upload_file_streams_base64_over_railway_ssh(
         calls.append((argv, kwargs))
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     source = tmp_path / "idea.txt"
     source.write_text("ship it\n", encoding="utf-8")
@@ -305,8 +305,8 @@ def test_read_remote_file_uses_cat_over_railway_ssh(monkeypatch: pytest.MonkeyPa
         calls.append((argv, kwargs))
         return subprocess.CompletedProcess(argv, 0, stdout="remote body\n", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec())
     assert provider.read_remote_file("/workspace/chain_state.json") == "remote body\n"
@@ -341,8 +341,8 @@ def test_down_and_destroy_use_expected_argv(monkeypatch: pytest.MonkeyPatch) -> 
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec())
     assert provider.down() == 0
@@ -358,7 +358,7 @@ def test_down_and_destroy_use_expected_argv(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_missing_binary_raises_provider_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: None)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: None)
 
     with pytest.raises(CliError, match="https://docs.railway.app/develop/cli"):
         RailwayProvider(_spec())
@@ -372,8 +372,8 @@ def test_deploy_missing_secret_fails_before_any_railway_call(monkeypatch: pytest
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
     monkeypatch.delenv("MISSING_ENV", raising=False)
 
     provider = RailwayProvider(_spec(secrets=["MISSING_ENV"]))
@@ -390,8 +390,8 @@ def test_destroy_volume_delete_failure_raises(monkeypatch: pytest.MonkeyPatch) -
             return subprocess.CompletedProcess(argv, 1, stdout="", stderr="delete failed")
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
-    monkeypatch.setattr("megaplan.cloud.providers.railway.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: "/usr/bin/railway")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec())
     with pytest.raises(CliError, match="delete failed"):

@@ -14,8 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan._pipeline import registry
-from megaplan._pipeline.discovery.manifest import Manifest
+from arnold.pipelines.megaplan._pipeline import registry
+from arnold.pipelines.megaplan._pipeline.discovery.manifest import Manifest
 
 
 # ── Expected metadata from megaplan/pipelines/planning/__init__.py ──────
@@ -46,7 +46,7 @@ def planning_only_scan_root(tmp_path: Path):
     # Copy the real planning package into the temp dir.
     real_planning = (
         Path(__file__).resolve().parents[2]
-        / "megaplan" / "pipelines" / "planning"
+        / "arnold" / "pipelines" / "megaplan" / "pipelines" / "planning"
     )
     shutil.copytree(real_planning, pipelines_dir / "planning")
     return pipelines_dir
@@ -60,7 +60,7 @@ def test_discover_python_pipelines_flag_on_finds_planning_with_correct_metadata(
         "os.environ", {"MEGAPLAN_M6_MANIFEST_DISCOVERY": "1"}, clear=False
     ), patch.object(
         registry, "_get_scan_roots",
-        lambda: [(planning_only_scan_root, "megaplan.pipelines")],
+        lambda: [(planning_only_scan_root, "arnold.pipelines.megaplan.pipelines")],
     ):
         quads = registry.discover_python_pipelines()
 
@@ -102,7 +102,7 @@ def test_discover_python_pipelines_flag_on_planning_builder_is_callable_and_yiel
         "os.environ", {"MEGAPLAN_M6_MANIFEST_DISCOVERY": "1"}, clear=False
     ), patch.object(
         registry, "_get_scan_roots",
-        lambda: [(planning_only_scan_root, "megaplan.pipelines")],
+        lambda: [(planning_only_scan_root, "arnold.pipelines.megaplan.pipelines")],
     ):
         quads = registry.discover_python_pipelines()
 
@@ -111,7 +111,7 @@ def test_discover_python_pipelines_flag_on_planning_builder_is_callable_and_yiel
 
     _cli_name, builder, _meta, _source_path = by_name["megaplan"]
 
-    from megaplan._pipeline.types import Pipeline as PipelineCls
+    from arnold.pipelines.megaplan._pipeline.types import Pipeline as PipelineCls
 
     pipeline = builder()
     assert isinstance(pipeline, PipelineCls), (
@@ -133,7 +133,7 @@ def test_scan_python_pipelines_flag_on_planning_disposition_has_manifest(
         "os.environ", {"MEGAPLAN_M6_MANIFEST_DISCOVERY": "1"}, clear=False
     ), patch.object(
         registry, "_get_scan_roots",
-        lambda: [(planning_only_scan_root, "megaplan.pipelines")],
+        lambda: [(planning_only_scan_root, "arnold.pipelines.megaplan.pipelines")],
     ):
         dispositions = registry.scan_python_pipelines()
 

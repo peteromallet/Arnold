@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from megaplan._pipeline.pattern_select import (
+from arnold.pipelines.megaplan._pipeline.pattern_select import (
     select,
     threshold,
     top_1,
     top_k,
 )
-from megaplan._pipeline.types import SelectionResult
+from arnold.pipelines.megaplan._pipeline.types import SelectionResult
 
 
 def test_top_1_picks_highest_score():

@@ -10,12 +10,14 @@ from unittest.mock import patch
 
 from arnold.pipeline import Pipeline, Stage, StepContext, run_pipeline
 from arnold.runtime.envelope import RuntimeEnvelope
-from megaplan._pipeline import registry
-from megaplan._pipeline.discovery.manifest import Manifest, read_manifest
+from arnold.pipelines.megaplan._pipeline import registry
+from arnold.pipelines.megaplan._pipeline.discovery.manifest import Manifest, read_manifest
 
 
 PIPELINE_INIT = (
     Path(__file__).resolve().parents[2]
+    / "arnold"
+    / "pipelines"
     / "megaplan"
     / "pipelines"
     / "jokes"
@@ -37,7 +39,7 @@ def test_jokes_manifest_first_scan_defers_import() -> None:
     with patch.dict(
         "os.environ", {"MEGAPLAN_M6_MANIFEST_DISCOVERY": "1"}, clear=False
     ), patch.object(
-        registry, "_get_scan_roots", lambda: [(scan_root, "megaplan.pipelines")]
+        registry, "_get_scan_roots", lambda: [(scan_root, "arnold.pipelines.megaplan.pipelines")]
     ), patch.object(registry, "_load_module_from_path") as load_spy:
         dispositions = registry.scan_python_pipelines()
 
@@ -51,7 +53,7 @@ def test_jokes_manifest_first_scan_defers_import() -> None:
 def test_jokes_build_pipeline_supplies_content_and_wiring() -> None:
     import importlib
 
-    module = importlib.import_module("megaplan.pipelines.jokes")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.jokes")
     pipeline = module.build_pipeline(topic="dependency graphs")
 
     assert pipeline.entry == "draft"
@@ -67,7 +69,7 @@ def test_jokes_build_pipeline_supplies_content_and_wiring() -> None:
 def test_jokes_runs_and_emits_final_artifact(tmp_path) -> None:
     import importlib
 
-    module = importlib.import_module("megaplan.pipelines.jokes")
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.jokes")
     pipeline = module.build_pipeline(topic="dependency graphs")
     plan_dir = tmp_path / "jokes"
 

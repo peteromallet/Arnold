@@ -216,7 +216,7 @@ class TestFullValidateIntegration:
         """The planning pipeline stages with prompt_keys should pass
         resource validation since they don't rely on Arnold resource_bundles
         (they have their own prompt resolution mechanism)."""
-        from megaplan._pipeline.registry import get_pipeline
+        from arnold.pipelines.megaplan._pipeline.registry import get_pipeline
 
         pipeline = get_pipeline("planning")
         diag = validate_resource_dependencies(pipeline)

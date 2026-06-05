@@ -14,11 +14,11 @@ from typing import Any, Mapping
 
 from arnold.pipelines.megaplan.handlers import handle_prep
 from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
-from megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepMixinProperty, StepResult
 
 
 @dataclass(frozen=True)
-class PrepStep:
+class PrepStep(StepMixinProperty):
     """The prep phase as a real, typed Step."""
 
     name: str = "prep"

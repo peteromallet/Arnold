@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.types import (
     Reduce,
     ReduceResult,
     SelectionResult,

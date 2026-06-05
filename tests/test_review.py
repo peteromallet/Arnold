@@ -4,14 +4,14 @@ import json
 
 import pytest
 
-import megaplan
-import megaplan.execute.aggregation
-import megaplan.execute.batch
-import megaplan.execute.core
-import megaplan.handlers
-import megaplan.execute.merge
-import megaplan.workers
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.execute.aggregation as megaplan_execute_aggregation
+import arnold.pipelines.megaplan.execute.batch as megaplan_execute_batch
+import arnold.pipelines.megaplan.execute.core as megaplan_execute_core
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+import arnold.pipelines.megaplan.execute.merge as megaplan_execute_merge
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 from tests.conftest import PlanFixture, load_state, read_json
 
@@ -350,7 +350,7 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
     assert "Reviewer verdicts pending: 1" in blocked_md
     assert "Sense-check verdicts pending: 1" in blocked_md
     # Verify phase_result.json is written with success (review always emits success)
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr_blocked = read_phase_result(plan_fixture.plan_dir)
     assert pr_blocked is not None, "phase_result.json must be written after review"
     assert pr_blocked.exit_kind == "success"
@@ -438,7 +438,7 @@ def test_review_blocks_empty_evidence_files_without_substantive_verdict(
     assert response["next_step"] == "review"
     assert "missing reviewer evidence_files" in response["summary"]
     # Verify phase_result.json is written
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after review"
     assert pr.exit_kind == "success"
@@ -508,7 +508,7 @@ def test_review_softens_substantive_verdict_without_evidence_files_and_can_kick_
     assert state["history"][-1]["result"] == "needs_rework"
     assert stored_review["review_verdict"] == "needs_rework"
     # Verify phase_result.json emission
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after review"
     assert pr.exit_kind == "success"
@@ -715,7 +715,7 @@ def test_review_works_after_batch_by_batch_execution(
     )
     assert review["state"] == megaplan.STATE_DONE
     # Verify phase_result.json is written after this review too
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after review"
     assert pr.exit_kind == "success"
@@ -751,7 +751,7 @@ def test_execution_merge_config_includes_blocked_status() -> None:
     """The enum_fields passed to the execute merge path must include blocked."""
     # Import source to sanity-check the constant survives future edits.
     import inspect
-    import megaplan.execute.core as execution_module
+    import arnold.pipelines.megaplan.execute.core as execution_module
 
     source = inspect.getsource(execution_module._merge_batch_results)
     assert '"blocked"' in source, (

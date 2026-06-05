@@ -8,14 +8,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from megaplan.cloud.cli import _ensure_repo_checkout, _ensure_repo_command
-from megaplan.cloud.spec import RepoSpec, load_spec
-from megaplan.cloud.template import (
+from arnold.pipelines.megaplan.cloud.cli import _ensure_repo_checkout, _ensure_repo_command
+from arnold.pipelines.megaplan.cloud.spec import RepoSpec, load_spec
+from arnold.pipelines.megaplan.cloud.template import (
     render_ensure_repo_command,
     render_ensure_repos_block,
     render_entrypoint,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _base_spec(*, mode: str = "idle") -> dict[str, object]:

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.auto import (
+from arnold.pipelines.megaplan.auto import (
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_PHASE_TIMEOUT_SECONDS,
     DEFAULT_POLL_SLEEP_SECONDS,
@@ -23,7 +23,7 @@ from megaplan.auto import (
     ESCALATE_ACTIONS,
     DriverOutcome,
 )
-from megaplan.supervisor.driver import (
+from arnold.pipelines.megaplan.supervisor.driver import (
     DEFAULT_ESCALATE_ACTION,
     DefaultRunDriver,
     PackRunner,
@@ -32,7 +32,7 @@ from megaplan.supervisor.driver import (
     RunRequest,
     RunWriter,
 )
-from megaplan.supervisor.model import RunNode
+from arnold.pipelines.megaplan.supervisor.model import RunNode
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Reference helpers
@@ -240,7 +240,7 @@ class TestDefaultRunDriver:
             return _make_fake_outcome(plan=plan)
 
         monkeypatch.setattr(
-            "megaplan.supervisor.driver.auto_drive", fake_auto_drive
+            "arnold.pipelines.megaplan.supervisor.driver.auto_drive", fake_auto_drive
         )
 
         called: list[tuple[str, int, str, str]] = []
@@ -294,7 +294,7 @@ class TestDefaultRunDriver:
             return _make_fake_outcome(plan=plan)
 
         monkeypatch.setattr(
-            "megaplan.supervisor.driver.auto_drive", fake_auto_drive
+            "arnold.pipelines.megaplan.supervisor.driver.auto_drive", fake_auto_drive
         )
 
         req = RunRequest(root=Path("."), plan="minimal")
@@ -414,19 +414,19 @@ class TestExportSurface:
     }
 
     def test_driver_module_all_matches(self) -> None:
-        from megaplan.supervisor import driver as dmod
+        from arnold.pipelines.megaplan.supervisor import driver as dmod
 
         assert set(dmod.__all__) == self.DRIVER_ALL
 
     def test_supervisor_init_exports_driver_items(self) -> None:
-        from megaplan.supervisor import __all__ as supervisor_all
+        from arnold.pipelines.megaplan.supervisor import __all__ as supervisor_all
 
         supervisor_set = set(supervisor_all)
         for name in self.DRIVER_ALL:
             assert name in supervisor_set, f"{name} missing from supervisor __all__"
 
     def test_every_exported_symbol_is_importable(self) -> None:
-        from megaplan.supervisor import (
+        from arnold.pipelines.megaplan.supervisor import (
             DEFAULT_ESCALATE_ACTION,
             DefaultRunDriver,
             PackRunner,

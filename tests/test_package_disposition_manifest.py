@@ -75,6 +75,7 @@ def _manifest_with_rows(
         "rows": rows,
         "parity_gates": [],
         "runtime_settings_gates": [],
+        "deferral_ledger": [],
     }
     base.update(overrides)
     return base

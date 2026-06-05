@@ -233,7 +233,7 @@ class TestArnoldWeightedVote:
 class TestMegaplanBridgeJoins:
     def test_bridge_majority_vote_uses_tiebreaker_default(self) -> None:
         """The Megaplan bridge must default to 'tiebreaker'."""
-        from megaplan._pipeline.pattern_joins import majority_vote as mega_majority
+        from arnold.pipelines.megaplan._pipeline.pattern_joins import majority_vote as mega_majority
 
         join = mega_majority()  # uses legacy default_on_tie='tiebreaker'
         results = [
@@ -245,7 +245,7 @@ class TestMegaplanBridgeJoins:
         assert out.next == "tiebreaker"
 
     def test_bridge_weighted_vote_uses_tiebreaker_default(self) -> None:
-        from megaplan._pipeline.pattern_joins import weighted_vote as mega_weighted
+        from arnold.pipelines.megaplan._pipeline.pattern_joins import weighted_vote as mega_weighted
 
         join = mega_weighted({"r1": 1.0, "r2": 1.0})
         results = [
@@ -257,7 +257,7 @@ class TestMegaplanBridgeJoins:
 
     def test_bridge_delegates_to_arnold_core(self) -> None:
         """The Megaplan bridge must delegate to Arnold functions."""
-        from megaplan._pipeline.pattern_joins import majority_vote as mega_majority
+        from arnold.pipelines.megaplan._pipeline.pattern_joins import majority_vote as mega_majority
         from arnold.pipeline.pattern_joins import majority_vote as arnold_maj
 
         # Both should produce the same result for the same inputs.

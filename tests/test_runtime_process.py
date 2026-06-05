@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from megaplan.runtime.process import kill_group, spawn, spawn_async
+from arnold.pipelines.megaplan.runtime.process import kill_group, spawn, spawn_async
 
 
 # ---------------------------------------------------------------------------

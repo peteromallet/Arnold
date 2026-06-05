@@ -1,8 +1,8 @@
 """T15 — pipelines new scaffold tests.
 
 Verifies that ``pipelines new <name>``:
-* Creates a build_pipeline module file (``megaplan/pipelines/<stem>.py``)
-* Creates a SKILL.md stub (``megaplan/pipelines/<cli-name>/SKILL.md``)
+* Creates a build_pipeline module file (``arnold/pipelines/megaplan/pipelines/<stem>.py``)
+* Creates a SKILL.md stub (``arnold/pipelines/megaplan/pipelines/<cli-name>/SKILL.md``)
 * The emitted package passes ``pipelines check`` (exit 0).
 """
 
@@ -16,13 +16,15 @@ from pathlib import Path
 import pytest
 
 
-_PIPELINES_DIR = Path(__file__).resolve().parent.parent / "megaplan" / "pipelines"
+_PIPELINES_DIR = (
+    Path(__file__).resolve().parent.parent / "arnold" / "pipelines" / "megaplan" / "pipelines"
+)
 
 
 def _run_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run ``python -m megaplan pipelines ...`` and return the result."""
+    """Run ``python -m arnold.pipelines.megaplan pipelines ...`` and return the result."""
     return subprocess.run(
-        [sys.executable, "-m", "megaplan", "pipelines", *args],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "pipelines", *args],
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "MEGAPLAN_MOCK_WORKERS": "1"},
@@ -30,9 +32,9 @@ def _run_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _run_arnold_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run ``python -m megaplan.cli.arnold pipelines ...`` and return the result."""
+    """Run ``python -m arnold.pipelines.megaplan.cli.arnold pipelines ...``."""
     return subprocess.run(
-        [sys.executable, "-m", "megaplan.cli.arnold", "pipelines", *args],
+        [sys.executable, "-m", "arnold.pipelines.megaplan.cli.arnold", "pipelines", *args],
         capture_output=True,
         text=True,
         env={**__import__("os").environ, "MEGAPLAN_MOCK_WORKERS": "1"},

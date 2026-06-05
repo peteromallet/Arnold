@@ -1,8 +1,8 @@
 """T9c — alternating_turns stores until_condition on terminal Stage."""
 from __future__ import annotations
 
-from megaplan._pipeline.pattern_topology import alternating_turns
-from megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan._pipeline.pattern_topology import alternating_turns
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult
 
 
 class _RoleStep:

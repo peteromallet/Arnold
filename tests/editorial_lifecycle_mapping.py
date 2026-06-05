@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.schemas.arnold import ARNOLD_EPIC_STATES, ARNOLD_TO_MEGAPLAN_EPIC_STATE, Epic, map_arnold_epic_state
+from arnold.pipelines.megaplan.schemas.arnold import ARNOLD_EPIC_STATES, ARNOLD_TO_MEGAPLAN_EPIC_STATE, Epic, map_arnold_epic_state
 
 
 def test_arnold_epic_lifecycle_mapping_uses_existing_megaplan_states() -> None:

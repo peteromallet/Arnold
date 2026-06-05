@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._core.workflow import BuildBindingError, build_with_binding
-from megaplan._pipeline.types import Edge, Pipeline, Port, PortRef, Stage
+from arnold.pipelines.megaplan._core.workflow import BuildBindingError, build_with_binding
+from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Port, PortRef, Stage
 
 
 class _ProdStep:

@@ -11,7 +11,7 @@ Enforces the three allowlists from the R1 authority flip:
   retired at M6`` annotation.
 
 Any other ``read_json(plan_dir / "state.json")``-shaped read found in the
-``megaplan/`` tree fails the audit.
+``arnold/pipelines/megaplan/`` tree fails the audit.
 """
 
 from __future__ import annotations
@@ -23,38 +23,38 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MEGAPLAN_DIR = REPO_ROOT / "megaplan"
+MEGAPLAN_DIR = REPO_ROOT / "arnold" / "pipelines" / "megaplan"
 
 
 # Files (relative to repo root) where state.json reads have been classified.
 AUTHORITY_FILES = {
-    "megaplan/control.py",
-    "megaplan/store/plan_repository.py",
-    "megaplan/handlers/execute.py",
-    "megaplan/_core/state.py",
-    "megaplan/orchestration/tiebreaker.py",
-    "megaplan/prompts/tiebreaker_orchestrator.py",
+    "arnold/pipelines/megaplan/control.py",
+    "arnold/pipelines/megaplan/store/plan_repository.py",
+    "arnold/pipelines/megaplan/handlers/execute.py",
+    "arnold/pipelines/megaplan/_core/state.py",
+    "arnold/pipelines/megaplan/orchestration/tiebreaker.py",
+    "arnold/pipelines/megaplan/prompts/tiebreaker_orchestrator.py",
 }
 
 CACHE_TOLERANT_FILES = {
-    "megaplan/bakeoff/metrics.py",
-    "megaplan/receipts/report.py",
-    "megaplan/receipts/extractors.py",
-    "megaplan/cli/status_view.py",
-    "megaplan/cli/__init__.py",
-    "megaplan/cli/feedback.py",
-    "megaplan/observability/doctor.py",
-    "megaplan/observability/cost.py",
-    "megaplan/observability/introspect.py",
-    "megaplan/bakeoff/judge.py",
-    "megaplan/store/warrant_sources.py",
+    "arnold/pipelines/megaplan/bakeoff/metrics.py",
+    "arnold/pipelines/megaplan/receipts/report.py",
+    "arnold/pipelines/megaplan/receipts/extractors.py",
+    "arnold/pipelines/megaplan/cli/status_view.py",
+    "arnold/pipelines/megaplan/cli/__init__.py",
+    "arnold/pipelines/megaplan/cli/feedback.py",
+    "arnold/pipelines/megaplan/observability/doctor.py",
+    "arnold/pipelines/megaplan/observability/cost.py",
+    "arnold/pipelines/megaplan/observability/introspect.py",
+    "arnold/pipelines/megaplan/bakeoff/judge.py",
+    "arnold/pipelines/megaplan/store/warrant_sources.py",
 }
 
 DORMANT_FILES = {
-    "megaplan/auto.py",
+    "arnold/pipelines/megaplan/auto.py",
     # _legacy_subprocess is the frozen pre-T25 snapshot of auto.py's
     # supervisor loop; its reads are dormant by construction.
-    "megaplan/_legacy_subprocess/__init__.py",
+    "arnold/pipelines/megaplan/_legacy_subprocess/__init__.py",
 }
 
 # state_store.py is the new R1 backend module — its reads are routed via
@@ -62,28 +62,28 @@ DORMANT_FILES = {
 # state.py owns the writer (atomic_write_json) and read sites outside the
 # 8-reader allowlist (snapshot/restore plumbing — they are write-side I/O).
 INFRA_ALLOWED_FILES = {
-    "megaplan/_core/io.py",  # defines read_plan_state_cached itself
-    "megaplan/_core/state.py",  # writer/snapshot plumbing
-    "megaplan/_core/state_store.py",  # backend protocol
-    "megaplan/_pipeline/executor.py",  # forensic backup path
-    "megaplan/_pipeline/resume.py",  # resume cursor probe
-    "megaplan/_pipeline/run_cli.py",  # CLI resume probe
-    "megaplan/_pipeline/types.py",  # in-process phase dispatch reads live state
-    "megaplan/_pipeline/stages/inprocess_step.py",  # in-process driver
-    "megaplan/chain/__init__.py",  # chain runner state probes
-    "megaplan/supervisor/chain_runner.py",  # supervisor chain state probes
+    "arnold/pipelines/megaplan/_core/io.py",  # defines read_plan_state_cached itself
+    "arnold/pipelines/megaplan/_core/state.py",  # writer/snapshot plumbing
+    "arnold/pipelines/megaplan/_core/state_store.py",  # backend protocol
+    "arnold/pipelines/megaplan/_pipeline/executor.py",  # forensic backup path
+    "arnold/pipelines/megaplan/_pipeline/resume.py",  # resume cursor probe
+    "arnold/pipelines/megaplan/_pipeline/run_cli.py",  # CLI resume probe
+    "arnold/pipelines/megaplan/_pipeline/types.py",  # in-process phase dispatch reads live state
+    "arnold/pipelines/megaplan/stages/inprocess_step.py",  # in-process driver
+    "arnold/pipelines/megaplan/chain/__init__.py",  # chain runner state probes
+    "arnold/pipelines/megaplan/supervisor/chain_runner.py",  # supervisor chain state probes
     # write paths / fixture/manifest references / non-reader callers
-    "megaplan/observability/fold.py",  # WAL fold authority itself
-    "megaplan/bakeoff/merge.py",  # rewrite helper
-    "megaplan/orchestration/phase_result.py",  # write path
-    "megaplan/workers/_impl.py",  # worker write path
-    "megaplan/handlers/init.py",  # artifact manifest string
-    "megaplan/loop/handlers.py",  # loop artifact manifest strings
-    "megaplan/loop/engine.py",  # loop engine write path
+    "arnold/pipelines/megaplan/observability/fold.py",  # WAL fold authority itself
+    "arnold/pipelines/megaplan/bakeoff/merge.py",  # rewrite helper
+    "arnold/pipelines/megaplan/orchestration/phase_result.py",  # write path
+    "arnold/pipelines/megaplan/workers/_impl.py",  # worker write path
+    "arnold/pipelines/megaplan/handlers/init.py",  # artifact manifest string
+    "arnold/pipelines/megaplan/loop/handlers.py",  # loop artifact manifest strings
+    "arnold/pipelines/megaplan/loop/engine.py",  # loop engine write path
     # test infra (not the megaplan reader surface)
-    "megaplan/tests/agentic/adapter.py",
-    "megaplan/agent/tests/test_benchmark_scoring.py",
-    "megaplan/agent/tests/test_evals/test_run_evals.py",
+    "arnold/pipelines/megaplan/tests/agentic/adapter.py",
+    "arnold/pipelines/megaplan/agent/tests/test_benchmark_scoring.py",
+    "arnold/pipelines/megaplan/agent/tests/test_evals/test_run_evals.py",
 }
 
 ALLOWED_FILES = (
@@ -125,13 +125,13 @@ def test_cache_tolerant_files_carry_annotation():
 
 def test_dormant_path_reads_carry_annotation():
     """All auto.py state.json reads must carry the dormant-path annotation."""
-    auto_path = REPO_ROOT / "megaplan/auto.py"
+    auto_path = REPO_ROOT / "arnold/pipelines/megaplan/auto.py"
     text = auto_path.read_text(encoding="utf-8")
     expected_marker = "# dormant-path: subprocess seam, retired at M6"
     count = text.count(expected_marker)
     # 10 dormant reads per the Step 20 inventory.
     assert count >= 10, (
-        f"megaplan/auto.py: expected ≥10 `{expected_marker}` annotations, "
+        f"arnold/pipelines/megaplan/auto.py: expected ≥10 `{expected_marker}` annotations, "
         f"found {count}."
     )
 

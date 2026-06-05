@@ -14,8 +14,8 @@ from typing import Any, Literal
 
 import pytest
 
-from megaplan._core.scheduler.run import ProcessDriver, run_scheduler
-from megaplan._core.scheduler.types import Reduce
+from arnold.pipelines.megaplan._core.scheduler.run import ProcessDriver, run_scheduler
+from arnold.pipelines.megaplan._core.scheduler.types import Reduce
 
 
 # ---------------------------------------------------------------------------

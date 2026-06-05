@@ -6,20 +6,20 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.state import (
+from arnold.pipelines.megaplan._core.state import (
     save_state,
     save_state_merge_meta,
     touch_active_step,
     write_plan_state,
 )
-from megaplan._pipeline.executor import _merge_state_to_disk
-from megaplan._pipeline.resume import ResumeCursor
-from megaplan.auto import _clear_orphaned_active_step
-from megaplan.bakeoff.merge import _rewrite_project_dir
-from megaplan.chain import _mark_blocked_execute_as_executed
-from megaplan.store.plan_repository import PlanRepository
-from megaplan.types import CliError
-from megaplan.planning.state import STATE_EXECUTED, STATE_FINALIZED, STATE_INITIALIZED, STATE_PLANNED
+from arnold.pipelines.megaplan._pipeline.executor import _merge_state_to_disk
+from arnold.pipelines.megaplan._pipeline.resume import ResumeCursor
+from arnold.pipelines.megaplan.auto import _clear_orphaned_active_step
+from arnold.pipelines.megaplan.bakeoff.merge import _rewrite_project_dir
+from arnold.pipelines.megaplan.chain import _mark_blocked_execute_as_executed
+from arnold.pipelines.megaplan.store.plan_repository import PlanRepository
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.planning.state import STATE_EXECUTED, STATE_FINALIZED, STATE_INITIALIZED, STATE_PLANNED
 
 
 def _state(**overrides):
@@ -311,7 +311,7 @@ def test_no_direct_production_plan_run_state_writes_regression() -> None:
             "rg",
             "-n",
             r"state_path\.write_text|\(.*state\.json.*\)\.write_text|atomic_write_json\([^\n]*(state_path|state\.json)",
-            "megaplan",
+            "arnold/pipelines/megaplan",
         ],
         cwd=repo,
         text=True,
@@ -322,12 +322,12 @@ def test_no_direct_production_plan_run_state_writes_regression() -> None:
     assert result.returncode in {0, 1}, result.stderr
     offenders = []
     allowed = (
-        "megaplan/_core/state.py:",
-        "megaplan/_core/io.py:",
-        "megaplan/loop/engine.py:",
-        "megaplan/supervisor/state.py:",
-        "megaplan/workers/shannon.py:",
-        "megaplan/agent/tests/",
+        "arnold/pipelines/megaplan/_core/state.py:",
+        "arnold/pipelines/megaplan/_core/io.py:",
+        "arnold/pipelines/megaplan/loop/engine.py:",
+        "arnold/pipelines/megaplan/supervisor/state.py:",
+        "arnold/pipelines/megaplan/workers/shannon.py:",
+        "arnold/pipelines/megaplan/agent/tests/",
     )
     for line in result.stdout.splitlines():
         if line.startswith(allowed):

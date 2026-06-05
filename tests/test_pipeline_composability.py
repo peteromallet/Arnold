@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     ParallelStage,
     Pipeline,
@@ -35,8 +35,8 @@ from megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.prompts import PromptRegistry
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.prompts import PromptRegistry
 
 
 # -----------------------------------------------------------------------
@@ -154,9 +154,9 @@ def test_critic_verdict_flags_reach_reviser_via_state_patch(tmp_path: Path) -> N
 # -----------------------------------------------------------------------
 
 def test_one_step_type_serves_all_pipelines() -> None:
-    from megaplan._pipeline.demos.doc_critique import build_pipeline as build_doc
-    from megaplan._pipeline.demo_judges import build_pipeline as build_judges
-    from megaplan._pipeline.planning import compile_planning_pipeline
+    from arnold.pipelines.megaplan._pipeline.demos.doc_critique import build_pipeline as build_doc
+    from arnold.pipelines.megaplan._pipeline.demo_judges import build_pipeline as build_judges
+    from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
 
     doc_pipeline = build_doc()
     judges_pipeline = build_judges()
@@ -279,7 +279,7 @@ def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline(
     submission time in _run_parallel_stage, before pool.submit).  The error
     message must name the stage and the unsafe step.
     """
-    from megaplan._pipeline.executor import run_pipeline
+    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
     from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
     # A handler that raises if called — proves the guard fires first.
@@ -325,8 +325,8 @@ def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline_wit
     tmp_path: Path,
 ) -> None:
     """run_pipeline_with_policy also rejects unsafe ParallelStage before any handler runs."""
-    from megaplan._pipeline.executor import run_pipeline_with_policy
-    from megaplan._pipeline.runtime import RuntimePolicy
+    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+    from arnold.pipelines.megaplan._pipeline.runtime import RuntimePolicy
     from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
     def _must_not_run(_root: Path, _args: Any) -> dict[str, Any]:
@@ -374,7 +374,7 @@ def test_safe_hermetic_parallel_steps_run_concurrently_and_return_in_declaration
     as_completed order.
     """
     import time as _time
-    from megaplan._pipeline.executor import run_pipeline
+    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
 
     # Shared timeline so we can assert overlap.
     timeline: list[tuple[str, float]] = []

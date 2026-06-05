@@ -7,11 +7,11 @@ from typing import Any, Mapping
 
 from arnold.pipelines.megaplan.handlers import handle_critique
 from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
-from megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepMixinProperty, StepResult
 
 
 @dataclass(frozen=True)
-class CritiqueStep:
+class CritiqueStep(StepMixinProperty):
     name: str = "critique"
     kind: str = "judge"
     prompt_key: str | None = "critique"

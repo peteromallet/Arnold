@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan import drivers
-from megaplan.drivers import (
+from arnold.pipelines.megaplan import drivers
+from arnold.pipelines.megaplan.drivers import (
     SUBSTRATES,
     TOPOLOGIES,
     InProcessDriver,

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import (
+from arnold.pipelines.megaplan._core import (
     apply_session_update,
     append_history,
     atomic_write_json,
@@ -31,9 +31,9 @@ from arnold.pipelines.megaplan.execute.quality import (
 from arnold.pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
 )
-from megaplan.types import CliError, PlanState, StepResponse
-from megaplan.planning.state import STATE_FINALIZED
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.types import CliError, PlanState, StepResponse
+from arnold.pipelines.megaplan.planning.state import STATE_FINALIZED
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 def _resolve_execute_approval_mode(

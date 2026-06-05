@@ -9,18 +9,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import configured_robustness, is_creative_mode, is_prose_mode
-from megaplan._core.io import list_batch_artifacts, read_json
+from arnold.pipelines.megaplan._core import configured_robustness, is_creative_mode, is_prose_mode
+from arnold.pipelines.megaplan._core.io import list_batch_artifacts, read_json
 from arnold.pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot,
     _capture_git_status_snapshot_recursive,
     _collect_execute_claimed_paths,
     _normalize_execute_claimed_path,
 )
-from megaplan.forms.directors_notes import update_directors_notes_at_aggregate
-from megaplan.forms.provocations import select_active_checks
-from megaplan.receipts.drift import collect_loc_by_file, compute_scope_drift
-from megaplan.types import CliError, PlanState
+from arnold.pipelines.megaplan.forms.directors_notes import update_directors_notes_at_aggregate
+from arnold.pipelines.megaplan.forms.provocations import select_active_checks
+from arnold.pipelines.megaplan.receipts.drift import collect_loc_by_file, compute_scope_drift
+from arnold.pipelines.megaplan.types import CliError, PlanState
 
 
 def _stable_unique_strings(values: list[str]) -> list[str]:

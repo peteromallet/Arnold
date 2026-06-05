@@ -14,8 +14,8 @@ import inspect
 
 import pytest
 
-import megaplan._legacy_subprocess as _snap
-import megaplan.auto as _auto
+import arnold.pipelines.megaplan._legacy_subprocess as _snap
+import arnold.pipelines.megaplan.auto as _auto
 
 
 class TestLegacyPhaseCommand:

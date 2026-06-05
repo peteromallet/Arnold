@@ -5,7 +5,7 @@ import os
 import time
 from pathlib import Path
 
-from megaplan._core.io import (
+from arnold.pipelines.megaplan._core.io import (
     append_framed_json_transaction,
     commit_journal_transaction,
     framed_json_record_bytes,
