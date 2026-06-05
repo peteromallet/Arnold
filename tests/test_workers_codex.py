@@ -1496,6 +1496,7 @@ def test_run_codex_step_skips_poison_retry_when_fresh_already(
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
 
     poisoned_raw = "bwrap: Creating new namespace failed: Permission denied\n"
 
