@@ -372,11 +372,18 @@ def test_run_codex_step_parses_output_file(tmp_path: Path) -> None:
 
     with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
-            "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=False,
+            fresh=True,
+            model="gpt-5.4",
         )
     assert result.payload == plan_payload
     assert result.duration_ms == 300
     assert result.cost_usd == 0.0
+    assert result.model_actual == "gpt-5.4"
 
 def test_run_codex_step_reports_schema_validation_error_for_json_payload(tmp_path: Path) -> None:
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
