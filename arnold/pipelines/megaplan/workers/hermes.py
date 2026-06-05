@@ -18,6 +18,8 @@ from arnold.pipelines.megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _check_mock_safe,
+    _json_decode_error_for_raw,
+    _repair_worker_json_once,
     mock_worker_output,
     session_key_for,
     validate_payload,
@@ -773,6 +775,8 @@ def parse_agent_output(
     extra_run_kwargs = run_kwargs or {}
     raw_output = result.get("final_response", "") or ""
     messages = result.get("messages", [])
+    parse_error: json.JSONDecodeError | None = _json_decode_error_for_raw(raw_output)
+    repair_raw = raw_output
 
     # If final_response is empty and the model used tools, the agent loop exited
     # after tool calls without giving the model a chance to output JSON.
@@ -802,7 +806,8 @@ def parse_agent_output(
     payload = None
     if output_path and output_path.exists():
         try:
-            candidate_payload = json.loads(output_path.read_text(encoding="utf-8"))
+            output_text = output_path.read_text(encoding="utf-8")
+            candidate_payload = json.loads(output_text)
             if isinstance(candidate_payload, dict):
                 # Check if the model actually filled in findings (not just the empty template)
                 has_content = _template_has_content(candidate_payload, step)
@@ -811,12 +816,20 @@ def parse_agent_output(
                     print(f"[hermes-worker] Read JSON from template file: {output_path}", file=sys.stderr)
                 else:
                     print(f"[hermes-worker] Template file exists but has no real content", file=sys.stderr)
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError as exc:
+            parse_error = parse_error or exc
+            try:
+                repair_raw = output_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+        except OSError:
             pass
 
     # Try parsing the final text response
     if payload is None:
         payload = _parse_json_response(raw_output)
+        if payload is None and parse_error is None:
+            parse_error = _json_decode_error_for_raw(raw_output)
 
     # Fallback: some models (GLM-5) put JSON in reasoning/think tags
     # instead of content. Just grab it from there.
@@ -855,10 +868,14 @@ def parse_agent_output(
         ]:
             if candidate.exists() and candidate != output_path:  # skip if already checked
                 try:
-                    payload = json.loads(candidate.read_text(encoding="utf-8"))
+                    candidate_text = candidate.read_text(encoding="utf-8")
+                    payload = json.loads(candidate_text)
                     print(f"[hermes-worker] Read JSON from file written by model: {candidate}", file=sys.stderr)
                     break
-                except (json.JSONDecodeError, OSError):
+                except json.JSONDecodeError as exc:
+                    parse_error = parse_error or exc
+                    repair_raw = candidate_text
+                except OSError:
                     pass
 
     # Last resort for template-file phases: the model investigated and produced
@@ -887,12 +904,45 @@ def parse_agent_output(
         except Exception as exc:
             print(f"[hermes-worker] Summary prompt failed: {exc}", file=sys.stderr)
 
+    if payload is None and parse_error is not None:
+        repair_result_holder: dict[str, object] = {}
+
+        def _repair_call(repair_prompt: str) -> str:
+            repair_result = agent.run_conversation(
+                user_message=repair_prompt,
+                conversation_history=messages,
+                **extra_run_kwargs,
+            )
+            repair_result_holder["result"] = repair_result
+            return str(repair_result.get("final_response", "") or "")
+
+        try:
+            repaired = _repair_worker_json_once(
+                step,
+                repair_raw or raw_output,
+                _repair_call,
+                parse_error=parse_error,
+                validate=False,
+            )
+        except CliError as exc:
+            raise CliError(
+                "worker_parse_error",
+                exc.message,
+                extra=exc.extra,
+            ) from exc
+        if repaired is not None:
+            payload, raw_output = repaired
+            repair_result = repair_result_holder.get("result")
+            if isinstance(repair_result, dict):
+                messages = repair_result.get("messages", messages)
+            print(f"[hermes-worker] Repaired malformed JSON with one retry", file=sys.stderr)
+
     if payload is None:
         raise CliError(
             "worker_parse_error",
             f"Hermes worker returned invalid JSON for step '{step}': "
             f"could not extract JSON from response ({len(raw_output)} chars)",
-            extra={"raw_output": raw_output},
+            extra={"raw_output": raw_output, "model_output_parse_error": parse_error is not None},
         )
 
     result["final_response"] = raw_output

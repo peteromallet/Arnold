@@ -23,6 +23,7 @@ _EK_BLOCKED_BY_PREREQ = "blocked_by_prereq"
 _EK_TIMEOUT = "timeout"
 _EK_CONTEXT_EXHAUSTED = "context_exhausted"
 _EK_INTERNAL_ERROR = "internal_error"
+_EK_MALFORMED_MODEL_OUTPUT = "malformed_model_output"
 _EK_EXTERNAL_ERROR = "external_error"
 
 
@@ -107,7 +108,7 @@ def classify_failure(
     if exit_kind == _EK_TIMEOUT:
         return FailureCategory.timeout, []
 
-    if exit_kind == _EK_INTERNAL_ERROR:
+    if exit_kind in {_EK_INTERNAL_ERROR, _EK_MALFORMED_MODEL_OUTPUT}:
         return FailureCategory.internal_error, []
 
     if exit_kind == _EK_EXTERNAL_ERROR:
