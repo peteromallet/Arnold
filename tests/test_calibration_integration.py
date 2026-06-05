@@ -193,7 +193,7 @@ def test_calibration_integration_flag_off_preserves_toml_routing_and_semantic_pa
         batch_complexity=4,
     )
     assert resolution.source == "toml"
-    assert resolution.spec == "claude:medium"
+    assert resolution.spec == "codex:medium"
     assert resolution.counterfactual_tag is None
 
     projected = project_tier_models([], tier_models)
@@ -202,7 +202,7 @@ def test_calibration_integration_flag_off_preserves_toml_routing_and_semantic_pa
     updated_state = _write_execute_history(
         plan_dir,
         state,
-        spec=resolution.spec or "claude:medium",
+        spec=resolution.spec or "codex:medium",
         projected_tier=resolution.projected_tier,
         counterfactual_tag=resolution.counterfactual_tag,
     )
@@ -305,13 +305,13 @@ def test_calibration_integration_flag_on_uses_query_without_rewriting_toml(
         batch_complexity=4,
     )
     assert resolution.source == "calibration_query"
-    assert resolution.spec == "claude:high"
+    assert resolution.spec == "codex:high"
     assert resolution.projected_tier == 5
 
     updated_state = _write_execute_history(
         plan_dir,
         state,
-        spec=resolution.spec or "claude:high",
+        spec=resolution.spec or "codex:high",
         projected_tier=resolution.projected_tier,
         counterfactual_tag=resolution.counterfactual_tag,
     )
@@ -321,7 +321,7 @@ def test_calibration_integration_flag_on_uses_query_without_rewriting_toml(
     finalized = read_json(plan_dir / "finalize.json")
     report = finalized["tasks"][0]["metadata"]["calibration_route_report"]
     assert report["authoritative_complexity"] == 4
-    assert report["suggestion"]["tier_spec"] == "claude:high"
+    assert report["suggestion"]["tier_spec"] == "codex:high"
     assert report["suggestion"]["projected_tier"] == 5
 
     claims = read_capability_claims(plan_dir)

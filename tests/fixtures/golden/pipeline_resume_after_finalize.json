@@ -2,6 +2,7 @@
   "artifact_filenames": [
     ".events.seq",
     ".plan.lock",
+    ".routing_ledger.lock",
     "contract.json",
     "critique_check_all_locations.json",
     "critique_check_callers.json",
@@ -27,6 +28,7 @@
     "gate_carry.json",
     "gate_signals_v1.json",
     "gate_signals_v2.json",
+    "idea_snapshot.md",
     "phase_result.json",
     "plan_v1.md",
     "plan_v1.meta.json",
@@ -34,6 +36,7 @@
     "plan_v2.meta.json",
     "prep.json",
     "review.json",
+    "routing_ledger.jsonl",
     "state.json",
     "step_receipt_critique_v1.json",
     "step_receipt_critique_v2.json",
@@ -50,6 +53,7 @@
   "artifact_filenames_at_halt": [
     ".events.seq",
     ".plan.lock",
+    ".routing_ledger.lock",
     "contract.json",
     "critique_check_all_locations.json",
     "critique_check_callers.json",
@@ -75,6 +79,7 @@
     "gate_carry.json",
     "gate_signals_v1.json",
     "gate_signals_v2.json",
+    "idea_snapshot.md",
     "phase_result.json",
     "plan_v1.md",
     "plan_v1.meta.json",
@@ -82,6 +87,7 @@
     "plan_v2.meta.json",
     "prep.json",
     "review.json",
+    "routing_ledger.jsonl",
     "state.json",
     "step_receipt_critique_v1.json",
     "step_receipt_critique_v2.json",
@@ -131,7 +137,7 @@
         "step": "plan"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "flags_count": 10,
         "output_file": "critique_v1.json",
         "result": "success",
@@ -158,7 +164,7 @@
         "step": "revise"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "flags_count": 1,
         "output_file": "critique_v2.json",
         "result": "success",
@@ -668,7 +674,7 @@
         "step": "plan"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "flags_count": 10,
         "output_file": "critique_v1.json",
         "result": "success",
@@ -695,7 +701,7 @@
         "step": "revise"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "flags_count": 1,
         "output_file": "critique_v2.json",
         "result": "success",
@@ -718,7 +724,7 @@
         "step": "finalize"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "approval_mode": "user_approved",
         "output_file": "execution.json",
         "result": "success",
@@ -726,7 +732,7 @@
         "step": "execute"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "output_file": "review.json",
         "result": "success",
         "session_mode": "persistent",
@@ -778,6 +784,10 @@
       }
     ],
     "sessions": {
+      "claude_executor": {
+        "mode": "persistent",
+        "refreshed": false
+      },
       "claude_finalizer": {
         "mode": "persistent",
         "refreshed": true
@@ -790,11 +800,7 @@
         "mode": "persistent",
         "refreshed": true
       },
-      "codex_executor": {
-        "mode": "persistent",
-        "refreshed": false
-      },
-      "codex_reviewer": {
+      "claude_reviewer": {
         "mode": "persistent",
         "refreshed": true
       },

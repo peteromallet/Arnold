@@ -1083,7 +1083,12 @@ def get_execution_schema_key(mode: str, form: str | None = None) -> str:
 def _preserve_explicit_required(path: tuple[str, ...]) -> bool:
     # `review.rework_items[]` uses explicit required fields because OpenAI
     # structured outputs require every property key to appear in `required`.
-    return path[-3:] == ("properties", "rework_items", "items")
+    return path[-3:] == ("properties", "rework_items", "items") or path[-4:] == (
+        "properties",
+        "rework_items",
+        "items",
+        "properties",
+    )
 
 
 def strict_schema(schema: Any, _path: tuple[str, ...] = ()) -> Any:

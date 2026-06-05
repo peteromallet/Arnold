@@ -63,6 +63,14 @@
       ]
     },
     {
+      "active_step_progress": null,
+      "in_flight_llm": false,
+      "msg": "event progress advanced to seq=6 kind=tier_escalated at state=executing \u2014 resetting stall counter",
+      "progress_event_seq": 6,
+      "progress_sig": 0,
+      "stall_count": 1
+    },
+    {
       "msg": "running: megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan auto-escalate-up --phase-model execute=claude-opus-4-8 --fresh",
       "phase": "execute",
       "timeout": 3600
