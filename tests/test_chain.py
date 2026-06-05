@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import inspect
 import json
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from unittest.mock import ANY, patch
 
@@ -110,6 +113,34 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
         text=True,
         check=check,
     )
+
+
+def _subparser(parser: argparse.ArgumentParser, name: str) -> argparse.ArgumentParser:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action.choices[name]
+    raise AssertionError(f"{name!r} subparser not found")
+
+
+def _long_options(parser: argparse.ArgumentParser) -> set[str]:
+    return {
+        option
+        for action in parser._actions
+        for option in action.option_strings
+        if option.startswith("--")
+    }
+
+
+def _static_long_option_literals(func: object) -> set[str]:
+    source = textwrap.dedent(inspect.getsource(func))
+    tree = ast.parse(source)
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("--")
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2042,6 +2073,15 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
     assert mock_run.call_args.kwargs["cwd"] == str(chain_module.megaplan_engine_root())
     env = mock_run.call_args.kwargs["env"]
     assert env["PYTHONPATH"].split(os.pathsep)[0] == str(chain_module.megaplan_engine_root())
+
+
+def test_init_plan_long_options_are_registered_on_init_parser() -> None:
+    from megaplan.cli import build_parser
+
+    emitted = _static_long_option_literals(chain_module._init_plan)
+    registered = _long_options(_subparser(build_parser(), "init"))
+
+    assert emitted <= registered
 
 
 def test_init_plan_warns_when_vendor_ignored_by_locked_profile(tmp_path: Path) -> None:
