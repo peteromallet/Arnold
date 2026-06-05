@@ -81,10 +81,14 @@ def test_deploy_without_project_sets_variables_and_ups(monkeypatch: pytest.Monke
     monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec(secrets=["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]))
-    assert provider.deploy(
+    report = provider.deploy(
         tmp_path,
         secrets={"OPENAI_API_KEY": "openai-secret", "ANTHROPIC_API_KEY": "anthropic-secret"},
-    ) == 0
+    )
+    assert report.exit_code == 0
+    assert report.image_rebuild == "triggered"
+    assert report.vars_updated == 2
+    assert report.warnings == ["railway up returned no stdout/stderr; verify the Railway deployment logs for build outcome"]
 
     assert [argv for argv, _kwargs in calls] == [
         ["/usr/bin/railway", "variables", "--service", "svc", "--set", "OPENAI_API_KEY=openai-secret"],
@@ -108,7 +112,13 @@ def test_deploy_with_project_links_once_before_upload(monkeypatch: pytest.Monkey
     monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec(project="my-proj", secrets=["OPENAI_API_KEY"]))
-    provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
+    report = provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
+    assert [step.name for step in report.steps] == [
+        "railway link",
+        "verify Railway service",
+        "set Railway service variables",
+        "railway up",
+    ]
 
     assert calls == [
         ["/usr/bin/railway", "link", "--project", "my-proj"],
@@ -132,7 +142,9 @@ def test_deploy_preserves_environment_scope_for_cloud_commands(monkeypatch: pyte
     monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.subprocess.run", fake_run)
 
     provider = RailwayProvider(_spec(project="my-proj", environment="prod", secrets=["OPENAI_API_KEY"]))
-    provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
+    report = provider.deploy(tmp_path, secrets={"OPENAI_API_KEY": "secret"})
+    assert report.service == "svc"
+    assert report.image_rebuild == "triggered"
 
     assert calls == [
         ["/usr/bin/railway", "link", "--project", "my-proj", "--environment", "prod"],

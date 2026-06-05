@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import argparse
+import json
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,7 @@ import yaml
 
 from arnold.pipelines.megaplan.cloud.auth import seed_codex_oauth
 from arnold.pipelines.megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
+from arnold.pipelines.megaplan.cloud.providers.base import DeployReport, DeployStepReport
 from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
@@ -146,13 +148,191 @@ mode: idle
     monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
     monkeypatch.setattr(
         "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
-        lambda _spec, _provider: calls.append("seed"),
+        lambda _spec, _provider, **_kwargs: calls.append("seed") or {"events": []},
     )
 
     args = _parser().parse_args(["cloud", "deploy", "--cloud-yaml", str(cloud_yaml)])
 
     assert run_cloud_cli(tmp_path, args) == 0
     assert calls == ["deploy", "seed"]
+
+
+def _last_json_object(output: str) -> dict:
+    start = output.rfind("\n{")
+    if start == -1:
+        start = output.find("{")
+    else:
+        start += 1
+    return json.loads(output[start:])
+
+
+def test_cloud_deploy_reports_rebuild_and_provider_output(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    cloud_yaml = tmp_path / "cloud.yaml"
+    cloud_yaml.write_text("provider: railway\n", encoding="utf-8")
+
+    class Provider(_Provider):
+        supports_session = False
+
+        def deploy(self, deploy_dir: Path, *, secrets: dict[str, str]) -> DeployReport:
+            del secrets
+            return DeployReport(
+                success=True,
+                provider="railway",
+                service="agent",
+                deploy_dir=str(deploy_dir),
+                steps=[
+                    DeployStepReport(
+                        name="set Railway service variables",
+                        status="ok",
+                        detail="set 1 service var(s)",
+                        stdout="variables updated\n",
+                    ),
+                    DeployStepReport(
+                        name="railway up",
+                        status="ok",
+                        detail="ran railway up --detach --ci",
+                        stdout="building image\npushed image sha256:abc123\n",
+                    ),
+                ],
+                image_rebuild="triggered",
+                image_ref="sha256:abc123",
+                vars_updated=1,
+                logs={"command": "arnold cloud logs --no-follow", "service": "agent"},
+                verdict="deploy: rebuilt+pushed image sha256:abc123",
+            )
+
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: Provider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
+        lambda _spec, _provider, **_kwargs: {"events": []},
+    )
+
+    args = _parser().parse_args(["cloud", "deploy", "--cloud-yaml", str(cloud_yaml)])
+
+    assert run_cloud_cli(tmp_path, args) == 0
+    output = capsys.readouterr().out
+    assert "- render Dockerfile: ok" in output
+    assert "- render entrypoint.sh: ok" in output
+    assert "- railway up: ok" in output
+    assert "building image" in output
+    assert "logs:" in output
+    assert "deploy: rebuilt+pushed image sha256:abc123" in output
+    payload = _last_json_object(output)
+    assert payload["image_rebuild"] == "triggered"
+    assert payload["image_ref"] == "sha256:abc123"
+    assert payload["logs"]["service"] == "agent"
+
+
+def test_cloud_deploy_reports_vars_only_no_image_rebuild(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    cloud_yaml = tmp_path / "cloud.yaml"
+    cloud_yaml.write_text("provider: railway\n", encoding="utf-8")
+
+    class Provider(_Provider):
+        supports_session = False
+
+        def deploy(self, deploy_dir: Path, *, secrets: dict[str, str]) -> DeployReport:
+            del secrets
+            return DeployReport(
+                success=True,
+                provider="railway",
+                service="agent",
+                deploy_dir=str(deploy_dir),
+                steps=[
+                    DeployStepReport(
+                        name="set Railway service variables",
+                        status="ok",
+                        detail="set 1 service var(s)",
+                    ),
+                    DeployStepReport(
+                        name="railway up",
+                        status="ok",
+                        detail="railway reported no image rebuild",
+                        stdout="no changes detected\n",
+                    ),
+                ],
+                image_rebuild="not_triggered",
+                no_op=False,
+                vars_updated=1,
+                logs={"command": "arnold cloud logs --no-follow", "service": "agent"},
+                verdict="deploy: vars updated, no image rebuild",
+            )
+
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: Provider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
+        lambda _spec, _provider, **_kwargs: {"events": []},
+    )
+
+    args = _parser().parse_args(["cloud", "deploy", "--cloud-yaml", str(cloud_yaml)])
+
+    assert run_cloud_cli(tmp_path, args) == 0
+    output = capsys.readouterr().out
+    assert "deploy: vars updated, no image rebuild" in output
+    assert "no changes detected" in output
+    payload = _last_json_object(output)
+    assert payload["image_rebuild"] == "not_triggered"
+    assert payload["no_op"] is False
+    assert payload["vars_updated"] == 1
+
+
+def test_cloud_deploy_reports_no_op(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    cloud_yaml = tmp_path / "cloud.yaml"
+    cloud_yaml.write_text("provider: railway\n", encoding="utf-8")
+
+    class Provider(_Provider):
+        supports_session = False
+
+        def deploy(self, deploy_dir: Path, *, secrets: dict[str, str]) -> DeployReport:
+            del secrets
+            return DeployReport(
+                success=True,
+                provider="railway",
+                service="agent",
+                deploy_dir=str(deploy_dir),
+                steps=[
+                    DeployStepReport(
+                        name="railway up",
+                        status="ok",
+                        detail="railway reported no image rebuild",
+                        stdout="nothing to deploy\n",
+                    ),
+                ],
+                image_rebuild="not_triggered",
+                no_op=True,
+                vars_updated=0,
+                logs={"command": "arnold cloud logs --no-follow", "service": "agent"},
+                verdict="deploy: no-op (nothing changed)",
+            )
+
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: Provider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
+        lambda _spec, _provider, **_kwargs: {"events": []},
+    )
+
+    args = _parser().parse_args(["cloud", "deploy", "--cloud-yaml", str(cloud_yaml)])
+
+    assert run_cloud_cli(tmp_path, args) == 0
+    output = capsys.readouterr().out
+    assert "deploy: no-op (nothing changed)" in output
+    payload = _last_json_object(output)
+    assert payload["image_rebuild"] == "not_triggered"
+    assert payload["no_op"] is True
 
 
 def test_cloud_chain_invokes_codex_oauth_seed_before_launch(
