@@ -429,7 +429,12 @@ class ChainSpec:
         driver_raw = raw.get("driver") or {}
         if not isinstance(driver_raw, dict):
             raise CliError("invalid_spec", "`driver` must be a mapping")
-        stall = int(driver_raw.get("stall_threshold", DEFAULT_STALL_THRESHOLD))
+        stall = int(
+            driver_raw.get(
+                "max_stall_iterations",
+                driver_raw.get("stall_threshold", DEFAULT_STALL_THRESHOLD),
+            )
+        )
         max_iter = int(driver_raw.get("max_iterations", DEFAULT_MAX_ITERATIONS))
         poll = float(driver_raw.get("poll_sleep", DEFAULT_POLL_SLEEP_SECONDS))
         phase_to = float(driver_raw.get("phase_timeout", DEFAULT_PHASE_TIMEOUT_SECONDS))

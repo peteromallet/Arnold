@@ -42,7 +42,11 @@ from arnold.pipelines.megaplan._pipeline.envelope import (
 from arnold.pipelines.megaplan._core.state import write_plan_state
 from arnold.pipelines.megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
 from arnold.pipelines.megaplan.runtime.process import kill_group, spawn
-from arnold.pipelines.megaplan.observability.events import emit as emit_event, EventKind
+from arnold.pipelines.megaplan.observability.events import (
+    EventKind,
+    emit as emit_event,
+    read_events,
+)
 from arnold.pipelines.megaplan.orchestration.phase_result import (
     ExitKind,
     PhaseResult,
@@ -112,6 +116,17 @@ EXTERNAL_RETRYABLE_LAYERS = frozenset(
         "stream_read_timeout",
         "transport_timeout",
         "worker_stream_stall",
+    }
+)
+STALL_PROGRESS_EVENT_KINDS = frozenset(
+    {
+        EventKind.LLM_CALL_START,
+        EventKind.LLM_TOKEN_HEARTBEAT,
+        EventKind.LLM_CALL_END,
+        EventKind.LLM_CALL_ERROR,
+        EventKind.ARTIFACT_WRITTEN,
+        EventKind.COST_RECORDED,
+        EventKind.TIER_ESCALATED,
     }
 )
 # When execute exits 0 but state.json's latest execute entry is `result=blocked`,
@@ -1614,6 +1629,69 @@ def _active_step_last_activity_stale(
     return idle_seconds >= threshold_seconds, idle_seconds
 
 
+def _active_step_progress_signature(
+    active_step: object,
+) -> tuple[str | None, str | None, str | None] | None:
+    if not isinstance(active_step, dict):
+        return None
+    last_activity_at = active_step.get("last_activity_at")
+    if not last_activity_at:
+        return None
+    return (
+        str(active_step.get("run_id") or active_step.get("phase") or ""),
+        str(last_activity_at),
+        str(active_step.get("last_activity_kind") or ""),
+    )
+
+
+def _stall_event_progress_snapshot(
+    plan_dir: Path | None,
+) -> tuple[int | None, bool, str | None]:
+    """Return journal progress relevant to same-state stall detection."""
+
+    if plan_dir is None:
+        return None, False, None
+    latest_progress_seq: int | None = None
+    latest_progress_kind: str | None = None
+    open_llm_calls: dict[str, dict[str, Any]] = {}
+    anonymous_llm_starts: dict[str, dict[str, Any]] = {}
+    try:
+        for event in read_events(plan_dir):
+            kind = event.get("kind")
+            seq = event.get("seq")
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            driver_lateral_defer = (
+                kind == EventKind.TIER_ESCALATED
+                and payload.get("scope") == "lateral_deferred"
+            )
+            if (
+                kind in STALL_PROGRESS_EVENT_KINDS
+                and isinstance(seq, int)
+                and not driver_lateral_defer
+            ):
+                latest_progress_seq = seq
+                latest_progress_kind = str(kind)
+            if kind == EventKind.LLM_CALL_START:
+                request_id = payload.get("request_id")
+                if request_id:
+                    open_llm_calls[str(request_id)] = event
+                elif isinstance(seq, int):
+                    anonymous_llm_starts[str(seq)] = event
+            elif kind in {EventKind.LLM_CALL_END, EventKind.LLM_CALL_ERROR}:
+                request_id = payload.get("request_id")
+                if request_id:
+                    open_llm_calls.pop(str(request_id), None)
+                elif anonymous_llm_starts:
+                    anonymous_llm_starts.clear()
+    except Exception:
+        return latest_progress_seq, False, latest_progress_kind
+    return (
+        latest_progress_seq,
+        bool(open_llm_calls or anonymous_llm_starts),
+        latest_progress_kind,
+    )
+
+
 def drive(
     plan: str,
     *,
@@ -1648,6 +1726,9 @@ def drive(
     events: list[dict[str, Any]] = []
     last_state: str | None = None
     stall_count = 0
+    last_progress_sig: int | None = None
+    last_stall_progress_event_seq: int | None = None
+    last_active_step_progress_sig: tuple[str | None, str | None, str | None] | None = None
     last_phase: str | None = None
     context_retry_count = 0
     external_retry_count = 0
@@ -2121,8 +2202,69 @@ def drive(
                     last_phase=last_phase,
                 )
 
-        # Stall detection: same state for stall_threshold+ iterations.
-        if state == last_state:
+        # Stall detection: same state for stall_threshold+ iterations with no
+        # measurable progress. "Stalled" means "no progress", not merely
+        # "same state name": large execute phases can drain tasks while state
+        # is pinned, and critique/finalize/review can stream LLM or artifact
+        # progress while their state is unchanged.
+        progress_now = status.get("progress") or {}
+        try:
+            progress_sig_now = int(progress_now.get("tasks_done", 0) or 0) + int(
+                progress_now.get("tasks_skipped", 0) or 0
+            )
+        except Exception:
+            progress_sig_now = None
+        made_task_progress = (
+            progress_sig_now is not None
+            and last_progress_sig is not None
+            and progress_sig_now > last_progress_sig
+        )
+        (
+            stall_progress_event_seq_now,
+            has_in_flight_llm,
+            stall_progress_event_kind_now,
+        ) = _stall_event_progress_snapshot(plan_dir)
+        made_event_progress = (
+            stall_progress_event_seq_now is not None
+            and (
+                last_stall_progress_event_seq is None
+                or stall_progress_event_seq_now > last_stall_progress_event_seq
+            )
+        )
+        active_step_progress_sig_now = _active_step_progress_signature(active_step)
+        made_active_step_progress = (
+            active_step_progress_sig_now is not None
+            and active_step_progress_sig_now != last_active_step_progress_sig
+        )
+        made_progress = (
+            made_task_progress
+            or made_event_progress
+            or made_active_step_progress
+            or has_in_flight_llm
+        )
+        if state == last_state and made_progress:
+            if stall_count:
+                if made_task_progress:
+                    reason = f"task progress advanced ({last_progress_sig}->{progress_sig_now})"
+                elif made_event_progress:
+                    reason = (
+                        f"event progress advanced to seq={stall_progress_event_seq_now} "
+                        f"kind={stall_progress_event_kind_now}"
+                    )
+                elif made_active_step_progress:
+                    reason = "active_step heartbeat advanced"
+                else:
+                    reason = "in-flight LLM call still open"
+                log(
+                    f"{reason} at state={state} — resetting stall counter",
+                    stall_count=stall_count,
+                    progress_sig=progress_sig_now,
+                    progress_event_seq=stall_progress_event_seq_now,
+                    in_flight_llm=has_in_flight_llm,
+                    active_step_progress=active_step_progress_sig_now,
+                )
+            stall_count = 0
+        elif state == last_state:
             stall_count += 1
             if stall_count >= stall_threshold:
                 # Distinguish an all-blocked outcome from a generic stall.
@@ -2199,6 +2341,10 @@ def drive(
                         context={"from_state": last_state, "to_state": state},
                     )
             last_state = state
+        if progress_sig_now is not None:
+            last_progress_sig = progress_sig_now
+        last_stall_progress_event_seq = stall_progress_event_seq_now
+        last_active_step_progress_sig = active_step_progress_sig_now
 
         # Escalation: no phase to run but overrides are available.
         if not next_step:
