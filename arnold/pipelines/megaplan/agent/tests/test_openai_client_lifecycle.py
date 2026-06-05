@@ -74,6 +74,15 @@ def _connection_error():
     )
 
 
+def _stream_chunks(text="ok"):
+    return iter([
+        SimpleNamespace(
+            model="gpt-5-codex",
+            choices=[SimpleNamespace(delta=SimpleNamespace(content=text, tool_calls=None), finish_reason="stop")],
+        ),
+    ])
+
+
 def test_retry_after_api_connection_error_recreates_request_client(monkeypatch):
     first_request = FakeRequestClient(lambda **kwargs: (_ for _ in ()).throw(_connection_error()))
     second_request = FakeRequestClient(lambda **kwargs: {"ok": True})
@@ -93,23 +102,22 @@ def test_retry_after_api_connection_error_recreates_request_client(monkeypatch):
     assert second_request.close_calls >= 1
 
 
-def test_closed_shared_client_is_recreated_before_request(monkeypatch):
+def test_closed_shared_client_is_recreated_when_primary_is_requested(monkeypatch):
     stale_shared = FakeSharedClient(lambda **kwargs: (_ for _ in ()).throw(AssertionError("stale shared client used")))
     stale_shared._client.is_closed = True
 
     replacement_shared = FakeSharedClient(lambda **kwargs: {"replacement": True})
-    request_client = FakeRequestClient(lambda **kwargs: {"ok": "fresh-request-client"})
-    factory = OpenAIFactory([replacement_shared, request_client])
+    factory = OpenAIFactory([replacement_shared])
     monkeypatch.setattr(run_agent, "OpenAI", factory)
 
     agent = _build_agent(shared_client=stale_shared)
-    result = agent._interruptible_api_call({"model": agent.model, "messages": []})
+    result = agent._ensure_primary_openai_client(reason="direct_primary_use")
 
-    assert result == {"ok": "fresh-request-client"}
+    assert result is replacement_shared
     assert agent.client is replacement_shared
     assert stale_shared.close_calls >= 1
     assert replacement_shared.close_calls == 0
-    assert len(factory.calls) == 2
+    assert len(factory.calls) == 1
 
 
 def test_concurrent_requests_do_not_break_each_other_when_one_client_closes(monkeypatch):
@@ -155,35 +163,75 @@ def test_concurrent_requests_do_not_break_each_other_when_one_client_closes(monk
 
 
 
-def test_streaming_call_recreates_closed_shared_client_before_request(monkeypatch):
-    chunks = iter([
-        SimpleNamespace(
-            model="gpt-5-codex",
-            choices=[SimpleNamespace(delta=SimpleNamespace(content="Hello", tool_calls=None), finish_reason=None)],
-        ),
-        SimpleNamespace(
-            model="gpt-5-codex",
-            choices=[SimpleNamespace(delta=SimpleNamespace(content=" world", tool_calls=None), finish_reason="stop")],
-        ),
-    ])
-
+def test_streaming_call_uses_request_client_when_shared_client_is_closed(monkeypatch):
     stale_shared = FakeSharedClient(lambda **kwargs: (_ for _ in ()).throw(AssertionError("stale shared client used")))
     stale_shared._client.is_closed = True
 
-    replacement_shared = FakeSharedClient(lambda **kwargs: {"replacement": True})
-    request_client = FakeRequestClient(lambda **kwargs: chunks)
-    factory = OpenAIFactory([replacement_shared, request_client])
+    request_client = FakeRequestClient(lambda **kwargs: _stream_chunks("Hello world"))
+    factory = OpenAIFactory([request_client])
     monkeypatch.setattr(run_agent, "OpenAI", factory)
 
     agent = _build_agent(shared_client=stale_shared)
     agent.stream_delta_callback = lambda _delta: None
-    # Force chat_completions mode so the streaming path uses
-    # chat.completions.create(stream=True) instead of Codex responses.stream()
     agent.api_mode = "chat_completions"
     response = agent._interruptible_streaming_api_call({"model": agent.model, "messages": []})
 
     assert response.choices[0].message.content == "Hello world"
-    assert agent.client is replacement_shared
-    assert stale_shared.close_calls >= 1
+    assert agent.client is stale_shared
+    assert stale_shared.close_calls == 0
     assert request_client.close_calls >= 1
-    assert len(factory.calls) == 2
+    assert len(factory.calls) == 1
+
+
+def test_concurrent_streaming_requests_do_not_hang_on_blocked_shared_client_close(monkeypatch):
+    close_entered = threading.Event()
+    release_close = threading.Event()
+
+    stale_shared = FakeSharedClient(lambda **kwargs: (_ for _ in ()).throw(AssertionError("stale shared client used")))
+    stale_shared._client.is_closed = True
+
+    def blocked_close():
+        stale_shared.close_calls += 1
+        close_entered.set()
+        release_close.wait(timeout=10)
+        stale_shared._client.is_closed = True
+
+    stale_shared.close = blocked_close
+
+    first_request = FakeRequestClient(lambda **kwargs: _stream_chunks("first"))
+    second_request = FakeRequestClient(lambda **kwargs: _stream_chunks("second"))
+    factory = OpenAIFactory([first_request, second_request])
+    monkeypatch.setattr(run_agent, "OpenAI", factory)
+
+    agent = _build_agent(shared_client=stale_shared)
+    agent.stream_delta_callback = lambda _delta: None
+    results = {}
+
+    def run_stream(name):
+        try:
+            response = agent._interruptible_streaming_api_call({"model": agent.model, "messages": []})
+            results[name] = response.choices[0].message.content
+        except Exception as exc:  # noqa: BLE001 - assertion reports the captured exception
+            results[name] = exc
+
+    thread_one = threading.Thread(target=run_stream, args=("one",), daemon=True)
+    thread_two = threading.Thread(target=run_stream, args=("two",), daemon=True)
+
+    try:
+        thread_one.start()
+        thread_two.start()
+        thread_one.join(timeout=2)
+        thread_two.join(timeout=2)
+
+        assert not thread_one.is_alive()
+        assert not thread_two.is_alive()
+        assert sorted(results.values()) == ["first", "second"]
+        assert not close_entered.is_set()
+        assert stale_shared.close_calls == 0
+        assert first_request.close_calls >= 1
+        assert second_request.close_calls >= 1
+        assert len(factory.calls) == 2
+    finally:
+        release_close.set()
+        thread_one.join(timeout=1)
+        thread_two.join(timeout=1)
