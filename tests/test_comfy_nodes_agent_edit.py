@@ -18,6 +18,7 @@ from vibecomfy.comfy_nodes.agent_edit import (
     _agent_edit_turn_event_payload,
     _batch_warning_sentence,
     _landed_edit_lead,
+    _repair_field_changes_from_original_ui,
     _run_batch_repl_product_path,
     _safe_session_id,
     _synthesize_batch_repl_message,
@@ -5364,6 +5365,35 @@ def test_synthesize_message_landed_edit_lead_zero() -> None:
     assert lead == ""
 
 
+def test_repair_field_changes_uses_named_widget_old_value_for_ksampler_steps() -> None:
+    graph = {
+        "nodes": [
+            {
+                "id": 2,
+                "type": "KSampler",
+                "properties": {"vibecomfy_uid": "ksampler"},
+                "widgets_values": [123, "randomize", 20, 7.5, "euler", "normal", 1],
+            }
+        ],
+        "links": [],
+    }
+    repaired = _repair_field_changes_from_original_ui(
+        graph,
+        (
+            FieldChange(
+                uid="ksampler",
+                field_path="steps",
+                old="normal",
+                new=28,
+            ),
+        ),
+    )
+
+    assert repaired == (
+        FieldChange(uid="ksampler", field_path="steps", old=20, new=28),
+    )
+
+
 def test_synthesize_message_edit_outcome_with_done_summary() -> None:
     """Edit outcome with done_summary combines lead + summary."""
     from vibecomfy.porting.edit_types import FieldChange
@@ -5441,6 +5471,20 @@ def test_synthesize_message_failure_non_budget() -> None:
     assert msg[-1] in ".!?"
     # Non-budget failure gets the "did not land" / "stopped before applying" message
     assert "did not land" in msg.lower() or "stopped" in msg.lower() or "validation" in msg.lower()
+
+
+def test_synthesize_message_stale_state_failure_describes_baseline_mismatch() -> None:
+    failure = failure_envelope(
+        FailureKind.STALE_STATE_MISMATCH,
+        "ingest",
+        TurnContext(session_id="s1", turn_id="t1"),
+    )
+    state = _make_state(user_message="", batch_exit_mode="", batch_field_changes=())
+
+    msg = _synthesize_batch_repl_message(state, failure=failure)
+
+    assert "submitted graph" in msg.lower() or "canvas changed" in msg.lower()
+    assert "did not land" not in msg.lower()
 
 
 def test_synthesize_message_all_messages_are_non_empty() -> None:

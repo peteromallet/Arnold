@@ -1629,14 +1629,20 @@ function extractRebaselineRecovery(payload) {
   if (topLevel) {
     return topLevel;
   }
-  const issues = payload.agent_failure_context?.issues;
-  if (!Array.isArray(issues)) {
-    return null;
-  }
-  for (const issue of issues) {
-    const recovery = normalizeRebaselineRecovery(issue?.rebaseline_recovery);
-    if (recovery) {
-      return recovery;
+  const issueSources = [
+    payload.agent_failure_context?.issues,
+    payload.outcome?.agent_failure_context?.issues,
+    payload.debug?.failure?.agent_failure_context?.issues,
+  ];
+  for (const issues of issueSources) {
+    if (!Array.isArray(issues)) {
+      continue;
+    }
+    for (const issue of issues) {
+      const recovery = normalizeRebaselineRecovery(issue?.rebaseline_recovery);
+      if (recovery) {
+        return recovery;
+      }
     }
   }
   return null;
@@ -6791,7 +6797,7 @@ async function rebaselineCurrentCanvas(panel) {
     panel.state.failure = null;
     panel.state.rebaselineRecovery = null;
     panel.state.phase = PANEL_STATE.IDLE;
-    panel.state.message = "Current canvas rebaselined. Submit again from this canvas.";
+    panel.state.message = "Current canvas rebaselined. Resubmitting from this canvas...";
     panel.state.auditRef = result.audit_ref || panel.state.auditRef;
     panel.state.debugPayload = {
       stale_state_recovery: true,
@@ -6799,6 +6805,7 @@ async function rebaselineCurrentCanvas(panel) {
     };
     renderAgentPanel(panel);
     toast("Current canvas rebaselined");
+    await submitAgentEdit(panel);
     return result;
   } catch (failure) {
     panel.state.rebaselineRecovery = extractRebaselineRecovery(failure) || recovery;
@@ -6824,7 +6831,7 @@ async function undoLastApply(panel) {
     return panel.state.inFlightRebaseline;
   }
   clearChangedNodeFeedbackVisuals();
-  app.loadGraphData(previous.graph);
+  await app.loadGraphData(previous.graph);
   panel.state.lastAppliedChanges = null;
   setQueueGuardContext(null);
   panel.state.phase = PANEL_STATE.IDLE;
@@ -6870,7 +6877,16 @@ async function undoLastApply(panel) {
     toast("Previous graph restored");
     return result;
   } catch (failure) {
+    const normalizedFailure = failure && typeof failure === "object"
+      ? failure
+      : agentPanelFailure("RebaselineError", String(failure), {
+          retryable: true,
+          graph_unchanged: true,
+          next_action: "Retry Undo Rebaseline after the backend responds again.",
+        });
     panel.state.phase = PANEL_STATE.ERROR;
+    panel.state.failure = normalizedFailure;
+    panel.state.rebaselineRecovery = extractRebaselineRecovery(normalizedFailure) || panel.state.rebaselineRecovery;
     panel.state.message = "Previous graph restored locally, but the undo rebaseline failed. Retry Undo Rebaseline.";
     panel.state.debugPayload = {
       ...(panel.state.debugPayload || {}),

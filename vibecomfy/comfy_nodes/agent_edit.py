@@ -36,6 +36,7 @@ from .agent_contracts import (
     turn_envelope,
 )
 from vibecomfy.porting.edit_types import FieldChange
+from vibecomfy.porting.widget_aliases import widget_names_for_class
 from .agent_gates import (
     apply_stage_gate_updates,
     derive_gates,
@@ -265,6 +266,11 @@ def _batch_warning_sentence(
     outcome: TurnOutcome | None = None,
 ) -> str:
     if failure is not None:
+        if failure.kind is FailureKind.STALE_STATE_MISMATCH:
+            return ensure_sentence_message(
+                failure.user_facing_message,
+                fallback="The canvas changed since the current baseline. Rebaseline and resubmit from the current canvas.",
+            )
         if state.batch_exit_mode == _BATCH_EXIT_BUDGET:
             return ensure_sentence_message(
                 "I ran out of batch budget before completing the remaining changes",
@@ -736,6 +742,108 @@ def _json_safe(value: Any) -> Any:
 
 def _field_changes_payload(changes: tuple[FieldChange, ...]) -> list[dict[str, Any]]:
     return [change.to_dict() for change in changes]
+
+
+_MISSING_FIELD_CHANGE_OLD = object()
+
+
+def _ui_node_uid(node: Mapping[str, Any]) -> str | None:
+    properties = node.get("properties")
+    if isinstance(properties, Mapping):
+        uid = properties.get("vibecomfy_uid")
+        if isinstance(uid, str) and uid:
+            return uid
+    node_id = node.get("id")
+    if isinstance(node_id, str) and node_id:
+        return node_id
+    if isinstance(node_id, int):
+        return str(node_id)
+    return None
+
+
+def _iter_ui_graph_nodes(graph: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, list):
+        return ()
+    return tuple(node for node in nodes if isinstance(node, Mapping))
+
+
+def _widget_index_from_field_path(field_path: str) -> int | None:
+    match = re.fullmatch(r"widgets_values(?:\.|\[)(\d+)\]?", field_path)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _ui_widget_value_for_field(node: Mapping[str, Any], field_path: str) -> Any:
+    widgets_values = node.get("widgets_values")
+    explicit_index = _widget_index_from_field_path(field_path)
+    if explicit_index is not None:
+        if isinstance(widgets_values, list) and 0 <= explicit_index < len(widgets_values):
+            return widgets_values[explicit_index]
+        return _MISSING_FIELD_CHANGE_OLD
+    if isinstance(widgets_values, Mapping):
+        return widgets_values[field_path] if field_path in widgets_values else _MISSING_FIELD_CHANGE_OLD
+    if isinstance(widgets_values, list):
+        class_type = str(node.get("type") or node.get("class_type") or "")
+        widget_names = widget_names_for_class(class_type) or []
+        for index, name in enumerate(widget_names):
+            if name == field_path and index < len(widgets_values):
+                return widgets_values[index]
+        widgets = node.get("widgets")
+        if isinstance(widgets, list):
+            for index, widget in enumerate(widgets):
+                if (
+                    isinstance(widget, Mapping)
+                    and widget.get("name") == field_path
+                    and index < len(widgets_values)
+                ):
+                    return widgets_values[index]
+    return _MISSING_FIELD_CHANGE_OLD
+
+
+def _original_ui_field_value(graph: Mapping[str, Any], change: FieldChange) -> Any:
+    for node in _iter_ui_graph_nodes(graph):
+        if _ui_node_uid(node) != change.uid:
+            continue
+        if change.field_path in node and not change.field_path.startswith("widgets_values"):
+            return node[change.field_path]
+        widget_value = _ui_widget_value_for_field(node, change.field_path)
+        if widget_value is not _MISSING_FIELD_CHANGE_OLD:
+            return widget_value
+        return _MISSING_FIELD_CHANGE_OLD
+    return _MISSING_FIELD_CHANGE_OLD
+
+
+def _repair_field_changes_from_original_ui(
+    graph: Mapping[str, Any],
+    changes: tuple[FieldChange, ...],
+) -> tuple[FieldChange, ...]:
+    if not changes:
+        return ()
+    repaired: list[FieldChange] = []
+    changed = False
+    for change in changes:
+        if change.old is None:
+            repaired.append(change)
+            continue
+        old = _original_ui_field_value(graph, change)
+        if old is _MISSING_FIELD_CHANGE_OLD or old == change.old:
+            repaired.append(change)
+            continue
+        repaired.append(
+            FieldChange(
+                uid=change.uid,
+                field_path=change.field_path,
+                old=old,
+                new=change.new,
+            )
+        )
+        changed = True
+    return tuple(repaired) if changed else changes
 
 
 def _write_turn_chat_artifact(
@@ -1686,7 +1794,11 @@ def _stage_agent_batch_repl(
             consecutive_errors=consecutive_errors,
             budget_remaining=max_batches - (turn_number + 1),
         )
-        state.batch_field_changes = state.batch_field_changes + tuple(batch_result.field_changes)
+        field_changes = _repair_field_changes_from_original_ui(
+            state.graph,
+            tuple(batch_result.field_changes),
+        )
+        state.batch_field_changes = state.batch_field_changes + field_changes
         turn_record = {
             "turn_number": turn_number,
             "batch": turn_result.batch,
@@ -1699,7 +1811,7 @@ def _stage_agent_batch_repl(
             "landed_op_count": len(batch_result.landed_ops),
             "diagnostics": report_json["diagnostics"],
             "statements": report_json["statements"],
-            "field_changes": _field_changes_payload(batch_result.field_changes),
+            "field_changes": _field_changes_payload(field_changes),
             "diff": diff_text,
             "report": report_text,
         }
@@ -2659,6 +2771,14 @@ def _run_stage(
                 "issues": [dict(issue) for issue in result.issues if isinstance(issue, dict)],
             },
         )
+        if failure.kind is FailureKind.STALE_STATE_MISMATCH and name in {"ingest", "ingest_v2"}:
+            failure = dataclasses.replace(
+                failure,
+                user_facing_message=(
+                    "The canvas changed since the current backend baseline. "
+                    "Rebaseline and resubmit from the current canvas."
+                ),
+            )
         raise _StageBlocked(result, failure)
     return result
 

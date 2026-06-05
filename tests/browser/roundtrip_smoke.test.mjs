@@ -1263,6 +1263,33 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
         session_id: "session-apply",
         turn_id: "0003",
         baseline_turn_id: "0002",
+        baseline_graph_hash: "baseline-after-undo",
+        baseline_graph_hash_kind: "structural",
+        baseline_graph_hash_version: 2,
+        baseline_source: "rebaseline",
+        baseline_rebaseline_id: "undo-0001",
+        baseline_graph_source_path: "_rebaseline/undo-0001/graph.ui.json",
+        canvas_apply_allowed: true,
+        apply_allowed: true,
+        queue_allowed: false,
+        apply_eligibility: {
+          applyable: true,
+          reason: "queue_blocked_warning",
+          message: "Apply is allowed, but Queue remains blocked for this candidate.",
+          warnings: ["queue_blocked"],
+        },
+        message: "Post-undo candidate.",
+        graph: candidateGraph,
+        report: { change: { content_edits: { preserved: ["uid-1"], edited: [], removed_named: [] } }, recovery: [] },
+      },
+    },
+    {
+      status: 200,
+      body: {
+        ok: true,
+        session_id: "session-apply",
+        turn_id: "0004",
+        baseline_turn_id: "0003",
         canvas_apply_allowed: true,
         apply_allowed: true,
         queue_allowed: false,
@@ -1282,8 +1309,8 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
       body: {
         ok: true,
         session_id: "session-apply",
-        turn_id: "0004",
-        baseline_turn_id: "0002",
+        turn_id: "0005",
+        baseline_turn_id: "0003",
         canvas_apply_allowed: true,
         apply_allowed: true,
         queue_allowed: false,
@@ -1326,8 +1353,8 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
         graph_unchanged: true,
         user_facing_message: "Accept rejected.",
         session_id: "session-apply",
-        turn_id: "0004",
-        baseline_turn_id: "0002",
+        turn_id: "0005",
+        baseline_turn_id: "0003",
       },
     },
   ];
@@ -1396,11 +1423,19 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
           },
         },
       },
-      "/vibecomfy/agent-edit": async () => submitResponses.shift(),
+      "/vibecomfy/agent-edit": async ({ options }) => {
+        const body = JSON.parse(options.body);
+        if (body.task === "post undo baseline submit") {
+          assert.equal(body.session_id, "session-apply");
+          assert.equal(body.client_graph_hash, initialGraphHash);
+          assert.equal(typeof body.client_structural_graph_hash, "string");
+        }
+        return submitResponses.shift();
+      },
       "/vibecomfy/agent-edit/accept": async ({ options }) => {
         const body = JSON.parse(options.body);
         assert.equal(body.session_id, "session-apply");
-        assert.match(body.turn_id, /^000[24]$/);
+        assert.match(body.turn_id, /^000[25]$/);
         assert.equal(body.client_graph_hash, initialGraphHash);
         if (body.turn_id === "0002") {
           assert.equal(body.client_live_canvas_token, "live:rev:1");
@@ -1409,7 +1444,7 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
         }
         assert.equal(body.submit_graph_hash, body.turn_id === "0002" ? initialGraphHash : undefined);
         assert.equal(body.candidate_graph_hash, candidateGraphHash);
-        assert.match(body.idempotency_key, /^accept:session-apply:000[24]:[0-9a-f]{12}:/);
+        assert.match(body.idempotency_key, /^accept:session-apply:000[25]:[0-9a-f]{12}:/);
         return acceptResponses.shift();
       },
       "/vibecomfy/agent-edit/reject": async ({ options }) => {
@@ -1523,6 +1558,11 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
 
     await harness.clickButton("Undo Last Apply");
     assert.equal(harness.loadGraphDataCalls.length, 1);
+
+    prompt.value = "post undo baseline submit";
+    await harness.clickButton("Submit");
+    assert.doesNotMatch(harness.textDump(), /StaleStateMismatch/);
+    assert.match(harness.textDump(), /Post-undo candidate/);
 
     harness.setCurrentGraph(initialGraph);
     prompt.value = "stale";
@@ -2851,6 +2891,7 @@ test("VibeComfy syncs authoritative baseline state from responses and blocks Sub
 test("VibeComfy renders one stale-state recovery action, retries against updated evidence, and recovers through rebaseline resubmit and apply", async () => {
   const rebaselineBodies = [];
   const acceptBodies = [];
+  const submitBodies = [];
   let rebaselineCallCount = 0;
   const recoveryButtonsFor = (panel) => panel.sections.failure.querySelectorAll(
     (node) => node.tagName === "BUTTON" && node.textContent === "Rebaseline Current Canvas",
@@ -2879,43 +2920,49 @@ test("VibeComfy renders one stale-state recovery action, retries against updated
           },
         },
       },
-      "/vibecomfy/agent-edit": {
-        status: 200,
-        body: {
-          ok: true,
-          session_id: "session-stale",
-          turn_id: "0006",
-          baseline_turn_id: null,
-          baseline_graph_hash: "baseline-after-recovery",
-          baseline_graph_hash_kind: "structural",
-          baseline_graph_hash_version: 2,
-          baseline_source: "rebaseline",
-          baseline_rebaseline_id: "recovery-0001",
-          baseline_graph_source_path: "_rebaseline/recovery-0001/graph.ui.json",
-          canvas_apply_allowed: true,
-          apply_allowed: true,
-          queue_allowed: false,
-          apply_eligibility: {
-            applyable: true,
-            reason: "queue_blocked_warning",
-            message: "Apply is allowed, but Queue remains blocked for this candidate.",
-            warnings: ["queue_blocked"],
+      "/vibecomfy/agent-edit": async ({ options }) => {
+        const body = JSON.parse(options.body);
+        submitBodies.push(body);
+        assert.equal(body.task, "finish the recovered edit");
+        assert.equal(body.session_id, "session-stale");
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            session_id: "session-stale",
+            turn_id: "0006",
+            baseline_turn_id: null,
+            baseline_graph_hash: "baseline-after-recovery",
+            baseline_graph_hash_kind: "structural",
+            baseline_graph_hash_version: 2,
+            baseline_source: "rebaseline",
+            baseline_rebaseline_id: "recovery-0001",
+            baseline_graph_source_path: "_rebaseline/recovery-0001/graph.ui.json",
+            canvas_apply_allowed: true,
+            apply_allowed: true,
+            queue_allowed: false,
+            apply_eligibility: {
+              applyable: true,
+              reason: "queue_blocked_warning",
+              message: "Apply is allowed, but Queue remains blocked for this candidate.",
+              warnings: ["queue_blocked"],
+            },
+            message: "Recovered candidate ready to apply.",
+            submit_graph_hash: "submit-after-recovery",
+            candidate_graph_hash: "candidate-after-recovery",
+            graph: {
+              nodes: [
+                { id: 1, type: "Input", properties: { vibecomfy_uid: "uid-recover-1", prompt: "recover me again" } },
+                { id: 2, type: "SaveImage", properties: { vibecomfy_uid: "uid-recover-2" } },
+              ],
+              links: [[1, 1, 0, 2, 0, "IMAGE"]],
+            },
+            report: {
+              change: { content_edits: { preserved: ["uid-recover-1"], edited: ["uid-recover-2"], removed_named: [] } },
+              recovery: [],
+            },
           },
-          message: "Recovered candidate ready to apply.",
-          submit_graph_hash: "submit-after-recovery",
-          candidate_graph_hash: "candidate-after-recovery",
-          graph: {
-            nodes: [
-              { id: 1, type: "Input", properties: { vibecomfy_uid: "uid-recover-1", prompt: "recover me again" } },
-              { id: 2, type: "SaveImage", properties: { vibecomfy_uid: "uid-recover-2" } },
-            ],
-            links: [[1, 1, 0, 2, 0, "IMAGE"]],
-          },
-          report: {
-            change: { content_edits: { preserved: ["uid-recover-1"], edited: ["uid-recover-2"], removed_named: [] } },
-            recovery: [],
-          },
-        },
+        };
       },
       "/vibecomfy/agent-edit/accept": async ({ options }) => {
         const body = JSON.parse(options.body);
@@ -3028,32 +3075,71 @@ test("VibeComfy renders one stale-state recovery action, retries against updated
     panel.state.sessionId = "session-stale";
     panel.state.turnId = "0005";
     panel.state.candidateGraph = { nodes: [{ id: 9, type: "Candidate" }], links: [] };
+    const prompt = harness.document.getElementById("vibecomfy-agent-panel-prompt");
+    prompt.value = "finish the recovered edit";
     const initialFailure = {
       ok: false,
       kind: "StaleStateMismatch",
       stage: "ingest",
       retryable: true,
       graph_unchanged: true,
-      user_facing_message: "Submitted graph no longer matches the current baseline.",
-      next_action: "Rebaseline the current canvas or resubmit.",
+      message: "Some requested edits did not land, so I stopped before applying the rest.",
+      user_facing_message: "The canvas changed since the current backend baseline. Rebaseline and resubmit from the current canvas.",
+      next_action: "resubmit from the current canvas",
       session_id: "session-stale",
       turn_id: "0005",
       baseline_turn_id: null,
+      outcome: {
+        kind: "failure",
+        failure_kind: "StaleStateMismatch",
+        stage: "ingest",
+        graph_unchanged: true,
+        retryable: false,
+        next_action: "resubmit from the current canvas",
+        agent_failure_context: {
+          explanation: "Stage ingest blocked the agent edit.",
+          issues: [
+            {
+              code: "stale_state_mismatch",
+              severity: "error",
+              failure_kind: "StaleStateMismatch",
+              message: "Submitted graph no longer matches the current baseline.",
+              detail: {
+                baseline_graph_hash: "baseline-before-recovery",
+                client_graph_hash: "client-structural-before-recovery",
+                reason: "hash_mismatch",
+                stage: "ingest",
+              },
+              rebaseline_recovery: {
+                action: "rebaseline",
+                endpoint: "/vibecomfy/agent-edit/rebaseline",
+                reason: "stale_state_recovery",
+                last_known_baseline_graph_hash: "baseline-before-recovery",
+                submit_graph_hash: "submit-before-recovery",
+                submit_structural_graph_hash: "submit-structural-before-recovery",
+                client_graph_hash: "client-before-recovery",
+                client_structural_graph_hash: "client-structural-before-recovery",
+              },
+            },
+          ],
+        },
+      },
+      rebaseline_recovery: {
+        action: "rebaseline",
+        endpoint: "/vibecomfy/agent-edit/rebaseline",
+        reason: "stale_state_recovery",
+        last_known_baseline_graph_hash: "baseline-before-recovery",
+        submit_graph_hash: "submit-before-recovery",
+        submit_structural_graph_hash: "submit-structural-before-recovery",
+        client_graph_hash: "client-before-recovery",
+        client_structural_graph_hash: "client-structural-before-recovery",
+      },
       agent_failure_context: {
+        explanation: "Stage ingest blocked the agent edit.",
         issues: [
           {
             code: "stale_state_mismatch",
             severity: "error",
-            rebaseline_recovery: {
-              action: "rebaseline",
-              endpoint: "/vibecomfy/agent-edit/rebaseline",
-              reason: "stale_state_recovery",
-              last_known_baseline_graph_hash: "baseline-before-recovery",
-              submit_graph_hash: "submit-before-recovery",
-              submit_structural_graph_hash: "submit-structural-before-recovery",
-              client_graph_hash: "client-before-recovery",
-              client_structural_graph_hash: "client-structural-before-recovery",
-            },
           },
         ],
       },
@@ -3065,6 +3151,7 @@ test("VibeComfy renders one stale-state recovery action, retries against updated
 
     let recoveryButtons = recoveryButtonsFor(panel);
     assert.equal(recoveryButtons.length, 1);
+    assert.match(harness.textDump(), /canvas changed since the current backend baseline/i);
 
     recoveryButtons[0].click();
     await waitFor(() => rebaselineBodies.length === 1);
@@ -3078,21 +3165,16 @@ test("VibeComfy renders one stale-state recovery action, retries against updated
 
     recoveryButtons[0].click();
     await waitFor(() => rebaselineBodies.length === 2);
-    await waitFor(() => panel.state.failure === null);
+    await waitFor(() => submitBodies.length === 1);
+    await waitFor(() => panel.state.turnId === "0006");
     assert.equal(rebaselineBodies[1].last_known_baseline_graph_hash, "baseline-retry");
     assert.equal(panel.state.failure, null);
-    assert.equal(panel.state.candidateGraph, null);
     assert.equal(panel.state.rebaselineRecovery, null);
     assert.equal(panel.state.baselineGraphHash, "baseline-after-recovery");
     assert.equal(panel.state.baselineSource, "rebaseline");
     assert.equal(panel.state.baselineGraphSourcePath, "_rebaseline/recovery-0001/graph.ui.json");
-    assert.equal(panel.state.message, "Current canvas rebaselined. Submit again from this canvas.");
     assert.equal(recoveryButtonsFor(panel).length, 0);
-
-    const prompt = harness.document.getElementById("vibecomfy-agent-panel-prompt");
-    prompt.value = "finish the recovered edit";
-    await harness.clickButton("Submit");
-    assert.equal(panel.state.turnId, "0006");
+    assert.equal(submitBodies.length, 1);
     assert.equal(panel.state.candidateGraphHash, "candidate-after-recovery");
     assert.match(harness.textDump(), /Apply is allowed, but Queue remains blocked for this candidate\./);
 
