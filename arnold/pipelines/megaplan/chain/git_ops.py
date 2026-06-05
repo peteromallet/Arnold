@@ -250,8 +250,21 @@ def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
     )
 
 
-def _checkout_milestone_branch(root: Path, branch: str, *, base_branch: str, writer) -> None:
-    """Create or resume the milestone branch and push it to origin."""
+def _checkout_milestone_branch(
+    root: Path,
+    branch: str,
+    *,
+    base_branch: str,
+    writer,
+    from_origin: bool = False,
+) -> None:
+    """Create or resume the milestone branch and push it to origin.
+
+    When ``from_origin`` is True, a new milestone branch forks from
+    ``origin/<base_branch>`` so it includes prior squash-merged milestone PRs.
+    Local ``<base_branch>`` can be stale in that workflow because the squash
+    merge creates a fresh commit only on the remote base branch.
+    """
     if _compat()._remote_branch_exists(root, branch, writer=writer):
         _compat()._run_command(root, ["git", "fetch", "origin", branch], writer=writer, error_code="git_branch_failed")
         _compat()._run_command(
@@ -261,7 +274,30 @@ def _checkout_milestone_branch(root: Path, branch: str, *, base_branch: str, wri
             error_code="git_branch_failed",
         )
         return
-    _compat()._run_command(root, ["git", "checkout", "-B", branch, base_branch], writer=writer, error_code="git_branch_failed")
+    fork_point = base_branch
+    if from_origin:
+        fetch = _compat().subprocess.run(
+            ["git", "fetch", "origin", base_branch],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        writer(f"[chain] git fetch origin {base_branch} -> rc={fetch.returncode}\n")
+        if fetch.returncode == 0:
+            fork_point = f"origin/{base_branch}"
+            writer(
+                f"[chain] forking {branch} from {fork_point} "
+                "(authoritative merged history)\n"
+            )
+        else:
+            detail = (fetch.stderr or fetch.stdout or "").strip()
+            writer(
+                f"[chain] fetch failed; forking {branch} from local "
+                f"{base_branch}{(': ' + detail) if detail else ''}\n"
+            )
+    _compat()._run_command(root, ["git", "checkout", "-B", branch, fork_point], writer=writer, error_code="git_branch_failed")
     _compat()._run_command(root, ["git", "push", "-u", "origin", branch], writer=writer, error_code="git_push_failed")
 
 
