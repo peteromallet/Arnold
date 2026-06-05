@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
@@ -262,6 +263,22 @@ def test_parse_shannon_output_result_string() -> None:
     }))
     assert payload == {"output": "done"}
 
+
+def test_extract_actual_model_from_shannon_envelope() -> None:
+    from arnold.pipelines.megaplan.workers.shannon import _extract_actual_model_from_envelope
+
+    assert (
+        _extract_actual_model_from_envelope({"model": "claude-opus-4-7"})
+        == "claude-opus-4-7"
+    )
+    assert (
+        _extract_actual_model_from_envelope(
+            {"message": {"model": "claude-sonnet-4-6"}}
+        )
+        == "claude-sonnet-4-6"
+    )
+
+
 def test_parse_shannon_output_transcript_array() -> None:
     from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
@@ -409,8 +426,9 @@ def test_parse_shannon_output_empty_transcript_uses_last_dict() -> None:
 # stream-json (NDJSON) parsing — the liveness output format
 #
 # Sample events mirror @dexh/shannon's stream-json emission shape (one JSON
-# object per line): system/init after session discovery, per-turn
-# assistant + result, and a trailing shannon_session metadata row on cleanup.
+# object per line): system/init after session discovery, then per-turn
+# assistant + result. Wrapper-only shannon_session metadata is hidden by
+# default so the stream is closer to native Claude output.
 # The final structured-output payload lives in the type=result event's
 # `result` field, identical to the legacy buffered json-array path.
 # ---------------------------------------------------------------------------
@@ -444,9 +462,6 @@ def test_parse_shannon_stream_json_prefers_result_event() -> None:
             "total_cost_usd": 0.05,
             "usage": {"input_tokens": 20, "output_tokens": 10},
         },
-        # Trailing cleanup metadata row, last line — must be skipped in favour
-        # of the result event above.
-        {"type": "shannon_session", "subtype": "metadata", "session_id": "sess-stream"},
     ])
     envelope, parsed = _parse_shannon_output(raw)
     assert parsed == payload
@@ -639,18 +654,26 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
         )
 
     command = run_command.call_args.args[0]
-    # Shannon is launched as ``bun <vendored-index.ts> ... -p <launcher-prompt> ...``
-    # post-cutover (no ``shannon`` shim on PATH).
+    env = run_command.call_args.kwargs["env"]
+    # Shannon is launched as ``bun <vendored-index.ts> ...`` and the main
+    # megaplan prompt is handed to the wrapper over stream-json stdin. The
+    # vendored wrapper then starts native Claude in tmux and pastes it after
+    # readiness.
     from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
     assert command[0:2] == ["bun", str(VENDORED_SHANNON_PATH)]
-    assert "-p" in command
-    p_idx = command.index("-p")
-    assert "Read the full megaplan phase prompt from this file" in command[p_idx + 1]
+    assert "-p" not in command
+    assert "--input-format=stream-json" in command
+    stdin_msg = json.loads(run_command.call_args.kwargs["stdin_text"])
+    assert stdin_msg["type"] == "user"
+    assert "return json" in stdin_msg["message"]["content"]
     # Shannon is launched with stream-json so it emits incremental NDJSON
     # events that reset the _impl.py idle-output watchdog (real liveness),
     # instead of the fully buffered single-array --output-format=json.
     assert "--output-format=stream-json" in command
     assert "--output-format=json" not in command
+    assert "--strict-mcp-config" in command
+    mcp_config = Path(command[command.index("--mcp-config") + 1])
+    assert json.loads(mcp_config.read_text(encoding="utf-8")) == {"mcpServers": {}}
     assert "--json-schema" not in command
     assert "--add-dir" not in command
     assert "--permission-mode" in command
@@ -659,23 +682,37 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     assert "--allow-dangerously-skip-permissions" in command
     # Readiness probe may trigger probabilistically; accept either flag.
     assert ("--session-id" in command) or ("--resume" in command)
-    assert run_command.call_args.kwargs["stdin_text"] is None
-    assert run_command.call_args.kwargs["env"]["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
+    assert env["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
     # Output ceiling is raised above the inherited ~64k default so opus is not
     # cut off mid-run before emitting the structured envelope.
-    assert run_command.call_args.kwargs["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
-    assert run_command.call_args.kwargs["env"]["BASH_DEFAULT_TIMEOUT_MS"] == "7200000"
-    assert run_command.call_args.kwargs["env"]["BASH_MAX_TIMEOUT_MS"] == "7200000"
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
+    assert env["BASH_DEFAULT_TIMEOUT_MS"] == "7200000"
+    assert env["BASH_MAX_TIMEOUT_MS"] == "7200000"
+    assert env["SHANNON_TMUX_SESSION_NAME"]
+    assert re.fullmatch(r"[0-9a-f]{12}", env["SHANNON_TMUX_SESSION_NAME"])
     # On non-root systems, ANTHROPIC_API_KEY is set to "" to block Bun's dotenv auto-load.
-    api_key_val = run_command.call_args.kwargs["env"].get("ANTHROPIC_API_KEY")
+    api_key_val = env.get("ANTHROPIC_API_KEY")
     assert api_key_val is None or api_key_val == ""
     # Prompt file now lives under .megaplan/runs/<plan_id>/<step>/shannon/
     # (the per-run artifact directory) instead of the plan directory root.
     run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "execute" / "shannon"
+    assert env["CLAUDE_CONFIG_DIR"] == str(run_dir / "claude_config")
     prompt_file = run_dir / "execute_shannon_prompt.txt"
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "return json" in prompt_text
     assert "Output format:" in prompt_text
+    ledger_path = run_dir / "tmux_session.json"
+    assert ledger_path.is_relative_to(run_dir)
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert ledger == {
+        "version": 1,
+        "plan_id": state["name"],
+        "step": "execute",
+        "iteration": int(state.get("iteration", 0) or 0),
+        "tmux_session_name": env["SHANNON_TMUX_SESSION_NAME"],
+        "tmux_session_name_derivation": "sha256(plan_id|step|iteration)[:12]",
+        "run_dir": str(run_dir),
+    }
     assert result.payload == payload
     assert result.session_id == "real-shannon-session"
     assert result.cost_usd == 0.02
@@ -781,13 +818,87 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
     # bun-invoked vendored fork, not a PATH-resolved ``shannon`` shim.
     assert f"bun {VENDORED_SHANNON_PATH}" in command[6]
-    assert " -p " in command[6]
+    assert " -p " not in command[6]
+    assert "--input-format=stream-json" in command[6]
     assert "claude -p" not in command[6]
+    assert "--strict-mcp-config" in command[6]
+    assert "--mcp-config" in command[6]
     assert "--bare" in command[6]
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-test"
     assert env["HOME"] == str(tmp_path / "project" / ".megaplan" / "shannon-home")
+    run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon"
+    assert env["CLAUDE_CONFIG_DIR"] == str(run_dir / "claude_config")
     assert env["MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT"] == "4"
     assert (tmp_path / "project" / ".megaplan" / "shannon-home" / ".claude.json").exists()
+
+
+def test_run_shannon_step_native_config_mode_uses_effective_child_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE", "native")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "should-not-leak"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.os.geteuid", lambda: 0)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.shutil.which", lambda name: "/bin/su" if name == "su" else None)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(payload),
+                "session_id": "real-shannon-session",
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon._ensure_workspace_trusted") as trust,
+        patch("arnold.pipelines.megaplan.workers.shannon._make_shannon_liveness_probe", return_value=lambda: True) as liveness,
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+        )
+
+    env = run_command.call_args.kwargs["env"]
+    expected_home = tmp_path / "project" / ".megaplan" / "shannon-home"
+    run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon"
+    assert env["HOME"] == str(expected_home)
+    assert "CLAUDE_CONFIG_DIR" not in env
+    assert not (run_dir / "claude_config").exists()
+    assert trust.call_args.kwargs == {
+        "claude_config_dir": None,
+        "home": str(expected_home),
+    }
+    assert liveness.call_args.kwargs == {
+        "claude_config_dir": None,
+        "home": str(expected_home),
+    }
+
 
 def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -825,9 +936,11 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
         }
     ])
     calls: list[list[str]] = []
+    stdins: list[object] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         calls.append(command)
+        stdins.append(kwargs.get("stdin_text"))
         if len(calls) == 1:
             assert kwargs["timeout"] == 120
             return CommandResult(
@@ -867,8 +980,10 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     # Second turn is the main work turn resuming the same session.
     assert "--resume" in calls[1]
     assert calls[1][calls[1].index("--resume") + 1] == session_id
-    p1 = calls[1].index("-p")
-    assert "Read the full megaplan phase prompt from this file" in calls[1][p1 + 1]
+    assert "-p" not in calls[1]
+    assert "--input-format=stream-json" in calls[1]
+    stdin_msg = json.loads(stdins[1])
+    assert "return json" in stdin_msg["message"]["content"]
     assert result.payload == payload
 
 def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
@@ -925,8 +1040,10 @@ def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
     command = run_command.call_args.args[0]
     assert "--session-id" in command
     assert "--resume" not in command
-    p_idx = command.index("-p")
-    assert "Read the full megaplan phase prompt from this file" in command[p_idx + 1]
+    assert "-p" not in command
+    assert "--input-format=stream-json" in command
+    stdin_msg = json.loads(run_command.call_args.kwargs["stdin_text"])
+    assert "return json" in stdin_msg["message"]["content"]
     sleep.assert_not_called()
     assert result.payload == payload
 
@@ -988,6 +1105,384 @@ def test_run_shannon_step_repeats_execute_batch_scope_after_schema(
     assert "EXECUTE BATCH OUTPUT SCOPE" in prompt_text
     assert "exactly these task IDs and no others: T2" in prompt_text
     assert "exactly these sense check IDs and no others: SC2" in prompt_text
+
+
+def test_run_shannon_step_checks_builder_prompt_after_schema_before_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "execute"
+        assert "EXECUTE BATCH OUTPUT SCOPE" in prompt_text
+        assert "exactly these task IDs and no others: T2" in prompt_text
+        assert "exactly these sense check IDs and no others: SC2" in prompt_text
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.create_claude_prompt", return_value=built_prompt),
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon._write_prompt_file",
+            side_effect=AssertionError("prompt file should not be written"),
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            side_effect=AssertionError("run_command should not be reached"),
+        ),
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+            )
+
+
+def test_run_shannon_step_checks_prompt_override_after_schema_before_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    prompt_override = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "execute"
+        assert prompt_text.startswith("Execute batch 2.")
+        assert "EXECUTE BATCH OUTPUT SCOPE" in prompt_text
+        assert "exactly these task IDs and no others: T2" in prompt_text
+        assert "exactly these sense check IDs and no others: SC2" in prompt_text
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon._write_prompt_file",
+            side_effect=AssertionError("prompt file should not be written"),
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            side_effect=AssertionError("run_command should not be reached"),
+        ),
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+                prompt_override=prompt_override,
+            )
+
+
+def test_run_shannon_step_normal_builder_prompt_dispatches_after_guard_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normal-sized builder prompt reaches dispatch after the guard passes,
+    and scope-reinforcement strings are present at guard time."""
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "normal-builder-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    guard_checked: list[str] = []
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        guard_checked.append(prompt_text)
+        # Normal — no raise
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.create_claude_prompt", return_value=built_prompt),
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+        )
+
+    assert run_command.call_count == 1
+    assert result.payload == payload
+    # Guard was consulted with the full prompt after schema augmentation
+    assert len(guard_checked) == 1
+    assert "Execute batch 2." in guard_checked[0]
+    # Scope-reinforcement strings are present when the guard runs
+    assert "EXECUTE BATCH OUTPUT SCOPE" in guard_checked[0]
+    assert "exactly these task IDs and no others: T2" in guard_checked[0]
+    assert "exactly these sense check IDs and no others: SC2" in guard_checked[0]
+
+
+def test_run_shannon_step_normal_prompt_override_dispatches_after_guard_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normal-sized prompt_override reaches dispatch after the guard passes,
+    and scope-reinforcement strings are present at guard time."""
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    prompt_override = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "normal-override-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    guard_checked: list[str] = []
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        guard_checked.append(prompt_text)
+        # Normal — no raise
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override=prompt_override,
+        )
+
+    assert run_command.call_count == 1
+    assert result.payload == payload
+    # Guard was consulted with the full prompt after schema augmentation
+    assert len(guard_checked) == 1
+    assert "Execute batch 2." in guard_checked[0]
+    # Scope-reinforcement strings are present when the guard runs
+    assert "EXECUTE BATCH OUTPUT SCOPE" in guard_checked[0]
+    assert "exactly these task IDs and no others: T2" in guard_checked[0]
+    assert "exactly these sense check IDs and no others: SC2" in guard_checked[0]
+
+
+def test_run_shannon_step_passes_read_only_projection_capabilities_to_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    captured: list[object] = []
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(plan_payload),
+                "session_id": "read-only-session",
+                "total_cost_usd": 0.02,
+                "usage": {"input_tokens": 11, "output_tokens": 7},
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    def _fake_prompt(*args, **kwargs):
+        captured.append(kwargs.get("projection_capabilities"))
+        return "return json"
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.create_claude_prompt", side_effect=_fake_prompt),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result),
+    ):
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            read_only=True,
+        )
+
+    caps = captured[0]
+    assert caps.can_read_plan_dir is True
+    assert caps.can_read_project_dir is True
+    assert caps.has_file_tools is True
+    assert caps.checkpoint_write_access is False
+
+
+def test_run_shannon_step_passes_write_projection_capabilities_to_prompt_and_keeps_schema_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    captured: list[object] = []
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "write-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    def _fake_prompt(*args, **kwargs):
+        captured.append(kwargs.get("projection_capabilities"))
+        return "return json"
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.create_claude_prompt", side_effect=_fake_prompt),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result),
+    ):
+        run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            read_only=False,
+        )
+
+    caps = captured[0]
+    assert caps.can_read_plan_dir is True
+    assert caps.can_read_project_dir is True
+    assert caps.has_file_tools is True
+    assert caps.checkpoint_write_access is True
+    run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "execute" / "shannon"
+    prompt_text = (run_dir / "execute_shannon_prompt.txt").read_text(encoding="utf-8")
+    assert "Output format:" in prompt_text
+
 
 def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
     tmp_path: Path,
@@ -1106,6 +1601,91 @@ def test_run_shannon_step_read_only_uses_tool_restrictions_without_bypass_flags(
     assert "--dangerously-skip-permissions" not in command
     assert "--allow-dangerously-skip-permissions" not in command
     assert result.payload == payload
+
+
+def test_vendored_shannon_current_launch_and_paste_contracts() -> None:
+    """Pin wrapper-owned native launch and stdin-backed paste before hardening."""
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
+
+    src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
+
+    # The TypeScript wrapper owns the interactive tmux launch and starts the
+    # plain Claude CLI inside the tmux pane.
+    assert "const claudeLaunchArgs = [" in src
+    assert '"claude",' in src
+    assert '"tmux",\n      "new-session",' in src
+    assert "...claudeLaunchArgs," in src
+    # The user prompt is not threaded into the inner Claude argv; sendPrompt
+    # waits for readiness and delivers prompt bytes through tmux paste instead.
+    launch_block = src[src.index("const claudeLaunchArgs = [") : src.index("void maybeSendStartupEnterKeys")]
+    assert "options.prompt" not in launch_block
+    assert "prompt" not in launch_block
+    assert "await waitUntilReadyToSend(tmuxSession);" in src
+    assert "await sendPrompt(tmuxSession, prompt);" in src
+
+    # Long/main prompt delivery stays stdin-backed with an opaque tmux buffer:
+    # load-buffer reads from "-", prompt bytes are written to stdin, then
+    # paste-buffer -p and Enter submit. The temporary buffer is cleaned up
+    # without naming the worker/session/cwd in tmux global buffer state.
+    assert "const _mpBuf = randomUUID();" in src
+    assert "const _mpBuf = `shannon-${tmuxSession}`;" not in src
+    assert 'Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"]' in src
+    assert "_mpLoad.stdin.write(prompt)" in src
+    assert '"paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession' in src
+    assert '"send-keys", "-t", tmuxSession, "C-m"' in src
+    assert "finally {" in src
+    assert 'await runCommand(["tmux", "delete-buffer", "-b", _mpBuf]);' in src
+
+    # Optional short-turn typing is a narrow env-gated branch: by default the
+    # threshold is zero, typed prompts must fit the threshold and contain no
+    # newline/control characters, and the branch uses tmux send-keys -l before
+    # falling through to the unchanged paste-buffer path for every other turn.
+    assert "const TYPE_PROMPT_MAX_CHARS = Number(Bun.env.SHANNON_TYPE_PROMPT_MAX_CHARS ?? 0);" in src
+    assert "function canTypePromptLiterally(prompt: string)" in src
+    assert "TYPE_PROMPT_MAX_CHARS > 0" in src
+    assert "prompt.length <= TYPE_PROMPT_MAX_CHARS" in src
+    assert r"&& !/[\r\n\x00-\x1F\x7F]/.test(prompt)" in src
+    assert '"send-keys", "-t", tmuxSession, "-l", prompt' in src
+
+    # Transcript discovery has a single project-folder helper chain. Claude
+    # Code v2.1.x scopes config files to CLAUDE_CONFIG_DIR but still writes
+    # transcripts under the effective child HOME, so the helper deliberately
+    # ignores CLAUDE_CONFIG_DIR for project-folder lookup.
+    assert "export function claudeProjectsRoot(" in src
+    assert "claudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR" in src
+    assert "void claudeConfigDir;" in src
+    assert 'if (claudeConfigDir) return join(claudeConfigDir, "projects");' not in src
+    assert 'return join(home, ".claude", "projects");' in src
+    assert "return join(claudeProjectsRoot(claudeConfigDir, home), projectKeyForCwd(cwd));" in src
+    assert "export function claudeProjectFolder(" in src
+    assert "const projectFolder = claudeProjectFolder(options.cwd);" in src
+    assert src.count("claudeProjectFolder(options.cwd)") == 1
+    assert src.count("listTranscriptPaths(projectFolder)") == 2
+    assert "await waitForSessionWithPrompt(" in src
+
+
+def test_python_shannon_current_session_teardown_and_drop_root_contracts() -> None:
+    """Pin worker-side session identity, teardown, and drop-root HOME contracts."""
+    import inspect
+
+    from arnold.pipelines.megaplan.workers import shannon as shannon_mod
+
+    run_src = inspect.getsource(shannon_mod.run_shannon_step)
+    assert 'env["SHANNON_TMUX_SESSION_NAME"] = session_name' in run_src
+    assert "tmux_session = TmuxSession(session_name)" in run_src
+    assert "_write_tmux_session_ledger(" in run_src
+    assert "pids = pane_pids(session_name)" in run_src
+    assert "tmux_session.teardown()" in run_src
+    assert "if tmux_session.exists():" in run_src
+    assert 'remediation=f"tmux kill-session -t {session_name}"' in run_src
+    assert run_src.index("_write_tmux_session_ledger(") < run_src.index("pids = pane_pids(session_name)")
+
+    nonroot_src = inspect.getsource(shannon_mod._prepare_nonroot_shannon_runtime)
+    assert 'work_dir / ".megaplan" / "shannon-home"' in nonroot_src
+    assert 'child_env["HOME"] = str(home)' in nonroot_src
+    assert 'child_env.pop("TMUX", None)' in nonroot_src
+    assert 'child_env["TMUX_TMPDIR"] = "/tmp"' in nonroot_src
+    assert 'return [su_path, "-m", "-s", "/bin/bash", user, "-c"], child_env' in nonroot_src
 
 
 def test_vendored_shannon_contains_turn_timeout_and_tool_use_patches() -> None:
@@ -1365,9 +1945,11 @@ def test_session_strategy_never_plain_resumes_reused_session(
     plan_dir, state = _mock_state(tmp_path)
     _seed_shannon_session(state, "execute", "sess-keep")
     calls: list[list[str]] = []
+    stdins: list[object] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         calls.append(command)
+        stdins.append(kwargs.get("stdin_text"))
         if len(calls) == 1:
             return CommandResult(
                 command=command, cwd=tmp_path, returncode=0,
@@ -1401,9 +1983,11 @@ def test_session_strategy_compact_injects_slash_compact(
     plan_dir, state = _mock_state(tmp_path)
     _seed_shannon_session(state, "execute", "sess-keep")
     calls: list[list[str]] = []
+    stdins: list[object] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         calls.append(command)
+        stdins.append(kwargs.get("stdin_text"))
         if len(calls) == 1:
             return CommandResult(
                 command=command, cwd=tmp_path, returncode=0,
@@ -1420,13 +2004,15 @@ def test_session_strategy_compact_injects_slash_compact(
             prompt_override="batch",
         )
     # Turn 1 is the injected /compact against the resumed session; turn 2 is the
-    # real work turn resuming the same id with the launcher prompt.
+    # real work turn resuming the same id with the full prompt over stdin.
     assert len(calls) == 2
     assert calls[0][calls[0].index("-p") + 1] == "/compact"
     assert calls[0][calls[0].index("--resume") + 1] == "sess-keep"
     assert calls[1][calls[1].index("--resume") + 1] == "sess-keep"
-    p1 = calls[1].index("-p")
-    assert "Read the full megaplan phase prompt from this file" in calls[1][p1 + 1]
+    assert "-p" not in calls[1]
+    assert "--input-format=stream-json" in calls[1]
+    stdin_msg = json.loads(stdins[1])
+    assert "batch" in stdin_msg["message"]["content"]
 
 
 def test_session_strategy_clear_injects_slash_clear(
@@ -1654,6 +2240,76 @@ def test_vendored_shannon_contains_slash_completion_helpers() -> None:
     assert "isCompactSummary === true" in src
 
 
+def test_vendored_shannon_launches_native_claude_and_sends_after_ready() -> None:
+    """Vendored Shannon must launch plain interactive Claude, then paste turns.
+
+    The outer Shannon process may receive text via argv or stdin, but the inner
+    Claude process should look like a native tmux launch: no prompt argv, no
+    ``claude -p`` fallback, and each message sent only after prompt readiness
+    plus a randomized delay.
+    """
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
+
+    src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
+    assert '"claude",' in src
+    assert '"-p"' not in src[src.index("const claudeLaunchArgs"):src.index("await runCommand([", src.index("const claudeLaunchArgs"))]
+    assert "...options.claudeArgs, prompt" not in src
+    assert "...rootSafeClaudeArgs(options.claudeArgs), prompt" not in src
+    assert "let launchedWithPrompt" not in src
+    assert "await waitUntilReadyToSend(tmuxSession);" in src
+    assert "const promptSentAt = Date.now();" in src
+    assert "classifyClaudeStartupBlocker(pane.stdout)" in src
+    assert "paneLooksReadyForUserMessage(pane.stdout)" in src
+    assert "function randomSendDelayMs()" in src
+    assert "Math.random()" in src
+    assert "SHANNON_START_TIMEOUT_MS" in src
+    assert 'Bun.env.SHANNON_EMIT_METADATA !== "1"' in src
+    assert "type: \"shannon_session\"" in src  # still available when explicitly opted in
+
+
+def test_vendored_shannon_readiness_classifier_handles_blockers() -> None:
+    """The TypeScript pane classifier must not treat blocker screens as ready."""
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
+    import subprocess
+
+    script = f"""
+      import {{
+        classifyClaudeStartupBlocker,
+        paneLooksReadyForUserMessage,
+      }} from {json.dumps(str(VENDORED_SHANNON_PATH))};
+
+      const cases = [
+        ["trust", "Is this a project you trust? >"],
+        ["auth", "Not logged in. Run /login first. >"],
+        ["approval", "Do you want to proceed? Yes, and don't ask again >"],
+        ["onboarding", "Press Enter to continue >"],
+      ];
+      for (const [kind, pane] of cases) {{
+        const blocker = classifyClaudeStartupBlocker(pane);
+        if (!blocker || blocker.kind !== kind) {{
+          throw new Error(`expected ${{kind}} blocker, got ${{JSON.stringify(blocker)}}`);
+        }}
+      }}
+      if (!paneLooksReadyForUserMessage("\\n│ ❯ ")) {{
+        throw new Error("expected composer prompt to be ready");
+      }}
+      const claude2160Pane = [
+        "Some startup text",
+        "⚠ 2 setup issues: MCP · /doctor",
+        "",
+        "❯ Try \\"write a test for cli.py\\"",
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · PR #65 · ← for agents",
+      ].join("\\n");
+      if (!paneLooksReadyForUserMessage(claude2160Pane)) {{
+        throw new Error("expected Claude Code v2.1.160 composer prompt to be ready");
+      }}
+      if (paneLooksReadyForUserMessage("normal output > with more text")) {{
+        throw new Error("non-terminal greater-than sign should not be ready");
+      }}
+    """
+    subprocess.run(["bun", "-e", script], check=True)
+
+
 def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every historical env-var must map to its ShannonConfig field correctly."""
     from arnold.pipelines.megaplan.workers.shannon import ShannonConfig
@@ -1676,6 +2332,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("MEGAPLAN_SHANNON_DROP_ROOT", "1")
     monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_ENV_SCRUB", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE", "native")
 
     cfg = ShannonConfig.load({})
 
@@ -1696,6 +2353,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert cfg.max_output_tokens == 64000
     assert cfg.drop_root is True
     assert cfg.chmod_workspace is False
+    assert cfg.claude_config_mode == "native"
     assert cfg.env_scrub is False
 
     # Defaults fire when env-vars are absent.
@@ -1706,6 +2364,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delenv("MEGAPLAN_SHANNON_DROP_ROOT")
     monkeypatch.delenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE")
     monkeypatch.delenv("MEGAPLAN_SHANNON_ENV_SCRUB")
+    monkeypatch.delenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE")
     # Override root detection so drop_root auto-logic is predictable in CI.
     monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon._running_as_root", lambda: False)
 
@@ -1714,9 +2373,10 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert cfg2.readiness_probe_forced is False
     assert cfg2.trusted_container is False
     assert cfg2.session_roulette_enabled is True
-    assert cfg2.paste_first_turn is False
+    assert cfg2.paste_first_turn is True
     assert cfg2.drop_root is False
     assert cfg2.chmod_workspace is True
+    assert cfg2.claude_config_mode == "isolated"
     assert cfg2.env_scrub is True
     assert cfg2.readiness_timeout_seconds == 99   # still set from above
     assert cfg2.execute_timeout_seconds == 888
@@ -1724,6 +2384,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
 
     # Verify the pure defaults when nothing is set at all.
     default_cfg = ShannonConfig.load({}, env={})
+    assert default_cfg.claude_config_mode == "isolated"
     assert default_cfg.readiness_timeout_seconds == 120
     assert default_cfg.execute_timeout_seconds == 7200
     assert default_cfg.context_op_timeout_seconds == 180
@@ -1734,26 +2395,63 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert default_cfg.session_compact_probability == pytest.approx(0.25)
     assert default_cfg.context_op_delay_min_seconds == pytest.approx(1.0)
     assert default_cfg.context_op_delay_max_seconds == pytest.approx(15.0)
-    assert default_cfg.paste_first_turn is False
+    assert default_cfg.paste_first_turn is True
     assert default_cfg.max_output_tokens == 128000
     assert default_cfg.chmod_workspace is True
     assert default_cfg.env_scrub is True
     assert default_cfg.voice == "announced"
 
 
-def test_paste_first_turn_delivers_prompt_via_stdin(
+def test_shannon_config_rejects_unknown_claude_config_mode() -> None:
+    from arnold.pipelines.megaplan.workers.shannon import ShannonConfig
+
+    with pytest.raises(CliError, match="MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE"):
+        ShannonConfig.load({}, env={"MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE": "shared"})
+
+
+def test_python_shannon_claude_config_mode_contracts() -> None:
+    """Isolated config stays default; native mode follows effective child HOME."""
+    import inspect
+
+    from arnold.pipelines.megaplan.workers import shannon as shannon_mod
+
+    config_src = inspect.getsource(shannon_mod.ShannonConfig.load)
+    assert (
+        '_get("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE").lower() or "isolated"'
+        in config_src
+    )
+    assert 'claude_config_mode not in {"isolated", "native"}' in config_src
+
+    run_src = inspect.getsource(shannon_mod.run_shannon_step)
+    assert (
+        'run_dir / "claude_config" if cfg.claude_config_mode == "isolated" else None'
+        in run_src
+    )
+    assert 'env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)' in run_src
+    assert 'env.pop("CLAUDE_CONFIG_DIR", None)' in run_src
+    assert "home=env.get(\"HOME\")" in run_src
+
+    trust_src = inspect.getsource(shannon_mod._ensure_workspace_trusted)
+    assert 'cfg_path = Path(claude_config_dir) / ".claude.json"' in trust_src
+    assert 'cfg_path = Path(home) / ".claude.json"' in trust_src
+
+    transcript_src = inspect.getsource(shannon_mod._claude_transcript_paths)
+    assert 'projects_root = Path(claude_config_dir) / "projects"' in transcript_src
+    assert 'projects_root = Path(home) / ".claude" / "projects"' in transcript_src
+
+
+def test_native_prompt_handoff_delivers_prompt_via_stdin_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # With paste-first-turn on, the main turn carries the REAL prompt over stdin
-    # (a stream-json user message), uses --input-format=stream-json, drops the
-    # argv -p launcher entirely, and sets the env flag that activates the Shannon
-    # patch. No "read this file" pointer reaches Claude.
+    # By default, the main turn carries the REAL prompt over stdin (a stream-json
+    # user message), uses --input-format=stream-json, drops the argv -p launcher
+    # entirely, and avoids sending the "read this file" pointer as the task.
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
     from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
     from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
-    monkeypatch.setenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", "1")
+    monkeypatch.delenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", raising=False)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")  # legacy -> fresh, no op turn
     monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.os.geteuid", lambda: 1000, raising=False)
@@ -1793,16 +2491,19 @@ def test_paste_first_turn_delivers_prompt_via_stdin(
     assert captured["env"]["MEGAPLAN_SHANNON_PASTE_FIRST_TURN"] == "1"
 
 
-def test_paste_first_turn_off_keeps_argv_launcher(
+def test_native_prompt_handoff_can_be_disabled_for_legacy_launcher(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Default (flag off): unchanged -p launcher in argv, no stdin, no env flag.
+    # Explicit opt-out keeps the legacy outer-Shannon argv launcher. The vendored
+    # launcher still starts native Claude in tmux and pastes this text after
+    # readiness; this only changes whether megaplan sends the full prompt or the
+    # prompt-file pointer to Shannon.
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
     from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
     from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
-    monkeypatch.delenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", raising=False)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
     plan_dir, state = _mock_state(tmp_path)
@@ -1831,7 +2532,7 @@ def test_paste_first_turn_off_keeps_argv_launcher(
     assert "-p" in command
     assert "--input-format=stream-json" not in command
     assert captured["stdin"] is None
-    assert "MEGAPLAN_SHANNON_PASTE_FIRST_TURN" not in (captured["env"] or {})
+    assert (captured["env"] or {}).get("MEGAPLAN_SHANNON_PASTE_FIRST_TURN") != "1"
 
 
 def test_plan_session_seeded_reproducibility() -> None:
@@ -2047,6 +2748,7 @@ def _make_turn_ctx(tmp_path: Path, *, shannon_prefix: list[str] | None = None,
         work_dir=work_dir,
         plan_dir=plan_dir,
         run_dir=plan_dir / ".megaplan" / "runs" / "t7-plan" / "execute" / "shannon",
+        claude_config_dir=str(plan_dir / ".megaplan" / "runs" / "t7-plan" / "execute" / "shannon" / "claude_config"),
         tmux_session=TmuxSession("t7-test-session"),
         state={"name": "t7-plan", "iteration": 1},
     )
@@ -2112,6 +2814,50 @@ def test_run_turn_builds_resume_and_session_id_args(tmp_path: Path) -> None:
         "type": "user",
         "message": {"role": "user", "content": "the real prompt"},
     }
+
+
+def test_run_turn_enables_typed_env_only_for_short_control_turns(tmp_path: Path) -> None:
+    """Short pre-turns may opt into typing without mutating shared worker env."""
+    from arnold.pipelines.megaplan.workers.shannon import run_turn, Turn
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    shared_env = {"BASE": "1"}
+    ctx = _make_turn_ctx(tmp_path, env=shared_env)
+    fake = CommandResult(
+        command=[], cwd=tmp_path, returncode=0,
+        stdout='{"session_id": "landed"}', stderr="", duration_ms=1,
+    )
+
+    readiness = Turn(
+        session_id="sid-ready", resume=False,
+        body="Hello, say ready when you are.",
+        delivery="argv", expect="non_empty", timeout=60, pre_sleep_s=0.0,
+    )
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(readiness, ctx)
+    readiness_env = rc.call_args.kwargs["env"]
+    assert readiness_env is not ctx.env
+    assert readiness_env["SHANNON_TYPE_PROMPT_MAX_CHARS"] == "256"
+    assert "SHANNON_TYPE_PROMPT_MAX_CHARS" not in ctx.env
+    assert shared_env == {"BASE": "1"}
+
+    clear = Turn(
+        session_id="sid-clear", resume=True, body="/clear",
+        delivery="argv", expect="rotation", timeout=60, pre_sleep_s=0.0,
+    )
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(clear, ctx)
+    assert rc.call_args.kwargs["env"]["SHANNON_TYPE_PROMPT_MAX_CHARS"] == "256"
+    assert "SHANNON_TYPE_PROMPT_MAX_CHARS" not in ctx.env
+
+    main = Turn(
+        session_id="sid-main", resume=True, body="the real prompt",
+        delivery="stdin", expect="envelope", timeout=7200, pre_sleep_s=0.0,
+    )
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(main, ctx)
+    assert rc.call_args.kwargs["env"] is ctx.env
+    assert "SHANNON_TYPE_PROMPT_MAX_CHARS" not in rc.call_args.kwargs["env"]
 
 
 def test_run_turn_propagates_cli_error_codes(tmp_path: Path) -> None:
@@ -2294,7 +3040,7 @@ def test_run_artifacts_written_to_run_dir_not_cwd(
     The prompt file, Claude config, and transcript paths must resolve under
     the per-run directory — never in cwd or plan_dir root.
     """
-    import os
+    import re
 
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
     from arnold.pipelines.megaplan.workers.shannon import (
@@ -2347,13 +3093,29 @@ def test_run_artifacts_written_to_run_dir_not_cwd(
 
     # ── Transcript paths resolve under CLAUDE_CONFIG_DIR ──
     from arnold.pipelines.megaplan.workers.shannon import _claude_transcript_paths
-    cd_str = str(claude_config_dir)
+    projects_root = claude_config_dir / "projects"
+    slug = re.sub(r"[^a-zA-Z0-9_-]", "-", str(tmp_path.resolve()))
+    transcript = projects_root / slug / "test-sid.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("{}\n", encoding="utf-8")
     paths = _claude_transcript_paths(
-        "test-sid", tmp_path, claude_config_dir=cd_str
+        "test-sid", tmp_path, claude_config_dir=str(claude_config_dir)
     )
-    # Even if no transcript exists yet, the projects root is under claude_config_dir
-    # (Py3.9 does not have is_relative_to so we use str.startswith)
-    assert cd_str in str(Path.home() / ".claude") or True  # home fallback not used when cd is set
+    assert paths == [transcript]
+    assert all(path.is_relative_to(projects_root) for path in paths)
+
+    # Native config mode leaves CLAUDE_CONFIG_DIR unset, so transcript probing
+    # must use the effective child HOME rather than the supervisor's home.
+    child_home = run_dir / "native-home"
+    native_projects_root = child_home / ".claude" / "projects"
+    native_transcript = native_projects_root / slug / "native-sid.jsonl"
+    native_transcript.parent.mkdir(parents=True)
+    native_transcript.write_text("{}\n", encoding="utf-8")
+    native_paths = _claude_transcript_paths(
+        "native-sid", tmp_path, claude_config_dir=None, home=str(child_home)
+    )
+    assert native_paths == [native_transcript]
+    assert all(path.is_relative_to(native_projects_root) for path in native_paths)
 
 
 # ---------------------------------------------------------------------------

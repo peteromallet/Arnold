@@ -20,7 +20,7 @@ Env-var → ShannonConfig field mapping (all read by :meth:`ShannonConfig.load`)
   MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY → session_compact_probability (default 0.25)
   MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MIN_SECONDS → context_op_delay_min_seconds (default 1.0)
   MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS → context_op_delay_max_seconds (default 15.0)
-  MEGAPLAN_SHANNON_PASTE_FIRST_TURN          → paste_first_turn            (default False)
+  MEGAPLAN_SHANNON_PASTE_FIRST_TURN          → paste_first_turn            (default True)
   MEGAPLAN_SHANNON_MAX_OUTPUT_TOKENS         → max_output_tokens           (default 128000)
   MEGAPLAN_SHANNON_BASH_TIMEOUT_MS           → launched Claude Bash timeout (default 7200000)
   MEGAPLAN_SHANNON_DROP_ROOT                 → drop_root  (default: auto from root+trusted_container)
@@ -33,7 +33,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-import logging
 import os
 import random
 import re
@@ -60,6 +59,8 @@ from arnold.pipelines.megaplan.runtime.process import OrphanDetectedError, TmuxS
 from arnold.pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from arnold.pipelines.megaplan._core import creative_form_id, read_json, schemas_root
 from arnold.pipelines.megaplan.prompts import create_claude_prompt
+from arnold.pipelines.megaplan.prompts._projection import check_prompt_size
+from arnold.pipelines.megaplan.prompts.review import compact_review_prompt
 from arnold.pipelines.megaplan.schemas import get_execution_schema_key
 from arnold.pipelines.megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
@@ -76,6 +77,7 @@ from arnold.pipelines.megaplan.workers._impl import (
     session_key_for,
     validate_payload,
 )
+from arnold.pipelines.megaplan.workers._projection_caps import shannon_projection_capabilities
 
 
 # Sentinel marker the vendored fork carries on line 2 of index.ts. Mirrors
@@ -194,7 +196,7 @@ class ShannonConfig:
     context_op_delay_max_seconds: float  # MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS
 
     # ── delivery ─────────────────────────────────────────────────────────
-    paste_first_turn: bool  # MEGAPLAN_SHANNON_PASTE_FIRST_TURN
+    paste_first_turn: bool  # MEGAPLAN_SHANNON_PASTE_FIRST_TURN; default native-style stdin handoff
 
     # ── output budget ────────────────────────────────────────────────────
     max_output_tokens: int  # MEGAPLAN_SHANNON_MAX_OUTPUT_TOKENS
@@ -202,6 +204,7 @@ class ShannonConfig:
     # ── root-drop / runtime env ──────────────────────────────────────────
     drop_root: bool        # MEGAPLAN_SHANNON_DROP_ROOT (or auto-detect)
     chmod_workspace: bool  # MEGAPLAN_SHANNON_CHMOD_WORKSPACE
+    claude_config_mode: str  # MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE; isolated|native
 
     # ── structural tells (T9 targets; fields land here now) ──────────────
     voice: str       # prompt voice; no env-var yet; default "announced"
@@ -280,6 +283,15 @@ class ShannonConfig:
         else:
             drop_root = _running_as_root() and trusted_container
         _roulette = _truthy("MEGAPLAN_SHANNON_SESSION_ROULETTE")
+        claude_config_mode = (
+            _get("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE").lower() or "isolated"
+        )
+        if claude_config_mode not in {"isolated", "native"}:
+            raise CliError(
+                "worker_error",
+                "Invalid MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE "
+                f"{claude_config_mode!r}; expected 'isolated' or 'native'.",
+            )
 
         return cls(
             readiness_probe_raw=readiness_probe_raw,
@@ -295,10 +307,11 @@ class ShannonConfig:
             session_compact_probability=_float_unit("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", 0.25),
             context_op_delay_min_seconds=_float_pos("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MIN_SECONDS", 1.0),
             context_op_delay_max_seconds=_float_pos("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", 15.0),
-            paste_first_turn=(_truthy("MEGAPLAN_SHANNON_PASTE_FIRST_TURN") is True),
+            paste_first_turn=(_truthy("MEGAPLAN_SHANNON_PASTE_FIRST_TURN") is not False),
             max_output_tokens=_int_pos("MEGAPLAN_SHANNON_MAX_OUTPUT_TOKENS", 128000),
             drop_root=drop_root,
             chmod_workspace=(_truthy("MEGAPLAN_SHANNON_CHMOD_WORKSPACE") is not False),
+            claude_config_mode=claude_config_mode,
             voice="announced",
             env_scrub=(_truthy("MEGAPLAN_SHANNON_ENV_SCRUB") is not False),
         )
@@ -559,7 +572,7 @@ class Turn:
     ``body`` is the user content for this turn (``/clear``, ``/compact``, a
     readiness prompt, or "" for the main turn whose body is the caller's
     real phase prompt). ``delivery`` is ``"argv"`` for ``-p`` launchers or
-    ``"stdin"`` for the paste-first-turn stream-json path. ``expect``
+    ``"stdin"`` for the native-style stream-json prompt handoff. ``expect``
     annotates what the consumer should look for in the response — currently
     "envelope", "non_empty", "completion", or "rotation". ``pre_sleep_s`` is
     pre-computed by the injected rng (e.g. ``rng.uniform(lo, hi)``) so the
@@ -773,7 +786,7 @@ def plan_session(
         session_id=main_session_id,
         resume=main_resume,
         body="",  # the caller substitutes the real phase prompt
-        delivery="argv",  # caller overrides to "stdin" when paste_mode is on
+        delivery="argv",  # caller overrides to "stdin" for the native-style main turn
         expect="envelope",
         timeout=cfg.execute_timeout_seconds,
         pre_sleep_s=main_pre_sleep,
@@ -860,6 +873,7 @@ class TurnContext:
     work_dir: Path
     plan_dir: Path
     run_dir: Path
+    claude_config_dir: str | None
     tmux_session: TmuxSession
     state: PlanState
 
@@ -946,6 +960,17 @@ def session_id_of(raw: str | None) -> str | None:
     return None
 
 
+def _typed_control_prompt_env(turn: Turn) -> dict[str, str] | None:
+    """Return the per-turn env addition for short control-message typing."""
+    if turn.delivery != "argv":
+        return None
+    if turn.body in {"/clear", "/compact"} and turn.expect in {"completion", "rotation"}:
+        return {"SHANNON_TYPE_PROMPT_MAX_CHARS": "256"}
+    if turn.expect == "non_empty" and turn.body == "Hello, say ready when you are.":
+        return {"SHANNON_TYPE_PROMPT_MAX_CHARS": "256"}
+    return None
+
+
 def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
     """Execute one planned :class:`Turn` as a single ``run_command`` call.
 
@@ -1004,12 +1029,17 @@ def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
     else:
         launch_command = command
 
+    run_env = ctx.env
+    typed_env = _typed_control_prompt_env(turn)
+    if typed_env is not None:
+        run_env = {**ctx.env, **typed_env}
+
     try:
         result = run_command(
             launch_command,
             cwd=ctx.work_dir,
             stdin_text=stdin_text,
-            env=ctx.env,
+            env=run_env,
             timeout=turn.timeout,
             activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
             idle_timeout=_worker_stream_idle_timeout_seconds(),
@@ -1017,7 +1047,8 @@ def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
                 ctx.tmux_session,
                 turn.session_id,
                 ctx.work_dir,
-                claude_config_dir=str(ctx.run_dir / "claude_config"),
+                claude_config_dir=ctx.claude_config_dir,
+                home=ctx.env.get("HOME"),
             ),
             tmux_session=ctx.tmux_session,
         )
@@ -1499,6 +1530,14 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
     )
 
 
+def _extract_actual_model_from_envelope(envelope: dict[str, Any]) -> str | None:
+    model_actual = envelope.get("model")
+    message = envelope.get("message")
+    if not model_actual and isinstance(message, dict):
+        model_actual = message.get("model")
+    return str(model_actual) if model_actual else None
+
+
 def _apply_file_fallback(
     step: str,
     payload: dict[str, Any],
@@ -1567,6 +1606,7 @@ def _claude_transcript_paths(
     work_dir: Path,
     *,
     claude_config_dir: str | None = None,
+    home: str | None = None,
 ) -> list[Path]:
     """Best-effort list of candidate Claude transcript .jsonl files for a turn.
 
@@ -1588,6 +1628,8 @@ def _claude_transcript_paths(
     try:
         if claude_config_dir:
             projects_root = Path(claude_config_dir) / "projects"
+        elif home:
+            projects_root = Path(home) / ".claude" / "projects"
         else:
             projects_root = Path.home() / ".claude" / "projects"
     except Exception:
@@ -1625,6 +1667,7 @@ def _make_shannon_liveness_probe(
     work_dir: Path,
     *,
     claude_config_dir: str | None = None,
+    home: str | None = None,
 ):
     """Build a liveness probe for the buffered shannon worker.
 
@@ -1680,7 +1723,7 @@ def _make_shannon_liveness_probe(
     def _max_transcript_mtime() -> float:
         newest = 0.0
         for path in _claude_transcript_paths(
-            session_id, work_dir, claude_config_dir=claude_config_dir
+            session_id, work_dir, claude_config_dir=claude_config_dir, home=home
         ):
             try:
                 m = path.stat().st_mtime
@@ -1764,8 +1807,43 @@ def _shannon_run_dir(plan_dir: Path, *, plan_id: str, step: str) -> Path:
     return plan_dir / ".megaplan" / "runs" / plan_id / step / "shannon"
 
 
+def _write_tmux_session_ledger(
+    run_dir: Path,
+    *,
+    plan_id: str,
+    step: str,
+    iteration: int,
+    tmux_session_name: str,
+) -> Path:
+    """Record the opaque tmux session's operator mapping under *run_dir*."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    ledger_path = run_dir / "tmux_session.json"
+    payload = {
+        "version": 1,
+        "plan_id": plan_id,
+        "step": step,
+        "iteration": iteration,
+        "tmux_session_name": tmux_session_name,
+        "tmux_session_name_derivation": "sha256(plan_id|step|iteration)[:12]",
+        "run_dir": str(run_dir),
+    }
+    fd, tmp = tempfile.mkstemp(dir=str(run_dir), prefix=".tmux_session.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp, ledger_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return ledger_path
+
+
 def _ensure_workspace_trusted(
-    work_dir: Path, *, claude_config_dir: str | None = None
+    work_dir: Path, *, claude_config_dir: str | None = None, home: str | None = None
 ) -> None:
     """Pre-accept Claude Code's folder-trust dialog for *work_dir* before launch.
 
@@ -1789,10 +1867,16 @@ def _ensure_workspace_trusted(
     When *claude_config_dir* is set (``CLAUDE_CONFIG_DIR`` env-var), the trust
     file is ``<claude_config_dir>/.claude.json`` instead of ``~/.claude.json``.
     This keeps per-run trust entries scoped to the run artifact dir.
+
+    When native config mode is selected and the worker drops root, *home* must
+    be the effective child ``HOME`` so pre-trust writes land where Claude will
+    actually read them.
     """
     try:
         if claude_config_dir:
             cfg_path = Path(claude_config_dir) / ".claude.json"
+        elif home:
+            cfg_path = Path(home) / ".claude.json"
         else:
             cfg_path = Path(os.path.expanduser("~/.claude.json"))
         candidates = {str(work_dir)}
@@ -1812,6 +1896,14 @@ def _ensure_workspace_trusted(
         if not isinstance(projects, dict):
             return
         changed = False
+        # Global first-run onboarding (theme picker) blocks the composer just
+        # like the trust dialog does. An isolated CLAUDE_CONFIG_DIR starts
+        # empty, so claude treats it as a fresh install and the readiness
+        # probe times out staring at the theme wizard. Pre-complete it.
+        if not data.get("hasCompletedOnboarding"):
+            data["hasCompletedOnboarding"] = True
+            data.setdefault("theme", "dark")
+            changed = True
         for path in candidates:
             entry = projects.get(path)
             if not isinstance(entry, dict):
@@ -1893,10 +1985,19 @@ def run_shannon_step(
     # ~/.claude. Left on disk after the step for post-hoc inspection.
     plan_id = str(state.get("name", ""))
     run_dir = _shannon_run_dir(plan_dir, plan_id=plan_id, step=step)
-    claude_config_dir = run_dir / "claude_config"
-    claude_config_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    empty_mcp_config_path = run_dir / "empty_mcp_config.json"
+    empty_mcp_config_path.write_text('{"mcpServers":{}}\n', encoding="utf-8")
 
-    _ensure_workspace_trusted(work_dir, claude_config_dir=str(claude_config_dir))
+    claude_config_dir = (
+        run_dir / "claude_config" if cfg.claude_config_mode == "isolated" else None
+    )
+    if claude_config_dir is not None:
+        claude_config_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_workspace_trusted(
+        work_dir,
+        claude_config_dir=str(claude_config_dir) if claude_config_dir is not None else None,
+    )
 
     # Tmux session name is a truncated sha256 of (plan_id, step, iteration)
     # so it's recoverable for reaping but carries no lexical advertisement
@@ -1907,6 +2008,13 @@ def run_shannon_step(
         f"{plan_id}|{step}|{iteration}".encode("utf-8")
     ).hexdigest()[:12]
     tmux_session = TmuxSession(session_name)
+    _write_tmux_session_ledger(
+        run_dir,
+        plan_id=plan_id,
+        step=step,
+        iteration=iteration,
+        tmux_session_name=session_name,
+    )
 
     # Reap any residual same-(plan,step) tmux pane from a prior attempt; if
     # the session survives teardown it is genuinely unkillable and must fail
@@ -1938,11 +2046,17 @@ def run_shannon_step(
     persisted_session_id = stored_session_id
 
     # ── (c) build the real phase prompt (file + launcher pointer) ───────
+    projection_capabilities = shannon_projection_capabilities(read_only=read_only)
     base_prompt = (
         prompt_override
         if prompt_override is not None
         else create_claude_prompt(
-            step, state, plan_dir, root=root, **(prompt_kwargs or {})
+            step,
+            state,
+            plan_dir,
+            root=root,
+            projection_capabilities=projection_capabilities,
+            **(prompt_kwargs or {}),
         )
     )
     if output_path is not None:
@@ -1956,6 +2070,21 @@ def run_shannon_step(
     )
     schema_text = json.dumps(read_json(schemas_root(root) / schema_name))
     prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
+    try:
+        check_prompt_size(prompt, phase=step)
+    except CliError as error:
+        if step != "review" or error.code != "prompt_oversized":
+            raise
+        base_prompt = compact_review_prompt(
+            state,
+            plan_dir,
+            root,
+            prompt_size_error=error.extra,
+            pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
+            projection_capabilities=projection_capabilities,
+        )
+        prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
+        check_prompt_size(prompt, phase=step)
 
     prompt_iteration = _prompt_file_iteration(step, state) if fresh and step != "execute" else None
     prompt_path = _write_prompt_file(run_dir, step, prompt, iteration=prompt_iteration)
@@ -1972,6 +2101,10 @@ def run_shannon_step(
     # The vendored fork's absolute path is required because the drop-root path
     # may shell-join the argv under ``su -c``.
     base_flags: list[str] = ["bun", str(VENDORED_SHANNON_PATH)]
+    # Unattended Megaplan phases must not depend on operator/account MCP health.
+    # Claude Code can surface unauthenticated or broken MCPs as startup banners,
+    # which makes Shannon's interactive readiness gate environment-sensitive.
+    base_flags.extend(["--strict-mcp-config", "--mcp-config", str(empty_mcp_config_path)])
     if model is not None:
         base_flags.extend(["--model", model])
     base_flags.append("--output-format=stream-json")
@@ -2001,27 +2134,31 @@ def run_shannon_step(
             ]
         )
 
-    # ── (e) env, ONCE: timeouts, output ceiling, paste-mode, nonroot prefix ─
+    # ── (e) env, ONCE: timeouts, output ceiling, native prompt handoff, nonroot prefix ─
     _is_root = hasattr(os, "geteuid") and os.geteuid() == 0
-    paste_mode = cfg.paste_first_turn and not _is_root
+    paste_mode = cfg.paste_first_turn
     env = _external_worker_env(turn_id=f'plan_worker_{state["name"]}')
     env["SHANNON_TMUX_SESSION_NAME"] = session_name
     # Route Claude's ~/.claude/ writes to the per-run artifact dir so
     # /clear session-file churn does not pile up in the user's home dir.
     # The vendored fork's P15 patch strips MEGAPLAN_*/SHANNON_* from the
     # grandchild env but CLAUDE_CONFIG_DIR passes through to Claude.
-    env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
+    if claude_config_dir is not None:
+        env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
+    else:
+        env.pop("CLAUDE_CONFIG_DIR", None)
     if paste_mode:
-        # Activate the Shannon paste-first-turn patch so the bare-launched
-        # Claude receives the main turn's prompt as a pasted turn 1. Pre/repair
-        # turns ride small ``-p`` prompts under the same env (paste only the
-        # delivery="stdin" turn).
+        # Keep the historical env flag for older vendored launchers and for
+        # operator diagnostics. The current vendored launcher always starts
+        # native interactive Claude in tmux, waits for a ready prompt, then
+        # sends every turn through tmux paste-buffer with a small random delay.
         env["MEGAPLAN_SHANNON_PASTE_FIRST_TURN"] = "1"
-        # Bare-launch startup race: Claude's welcome banner paints "❯" before
-        # the input box is live, so a turn-1 paste can land before Claude
-        # accepts input. Nudge delayed Enters past the banner.
-        env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT", "2")
-        env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_DELAY_MS", "2500")
+        # Startup race: Claude's welcome banner can paint "❯" before the input
+        # box is genuinely live. Nudge delayed Enters past the banner; the
+        # TypeScript wrapper still waits for prompt readiness before sending.
+        if not cfg.drop_root:
+            env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT", "2")
+            env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_DELAY_MS", "2500")
     if not _is_root:
         # Setting to empty (not popping) defeats Bun's dotenv auto-load in
         # shannon's launcher: Bun skips vars already set, so an empty value
@@ -2042,6 +2179,11 @@ def run_shannon_step(
     # Compute the nonroot shannon prefix + child env EXACTLY ONCE per run and
     # thread the result through ctx — :func:`run_turn` MUST NOT recompute it.
     shannon_prefix, env = _prepare_nonroot_shannon_runtime(work_dir, env, cfg=cfg)
+    _ensure_workspace_trusted(
+        work_dir,
+        claude_config_dir=str(claude_config_dir) if claude_config_dir is not None else None,
+        home=env.get("HOME"),
+    )
 
     ctx = TurnContext(
         base_flags=base_flags,
@@ -2050,6 +2192,7 @@ def run_shannon_step(
         work_dir=work_dir,
         plan_dir=plan_dir,
         run_dir=run_dir,
+        claude_config_dir=str(claude_config_dir) if claude_config_dir is not None else None,
         tmux_session=tmux_session,
         state=state,
     )
@@ -2261,6 +2404,7 @@ def run_shannon_step(
         cost_usd=float(envelope.get("total_cost_usd", 0.0) or 0.0),
         session_id=str(envelope.get("session_id") or session_id),
         rendered_prompt=prompt,
+        model_actual=_extract_actual_model_from_envelope(envelope),
         prompt_tokens=_extract_claude_usage(envelope)[0],
         completion_tokens=_extract_claude_usage(envelope)[1],
         total_tokens=sum(_extract_claude_usage(envelope)),

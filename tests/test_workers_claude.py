@@ -115,10 +115,9 @@ def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) ->
     command = run_command.call_args.args[0]
     assert command[0] == "bun"
     assert str(command[1]).endswith("vendor/shannon/index.ts")
-    assert "-p" in command
-    prompt_arg = command[command.index("-p") + 1]
-    assert "Read the full megaplan phase prompt from this file" in prompt_arg
-    assert run_command.call_args.kwargs["stdin_text"] is None
+    assert "-p" not in command
+    assert "custom prompt" in run_command.call_args.kwargs["stdin_text"]
+    assert "Your final answer must be exactly one valid JSON object" in run_command.call_args.kwargs["stdin_text"]
     prompt_file = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon" / "plan_v1_shannon_prompt.txt"
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "custom prompt" in prompt_text
@@ -259,6 +258,102 @@ def test_run_step_with_worker_forwards_output_path_to_claude_shannon(tmp_path: P
     assert agent == "claude"
     assert mocked_shannon.call_args.kwargs["output_path"] == output_path
     assert mocked_shannon.call_args.kwargs["read_only"] is True
+
+
+def test_run_claude_step_checks_final_prompt_before_run_command(
+    tmp_path: Path,
+) -> None:
+    """Oversized prompt_override triggers guard before run_command is reached."""
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_claude_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "plan"
+        assert prompt_text.startswith("custom claude prompt")
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            side_effect=AssertionError("run_command should not be reached"),
+        ),
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_claude_step(
+                "plan",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+                prompt_override="custom claude prompt",
+            )
+
+
+def test_run_claude_step_normal_prompt_dispatches_after_guard_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normal-sized prompt reaches run_command after the guard passes."""
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_claude_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_result = CommandResult(
+        command=["claude"],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps({
+            "structured_output": plan_payload,
+            "session_id": "sess-normal",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }),
+        stderr="",
+        duration_ms=10,
+    )
+
+    guard_checked: list[str] = []
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        guard_checked.append(prompt_text)
+        # Normal — no raise
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_claude_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="normal claude prompt",
+        )
+
+    assert run_command.call_count == 1
+    assert result.payload == plan_payload
+    assert result.session_id == "sess-normal"
+    # Guard was consulted with the full prompt after schema augmentation
+    assert len(guard_checked) == 1
+    assert "normal claude prompt" in guard_checked[0]
+    # Projection-specific heading is present in the prompt text
+    prompt_file = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon" / "plan_v1_shannon_prompt.txt"
+    prompt_text = prompt_file.read_text(encoding="utf-8")
+    assert "normal claude prompt" in prompt_text
+    assert "Output format:" in prompt_text
 
 
 def test_shannon_file_fallback_prefers_supplied_output_path(tmp_path: Path) -> None:
