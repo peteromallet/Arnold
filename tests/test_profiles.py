@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from argparse import Namespace
 from importlib.resources import files
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 import arnold.pipelines.megaplan as megaplan
 import arnold.pipelines.megaplan._core.user_config as user_config_module
 import arnold.pipelines.megaplan.profiles as profiles_module
+import arnold.pipelines.megaplan.profiles.policy as profiles_policy
 from arnold.pipelines.megaplan.profiles import (
     CANONICAL_PREP_MODELS,
     apply_profile_expansion,
@@ -274,6 +276,38 @@ def test_apply_profile_expansion_persisted_cli_override_beats_profile_default_on
     )
 
 
+def test_apply_profile_expansion_latest_persisted_phase_override_wins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later persisted override must beat an older persisted profile pin."""
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: tmp_path / ".config" / "megaplan",
+    )
+    persisted_state = {
+        "config": {
+            "profile": "partnered",
+            "phase_model": [
+                "plan=claude:low",
+                "plan=codex:low",
+            ],
+        }
+    }
+
+    step_args = _worker_args(profile=None, phase_model=[])
+    apply_profile_expansion(step_args, None, state=persisted_state)
+
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("plan", step_args)
+    assert agent == "codex"
+    assert model is None
+
+    plan_entries = [pm for pm in step_args.phase_model if pm.startswith("plan=")]
+    assert plan_entries[0] == "plan=codex:low"
+
+
 def test_apply_profile_expansion_falls_back_to_state_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -432,6 +466,45 @@ def test_handle_init_persists_deepseek_provider_in_state(
     state = json.loads(state_path.read_text(encoding="utf-8"))
 
     assert state["config"]["deepseek_provider"] == "direct"
+
+
+def test_handle_init_persists_routing_degradations_in_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    response = megaplan.handle_init(
+        root,
+        _init_args(
+            project_dir,
+            profile="partnered",
+            vendor="codex",
+            name="routing-degradation-state",
+        ),
+    )
+    state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    degradations = state["config"]["routing_degradations"]
+    assert {
+        "phase": "execute",
+        "tier": 4,
+        "from": "codex:gpt-5.4",
+        "to": DEEPSEEK_DIRECT,
+        "reason": (
+            "no premium credential or CLI route detected for vendor=codex; "
+            "no premium credential or CLI route detected for vendor=claude; "
+            "using DeepSeek credential floor"
+        ),
+    } in degradations
 
 
 def test_profile_expansion_resolves_prep_models_with_canonical_fallback_trace(
@@ -991,6 +1064,24 @@ def _isolate_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(user_config_module, "config_dir", lambda home=None: fake_home_config)
 
 
+def _clear_model_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    for env_var in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "FIREWORKS_API_KEY",
+    ):
+        monkeypatch.delenv(env_var, raising=False)
+
+
+def _disable_premium_cli_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        profiles_policy,
+        "_premium_cli_route_available",
+        lambda vendor: False,
+    )
+
+
 def test_vendor_codex_flips_premium_slots_on_all_claude(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1548,24 +1639,26 @@ def test_new_tier_profiles_all_load(
         assert name in catalog, f"missing tier profile {name!r}: catalog={sorted(catalog)}"
 
 
-def test_solo_profile_resolves_to_deepseek_end_to_end(
+def test_solo_profile_resolves_to_deepseek_reasoning_with_premium_floor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 
     args = _worker_args(profile="solo")
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    # solo runs DeepSeek end-to-end (including critique/review); no Kimi slot.
+    # solo keeps reasoning phases on DeepSeek; finalize and high execute tiers
+    # participate in the invariant premium floor.
     for phase in (
         "plan",
         "prep",
         "critique",
         "revise",
         "gate",
-        "finalize",
         "execute",
         "loop_plan",
         "loop_execute",
@@ -1574,14 +1667,38 @@ def test_solo_profile_resolves_to_deepseek_end_to_end(
         "tiebreaker_challenger",
     ):
         assert resolved[phase] == DEEPSEEK_DIRECT, f"solo.{phase} should be DeepSeek, got {resolved[phase]!r}"
+    assert resolved["finalize"] == "claude:low"
+    assert args.tier_models["execute"][4] == "claude:claude-sonnet-4-6"
+    assert args.tier_models["execute"][5] == "claude:claude-opus-4-7"
+
+
+def test_solo_profile_deepseek_only_falls_back_for_finalize_and_execute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    args = _worker_args(profile="solo")
+    apply_profile_expansion(args, None)
+    resolved = _phase_models_to_map(args.phase_model)
+
+    assert resolved["finalize"] == DEEPSEEK_DIRECT
+    assert args.tier_models["execute"][4] == DEEPSEEK_DIRECT
+    assert args.tier_models["execute"][5] == DEEPSEEK_DIRECT
 
 
 def test_solo_profile_is_noop_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """solo has no premium slots, so --vendor codex must not change anything."""
+    """solo reasoning is unchanged under --vendor codex."""
     _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
 
     baseline = _worker_args(profile="solo")
     apply_profile_expansion(baseline, None)
@@ -1681,6 +1798,97 @@ def test_partnered_profile_flips_all_premium_under_vendor_codex(
     tiers = args.tier_models["execute"]
     assert tiers[4] == "codex:gpt-5.4"
     assert tiers[5] == "codex:gpt-5.5"
+
+
+def test_partnered_vendor_codex_execute_keeps_codex_tiers_with_cli_auth_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No OpenAI/Anthropic env keys must not degrade Codex-reachable execute tiers."""
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    monkeypatch.setenv("FIREWORKS_API_KEY", "fw-test")
+    monkeypatch.setattr(
+        profiles_policy,
+        "_premium_cli_route_available",
+        lambda vendor: vendor == "codex",
+    )
+
+    args = _worker_args(
+        profile="partnered",
+        vendor="codex",
+        deepseek_provider="fireworks",
+    )
+    with caplog.at_level(logging.WARNING, logger="megaplan"):
+        apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    assert tier_models["execute"][4] == "codex:gpt-5.4"
+    assert tier_models["execute"][5] == "codex:gpt-5.5"
+    assert tier_models["execute"][4] == tier_models["critique"][4]
+    assert tier_models["execute"][5] == tier_models["critique"][5]
+    assert getattr(args, "routing_degradations", []) == []
+    assert "M_WARN_ROUTING_DEGRADED" not in caplog.text
+
+
+def test_partnered_vendor_codex_execute_degrades_when_no_premium_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """With no env-key or CLI-backed premium route, the DeepSeek floor remains."""
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    args = _worker_args(
+        profile="partnered",
+        vendor="codex",
+    )
+    with caplog.at_level(logging.WARNING, logger="megaplan"):
+        apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    assert tier_models["execute"][4] == DEEPSEEK_DIRECT
+    assert tier_models["execute"][5] == DEEPSEEK_DIRECT
+    assert tier_models["critique"][4] == "codex:gpt-5.4"
+    assert tier_models["critique"][5] == "codex:gpt-5.5"
+
+    degradations = getattr(args, "routing_degradations", None)
+    assert isinstance(degradations, list)
+    execute_degradations = [
+        item for item in degradations if item["phase"] == "execute" and item["tier"] in {4, 5}
+    ]
+    assert execute_degradations == [
+        {
+            "phase": "execute",
+            "tier": 4,
+            "from": "codex:gpt-5.4",
+            "to": DEEPSEEK_DIRECT,
+            "reason": (
+                "no premium credential or CLI route detected for vendor=codex; "
+                "no premium credential or CLI route detected for vendor=claude; "
+                "using DeepSeek credential floor"
+            ),
+        },
+        {
+            "phase": "execute",
+            "tier": 5,
+            "from": "codex:gpt-5.5",
+            "to": DEEPSEEK_DIRECT,
+            "reason": (
+                "no premium credential or CLI route detected for vendor=codex; "
+                "no premium credential or CLI route detected for vendor=claude; "
+                "using DeepSeek credential floor"
+            ),
+        },
+    ]
+    assert "M_WARN_ROUTING_DEGRADED" in caplog.text
+    assert "execute tier 4,5 -> hermes:deepseek:deepseek-v4-pro" in caplog.text
 
 
 def test_partnered_critic_kimi_overrides_critique_and_review(
@@ -3078,10 +3286,7 @@ def test_critique_tiers_4_and_5_match_execute_tiers(
     monkeypatch: pytest.MonkeyPatch,
     profile_name: str,
 ) -> None:
-    """Tiers 4-5 of ``tier_models.critique`` match the corresponding
-    ``tier_models.execute`` entries.  No profile in this sprint needs
-    3-tier aliasing because every built-in profile defines the full
-    1-5 ladder."""
+    """Tiers 4-5 match execute except solo, whose execute has the floor."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile=profile_name)
@@ -3091,6 +3296,12 @@ def test_critique_tiers_4_and_5_match_execute_tiers(
     assert tier_models is not None
     execute_tiers = tier_models["execute"]
     critique_tiers = tier_models["critique"]
+
+    if profile_name == "solo":
+        for t in (4, 5):
+            assert "deepseek" in critique_tiers[t].lower()
+            assert critique_tiers[t] != execute_tiers[t]
+        return
 
     for t in (4, 5):
         assert critique_tiers[t] == execute_tiers[t], (
@@ -3551,6 +3762,35 @@ feedback = "claude:low"
     assert state["config"]["tier_models"]["execute"]["4"] == "claude:medium"
 
 
+def test_init_saves_max_execute_tier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan.handlers.init import handle_init
+
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+
+    response = handle_init(
+        root,
+        _init_args(
+            project_dir,
+            profile="solo",
+            name="max-execute-tier-state",
+            auto_approve=True,
+            max_execute_tier=3,
+        ),
+    )
+
+    state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["config"]["max_execute_tier"] == 3
+
+
 def test_snapshot_cli_provenance_includes_tier_models() -> None:
     """_snapshot_cli_provenance includes tier_models when present in config."""
     from arnold.pipelines.megaplan.handlers.shared import _snapshot_cli_provenance
@@ -3559,12 +3799,14 @@ def test_snapshot_cli_provenance_includes_tier_models() -> None:
         "config": {
             "profile": "variable",
             "mode": "code",
+            "max_execute_tier": 3,
             "tier_models": {"execute": {1: "hermes:deepseek-flash", 5: "claude:high"}},
         }
     }
     snap = _snapshot_cli_provenance(state)
     assert "tier_models" in snap
     assert snap["tier_models"]["execute"][1] == "hermes:deepseek-flash"
+    assert snap["max_execute_tier"] == 3
 
 
 def test_snapshot_cli_provenance_omits_tier_models_when_absent() -> None:

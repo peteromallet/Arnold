@@ -4005,6 +4005,21 @@ def test_handle_execute_normalizes_string_tier_keys(
     assert captured_tier_map == {1: "hermes:flash", 5: "codex:high"}
 
 
+def test_apply_execute_tier_cap_reuses_cap_spec_for_higher_tiers() -> None:
+    from arnold.pipelines.megaplan.handlers.execute import _apply_execute_tier_cap
+
+    capped = _apply_execute_tier_cap(
+        {1: "hermes:flash", 3: "codex:medium", 5: "codex:high"},
+        3,
+    )
+
+    assert capped == {
+        1: "hermes:flash",
+        3: "codex:medium",
+        5: "codex:medium",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Freshness tests — auto_loop per-batch tier change
 # ---------------------------------------------------------------------------

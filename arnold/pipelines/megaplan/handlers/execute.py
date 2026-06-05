@@ -97,6 +97,30 @@ def _extract_execute_tier_map(tier_models: object) -> dict[int, str] | None:
             normalized[int(raw_tier)] = raw_spec
     return normalized or None
 
+
+def _apply_execute_tier_cap(
+    tier_map: dict[int, str] | None,
+    max_execute_tier: object,
+) -> dict[int, str] | None:
+    if tier_map is None:
+        return None
+    if isinstance(max_execute_tier, bool):
+        return tier_map
+    try:
+        cap = int(max_execute_tier)
+    except (TypeError, ValueError):
+        return tier_map
+    if cap < 1:
+        return tier_map
+    cap_spec = tier_map.get(cap)
+    if not cap_spec:
+        return tier_map
+    capped = dict(tier_map)
+    for tier in list(capped):
+        if tier > cap:
+            capped[tier] = cap_spec
+    return capped
+
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
         require_state(state, "execute", {STATE_FINALIZED, STATE_BLOCKED, STATE_FAILED})
@@ -151,6 +175,12 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # strips tier_models.execute when a CLI --phase-model execute=...
         # override is present, so no double-check is needed here.
         tier_map = _extract_execute_tier_map(getattr(args, "tier_models", None))
+        tier_map = _apply_execute_tier_cap(
+            tier_map,
+            getattr(args, "max_execute_tier", None)
+            if getattr(args, "max_execute_tier", None) is not None
+            else state["config"].get("max_execute_tier"),
+        )
         run_id = set_active_step(state, step="execute", agent=agent, mode=mode, model=model)
         _emit_phase_notice("execute")
         save_state_merge_meta(plan_dir, state)

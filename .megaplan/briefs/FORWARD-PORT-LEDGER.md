@@ -25,7 +25,7 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 10 | `d5220a97` | Make execute audit trail trustworthy | PORT | `arnold/pipelines/megaplan/orchestration`, `execute`, tests | pending | Live re-derived commit. |
 | 11 | `275e70f1` | Avoid concurrent shared request-client recreation | PORT | `arnold/pipelines/megaplan/agent`, tests | pending | Live re-derived commit. |
 | 12 | `70a95f63` | Avoid full state.json rewrite on heartbeat | PORT | `arnold/pipelines/megaplan/_core/state*`, observability tests | pending | Live re-derived commit. |
-| 13 | `ab1c5c54` | Same-family codex gpt-5.x substitution is not blocking | PORT | `arnold/pipelines/megaplan/routing`, profiles tests | pending | Live re-derived commit. |
+| 13 | `ab1c5c54` | Same-family codex gpt-5.x substitution is not blocking | SUPERSEDED | n/a | superseded | Source fixed obsolete `routing_degradations` model-mismatch blocker; Arnold target no longer has `_models_match` / routing-audit degradation blocking path. |
 | 14 | `5bdefcfb` | Harden Shannon native Claude launch | PORT | `arnold/pipelines/megaplan/vendor/shannon`, workers tests | pending | Live re-derived commit. |
 | 15 | `2bb6968c` | Per-step routing ledger across phases | PORT | `arnold/pipelines/megaplan/orchestration`, telemetry/tests | pending | Live re-derived commit. |
 | 16 | `0e152156` | Tool-driven scoped review and second-rework escalation | PORT | `arnold/pipelines/megaplan/review`, handlers/tests | pending | Live re-derived commit. |
@@ -54,15 +54,15 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 39 | `e4a46d12` | Project prompt context for review and execute | PORT | `arnold/pipelines/megaplan/prompts`, execute/review/tests | verified | Applied prompt projection modules and tests; focused prompt suite and worker integration passed. |
 | 40 | `c2007519` | Align native handoff and codex resume expectations | PORT | worker tests | pending | Live re-derived commit. |
 | 41 | `6b2697ba` | Never hard-fail review on large diffs | PORT | `arnold/pipelines/megaplan/review`, tests | verified | Applied `base_ref` diff helpers and compact review prompt path; prompt, worker, and chain suites passed. |
-| 42 | `e1170b05` | Invariant model floor routing | PORT | `arnold/pipelines/megaplan/profiles`, routing, CLI/tests | pending | Live re-derived commit. |
+| 42 | `e1170b05` | Invariant model floor routing | PORT | `arnold/pipelines/megaplan/profiles`, routing, CLI/tests | verified | Ported available-model floor, solo finalize/execute floor, `--max-execute-tier`, init/provenance persistence, and focused profile/execute tests. |
 | 43 | `3aae6d0f` | Stop injecting technical-debt registry into prompts | PORT | `arnold/pipelines/megaplan/prompts`, prep/review/tests | verified | Removed prompt-side debt injection and updated assertions that debt registry stays out of prompts; focused prompt suite passed. |
 | 44 | `78efcf4a` | Calibrate prompt caps to context windows | PORT | `arnold/pipelines/megaplan/prompts`, model metadata/tests | verified | Applied phase-aware prompt caps plus projection tests; focused prompt suite passed. |
 | 45 | `e03c5206` | CLI status project-dir resolves plan from target | PORT | `arnold/pipelines/megaplan/cli`, tests | pending | Live re-derived commit. |
 | 46 | `0e365bcb` | Submit large prompts via file reference | DISCARD | n/a | rejected | Reject: explicitly reverted by `fc2c1a8b`. |
 | 47 | `fc2c1a8b` | Revert large-prompt file reference | DISCARD | n/a | rejected | Reject: only reverts rejected commit `0e365bcb`. |
-| 48 | `958a669c` | Honor persisted phase model/vendor overrides | PORT | `arnold/pipelines/megaplan/profiles`, runtime/tests | pending | Live re-derived commit. |
-| 49 | `df3440df` | Premium execute routing recognizes CLI subscription auth | PORT | `arnold/pipelines/megaplan/profiles`, workers/tests | pending | Live re-derived commit. |
-| 50 | `5f8045f3` | Record loud model-floor routing degradations | PORT | `arnold/pipelines/megaplan/profiles`, status/tests | pending | Live re-derived commit. |
+| 48 | `958a669c` | Honor persisted phase model/vendor overrides | PORT | `arnold/pipelines/megaplan/profiles`, runtime/tests | verified | Persisted `phase_model` now dedupes by phase with latest entry winning ahead of profile defaults; regression in `tests/test_profiles.py` passed. |
+| 49 | `df3440df` | Premium execute routing recognizes CLI subscription auth | PORT | `arnold/pipelines/megaplan/profiles`, workers/tests | verified | Premium floor now checks env, key-pool credentials, and local CLI-backed routes before degrading execute tiers; CLI-auth and no-premium regressions passed. |
+| 50 | `5f8045f3` | Record loud model-floor routing degradations | PORT | `arnold/pipelines/megaplan/profiles`, status/tests | verified | Floor degradations are logged, stored in `state.config.routing_degradations`, and surfaced in status payload summaries; focused profile/config/execute slices passed. |
 | 51 | `36cd544a` | Evidence-first v2 authority-kernel restructure | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | verified | Applied from committed range as docs/spec batch. |
 | 52 | `d3111214` | Evidence-first m0 write-isolation focus | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | verified | Applied from committed range as docs/spec batch. |
 | 53 | `c4e5a8ba` | Shannon readiness detector misses pane padding | PORT | `arnold/pipelines/megaplan/vendor/shannon`, tests | verified | Applied to vendored `index.ts`; `bun test pane_ready.test.ts` passed. |
