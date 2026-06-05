@@ -44,6 +44,7 @@ class TestArnoldPipelinePublicExports:
     def test_typed_port_symbols_importable(self) -> None:
         from arnold.pipeline import (
             CONTENT_TYPES,
+            ContentValidatorRegistry,
             ContentTypeRegistry,
             Port,
             PortRef,
@@ -54,6 +55,7 @@ class TestArnoldPipelinePublicExports:
         assert PortRef is not None
         assert RoutingKey is not None
         assert ContentTypeRegistry is not None
+        assert ContentValidatorRegistry is not None
         assert CONTENT_TYPES is not None
         assert register_schema is not None
 
@@ -88,20 +90,28 @@ class TestArnoldPipelinePublicExports:
 
     def test_contract_result_symbols_importable(self) -> None:
         from arnold.pipeline import (
+            AcceptedVersionRange,
+            ContractSchemaRegistry,
             CONTRACT_RESULT_SCHEMA_VERSION,
             ContractResult,
             ContractStatus,
             EvidenceArtifactRef,
             Freshness,
             Provenance,
+            ValidationResult,
             Suspension,
+            select_audit_mode,
         )
+        assert AcceptedVersionRange is not None
+        assert ContractSchemaRegistry is not None
         assert ContractResult is not None
         assert ContractStatus is not None
         assert EvidenceArtifactRef is not None
         assert Freshness is not None
         assert Provenance is not None
         assert Suspension is not None
+        assert ValidationResult is not None
+        assert select_audit_mode is not None
         assert CONTRACT_RESULT_SCHEMA_VERSION is not None
 
 
