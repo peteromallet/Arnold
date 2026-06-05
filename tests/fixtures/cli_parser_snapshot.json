@@ -6685,6 +6685,21 @@
               ],
               "required": false,
               "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
             }
           ],
           "positionals": [],
@@ -7828,6 +7843,21 @@
               "nargs": null,
               "option_strings": [
                 "--plan"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -10245,6 +10275,21 @@
               "nargs": null,
               "option_strings": [
                 "--plan"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
               ],
               "required": false,
               "type": null
