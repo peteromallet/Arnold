@@ -283,6 +283,10 @@ def _init_plan(
     writer,
 ) -> str:
     """Run `megaplan init --idea-file ...` and return the plan name."""
+    # The init subprocess runs with cwd=megaplan_engine_root(), so a spec-relative
+    # idea path must be resolved against the project root here — otherwise init
+    # resolves it against the engine repo and fails with a misleading BRIEF_MISSING.
+    idea_path = str(_resolve_idea_path(root, idea_path))
     _warn_vendor_ignored_for_locked_profile(
         root,
         profile=profile,

@@ -550,6 +550,52 @@ def test_run_codex_step_grants_plan_dir_when_project_dir_differs(tmp_path: Path)
 
     assert result.payload == plan_payload
 
+
+def test_run_codex_execute_runs_subprocess_in_work_dir(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_codex_step
+    from arnold.pipelines.megaplan.workers._impl import resolve_work_dir
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    target_dir = resolve_work_dir(state)
+    assert target_dir == Path(state["config"]["project_dir"])
+    assert target_dir != Path.cwd()
+    execute_payload = _build_mock_payload("execute", state, plan_dir, output="done")
+    captured: dict[str, object] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        captured["cwd"] = kwargs["cwd"]
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(execute_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=Path(kwargs["cwd"]),
+            returncode=0,
+            stdout=json.dumps({"type": "thread.started", "thread_id": "execute-session-1"}),
+            stderr="",
+            duration_ms=1,
+        )
+
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=True,
+            fresh=True,
+        )
+
+    command = captured["command"]
+    assert result.payload == execute_payload
+    assert captured["cwd"] == target_dir
+    cd_idx = command.index("-C") + 1
+    assert Path(command[cd_idx]) == target_dir
+    assert Path(command[cd_idx]) != Path.cwd()
+
+
 def test_run_codex_step_accepts_empty_light_critique_payload(tmp_path: Path) -> None:
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
     from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step

@@ -74,16 +74,16 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 59 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m6-provenance-and-workspace-assertions.md` | Worker-sweep ownership manifest requirement | PORT | same path | pending | Live dirty source file. |
 | 60 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m7-transition-validator-routing.md` | Verified GitHub merge transition requirement | PORT | same path | pending | Live dirty source file. |
 | 61 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m9-atomic-reset-reconcile.md` | Recoverable merge failure and worktree-safe merge fallback | PORT | same path | pending | Live dirty source file. |
-| 62 | dirty `megaplan/chain/__init__.py` | Resolve spec-relative idea path against project root | PORT | `arnold/pipelines/megaplan/chain/__init__.py` | pending | Live dirty source file. |
-| 63 | dirty `megaplan/chain/git_ops.py` | Worktree-safe `gh pr merge --delete-branch` fallback | PORT | `arnold/pipelines/megaplan/chain/git_ops.py` | pending | Live dirty source file. |
-| 64 | dirty `megaplan/data/_codex_skills/babysit/SKILL.md` | Babysit skill hardening | PORT | `arnold/pipelines/megaplan/data/_codex_skills/babysit/SKILL.md` | pending | Live dirty source file; absent from old D-list. |
-| 65 | dirty `megaplan/data/babysit_skill.md` | Babysit skill hardening | PORT | `arnold/pipelines/megaplan/data/babysit_skill.md` | pending | Live dirty source file. |
-| 66 | dirty `megaplan/handlers/init.py` | High-fidelity missing idea-file diagnostic | PORT | `arnold/pipelines/megaplan/handlers/init.py` | pending | Live dirty source file. |
-| 67 | dirty `megaplan/vendor/shannon/VENDOR.md` | Document and complete Shannon P16/P17 | PORT | `arnold/pipelines/megaplan/vendor/shannon/VENDOR.md`, implementation/tests | pending | Live dirty source file. |
-| 68 | dirty `megaplan/workers/_impl.py` | L1 cwd fix: Codex execute subprocess runs in `work_dir` | PORT | `arnold/pipelines/megaplan/workers/_impl.py` | pending | Live dirty source file; rebuild frozen engine after verification. |
-| 69 | dirty `tests/test_handle_init_idea_file.py` | Regression for init idea-file diagnostic | PORT | same path | pending | Live dirty source file. |
-| 70 | dirty `tests/test_prep.py` | Prep regression update | PORT | same path | pending | Live dirty source file; absent from old D-list. |
-| 71 | dirty `tests/test_workers_codex.py` | Regression for Codex execute cwd behavior | PORT | same path | pending | Live dirty source file. |
+| 62 | dirty `megaplan/chain/__init__.py` | Resolve spec-relative idea path against project root | PORT | `arnold/pipelines/megaplan/chain/__init__.py` | verified | Applied via remapped dirty patch; covered by focused init/prep/worker gate. |
+| 63 | dirty `megaplan/chain/git_ops.py` | Worktree-safe `gh pr merge --delete-branch` fallback | PORT | `arnold/pipelines/megaplan/chain/git_ops.py` | verified | Applied via remapped dirty patch; no conflict. |
+| 64 | dirty `megaplan/data/_codex_skills/babysit/SKILL.md` | Babysit skill hardening | PORT | `arnold/pipelines/megaplan/data/_codex_skills/babysit/SKILL.md` | verified | Applied via remapped dirty patch. |
+| 65 | dirty `megaplan/data/babysit_skill.md` | Babysit skill hardening | PORT | `arnold/pipelines/megaplan/data/babysit_skill.md` | verified | Applied via remapped dirty patch. |
+| 66 | dirty `megaplan/handlers/init.py` | High-fidelity missing idea-file diagnostic | PORT | `arnold/pipelines/megaplan/handlers/init.py` | verified | Applied via remapped dirty patch; `tests/test_handle_init_idea_file.py` passed. |
+| 67 | dirty `megaplan/vendor/shannon/VENDOR.md` | Document and complete Shannon P16/P17 | PORT | `arnold/pipelines/megaplan/vendor/shannon/VENDOR.md`, implementation/tests | ported | VENDOR doc applied; implementation/test rows remain pending in rows 53, 54, and 72. |
+| 68 | dirty `megaplan/workers/_impl.py` | L1 cwd fix: Codex execute subprocess runs in `work_dir` | PORT | `arnold/pipelines/megaplan/workers/_impl.py` | verified | Applied via remapped dirty patch; `test_run_codex_execute_runs_subprocess_in_work_dir` passed. |
+| 69 | dirty `tests/test_handle_init_idea_file.py` | Regression for init idea-file diagnostic | PORT | same path | verified | Applied via remapped dirty patch; focused test file passed. |
+| 70 | dirty `tests/test_prep.py` | Prep regression update | PORT | same path | superseded | No net diff after M6; focused prep tests passed. |
+| 71 | dirty `tests/test_workers_codex.py` | Regression for Codex execute cwd behavior | PORT | same path | verified | Added manually in M6 import layout; focused worker test passed. |
 | 72 | untracked `megaplan/vendor/shannon/pane_ready.test.ts` | Shannon P16 pane-ready regression | PORT | `arnold/pipelines/megaplan/vendor/shannon/pane_ready.test.ts` | pending | Live untracked source file. |
 | 73 | untracked `.hypothesis/**` | Hypothesis generated examples | DISCARD | n/a | rejected | Generated local test cache; not forward-ported. |
 | 74 | untracked `runs/visual-understanding/**` | Generated visual-understanding crops | DISCARD | n/a | rejected | Generated local run output; not forward-ported. |

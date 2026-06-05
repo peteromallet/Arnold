@@ -22,7 +22,7 @@ Top-of-file (line 2, immediately after the shebang):
 ```
 // MEGAPLAN_SHANNON_VENDORED v1 — patches: P1..P15
 ```
-This is the cheap presence marker the Python side asserts via `_assert_vendored_shannon_sentinel()` to confirm all 15 patches landed.
+This is the cheap presence marker the Python side asserts via `_assert_vendored_shannon_sentinel()` to confirm all patches landed. (The Python check matches the substring `MEGAPLAN_SHANNON_VENDORED v1`; the trailing `patches: P1..PN` range is informational. As of P16 the range reads `P1..P16`.)
 
 ## Patch list
 
@@ -390,6 +390,98 @@ Replacement (prepends `_mpScrubKeys`/`_mpEnvPrefix` declarations AND threads `_m
 ```
 
 megaplan reason: Python parent cannot selectively scrub the grandchild claude's env — the bun process reads `SHANNON_*`/`MEGAPLAN_*` itself before stripping them from what it forwards. P15 uses `env -u KEY` prefixes at the tmux-spawned exec so the inner claude never sees `MEGAPLAN_*` or `SHANNON_*` (prevents behavioral contamination of the nested session). Patch lives inside `index.ts` because Python-side filtering can't reach the grandchild env.
+
+---
+
+# Patch P16 — pane-ready-trailing-blank-lines (NEW)
+
+Anchor (verbatim — the first two lines of `paneLooksReadyForUserMessage`):
+```ts
+export function paneLooksReadyForUserMessage(pane: string) {
+  const lines = pane.split(/\r?\n/).map((line) => line.trimEnd());
+  const recent = lines.slice(-12);
+  return recent.some((line) => {
+```
+
+Replacement:
+```ts
+export function paneLooksReadyForUserMessage(pane: string) {
+  const lines = pane.split(/\r?\n/).map((line) => line.trimEnd());
+  // Claude Code >=2.1.x renders its composer box and then pads the rest of the
+  // pane height with blank lines, so the visible `❯` prompt can sit ABOVE many
+  // trailing blank rows. A fixed `lines.slice(-12)` then only sees blank tail
+  // rows and never matches a visibly-ready prompt, so Shannon's readiness probe
+  // times out forever (manifesting as "Timed out waiting for Claude prompt").
+  // Trim trailing blank lines first, THEN inspect the meaningful tail.
+  let end = lines.length;
+  while (end > 0 && lines[end - 1].trim() === "") end -= 1;
+  const recent = lines.slice(Math.max(0, end - 12), end);
+  return recent.some((line) => {
+```
+
+megaplan reason: With Claude Code v2.1.161 in a detached tmux pane, `tmux capture-pane -S -40` returns the composer prompt line followed by ~14 trailing blank lines (the TUI pads to pane height). The previous `lines.slice(-12)` window contained only those blank tail rows, so `paneLooksReadyForUserMessage` returned `false` on every poll and `waitForPrompt` exhausted `START_TIMEOUT_MS` (20s default) on **every** turn — the `plan` phase produced zero artifacts and the auto-driver stalled at `state=initialized` ($0 cost, "phase 'plan' exited with internal_error … Timed out waiting for Claude prompt"). Earlier P-series patches (the composer-placeholder regex) handled the marker shape but not its vertical position. P16 strips trailing blank lines before slicing the last 12 meaningful rows, so a buried-but-visible prompt is detected. Reproduced live: detection dropped from TIMEOUT(>20s) to ~1.6s in the affected worktree. Covered by `pane_ready.test.ts`.
+
+Verification anchor (must be grep-able in the patched file):
+```ts
+  while (end > 0 && lines[end - 1].trim() === "") end -= 1;
+```
+
+---
+
+# Patch P17 — paste-submit-settle-delay (NEW)
+
+Two-part: (a) a new module-level constant near the other SEND_DELAY constants,
+and (b) a `sleep` between `paste-buffer -p` and the submitting `C-m` in
+`sendPrompt`.
+
+## P17a — constant
+
+Anchor (verbatim):
+```ts
+const SEND_DELAY_MIN_MS = Number(Bun.env.SHANNON_SEND_DELAY_MIN_MS ?? 350);
+const SEND_DELAY_MAX_MS = Number(Bun.env.SHANNON_SEND_DELAY_MAX_MS ?? 2500);
+```
+
+Replacement (appends the constant):
+```ts
+const SEND_DELAY_MIN_MS = Number(Bun.env.SHANNON_SEND_DELAY_MIN_MS ?? 350);
+const SEND_DELAY_MAX_MS = Number(Bun.env.SHANNON_SEND_DELAY_MAX_MS ?? 2500);
+const PASTE_SUBMIT_DELAY_MS = Number(Bun.env.SHANNON_PASTE_SUBMIT_DELAY_MS ?? 500);
+```
+
+## P17b — settle before Enter
+
+Anchor (verbatim):
+```ts
+    await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+```
+
+Replacement:
+```ts
+    await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
+    if (PASTE_SUBMIT_DELAY_MS > 0) await sleep(PASTE_SUBMIT_DELAY_MS);
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+```
+
+megaplan reason: Claude Code v2.1.x collapses a fast bracketed paste into a
+`[Pasted text #N +K lines]` attachment chip. An Enter (`C-m`) sent in the same
+instant as `paste-buffer -p` races chip-creation and is swallowed, so the prompt
+is left UNSUBMITTED in the composer — no transcript user-row is ever written and
+`waitForSessionWithPrompt` exhausts `START_TIMEOUT_MS` ("Timed out waiting for
+Claude transcript containing the submitted prompt"). This was the SECOND blocker
+behind a `plan`-phase stall (after P16's readiness fix unblocked the handshake).
+Reproduced 4-way: `paste -p` + immediate `C-m` → CHIP/unsubmitted; a >=0.5s
+settle before `C-m` (or a second `C-m` after a settle) → reliably SUBMITTED with
+a normal assistant reply. P17 inserts a short, env-tunable
+(`SHANNON_PASTE_SUBMIT_DELAY_MS`, default 500ms) settle so the TUI finishes
+ingesting the paste before Enter submits it. Short turns that go through the
+literal `send-keys -l` typing path (`canTypePromptLiterally`) are unaffected.
+
+Verification anchor (must be grep-able in the patched file):
+```ts
+    if (PASTE_SUBMIT_DELAY_MS > 0) await sleep(PASTE_SUBMIT_DELAY_MS);
+```
 
 ---
 

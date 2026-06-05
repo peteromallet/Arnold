@@ -2167,7 +2167,7 @@ def run_codex_step(
             pre_first_byte_s = 180.0
         result = run_command(
             command,
-            cwd=Path.cwd(),
+            cwd=work_dir,
             stdin_text=prompt,
             env=_codex_child_env(turn_id=f'plan_worker_{state["name"]}'),
             timeout=timeout_seconds,

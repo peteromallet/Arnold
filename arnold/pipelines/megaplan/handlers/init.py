@@ -298,6 +298,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         raise CliError("invalid_args", "Pass either the positional idea or --idea-file, not both")
     if idea_file:
         idea_path = Path(idea_file).expanduser().resolve()
+        if not idea_path.is_file():
+            raise CliError("invalid_args", f"idea file not found: {idea_path}")
         try:
             idea_text = markdown_body(idea_path).strip()
         except OSError as exc:

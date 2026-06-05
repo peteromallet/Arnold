@@ -1018,6 +1018,20 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
         return "merged" if _compat()._pr_state(root, pr_number, writer=writer) == "merged" else "open"
     except CliError as exc:
         combined = f"{exc.message} {exc.extra.get('stdout', '')} {exc.extra.get('stderr', '')}"
+        if "already checked out" in combined:
+            # --delete-branch needs a local branch switch, which fails when the
+            # chain runs in a git worktree whose base branch is checked out
+            # elsewhere. Retry without local branch deletion (remote branch is
+            # cleaned up by GitHub's delete-on-merge or left for manual GC).
+            writer("[chain] --delete-branch impossible from worktree; retrying auto-merge without it\n")
+            _compat()._run_command(
+                root,
+                ["gh", "pr", "merge", str(pr_number), "--auto", "--squash"],
+                writer=writer,
+                timeout=120,
+                error_code="gh_pr_merge_failed",
+            )
+            return "merged" if _compat()._pr_state(root, pr_number, writer=writer) == "merged" else "open"
         if "Auto merge is not allowed" not in combined:
             raise
         writer("[chain] auto-merge unavailable; falling back to immediate squash merge\n")
