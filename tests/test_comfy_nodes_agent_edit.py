@@ -2084,12 +2084,23 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert result["debug"]["gates"] == result["gates"]
     assert result["debug"]["hashes"]["candidate_graph_hash"] == result["candidate_graph_hash"]
     assert result["debug"]["batch_repl"]["exit_mode"] == "done"
-    assert result["message"].startswith("Applied 1 edit.")
-    assert result["done_summary"] in result["message"]
+    assert result["message"] == "Updated 2.filename_prefix from null to after."
+    assert result["done_summary"] not in result["message"]
     assert result["done_summary"].startswith("Gate A passed:")
     assert "Gate B passed:" in result["done_summary"]
     assert "Set saveimage.filename_prefix" in result["done_summary"]
     assert "after" in result["done_summary"]
+    assert result["change_details"]["done_summary"] == result["done_summary"]
+    assert result["change_details"]["landed_operation_count"] == 1
+    assert result["change_details"]["operations"] == [
+        {
+            "uid": "2",
+            "field_path": "filename_prefix",
+            "old": None,
+            "new": "after",
+            "summary": "Changed 2.filename_prefix from null to after.",
+        }
+    ]
     assert result["report"]["done_summary"] == result["done_summary"]
     assert result["outcome"] == {
         "kind": "edit",
@@ -5395,20 +5406,55 @@ def test_repair_field_changes_uses_named_widget_old_value_for_ksampler_steps() -
 
 
 def test_synthesize_message_edit_outcome_with_done_summary() -> None:
-    """Edit outcome with done_summary combines lead + summary."""
+    """Edit outcome uses repaired FieldChange values for the visible message."""
     from vibecomfy.porting.edit_types import FieldChange
 
     state = _make_state(
         user_message="",
         batch_exit_mode="done",
-        batch_done_summary="The candidate is ready",
+        batch_done_summary="Gate A passed: 1 edit operation(s) verified. Changed ksampler.steps from 'normal' to 26.",
         batch_field_changes=(
-            FieldChange(uid="widget", field_path="seed", old=1, new=9),
+            FieldChange(uid="ksampler", field_path="steps", old=20, new=26),
         ),
     )
     msg = _synthesize_batch_repl_message(state, outcome=TurnOutcome.edit())
-    assert "Applied 1 edit" in msg
-    assert "The candidate is ready" in msg
+    assert "ksampler.steps" in msg
+    assert "20" in msg
+    assert "26" in msg
+    assert "Gate A" not in msg
+    assert "normal" not in msg
+
+
+def test_rendered_chat_message_uses_humanized_repaired_old_value(tmp_path: Path) -> None:
+    """Persisted chat text uses the final human message, not raw gate summary text."""
+    from vibecomfy.comfy_nodes.agent_edit import _change_details_payload
+
+    context = TurnContext(session_id="chat-repaired", turn_id="0001")
+    state = _make_state(
+        task="set steps to 26",
+        session_dir=tmp_path / "chat-repaired",
+        turn_dir=tmp_path / "chat-repaired" / "turns" / "0001",
+        batch_done_summary="Gate A passed: 1 edit operation(s) verified. Changed ksampler.steps from 'normal' to 26.",
+        batch_final_summary="Gate B passed: touched compile region is isomorphic.",
+        batch_field_changes=(
+            FieldChange(uid="ksampler", field_path="steps", old=20, new=26),
+        ),
+    )
+    message = _synthesize_batch_repl_message(state, outcome=TurnOutcome.edit(changes=state.batch_field_changes))
+    response = {
+        "message": message,
+        "outcome": TurnOutcome.edit(changes=state.batch_field_changes).to_dict(),
+        "change_details": _change_details_payload(state, context),
+    }
+
+    _write_turn_chat_artifact(state, context, response, "batch_repl")
+    chat = json.loads((state.turn_dir / "chat.json").read_text(encoding="utf-8"))
+    agent = chat["messages"][1]
+    assert "ksampler.steps" in agent["text"]
+    assert "20" in agent["text"]
+    assert "normal" not in agent["text"]
+    assert "Gate A" not in agent["text"]
+    assert "Gate A passed" in agent["change_details"]["done_summary"]
 
 
 def test_synthesize_message_clarify_outcome() -> None:

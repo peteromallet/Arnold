@@ -3810,7 +3810,7 @@ def test_run_agent_turn_batch_uses_runtime_batch_entrypoint(monkeypatch) -> None
 
 
 def test_run_agent_turn_batch_empty_content_is_malformed(monkeypatch) -> None:
-    """Two empty batch responses still fail as malformed model output."""
+    """Initial empty response plus two retry nudges still fail as malformed model output."""
     calls: list[dict[str, object]] = []
 
     class EmptyBatchRuntime:
@@ -3825,9 +3825,11 @@ def test_run_agent_turn_batch_empty_content_is_malformed(monkeypatch) -> None:
             task="set prompt",
             messages=[{"role": "user", "content": "set prompt"}],
         )
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert calls[1]["messages"][-1]["role"] == "system"  # type: ignore[index]
     assert "previous reply was empty or unparseable" in calls[1]["messages"][-1]["content"]  # type: ignore[index]
+    assert calls[2]["messages"][-1]["role"] == "system"  # type: ignore[index]
+    assert "previous reply was empty or unparseable" in calls[2]["messages"][-1]["content"]  # type: ignore[index]
 
 
 def test_run_agent_turn_batch_retries_empty_content_once_then_succeeds(monkeypatch) -> None:

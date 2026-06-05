@@ -287,6 +287,9 @@ let queueGuardBlockedTurnKeys = new Set();
 let _previewForegroundInstallReport = null;
 let _adapterCapabilities = null;
 let _progressPulseInjected = false;
+let _scheduledAgentPanelRender = null;
+let _scheduledAgentPanelRenderQueued = false;
+let _overlayDrawModelCache = null;
 
 function isIntentClassType(classType) {
   return INTENT_NODE_CLASS_TYPES.has(String(classType || "").trim());
@@ -538,9 +541,12 @@ function installIntentNodeFallback() {
 }
 
 function installAgentPreviewOverlay() {
+  if (app?.__vibecomfyAgentPreviewOverlayInstalled && _previewForegroundInstallReport) {
+    return;
+  }
   // Draw the pending-candidate preview overlay onto whatever canvas/context
   // LiteGraph is currently rendering.
-  const overlayDraw = function (ctx) {
+  const overlayDraw = app.__vibecomfyAgentPreviewOverlayDraw || function (ctx) {
     const panel = agentPanel;
     if (!panel) {
       return;
@@ -560,9 +566,11 @@ function installAgentPreviewOverlay() {
       console.warn("[vibecomfy] drawPreviewOverlay threw:", e);
     }
   };
+  app.__vibecomfyAgentPreviewOverlayDraw = overlayDraw;
   try {
     const install = installPreviewForegroundOverlay(app, overlayDraw, { windowObj: window });
     _previewForegroundInstallReport = install;
+    app.__vibecomfyAgentPreviewOverlayInstalled = true;
     if (install.polling) {
       console.warn(`[vibecomfy] preview overlay install degraded: ${install.detail}`);
     }
@@ -618,6 +626,9 @@ function panelSection(id, title) {
     padding: "10px",
     display: "grid",
     gap: "8px",
+    minWidth: "0",
+    maxWidth: "100%",
+    overflow: "hidden",
   });
 
   const heading = el("div", title);
@@ -636,6 +647,10 @@ function panelSection(id, title) {
     gap: "6px",
     fontSize: "12px",
     lineHeight: "1.4",
+    minWidth: "0",
+    maxWidth: "100%",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
   });
 
   section.appendChild(heading);
@@ -685,6 +700,8 @@ function setButtonEmphasis(buttonNode, visible, tone) {
 function appendTextLine(target, text, color = "#edf2f7") {
   const node = el("div", text);
   node.style.color = color;
+  node.style.minWidth = "0";
+  node.style.overflowWrap = "anywhere";
   target.appendChild(node);
 }
 
@@ -705,6 +722,115 @@ function safeJson(value) {
   } catch (e) {
     return String(value);
   }
+}
+
+function scrubDebugPayload(value, depth = 0) {
+  if (value == null || typeof value !== "object") {
+    return value;
+  }
+  if (depth > 5) {
+    return "[truncated]";
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 50) {
+      return {
+        kind: "array",
+        length: value.length,
+        preview: value.slice(0, 8).map((item) => scrubDebugPayload(item, depth + 1)),
+      };
+    }
+    return value.map((item) => scrubDebugPayload(item, depth + 1));
+  }
+  const result = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "graph" || key === "candidate" || key === "candidate_graph") {
+      const graph = key === "candidate" && entry?.graph ? entry.graph : entry;
+      result[key] = {
+        graph_omitted: true,
+        node_count: Array.isArray(graph?.nodes) ? graph.nodes.length : null,
+        link_count: Array.isArray(graph?.links) ? graph.links.length : null,
+      };
+      continue;
+    }
+    if (key === "raw_payload" && entry && typeof entry === "object") {
+      result[key] = scrubDebugPayload({
+        ok: entry.ok,
+        kind: entry.kind,
+        stage: entry.stage,
+        session_id: entry.session_id,
+        turn_id: entry.turn_id,
+        candidate_graph_hash: entry.candidate_graph_hash,
+        audit_ref: entry.audit_ref,
+        apply_eligibility: entry.apply_eligibility,
+        rebaseline_recovery: entry.rebaseline_recovery,
+      }, depth + 1);
+      continue;
+    }
+    result[key] = scrubDebugPayload(entry, depth + 1);
+  }
+  return result;
+}
+
+function compactDetailsPreview(value) {
+  if (value == null || typeof value !== "object") {
+    return "";
+  }
+  const parts = [];
+  const pushPart = (key, entry) => {
+    if (parts.length >= 12) {
+      return;
+    }
+    if (entry == null || typeof entry === "number" || typeof entry === "boolean") {
+      parts.push(`${key}: ${String(entry)}; "${key}": ${String(entry)}`);
+    } else if (typeof entry === "string") {
+      const quoted = /(?:^|_)turn_id$|(?:^|_)id$/.test(key) ? ` (${JSON.stringify(entry)})` : "";
+      parts.push(`${key}: ${entry}${quoted}`);
+    } else if (Array.isArray(entry)) {
+      parts.push(`${key}: [${entry.length}]`);
+    } else if (entry && typeof entry === "object") {
+      const message = entry.message || entry.user_facing_message || entry.path;
+      if (typeof message === "string" && message) {
+        parts.push(`${key}: ${message}`);
+      } else {
+        parts.push(`${key}: {...}`);
+      }
+    }
+  };
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "graph" || key === "candidate_graph" || key === "candidate") {
+      continue;
+    }
+    pushPart(key, entry);
+    if (parts.length >= 8) {
+      break;
+    }
+  }
+  const wanted = new Set([
+    "expected_structural_graph_hash",
+    "expected_live_canvas_token",
+    "expected_graph_hash",
+    "expected_baseline_graph_hash",
+    "rebaseline_response",
+    "accept_response",
+  ]);
+  const visit = (node, depth = 0) => {
+    if (!node || typeof node !== "object" || depth > 4 || parts.length >= 12) {
+      return;
+    }
+    for (const [key, entry] of Object.entries(node)) {
+      if (key === "graph" || key === "candidate_graph" || key === "candidate") {
+        continue;
+      }
+      if (wanted.has(key) && !parts.some((part) => part.startsWith(`${key}:`))) {
+        pushPart(key, entry);
+      }
+      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        visit(entry, depth + 1);
+      }
+    }
+  };
+  visit(value);
+  return parts.join("; ");
 }
 
 function clonePlainData(value) {
@@ -978,15 +1104,43 @@ function createDetails(summary, value) {
   const details = el("details");
   const heading = el("summary", summary);
   heading.style.cursor = "pointer";
-  const pre = el("pre", safeJson(value));
+  let rendered = false;
+  const pre = el("pre", "");
   Object.assign(pre.style, {
     margin: "8px 0 0 0",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
+    overflowWrap: "anywhere",
     color: "#b9ffcc",
     fontSize: "11px",
+    maxWidth: "100%",
+    minWidth: "0",
+  });
+  const renderValue = () => {
+    if (rendered) {
+      return;
+    }
+    rendered = true;
+    pre.textContent = safeJson(value);
+  };
+  details.addEventListener("toggle", () => {
+    if (details.open) {
+      renderValue();
+    }
   });
   details.appendChild(heading);
+  const preview = compactDetailsPreview(value);
+  if (preview) {
+    const previewNode = el("div", preview);
+    Object.assign(previewNode.style, {
+      marginTop: "4px",
+      color: "#8d93a1",
+      fontSize: "10px",
+      overflowWrap: "anywhere",
+      wordBreak: "break-word",
+    });
+    details.appendChild(previewNode);
+  }
   details.appendChild(pre);
   return details;
 }
@@ -996,6 +1150,8 @@ function createBubbleDetailSection(title) {
   Object.assign(section.style, {
     display: "grid",
     gap: "4px",
+    minWidth: "0",
+    maxWidth: "100%",
   });
   const heading = el("div", title);
   Object.assign(heading.style, {
@@ -1009,6 +1165,10 @@ function createBubbleDetailSection(title) {
   Object.assign(body.style, {
     display: "grid",
     gap: "4px",
+    minWidth: "0",
+    maxWidth: "100%",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
   });
   section.appendChild(heading);
   section.appendChild(body);
@@ -1304,7 +1464,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
       });
       panel.fields.route.value = route;
       if (typeof document !== "undefined") {
-        renderAgentPanel(panel);
+        scheduleRenderAgentPanel("status", panel);
       }
       return;
     }
@@ -1393,7 +1553,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
   if (typeof document === "undefined") {
     return;
   }
-  renderAgentPanel(panel);
+  scheduleRenderAgentPanel("status", panel);
 }
 
 function submitReadinessState(panel) {
@@ -2209,6 +2369,7 @@ function createAgentPanel() {
       },
       lastAppliedChanges: null,
       lastSubmitFieldChanges: null,
+      changeDetails: null,
       queueGuard: getQueueGuardStateForPanel(),
       previewEnabled: false,
       expandedTurnKeys: {},
@@ -2306,6 +2467,39 @@ function rerenderAgentPanelIfMounted(panel = agentPanel) {
   renderAgentPanel(panel);
 }
 
+function scheduleRenderAgentPanel(reason = "scheduled", panel = agentPanel) {
+  if (!panel?.root || typeof document === "undefined" || panel.root.ownerDocument !== document) {
+    return;
+  }
+  _scheduledAgentPanelRender = { panel, reason };
+  const flush = () => {
+    const scheduled = _scheduledAgentPanelRender;
+    _scheduledAgentPanelRender = null;
+    _scheduledAgentPanelRenderQueued = false;
+    if (
+      typeof document !== "undefined"
+      && scheduled?.panel?.root?.ownerDocument === document
+    ) {
+      renderAgentPanel(scheduled.panel);
+    }
+  };
+  if (_scheduledAgentPanelRenderQueued) {
+    return;
+  }
+  _scheduledAgentPanelRenderQueued = true;
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(flush);
+  } else if (typeof queueMicrotask === "function") {
+    queueMicrotask(flush);
+  } else if (typeof Promise !== "undefined") {
+    Promise.resolve().then(flush);
+  } else if (typeof setTimeout !== "function") {
+    flush();
+  } else {
+    setTimeout(flush, 0);
+  }
+}
+
 export function ensureAgentPanel() {
   if (!agentPanel) {
     // Create the panel shell only. Chat rehydration happens on open
@@ -2326,7 +2520,7 @@ function openAgentPanel() {
   // Creation (ensureAgentPanel) intentionally does not fetch, so this single
   // call covers both first open and reopen.
   _rehydrateChat(panel).then(() => {
-    rerenderAgentPanelIfMounted(panel);
+    scheduleRenderAgentPanel("rehydrate", panel);
   }).catch((err) => {
     console.warn("[vibecomfy] chat rehydration render failed", err);
   });
@@ -2646,6 +2840,16 @@ function normalizeFieldChangesFromMessage(message) {
   return { directChanges, outcomeChanges };
 }
 
+function changeDetailsForMessage(panel, message, snapshot = null) {
+  if (message?.change_details && typeof message.change_details === "object") {
+    return message.change_details;
+  }
+  if (snapshot?.changeDetails && typeof snapshot.changeDetails === "object") {
+    return snapshot.changeDetails;
+  }
+  return panel?.state?.changeDetails || null;
+}
+
 function normalizeBatchTurn(payload, { source = "response", sessionId = null, status = null } = {}) {
   if (!payload || typeof payload !== "object") {
     return null;
@@ -2794,6 +2998,7 @@ function rememberTurnDetailSnapshot(panel, detail = {}) {
     debugPayload: clonePlainData(detail.debugPayload ?? panel.state.debugPayload ?? null),
     queueGuard: clonePlainData(detail.queueGuard ?? panel.state.queueGuard ?? getQueueGuardStateForPanel()),
     fieldChanges: clonePlainData(detail.fieldChanges ?? panel.state.lastSubmitFieldChanges ?? null),
+    changeDetails: clonePlainData(detail.changeDetails ?? panel.state.changeDetails ?? null),
     lastAppliedChanges: clonePlainData(detail.lastAppliedChanges ?? panel.state.lastAppliedChanges ?? null),
   };
   panel.state.turnDetailSnapshots[turnId] = snapshot;
@@ -2888,18 +3093,31 @@ function reconcileResponseBatchTurns(panel, result) {
   }
   panel.state.turns = nextTurns;
   const finalIndex = result.batch_turns.length - 1;
+  const resultHasCandidate = Boolean(candidateGraphFromResult(result));
   for (let index = 0; index < result.batch_turns.length; index += 1) {
     const turn = result.batch_turns[index];
-    const turnOutcome = outcomeFromResult(turn);
+    const turnPayload =
+      index === finalIndex
+      && typeof result?.done_summary === "string"
+      && result.done_summary
+        ? { ...turn, done_summary: turn.done_summary || result.done_summary }
+        : turn;
+    const turnOutcome = outcomeFromResult(turnPayload);
     let status = null;
     if (outcomeRequiresClarification(turnOutcome)) {
       status = "clarify";
-    } else if (index === finalIndex && typeof result?.done_summary === "string" && result.done_summary) {
+    } else if (
+      index === finalIndex
+      && (
+        (typeof result?.done_summary === "string" && result.done_summary)
+        || (result?.ok === true && resultHasCandidate)
+      )
+    ) {
       status = "done";
     } else {
       status = "in_progress";
     }
-    upsertBatchTurn(panel, turn, {
+    upsertBatchTurn(panel, turnPayload, {
       source: "response",
       sessionId: responseSessionId,
       status,
@@ -2960,17 +3178,18 @@ function handleAgentTurnEvent(event) {
   if (!normalized) {
     return;
   }
-  renderAgentPanel(panel);
+  scheduleRenderAgentPanel("websocket", panel);
 }
 
 function ensureAgentTurnListener() {
-  if (agentTurnEventListenerRegistered || typeof api?.addEventListener !== "function") {
+  if (api?.__vibecomfyAgentTurnListenerRegistered || typeof api?.addEventListener !== "function") {
     return;
   }
   agentTurnEventListener = handleAgentTurnEvent;
   // Event name MUST match the backend emit string in agent_edit.py (_ws_send).
   api.addEventListener("vibecomfy.agent_edit.turn", agentTurnEventListener);
   agentTurnEventListenerRegistered = true;
+  api.__vibecomfyAgentTurnListenerRegistered = true;
 }
 
 function renderMeta(panel) {
@@ -3099,6 +3318,20 @@ function _statementBullet(stmt, index) {
   kindEl.style.color = "#9da1ac";
   row.appendChild(kindEl);
 
+  const targetText =
+    (typeof stmt.field_path === "string" && stmt.field_path)
+    || (typeof stmt.target === "string" && stmt.target)
+    || (typeof stmt.target_field === "string" && stmt.target_field)
+    || null;
+  if (targetText) {
+    const targetEl = el("span", targetText);
+    targetEl.style.color = "#c4ccd6";
+    targetEl.style.fontSize = "10px";
+    targetEl.style.marginLeft = "2px";
+    targetEl.style.overflowWrap = "anywhere";
+    row.appendChild(targetEl);
+  }
+
   // First diagnostic (compact)
   if (Array.isArray(stmt.diagnostics) && stmt.diagnostics.length) {
     const firstDiag = stmt.diagnostics[0];
@@ -3210,7 +3443,16 @@ function _renderBatchTurnRow(body, panel, entry, index) {
   collapsedLine.appendChild(statusEl);
 
   // Truncated message
-  const shortMsg = _truncateMessage(entry.message || entry.done_summary, 80);
+  const shortMsg = _truncateMessage(
+    entry.status === "done"
+      ? (
+        entry.done_summary && entry.message && entry.done_summary !== entry.message
+          ? `${entry.done_summary} ${entry.message}`
+          : (entry.done_summary || entry.message)
+      )
+      : (entry.message || entry.done_summary),
+    80,
+  );
   if (shortMsg) {
     const msgEl = el("span", shortMsg);
     msgEl.style.color = "#9da1ac";
@@ -3434,6 +3676,8 @@ function renderChatThread(panel) {
       marginBottom: "8px",
       paddingBottom: "6px",
       borderBottom: "1px solid #282a32",
+      minWidth: "0",
+      maxWidth: "100%",
     });
     const sessionLabel = panel.state.chatSessionPath || `out/editor_sessions/${panel.state.sessionId}`;
     const link = el("a", `session: ${sessionLabel}`);
@@ -3446,6 +3690,9 @@ function renderChatThread(panel) {
       fontFamily: "monospace",
       textDecoration: "none",
       cursor: "pointer",
+      minWidth: "0",
+      overflowWrap: "anywhere",
+      wordBreak: "break-word",
     });
     linkRow.appendChild(link);
     body.appendChild(linkRow);
@@ -3487,6 +3734,7 @@ function renderChatThread(panel) {
       alignItems: isUser ? "flex-end" : "flex-start",
       marginBottom: "6px",
       maxWidth: "100%",
+      minWidth: "0",
     });
 
     const label = el("span", isUser ? "You" : "Agent");
@@ -3509,8 +3757,10 @@ function renderChatThread(panel) {
       borderRadius: isUser ? "10px 10px 3px 10px" : "10px 10px 10px 3px",
       maxWidth: "92%",
       wordBreak: "break-word",
+      overflowWrap: "anywhere",
       whiteSpace: "pre-wrap",
       lineHeight: "1.4",
+      minWidth: "0",
     });
     bubble.appendChild(text);
 
@@ -3525,6 +3775,8 @@ function renderChatThread(panel) {
       Object.assign(detailRow.style, {
         marginTop: "3px",
         fontSize: "10px",
+        maxWidth: "100%",
+        minWidth: "0",
       });
 
       const detailToggle = el("span", "\u25b6 details");
@@ -3544,9 +3796,14 @@ function renderChatThread(panel) {
         borderRadius: "4px",
         fontSize: "10px",
         color: "#8d93a1",
-        gridTemplateColumns: "auto 1fr",
+        gridTemplateColumns: "minmax(0, 1fr)",
         gap: "4px 8px",
         alignItems: "baseline",
+        maxWidth: "100%",
+        minWidth: "0",
+        overflow: "hidden",
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
       });
 
       let detailShown = !!panel.state.expandedBubbleTurnKeys?.[detailTurnKey];
@@ -3589,6 +3846,32 @@ function populateAgentBubbleDetail(target, panel, message, snapshot = null) {
   });
   if (progressSection.body.children.length) {
     target.appendChild(progressSection.section);
+  }
+
+  const changeDetails = changeDetailsForMessage(panel, message, snapshot);
+  if (changeDetails) {
+    const changesSection = createBubbleDetailSection("Changes");
+    const count = Number.isFinite(changeDetails.landed_operation_count)
+      ? changeDetails.landed_operation_count
+      : (Array.isArray(changeDetails.operations) ? changeDetails.operations.length : 0);
+    appendTextLine(changesSection.body, `${count} operation${count === 1 ? "" : "s"}`, "#c4ccd6");
+    if (changeDetails.done_summary) {
+      appendTextLine(changesSection.body, changeDetails.done_summary, "#9ed0ff");
+    }
+    if (Array.isArray(changeDetails.operations) && changeDetails.operations.length) {
+      const opList = el("div");
+      Object.assign(opList.style, {
+        display: "grid",
+        gap: "3px",
+        minWidth: "0",
+      });
+      for (const op of changeDetails.operations) {
+        appendTextLine(opList, op?.summary || `${op?.field_path || "field"} changed`, "#b9ffcc");
+      }
+      changesSection.body.appendChild(opList);
+    }
+    changesSection.body.appendChild(createDetails("full change details", changeDetails));
+    target.appendChild(changesSection.section);
   }
 
   const candidateSection = createBubbleDetailSection("Candidate");
@@ -3884,6 +4167,7 @@ function clearCandidatePreviewState(panel) {
   }
   delete panel.state._previewDiff;
   delete panel.state._previewDiffGraphHash;
+  _overlayDrawModelCache = null;
   try {
     const graph = getLiveGraph();
     if (graph) {
@@ -3909,9 +4193,11 @@ function invalidateCandidateState(panel, { repaint = true } = {}) {
   panel.state.applyEligibility = null;
   panel.state.applyEligibilityWarning = null;
   panel.state.applyEligibilityWarningKey = null;
+  panel.state.changeDetails = null;
   // Clear preview diff caches (same as clearCandidatePreviewState)
   delete panel.state._previewDiff;
   delete panel.state._previewDiffGraphHash;
+  _overlayDrawModelCache = null;
   // Repaint to clear the always-on candidate preview overlay from the canvas.
   // Callers that have ALREADY repainted (e.g. the post-Apply path, which just
   // ran applyGraphInPlaceWithIntentDecoration -> setDirtyCanvas and is now IDLE
@@ -4291,6 +4577,78 @@ function getOrBuildPreviewDiff() {
   return computePreviewDiff(candidateGraph, candidateReport);
 }
 
+function _graphNodeCount(graph) {
+  return Array.isArray(graph?.nodes) ? graph.nodes.length : 0;
+}
+
+function _overlayDrawCacheKey(diff, candidateGraph) {
+  const candidateHash =
+    diff?._candidateGraphHash
+    || agentPanel?.state?.candidateGraphHash
+    || `inline:${_graphNodeCount(candidateGraph)}:${Array.isArray(candidateGraph?.links) ? candidateGraph.links.length : 0}`;
+  const liveRevision = captureLiveCanvasRevision();
+  return `${candidateHash}:${liveRevision == null ? "unknown" : liveRevision}`;
+}
+
+function _buildOverlayDrawModel(ctx, diff, candidateGraph) {
+  const key = _overlayDrawCacheKey(diff, candidateGraph);
+  if (_overlayDrawModelCache?.key === key) {
+    return _overlayDrawModelCache.model;
+  }
+  const liveByUid = new Map();
+  for (const node of getLiveGraphNodes(getLiveGraph())) {
+    const uid = getUid(node);
+    if (uid) {
+      liveByUid.set(uid, node);
+    }
+  }
+  const candidateByUid = new Map();
+  for (const node of Array.isArray(candidateGraph?.nodes) ? candidateGraph.nodes : []) {
+    const uid = getUid(node);
+    if (uid) {
+      candidateByUid.set(uid, node);
+    }
+  }
+  const addedByUid = new Map();
+  for (const item of Array.isArray(diff?.added) ? diff.added : []) {
+    if (item?.uid) {
+      addedByUid.set(item.uid, item);
+    }
+  }
+  const ghostDimsByUid = new Map();
+  for (const [uid, node] of candidateByUid) {
+    if (!addedByUid.has(uid)) {
+      continue;
+    }
+    if (Array.isArray(node.size)) {
+      const rawW = node.size[0];
+      const rawH = node.size[1];
+      if (typeof rawW === "number" && typeof rawH === "number" && rawW > 40 && rawH > 20) {
+        ghostDimsByUid.set(uid, { w: rawW, h: rawH });
+        continue;
+      }
+    }
+    ghostDimsByUid.set(uid, _computeGhostDimensions(node, ctx));
+  }
+  const model = {
+    liveByUid,
+    candidateByUid,
+    addedByUid,
+    ghostDimsByUid,
+    unresolvedWarnCount: 0,
+  };
+  _overlayDrawModelCache = { key, model };
+  return model;
+}
+
+function _warnOverlayUnresolved(model, message, detail) {
+  if (!model || model.unresolvedWarnCount >= 5) {
+    return;
+  }
+  model.unresolvedWarnCount += 1;
+  console.warn(message, detail);
+}
+
 // ── Ghost dimension computation (T3) ──────────────────────────────────────
 // Compute plausible width and height from node content when cn.size is
 // missing or implausible (w ≤ 40 or h ≤ 20). Uses LiteGraph constants,
@@ -4382,6 +4740,11 @@ export function drawPreviewOverlay(ctx, diff) {
     var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
     var SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
     var WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
+    var candidateGraph = (diff && diff._candidateGraph) || (agentPanel && agentPanel.state && agentPanel.state.candidateGraph);
+    var drawModel = _buildOverlayDrawModel(ctx, diff, candidateGraph);
+    var liveByUid = drawModel.liveByUid;
+    var candidateByUid = drawModel.candidateByUid;
+    var addedByUid = drawModel.addedByUid;
 
     var _drawBadge = function (bx, by, text, color) {
       ctx.save();
@@ -4414,7 +4777,7 @@ export function drawPreviewOverlay(ctx, diff) {
     // [pos[0], pos[1]-TITLE_H, size[0], size[1]+TITLE_H].
     for (var _ei = 0; _ei < (diff.edited || []).length; _ei += 1) {
       var eitem = diff.edited[_ei];
-      var enode = lookupLiveNodeByUid(eitem.uid);
+      var enode = liveByUid.get(eitem.uid);
       if (!enode || !enode.pos) {
         continue;
       }
@@ -4470,7 +4833,7 @@ export function drawPreviewOverlay(ctx, diff) {
     if (diff.edited_fields && diff.edited_fields.length > 0) {
       for (var _efi = 0; _efi < diff.edited_fields.length; _efi += 1) {
         var ef = diff.edited_fields[_efi];
-        var efn = lookupLiveNodeByUid(ef.uid);
+        var efn = liveByUid.get(ef.uid);
         if (!efn || !efn.pos) continue;
         var efCollapsed = !!(efn.flags && efn.flags.collapsed);
         if (efCollapsed) continue;
@@ -4513,7 +4876,7 @@ export function drawPreviewOverlay(ctx, diff) {
     var removedItems = (diff.removed || []).concat(diff.removed_named || []);
     for (var _ri = 0; _ri < removedItems.length; _ri += 1) {
       var ritem = removedItems[_ri];
-      var rnode = lookupLiveNodeByUid(ritem.uid);
+      var rnode = liveByUid.get(ritem.uid);
       if (!rnode || !rnode.pos) {
         continue;
       }
@@ -4529,12 +4892,7 @@ export function drawPreviewOverlay(ctx, diff) {
     }
 
     // ── Added nodes (translucent green ghost + "+ new" badge; candidate pos) ─
-    var candidateGraph = (diff && diff._candidateGraph) || (agentPanel && agentPanel.state && agentPanel.state.candidateGraph);
     if (candidateGraph && diff.added && diff.added.length > 0) {
-      var addedByUid = new Map();
-      for (var _ai = 0; _ai < diff.added.length; _ai += 1) {
-        addedByUid.set(diff.added[_ai].uid, diff.added[_ai]);
-      }
       var candidateNodes = Array.isArray(candidateGraph.nodes)
         ? candidateGraph.nodes
         : [];
@@ -4565,7 +4923,7 @@ export function drawPreviewOverlay(ctx, diff) {
           }
         }
         if (!sizeValid) {
-          var dims = _computeGhostDimensions(cn, ctx);
+          var dims = drawModel.ghostDimsByUid.get(uid) || _computeGhostDimensions(cn, ctx);
           cw = dims.w;
           ch = dims.h;
         }
@@ -4654,18 +5012,6 @@ export function drawPreviewOverlay(ctx, diff) {
     // node.getConnectionPos(isInput, slotIndex); ghost (candidate-only)
     // nodes use geometry derived from ghost rect slot rows.
     if (candidateGraph && ((diff.removed_links && diff.removed_links.length > 0) || (diff.added_links && diff.added_links.length > 0))) {
-      // Build candidate-by-uid map once for ghost endpoint lookups.
-      var _candByUid = new Map();
-      var _candNodes = Array.isArray(candidateGraph.nodes) ? candidateGraph.nodes : [];
-      for (var _ci = 0; _ci < _candNodes.length; _ci += 1) {
-        var _candNode = _candNodes[_ci];
-        var _candUid = _candNode && _candNode.properties ? _candNode.properties.vibecomfy_uid : undefined;
-        if (_candUid) _candByUid.set(_candUid, _candNode);
-      }
-
-      var _unresWarn = 0;
-      var _MAX_UNRES_WARN = 5;
-
       // Parse link key "fromUid::fromPortName->toUid::toPortName"
       function _parseKey(k) {
         var m = k.match(/^(.+?)::(.+?)->(.+?)::(.+?)$/);
@@ -4723,6 +5069,10 @@ export function drawPreviewOverlay(ctx, diff) {
 
       // Ghost dimension helper (mirrors added-node logic)
       function _ghostDims(cn) {
+        var _uid = getUid(cn);
+        if (_uid && drawModel.ghostDimsByUid.has(_uid)) {
+          return drawModel.ghostDimsByUid.get(_uid);
+        }
         if (Array.isArray(cn.size)) {
           var _rw = cn.size[0], _rh = cn.size[1];
           if (typeof _rw === 'number' && typeof _rh === 'number' && _rw > 40 && _rh > 20) {
@@ -4738,14 +5088,14 @@ export function drawPreviewOverlay(ctx, diff) {
         var _p = _parseKey(_remLinks[_rli]);
         if (!_p) continue;
 
-        var _fNode = lookupLiveNodeByUid(_p.fromUid);
-        var _tNode = lookupLiveNodeByUid(_p.toUid);
+        var _fNode = liveByUid.get(_p.fromUid);
+        var _tNode = liveByUid.get(_p.toUid);
 
         var _fSlot = _slotIdx(_fNode, _p.fromPort, 'outputs');
         var _tSlot = _slotIdx(_tNode, _p.toPort, 'inputs');
 
         if (_fSlot < 0 || _tSlot < 0) {
-          if (_unresWarn < _MAX_UNRES_WARN) { _unresWarn += 1; console.warn('[vibecomfy] drawPreviewOverlay — unresolvable removed-wire endpoint:', _remLinks[_rli]); }
+          _warnOverlayUnresolved(drawModel, '[vibecomfy] drawPreviewOverlay — unresolvable removed-wire endpoint:', _remLinks[_rli]);
           continue;
         }
 
@@ -4753,8 +5103,8 @@ export function drawPreviewOverlay(ctx, diff) {
         var _tp = _connPos(_tNode, true, _tSlot, null, 0);
         if (_fp && _tp) {
           _strokeWire(_fp[0], _fp[1], _tp[0], _tp[1], removedColor, true);
-        } else if (_unresWarn < _MAX_UNRES_WARN) {
-          _unresWarn += 1; console.warn('[vibecomfy] drawPreviewOverlay — could not resolve removed-wire endpoint positions:', _remLinks[_rli]);
+        } else {
+          _warnOverlayUnresolved(drawModel, '[vibecomfy] drawPreviewOverlay — could not resolve removed-wire endpoint positions:', _remLinks[_rli]);
         }
       }
 
@@ -4764,13 +5114,13 @@ export function drawPreviewOverlay(ctx, diff) {
         var _p2 = _parseKey(_addLinks[_ali]);
         if (!_p2) continue;
 
-        var _fNode2 = lookupLiveNodeByUid(_p2.fromUid);
-        var _tNode2 = lookupLiveNodeByUid(_p2.toUid);
+        var _fNode2 = liveByUid.get(_p2.fromUid);
+        var _tNode2 = liveByUid.get(_p2.toUid);
 
         // Ghost fallback for endpoints not in the live graph
         var _fGhostPos = null, _fGhostW = 0;
         if (!_fNode2) {
-          var _fc = _candByUid.get(_p2.fromUid);
+          var _fc = candidateByUid.get(_p2.fromUid);
           if (_fc && _fc.pos && Array.isArray(_fc.pos) && _fc.pos.length >= 2) {
             _fGhostPos = _fc.pos;
             _fGhostW = _ghostDims(_fc).w;
@@ -4778,7 +5128,7 @@ export function drawPreviewOverlay(ctx, diff) {
         }
         var _tGhostPos = null, _tGhostW = 0;
         if (!_tNode2) {
-          var _tc = _candByUid.get(_p2.toUid);
+          var _tc = candidateByUid.get(_p2.toUid);
           if (_tc && _tc.pos && Array.isArray(_tc.pos) && _tc.pos.length >= 2) {
             _tGhostPos = _tc.pos;
             _tGhostW = _ghostDims(_tc).w;
@@ -4786,14 +5136,14 @@ export function drawPreviewOverlay(ctx, diff) {
         }
 
         // Resolve port → slot on whichever node we have (live or candidate)
-        var _fNodeR = _fNode2 || _candByUid.get(_p2.fromUid) || null;
-        var _tNodeR = _tNode2 || _candByUid.get(_p2.toUid) || null;
+        var _fNodeR = _fNode2 || candidateByUid.get(_p2.fromUid) || null;
+        var _tNodeR = _tNode2 || candidateByUid.get(_p2.toUid) || null;
 
         var _fSlot2 = _slotIdx(_fNodeR, _p2.fromPort, 'outputs');
         var _tSlot2 = _slotIdx(_tNodeR, _p2.toPort, 'inputs');
 
         if (_fSlot2 < 0 || _tSlot2 < 0) {
-          if (_unresWarn < _MAX_UNRES_WARN) { _unresWarn += 1; console.warn('[vibecomfy] drawPreviewOverlay — unresolvable added-wire endpoint:', _addLinks[_ali]); }
+          _warnOverlayUnresolved(drawModel, '[vibecomfy] drawPreviewOverlay — unresolvable added-wire endpoint:', _addLinks[_ali]);
           continue;
         }
 
@@ -4801,8 +5151,8 @@ export function drawPreviewOverlay(ctx, diff) {
         var _tp2 = _connPos(_tNode2, true, _tSlot2, _tGhostPos, _tGhostW);
         if (_fp2 && _tp2) {
           _strokeWire(_fp2[0], _fp2[1], _tp2[0], _tp2[1], addedColor, false);
-        } else if (_unresWarn < _MAX_UNRES_WARN) {
-          _unresWarn += 1; console.warn('[vibecomfy] drawPreviewOverlay — could not resolve added-wire endpoint positions:', _addLinks[_ali]);
+        } else {
+          _warnOverlayUnresolved(drawModel, '[vibecomfy] drawPreviewOverlay — could not resolve added-wire endpoint positions:', _addLinks[_ali]);
         }
       }
 
@@ -5212,9 +5562,6 @@ function appendFailureDetail(body, panel, snapshot = null) {
     if (recovery.last_known_baseline_graph_hash) {
       appendCodeLine(body, `expected_baseline: ${recovery.last_known_baseline_graph_hash}`, "#8d93a1");
     }
-    const recoveryButton = button("Rebaseline Current Canvas", () => rebaselineCurrentCanvas(panel));
-    recoveryButton.disabled = Boolean(panel.state.inFlightRebaseline);
-    body.appendChild(recoveryButton);
   }
   if (failure.agent_failure_context && Object.keys(failure.agent_failure_context).length) {
     body.appendChild(createDetails("agent failure context", failure.agent_failure_context));
@@ -5305,7 +5652,7 @@ function renderAudit(panel) {
 }
 
 function appendDebugDetail(body, panel, snapshot = null) {
-  const debugPayload = snapshot?.debugPayload || panel.state.debugPayload || { state: snapshot?.phase || panel.state.phase };
+  const debugPayload = scrubDebugPayload(snapshot?.debugPayload || panel.state.debugPayload || { state: snapshot?.phase || panel.state.phase });
   body.appendChild(createDetails("Raw response (debug)", debugPayload));
 }
 
@@ -5446,40 +5793,14 @@ function renderDeveloper(panel) {
 
   // ── Raw JSON ──────────────────────────────────────────────────────────
   const rawSection = renderDeveloperSubsection("Raw JSON");
-  const statusSnapshot = panel.state.statusSnapshot;
-  const debugPayload = panel.state.debugPayload;
+  const statusSnapshot = scrubDebugPayload(panel.state.statusSnapshot);
+  const debugPayload = scrubDebugPayload(panel.state.debugPayload);
   if (statusSnapshot || debugPayload) {
     if (statusSnapshot) {
-      const pre = el("pre", JSON.stringify(statusSnapshot, null, 2));
-      Object.assign(pre.style, {
-        maxHeight: "120px",
-        overflowY: "auto",
-        background: "#0d0e12",
-        padding: "4px",
-        borderRadius: "4px",
-        fontSize: "9px",
-        margin: "0",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-all",
-      });
-      rawSection.appendChild(el("div", "Status snapshot:"));
-      rawSection.appendChild(pre);
+      rawSection.appendChild(createDetails("Status snapshot", statusSnapshot));
     }
     if (debugPayload) {
-      const pre = el("pre", JSON.stringify(debugPayload, null, 2));
-      Object.assign(pre.style, {
-        maxHeight: "120px",
-        overflowY: "auto",
-        background: "#0d0e12",
-        padding: "4px",
-        borderRadius: "4px",
-        fontSize: "9px",
-        margin: "0",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-all",
-      });
-      rawSection.appendChild(el("div", "Debug payload:"));
-      rawSection.appendChild(pre);
+      rawSection.appendChild(createDetails("Debug payload", debugPayload));
     }
     devData.appendChild(rawSection);
   }
@@ -5604,8 +5925,42 @@ function renderComposerNotice(panel, readinessState) {
   }
   clearNode(notice);
   let hasContent = false;
+  const recovery = panel.state.phase === PANEL_STATE.ERROR ? panel.state.rebaselineRecovery : null;
+  if (recovery?.action === "rebaseline" && recovery.reason === "stale_state_recovery") {
+    const heading = el("div", "Canvas changed");
+    heading.style.color = "#ffb86c";
+    heading.style.fontWeight = "700";
+    heading.style.marginBottom = "4px";
+    notice.appendChild(heading);
+    const message = el("div", "Rebaseline from the current canvas and retry the edit in one step.");
+    message.style.color = "#edf2f7";
+    notice.appendChild(message);
+    const actionRow = el("div");
+    Object.assign(actionRow.style, {
+      display: "flex",
+      flexWrap: "wrap",
+      gap: "6px",
+      marginTop: "8px",
+    });
+    const recoveryButton = button("Rebaseline & retry", () => rebaselineCurrentCanvas(panel));
+    recoveryButton.dataset.vibecomfyRecoveryAction = "stale-rebaseline-retry";
+    recoveryButton.disabled = Boolean(panel.state.inFlightRebaseline);
+    recoveryButton.style.fontSize = "12px";
+    recoveryButton.style.padding = "6px 10px";
+    setButtonEmphasis(recoveryButton, true, "primary");
+    actionRow.appendChild(recoveryButton);
+    notice.appendChild(actionRow);
+    hasContent = true;
+  }
   const clarification = panel?.state?.clarification;
   if (panel.state.phase === PANEL_STATE.CLARIFY && clarification?.message) {
+    if (hasContent) {
+      const divider = el("div");
+      divider.style.height = "1px";
+      divider.style.background = "#2a313c";
+      divider.style.margin = "8px 0";
+      notice.appendChild(divider);
+    }
     const heading = el("div", "Clarify question");
     heading.style.color = "#ffc107";
     heading.style.fontWeight = "700";
@@ -5841,6 +6196,11 @@ async function newAgentConversation(panel) {
   panel.state.auditRef = null;
   panel.state.debugPayload = null;
   panel.state.lastSubmit = null;
+  panel.state.inFlightSubmit = null;
+  panel.state.inFlightApply = null;
+  panel.state.inFlightRebaseline = null;
+  panel.state.rebaselinePending = null;
+  panel.state.rebaselineRecovery = null;
   panel.state.undoStack = [];
   panel.state.lastAppliedChanges = null;
   panel.state.previewEnabled = false;
@@ -6047,7 +6407,7 @@ async function submitAgentEdit(panel) {
       });
       renderAgentPanel(panel);
       // Canonicalize chat through the rehydrate endpoint.
-      _rehydrateChat(panel).then(() => { rerenderAgentPanelIfMounted(agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
+      _rehydrateChat(panel).then(() => { scheduleRenderAgentPanel("rehydrate", agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
       return;
     } finally {
       panel.state.submitAbortController = null;
@@ -6117,7 +6477,7 @@ async function submitAgentEdit(panel) {
       });
       renderAgentPanel(panel);
       // Canonicalize chat through the rehydrate endpoint.
-      _rehydrateChat(panel).then(() => { rerenderAgentPanelIfMounted(agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
+      _rehydrateChat(panel).then(() => { scheduleRenderAgentPanel("rehydrate", agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
       return;
     }
 
@@ -6195,7 +6555,7 @@ async function submitAgentEdit(panel) {
       });
       renderAgentPanel(panel);
       // Canonicalize chat through the rehydrate endpoint.
-      _rehydrateChat(panel).then(() => { rerenderAgentPanelIfMounted(agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
+      _rehydrateChat(panel).then(() => { scheduleRenderAgentPanel("rehydrate", agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
       return;
     }
 
@@ -6222,10 +6582,13 @@ async function submitAgentEdit(panel) {
     panel.state.queueGuard = getQueueGuardStateForPanel();
     reconcileResponseBatchTurns(panel, result);
     panel.state.lastSubmitFieldChanges = normalizeFieldChangesFromSubmit(result);
-    panel.state.debugPayload = {
+    panel.state.changeDetails = result.change_details && typeof result.change_details === "object"
+      ? clonePlainData(result.change_details)
+      : null;
+    panel.state.debugPayload = scrubDebugPayload({
       ...result,
       last_submit: panel.state.lastSubmit,
-    };
+    });
     pushHistory(panel, "candidate", result.turn_id ? `turn ${result.turn_id}` : "candidate");
     pushTurnStatus(panel, "candidate", {
       session_id: result.session_id,
@@ -6246,15 +6609,16 @@ async function submitAgentEdit(panel) {
       canvasApplyAllowed: Boolean(result.canvas_apply_allowed),
       auditRef: result.audit_ref || null,
       debugPayload: {
-        ...result,
+        ...scrubDebugPayload(result),
         last_submit: panel.state.lastSubmit,
       },
       fieldChanges: panel.state.lastSubmitFieldChanges,
+      changeDetails: panel.state.changeDetails,
       message: result.message || null,
     });
     renderAgentPanel(panel);
     // Canonicalize chat through the rehydrate endpoint after visible update.
-    _rehydrateChat(panel).then(() => { rerenderAgentPanelIfMounted(agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
+    _rehydrateChat(panel).then(() => { scheduleRenderAgentPanel("rehydrate", agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
 
     if (panel.state.previewEnabled) {
       if (app?.canvas?.setDirty) {

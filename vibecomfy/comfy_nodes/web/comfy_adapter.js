@@ -386,6 +386,11 @@ export function installQueueGuard(app, options = {}) {
     };
   }
 
+  const existingInstall = app?.__vibecomfyQueueGuardInstall;
+  if (existingInstall?.installed && typeof existingInstall.wrapper === "function") {
+    return existingInstall;
+  }
+
   const original = app.queuePrompt;
   const shouldBlock = typeof options.shouldBlock === "function" ? options.shouldBlock : null;
   const onBlock = typeof options.onBlock === "function" ? options.onBlock : null;
@@ -434,9 +439,12 @@ export function installQueueGuard(app, options = {}) {
     if (app.queuePrompt === wrapper) {
       app.queuePrompt = original;
     }
+    if (app?.__vibecomfyQueueGuardInstall === report) {
+      delete app.__vibecomfyQueueGuardInstall;
+    }
   };
 
-  return {
+  const report = {
     capability,
     strategy: "wrapper",
     installed: true,
@@ -445,6 +453,8 @@ export function installQueueGuard(app, options = {}) {
     wrapper,
     cleanup,
   };
+  app.__vibecomfyQueueGuardInstall = report;
+  return report;
 }
 
 /**

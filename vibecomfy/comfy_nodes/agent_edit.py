@@ -259,6 +259,99 @@ def _landed_edit_lead(state: AgentEditState) -> str:
     return f"Applied {count} {noun}."
 
 
+def _display_value(value: Any, *, limit: int = 48) -> str:
+    if isinstance(value, str):
+        text = value
+    elif value is None:
+        text = "null"
+    elif isinstance(value, (int, float, bool)):
+        text = str(value)
+    else:
+        try:
+            text = json.dumps(_json_safe(value), sort_keys=True)
+        except (TypeError, ValueError):
+            text = str(value)
+    text = " ".join(text.split())
+    if len(text) > limit:
+        return text[: max(0, limit - 1)] + "…"
+    return text
+
+
+def _change_subject(change: FieldChange) -> str:
+    uid = str(change.uid or "node").strip() or "node"
+    field = str(change.field_path or "field").strip() or "field"
+    return f"{uid}.{field}"
+
+
+def _human_change_phrase(change: FieldChange) -> str:
+    return (
+        f"updated {_change_subject(change)} from "
+        f"{_display_value(change.old)} to {_display_value(change.new)}"
+    )
+
+
+def _sentence_case(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    return stripped[0].upper() + stripped[1:]
+
+
+def _humanized_edit_message(state: AgentEditState) -> str:
+    changes = tuple(state.batch_field_changes or ())
+    if not changes:
+        return ensure_sentence_message(
+            state.batch_done_summary or state.user_message,
+            fallback="The candidate is ready to review.",
+        )
+    if len(changes) == 1:
+        return _sentence_case(
+            ensure_sentence_message(
+                _human_change_phrase(changes[0]),
+                fallback="Updated the workflow.",
+            )
+        )
+    phrases = [_human_change_phrase(change) for change in changes[:3]]
+    if len(changes) == 2:
+        text = f"{phrases[0]} and {phrases[1]}"
+    else:
+        text = f"{phrases[0]}, {phrases[1]}, and {phrases[2]}"
+        remaining = len(changes) - 3
+        if remaining > 0:
+            noun = "other field" if remaining == 1 else "other fields"
+            text = f"{text}, plus {remaining} {noun}"
+    return _sentence_case(ensure_sentence_message(text, fallback=f"Updated {len(changes)} workflow fields."))
+
+
+def _operation_detail_payload(changes: tuple[FieldChange, ...]) -> list[dict[str, Any]]:
+    return [
+        {
+            **change.to_dict(),
+            "summary": (
+                f"Changed {_change_subject(change)} from "
+                f"{_display_value(change.old)} to {_display_value(change.new)}."
+            ),
+        }
+        for change in changes
+    ]
+
+
+def _change_details_payload(state: AgentEditState, context: TurnContext) -> dict[str, Any]:
+    gate_snapshot = context.gate_snapshot()
+    gate_a = gate_snapshot.get("edit_scope_ok") or gate_snapshot.get("python_load_ok")
+    gate_b = gate_snapshot.get("isomorphic_ok") or gate_snapshot.get("ui_fidelity_ok")
+    operations = _operation_detail_payload(tuple(state.batch_field_changes or ()))
+    return {
+        "landed_operation_count": len(operations),
+        "done_summary": state.batch_done_summary or "",
+        "final_summary": state.batch_final_summary or "",
+        "gate_a": _json_safe(gate_a),
+        "gate_b": _json_safe(gate_b),
+        "operations": operations,
+        "batch_turns": _json_safe(state.batch_turns),
+    }
+
+
 def _batch_warning_sentence(
     state: AgentEditState,
     *,
@@ -300,17 +393,7 @@ def _synthesize_batch_repl_message(
     if outcome is None:
         return ensure_sentence_message(state.user_message, fallback="The agent edit turn completed.")
     if outcome.kind == "edit":
-        if state.batch_done_summary:
-            tail = ensure_sentence_message(
-                state.batch_done_summary,
-                fallback="The candidate is ready to apply.",
-            )
-            if lead:
-                return f"{lead} {tail}".strip()
-            return tail
-        if lead:
-            return lead
-        return ensure_sentence_message(state.user_message, fallback="The candidate is ready to apply.")
+        return _humanized_edit_message(state)
     if outcome.kind == "edit+clarify":
         warning = _batch_warning_sentence(state, outcome=outcome)
         if lead:
@@ -889,6 +972,9 @@ def _write_turn_chat_artifact(
         agent_msg["outcome"] = dict(outcome_payload)
     if changes is not None:
         agent_msg["changes"] = changes
+    change_details = response.get("change_details")
+    if isinstance(change_details, Mapping):
+        agent_msg["change_details"] = _json_safe(dict(change_details))
 
     chat_record: dict[str, Any] = {
         "session_id": context.session_id,
@@ -2669,6 +2755,7 @@ def _build_batch_repl_response(
     else:
         outcome = TurnOutcome.noop(reason=state.batch_done_summary or state.user_message or None)
     message = _synthesize_batch_repl_message(state, outcome=outcome)
+    change_details = _change_details_payload(state, context)
     response.update(
         turn_envelope(
             message=message,
@@ -2693,6 +2780,7 @@ def _build_batch_repl_response(
             },
         )
     )
+    response["change_details"] = change_details
     response.update(compatibility_fields)
     if state.batch_exit_mode in {_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY}:
         response["clarification_required"] = True
