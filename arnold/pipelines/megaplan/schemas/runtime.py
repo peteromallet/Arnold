@@ -993,6 +993,17 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "evidence_file": {"type": "string"},
                         "flag_id": {"type": ["string", "null"]},
                         "source": {"type": ["string", "null"]},
+                        "deterministic_check": {
+                            "x-preserve-explicit-required": True,
+                            "type": "object",
+                            "properties": {
+                                "command": {"type": "string"},
+                                "baseline_status": {"type": "string"},
+                                "post_status": {"type": "string"},
+                                "evidence_file": {"type": "string"},
+                            },
+                            "required": ["command", "baseline_status", "post_status"],
+                        },
                     },
                     "required": ["task_id", "issue", "expected", "actual", "evidence_file", "flag_id", "source"],
                 },

@@ -383,6 +383,29 @@ def _dead_guard_static_flags(project_dir: Path, metadata: _DiffMetadata) -> list
     return flags
 
 
+def real_megaplan_import_usages(
+    source: str,
+    *,
+    filename: str = "<unknown>",
+) -> list[tuple[int, str]]:
+    """Return real ``megaplan`` import usages, ignoring comments and strings."""
+    try:
+        tree = ast.parse(source, filename=filename)
+    except SyntaxError:
+        return []
+    usages: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "megaplan" or alias.name.startswith("megaplan."):
+                    usages.append((node.lineno, alias.name))
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "megaplan" or module.startswith("megaplan."):
+                usages.append((node.lineno, f"from {module}"))
+    return usages
+
+
 def run_pre_checks(plan_dir: Path, state: PlanState, project_dir: Path) -> list[dict[str, str]]:
     metadata = _parse_diff_metadata(collect_git_diff_patch(project_dir))
     finalized_task_count = _finalized_task_count(plan_dir)
@@ -393,4 +416,4 @@ def run_pre_checks(plan_dir: Path, state: PlanState, project_dir: Path) -> list[
     return flags
 
 
-__all__ = ["run_pre_checks"]
+__all__ = ["real_megaplan_import_usages", "run_pre_checks"]
