@@ -461,6 +461,7 @@ def _normalized_chain_upload_spec(
     base_branch: str,
     source_workspace: str | None = None,
     target_workspace: str | None = None,
+    driver_overrides: dict[str, Any] | None = None,
 ) -> Path:
     raw = _read_chain_yaml(local_spec_path)
     workspace_changed = (
@@ -468,11 +469,16 @@ def _normalized_chain_upload_spec(
         and bool(target_workspace)
         and source_workspace != target_workspace
     )
-    if "base_branch" in raw and not workspace_changed:
+    if "base_branch" in raw and not workspace_changed and not driver_overrides:
         return local_spec_path
     normalized = dict(raw)
     if "base_branch" not in normalized:
         normalized["base_branch"] = base_branch
+    if driver_overrides:
+        driver = normalized.get("driver")
+        driver_mapping = dict(driver) if isinstance(driver, dict) else {}
+        driver_mapping.update(driver_overrides)
+        normalized["driver"] = driver_mapping
     if workspace_changed and isinstance(normalized.get("milestones"), list):
         rewritten: list[Any] = []
         for item in normalized["milestones"]:
@@ -1073,6 +1079,10 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     explicit_base_branch = _chain_spec_has_explicit_base_branch(local_spec_path)
     if not explicit_base_branch:
         chain_spec.base_branch = spec.repo.branch
+    driver_overrides: dict[str, Any] = {}
+    if spec.driver is not None and spec.driver.max_stall_iterations is not None:
+        chain_spec.stall_threshold = spec.driver.max_stall_iterations
+        driver_overrides["max_stall_iterations"] = spec.driver.max_stall_iterations
     launch_ctx = _derive_chain_launch_context(
         spec=spec,
         local_spec_path=local_spec_path,
@@ -1159,6 +1169,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         base_branch=chain_spec.base_branch,
         source_workspace=spec.repo.workspace,
         target_workspace=launch_ctx.workspace,
+        driver_overrides=driver_overrides or None,
     )
     try:
         provider.upload_file(upload_spec_path, remote_spec_path)
