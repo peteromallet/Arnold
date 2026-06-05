@@ -1522,6 +1522,108 @@ def _extract_json_from_raw(raw: str) -> dict[str, Any] | None:
     return None
 
 
+def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
+    """Return a representative JSON decode error for malformed model output."""
+    text = raw.strip()
+    if not text:
+        return None
+    candidates = [text]
+    fenced = re.findall(r"```json\s*\n(.*?)```", raw, re.DOTALL)
+    candidates.extend(block.strip() for block in fenced if block.strip())
+    brace = raw.find("{")
+    if brace >= 0:
+        candidates.append(raw[brace:].strip())
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("{") or stripped.startswith("["):
+            candidates.append(stripped)
+    for candidate in candidates:
+        try:
+            json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            return exc
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _build_json_repair_prompt(error: json.JSONDecodeError, raw: str) -> str:
+    prompt = (
+        f"Your previous output was not valid JSON (error at line {error.lineno} "
+        f"col {error.colno}). Re-emit ONLY a single JSON object matching the "
+        "required schema. Escape every backslash as `\\\\` (e.g. write a regex "
+        "as `clarify\\\\s*\\\\(`). No prose, no code fences."
+    )
+    raw = raw.strip()
+    if raw:
+        prompt += "\n\nPrevious output to repair:\n" + raw[-20000:]
+    return prompt
+
+
+def _recover_payload_from_candidates(
+    step: str,
+    candidates: list[dict[str, Any]],
+    *,
+    raw: str,
+    validate: bool,
+) -> dict[str, Any] | None:
+    validation_errors: list[str] = []
+    for candidate in candidates:
+        normalized = _normalize_worker_payload(step, candidate)
+        if not validate:
+            return normalized
+        try:
+            validate_payload(step, normalized)
+        except CliError as error:
+            if _looks_like_step_payload(step, normalized):
+                validation_errors.append(error.message)
+            continue
+        return normalized
+    if validation_errors:
+        unique_errors = list(dict.fromkeys(validation_errors))
+        raise CliError(
+            "parse_error",
+            f"Repaired JSON object for {step} failed validation: "
+            + " | ".join(unique_errors),
+            extra={"raw_output": raw, "model_output_parse_error": True},
+        )
+    return None
+
+
+def _repair_worker_json_once(
+    step: str,
+    raw: str,
+    repair_call: Callable[[str], str],
+    *,
+    parse_error: json.JSONDecodeError | None = None,
+    validate: bool = True,
+) -> tuple[dict[str, Any], str] | None:
+    error = parse_error or _json_decode_error_for_raw(raw)
+    if error is None:
+        return None
+    repaired_raw = repair_call(_build_json_repair_prompt(error, raw))
+    repaired_candidates = _extract_json_candidates_from_raw(repaired_raw)
+    payload = _recover_payload_from_candidates(
+        step,
+        repaired_candidates,
+        raw=repaired_raw,
+        validate=validate,
+    )
+    if payload is None:
+        repaired_error = _json_decode_error_for_raw(repaired_raw)
+        location = (
+            f" at line {repaired_error.lineno} col {repaired_error.colno}"
+            if repaired_error is not None
+            else ""
+        )
+        raise CliError(
+            "parse_error",
+            f"Repair retry for {step} did not return valid JSON{location}",
+            extra={"raw_output": repaired_raw, "model_output_parse_error": True},
+        )
+    return payload, repaired_raw
+
+
 def _normalize_worker_payload(step: str, payload: dict[str, Any]) -> dict[str, Any]:
     if step == "execute":
         normalized = dict(payload)
@@ -1985,6 +2087,7 @@ def run_codex_step(
     model: str | None = None,
     read_only: bool = False,
     output_path: Path | None = None,
+    repair_attempted: bool = False,
 ) -> WorkerResult:
     if read_only and step not in {"prep-triage", "prep-distill", "critique", "review"}:
         raise CliError(
@@ -2439,7 +2542,40 @@ def run_codex_step(
         raw=raw,
     )
     if payload is None:
-        raise CliError("parse_error", f"Output file {output_path.name} was not valid JSON and no fallback found", extra={"raw_output": raw})
+        parse_error = _json_decode_error_for_raw(raw)
+        try:
+            output_raw = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            output_raw = ""
+        if parse_error is None:
+            parse_error = _json_decode_error_for_raw(output_raw)
+        repair_raw = output_raw or raw
+        if parse_error is not None and not repair_attempted:
+            repair_prompt = _build_json_repair_prompt(parse_error, repair_raw)
+            return run_codex_step(
+                step,
+                state,
+                plan_dir,
+                root=root,
+                persistent=persistent,
+                fresh=True,
+                json_trace=json_trace,
+                prompt_override=repair_prompt,
+                prompt_kwargs=prompt_kwargs,
+                effort=effort,
+                model=model,
+                read_only=read_only,
+                output_path=output_path,
+                repair_attempted=True,
+            )
+        raise CliError(
+            "parse_error",
+            f"Output file {output_path.name} was not valid JSON and no fallback found",
+            extra={
+                "raw_output": repair_raw or raw,
+                "model_output_parse_error": parse_error is not None,
+            },
+        )
     raw_session_id = extract_session_id(raw)
     session_id = session.get("id") if persistent and not fresh else None
     if persistent and not session_id:

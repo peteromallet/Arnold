@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from contextlib import nullcontext
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -144,6 +145,52 @@ def test_run_step_with_worker_forwards_output_path_and_worker_options_to_hermes(
     assert agent == "hermes"
     assert mocked_hermes.call_args.kwargs["output_path"] == output_path
     assert mocked_hermes.call_args.kwargs["worker_options"] == worker_options
+
+
+def test_parse_agent_output_repairs_malformed_json_once(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.workers.hermes import parse_agent_output
+
+    plan_dir, state = _mock_state(tmp_path)
+    project_dir = Path(state["config"]["project_dir"])
+    invalid_raw = (
+        '{"plan":"Use regex clarify\\s*\\(","changes_summary":"x",'
+        '"flags_addressed":[],"assumptions":[],"success_criteria":[],"questions":[]}'
+    )
+    valid_payload = {
+        "plan": "Use regex clarify\\\\s*\\\\( safely.",
+        "changes_summary": "Escaped regex backslashes.",
+        "flags_addressed": [],
+        "assumptions": [],
+        "success_criteria": [],
+        "questions": [],
+    }
+
+    class FakeAgent:
+        def __init__(self) -> None:
+            self.repair_prompts: list[str] = []
+
+        def run_conversation(self, **kwargs):
+            self.repair_prompts.append(str(kwargs["user_message"]))
+            return {
+                "final_response": json.dumps(valid_payload),
+                "messages": [{"role": "assistant", "content": json.dumps(valid_payload)}],
+            }
+
+    agent = FakeAgent()
+    payload, raw_output = parse_agent_output(
+        agent,
+        {"final_response": invalid_raw, "messages": [{"role": "assistant", "content": invalid_raw}]},
+        output_path=None,
+        schema={},
+        step="revise",
+        project_dir=project_dir,
+        plan_dir=plan_dir,
+    )
+
+    assert payload == valid_payload
+    assert json.loads(raw_output) == valid_payload
+    assert len(agent.repair_prompts) == 1
+    assert "No prose, no code fences." in agent.repair_prompts[0]
 
 
 def test_run_hermes_step_uses_worker_options_and_preserves_minimax_fallback(

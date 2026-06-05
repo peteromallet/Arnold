@@ -64,6 +64,12 @@ def test_internal_error_category() -> None:
     assert ids == []
 
 
+def test_malformed_model_output_category() -> None:
+    cat, ids = classify_failure(ExitKind.malformed_model_output.value, [], [])
+    assert cat == FailureCategory.internal_error
+    assert ids == []
+
+
 def test_external_error_category() -> None:
     cat, ids = classify_failure(ExitKind.external_error.value, [], [])
     assert cat == FailureCategory.external_error
@@ -207,6 +213,7 @@ def test_categories_without_per_task_signal_return_empty_ids() -> None:
         ExitKind.context_exhausted,
         ExitKind.timeout,
         ExitKind.internal_error,
+        ExitKind.malformed_model_output,
         ExitKind.external_error,
     )
     for ek in no_task_signal:

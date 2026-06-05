@@ -356,6 +356,27 @@ class TestPhaseResultGuard:
         assert restored.exit_kind == ExitKind.internal_error.value
         assert restored.invocation_id == "abc123"
 
+    def test_guard_classifies_worker_parse_error_as_malformed_model_output(self, tmp_path: Path) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        self._write_state_file(plan_dir, "abc123", step="revise")
+
+        with pytest.raises(CliError):
+            with phase_result_guard(plan_dir):
+                raise CliError(
+                    "parse_error",
+                    "Repair retry for revise did not return valid JSON at line 1 col 29",
+                    extra={
+                        "raw_output": '{"plan":"clarify\\s*\\("}',
+                        "model_output_parse_error": True,
+                    },
+                )
+
+        restored = read_phase_result(plan_dir)
+        assert restored is not None
+        assert restored.exit_kind == ExitKind.malformed_model_output.value
+        assert restored.invocation_id == "abc123"
+
     def test_skip_emission_without_invocation_id(self, tmp_path: Path) -> None:
         """When state.json has no invocation_id, exception re-raises WITHOUT
         writing phase_result.json."""

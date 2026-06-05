@@ -29,6 +29,7 @@ class ExitKind(str, Enum):
     timeout = "timeout"
     context_exhausted = "context_exhausted"
     internal_error = "internal_error"
+    malformed_model_output = "malformed_model_output"
     external_error = "external_error"
 
 
@@ -583,9 +584,13 @@ def phase_result_guard(plan_dir: Path):
         if not isinstance(exc, Exception):
             raise
 
+        from arnold.pipelines.megaplan.types import CliError
+
         # Decide exit_kind based on exception class
         if isinstance(exc, subprocess.TimeoutExpired):
             ek = ExitKind.timeout.value
+        elif isinstance(exc, CliError) and exc.extra.get("model_output_parse_error") is True:
+            ek = ExitKind.malformed_model_output.value
         else:
             ek = ExitKind.internal_error.value
         external_error = None
