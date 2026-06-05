@@ -1100,6 +1100,11 @@ async function waitForPrompt(tmuxSession: string) {
     }
     const blocker = classifyClaudeStartupBlocker(pane.stdout);
     if (blocker) {
+      if (blocker.kind === "permission") {
+        await acceptBypassPermissionsStartupDialog(tmuxSession);
+        await sleep(POLL_MS);
+        continue;
+      }
       throw new Error(
         `Claude is waiting at a ${blocker.kind} prompt before Shannon can send a message: ${blocker.detail}\n\nCaptured tmux pane:\n${pane.stdout}`,
       );
@@ -1113,9 +1118,13 @@ async function waitForPrompt(tmuxSession: string) {
 }
 
 type StartupBlocker = {
-  kind: "approval" | "auth" | "trust" | "onboarding";
+  kind: "approval" | "auth" | "trust" | "onboarding" | "permission";
   detail: string;
 };
+
+async function acceptBypassPermissionsStartupDialog(tmuxSession: string) {
+  await runCommand(["tmux", "send-keys", "-t", tmuxSession, "2", "C-m"], false);
+}
 
 export function classifyClaudeStartupBlocker(pane: string): StartupBlocker | undefined {
   const normalized = pane.toLowerCase().replace(/\s+/g, " ");
