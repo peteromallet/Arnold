@@ -234,6 +234,16 @@ def scatter_worker_unit(
         read_only=unit.read_only,
         output_path=unit.output_path,
         worker_options=dict(worker_options) if worker_options is not None else None,
+        ledger_step_label=(
+            unit.extra.get("ledger_step_label")
+            or unit.extra.get("check_id")
+            or unit.extra.get("area_id")
+            or unit.step
+        ),
+        ledger_selected_spec=unit.extra.get("ledger_selected_spec"),
+        ledger_tier=unit.extra.get("ledger_tier"),
+        ledger_complexity=unit.extra.get("ledger_complexity"),
+        ledger_tier_routing_active=bool(unit.extra.get("ledger_tier_routing_active", False)),
     )
     unit_result = WorkerUnitResult.from_worker_result(worker, unit)
     return (
