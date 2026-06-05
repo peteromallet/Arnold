@@ -677,6 +677,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ["status", "progress", "watch"]:
         step_parser = subparsers.add_parser(name)
         step_parser.add_argument("--plan")
+        step_parser.add_argument("--project-dir")
         if name == "status":
             step_parser.add_argument(
                 "--pending-human",
