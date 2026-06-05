@@ -142,6 +142,23 @@ def _text_indicates_no_repository_inspection(value: Any) -> bool:
     return any(marker in lowered for marker in _NO_REPOSITORY_INSPECTION_MARKERS)
 
 
+def _has_genuine_rejection(payload: dict[str, Any]) -> bool:
+    for criterion in payload.get("criteria", []) or []:
+        if not isinstance(criterion, dict):
+            continue
+        if criterion.get("priority") == "must" and criterion.get("pass") in (False, "fail"):
+            return True
+    for item in payload.get("rework_items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source")
+        if isinstance(source, str) and source in _REVIEW_INFRASTRUCTURE_SOURCES:
+            continue
+        if _rework_item_is_blocker(item):
+            return True
+    return False
+
+
 def _review_infrastructure_failure(
     payload: dict[str, Any],
     *,
@@ -155,12 +172,31 @@ def _review_infrastructure_failure(
     a reviewer failure into a bogus executor pass and can overwrite useful
     execution evidence.
     """
+    if _has_genuine_rejection(payload):
+        return False
+
+    raw_completion_status = payload.get("review_completion_status")
+    completion_status = (
+        raw_completion_status
+        if raw_completion_status in {"complete", "incomplete"}
+        else None
+    )
+    if completion_status == "incomplete":
+        return True
+
     for item in payload.get("rework_items", []) or []:
         if not isinstance(item, dict):
             continue
         source = item.get("source")
         if isinstance(source, str) and source in _REVIEW_INFRASTRUCTURE_SOURCES:
             return True
+
+    if completion_status is not None:
+        return False
+
+    for item in payload.get("rework_items", []) or []:
+        if not isinstance(item, dict):
+            continue
         if _text_indicates_no_repository_inspection(item.get("issue")):
             return True
     if any(_text_indicates_no_repository_inspection(issue) for issue in issues):
