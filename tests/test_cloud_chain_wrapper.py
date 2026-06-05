@@ -74,6 +74,23 @@ def _json_payload_from_output(output: str) -> dict[str, object]:
     return json.loads(output[output.index("{"):])
 
 
+def test_cloud_chain_no_git_refresh_reaches_remote_chain_start() -> None:
+    parser = _parser()
+    args = parser.parse_args(["cloud", "chain", "chain.yaml", "--no-git-refresh"])
+
+    command = _tmux_chain_launch_command(
+        "/workspace/app",
+        "/workspace/app/chain.yaml",
+        no_git_refresh=bool(args.no_git_refresh),
+    )
+
+    assert args.no_git_refresh is True
+    assert (
+        "MEGAPLAN_TRUSTED_CONTAINER=1 arnold chain start "
+        "--spec /workspace/app/chain.yaml --no-git-refresh"
+    ) in command
+
+
 def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
