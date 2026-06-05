@@ -304,12 +304,22 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
             idea_text = markdown_body(idea_path).strip()
         except OSError as exc:
             raise CliError("invalid_args", f"Unable to read --idea-file {idea_path}: {exc}") from exc
-        if not idea_text:
-            raise CliError("invalid_args", "--idea-file must contain non-empty UTF-8 text")
+        idea_source = "--idea-file"
     elif positional_idea:
-        idea_text = positional_idea
+        idea_path = Path(positional_idea).expanduser()
+        if idea_path.is_file():
+            try:
+                idea_text = markdown_body(idea_path).strip()
+            except OSError as exc:
+                raise CliError("invalid_args", f"Unable to read idea file {idea_path}: {exc}") from exc
+            idea_source = "positional idea file"
+        else:
+            idea_text = positional_idea
+            idea_source = "positional idea"
     else:
         raise CliError("invalid_args", "Provide an idea argument or --idea-file <path>")
+    if not idea_text.strip():
+        raise CliError("BRIEF_MISSING", f"{idea_source} must contain non-empty UTF-8 text")
     explicit_mode = getattr(args, "mode", None)
     raw_output_path = getattr(args, "output", None)
     raw_primary_criterion = getattr(args, "primary_criterion", None)
@@ -398,10 +408,13 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     if plan_dir.exists():
         raise CliError("duplicate_plan", f"Plan directory already exists: {plan_name}")
     plan_dir.mkdir(parents=True, exist_ok=False)
+    idea_snapshot_path = "idea_snapshot.md"
+    (plan_dir / idea_snapshot_path).write_text(idea_text, encoding="utf-8")
 
     state: PlanState = {
         "name": plan_name,
         "idea": idea_text,
+        "idea_snapshot_path": idea_snapshot_path,
         "current_state": STATE_INITIALIZED,
         "iteration": 0,
         "created_at": now_utc(),
