@@ -16,6 +16,37 @@ description: >
 passive "I'll check in and report" loop is the failure mode. Each fire must end
 with the run measurably closer to done, or with a concrete blocker fixed.
 
+## The loop prompt MUST carry the key principles
+
+The reminder you set up re-fires into a fresh context that has none of this
+skill's content unless you put it there. So the loop/cron/wakeup prompt you
+write must itself state, explicitly, every fire's standing orders:
+
+1. **No questions** — never ask the operator anything; decide every blocker,
+   prefer the reversible option, log decision + rationale in the fire report
+   (see "No questions — decide and proceed" under Discipline).
+2. **Always be pushing** — one concrete forward step or one fixed blocker per
+   fire; a status echo is a failed fire.
+3. **Unblock at the root** — diagnose the actual cause of any stall and fix
+   that, not the symptom.
+4. **Fix megaplan itself** — when the blocker is a harness/engine defect, fix
+   it in the engine source (with a test) so it never recurs; ticket what you
+   can't fix on the spot.
+5. **Verify, don't trust** — on any "done", check the work actually landed
+   (files/commits/merged content), not the status word.
+6. **Re-arm or tear down** — schedule the next fire while work remains; when
+   everything is genuinely complete, stop the loop and remove monitors.
+7. **Carry the follow-on plan** — if the user specified what comes AFTER the
+   current run (launch another megaplan, run a test pass, deploy, verify
+   something), write it into the loop prompt as an explicit next phase with
+   its trigger condition ("when X is merged, do Y") and concrete commands.
+   The babysitter executes the handoff itself when the trigger hits — the
+   follow-on must never depend on the user coming back to start it.
+
+Treat this list as the template for the prompt's opening lines, then append
+the run-specific state (paths, specs, plan ids, known traps, stop condition,
+and any phase-2+ follow-on work with its trigger).
+
 Set up a reminder that re-fires on an interval. On every fire you:
 
 1. **Assess** — is the run progressing, stopped, or stalled?
@@ -190,6 +221,26 @@ loop/monitor** (don't leave a zombie reminder running).
   not a stall.
 - Prefer fixing the megaplan source over re-patching the run every tick — a
   recurring blocker is an engine defect (see "Fix the engine, not just the run").
+
+### No questions — decide and proceed
+
+**A babysit fire never asks the operator anything.** The whole point of the
+loop is that nobody is watching; a question parks the run until a human
+happens to look, which is strictly worse than a wrong-but-reversible decision.
+On every blocker: make the call, take the safest forward action, and record
+what you decided and why in the fire's report so the operator can audit (and
+reverse) it later. Decide-and-log, not ask-and-wait.
+
+- Pick the reversible option when two paths are close — re-drives, retries,
+  branch surgery, engine fixes with tests are all reversible; force-pushes,
+  history rewrites, deletions of unmerged work are not.
+- If a decision is genuinely hard to reverse AND wrong-by-default would
+  destroy work (the only legitimate "extremely uncertain" case), don't ask
+  and don't act: park that single item in a recoverable state, file a ticket
+  (`/megaplan-tickets`) with the decision needed, note it in the report, and
+  keep driving everything else. The loop never blocks on a human.
+- Questions asked mid-fire to a non-present operator are the failure mode
+  this section exists to kill. The report is the channel, not the prompt.
 
 Related: `megaplan-epic` (driving the chain), `megaplan-observe` (live
 introspection), `megaplan-tickets` (file what you can't fix on the spot),

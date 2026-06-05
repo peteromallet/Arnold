@@ -83,6 +83,27 @@ def test_init_rejects_empty_idea_file(tmp_path: Path, bootstrap_fixture: tuple[P
     assert "--idea-file" in str(info.value)
 
 
+def test_init_rejects_missing_idea_file_with_resolved_path(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    idea_file = tmp_path / "missing.txt"
+    resolved_path = idea_file.resolve()
+
+    with pytest.raises(CliError) as info:
+        megaplan.handle_init(
+            root,
+            _args(project_dir, idea_file=str(idea_file)),
+        )
+
+    assert info.value.code == "invalid_args"
+    message = str(info.value)
+    assert "idea file not found" in message
+    assert str(resolved_path) in message
+    assert "BRIEF_MISSING" not in message
+
+
 def test_init_slugify_uses_resolved_idea_text(
     tmp_path: Path,
     bootstrap_fixture: tuple[Path, Path],
