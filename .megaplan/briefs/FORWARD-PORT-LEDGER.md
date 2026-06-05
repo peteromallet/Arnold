@@ -51,12 +51,12 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 36 | `a18a2da5` | Idempotent restart, strict spec validation, checkout-free refresh | PORT | `arnold/pipelines/megaplan/chain`, tests | pending | Live re-derived commit. |
 | 37 | `02b34ccb` | Harden Shannon native parity | PORT | `arnold/pipelines/megaplan/vendor/shannon`, workers/tests | pending | Live re-derived commit. |
 | 38 | `7680cd81` | Create run artifact dir before empty MCP config | PORT | `arnold/pipelines/megaplan/workers`, vendor/shannon tests | pending | Live re-derived commit. |
-| 39 | `e4a46d12` | Project prompt context for review and execute | PORT | `arnold/pipelines/megaplan/prompts`, execute/review/tests | pending | Partially ported prompt projection helpers for Shannon dependency; full row still needs audit. |
+| 39 | `e4a46d12` | Project prompt context for review and execute | PORT | `arnold/pipelines/megaplan/prompts`, execute/review/tests | verified | Applied prompt projection modules and tests; focused prompt suite and worker integration passed. |
 | 40 | `c2007519` | Align native handoff and codex resume expectations | PORT | worker tests | pending | Live re-derived commit. |
-| 41 | `6b2697ba` | Never hard-fail review on large diffs | PORT | `arnold/pipelines/megaplan/review`, tests | pending | Partially ported `compact_review_prompt` dependency; full row still needs audit. |
+| 41 | `6b2697ba` | Never hard-fail review on large diffs | PORT | `arnold/pipelines/megaplan/review`, tests | verified | Applied `base_ref` diff helpers and compact review prompt path; prompt, worker, and chain suites passed. |
 | 42 | `e1170b05` | Invariant model floor routing | PORT | `arnold/pipelines/megaplan/profiles`, routing, CLI/tests | pending | Live re-derived commit. |
-| 43 | `3aae6d0f` | Stop injecting technical-debt registry into prompts | PORT | `arnold/pipelines/megaplan/prompts`, prep/review/tests | pending | Prompt projection files touched as Shannon dependency; full row still needs audit. |
-| 44 | `78efcf4a` | Calibrate prompt caps to context windows | PORT | `arnold/pipelines/megaplan/prompts`, model metadata/tests | pending | `check_prompt_size` dependency ported; full row still needs audit. |
+| 43 | `3aae6d0f` | Stop injecting technical-debt registry into prompts | PORT | `arnold/pipelines/megaplan/prompts`, prep/review/tests | verified | Removed prompt-side debt injection and updated assertions that debt registry stays out of prompts; focused prompt suite passed. |
+| 44 | `78efcf4a` | Calibrate prompt caps to context windows | PORT | `arnold/pipelines/megaplan/prompts`, model metadata/tests | verified | Applied phase-aware prompt caps plus projection tests; focused prompt suite passed. |
 | 45 | `e03c5206` | CLI status project-dir resolves plan from target | PORT | `arnold/pipelines/megaplan/cli`, tests | pending | Live re-derived commit. |
 | 46 | `0e365bcb` | Submit large prompts via file reference | DISCARD | n/a | rejected | Reject: explicitly reverted by `fc2c1a8b`. |
 | 47 | `fc2c1a8b` | Revert large-prompt file reference | DISCARD | n/a | rejected | Reject: only reverts rejected commit `0e365bcb`. |

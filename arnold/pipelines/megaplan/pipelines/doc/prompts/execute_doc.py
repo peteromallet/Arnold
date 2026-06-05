@@ -13,20 +13,28 @@ from arnold.pipelines.megaplan._core import (
     intent_and_notes_block,
     json_dump,
     latest_plan_meta_path,
+    latest_plan_path,
     read_json,
 )
 from arnold.pipelines.megaplan.types import PlanState
 
+from arnold.pipelines.megaplan.prompts._projection import (
+    PromptProjectionCapabilities,
+    project_execute_context,
+)
 from arnold.pipelines.megaplan.prompts._shared import (
-    _debt_watch_lines,
     _gate_summary_or_skipped,
     _render_prep_block,
 )
 from arnold.pipelines.megaplan.prompts.execute import (
+    _checkpoint_requirements,
+    _checkpoint_summary_requirement,
     _execute_approval_note,
     _execute_nudges,
     _execute_rerun_guidance,
     _execute_review_block,
+    _extract_execution_order_summary,
+    _render_settled_decisions_brief,
 )
 
 _EXECUTE_DOC_OUTPUT_SHAPE_EXAMPLE = textwrap.dedent(
@@ -78,9 +86,7 @@ _EXECUTE_DOC_REQUIREMENTS_TEMPLATE = textwrap.dedent(
     - Do not over-engineer beyond what the plan prescribes.
     - Output concrete sections written per task. `sections_written` means section IDs you authored — not sections you read or referenced.
     - Use the tasks in `finalize.json` as the execution boundary.
-    - Best-effort progress checkpointing: if `{checkpoint_path}` is writable, then after each completed task read the full file, update that task's `status`, `executor_notes`, and `sections_written`, and write the full file back. Do NOT write to `finalize.json` directly — the harness owns that file.
-    - Best-effort sense-check checkpointing: if `{checkpoint_path}` is writable, then after each sense check acknowledgment read the full file again, update that sense check's `executor_note`, and write the full file back.
-    - Always use full read-modify-write updates for `{checkpoint_path}` instead of partial edits. If the sandbox blocks writes, continue execution and rely on the structured output below.
+    {checkpoint_requirements}
     - Structured output remains the authoritative final summary for this step. Disk writes are progress checkpoints for timeout recovery only.
     - Return `task_updates` with one object per completed or skipped task.
     - `task_updates[].status` must be either `done` or `skipped`. Never return `pending` in execute output.
@@ -132,22 +138,38 @@ def _prior_doc_context_block(state: PlanState) -> str:
     return "\n".join(lines)
 
 
-def _execute_doc_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
+def _execute_doc_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    projection_capabilities: PromptProjectionCapabilities | None = None,
+) -> str:
     project_dir = Path(state["config"]["project_dir"])
     output_path = state["config"].get("output_path", "output.md")
     prep_block, prep_instruction = _render_prep_block(plan_dir)
     finalize_data = read_json(plan_dir / "finalize.json")
+    projected_finalize = project_execute_context(
+        finalize_data,
+        capabilities=projection_capabilities,
+    )
     checkpoint_path = str(plan_dir / "execution_checkpoint.json")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     gate = _gate_summary_or_skipped(plan_dir)
     robustness = configured_robustness(state)
-    prior_review_block = _execute_review_block(plan_dir)
+    prior_review_block = _execute_review_block(
+        plan_dir,
+        capabilities=projection_capabilities,
+    )
     rerun_guidance = _execute_rerun_guidance(plan_dir, finalize_data)
     approval_note = _execute_approval_note(state)
     execution_nudges = _execute_nudges(finalize_data, plan_dir, root)
     prior_doc_block = _prior_doc_context_block(state)
     requirements_block = _EXECUTE_DOC_REQUIREMENTS_TEMPLATE.format(
         checkpoint_path=checkpoint_path,
+        checkpoint_requirements=_checkpoint_requirements(
+            checkpoint_path,
+            projection_capabilities,
+        ),
         output_shape=_EXECUTE_DOC_OUTPUT_SHAPE_EXAMPLE,
     )
     return textwrap.dedent(
@@ -166,8 +188,8 @@ def _execute_doc_prompt(state: PlanState, plan_dir: Path, root: Path | None = No
 
         {intent_and_notes_block(state)}
 
-        Execution tracking source of truth (`finalize.json`):
-        {json_dump(finalize_data).strip()}
+        Execution tracking source of truth (`finalize.json`, prompt projection only):
+        {json_dump(projected_finalize).strip()}
 
         Absolute checkpoint path for best-effort progress checkpoints (NOT `finalize.json`):
         {checkpoint_path}
@@ -200,27 +222,41 @@ def _execute_doc_batch_prompt(
     batch_task_ids: list[str],
     completed_task_ids: set[str] | None = None,
     root: Path | None = None,
+    projection_capabilities: PromptProjectionCapabilities | None = None,
 ) -> str:
     completed = set(completed_task_ids or set())
     output_path = state["config"].get("output_path", "output.md")
     finalize_data = read_json(plan_dir / "finalize.json")
+    projected_finalize = project_execute_context(
+        finalize_data,
+        capabilities=projection_capabilities,
+    )
     all_tasks = finalize_data.get("tasks", [])
+    projected_tasks = projected_finalize.get("tasks", [])
     tasks_by_id = {
         task["id"]: task
         for task in all_tasks
         if isinstance(task, dict) and isinstance(task.get("id"), str)
     }
+    projected_tasks_by_id = {
+        task["id"]: task
+        for task in projected_tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    }
     batch_tasks = [
-        tasks_by_id[task_id] for task_id in batch_task_ids if task_id in tasks_by_id
+        projected_tasks_by_id[task_id]
+        for task_id in batch_task_ids
+        if task_id in projected_tasks_by_id
     ]
     completed_tasks = [
-        task
-        for task_id, task in tasks_by_id.items()
-        if task_id in completed and task_id not in set(batch_task_ids)
+        projected_tasks_by_id[task_id]
+        for task_id in completed
+        if task_id not in set(batch_task_ids) and task_id in projected_tasks_by_id
     ]
+    projected_sense_checks = projected_finalize.get("sense_checks", [])
     batch_sense_checks = [
         sense_check
-        for sense_check in finalize_data.get("sense_checks", [])
+        for sense_check in projected_sense_checks
         if sense_check.get("task_id") in set(batch_task_ids)
     ]
     batch_sense_check_ids = [
@@ -254,17 +290,29 @@ def _execute_doc_batch_prompt(
                     prior_batch_deviations = json_dump(deviations).strip()
     approval_note = _execute_approval_note(state)
     prior_doc_block = _prior_doc_context_block(state)
-    debt_watch_items = _debt_watch_lines(plan_dir, root)
-    debt_watch_block = (
-        "\n".join(
-            [
-                "Debt watch items (do not make these worse):",
-                *[f"- {item}" for item in debt_watch_items],
-            ]
-        )
-        if debt_watch_items
-        else "Debt watch items (do not make these worse):\n- None."
-    )
+    gate_carry = _gate_summary_or_skipped(plan_dir)
+    try:
+        latest_plan_text = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
+    except (KeyError, OSError):
+        latest_plan_text = ""
+    meta_commentary = projected_finalize.get("meta_commentary", "")
+    if not isinstance(meta_commentary, str):
+        meta_commentary = ""
+    execution_context = textwrap.dedent(
+        f"""
+        ## Execution context (settled - DO NOT re-litigate)
+
+        {_render_settled_decisions_brief(gate_carry)}
+
+        ## Plan execution order rationale
+
+        {_extract_execution_order_summary(latest_plan_text)}
+
+        ## Inter-task guidance from finalize
+
+        {meta_commentary[:1500]}
+        """
+    ).strip()
     return textwrap.dedent(
         f"""
         Author the planned document sections.
@@ -294,10 +342,7 @@ def _execute_doc_batch_prompt(
         Batch-scoped sense checks:
         {json_dump(batch_sense_checks).strip()}
 
-        Full execution tracking source of truth (`finalize.json`):
-        {json_dump(finalize_data).strip()}
-
-        {debt_watch_block}
+        {execution_context}
 
         {approval_note}
         Robustness level: {configured_robustness(state)}.
@@ -313,13 +358,13 @@ def _execute_doc_batch_prompt(
         - Only produce `sense_check_acknowledgments` for these sense checks: [{", ".join(batch_sense_check_ids)}]
         - Do not include updates for tasks or sense checks outside this batch.
         - Keep `executor_notes` verification-focused.
-        - Best-effort progress checkpointing: if `{checkpoint_path}` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - {_checkpoint_summary_requirement(checkpoint_path, projection_capabilities)}
         - `sections_written` replaces `files_changed` in task_updates. List the section IDs you authored, not file paths.
         - When the document contains design decisions, emit a top-level `## Settled Decisions` section. Either shape below is accepted; prefer the bold-dash inline form for short decisions:
           ```md
           ## Settled Decisions
 
-          - **SD-001** \u2014 Keep the current storage model. _load_bearing: true_
+          - **SD-001** — Keep the current storage model. _load_bearing: true_
             Rationale: External integrations depend on it.
           ```
           Or the YAML-ish shape:

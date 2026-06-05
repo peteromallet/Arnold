@@ -1144,7 +1144,7 @@ def current_iteration_raw_artifact(plan_dir: Path, prefix: str, iteration: int) 
 import subprocess
 
 
-def collect_git_diff_summary(project_dir: Path) -> str:
+def collect_git_diff_summary(project_dir: Path, base_ref: str | None = None) -> str:
     if not (project_dir / ".git").exists():
         return "Project directory is not a git repository."
     try:
@@ -1164,7 +1164,7 @@ def collect_git_diff_summary(project_dir: Path) -> str:
     status = process.stdout.strip()
     if status:
         return status
-    branch_summary = _collect_branch_diff_summary(project_dir)
+    branch_summary = _collect_branch_diff_summary(project_dir, base_ref=base_ref)
     return branch_summary or "No git changes detected."
 
 
@@ -1193,8 +1193,8 @@ def _branch_diff_base(project_dir: Path) -> str | None:
     return None
 
 
-def _collect_branch_diff_summary(project_dir: Path) -> str:
-    base = _branch_diff_base(project_dir)
+def _collect_branch_diff_summary(project_dir: Path, *, base_ref: str | None = None) -> str:
+    base = base_ref or _branch_diff_base(project_dir)
     if not base:
         return ""
     try:
@@ -1213,9 +1213,14 @@ def _collect_branch_diff_summary(project_dir: Path) -> str:
     return f"Branch diff against base {base[:12]}:\n{summary}" if summary else ""
 
 
-def collect_git_diff_patch(project_dir: Path) -> str:
+def collect_git_diff_patch(project_dir: Path, base_ref: str | None = None) -> str:
     if not (project_dir / ".git").exists():
         return "Project directory is not a git repository."
+
+    def _is_untracked_diff_noise(rel_path: str) -> bool:
+        from arnold.pipelines.megaplan.review.mechanical import _is_diff_noise
+
+        return _is_diff_noise(rel_path)
 
     def _run_git(
         args: list[str],
@@ -1239,6 +1244,23 @@ def collect_git_diff_patch(project_dir: Path) -> str:
             return None, f"Unable to read git diff: {detail}"
         return process, None
 
+    base = base_ref or _branch_diff_base(project_dir)
+
+    patches: list[str] = []
+    seen_patches: set[str] = set()
+
+    def _append_patch(raw_patch: str) -> None:
+        patch = raw_patch.rstrip()
+        if patch and patch not in seen_patches:
+            patches.append(patch)
+            seen_patches.add(patch)
+
+    if base:
+        branch_process, error = _run_git(["diff", "--binary", "--no-ext-diff", f"{base}...HEAD"])
+        if error:
+            return error
+        _append_patch(branch_process.stdout if branch_process is not None else "")
+
     tracked_process, error = _run_git(["diff", "--binary", "--no-ext-diff", "HEAD"])
     if error:
         return error
@@ -1247,15 +1269,12 @@ def collect_git_diff_patch(project_dir: Path) -> str:
     if error:
         return error
 
-    patches: list[str] = []
-    tracked_patch = (tracked_process.stdout if tracked_process is not None else "").rstrip()
-    if tracked_patch:
-        patches.append(tracked_patch)
+    _append_patch(tracked_process.stdout if tracked_process is not None else "")
 
     untracked_paths = [
         line.strip()
         for line in (untracked_process.stdout if untracked_process is not None else "").splitlines()
-        if line.strip()
+        if line.strip() and not _is_untracked_diff_noise(line.strip())
     ]
     for rel_path in untracked_paths:
         if not (project_dir / rel_path).exists():
@@ -1266,9 +1285,7 @@ def collect_git_diff_patch(project_dir: Path) -> str:
         )
         if error:
             return error
-        patch = (patch_process.stdout if patch_process is not None else "").rstrip()
-        if patch:
-            patches.append(patch)
+        _append_patch(patch_process.stdout if patch_process is not None else "")
 
     patch = "\n".join(patches).strip()
     if patch:

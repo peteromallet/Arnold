@@ -181,7 +181,7 @@ def test_batch_prompt_includes_meta_commentary_truncated(tmp_path: Path) -> None
     prompt = _execute_batch_prompt(state, plan_dir, ["T1"], set())
 
     assert "## Inter-task guidance from finalize" in prompt
-    assert "A" * 1500 in prompt
+    assert ("A" * 1497) + "..." in prompt
     assert "TAIL_SHOULD_NOT_RENDER" not in prompt
 
 
