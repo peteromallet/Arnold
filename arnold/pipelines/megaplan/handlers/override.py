@@ -1047,6 +1047,17 @@ def _override_set_profile(
     previous_profile = state["config"].get("profile")
     state["config"]["profile"] = new_profile
     state["config"]["phase_model"] = phase_models
+    exec_spec = next(
+        (phase_model.split("=", 1)[1] for phase_model in phase_models if phase_model.startswith("execute=")),
+        "",
+    ).lower()
+    exec_family = None
+    if exec_spec.startswith("claude"):
+        exec_family = "claude"
+    elif exec_spec.startswith("codex") or "gpt-5" in exec_spec:
+        exec_family = "codex"
+    if exec_family is not None and state["config"].get("vendor") != exec_family:
+        state["config"]["vendor"] = exec_family
     _append_to_meta(
         state,
         "overrides",
