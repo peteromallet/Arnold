@@ -371,9 +371,10 @@ def _critique_evaluator_prompt(
 
         ## Complexity Rubric (1–5)
 
-        Rate each selected lens on its **hardest** aspect, not its average.
-        When genuinely torn between two tiers, choose the HIGHER one and say
-        why in the justification.
+        Rate each selected lens on its **hardest realistic** aspect, not a
+        worst-case imagining. When genuinely torn between two tiers, choose the
+        LOWER one UNLESS you can name the specific cascading, test-evading
+        failure that earns the higher tier in the justification.
 
         - **1 = trivial, mechanical check.** The lens's question can be
           answered by pattern-matching a single file or a grep hit. A weak
@@ -384,22 +385,28 @@ def _critique_evaluator_prompt(
         - **3 = multi-step check with non-trivial reasoning.** The lens
           requires holding multiple files or a dataflow in your head;
           correctness is not self-evident from a quick skim.
-        - **4 = cross-cutting or high-stakes check.** The lens spans several
-          modules or touches a shared interface/contract with architecture
-          implications; missing a defect would cascade. The question
-          demands judgement, not just lookup.
+        - **4 = cross-cutting or high-stakes check.** A defect this lens would
+          miss is **non-local and not caught by an obvious test** — it
+          propagates through a shared contract or invariant that code the plan
+          does NOT touch relies on. Spanning several modules is NOT sufficient
+          on its own; a lens whose failure is local and obvious is tier 2-3.
         - **5 = fundamental system-level check.** The lens probes a
           security-sensitive path, a schema migration, an auth boundary, or
-          a contract relied on by the whole system. A subtle error would
-          pass tests but be wrong. Only assign tier 5 when the lens
-          genuinely requires system-level reasoning.
+          a contract relied on by the whole system, where a subtle error would
+          pass the full suite and corrupt state. Only assign tier 5 when the
+          lens genuinely requires system-level reasoning — not merely
+          "important" or central code.
 
-        **FLOOR rules (hard minimum):**
+        **FLOOR rules (hard minimum) — these two lenses ONLY:**
         - `correctness` — NEVER below tier 4. A correctness defect that
           slips through is the most expensive failure mode.
         - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
           contradictions are subtle and cascade into runtime failures; a
           weak model will miss them.
+        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        expected home for an ordinary, locally-verifiable check is tier 2-3.
+        Do not let "this plan is large" inflate a lens whose own question is
+        answerable by a focused read.
 
         ## Assignment Contract
 
