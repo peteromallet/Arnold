@@ -2846,6 +2846,103 @@ def test_execute_auto_loop_stops_when_existing_task_is_blocked(
     assert pr.exit_kind == "blocked_by_prereq"
 
 
+def test_execute_unroutable_review_rework_reruns_review_then_blocks_recoverably(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(
+            plan=plan_fixture.plan_name,
+            override_action="force-proceed",
+            reason="test",
+        ),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    for task in finalize_data["tasks"]:
+        task["status"] = "done"
+        task["executor_notes"] = "done"
+        task["commands_run"] = ["true"]
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    review_payload = {
+        "review_verdict": "needs_rework",
+        "rework_items": [
+            {
+                "task_id": "REVIEW",
+                "issue": "Placeholder review finding.",
+                "expected": "Reference a concrete finalize task.",
+                "actual": "No concrete finalize task was referenced.",
+            }
+        ],
+    }
+    (plan_fixture.plan_dir / "review.json").write_text(
+        json.dumps(review_payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    def worker_should_not_run(*_args, **_kwargs):
+        raise AssertionError("unroutable rework should reroute before execute workers run")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker_should_not_run)
+
+    def rerun_execute_with_same_bad_review() -> dict:
+        state = load_state(plan_fixture.plan_dir)
+        state["current_state"] = megaplan.STATE_FINALIZED
+        (plan_fixture.plan_dir / "state.json").write_text(
+            json.dumps(state, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (plan_fixture.plan_dir / "review.json").write_text(
+            json.dumps(review_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return megaplan.handle_execute(
+            plan_fixture.root,
+            make_args(
+                plan=plan_fixture.plan_name,
+                confirm_destructive=True,
+                user_approved=True,
+            ),
+        )
+
+    first = rerun_execute_with_same_bad_review()
+    second = rerun_execute_with_same_bad_review()
+    third = rerun_execute_with_same_bad_review()
+    state = load_state(plan_fixture.plan_dir)
+
+    assert first["state"] == megaplan.STATE_EXECUTED
+    assert first["next_step"] == "review"
+    assert first["success"] is True
+    assert second["state"] == megaplan.STATE_EXECUTED
+    assert second["next_step"] == "review"
+    assert third["state"] == megaplan.STATE_BLOCKED
+    assert third["next_step"] is None
+    assert third["unrunnable_rework_task_ids"] == ["REVIEW"]
+    assert state["current_state"] == megaplan.STATE_BLOCKED
+    assert state["resume_cursor"] == {
+        "phase": "execute",
+        "batch_index": None,
+        "retry_strategy": "fresh_session",
+    }
+    assert state["meta"]["unroutable_rework_attempts"] == 3
+    assert "review requested rework but no runnable finalize task IDs" in third["summary"]
+
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
+
+    pr = read_phase_result(plan_fixture.plan_dir)
+    assert pr is not None, "phase_result.json must be written for every execute exit"
+    assert pr.exit_kind == "blocked_by_quality"
+    assert pr.deviations
+
+
 def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
