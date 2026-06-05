@@ -20,7 +20,13 @@ from typing import Any
 import yaml
 
 from arnold.pipelines.megaplan.cloud.auth import seed_codex_oauth
-from arnold.pipelines.megaplan.cloud.providers.base import _write_redacted_output, get_provider
+from arnold.pipelines.megaplan.cloud.providers.base import (
+    DeployReport,
+    DeployStepReport,
+    _write_redacted_output,
+    get_provider,
+)
+from arnold.pipelines.megaplan.cloud.redact import redact
 from arnold.pipelines.megaplan.cloud.spec import CloudSpec, RailwaySpec, apply_repo_overrides, load_spec as load_cloud_spec
 from arnold.pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
 from arnold.pipelines.megaplan.types import CliError
@@ -228,31 +234,25 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             secrets = {name: os.environ.get(name, "") for name in spec.secrets}
             with _materialized_deploy_dir(spec) as deploy_dir:
                 result = provider.deploy(deploy_dir, secrets=secrets)
-            if result == 0:
-                seed_codex_oauth(spec, provider)
-            sys.stdout.write(
-                json.dumps(
-                    {
-                        "success": result == 0,
-                        "event": "cloud_deploy",
-                        "provider": spec.provider,
-                        "service": _get_provider_identity(spec),
-                        "deploy_dir": str(deploy_dir),
-                        "action": "provider_deploy_invoked",
-                        "rebuilt_or_pushed": "provider-controlled",
-                        "no_op": False,
-                        "image_model": "stable_base",
-                        "note": (
-                            "cloud deploy updates the thin runner service. "
-                            "Routine arnold behavior refreshes from the on-volume source clone during cloud chain launch."
-                        ),
-                        "logs": _deploy_log_hint(spec),
-                    },
-                    indent=2,
+                report = _coerce_deploy_report(result, spec=spec, deploy_dir=deploy_dir)
+                report.steps = [
+                    *_deploy_context_steps(deploy_dir),
+                    *report.steps,
+                ]
+            if report.exit_code == 0:
+                seed_messages: list[str] = []
+                seed_result = seed_codex_oauth(spec, provider, writer=seed_messages.append)
+                report.steps.append(
+                    DeployStepReport(
+                        name="seed Codex OAuth",
+                        status="ok",
+                        detail=_oauth_seed_detail(seed_result),
+                        stderr="".join(seed_messages),
+                        metadata=seed_result,
+                    )
                 )
-                + "\n"
-            )
-            return result
+            _emit_deploy_report(report, secret_names=spec.secrets, env=os.environ)
+            return report.exit_code
 
         if action == "status":
             if bool(getattr(args, "all", False)):
@@ -735,6 +735,181 @@ def _deploy_log_hint(spec: CloudSpec) -> dict[str, Any]:
     if spec.provider == "ssh":
         return {"command": "arnold cloud logs --no-follow"}
     return {"status": "unknown"}
+
+
+def _deploy_context_steps(deploy_dir: Path) -> list[DeployStepReport]:
+    steps: list[DeployStepReport] = []
+    for relative in ("Dockerfile", "entrypoint.sh"):
+        path = deploy_dir / relative
+        if not path.exists():
+            steps.append(
+                DeployStepReport(
+                    name=f"render {relative}",
+                    status="missing",
+                    detail=f"{relative} was not materialized",
+                )
+            )
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        steps.append(
+            DeployStepReport(
+                name=f"render {relative}",
+                status="ok",
+                detail=f"sha256={digest}",
+                metadata={"path": str(path), "sha256": digest},
+            )
+        )
+    return steps
+
+
+def _coerce_deploy_report(result: Any, *, spec: CloudSpec, deploy_dir: Path) -> DeployReport:
+    if isinstance(result, DeployReport):
+        report = result
+        report.deploy_dir = str(deploy_dir)
+        if not report.logs:
+            report.logs = _deploy_log_hint(spec)
+        if not report.provider:
+            report.provider = spec.provider
+        if report.service is None:
+            report.service = _get_provider_identity(spec)
+        return report
+
+    exit_code = int(result)
+    success = exit_code == 0
+    return DeployReport(
+        success=success,
+        provider=spec.provider,
+        service=_get_provider_identity(spec),
+        deploy_dir=str(deploy_dir),
+        steps=[
+            DeployStepReport(
+                name="provider deploy",
+                status="ok" if success else "failed",
+                detail="provider returned an exit code only; image rebuild decision is provider-controlled",
+            )
+        ],
+        image_rebuild="unknown",
+        no_op=False,
+        logs=_deploy_log_hint(spec),
+        verdict=(
+            "deploy: provider deploy completed; image rebuild outcome unknown"
+            if success
+            else f"deploy: provider deploy failed with exit {exit_code}"
+        ),
+        exit_code=exit_code,
+    )
+
+
+def _oauth_seed_detail(seed_result: dict[str, list[dict[str, str]]]) -> str:
+    events = seed_result.get("events", [])
+    counts: dict[str, int] = {}
+    for event in events:
+        status = event.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    if not counts:
+        return "no oauth seed events"
+    return ", ".join(f"{status}={count}" for status, count in sorted(counts.items()))
+
+
+def _tail_text(text: str, *, max_lines: int = 20, max_chars: int = 4000) -> str:
+    if not text:
+        return ""
+    lines = text.splitlines()
+    tail = "\n".join(lines[-max_lines:])
+    if len(tail) > max_chars:
+        tail = tail[-max_chars:]
+    return tail
+
+
+def _step_payload(
+    step: DeployStepReport,
+    *,
+    secret_names: list[str] | tuple[str, ...],
+    env: dict[str, str] | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "name": step.name,
+        "status": step.status,
+    }
+    if step.detail:
+        payload["detail"] = step.detail
+    if step.log_ref:
+        payload["log_ref"] = step.log_ref
+    stdout_tail = _tail_text(step.stdout)
+    stderr_tail = _tail_text(step.stderr)
+    if stdout_tail:
+        payload["stdout_tail"] = redact(stdout_tail, secret_names, env=env)
+    if stderr_tail:
+        payload["stderr_tail"] = redact(stderr_tail, secret_names, env=env)
+    if step.metadata:
+        payload["metadata"] = step.metadata
+    return payload
+
+
+def _deploy_report_payload(
+    report: DeployReport,
+    *,
+    secret_names: list[str] | tuple[str, ...],
+    env: dict[str, str] | None,
+) -> dict[str, Any]:
+    return {
+        "success": report.success,
+        "event": "cloud_deploy",
+        "provider": report.provider,
+        "service": report.service,
+        "deploy_dir": report.deploy_dir,
+        "steps": [
+            _step_payload(step, secret_names=secret_names, env=env)
+            for step in report.steps
+        ],
+        "image_rebuild": report.image_rebuild,
+        "image_ref": report.image_ref,
+        "no_op": report.no_op,
+        "vars_updated": report.vars_updated,
+        "logs": report.logs,
+        "warnings": report.warnings,
+        "verdict": report.verdict,
+        "note": (
+            "cloud deploy updates the thin runner service. Routine arnold behavior "
+            "refreshes from the on-volume source clone during cloud chain launch."
+        ),
+    }
+
+
+def _emit_deploy_report(
+    report: DeployReport,
+    *,
+    secret_names: list[str] | tuple[str, ...],
+    env: dict[str, str] | None,
+) -> None:
+    sys.stdout.write(f"cloud deploy: provider={report.provider} service={report.service or '<unknown>'}\n")
+    for step in report.steps:
+        detail = f" ({step.detail})" if step.detail else ""
+        sys.stdout.write(f"- {step.name}: {step.status}{detail}\n")
+        stdout_tail = _tail_text(step.stdout)
+        stderr_tail = _tail_text(step.stderr)
+        if stdout_tail:
+            redacted = redact(stdout_tail, secret_names, env=env)
+            sys.stdout.write("  stdout tail:\n")
+            for line in redacted.splitlines():
+                sys.stdout.write(f"    {line}\n")
+        if stderr_tail:
+            redacted = redact(stderr_tail, secret_names, env=env)
+            sys.stdout.write("  stderr tail:\n")
+            for line in redacted.splitlines():
+                sys.stdout.write(f"    {line}\n")
+    if report.logs:
+        sys.stdout.write(f"logs: {json.dumps(report.logs, sort_keys=True)}\n")
+    for warning in report.warnings:
+        sys.stdout.write(f"warning: {warning}\n")
+    sys.stdout.write(f"{report.verdict}\n")
+    sys.stdout.write(
+        json.dumps(
+            _deploy_report_payload(report, secret_names=secret_names, env=env),
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def _chain_start_command(
