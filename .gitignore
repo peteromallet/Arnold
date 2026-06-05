@@ -8,6 +8,15 @@ __pycache__/
 !.megaplan/
 !.megaplan/briefs/
 !.megaplan/briefs/**
+.megaplan/briefs/**/.megaplan/
+.megaplan/.state-locks/
+.megaplan/cloud-chain.log
+.megaplan/debt.json
+.megaplan/epics/
+.megaplan/profiles.toml
+.megaplan/schemas/
+.megaplan/telemetry/
+.megaplan/verification/
 .megaplan/plans/
 chain_state.json
 .desloppify/
