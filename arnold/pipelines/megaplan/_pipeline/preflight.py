@@ -10,6 +10,7 @@ TTY mode: renders a structured prompt with options.
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from typing import Any
@@ -43,6 +44,21 @@ def _parse_agent_spec(spec: str) -> tuple[str, str | None]:
 def _check_credential(env_var: str) -> bool:
     """Check if an environment variable is set (non-empty)."""
     return bool(os.environ.get(env_var, "").strip())
+
+
+def _resolve_concrete_slot_spec(spec: str, *, vendor: str | None = None) -> str:
+    """Resolve symbolic premium placeholders to concrete specs for preflight."""
+    from arnold.pipelines.megaplan.profiles import effective_premium_vendor
+    from arnold.pipelines.megaplan.types import (
+        format_agent_spec,
+        is_premium_placeholder_spec,
+        resolve_premium_placeholder_spec,
+    )
+
+    if not is_premium_placeholder_spec(spec):
+        return spec
+    resolved_vendor = effective_premium_vendor(argparse.Namespace(vendor=vendor))
+    return format_agent_spec(resolve_premium_placeholder_spec(spec, resolved_vendor))
 
 
 # Slots that are opt-in / non-blocking and so must NOT hard-fail preflight.
@@ -160,6 +176,7 @@ def preflight_check_profile(
     *,
     pipeline_name: str = "",
     profile_name: str = "",
+    vendor: str | None = None,
 ) -> list[dict[str, Any]]:
     """Check that all slots in a resolved profile have their credentials available.
 
@@ -186,13 +203,14 @@ def preflight_check_profile(
         if slot in _SOFT_SLOTS:
             # Opt-in / non-blocking slot — don't gate the whole run on it.
             continue
-        required = _required_env_vars_for_slot(spec, slot)
+        concrete_spec = _resolve_concrete_slot_spec(spec, vendor=vendor)
+        required = _required_env_vars_for_slot(concrete_spec, slot)
         for env_var, display_name in required:
             if not _check_credential(env_var):
                 missing.append(
                     {
                         "slot": slot,
-                        "spec": spec,
+                        "spec": concrete_spec,
                         "agent": display_name,
                         "env_var": env_var,
                     }
@@ -282,6 +300,7 @@ def preflight_or_raise(
     *,
     pipeline_name: str = "",
     profile_name: str = "",
+    vendor: str | None = None,
 ) -> None:
     """Run credential preflight and exit with code 7 if credentials are missing.
 
@@ -294,6 +313,7 @@ def preflight_or_raise(
         profile,
         pipeline_name=pipeline_name,
         profile_name=profile_name,
+        vendor=vendor,
     )
 
     if not missing:

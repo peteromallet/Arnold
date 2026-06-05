@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from arnold.pipelines.megaplan.audits.robustness import build_empty_template
 from arnold.pipelines.megaplan.forms.provocations import select_active_checks
-from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING
+from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
 from arnold.pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
 from arnold.pipelines.megaplan.orchestration.progress import strip_progress_env
 from arnold.pipelines.megaplan.observability.routing_ledger import (
@@ -37,8 +37,11 @@ from arnold.pipelines.megaplan.types import (
     MOCK_ENV_VAR,
     PlanState,
     SessionInfo,
+    format_agent_spec,
+    is_premium_placeholder_agent,
     parse_agent_spec,
     resolved_default_model_for_agent,
+    resolve_premium_placeholder_spec,
 )
 from arnold.pipelines.megaplan._core import (
     apply_session_update,
@@ -2740,10 +2743,20 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
                 configured_spec = config.get("agents", {}).get(step)
                 spec = configured_spec or DEFAULT_AGENT_ROUTING[step]
                 spec = _vendor_adjusted_default_spec(step, spec, args)
+                if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+                    vendor = effective_premium_vendor(args, config)
+                    spec = format_agent_spec(resolve_premium_placeholder_spec(spec, vendor))
                 spec_parsed = parse_agent_spec(spec)
                 agent = spec_parsed.agent
                 model = spec_parsed.model
                 effort = spec_parsed.effort
+
+    if is_premium_placeholder_agent(agent):
+        raise CliError(
+            "invalid_agent_spec",
+            f"Unresolved premium placeholder reached worker dispatch for step {step!r}. "
+            "Resolve it to 'claude' or 'codex' before dispatch.",
+        )
 
     # Validate agent availability
     # MEGAPLAN_MOCK_WORKERS=1 bypasses availability for explicit Shannon

@@ -8,7 +8,14 @@ from typing import Any
 
 from .._core import user_config as _user_config_module
 from .._core.user_config import VALID_VENDORS
-from ..types import _PREMIUM_VENDORS, parse_agent_spec
+from ..types import (
+    PREMIUM_AGENT,
+    _PREMIUM_VENDORS,
+    format_agent_spec,
+    is_premium_placeholder_agent,
+    parse_agent_spec,
+    resolve_premium_placeholder_spec,
+)
 
 log = logging.getLogger("megaplan")
 
@@ -17,20 +24,20 @@ log = logging.getLogger("megaplan")
 _WARNED_STALE_OVERRIDE: set[tuple[str, str]] = set()
 
 DEFAULT_AGENT_ROUTING: dict[str, str] = {
-    "plan": "claude",
+    "plan": PREMIUM_AGENT,
     "prep": "hermes",
-    "critique": "codex",
-    "critique_evaluator": "claude",
-    "revise": "claude",
-    "gate": "claude",
-    "feedback": "claude:low",
-    "finalize": "claude",
-    "execute": "codex",
-    "loop_plan": "claude",
-    "loop_execute": "codex",
-    "review": "codex",
-    "tiebreaker_researcher": "codex",
-    "tiebreaker_challenger": "codex",
+    "critique": PREMIUM_AGENT,
+    "critique_evaluator": PREMIUM_AGENT,
+    "revise": PREMIUM_AGENT,
+    "gate": PREMIUM_AGENT,
+    "feedback": f"{PREMIUM_AGENT}:low",
+    "finalize": PREMIUM_AGENT,
+    "execute": PREMIUM_AGENT,
+    "loop_plan": PREMIUM_AGENT,
+    "loop_execute": PREMIUM_AGENT,
+    "review": PREMIUM_AGENT,
+    "tiebreaker_researcher": PREMIUM_AGENT,
+    "tiebreaker_challenger": PREMIUM_AGENT,
 }
 KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
@@ -105,6 +112,28 @@ def _resolve_default_vendor() -> str:
     return _user_config_module.default_vendor()
 
 
+def effective_premium_vendor(
+    args: argparse.Namespace | None = None,
+    config: dict[str, Any] | None = None,
+) -> str:
+    """Return the concrete vendor that symbolic ``premium`` specs mean."""
+
+    def _validate(source: str, value: Any) -> str:
+        if not isinstance(value, str) or value not in VALID_VENDORS:
+            raise _cli_error(
+                "invalid_vendor",
+                f"{source} must be one of {', '.join(VALID_VENDORS)}; got {value!r}",
+            )
+        return value
+
+    cli_vendor = getattr(args, "vendor", None) if args is not None else None
+    if cli_vendor is not None:
+        return _validate("CLI --vendor", cli_vendor)
+    if config is not None and "vendor" in config:
+        return _validate("loaded config vendor", config.get("vendor"))
+    return _validate("project default vendor", _resolve_default_vendor())
+
+
 def normalize_robustness(value: Any) -> str:
     if isinstance(value, str):
         if value in ROBUSTNESS_LEVELS:
@@ -137,9 +166,10 @@ def validate_prep_stage_provider(
         _fail(f"expected a non-empty string agent spec, got {type(raw_spec).__name__}")
     spec = raw_spec.strip()
     parsed = parse_agent_spec(spec)
-    if parsed.agent not in KNOWN_AGENTS:
+    if parsed.agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(parsed.agent):
         _fail(
-            f"unknown agent '{parsed.agent}' in spec {spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}"
+            f"unknown agent '{parsed.agent}' in spec {spec!r}. Valid agents: "
+            f"{', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)"
         )
     if parsed.agent not in READ_ONLY_PREP_AGENTS:
         _fail(
@@ -349,6 +379,11 @@ def profile_to_phase_models(profile: dict[str, str]) -> list[str]:
 
 def _swap_premium_spec(spec: str, target_vendor: str) -> str:
     parsed = parse_agent_spec(spec)
+    if is_premium_placeholder_agent(parsed.agent):
+        raise _cli_error(
+            "profile_resolution_mismatch",
+            f"Unresolved premium placeholder reached vendor swap: {spec!r}",
+        )
     if parsed.agent not in _PREMIUM_VENDORS:
         return spec
     if parsed.agent == target_vendor:
@@ -387,11 +422,14 @@ def apply_vendor_rewrite(
             "invalid_vendor",
             f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
         )
+    def _resolve_symbolic(spec: str) -> str:
+        return format_agent_spec(resolve_premium_placeholder_spec(spec, vendor))
+
     if tier_models is not None:
         for phase, tiers in tier_models.items():
             for tier_int, spec in tiers.items():
                 try:
-                    tiers[tier_int] = _swap_premium_spec(spec, vendor)
+                    tiers[tier_int] = _swap_premium_spec(_resolve_symbolic(spec), vendor)
                 except CliError as e:
                     if e.code == "vendor_swap_model_conflict":
                         raise _cli_error(
@@ -402,7 +440,7 @@ def apply_vendor_rewrite(
     if prep_models is not None:
         for stage, spec in prep_models.items():
             try:
-                prep_models[stage] = _swap_premium_spec(spec, vendor)
+                prep_models[stage] = _swap_premium_spec(_resolve_symbolic(spec), vendor)
             except CliError as e:
                 if e.code == "vendor_swap_model_conflict":
                     raise _cli_error(
@@ -412,10 +450,8 @@ def apply_vendor_rewrite(
                 raise
     result: dict[str, str] = {}
     for phase, spec in profile.items():
-        if phase == "feedback":
-            continue
         try:
-            result[phase] = _swap_premium_spec(spec, vendor)
+            result[phase] = _swap_premium_spec(_resolve_symbolic(spec), vendor)
         except CliError as e:
             if e.code == "vendor_swap_model_conflict":
                 raise _cli_error(
@@ -423,7 +459,6 @@ def apply_vendor_rewrite(
                     f"Vendor swap conflict on phase '{phase}': {e.message}",
                 ) from e
             raise
-    result["feedback"] = profile.get("feedback", "claude:low")
     return result
 
 
@@ -689,9 +724,37 @@ def apply_available_model_floor(
 def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
     for spec in profile.values():
         parsed = parse_agent_spec(spec)
-        if parsed.agent in _PREMIUM_VENDORS:
+        if parsed.agent in _PREMIUM_VENDORS or is_premium_placeholder_agent(parsed.agent):
             return True
     return False
+
+
+def _validate_resolved_profile_invariants(
+    profile_name: str,
+    resolved: dict[str, str],
+    *,
+    tier_models: dict[str, dict[int, str]] | None = None,
+    prep_models: dict[str, str] | None = None,
+) -> None:
+    bad: list[str] = []
+    for phase, spec in resolved.items():
+        if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+            bad.append(f"{phase}={spec}")
+    if tier_models:
+        for phase, tiers in tier_models.items():
+            for tier_int, spec in tiers.items():
+                if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+                    bad.append(f"tier_models.{phase}.{tier_int}={spec}")
+    if prep_models:
+        for stage, spec in prep_models.items():
+            if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+                bad.append(f"prep_models.{stage}={spec}")
+    if bad:
+        raise _cli_error(
+            "profile_resolution_mismatch",
+            f"profile={profile_name} resolved with symbolic premium placeholders still present: "
+            f"{', '.join(bad)}",
+        )
 
 
 def _validate_named_profile_invariants(
@@ -819,14 +882,8 @@ def apply_profile_expansion(
         )
 
         if not vendor_locked:
-            vendor = effective_vendor_flag
-            if vendor is None:
-                vendor = _resolve_default_vendor()
-            if vendor not in VALID_VENDORS:
-                raise _cli_error(
-                    "invalid_vendor",
-                    f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
-                )
+            state_config = (state.get("config") or {}) if state is not None else None
+            vendor = effective_premium_vendor(args, state_config)
             if _profile_has_premium_slots(resolved) or inherited_prep_models:
                 resolved = apply_vendor_rewrite(
                     resolved,
@@ -864,6 +921,12 @@ def apply_profile_expansion(
         prep_models, prep_trace = resolve_prep_models(
             flat_prep_spec=_prep_flat_spec_from_profile(resolved),
             prep_models=inherited_prep_models,
+        )
+        _validate_resolved_profile_invariants(
+            profile_name,
+            resolved,
+            tier_models=tier_models,
+            prep_models=prep_models,
         )
 
         if tier_models:
@@ -966,12 +1029,14 @@ __all__ = [
     "_resolve_default_vendor",
     "_validate_named_profile_invariants",
     "_validate_projected_tier_models",
+    "_validate_resolved_profile_invariants",
     "apply_critic_rewrite",
     "apply_available_model_floor",
     "apply_deepseek_provider_rewrite",
     "apply_depth_rewrite",
     "apply_profile_expansion",
     "apply_vendor_rewrite",
+    "effective_premium_vendor",
     "normalize_robustness",
     "profile_to_phase_models",
     "resolve_pipeline_profile",

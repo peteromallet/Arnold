@@ -9,7 +9,12 @@ from pathlib import Path, PurePosixPath
 from string import Template
 
 from arnold.pipelines.megaplan.cloud.spec import CloudSpec, RepoSpec, ToolchainSpec
-from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING
+from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
+from arnold.pipelines.megaplan.types import (
+    format_agent_spec,
+    is_premium_placeholder_spec,
+    resolve_premium_placeholder_spec,
+)
 
 
 PLACEHOLDERS = (
@@ -158,12 +163,20 @@ def _runner_block(spec: CloudSpec) -> str:
 
 def _agent_routing_block(spec: CloudSpec) -> str:
     default_agent = spec.agents.get("default")
+    selected_vendor = (
+        default_agent
+        if default_agent in {"claude", "codex"}
+        else effective_premium_vendor()
+    )
     routing = {
         step: spec.agents.get(step, default_agent or fallback)
         for step, fallback in DEFAULT_AGENT_ROUTING.items()
     }
     return "\n".join(
-        f'arnold config set agents.{step} {agent} >/dev/null 2>&1 || true'
+        "arnold config set agents."
+        f"{step} "
+        f"{format_agent_spec(resolve_premium_placeholder_spec(agent, selected_vendor)) if is_premium_placeholder_spec(agent) else agent} "
+        ">/dev/null 2>&1 || true"
         for step, agent in routing.items()
     )
 

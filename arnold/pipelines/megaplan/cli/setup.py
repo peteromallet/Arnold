@@ -5,8 +5,13 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING
-from arnold.pipelines.megaplan.types import CliError, StepResponse
+from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
+from arnold.pipelines.megaplan.types import (
+    CliError,
+    PREMIUM_AGENT,
+    StepResponse,
+    parse_agent_spec,
+)
 from arnold.pipelines.megaplan._core import (
     atomic_write_text,
     detect_available_agents,
@@ -172,9 +177,24 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
     config_path = None
     routing = None
     if available:
+        vendor = effective_premium_vendor()
+
+        def _resolve_default(spec: str) -> str:
+            parsed = parse_agent_spec(spec)
+            if parsed.agent == PREMIUM_AGENT:
+                if parsed.effort:
+                    return f"{vendor}:{parsed.effort}"
+                return vendor
+            return spec
+
         agents_config = {
-            step: (default if default in available else available[0])
+            step: (
+                resolved
+                if parse_agent_spec(resolved).agent in available
+                else available[0]
+            )
             for step, default in DEFAULT_AGENT_ROUTING.items()
+            for resolved in (_resolve_default(default),)
         }
         config = load_config(home)
         config["agents"] = agents_config

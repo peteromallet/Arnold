@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .._core.user_config import config_dir
-from ..types import CliError, parse_agent_spec
+from ..types import CliError, is_premium_placeholder_agent, parse_agent_spec
 from .policy import (
     CANONICAL_PREP_MODELS,
     DEFAULT_AGENT_ROUTING,
@@ -33,12 +33,14 @@ from .policy import (
     _swap_premium_spec,
     _validate_named_profile_invariants,
     _validate_projected_tier_models,
+    _validate_resolved_profile_invariants,
     apply_critic_rewrite,
     apply_available_model_floor,
     apply_deepseek_provider_rewrite,
     apply_depth_rewrite,
     apply_profile_expansion,
     apply_vendor_rewrite,
+    effective_premium_vendor,
     normalize_robustness,
     profile_to_phase_models,
     resolve_pipeline_profile,
@@ -236,12 +238,13 @@ def _validate_profile_map(
         if not isinstance(raw_spec, str):
             _raise_invalid_profile(path, profile_name, phase, f"expected a string agent spec, got {type(raw_spec).__name__}")
         parsed = parse_agent_spec(raw_spec)
-        if parsed.agent not in KNOWN_AGENTS:
+        if parsed.agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(parsed.agent):
             _raise_invalid_profile(
                 path,
                 profile_name,
                 phase,
-                f"unknown agent '{parsed.agent}' in spec {raw_spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
+                f"unknown agent '{parsed.agent}' in spec {raw_spec!r}. Valid agents: "
+                f"{', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)",
             )
         validated[str(phase)] = raw_spec
     return validated
@@ -347,12 +350,13 @@ def _validate_tier_models(
                     f"expected a string agent spec, got {type(spec).__name__}",
                 )
             agent, _model = parse_agent_spec(spec)
-            if agent not in KNOWN_AGENTS:
+            if agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(agent):
                 _raise_invalid_profile(
                     path,
                     profile_name,
                     f"tier_models.{phase}.{tier_int}",
-                    f"unknown agent '{agent}' in spec {spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
+                    f"unknown agent '{agent}' in spec {spec!r}. Valid agents: "
+                    f"{', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)",
                 )
             v_tiers[tier_int] = spec
         if v_tiers:
@@ -613,7 +617,7 @@ def _load_pipeline_local_profiles(
                     if not isinstance(raw_spec, str):
                         continue
                     agent, _model = parse_agent_spec(raw_spec)
-                    if agent not in KNOWN_AGENTS:
+                    if agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(agent):
                         continue
                     validated[str(slot)] = raw_spec
                 if validated:
@@ -973,6 +977,7 @@ __all__ = [
     "apply_depth_rewrite",
     "apply_profile_expansion",
     "apply_vendor_rewrite",
+    "effective_premium_vendor",
     "load_profile_metadata",
     "load_profile_sources",
     "load_profiles",
@@ -986,6 +991,7 @@ __all__ = [
     "_load_pipeline_local_metadata",
     "_validate_named_profile_invariants",
     "_validate_projected_tier_models",
+    "_validate_resolved_profile_invariants",
     "_resolve_with_inheritance",
     "_resolve_default_vendor",
     "_swap_premium_spec",

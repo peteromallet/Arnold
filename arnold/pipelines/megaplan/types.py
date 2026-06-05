@@ -295,6 +295,7 @@ FLAG_VALID_STATUSES = {
 }
 DEBT_ESCALATION_THRESHOLD = 3
 MOCK_ENV_VAR = "MEGAPLAN_MOCK_WORKERS"
+PREMIUM_AGENT = "premium"
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +332,55 @@ _VALID_PREMIUM_EFFORTS: dict[str, frozenset[str]] = {
 _PREMIUM_EFFORT_TOKENS: frozenset[str] = (
     _VALID_CLAUDE_SPEC_EFFORTS | _VALID_CODEX_SPEC_EFFORTS
 )
+
+
+def is_premium_placeholder_agent(agent: str) -> bool:
+    """True when *agent* is the symbolic premium placeholder."""
+    return agent == PREMIUM_AGENT
+
+
+def is_premium_placeholder_spec(spec: str | "AgentSpec") -> bool:
+    """True when *spec* is the symbolic premium placeholder spec."""
+    parsed = spec if isinstance(spec, AgentSpec) else parse_agent_spec(spec)
+    return is_premium_placeholder_agent(parsed.agent)
+
+
+def resolve_premium_placeholder_agent(agent: str, vendor: str) -> str:
+    """Resolve the symbolic premium placeholder agent to a concrete vendor."""
+    return vendor if is_premium_placeholder_agent(agent) else agent
+
+
+def resolve_premium_placeholder_spec(spec: str | "AgentSpec", vendor: str) -> "AgentSpec":
+    """Resolve a symbolic premium placeholder spec to a concrete vendor spec."""
+    parsed = spec if isinstance(spec, AgentSpec) else parse_agent_spec(spec)
+    if not is_premium_placeholder_agent(parsed.agent):
+        return parsed
+    return AgentSpec(
+        agent=resolve_premium_placeholder_agent(parsed.agent, vendor),
+        model=parsed.model,
+        effort=parsed.effort,
+    )
+
+
+def _validate_premium_placeholder_spec(
+    spec: str,
+    *,
+    model: str | None,
+    effort: str | None,
+) -> None:
+    """Reject malformed symbolic premium placeholder specs."""
+    if model is not None:
+        raise CliError(
+            "invalid_agent_spec",
+            f"Invalid premium agent spec {spec!r}: symbolic premium specs do not "
+            "accept model pins; use 'premium' or 'premium:<effort>'.",
+        )
+    if effort is not None and effort not in _PREMIUM_EFFORT_TOKENS:
+        raise CliError(
+            "invalid_agent_spec",
+            f"Invalid premium agent spec {spec!r}: effort token {effort!r} is not "
+            f"valid ({', '.join(sorted(_PREMIUM_EFFORT_TOKENS))}).",
+        )
 
 
 def _is_claude_model_name(name: str) -> bool:
@@ -478,6 +528,18 @@ def parse_agent_spec(spec: str) -> AgentSpec:
         return AgentSpec(agent=spec)
 
     agent, rest = spec.split(":", 1)
+
+    if agent == PREMIUM_AGENT:
+        if ":" in rest:
+            model, effort = rest.split(":", 1)
+            if not effort:
+                effort = None
+            _validate_premium_placeholder_spec(spec, model=model, effort=effort)
+            return AgentSpec(agent=agent, model=model, effort=effort)
+        if rest in _PREMIUM_EFFORT_TOKENS:
+            _validate_premium_placeholder_spec(spec, model=None, effort=rest)
+            return AgentSpec(agent=agent, effort=rest)
+        _validate_premium_placeholder_spec(spec, model=rest, effort=None)
 
     # Non-premium agents (hermes, shannon): everything after the first
     # colon is the model — colons in the model string are preserved.

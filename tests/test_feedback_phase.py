@@ -664,20 +664,29 @@ class TestRouting:
             assert "feedback" in profile, (
                 f"Profile '{name}' missing 'feedback' slot"
             )
-            # Most built-in profiles pin feedback to Claude. The Arnold launch
-            # profile is intentionally all-OpenRouter so a no-Anthropic-key run
-            # can keep every role on the available provider.
+            # Profiles may either pin feedback to their concrete family or use
+            # the symbolic premium placeholder that resolves with --vendor.
             expected_feedback = (
                 ("hermes:openrouter:deepseek/deepseek-chat",)
                 if name == "arnold-openrouter"
-                else ("claude:low", "claude")
+                else (
+                    "claude:low",
+                    "claude",
+                    "codex:low",
+                    "hermes:deepseek:deepseek-v4-flash",
+                    "hermes:deepseek:deepseek-v4-pro",
+                    "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro",
+                    "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2",
+                    "hermes:glm-5.1",
+                    "premium:low",
+                )
             )
             assert profile["feedback"] in expected_feedback, (
                 f"Profile '{name}' has unexpected feedback value: {profile['feedback']}"
             )
 
-    def test_vendor_rewrite_leaves_feedback_at_claude_low(self) -> None:
-        """apply_vendor_rewrite('codex') leaves feedback at claude:low."""
+    def test_vendor_rewrite_rewrites_feedback_with_profile_slots(self) -> None:
+        """apply_vendor_rewrite('codex') rewrites profile-provided feedback."""
         from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
         profile = {
             "plan": "claude",
@@ -687,8 +696,7 @@ class TestRouting:
             "feedback": "claude:low",
         }
         rewritten = apply_vendor_rewrite(profile, "codex")
-        # All premium slots become codex, but feedback stays claude:low
-        assert rewritten["feedback"] == "claude:low"
+        assert rewritten["feedback"] == "codex:low"
         assert rewritten["plan"] == "codex"
 
     def test_vendor_rewrite_claude_vendor_for_claude_profile(self) -> None:
@@ -731,9 +739,8 @@ class TestRouting:
         # but importantly feedback is untouched
         assert "feedback" in rewritten
 
-    def test_vendor_rewrite_preserves_bare_feedback_not_normalized_or_swapped(self) -> None:
-        """Bare feedback='claude' stays 'claude' — not normalized to 'claude:low'
-        and not swapped to the target vendor."""
+    def test_vendor_rewrite_swaps_bare_feedback_without_normalizing(self) -> None:
+        """Bare feedback='claude' swaps to bare 'codex', not codex:low."""
         from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
         # all-claude.toml has bare feedback = "claude" (no effort suffix).
@@ -750,15 +757,11 @@ class TestRouting:
         # Premium phases become codex (vendor-swapped)
         assert rewritten["plan"] == "codex"
         assert rewritten["critique"] == "codex"
-        # feedback is NOT vendor-swapped — it stays claude
-        assert rewritten["feedback"] == "claude"
-        # feedback is NOT normalized — bare "claude" stays bare,
-        # not coerced to "claude:low"
-        assert rewritten["feedback"] != "claude:low"
+        assert rewritten["feedback"] == "codex"
+        assert rewritten["feedback"] != "codex:low"
 
-    def test_vendor_rewrite_defaults_feedback_when_absent(self) -> None:
-        """When profile has no 'feedback' key, apply_vendor_rewrite defaults
-        to 'claude:low'."""
+    def test_vendor_rewrite_does_not_inject_feedback_when_absent(self) -> None:
+        """When profile has no feedback key, apply_vendor_rewrite leaves it absent."""
         from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
         profile: dict[str, str] = {
@@ -766,14 +769,14 @@ class TestRouting:
             "critique": "codex",
         }
         rewritten = apply_vendor_rewrite(profile, "claude")
-        assert rewritten["feedback"] == "claude:low"
+        assert "feedback" not in rewritten
         assert rewritten["plan"] == "claude"
 
     def test_default_agent_routing_has_feedback(self) -> None:
         """DEFAULT_AGENT_ROUTING includes 'feedback' key."""
         from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING
         assert "feedback" in DEFAULT_AGENT_ROUTING
-        assert DEFAULT_AGENT_ROUTING["feedback"] == "claude:low"
+        assert DEFAULT_AGENT_ROUTING["feedback"] == "premium:low"
 
 
 # ============================================================================
