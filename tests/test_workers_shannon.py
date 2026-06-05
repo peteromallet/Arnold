@@ -2282,6 +2282,7 @@ def test_vendored_shannon_readiness_classifier_handles_blockers() -> None:
         ["trust", "Is this a project you trust? >"],
         ["auth", "Not logged in. Run /login first. >"],
         ["approval", "Do you want to proceed? Yes, and don't ask again >"],
+        ["permission", "By proceeding, you accept all responsibility. 2. Yes, I accept >"],
         ["onboarding", "Press Enter to continue >"],
       ];
       for (const [kind, pane] of cases) {{
