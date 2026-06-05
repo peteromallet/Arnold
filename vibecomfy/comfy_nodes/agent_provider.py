@@ -184,6 +184,8 @@ def build_batch_messages(
     task: str,
     turn_number: int = 0,
     python_source: str = "",
+    node_variable_index: str = "",
+    previous_model_message: str = "",
     signature_catalog: str = "",
     available_node_names: str = "",
     diff: str = "",
@@ -197,8 +199,9 @@ def build_batch_messages(
     Turn 0 includes the full Python render, in-graph typed signatures, a compact
     names-only node index, budget, and (when provided) a compact ``Recent
     conversation`` block injected before ``User request:``.  Later turns include
-    only the diff, structured teaching report, remaining budget, and task — no
-    full Python re-dump.
+    the compact node-variable index on every iteration, plus the full current
+    render only when the caller supplies it (for example after a no-edit
+    search/report turn).
 
     The system prompt describes prose + a single ```batch fenced block with
     ``done()`` and ``clarify(\"...\")`` as in-batch calls.  It does **not**
@@ -301,6 +304,12 @@ def build_batch_messages(
                 "(search to get a signature before constructing):\n"
                 f"```\n{available_node_names}\n```"
             )
+        node_index_block = ""
+        if node_variable_index:
+            node_index_block = (
+                "\n\nNode variable index:\n"
+                f"```\n{node_variable_index}\n```"
+            )
         user = (
             f"{conversation_block}"
             f"User request:\n{task}\n\n"
@@ -308,6 +317,7 @@ def build_batch_messages(
             "```python\n"
             f"{python_source}\n"
             "```"
+            f"{node_index_block}"
             f"{catalog_block}"
             f"{names_block}"
         )
@@ -315,11 +325,34 @@ def build_batch_messages(
         diff_block = ""
         if diff:
             diff_block = f"\n\nDiff from previous render:\n```diff\n{diff}\n```"
+        render_block = ""
+        if python_source:
+            render_block = (
+                "\n\nCurrent scratchpad Python (full render):\n"
+                "```python\n"
+                f"{python_source}\n"
+                "```"
+            )
+        node_index_block = ""
+        if node_variable_index:
+            node_index_block = (
+                "\n\nNode variable index:\n"
+                f"```\n{node_variable_index}\n```"
+            )
+        previous_message_block = ""
+        if previous_model_message:
+            previous_message_block = (
+                "\n\nPrevious agent message:\n"
+                f"{previous_model_message}"
+            )
         report_block = ""
         if report:
             report_block = f"\n\nTeaching report from previous turn:\n{report}"
         user = (
             f"User request:\n{task}\n"
+            f"{render_block}"
+            f"{node_index_block}"
+            f"{previous_message_block}"
             f"{diff_block}"
             f"{report_block}"
             f"\n\nBudget: {budget_remaining} batch(es) remaining out of {max_batches}."

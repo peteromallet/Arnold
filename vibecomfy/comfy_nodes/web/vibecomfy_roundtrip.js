@@ -431,7 +431,7 @@ function drawIntentBadge(ctx, node) {
     return;
   }
   const badge = buildIntentBadge(meta);
-  const width = Array.isArray(node?.size) ? Number(node.size[0] || 180) : 180;
+  const width = readNodeSize(node, 180, 100).w;
   const style = styleForIntentMeta(meta);
   if (typeof ctx.save === "function") {
     ctx.save();
@@ -1812,22 +1812,6 @@ function applyEligibility(panel, liveCanvasSnapshot = null) {
   if (!panel?.state?.candidateGraph) {
     return noCandidateApplyEligibility();
   }
-  const submitStructuralHash = panel.state.lastSubmit?.client_structural_graph_hash;
-  const liveStructuralHash = liveCanvasSnapshot?.structuralHash;
-  if (
-    typeof submitStructuralHash === "string"
-    && submitStructuralHash
-    && typeof liveStructuralHash === "string"
-    && liveStructuralHash
-    && liveStructuralHash !== submitStructuralHash
-  ) {
-    return {
-      applyable: false,
-      reason: APPLY_ELIGIBILITY_REASON.STALE_CANVAS,
-      message: "The live canvas no longer matches the submitted candidate baseline.",
-      warnings: [],
-    };
-  }
   const canonicalEligibility = normalizeApplyEligibility(panel.state.applyEligibility);
   if (canonicalEligibility) {
     panel.state.applyEligibilityWarning = null;
@@ -1986,8 +1970,9 @@ function createAgentPanel() {
   Object.assign(shell.style, {
     position: "relative",
     height: "100%",
-    display: "grid",
-    gridTemplateRows: "auto auto 1fr auto",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: "0",
     background: "#101115",
     color: "#edf2f7",
     borderLeft: "1px solid #282a32",
@@ -2081,12 +2066,15 @@ function createAgentPanel() {
 
   // ── Thread mount (scrollable chat + activity region) ────────────────────
   const thread = el("div");
+  thread.dataset.vibecomfyAgentThread = "1";
   Object.assign(thread.style, {
+    flex: "1 1 auto",
+    minHeight: "0",
     overflowY: "auto",
     padding: "12px 14px",
-    display: "grid",
+    display: "flex",
+    flexDirection: "column",
     gap: "10px",
-    alignContent: "start",
   });
 
   // Chat section: persisted conversation bubbles (M3).
@@ -2293,6 +2281,7 @@ function createAgentPanel() {
   return {
     root,
     shell,
+    thread,
     metaRow,
     status,
     settingsPopover,
@@ -2355,6 +2344,7 @@ function createAgentPanel() {
       undoStack: [],
       inFlightSubmit: null,
       submitAbortController: null,
+      submitEpoch: 0,
       inFlightApply: null,
       inFlightRebaseline: null,
       rebaselinePending: null,
@@ -2413,6 +2403,18 @@ async function _rehydrateChat(panel) {
       return;
     }
     if (payload && payload.ok === true) {
+      if (payload.exists === false) {
+        forgetActiveSession();
+        if (panel.state.sessionId === savedId) {
+          panel.state.sessionId = null;
+        }
+        panel.state.chatMessages = [];
+        panel.state.chatLoaded = true;
+        panel.state.chatError = null;
+        panel.state.chatSessionPath = null;
+        panel.state.chatDetailJsonPath = null;
+        return;
+      }
       panel.state.chatMessages = Array.isArray(payload.messages) ? payload.messages : [];
       // Normalize field changes on each rehydrated message for chat-bubble rendering (M4b).
       for (const msg of panel.state.chatMessages) {
@@ -2429,6 +2431,7 @@ async function _rehydrateChat(panel) {
         panel.state.sessionId = payload.session_id;
         _lsSet(LS_ACTIVE_SESSION_KEY, payload.session_id);
       }
+      restoreLatestCandidateFromChat(panel, payload);
     } else {
       throw new Error(payload?.error || "chat endpoint returned ok: false");
     }
@@ -2448,6 +2451,72 @@ function _persistActiveSession(sessionId) {
   if (typeof sessionId === "string" && sessionId) {
     _lsSet(LS_ACTIVE_SESSION_KEY, sessionId);
   }
+}
+
+function restoreLatestCandidateFromChat(panel, payload) {
+  const latest = payload?.latest_candidate;
+  if (!panel?.state || !latest || typeof latest !== "object") {
+    return;
+  }
+  if (panel.state.phase === PANEL_STATE.SUBMITTING || panel.state.phase === PANEL_STATE.APPLYING) {
+    return;
+  }
+  const candidateGraph = candidateGraphFromResult(latest);
+  if (!candidateGraph || typeof candidateGraph !== "object") {
+    return;
+  }
+  const eligibility = eligibilityFromResult(latest);
+  panel.state.phase = PANEL_STATE.AWAITING_REVIEW;
+  panel.state.sessionId = typeof latest.session_id === "string" && latest.session_id
+    ? latest.session_id
+    : panel.state.sessionId;
+  panel.state.turnId = typeof latest.turn_id === "string" && latest.turn_id
+    ? latest.turn_id
+    : panel.state.turnId;
+  syncBaselineFromResponse(panel, latest);
+  invalidateCandidateState(panel, { repaint: false });
+  panel.state.candidateGraph = candidateGraph;
+  panel.state.candidateGraphHash = typeof latest.candidate_graph_hash === "string"
+    ? latest.candidate_graph_hash
+    : null;
+  panel.state.candidateReport = latest.report && typeof latest.report === "object" ? clonePlainData(latest.report) : null;
+  panel.state.serverSubmitGraphHash = typeof latest.submit_graph_hash === "string" ? latest.submit_graph_hash : null;
+  panel.state.message = typeof latest.message === "string" ? latest.message : null;
+  panel.state.failure = null;
+  panel.state.applyEligibility = normalizeApplyEligibility(eligibility);
+  panel.state.applyAllowed = latest.apply_allowed !== false && latest.canvas_apply_allowed !== false;
+  panel.state.canvasApplyAllowed = Boolean(latest.canvas_apply_allowed);
+  panel.state.queueAllowed = Boolean(latest.queue_allowed);
+  panel.state.auditRef = latest.audit_ref || panel.state.auditRef || null;
+  panel.state.changeDetails = latest.change_details && typeof latest.change_details === "object"
+    ? clonePlainData(latest.change_details)
+    : null;
+  panel.state.debugPayload = scrubDebugPayload({
+    ...latest,
+    restored_from_chat: true,
+  });
+  reconcileResponseBatchTurns(panel, latest);
+  panel.state.lastSubmitFieldChanges = normalizeFieldChangesFromSubmit(latest);
+  setQueueGuardContext({
+    sessionId: panel.state.sessionId,
+    turnId: panel.state.turnId,
+    queueAllowed: panel.state.queueAllowed,
+  });
+  panel.state.queueGuard = getQueueGuardStateForPanel();
+  rememberTurnDetailSnapshot(panel, {
+    turn_id: panel.state.turnId,
+    session_id: panel.state.sessionId,
+    candidateGraphPresent: true,
+    candidateReport: panel.state.candidateReport,
+    applyEligibility: panel.state.applyEligibility,
+    queueAllowed: panel.state.queueAllowed,
+    canvasApplyAllowed: panel.state.canvasApplyAllowed,
+    auditRef: panel.state.auditRef,
+    debugPayload: panel.state.debugPayload,
+    fieldChanges: panel.state.lastSubmitFieldChanges,
+    changeDetails: panel.state.changeDetails,
+    message: panel.state.message,
+  });
 }
 
 function forgetActiveSession() {
@@ -4042,8 +4111,21 @@ function renderActivityRows(panel) {
   populateActivityRows(panel.sections.history, panel);
 }
 
+function scrollChatThreadToBottom(panel) {
+  const container = panel?.thread;
+  if (!container) {
+    return;
+  }
+  const target = Number.isFinite(container.scrollHeight)
+    ? container.scrollHeight
+    : Math.max(0, (container.children?.length || 0) * 100);
+  container.scrollTop = target;
+  container.dataset.vibecomfyScrolledToBottom = "1";
+}
+
 function renderHistory(panel) {
   renderChatThread(panel);
+  scrollChatThreadToBottom(panel);
 }
 
 function collectDiffRows(report) {
@@ -4581,6 +4663,57 @@ function _graphNodeCount(graph) {
   return Array.isArray(graph?.nodes) ? graph.nodes.length : 0;
 }
 
+export function vecNumber(vec, i, fb) {
+  const value = vec != null ? Number(vec[i]) : NaN;
+  return Number.isFinite(value) ? value : fb;
+}
+
+export function readNodeSize(node, fbW = 200, fbH = 100) {
+  return {
+    w: vecNumber(node?.size, 0, fbW),
+    h: vecNumber(node?.size, 1, fbH),
+  };
+}
+
+function readNodePos(node, fbX = 0, fbY = 0) {
+  return {
+    x: vecNumber(node?.pos, 0, fbX),
+    y: vecNumber(node?.pos, 1, fbY),
+  };
+}
+
+function readNodeBounding(node, titleHeight) {
+  if (node && typeof node.getBounding === "function") {
+    try {
+      const bounds = node.getBounding();
+      if (bounds) {
+        if (Array.isArray(bounds) || typeof bounds.length === "number") {
+          const x = vecNumber(bounds, 0, NaN);
+          const y = vecNumber(bounds, 1, NaN);
+          const w = vecNumber(bounds, 2, NaN);
+          const h = vecNumber(bounds, 3, NaN);
+          if ([x, y, w, h].every(Number.isFinite)) {
+            return { x, y, w, h };
+          }
+        } else if (typeof bounds === "object") {
+          const x = Number(bounds.x);
+          const y = Number(bounds.y);
+          const w = Number(bounds.w ?? bounds.width);
+          const h = Number(bounds.h ?? bounds.height);
+          if ([x, y, w, h].every(Number.isFinite)) {
+            return { x, y, w, h };
+          }
+        }
+      }
+    } catch (_ignored) {
+      // Fall back to pos/size below.
+    }
+  }
+  const pos = readNodePos(node);
+  const size = readNodeSize(node);
+  return { x: pos.x, y: pos.y - titleHeight, w: size.w, h: size.h + titleHeight };
+}
+
 function _overlayDrawCacheKey(diff, candidateGraph) {
   const candidateHash =
     diff?._candidateGraphHash
@@ -4620,13 +4753,10 @@ function _buildOverlayDrawModel(ctx, diff, candidateGraph) {
     if (!addedByUid.has(uid)) {
       continue;
     }
-    if (Array.isArray(node.size)) {
-      const rawW = node.size[0];
-      const rawH = node.size[1];
-      if (typeof rawW === "number" && typeof rawH === "number" && rawW > 40 && rawH > 20) {
-        ghostDimsByUid.set(uid, { w: rawW, h: rawH });
-        continue;
-      }
+    const nodeSize = readNodeSize(node, NaN, NaN);
+    if (nodeSize.w > 40 && nodeSize.h > 20) {
+      ghostDimsByUid.set(uid, nodeSize);
+      continue;
     }
     ghostDimsByUid.set(uid, _computeGhostDimensions(node, ctx));
   }
@@ -4781,16 +4911,19 @@ export function drawPreviewOverlay(ctx, diff) {
       if (!enode || !enode.pos) {
         continue;
       }
-      var ex = enode.pos[0];
-      var ey = enode.pos[1];
-      var ew = Array.isArray(enode.size) ? enode.size[0] : 200;
+      var epos = readNodePos(enode);
+      var ex = epos.x;
+      var ey = epos.y;
+      var esize = readNodeSize(enode);
+      var ew = esize.w;
       var collapsed = !!(enode.flags && enode.flags.collapsed);
-      var eh = collapsed ? 0 : (Array.isArray(enode.size) ? enode.size[1] : 100);
+      var eh = collapsed ? 0 : esize.h;
+      var eb = readNodeBounding(enode, TITLE_H);
       ctx.setLineDash([]);
       ctx.strokeStyle = editedColor;
       ctx.lineWidth = lineWidth;
       // Box the WHOLE node: title bar (above pos[1]) + body.
-      ctx.strokeRect(ex - 2, ey - TITLE_H - 2, ew + 4, eh + TITLE_H + 4);
+      ctx.strokeRect(eb.x - 2, eb.y - 2, eb.w + 4, eb.h + 4);
       if (collapsed) {
         continue; // no widget rows to tint when collapsed
       }
@@ -4837,10 +4970,11 @@ export function drawPreviewOverlay(ctx, diff) {
         if (!efn || !efn.pos) continue;
         var efCollapsed = !!(efn.flags && efn.flags.collapsed);
         if (efCollapsed) continue;
-        var efx = efn.pos[0];
-        var efy = efn.pos[1];
-        var efw = Array.isArray(efn.size) ? efn.size[0] : 200;
-        var efh = Array.isArray(efn.size) ? efn.size[1] : 100;
+        var efpos = readNodePos(efn);
+        var efx = efpos.x;
+        var efy = efpos.y;
+        var efsize = readNodeSize(efn);
+        var efh = efsize.h;
 
         ctx.save();
         ctx.font = "11px Arial, sans-serif";
@@ -4880,10 +5014,11 @@ export function drawPreviewOverlay(ctx, diff) {
       if (!rnode || !rnode.pos) {
         continue;
       }
-      var rx = rnode.pos[0];
-      var ry = rnode.pos[1];
-      var rw = Array.isArray(rnode.size) ? rnode.size[0] : 200;
-      var rh = Array.isArray(rnode.size) ? rnode.size[1] : 100;
+      var rb = readNodeBounding(rnode, TITLE_H);
+      var rx = rb.x;
+      var ry = rb.y;
+      var rw = rb.w;
+      var rh = rb.h;
       ctx.setLineDash([]);
       ctx.strokeStyle = removedColor;
       ctx.lineWidth = lineWidth;
@@ -4904,23 +5039,21 @@ export function drawPreviewOverlay(ctx, diff) {
           continue;
         }
         var pos = cn.pos;
-        if (!pos || !Array.isArray(pos) || pos.length < 2) {
+        if (!pos || typeof pos.length !== "number" || pos.length < 2) {
           continue;
         }
-        var cx = pos[0];
-        var cy = pos[1];
+        var cpos = readNodePos(cn);
+        var cx = cpos.x;
+        var cy = cpos.y;
 
         // ── Dimension resolution: use cn.size only when plausible ────────
         var sizeValid = false;
         var cw, ch;
-        if (Array.isArray(cn.size)) {
-          var rawW = cn.size[0];
-          var rawH = cn.size[1];
-          if (typeof rawW === "number" && typeof rawH === "number" && rawW > 40 && rawH > 20) {
-            cw = rawW;
-            ch = rawH;
-            sizeValid = true;
-          }
+        var csize = readNodeSize(cn, NaN, NaN);
+        if (csize.w > 40 && csize.h > 20) {
+          cw = csize.w;
+          ch = csize.h;
+          sizeValid = true;
         }
         if (!sizeValid) {
           var dims = drawModel.ghostDimsByUid.get(uid) || _computeGhostDimensions(cn, ctx);
@@ -5036,17 +5169,18 @@ export function drawPreviewOverlay(ctx, diff) {
           } catch (_ignored) { /* fall through */ }
         }
         // Live geometry
-        if (node && node.pos && Array.isArray(node.pos) && node.pos.length >= 2) {
-          var _nx = node.pos[0];
-          var _ny = node.pos[1];
-          var _nw = Array.isArray(node.size) ? node.size[0] : 200;
+        if (node && node.pos && typeof node.pos.length === "number" && node.pos.length >= 2) {
+          var _npos = readNodePos(node);
+          var _nx = _npos.x;
+          var _ny = _npos.y;
+          var _nw = readNodeSize(node).w;
           if (isInput) return [_nx, _ny + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
           return [_nx + _nw, _ny + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
         }
         // Ghost geometry (candidate-only node)
-        if (ghostPos && Array.isArray(ghostPos) && ghostPos.length >= 2) {
-          var _gx = ghostPos[0];
-          var _gy = ghostPos[1];
+        if (ghostPos && typeof ghostPos.length === "number" && ghostPos.length >= 2) {
+          var _gx = vecNumber(ghostPos, 0, 0);
+          var _gy = vecNumber(ghostPos, 1, 0);
           if (isInput) return [_gx, _gy + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
           return [_gx + ghostW, _gy + TITLE_H + slotIdx * SLOT_H + SLOT_H / 2];
         }
@@ -5073,11 +5207,9 @@ export function drawPreviewOverlay(ctx, diff) {
         if (_uid && drawModel.ghostDimsByUid.has(_uid)) {
           return drawModel.ghostDimsByUid.get(_uid);
         }
-        if (Array.isArray(cn.size)) {
-          var _rw = cn.size[0], _rh = cn.size[1];
-          if (typeof _rw === 'number' && typeof _rh === 'number' && _rw > 40 && _rh > 20) {
-            return { w: _rw, h: _rh };
-          }
+        var _rs = readNodeSize(cn, NaN, NaN);
+        if (_rs.w > 40 && _rs.h > 20) {
+          return _rs;
         }
         return _computeGhostDimensions(cn, ctx);
       }
@@ -5121,7 +5253,7 @@ export function drawPreviewOverlay(ctx, diff) {
         var _fGhostPos = null, _fGhostW = 0;
         if (!_fNode2) {
           var _fc = candidateByUid.get(_p2.fromUid);
-          if (_fc && _fc.pos && Array.isArray(_fc.pos) && _fc.pos.length >= 2) {
+          if (_fc && _fc.pos && typeof _fc.pos.length === "number" && _fc.pos.length >= 2) {
             _fGhostPos = _fc.pos;
             _fGhostW = _ghostDims(_fc).w;
           }
@@ -5129,7 +5261,7 @@ export function drawPreviewOverlay(ctx, diff) {
         var _tGhostPos = null, _tGhostW = 0;
         if (!_tNode2) {
           var _tc = candidateByUid.get(_p2.toUid);
-          if (_tc && _tc.pos && Array.isArray(_tc.pos) && _tc.pos.length >= 2) {
+          if (_tc && _tc.pos && typeof _tc.pos.length === "number" && _tc.pos.length >= 2) {
             _tGhostPos = _tc.pos;
             _tGhostW = _ghostDims(_tc).w;
           }
@@ -5953,7 +6085,10 @@ function renderComposerNotice(panel, readinessState) {
     hasContent = true;
   }
   const clarification = panel?.state?.clarification;
-  if (panel.state.phase === PANEL_STATE.CLARIFY && clarification?.message) {
+  if (
+    (panel.state.phase === PANEL_STATE.CLARIFY || panel.state.phase === PANEL_STATE.AWAITING_REVIEW)
+    && clarification?.message
+  ) {
     if (hasContent) {
       const divider = el("div");
       divider.style.height = "1px";
@@ -5961,15 +6096,13 @@ function renderComposerNotice(panel, readinessState) {
       divider.style.margin = "8px 0";
       notice.appendChild(divider);
     }
-    const heading = el("div", "Clarify question");
+    const heading = el("div", "Reply in the prompt");
     heading.style.color = "#ffc107";
     heading.style.fontWeight = "700";
     heading.style.marginBottom = "4px";
     notice.appendChild(heading);
-    notice.appendChild(el("div", clarification.message));
-    const followUp = el("div", "Reply in the prompt and submit — it continues this same session.");
+    const followUp = el("div", "Your answer continues this same session.");
     followUp.style.color = "#9da1ac";
-    followUp.style.marginTop = "6px";
     notice.appendChild(followUp);
     hasContent = true;
   }
@@ -6049,7 +6182,7 @@ export function renderAgentPanel(panel) {
     submitting
     || rebaselinePending
     || !canSubmit
-    || (!readinessState.ready && readinessState.reason !== ROUTE_STATUS_KIND.LOADING);
+    || !readinessState.ready;
   panel.buttons.submit.textContent = submitting ? "Submitting..." : "Submit";
   panel.buttons.stop.disabled = !submitting;
   panel.buttons.apply.disabled = actionState.applyDisabled;
@@ -6157,6 +6290,7 @@ async function newAgentConversation(panel) {
     panel.state.submitAbortController.abort();
     panel.state.submitAbortController = null;
   }
+  panel.state.submitEpoch = (panel.state.submitEpoch || 0) + 1;
   panel.state.chatRehydrateEpoch = (panel.state.chatRehydrateEpoch || 0) + 1;
   // Clear candidate state
   panel.state.candidateGraph = null;
@@ -6184,6 +6318,7 @@ async function newAgentConversation(panel) {
   panel.state.turns = [];
   panel.state.history = [];
   // Clear session metadata — next submit will omit session_id.
+  setQueueGuardContext(null);
   panel.state.sessionId = null;
   panel.state.turnId = null;
   panel.state.baselineTurnId = null;
@@ -6219,6 +6354,9 @@ async function submitAgentEdit(panel) {
     return panel.state.inFlightSubmit;
   }
   panel.state.inFlightSubmit = (async () => {
+    const submitEpoch = (panel.state.submitEpoch || 0) + 1;
+    panel.state.submitEpoch = submitEpoch;
+    const isCurrentSubmit = () => panel?.state?.submitEpoch === submitEpoch;
     // Re-resolve the prompt element from the live DOM at submit time: a durable
     // panel re-render can replace the textarea, leaving panel.fields.prompt as a
     // stale, detached reference whose .value reads empty — a false "MissingTask".
@@ -6253,7 +6391,13 @@ async function submitAgentEdit(panel) {
     let snapshot;
     try {
       snapshot = await buildSubmitSnapshot(panel);
+      if (!isCurrentSubmit()) {
+        return;
+      }
     } catch (e) {
+      if (!isCurrentSubmit()) {
+        return;
+      }
       panel.state.phase = PANEL_STATE.ERROR;
       panel.state.failure = agentPanelFailure("SerializeError", String(e), {
         retryable: true,
@@ -6297,8 +6441,9 @@ async function submitAgentEdit(panel) {
     renderAgentPanel(panel);
 
     let result;
+    let submitAbortController = null;
     try {
-      const submitAbortController = new AbortController();
+      submitAbortController = new AbortController();
       panel.state.submitAbortController = submitAbortController;
       const body = {
         graph: snapshot.graph,
@@ -6318,7 +6463,13 @@ async function submitAgentEdit(panel) {
         body: JSON.stringify(body),
         signal: submitAbortController.signal,
       });
+      if (!isCurrentSubmit()) {
+        return;
+      }
       result = await res.json();
+      if (!isCurrentSubmit()) {
+        return;
+      }
       // Prefer typed envelope fields; fall back to compatibility fields.
       result = adaptTypedResponse(result);
       if (typeof result?.session_id === "string" && result.session_id) {
@@ -6344,6 +6495,9 @@ async function submitAgentEdit(panel) {
         });
       }
     } catch (e) {
+      if (!isCurrentSubmit()) {
+        return;
+      }
       if (e?.name === "AbortError") {
         panel.state.phase = PANEL_STATE.IDLE;
         panel.state.failure = null;
@@ -6410,8 +6564,10 @@ async function submitAgentEdit(panel) {
       _rehydrateChat(panel).then(() => { scheduleRenderAgentPanel("rehydrate", agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
       return;
     } finally {
-      panel.state.submitAbortController = null;
-      panel.state.inFlightSubmit = null;
+      if (isCurrentSubmit() || panel.state.submitAbortController === submitAbortController) {
+        panel.state.submitAbortController = null;
+        panel.state.inFlightSubmit = null;
+      }
     }
 
     // Clarify terminal: the agent ended the turn with `clarify("...")` instead of
@@ -6423,7 +6579,7 @@ async function submitAgentEdit(panel) {
     const outcome = outcomeFromResult(result);
     const candidateGraph = candidateGraphFromResult(result);
     const eligibility = eligibilityFromResult(result);
-    if (outcomeRequiresClarification(outcome)) {
+    if (outcomeRequiresClarification(outcome) && !candidateGraph) {
       const fallbackMessage =
         (typeof result.message === "string" && result.message.trim())
           ? result.message.trim()
@@ -6484,7 +6640,13 @@ async function submitAgentEdit(panel) {
     let arrivalSnapshot;
     try {
       arrivalSnapshot = await buildCanvasSnapshot();
+      if (!isCurrentSubmit()) {
+        return;
+      }
     } catch (e) {
+      if (!isCurrentSubmit()) {
+        return;
+      }
       panel.state.phase = PANEL_STATE.ERROR;
       syncBaselineFromResponse(panel, result);
       panel.state.failure = agentPanelFailure("SerializeError", `Could not serialize the current canvas after the candidate arrived: ${String(e)}`, {
@@ -6501,67 +6663,18 @@ async function submitAgentEdit(panel) {
       return;
     }
 
-    const expectedArrivalHash = panel.state.lastSubmit?.client_graph_hash;
     const expectedArrivalStructuralHash = panel.state.lastSubmit?.client_structural_graph_hash;
-    if (
+    const structuralChangedForDiagnostics =
       typeof expectedArrivalStructuralHash === "string"
       && expectedArrivalStructuralHash
-      && arrivalSnapshot.structuralHash !== expectedArrivalStructuralHash
-    ) {
-      const failure = agentPanelFailure("StaleResponseArrival", "The canvas changed before this candidate arrived. Review is blocked.", {
-        retryable: true,
-        graph_unchanged: true,
-        next_action: "Submit a new edit from the current canvas.",
-        client_graph_hash: arrivalSnapshot.graphHash,
-        client_structural_graph_hash: arrivalSnapshot.structuralHash,
-        expected_graph_hash: expectedArrivalHash,
-        expected_structural_graph_hash: expectedArrivalStructuralHash,
-        client_live_canvas_token: arrivalSnapshot.liveCanvasToken,
-        session_id: result.session_id,
-        turn_id: result.turn_id,
-        baseline_turn_id: result.baseline_turn_id,
-        audit_ref: result.audit_ref || null,
-        raw_response: result,
-      });
-      panel.state.phase = PANEL_STATE.ERROR;
-      panel.state.failure = failure;
-      panel.state.sessionId = result.session_id || panel.state.sessionId;
-      _persistActiveSession(panel.state.sessionId);
-      panel.state.turnId = result.turn_id || null;
-      syncBaselineFromResponse(panel, result);
-      panel.state.auditRef = result.audit_ref || null;
-      panel.state.queueGuard = getQueueGuardStateForPanel();
-      panel.state.debugPayload = {
-        ...failure,
-        last_submit: panel.state.lastSubmit,
-      };
-      pushHistory(panel, "failure", failure.kind || "StaleResponseArrival");
-      pushTurnStatus(panel, "failed", {
-        session_id: result.session_id,
-        turn_id: result.turn_id,
-        baseline_turn_id: result.baseline_turn_id,
-        task,
-        failure_kind: failure.kind,
-        failure_stage: failure.stage,
-        message: failure.user_facing_message || failure.message,
-        audit_ref: result.audit_ref,
-        raw_payload: failure,
-      });
-      rememberTurnDetailSnapshot(panel, {
-        turn_id: result.turn_id,
-        session_id: result.session_id,
-        failure,
-        message: failure.user_facing_message || failure.message,
-      });
-      renderAgentPanel(panel);
-      // Canonicalize chat through the rehydrate endpoint.
-      _rehydrateChat(panel).then(() => { scheduleRenderAgentPanel("rehydrate", agentPanel); }).catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
-      return;
-    }
+      && arrivalSnapshot.structuralHash !== expectedArrivalStructuralHash;
 
     const candidateGraphHash = typeof result.candidate_graph_hash === "string"
       ? result.candidate_graph_hash
       : await sha256HexUtf8(canonicalJsonString(candidateGraph));
+    if (!isCurrentSubmit()) {
+      return;
+    }
     panel.state.phase = PANEL_STATE.AWAITING_REVIEW;
     panel.state.sessionId = result.session_id || panel.state.sessionId;
     _persistActiveSession(panel.state.sessionId);
@@ -6574,11 +6687,23 @@ async function submitAgentEdit(panel) {
     panel.state.serverSubmitGraphHash = typeof result.submit_graph_hash === "string" ? result.submit_graph_hash : null;
     panel.state.message = result.message || null;
     panel.state.failure = null;
+    panel.state.clarification = outcomeRequiresClarification(outcome)
+      ? {
+          message: clarificationMessageFromOutcome(outcome, result.message || null),
+          turn_id: result.turn_id || null,
+          session_id: result.session_id || null,
+        }
+      : null;
     panel.state.applyEligibility = normalizeApplyEligibility(eligibility);
     panel.state.applyAllowed = result.apply_allowed !== false && result.canvas_apply_allowed !== false;
     panel.state.canvasApplyAllowed = Boolean(result.canvas_apply_allowed);
     panel.state.queueAllowed = Boolean(result.queue_allowed);
     panel.state.auditRef = result.audit_ref || null;
+    setQueueGuardContext({
+      sessionId: panel.state.sessionId,
+      turnId: panel.state.turnId,
+      queueAllowed: panel.state.queueAllowed,
+    });
     panel.state.queueGuard = getQueueGuardStateForPanel();
     reconcileResponseBatchTurns(panel, result);
     panel.state.lastSubmitFieldChanges = normalizeFieldChangesFromSubmit(result);
@@ -6588,6 +6713,9 @@ async function submitAgentEdit(panel) {
     panel.state.debugPayload = scrubDebugPayload({
       ...result,
       last_submit: panel.state.lastSubmit,
+      arrival_structural_mismatch: structuralChangedForDiagnostics,
+      arrival_client_graph_hash: arrivalSnapshot.graphHash,
+      arrival_client_structural_graph_hash: arrivalSnapshot.structuralHash,
     });
     pushHistory(panel, "candidate", result.turn_id ? `turn ${result.turn_id}` : "candidate");
     pushTurnStatus(panel, "candidate", {
@@ -6639,7 +6767,33 @@ function stopAgentSubmit(panel) {
     renderAgentPanel(panel);
     return false;
   }
+  panel.state.submitEpoch = (panel.state.submitEpoch || 0) + 1;
   controller.abort();
+  panel.state.submitAbortController = null;
+  panel.state.inFlightSubmit = null;
+  panel.state.phase = PANEL_STATE.IDLE;
+  panel.state.failure = null;
+  panel.state.message = "Request cancelled.";
+  panel.state.queueGuard = getQueueGuardStateForPanel();
+  panel.state.syntheticAgentMessage = {
+    role: "agent",
+    text: "Request cancelled.",
+    session_id: panel.state.sessionId || null,
+    synthetic: true,
+    local_id: `cancelled:${Date.now()}`,
+  };
+  panel.state.debugPayload = {
+    cancelled: true,
+    last_submit: panel.state.lastSubmit,
+  };
+  const task = panel.state.lastSubmit?.task || "";
+  pushHistory(panel, "cancelled", task);
+  pushTurnStatus(panel, "cancelled", {
+    session_id: panel.state.sessionId,
+    task,
+    message: "Request cancelled.",
+  });
+  renderAgentPanel(panel);
   return true;
 }
 
@@ -6767,8 +6921,22 @@ async function applyAgentCandidate(panel) {
             graph_unchanged: true,
             next_action: "Retry Apply after the backend accepts the turn.",
           });
+      const authoritativeBackendReject =
+        e?.ok === false
+        && !["MalformedResponse", "AcceptError", "NetworkError"].includes(String(e?.kind || ""));
       panel.state.phase = PANEL_STATE.ERROR;
       panel.state.failure = failure;
+      if (authoritativeBackendReject) {
+        panel.state.applyEligibility = disabledApplyEligibility(
+          APPLY_ELIGIBILITY_REASON.SUPERSEDED,
+          failure.user_facing_message || failure.message || "The backend rejected this candidate.",
+          ["backend_rejected"],
+        );
+        panel.state.applyAllowed = false;
+        panel.state.canvasApplyAllowed = false;
+        panel.state.queueAllowed = false;
+        setQueueGuardContext(null);
+      }
       syncBaselineFromResponse(panel, failure);
       panel.state.auditRef = failure.audit_ref || panel.state.auditRef;
       panel.state.debugPayload = {
@@ -6882,11 +7050,7 @@ async function applyAgentCandidate(panel) {
     // the panel is now IDLE (overlay won't draw), so skip the redundant repaint.
     invalidateCandidateState(panel, { repaint: false });
     panel.state.message = "Candidate accepted and applied locally.";
-    setQueueGuardContext({
-      sessionId: panel.state.sessionId,
-      turnId: panel.state.turnId,
-      queueAllowed: Boolean(accepted.queue_allowed ?? panel.state.queueAllowed),
-    });
+    setQueueGuardContext(null);
     panel.state.queueGuard = getQueueGuardStateForPanel();
     panel.state.debugPayload = {
       accepted,
@@ -7013,6 +7177,7 @@ async function rejectAgentCandidate(panel) {
   panel.state.phase = PANEL_STATE.IDLE;
   syncBaselineFromResponse(panel, rejected);
   invalidateCandidateState(panel);
+  setQueueGuardContext(null);
   panel.state.message = "Candidate rejected and cleared from the panel.";
   panel.state.failure = null;
   panel.state.auditRef = rejected.audit_ref || panel.state.auditRef;

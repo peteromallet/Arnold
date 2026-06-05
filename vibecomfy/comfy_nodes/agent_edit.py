@@ -58,6 +58,7 @@ from .agent_diagnostics import lower_stage_result, queue_stage_result
 from .agent_session import (
     allocate_turn,
     payload_hash,
+    read_state,
     record_idempotent_response,
     session_dir_for,
     structural_graph_hash,
@@ -277,15 +278,32 @@ def _display_value(value: Any, *, limit: int = 48) -> str:
     return text
 
 
-def _change_subject(change: FieldChange) -> str:
+def _node_label_by_uid(graph: Mapping[str, Any]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for node in _iter_ui_graph_nodes(graph):
+        uid = _ui_node_uid(node)
+        if not uid:
+            continue
+        class_type = node.get("type") or node.get("class_type")
+        title = node.get("title")
+        label = title if isinstance(title, str) and title.strip() else class_type
+        if isinstance(label, str) and label.strip():
+            labels[str(uid)] = label.strip()
+    return labels
+
+
+def _change_subject(change: FieldChange, labels: Mapping[str, str] | None = None) -> str:
     uid = str(change.uid or "node").strip() or "node"
     field = str(change.field_path or "field").strip() or "field"
+    label = labels.get(uid) if labels else None
+    if isinstance(label, str) and label.strip():
+        return f"{label.strip()} {field}"
     return f"{uid}.{field}"
 
 
-def _human_change_phrase(change: FieldChange) -> str:
+def _human_change_phrase(change: FieldChange, labels: Mapping[str, str] | None = None) -> str:
     return (
-        f"updated {_change_subject(change)} from "
+        f"updated {_change_subject(change, labels)} from "
         f"{_display_value(change.old)} to {_display_value(change.new)}"
     )
 
@@ -299,6 +317,7 @@ def _sentence_case(text: str) -> str:
 
 def _humanized_edit_message(state: AgentEditState) -> str:
     changes = tuple(state.batch_field_changes or ())
+    labels = _node_label_by_uid(state.graph)
     if not changes:
         return ensure_sentence_message(
             state.batch_done_summary or state.user_message,
@@ -307,11 +326,11 @@ def _humanized_edit_message(state: AgentEditState) -> str:
     if len(changes) == 1:
         return _sentence_case(
             ensure_sentence_message(
-                _human_change_phrase(changes[0]),
+                _human_change_phrase(changes[0], labels),
                 fallback="Updated the workflow.",
             )
         )
-    phrases = [_human_change_phrase(change) for change in changes[:3]]
+    phrases = [_human_change_phrase(change, labels) for change in changes[:3]]
     if len(changes) == 2:
         text = f"{phrases[0]} and {phrases[1]}"
     else:
@@ -370,11 +389,14 @@ def _batch_warning_sentence(
                 fallback=state.batch_final_summary or failure.message,
             )
         return ensure_sentence_message(
-            "Some requested edits did not land, so I stopped before applying the rest",
-            fallback=failure.message or failure.user_facing_message,
+            failure.user_facing_message,
+            fallback=failure.message or "The graph is unchanged.",
         )
     if outcome is not None and outcome.kind == "edit+clarify":
-        return "I still need clarification before continuing."
+        return ensure_sentence_message(
+            outcome.question,
+            fallback=state.user_message or "I still need clarification before continuing.",
+        )
     return ""
 
 
@@ -400,7 +422,10 @@ def _synthesize_batch_repl_message(
             return f"{lead} {warning}".strip()
         return warning
     if outcome.kind == "clarify":
-        return "I need clarification before continuing."
+        return ensure_sentence_message(
+            outcome.question,
+            fallback=state.user_message or "I need clarification before continuing.",
+        )
     if outcome.kind == "budget":
         return ensure_sentence_message(
             "I ran out of batch budget before completing the requested changes",
@@ -502,6 +527,25 @@ def _present_class_types(session: Any) -> list[str]:
         if isinstance(class_type, str) and class_type:
             types.add(class_type)
     return sorted(types)
+
+
+def _format_node_variable_index(session: Any) -> str:
+    """Return ``var = ClassType`` lines for the current EditSession graph."""
+    working_ui = getattr(session, "working_ui", None)
+    name_by_uid = getattr(session, "name_by_uid", None)
+    if not isinstance(working_ui, Mapping) or not isinstance(name_by_uid, Mapping):
+        return ""
+    rows: list[tuple[str, str, str]] = []
+    for node in _iter_ui_nodes(working_ui):
+        uid = _ui_node_uid(node)
+        if not uid:
+            continue
+        name = name_by_uid.get(uid)
+        class_type = node.get("type") or node.get("class_type")
+        if isinstance(name, str) and name and isinstance(class_type, str) and class_type:
+            rows.append((name, uid, class_type))
+    rows.sort(key=lambda item: (item[0], item[1]))
+    return "\n".join(f"{name} = {class_type}" for name, _uid, class_type in rows)
 
 
 def _format_available_node_names(rows: Any, *, max_line_chars: int = 96) -> str:
@@ -943,8 +987,9 @@ def _write_turn_chat_artifact(
     turn_dir = state.turn_dir
     chat_path = turn_dir / "chat.json"
 
-    agent_text: str = response.get("message", "")
-    if not isinstance(agent_text, str) or not agent_text.strip():
+    agent_text_raw = response.get("user_facing_message") or response.get("message", "")
+    agent_text: str = agent_text_raw if isinstance(agent_text_raw, str) else ""
+    if not agent_text.strip():
         agent_text = "The agent edit turn completed."
 
     # Extract structured changes by contract shape.
@@ -1007,6 +1052,63 @@ def _write_turn_chat_artifact(
         )
 
 
+def _latest_session_candidate_payload(session_dir: Path, turn_ids: list[str]) -> dict[str, Any] | None:
+    try:
+        state = read_state(session_dir)
+    except Exception:
+        state = {}
+    turns_state = state.get("turns") if isinstance(state, Mapping) else {}
+    if not isinstance(turns_state, Mapping):
+        turns_state = {}
+    for turn_id in reversed(turn_ids):
+        turn_state = turns_state.get(turn_id)
+        if not isinstance(turn_state, Mapping) or turn_state.get("state") != "candidate":
+            continue
+        turn_dir = session_dir / "turns" / turn_id
+        response_path = turn_dir / "response.json"
+        try:
+            response = json.loads(response_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            response = {}
+        if not isinstance(response, Mapping):
+            response = {}
+        candidate_path = turn_dir / "candidate.ui.json"
+        graph = response.get("graph")
+        if not isinstance(graph, Mapping) and candidate_path.is_file():
+            try:
+                graph = json.loads(candidate_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                graph = None
+        if not isinstance(graph, Mapping):
+            continue
+        candidate = response.get("candidate")
+        eligibility = response.get("apply_eligibility") or response.get("eligibility")
+        return {
+            "turn_id": turn_id,
+            "session_id": session_dir.name,
+            "baseline_turn_id": response.get("baseline_turn_id"),
+            "message": response.get("message"),
+            "graph": _json_safe(graph),
+            "report": _json_safe(response.get("report")) if isinstance(response.get("report"), Mapping) else None,
+            "candidate": _json_safe(candidate) if isinstance(candidate, Mapping) else None,
+            "apply_eligibility": _json_safe(eligibility) if isinstance(eligibility, Mapping) else None,
+            "canvas_apply_allowed": bool(response.get("canvas_apply_allowed")),
+            "apply_allowed": response.get("apply_allowed") is not False,
+            "queue_allowed": bool(response.get("queue_allowed")),
+            "candidate_graph_hash": response.get("candidate_graph_hash") or turn_state.get("candidate_graph_hash"),
+            "candidate_structural_graph_hash": response.get("candidate_structural_graph_hash") or turn_state.get("candidate_structural_graph_hash"),
+            "submit_graph_hash": response.get("submit_graph_hash") or turn_state.get("submit_graph_hash"),
+            "submit_structural_graph_hash": response.get("submit_structural_graph_hash") or turn_state.get("submit_structural_graph_hash"),
+            "baseline_graph_hash": response.get("baseline_graph_hash") or state.get("baseline_graph_hash"),
+            "baseline_graph_hash_kind": response.get("baseline_graph_hash_kind") or state.get("baseline_graph_hash_kind"),
+            "baseline_graph_hash_version": response.get("baseline_graph_hash_version") or state.get("baseline_graph_hash_version"),
+            "audit_ref": _json_safe(response.get("audit_ref")) if isinstance(response.get("audit_ref"), Mapping) else None,
+            "change_details": _json_safe(response.get("change_details")) if isinstance(response.get("change_details"), Mapping) else None,
+            "batch_turns": _json_safe(response.get("batch_turns")) if isinstance(response.get("batch_turns"), list) else [],
+        }
+    return None
+
+
 def read_session_chat(
     session_root: Path,
     session_id: str,
@@ -1028,14 +1130,17 @@ def read_session_chat(
     session_dir = session_dir_for(session_root, safe_id)
     turns_dir = session_dir / "turns"
 
+    session_exists = session_dir.is_dir()
     if not turns_dir.is_dir():
         return {
             "ok": True,
+            "exists": session_exists,
             "session_id": safe_id,
             "session_path": str(session_dir),
             "latest_turn_id": None,
             "detail_json_path": None,
             "messages": [],
+            "latest_candidate": None,
         }
 
     # Sort turn directories deterministically (zero-padded integers).
@@ -1071,8 +1176,9 @@ def read_session_chat(
                     response = json.loads(response_path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
                     continue  # skip unrecoverable turn
-                agent_text: str = response.get("message", "")
-                if not isinstance(agent_text, str) or not agent_text.strip():
+                agent_text_raw = response.get("user_facing_message") or response.get("message", "")
+                agent_text: str = agent_text_raw if isinstance(agent_text_raw, str) else ""
+                if not agent_text.strip():
                     agent_text = "The agent edit turn completed."
                 chat_record = {
                     "session_id": safe_id,
@@ -1115,6 +1221,7 @@ def read_session_chat(
 
     return {
         "ok": True,
+        "exists": True,
         "session_id": safe_id,
         "session_path": str(session_dir),
         "latest_turn_id": latest_turn_id,
@@ -1124,6 +1231,7 @@ def read_session_chat(
             else None
         ),
         "messages": display_messages,
+        "latest_candidate": _latest_session_candidate_payload(session_dir, turn_ids),
     }
 
 
@@ -1709,6 +1817,8 @@ def _stage_agent_batch_repl(
     current_render = initial_render
     last_diff = ""
     last_report = ""
+    last_landed_count: int | None = None
+    previous_model_message = ""
     consecutive_errors = 0
     total_landed = 0
     done_noop_nudges = 0
@@ -1718,10 +1828,16 @@ def _stage_agent_batch_repl(
 
     for turn_number in range(max_batches):
         budget_remaining = max_batches - turn_number
+        include_full_render = turn_number == 0 or last_landed_count == 0
+        node_variable_index = _format_node_variable_index(session)
         messages = build_batch_messages(
             task=state.task,
             turn_number=turn_number,
-            python_source=initial_render if turn_number == 0 else "",
+            python_source=(initial_render if turn_number == 0 else current_render)
+            if include_full_render
+            else "",
+            node_variable_index=node_variable_index,
+            previous_model_message=previous_model_message,
             signature_catalog=state.batch_signature_catalog if turn_number == 0 else "",
             available_node_names=available_node_names if turn_number == 0 else "",
             diff=last_diff,
@@ -1734,6 +1850,8 @@ def _stage_agent_batch_repl(
             "turn_number": turn_number,
             "messages": messages,
             "budget_remaining": budget_remaining,
+            "node_variable_index": node_variable_index,
+            "included_full_render": include_full_render,
         }
         request_log.append(request_entry)
         write_json_artifact(
@@ -1753,6 +1871,7 @@ def _stage_agent_batch_repl(
 
         state.provider_metadata = dict(turn_result.audit_metadata or {})
         state.user_message = turn_result.message
+        previous_model_message = turn_result.message
         clarify_split = split_terminal_clarify(turn_result.batch)
         clarify_message = clarify_split.message
         editable_batch = clarify_split.batch if clarify_message is not None else turn_result.batch
@@ -1867,7 +1986,9 @@ def _stage_agent_batch_repl(
         write_json_artifact(state.candidate_ui_path, state.ui_payload)
 
         turn_has_errors = (not batch_result.ok) or bool(batch_result.diagnostics)
-        total_landed += len(batch_result.landed_ops)
+        landed_count = len(batch_result.landed_ops)
+        total_landed += landed_count
+        last_landed_count = landed_count
         consecutive_errors = consecutive_errors + 1 if turn_has_errors else 0
         diff_text = _render_batch_diff(current_render, next_render)
         report_text = _format_batch_report(

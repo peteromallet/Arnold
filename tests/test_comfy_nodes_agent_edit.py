@@ -1987,7 +1987,7 @@ def test_handle_agent_edit_batch_repl_returns_successful_non_commit_clarificatio
     assert result["debug"]["batch_repl"]["exit_mode"] == "pure_clarify"
     assert result["clarification_required"] is True
     assert result["graph_unchanged"] is True
-    assert result["message"] == "I need clarification before continuing."
+    assert result["message"] == "before or after the face restoration?"
     assert result["apply_allowed"] is False
     assert result["queue_allowed"] is False
     assert result["apply_eligibility"]["reason"] == "no_candidate"
@@ -2084,7 +2084,7 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert result["debug"]["gates"] == result["gates"]
     assert result["debug"]["hashes"]["candidate_graph_hash"] == result["candidate_graph_hash"]
     assert result["debug"]["batch_repl"]["exit_mode"] == "done"
-    assert result["message"] == "Updated 2.filename_prefix from null to after."
+    assert result["message"] == "Updated SaveImage filename_prefix from null to after."
     assert result["done_summary"] not in result["message"]
     assert result["done_summary"].startswith("Gate A passed:")
     assert "Gate B passed:" in result["done_summary"]
@@ -2189,7 +2189,7 @@ def test_handle_agent_edit_batch_repl_clarify_after_edit_returns_edit_and_clarif
     assert result["apply_allowed"] is True
     assert result["apply_eligibility"]["reason"] == "queue_blocked_warning"
     assert result["candidate_graph_hash"] == payload_hash(result["graph"])
-    assert result["message"] == "Applied 1 edit. I still need clarification before continuing."
+    assert result["message"] == "Applied 1 edit. Should I also rename the file stem?"
     assert result["outcome"] == {
         "kind": "edit+clarify",
         "changes": [
@@ -2241,7 +2241,7 @@ def test_handle_agent_edit_batch_repl_inline_edit_then_clarify_applies_edit_and_
     assert result["graph_unchanged"] is False
     assert result["apply_allowed"] is True
     assert result["candidate_graph_hash"] == payload_hash(result["graph"])
-    assert result["message"] == "Applied 1 edit. I still need clarification before continuing."
+    assert result["message"] == "Applied 1 edit. Should I also rename the file stem?"
     assert result["outcome"] == {
         "kind": "edit+clarify",
         "changes": [
@@ -2690,6 +2690,12 @@ def test_handle_agent_edit_batch_repl_scripted_transcript_commits_structurally_c
         ],
     }
     assert len(captured_messages) == 4
+    assert "Node variable index:" in captured_messages[1][1]["content"]
+    assert "loadimage = LoadImage" in captured_messages[1][1]["content"]
+    assert "saveimage = SaveImage" in captured_messages[1][1]["content"]
+    assert "Previous agent message:" in captured_messages[1][1]["content"]
+    assert "Bypassed the passthrough output." in captured_messages[1][1]["content"]
+    assert captured_messages[1][1]["content"].count("Budget: 4 batch(es) remaining out of 5.") == 1
     assert "Teaching report from previous turn:" in captured_messages[2][1]["content"]
     assert "unknown_target_field: SaveImage has no editable field or input named 'not_a_field'." in captured_messages[2][1]["content"]
 
@@ -2747,6 +2753,53 @@ def test_handle_agent_edit_batch_repl_scripted_transcript_commits_structurally_c
             "new": "after",
         }
     ]
+
+
+def test_handle_agent_edit_batch_repl_reincludes_render_after_search_only_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    captured_messages: list[list[dict[str, str]]] = []
+    responses = iter(
+        [
+            {
+                "batch": 'search(focus_types=["SaveImage"])',
+                "message": "I checked the SaveImage signature.",
+            },
+            {
+                "batch": "done()",
+                "message": "No graph change is needed.",
+            },
+        ]
+    )
+
+    def _fake_batch_client(messages: list[dict[str, str]]) -> dict[str, str]:
+        captured_messages.append(messages)
+        return next(responses)
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "inspect save image and stop",
+            "session_id": "batch-search-only",
+            "max_batches": 2,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert len(captured_messages) == 2
+    second_user = captured_messages[1][1]["content"]
+    assert "Current scratchpad Python (full render):" in second_user
+    assert "saveimage = SaveImage" in second_user
+    assert "Node variable index:" in second_user
+    assert "Previous agent message:" in second_user
+    assert "I checked the SaveImage signature." in second_user
+    assert second_user.count("Budget: 1 batch(es) remaining out of 2.") == 1
 
 
 def test_handle_agent_edit_validates_lowered_copy_after_load_python(
@@ -5410,6 +5463,7 @@ def test_synthesize_message_edit_outcome_with_done_summary() -> None:
     from vibecomfy.porting.edit_types import FieldChange
 
     state = _make_state(
+        graph={"nodes": [{"id": 3, "type": "KSampler", "properties": {"vibecomfy_uid": "ksampler"}}]},
         user_message="",
         batch_exit_mode="done",
         batch_done_summary="Gate A passed: 1 edit operation(s) verified. Changed ksampler.steps from 'normal' to 26.",
@@ -5418,7 +5472,7 @@ def test_synthesize_message_edit_outcome_with_done_summary() -> None:
         ),
     )
     msg = _synthesize_batch_repl_message(state, outcome=TurnOutcome.edit())
-    assert "ksampler.steps" in msg
+    assert "KSampler steps" in msg
     assert "20" in msg
     assert "26" in msg
     assert "Gate A" not in msg
@@ -5459,9 +5513,11 @@ def test_rendered_chat_message_uses_humanized_repaired_old_value(tmp_path: Path)
 
 def test_synthesize_message_clarify_outcome() -> None:
     """Pure clarify produces the expected clarification message."""
-    state = _make_state(user_message="", batch_exit_mode="pure_clarify")
-    msg = _synthesize_batch_repl_message(state, outcome=TurnOutcome.clarify())
-    assert "clarification" in msg.lower()
+    state = _make_state(user_message="Which prompt should I edit?", batch_exit_mode="pure_clarify")
+    msg = _synthesize_batch_repl_message(
+        state, outcome=TurnOutcome.clarify(question="Which prompt should I edit?")
+    )
+    assert msg == "Which prompt should I edit?"
 
 
 def test_synthesize_message_edit_clarify_outcome() -> None:
@@ -5479,7 +5535,7 @@ def test_synthesize_message_edit_clarify_outcome() -> None:
         state, outcome=TurnOutcome.edit_and_clarify(question="Should I continue?")
     )
     assert "Applied 1 edit" in msg
-    assert "clarification" in msg.lower()
+    assert "Should I continue?" in msg
 
 
 def test_synthesize_message_failure_budget_with_lead() -> None:
@@ -5505,7 +5561,7 @@ def test_synthesize_message_failure_budget_with_lead() -> None:
 
 
 def test_synthesize_message_failure_non_budget() -> None:
-    """Non-budget failure produces a warning about unlanded edits."""
+    """Non-budget failure uses the typed user-facing failure message."""
     failure = failure_envelope(
         FailureKind.VALIDATION_ERROR,
         "lower",
@@ -5515,8 +5571,19 @@ def test_synthesize_message_failure_non_budget() -> None:
     msg = _synthesize_batch_repl_message(state, failure=failure)
     assert len(msg) > 0
     assert msg[-1] in ".!?"
-    # Non-budget failure gets the "did not land" / "stopped before applying" message
-    assert "did not land" in msg.lower() or "stopped" in msg.lower() or "validation" in msg.lower()
+    assert msg == "The edited workflow has validation errors and was not applied. See details."
+
+
+def test_synthesize_message_malformed_model_json_uses_user_facing_message() -> None:
+    failure = failure_envelope(
+        FailureKind.MALFORMED_MODEL_JSON,
+        "agent_response",
+        TurnContext(session_id="s1", turn_id="t1"),
+    )
+    state = _make_state(user_message="")
+    msg = _synthesize_batch_repl_message(state, failure=failure)
+    assert msg == "The model response could not be parsed. The graph is unchanged."
+    assert "Some requested edits" not in msg
 
 
 def test_synthesize_message_stale_state_failure_describes_baseline_mismatch() -> None:
@@ -5886,6 +5953,69 @@ def test_read_session_chat_metadata_fields(tmp_path: Path) -> None:
     assert "detail_json_path" in result
     assert result["detail_json_path"] is not None
     assert "response.json" in result["detail_json_path"]
+
+
+def test_read_session_chat_missing_session_reports_exists_false(tmp_path: Path) -> None:
+    result = read_session_chat(tmp_path, "deleted-session", max_messages=5)
+
+    assert result["ok"] is True
+    assert result["exists"] is False
+    assert result["session_id"] == "deleted-session"
+    assert result["messages"] == []
+    assert result["latest_candidate"] is None
+
+
+def test_read_session_chat_returns_latest_open_candidate_state(tmp_path: Path) -> None:
+    session_id = "rehydrate-candidate"
+    session_dir = session_dir_for(tmp_path, session_id)
+    turn_dir = session_dir / "turns" / "0001"
+    turn_dir.mkdir(parents=True)
+    graph = {"nodes": [{"id": 2, "type": "SaveImage"}], "links": []}
+    response = {
+        "ok": True,
+        "session_id": session_id,
+        "turn_id": "0001",
+        "message": "Candidate ready.",
+        "graph": graph,
+        "candidate_graph_hash": "candidate-hash",
+        "submit_graph_hash": "submit-hash",
+        "canvas_apply_allowed": True,
+        "apply_allowed": True,
+        "queue_allowed": False,
+        "apply_eligibility": {
+            "applyable": True,
+            "reason": "queue_blocked_warning",
+            "message": "Apply is allowed, but Queue remains blocked for this candidate.",
+            "warnings": ["queue_blocked"],
+        },
+        "report": {"change": {"content_edits": {"edited": ["2"]}}},
+    }
+    (turn_dir / "request.json").write_text(json.dumps({"task": "edit"}), encoding="utf-8")
+    (turn_dir / "response.json").write_text(json.dumps(response), encoding="utf-8")
+    (turn_dir / "candidate.ui.json").write_text(json.dumps(graph), encoding="utf-8")
+    (session_dir / "session_state.json").write_text(
+        json.dumps(
+            {
+                "turns": {
+                    "0001": {
+                        "state": "candidate",
+                        "candidate_graph_hash": "candidate-hash",
+                        "submit_graph_hash": "submit-hash",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = read_session_chat(tmp_path, session_id, max_messages=5)
+
+    latest = result["latest_candidate"]
+    assert latest["turn_id"] == "0001"
+    assert latest["graph"] == graph
+    assert latest["candidate_graph_hash"] == "candidate-hash"
+    assert latest["apply_eligibility"]["reason"] == "queue_blocked_warning"
+    assert latest["queue_allowed"] is False
 
 
 def test_read_session_json_turn_summaries_and_artifacts(tmp_path: Path) -> None:
