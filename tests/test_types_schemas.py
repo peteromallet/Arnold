@@ -569,3 +569,17 @@ def test_parse_agent_spec_accepts_default_routing_specs() -> None:
 
     for spec in set(DEFAULT_AGENT_ROUTING.values()):
         parse_agent_spec(spec)
+
+
+def test_parse_agent_spec_resolves_symbolic_premium_placeholder() -> None:
+    from arnold.pipelines.megaplan.types import (
+        format_agent_spec,
+        parse_agent_spec,
+        resolve_premium_placeholder_spec,
+    )
+
+    parsed = parse_agent_spec("premium:low")
+    assert parsed.agent == "premium"
+    assert parsed.model is None
+    assert parsed.effort == "low"
+    assert format_agent_spec(resolve_premium_placeholder_spec(parsed, "codex")) == "codex:low"

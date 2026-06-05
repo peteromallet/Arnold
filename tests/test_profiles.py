@@ -1352,7 +1352,7 @@ def test_all_codex_resolves_to_codex_without_vendor_flag(
         assert agent == "codex", (
             f"{phase} expected codex but got {resolved[phase]!r}"
         )
-    assert resolved["feedback"] == "claude:low"
+    assert resolved["feedback"] == "codex:low"
 
 
 def test_vendor_codex_without_profile_selects_all_codex(
@@ -1651,8 +1651,8 @@ def test_solo_profile_resolves_to_deepseek_reasoning_with_premium_floor(
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    # solo keeps reasoning phases on DeepSeek; finalize and high execute tiers
-    # participate in the invariant premium floor.
+    # solo keeps every flat phase on DeepSeek; higher execute tiers remain
+    # profile metadata and are used only when tier routing selects them.
     for phase in (
         "plan",
         "prep",
@@ -1667,7 +1667,7 @@ def test_solo_profile_resolves_to_deepseek_reasoning_with_premium_floor(
         "tiebreaker_challenger",
     ):
         assert resolved[phase] == DEEPSEEK_DIRECT, f"solo.{phase} should be DeepSeek, got {resolved[phase]!r}"
-    assert resolved["finalize"] == "claude:low"
+    assert resolved["finalize"] == DEEPSEEK_DIRECT
     assert args.tier_models["execute"][4] == "claude:claude-sonnet-4-6"
     assert args.tier_models["execute"][5] == "claude:claude-opus-4-7"
 
@@ -3170,6 +3170,53 @@ def test_vendor_rewrite_tier_entries_tier_models_none_does_not_crash() -> None:
     assert result["plan"] == "codex:low"
 
 
+def test_apply_vendor_rewrite_resolves_symbolic_premium_slots() -> None:
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
+
+    tier_models = {"execute": {4: "premium:medium"}}
+    prep_models = {"triage": "premium:low"}
+    profile = {
+        "plan": "premium:high",
+        "critique": "hermes:deepseek:deepseek-v4-pro",
+        "feedback": "premium:low",
+    }
+
+    rewritten = apply_vendor_rewrite(
+        profile,
+        "codex",
+        tier_models=tier_models,
+        prep_models=prep_models,
+    )
+
+    assert rewritten == {
+        "plan": "codex:high",
+        "critique": "hermes:deepseek:deepseek-v4-pro",
+        "feedback": "codex:low",
+    }
+    assert tier_models["execute"][4] == "codex:medium"
+    assert prep_models["triage"] == "codex:low"
+
+
+def test_apply_vendor_rewrite_does_not_inject_feedback_when_omitted() -> None:
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
+
+    assert apply_vendor_rewrite({"plan": "premium:high"}, "codex") == {
+        "plan": "codex:high"
+    }
+
+
+def test_validate_resolved_profile_invariants_rejects_symbolic_premium() -> None:
+    from arnold.pipelines.megaplan.profiles import _validate_resolved_profile_invariants
+
+    with pytest.raises(CliError, match="symbolic premium placeholders still present"):
+        _validate_resolved_profile_invariants(
+            "premium",
+            {"plan": "premium:low"},
+            tier_models={"execute": {4: "premium:medium"}},
+            prep_models={"triage": "premium:low"},
+        )
+
+
 def test_deepseek_provider_rewrite_tier_models_none_does_not_crash() -> None:
     """Passing tier_models=None does not crash (backward compat)."""
     from arnold.pipelines.megaplan.profiles import apply_deepseek_provider_rewrite
@@ -3883,7 +3930,7 @@ def test_all_codex_byte_identical_across_independent_expansions(
                   "tiebreaker_researcher", "tiebreaker_challenger"):
         agent = resolved[phase].split(":", 1)[0]
         assert agent == "codex", f"{phase} expected codex, got {resolved[phase]!r}"
-    assert resolved["feedback"] == "claude:low"
+    assert resolved["feedback"] == "codex:low"
 
 
 def test_all_codex_no_tier_metadata(

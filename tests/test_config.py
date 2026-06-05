@@ -216,6 +216,23 @@ def test_config_set_orchestration_mode_invalid(isolated_config_dir: Path) -> Non
         )
 
 
+def test_config_show_resolves_symbolic_defaults_to_concrete_vendor(
+    isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor",
+        lambda: "codex",
+    )
+
+    response = megaplan.handle_config(Namespace(config_action="show"))
+
+    assert response["success"] is True
+    assert response["routing"]["plan"] == "codex"
+    assert response["routing"]["feedback"] == "codex:low"
+    assert "premium" not in set(response["routing"].values())
+
+
 def test_build_parser_init_flags_are_tristate() -> None:
     from arnold.pipelines.megaplan.cli import build_parser
 

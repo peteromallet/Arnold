@@ -5,7 +5,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from arnold.pipelines.megaplan._pipeline.flags import control_interface_routing_on
-from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, ROBUSTNESS_ACCEPTED, normalize_robustness
+from arnold.pipelines.megaplan.profiles import (
+    DEFAULT_AGENT_ROUTING,
+    ROBUSTNESS_ACCEPTED,
+    effective_premium_vendor,
+    normalize_robustness,
+)
 from arnold.pipelines.megaplan.types import (
     AgentSpec,
     CliError,
@@ -13,8 +18,10 @@ from arnold.pipelines.megaplan.types import (
     StepResponse,
     _PREMIUM_EFFORT_TOKENS,
     _PREMIUM_VENDORS,
+    is_premium_placeholder_spec,
     parse_agent_spec,
     format_agent_spec,
+    resolve_premium_placeholder_spec,
 )
 from arnold.pipelines.megaplan.planning.state import (
     STATE_ABORTED,
@@ -1120,9 +1127,8 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
 
     # Infer the target agent for this phase
     # Priority: (1) persisted phase_model entry, (2) active profile, (3) DEFAULT_AGENT_ROUTING
-    agent = _infer_phase_agent(phase, state, root)
-    if agent is None:
-        agent = DEFAULT_AGENT_ROUTING.get(phase, "")
+    current_phase_spec = _current_phase_spec(phase, state, root)
+    agent = parse_agent_spec(current_phase_spec).agent
 
     explicit_spec = parse_agent_spec(model_arg) if ":" in model_arg else None
     if explicit_spec is not None and explicit_spec.agent in _PREMIUM_VENDORS:
@@ -1199,7 +1205,7 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
             break
     if not found:
         # No existing entry — append a new one
-        previous_spec = DEFAULT_AGENT_ROUTING.get(phase, "")
+        previous_spec = current_phase_spec
         phase_models.append(f"{phase}={new_spec}")
 
     state["config"]["phase_model"] = phase_models
@@ -1249,7 +1255,7 @@ def _current_phase_spec(phase: str, state: PlanState, root: Path) -> str:
         if isinstance(pm, str) and "=" in pm:
             pm_phase, pm_spec = pm.split("=", 1)
             if pm_phase == phase:
-                return pm_spec
+                return _resolve_symbolic_phase_spec(pm_spec, state)
     profile_name = state.get("config", {}).get("profile")
     if profile_name:
         try:
@@ -1259,10 +1265,17 @@ def _current_phase_spec(phase: str, state: PlanState, root: Path) -> str:
             profiles = load_profiles(project_dir=project_dir)
             resolved = resolve_profile(profile_name, profiles)
             if phase in resolved:
-                return resolved[phase]
+                return _resolve_symbolic_phase_spec(resolved[phase], state)
         except Exception:
             pass
-    return DEFAULT_AGENT_ROUTING.get(phase, "")
+    return _resolve_symbolic_phase_spec(DEFAULT_AGENT_ROUTING.get(phase, ""), state)
+
+
+def _resolve_symbolic_phase_spec(spec: str, state: PlanState) -> str:
+    if not spec or not is_premium_placeholder_spec(spec):
+        return spec
+    vendor = effective_premium_vendor(config=state.get("config", {}))
+    return format_agent_spec(resolve_premium_placeholder_spec(spec, vendor))
 
 
 def _override_set_vendor(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
@@ -1379,13 +1392,16 @@ def _infer_phase_agent(phase: str, state: PlanState, root: Path) -> str | None:
             profiles = load_profiles(project_dir=project_dir)
             resolved = resolve_profile(profile_name, profiles)
             if phase in resolved:
-                parsed = parse_agent_spec(resolved[phase])
+                parsed = parse_agent_spec(_resolve_symbolic_phase_spec(resolved[phase], state))
                 return parsed.agent
         except Exception:
             pass
 
     # Fall back to DEFAULT_AGENT_ROUTING
-    return DEFAULT_AGENT_ROUTING.get(phase)
+    default = DEFAULT_AGENT_ROUTING.get(phase)
+    if default is None:
+        return None
+    return parse_agent_spec(_resolve_symbolic_phase_spec(default, state)).agent
 
 
 def _override_resume_clarify(

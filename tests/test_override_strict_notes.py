@@ -193,15 +193,15 @@ def test_set_model_round_trip_persists_phase_model(plan_fixture: PlanFixture) ->
     # Read back state and confirm phase_model is persisted
     state = load_state(plan_fixture.plan_dir)
     phase_models = state["config"].get("phase_model") or []
-    assert any("critique=codex:gpt-5.3-codex:high" in pm for pm in phase_models), \
-        f"Expected critique=codex:gpt-5.3-codex:high in {phase_models}"
+    assert any("critique=claude:gpt-5.3-codex:high" in pm for pm in phase_models), \
+        f"Expected critique=claude:gpt-5.3-codex:high in {phase_models}"
     # Override meta entry is recorded
     overrides = state.get("meta", {}).get("overrides", [])
     model_overrides = [o for o in overrides if o.get("action") == "set-model"]
     assert len(model_overrides) >= 1
     latest = model_overrides[-1]
     assert latest["phase"] == "critique"
-    assert latest["new_spec"] == "codex:gpt-5.3-codex:high"
+    assert latest["new_spec"] == "claude:gpt-5.3-codex:high"
     assert latest["reason"] == "test set-model round trip"
 
 
@@ -885,26 +885,26 @@ def test_legacy_override_actions_characterization(
         assert response["success"] is True
         assert response["state"] == megaplan.STATE_PLANNED
         assert response["phase"] == "critique"
-        assert response["previous_spec"] == "codex"
-        assert response["new_spec"] == "codex:gpt-5.3-codex:high"
+        assert response["previous_spec"] == "claude"
+        assert response["new_spec"] == "claude:gpt-5.3-codex:high"
         assert response["next_step"] == "critique"
-        assert "critique=codex:gpt-5.3-codex:high" in (state["config"].get("phase_model") or [])
+        assert "critique=claude:gpt-5.3-codex:high" in (state["config"].get("phase_model") or [])
         latest = _latest_override(state, "set-model")
         assert latest["phase"] == "critique"
-        assert latest["previous_spec"] == "codex"
-        assert latest["new_spec"] == "codex:gpt-5.3-codex:high"
+        assert latest["previous_spec"] == "claude"
+        assert latest["new_spec"] == "claude:gpt-5.3-codex:high"
         assert latest["reason"] == "legacy model"
     elif name == "set-vendor":
         assert response["success"] is True
         assert response["state"] == megaplan.STATE_PLANNED
         assert response["phase"] == "critique"
-        assert response["previous_spec"] == "codex"
+        assert response["previous_spec"] == "claude"
         assert response["new_spec"] == "claude"
         assert response["next_step"] == "critique"
         assert "critique=claude" in (state["config"].get("phase_model") or [])
         latest = _latest_override(state, "set-vendor")
         assert latest["phase"] == "critique"
-        assert latest["previous_spec"] == "codex"
+        assert latest["previous_spec"] == "claude"
         assert latest["new_spec"] == "claude"
         assert latest["reason"] == "legacy vendor"
     else:

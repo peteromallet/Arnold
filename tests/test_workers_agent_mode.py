@@ -115,6 +115,46 @@ def test_resolve_agent_mode_config_override() -> None:
             agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     assert agent == "codex"
 
+
+def test_resolve_agent_mode_resolves_symbolic_default_routing_through_vendor() -> None:
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
+        with patch("arnold.pipelines.megaplan.workers._impl.load_config", return_value={"vendor": "codex", "agents": {}}):
+            agent, mode, refreshed, model = resolve_agent_mode(
+                "plan",
+                Namespace(
+                    agent=None,
+                    vendor=None,
+                    ephemeral=False,
+                    fresh=False,
+                    persist=False,
+                    confirm_self_review=False,
+                    hermes=None,
+                    phase_model=[],
+                ),
+            )
+
+    assert agent == "codex"
+    assert mode == "persistent"
+    assert refreshed is False
+
+
+def test_resolve_agent_mode_rejects_unresolved_premium_before_dispatch() -> None:
+    with pytest.raises(CliError, match="Unresolved premium placeholder reached worker dispatch"):
+        resolve_agent_mode(
+            "plan",
+            Namespace(
+                agent=None,
+                vendor=None,
+                ephemeral=False,
+                fresh=False,
+                persist=False,
+                confirm_self_review=False,
+                hermes=None,
+                phase_model=["plan=premium:low"],
+            ),
+        )
+
+
 def test_resolve_agent_mode_explicit_missing_raises() -> None:
     with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value=None):
         with pytest.raises(CliError, match="not found"):

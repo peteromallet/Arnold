@@ -236,6 +236,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         pipeline_name=pipeline_name,
         resolved_profile=resolved_profile,
         profile_name=cli_profile or default_profile,
+        vendor=vendor,
     )
     if preflight_code is not None:
         return preflight_code
@@ -525,6 +526,7 @@ def _validate_profile_for_run(
     pipeline_name: str,
     resolved_profile: dict[str, Any],
     profile_name: str | None,
+    vendor: str | None = None,
 ) -> int | None:
     from arnold.runtime.operations import OperationKind, OperationRequest
     from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
@@ -562,6 +564,7 @@ def _validate_profile_for_run(
             resolved_profile,
             pipeline_name=pipeline_name,
             profile_name=profile_name,
+            vendor=vendor,
         )
     except SystemExit as exc:
         code = exc.code
