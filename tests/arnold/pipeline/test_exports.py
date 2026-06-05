@@ -86,6 +86,24 @@ class TestArnoldPipelinePublicExports:
         assert resolve_default_profile is not None
         assert validate_declared_stage_keys is not None
 
+    def test_contract_result_symbols_importable(self) -> None:
+        from arnold.pipeline import (
+            CONTRACT_RESULT_SCHEMA_VERSION,
+            ContractResult,
+            ContractStatus,
+            EvidenceArtifactRef,
+            Freshness,
+            Provenance,
+            Suspension,
+        )
+        assert ContractResult is not None
+        assert ContractStatus is not None
+        assert EvidenceArtifactRef is not None
+        assert Freshness is not None
+        assert Provenance is not None
+        assert Suspension is not None
+        assert CONTRACT_RESULT_SCHEMA_VERSION is not None
+
 
 class TestBridgeImports:
     """Bridge re-exports from megaplan must still resolve."""
