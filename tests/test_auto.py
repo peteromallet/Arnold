@@ -3053,6 +3053,74 @@ def test_review_nonconvergence_second_same_issue_escalates() -> None:
     assert streaks["T1"] == 2
 
 
+def test_review_nonconvergence_model_issue_text_normalization_escalates() -> None:
+    previous = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "source": "model",
+                    "issue": "Need  stable evidence",
+                    "evidence_file": "old.json",
+                }
+            ],
+        }
+    )
+    current = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "source": "model",
+                    "issue": "need stable   evidence",
+                    "evidence_file": "new.json",
+                }
+            ],
+        }
+    )
+    streaks = {"T1": 1}
+
+    nonconverging = auto._nonconverging_rework_tasks(
+        previous=previous,
+        current=current,
+        streaks=streaks,
+    )
+
+    assert nonconverging == ["T1"]
+    assert streaks["T1"] == 2
+
+
+def test_review_nonconvergence_different_model_issues_reset_streak() -> None:
+    previous = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {"task_id": "T1", "source": "model", "issue": "first issue"},
+            ],
+        }
+    )
+    current = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {"task_id": "T1", "source": "model", "issue": "second issue"},
+            ],
+        }
+    )
+    streaks = {"T1": 1}
+
+    nonconverging = auto._nonconverging_rework_tasks(
+        previous=previous,
+        current=current,
+        streaks=streaks,
+    )
+
+    assert nonconverging == []
+    assert streaks["T1"] == 1
+
+
 def test_review_nonconvergence_shrinking_findings_do_not_escalate() -> None:
     streaks = {"T1": 1}
 
