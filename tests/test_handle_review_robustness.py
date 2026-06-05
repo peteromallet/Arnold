@@ -284,6 +284,58 @@ def test_resolve_review_outcome_uses_standard_and_robust_caps_separately(tmp_pat
     assert any("Max review rework cycles (2) reached" in issue for issue in robust_issues)
 
 
+def _cap_reached_state() -> dict[str, object]:
+    return {
+        "history": [
+            {"step": "review", "result": "needs_rework"},
+            {"step": "review", "result": "needs_rework"},
+            {"step": "review", "result": "needs_rework"},
+        ]
+    }
+
+
+def test_force_proceed_with_unresolved_must_escalates_to_recoverable_blocked(
+    tmp_path: Path,
+) -> None:
+    issues: list[str] = []
+    result, next_state, next_step = megaplan.handlers._resolve_review_outcome(
+        tmp_path,
+        "needs_rework",
+        1, 1, 1, 1,
+        [],
+        "full",
+        _cap_reached_state(),
+        issues,
+        criteria=[{"id": "C1", "priority": "must", "pass": False}],
+        rework_items=[{"task_id": "REVIEW", "issue": "manifest rewritten out of scope"}],
+    )
+
+    assert (result, next_state, next_step) == ("blocked", megaplan.STATE_BLOCKED, "review")
+    assert any("escalating to recoverable blocked" in issue for issue in issues)
+    assert not any("Force-proceeding to done" in issue for issue in issues)
+
+
+def test_force_proceed_with_only_cosmetic_items_still_ships_done(
+    tmp_path: Path,
+) -> None:
+    issues: list[str] = []
+    result, next_state, next_step = megaplan.handlers._resolve_review_outcome(
+        tmp_path,
+        "needs_rework",
+        1, 1, 1, 1,
+        [],
+        "full",
+        _cap_reached_state(),
+        issues,
+        criteria=[{"id": "C1", "priority": "should", "pass": False}],
+        rework_items=[{"task_id": "T1", "issue": "nit: wording", "severity": "minor"}],
+    )
+
+    assert (result, next_state, next_step) == ("success", megaplan.STATE_DONE, None)
+    assert any("non-blocking/cosmetic" in issue for issue in issues)
+    assert not any("recoverable blocked" in issue for issue in issues)
+
+
 def test_handle_review_superrobust_path_merges_parallel_review_and_creates_review_rework(
     tmp_path: Path,
     bootstrap_fixture: tuple[Path, Path],

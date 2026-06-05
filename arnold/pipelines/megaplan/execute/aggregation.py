@@ -234,10 +234,22 @@ def _append_scope_drift_blocker(
     drift: Any,
 ) -> None:
     robustness = configured_robustness(state)
-    if drift.severity == "high" and robustness in {"thorough", "extreme"}:
+    if drift.severity != "high":
+        # Low/none severity stays quiet at every robustness level.
+        return
+    if robustness in {"thorough", "extreme"}:
         blocking_reasons.append(
             f"scope_drift_severity=high: unclaimed files {sorted(drift.files_added)} "
             f"with {drift.loc_added_outside_claimed} LOC outside the claimed set"
+        )
+        return
+    if robustness == "full" and drift.files_added:
+        blocking_reasons.append(
+            f"scope_drift_unclaimed_files: files changed not claimed by any task: "
+            f"{sorted(drift.files_added)} "
+            f"({drift.loc_added_outside_claimed} LOC outside the claimed set). "
+            "Review these and attribute them to a task or recover-blocked after "
+            "operator review (no files were reverted)."
         )
 
 

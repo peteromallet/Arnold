@@ -23,6 +23,7 @@ from arnold.pipelines.megaplan.types import (
 )
 from arnold.pipelines.megaplan.planning.state import (
     STATE_AWAITING_HUMAN_VERIFY,
+    STATE_BLOCKED,
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FINALIZED,
@@ -67,6 +68,7 @@ from .shared import (
     worker_module,
 )
 from arnold.pipelines.megaplan.orchestration.phase_result import _emit_phase_result
+from arnold.pipelines.megaplan.orchestration.phase_result import Deviation as _PhaseDeviation
 from arnold.pipelines.megaplan.receipts.extractors import review_metrics
 
 """Review handler — post-execute implementation-evidence pass.
@@ -260,6 +262,52 @@ def _record_maker_stop(state: PlanState, plan_dir: Path, *, defense: str) -> Non
             atomic_write_json(notes_path, notes)
 
 
+_NON_BLOCKING_SEVERITY_TOKENS = {
+    "significant",
+    "minor",
+    "n/a",
+    "na",
+    "should",
+    "info",
+    "advisory",
+    "cosmetic",
+    "nit",
+    "nitpick",
+}
+
+
+def _rework_item_is_blocker(item: dict[str, Any]) -> bool:
+    for field in ("severity", "priority", "status"):
+        raw = item.get(field)
+        if isinstance(raw, str) and raw.strip().lower() in _NON_BLOCKING_SEVERITY_TOKENS:
+            return False
+    return True
+
+
+def _force_proceed_blockers(
+    criteria: list[dict[str, Any]] | None,
+    rework_items: list[dict[str, Any]] | None,
+) -> list[str]:
+    blockers: list[str] = []
+    for crit in criteria or []:
+        if not isinstance(crit, dict):
+            continue
+        if crit.get("priority") == "must" and crit.get("pass") in (False, "fail"):
+            label = str(
+                crit.get("criterion") or crit.get("id") or crit.get("text") or "must criterion"
+            ).strip()
+            blockers.append(f"failed must-criterion: {label}")
+    for item in rework_items or []:
+        if not isinstance(item, dict):
+            continue
+        if _rework_item_is_blocker(item):
+            label = str(
+                item.get("issue") or item.get("task_id") or item.get("flag_id") or "rework item"
+            ).strip()
+            blockers.append(f"unresolved blocking rework: {label}")
+    return blockers
+
+
 def _resolve_review_outcome(
     plan_dir: Path,
     review_verdict: str,
@@ -273,6 +321,7 @@ def _resolve_review_outcome(
     issues: list[str],
     criteria: list[dict[str, Any]] | None = None,
     infrastructure_failure: bool = False,
+    rework_items: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str, str | None]:
     """Determine review result, next state, and next step.
 
@@ -306,9 +355,22 @@ def _resolve_review_outcome(
             if entry.get("step") == "review" and entry.get("result") == "needs_rework"
         )
         if prior_rework_count >= max_review_rework_cycles:
+            blockers = _force_proceed_blockers(criteria, rework_items)
+            if blockers:
+                blocker_list = "; ".join(blockers[:10])
+                more = "" if len(blockers) <= 10 else f" (+{len(blockers) - 10} more)"
+                issues.append(
+                    f"Max review rework cycles ({max_review_rework_cycles}) reached with "
+                    f"{len(blockers)} unresolved blocker(s) — escalating to recoverable "
+                    "blocked instead of force-proceeding to done. Blockers: "
+                    f"{blocker_list}{more}. Resolve them and resume review, or "
+                    "`override recover-blocked`/`force-proceed` after operator review to ship anyway."
+                )
+                return "blocked", STATE_BLOCKED, "review"
             issues.append(
                 f"Max review rework cycles ({max_review_rework_cycles}) reached. "
-                "Force-proceeding to done despite unresolved review issues."
+                "Force-proceeding to done despite unresolved review issues "
+                "(all remaining items are non-blocking/cosmetic)."
             )
         else:
             return "needs_rework", STATE_FINALIZED, "execute"
@@ -478,7 +540,15 @@ def _finalize_review_outcome(
         state, issues,
         criteria=worker.payload.get("criteria", []),
         infrastructure_failure=infrastructure_failure,
+        rework_items=worker.payload.get("rework_items", []),
     )
+    force_proceed_blocked = result == "blocked" and next_state == STATE_BLOCKED
+    if force_proceed_blocked:
+        meta = state.setdefault("meta", {})
+        meta["resume_cursor"] = {
+            "phase": "review",
+            "retry_strategy": "manual_review",
+        }
     state["current_state"] = next_state
 
     clear_active_step(state)
@@ -514,7 +584,16 @@ def _finalize_review_outcome(
     save_state_merge_meta(plan_dir, state)
 
     criteria = worker.payload.get("criteria", [])
-    if result == "blocked":
+    if force_proceed_blocked:
+        summary = next(
+            (
+                issue for issue in reversed(issues)
+                if "escalating to recoverable blocked" in issue
+            ),
+            "Review rework cap reached with unresolved blockers — escalated to "
+            "recoverable blocked instead of force-proceeding to done.",
+        )
+    elif result == "blocked":
         summary = _build_review_blocked_message(
             verdict_count=verdict_count, total_tasks=total_tasks,
             check_count=check_count, total_checks=total_checks,
@@ -537,12 +616,24 @@ def _finalize_review_outcome(
         "issues": issues,
         "rework_items": list(worker.payload.get("rework_items", [])),
     }
-    _emit_phase_result(
-        phase="review",
-        state=state,
-        plan_dir=plan_dir,
-        exit_kind="success",
-    )
+    if force_proceed_blocked:
+        response["deviations"] = [summary]
+        response["warnings"] = [summary]
+        response["_phase_outcome"] = "blocked_by_quality"
+        _emit_phase_result(
+            phase="review",
+            state=state,
+            plan_dir=plan_dir,
+            exit_kind="blocked_by_quality",
+            deviations=(_PhaseDeviation.from_string(summary),),
+        )
+    else:
+        _emit_phase_result(
+            phase="review",
+            state=state,
+            plan_dir=plan_dir,
+            exit_kind="success",
+        )
     _attach_next_step_runtime(response)
     attach_agent_fallback(response, args)
     return response
