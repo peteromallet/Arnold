@@ -34,6 +34,7 @@ class FailureCategory(StrEnum):
     timeout = auto()
     internal_error = auto()
     external_error = auto()
+    review_non_convergence = auto()
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ CATEGORY_POLICY: dict[FailureCategory, CategoryPolicy] = {
     FailureCategory.timeout: CategoryPolicy(escalate=True, retries_first=0),
     FailureCategory.internal_error: CategoryPolicy(escalate=True, retries_first=1),
     FailureCategory.external_error: CategoryPolicy(escalate=False, retries_first=0),
+    FailureCategory.review_non_convergence: CategoryPolicy(escalate=True, retries_first=0),
 }
 
 
