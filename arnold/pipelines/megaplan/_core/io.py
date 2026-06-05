@@ -968,15 +968,7 @@ def _enforce_openai_strict_mode(node: Any, _path: tuple[str, ...] = ()) -> Any:
         if node.get("type") == "object" and isinstance(node.get("properties"), dict):
             properties: dict[str, Any] = node["properties"]
             required = set(node.get("required", []))
-            missing = [
-                key
-                for key in properties
-                if key not in required
-                and not (
-                    key == "deterministic_check"
-                    and _path[-3:] == ("properties", "rework_items", "items")
-                )
-            ]
+            missing = [key for key in properties if key not in required]
             if missing:
                 for key in missing:
                     prop = properties[key]
