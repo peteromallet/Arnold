@@ -134,6 +134,34 @@ def test_review_completion_status_incomplete_is_infrastructure_failure() -> None
     )
 
 
+def test_incomplete_status_wins_over_untagged_infra_rework_item() -> None:
+    payload = {
+        "review_verdict": "needs_rework",
+        "review_completion_status": "incomplete",
+        "criteria": [],
+        "issues": ["Incomplete review"],
+        "rework_items": [
+            {
+                "task_id": "T1",
+                "issue": "Could not complete repository inspection; premature verdict",
+                "expected": "Complete repo inspection",
+                "actual": "No inspection performed",
+            }
+        ],
+        "task_verdicts": [
+            {"task_id": "T1", "reviewer_verdict": "limited", "evidence_files": ["src/x.py"]}
+        ],
+        "sense_check_verdicts": [],
+    }
+
+    assert _review_infrastructure_failure(
+        payload,
+        issues=["Incomplete review"],
+        total_tasks=1,
+        total_checks=0,
+    )
+
+
 def test_blank_review_completion_status_uses_legacy_empty_verdict_fallback() -> None:
     payload = {
         "review_verdict": "needs_rework",
@@ -156,7 +184,7 @@ def test_blank_review_completion_status_uses_legacy_empty_verdict_fallback() -> 
 def test_review_infra_classifier_does_not_swallow_blocking_rework_item() -> None:
     payload = {
         "review_verdict": "needs_rework",
-        "review_completion_status": "incomplete",
+        "review_completion_status": "complete",
         "criteria": [],
         "issues": ["Blocking rework mentions no file inspection but is still real."],
         "rework_items": [

@@ -172,24 +172,28 @@ def _review_infrastructure_failure(
     a reviewer failure into a bogus executor pass and can overwrite useful
     execution evidence.
     """
-    if _has_genuine_rejection(payload):
-        return False
-
     raw_completion_status = payload.get("review_completion_status")
     completion_status = (
         raw_completion_status
         if raw_completion_status in {"complete", "incomplete"}
         else None
     )
+    # Explicit structured infra signals are authoritative and win first: the
+    # reviewer is self-reporting that it could not complete, so an explicit
+    # incomplete status or infra-tagged rework item must keep the plan in review.
     if completion_status == "incomplete":
         return True
-
     for item in payload.get("rework_items", []) or []:
         if not isinstance(item, dict):
             continue
         source = item.get("source")
         if isinstance(source, str) and source in _REVIEW_INFRASTRUCTURE_SOURCES:
             return True
+
+    # A genuine rejection beats only the fuzzy text / empty-verdict heuristics
+    # below. Structured infra signals above already took precedence.
+    if _has_genuine_rejection(payload):
+        return False
 
     if completion_status is not None:
         return False
