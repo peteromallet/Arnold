@@ -1,0 +1,53 @@
+# Agent-edit Structural Hardening epic
+#
+# Successor to the agent-edit-chat-platform epic (m0-m4, merged as PRs #50,#51,#54,#55,#56)
+# plus three live-validation fix rounds on main (a23c400, 83ad22a, 2db611e).
+# Live stress-testing on :8199 (real browser, real DeepSeek turns) showed every remaining
+# bug class is structural: implicit client lifecycle (transition-seam leaks) and
+# rebuild-the-world rendering (lag + scroll/clip regressions). This epic fixes both
+# properly instead of continuing point-fixes.
+#
+# m1 publishes docs/agent-edit-client-lifecycle.md (the transition contract) — the
+# artifact m2's render architecture consumes. Both partnered (novel/cross-cutting design;
+# behavior-preserving-but-topological on a 7k-line surface → premium planner per the
+# topological-risk rule). vendor=codex (consistent with the prior epic; performed well).
+#
+# Unattended: merge_policy=auto, auto_approve, prep_clarify=false where prep runs.
+# Babysit loop (Claude session) drives verify-human → merge → relaunch per milestone.
+
+base_branch: main
+merge_policy: auto
+
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+
+driver:
+  robustness: full
+  auto_approve: true
+  on_escalate: abort
+  max_iterations: 60
+  poll_sleep: 8.0
+
+milestones:
+  - label: m1-client-lifecycle-contract
+    idea: .megaplan/briefs/agent-edit-structural/m1-client-lifecycle-contract.md
+    branch: epic/agent-edit-structural/m1-client-lifecycle-contract
+    profile: partnered
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "Client lifecycle contract doc + transition-layer state store + exhaustive transition tests; projection-authority cleanup; wire-context contract (§8) formalized. The contract doc is the handoff artifact m2 consumes. Depth high: the transition table is the load-bearing design."
+
+  - label: m2-render-architecture
+    idea: .megaplan/briefs/agent-edit-structural/m2-render-architecture.md
+    branch: epic/agent-edit-structural/m2-render-architecture
+    profile: partnered
+    vendor: codex
+    robustness: full
+    depth: medium
+    with_prep: true
+    prep_clarify: false
+    prep_direction: "Map the current render call graph in vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js: renderAgentPanel and every render* helper it fans into, which state fields each section reads, where the 2A scheduleRenderAgentPanel debounce and lazy createDetails hooks live, how chat bubbles + per-bubble details + the turn-progress timeline are built (note the duplication of the timeline under every bubble), and where scroll position is set. Also locate the M1 transition layer's dispatch points. Ignore the overlay drawing internals beyond its cache invalidation entry points."
+    notes: "Scoped/incremental rendering on the m1 contract + thread windowing + reliable scroll + link-rewire/null-old message polish + bounded aesthetic tidy. Prep maps the render call graph first; clarify disabled for unattended run."
