@@ -73,6 +73,20 @@ def test_cli_init_prep_direction_flag_parses(tmp_path) -> None:
     assert parsed.prep_direction == "focus on cache invalidation"
 
 
+def test_cli_init_no_prep_clarify_flag_round_trips(tmp_path: Path) -> None:
+    parser = megaplan.cli.build_parser()
+
+    parsed_default = parser.parse_args(
+        ["init", "--project-dir", str(tmp_path), "an idea"]
+    )
+    parsed_disabled = parser.parse_args(
+        ["init", "--project-dir", str(tmp_path), "--no-prep-clarify", "an idea"]
+    )
+
+    assert parsed_default.prep_clarify is True
+    assert parsed_disabled.prep_clarify is False
+
+
 def test_handle_prep_zero_area_triage_writes_skip_artifacts_and_skips_fanout(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -74,6 +74,7 @@ from arnold.pipelines.megaplan.profiles import (
     _resolve_default_vendor,
     load_profile_metadata,
 )
+from arnold.pipelines.megaplan.runtime.process import megaplan_engine_env, megaplan_engine_root
 from arnold.pipelines.megaplan.types import CliError
 from arnold.pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE, STATE_EXECUTED, STATE_FINALIZED
 from . import spec as chain_spec
@@ -216,12 +217,22 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
     """
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "arnold.pipelines.megaplan", "status", "--plan", plan],
-            cwd=str(root),
+            [
+                sys.executable,
+                "-m",
+                "arnold.pipelines.megaplan",
+                "status",
+                "--project-dir",
+                str(root),
+                "--plan",
+                plan,
+            ],
+            cwd=str(megaplan_engine_root()),
             capture_output=True,
             text=True,
             check=False,
             timeout=timeout,
+            env=megaplan_engine_env(),
         )
     except subprocess.TimeoutExpired:
         return "unknown"
@@ -320,7 +331,13 @@ def _init_plan(
     args.extend(["--idea-file", str(idea_path)])
     writer(f"[chain] initializing plan from {idea_path}\n")
     proc = subprocess.run(
-        args, cwd=str(root), capture_output=True, text=True, check=False, timeout=300
+        args,
+        cwd=str(megaplan_engine_root()),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=300,
+        env=megaplan_engine_env(),
     )
     if proc.returncode != 0:
         raise CliError(

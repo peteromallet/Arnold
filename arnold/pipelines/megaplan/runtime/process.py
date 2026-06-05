@@ -16,9 +16,26 @@ import os
 import signal
 import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def megaplan_engine_root() -> Path:
+    """Return the repository root for the currently imported Arnold engine."""
+    return Path(__file__).resolve().parents[4]
+
+
+def megaplan_engine_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Return an env that resolves this engine before the target project."""
+    env = dict(base or os.environ)
+    engine_root = str(megaplan_engine_root())
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        engine_root if not existing else os.pathsep.join([engine_root, existing])
+    )
+    return env
 
 
 # ---------------------------------------------------------------------------
