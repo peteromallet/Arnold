@@ -93,3 +93,65 @@ def test_collect_git_diff_patch_falls_back_to_branch_diff_when_worktree_clean(tm
     assert "+value = 2" in patch
     assert "Branch diff against base" in summary
     assert "app.py" in summary
+
+
+def test_collect_git_diff_patch_prefers_branch_diff_over_untracked_noise(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init(repo)
+
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    _git_commit_all(repo, "initial")
+    subprocess.run(["git", "branch", "-M", "main"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "checkout", "-b", "feature"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git_commit_all(repo, "feature change")
+
+    pycache = repo / "__pycache__"
+    pycache.mkdir()
+    (pycache / "app.cpython-311.pyc").write_bytes(b"\x00\x01noise")
+
+    patch = collect_git_diff_patch(repo)
+
+    assert "diff --git a/app.py b/app.py" in patch
+    assert "+value = 2" in patch
+    assert "__pycache__" not in patch
+    assert ".pyc" not in patch
+
+
+def test_collect_git_diff_patch_includes_branch_diff_and_worktree_spillover(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_init(repo)
+
+    app = repo / "app.py"
+    app.write_text("value = 1\n", encoding="utf-8")
+    _git_commit_all(repo, "initial")
+    subprocess.run(["git", "branch", "-M", "main"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "checkout", "-b", "feature"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    app.write_text("value = 2\n", encoding="utf-8")
+    _git_commit_all(repo, "feature change")
+
+    app.write_text("value = 3\n", encoding="utf-8")
+    (repo / "notes.py").write_text("print('spillover')\n", encoding="utf-8")
+
+    patch = collect_git_diff_patch(repo)
+
+    assert "+value = 2" in patch
+    assert "+value = 3" in patch
+    assert "diff --git a/notes.py b/notes.py" in patch
+    assert "+print('spillover')" in patch
