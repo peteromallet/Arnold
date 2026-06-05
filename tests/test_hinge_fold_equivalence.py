@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.observability.fold import (
+from arnold.pipelines.megaplan.observability.fold import (
     OracleResult,
     fold_equivalence_oracle,
     fold_events,

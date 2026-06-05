@@ -6,7 +6,7 @@ import hashlib
 
 import pytest
 
-from megaplan.observability import (
+from arnold.pipelines.megaplan.observability import (
     BetterResult,
     EvaluandRecord,
     RecordedModelIO,
@@ -15,7 +15,7 @@ from megaplan.observability import (
     raw_prompt_sha256,
     re_judge,
 )
-from megaplan.observability.evaluand import (
+from arnold.pipelines.megaplan.observability.evaluand import (
     _evaluand_transaction_boundary,
     _reset_for_tests,
     better,
@@ -25,7 +25,7 @@ from megaplan.observability.evaluand import (
     write_evaluand,
     write_evaluand_event,
 )
-from megaplan.observability.events import (
+from arnold.pipelines.megaplan.observability.events import (
     EventKind,
     compute_model_identity,
     read_events,
@@ -822,7 +822,7 @@ def test_read_missing_returns_none():
 
 
 def test_exported_from_observability_package():
-    from megaplan import observability as ob
+    from arnold.pipelines.megaplan import observability as ob 
     assert "EvaluandRecord" in ob.__all__
     assert "BetterResult" in ob.__all__
     assert "better" in ob.__all__

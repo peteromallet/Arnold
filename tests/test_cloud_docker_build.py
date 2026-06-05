@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     MegaplanSpec,
@@ -13,7 +13,7 @@ from megaplan.cloud.spec import (
     RepoSpec,
     ResourcesSpec,
 )
-from megaplan.cloud.template import materialize_deploy_dir
+from arnold.pipelines.megaplan.cloud.template import materialize_deploy_dir
 
 
 if shutil.which("docker") is None:  # pragma: no cover - environment-dependent

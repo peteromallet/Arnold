@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from megaplan._core import normalize_text
+from arnold.pipelines.megaplan._core import normalize_text
 
 
 _GENERIC_ACKS = {

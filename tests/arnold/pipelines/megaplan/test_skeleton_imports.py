@@ -24,25 +24,22 @@ def test_can_import_plugin_domain_package(pkg_name: str) -> None:
     assert mod is not None
 
 
-# ── no-accidental-content sanity ───────────────────────────────────────
+# ── canonical package surface sanity ───────────────────────────────────
 
-def test_execute_skeleton_is_empty() -> None:
-    """The execute skeleton MUST NOT yet re-export implementation symbols."""
+def test_execute_package_exports_canonical_surface() -> None:
     import arnold.pipelines.megaplan.execute as pkg
-    # Only dunder attrs + package docstring — no implementation symbols
     public = [n for n in dir(pkg) if not n.startswith("_")]
-    assert public == [], (
-        f"execute skeleton should be empty, got: {public}"
-    )
+    assert "handle_execute_one_batch" in public
+    assert "run_quality_checks" in public
+    assert "reconcile_latest_execution_batch" in public
 
 
-def test_review_skeleton_is_empty() -> None:
-    """The review skeleton MUST NOT yet re-export implementation symbols."""
+def test_review_package_exports_canonical_surface() -> None:
     import arnold.pipelines.megaplan.review as pkg
     public = [n for n in dir(pkg) if not n.startswith("_")]
-    assert public == [], (
-        f"review skeleton should be empty, got: {public}"
-    )
+    assert "run_parallel_review" in public
+    assert "ReviewCheckSpec" in public
+    assert "run_pre_checks" in public
 
 
 def test_orchestration_package_init_stays_lean() -> None:

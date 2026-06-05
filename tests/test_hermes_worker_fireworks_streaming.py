@@ -22,18 +22,18 @@ from types import ModuleType
 
 import pytest
 
-from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
-from megaplan.audits.robustness import checks_for_robustness
-from megaplan.workers.hermes import (
+from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
+from arnold.pipelines.megaplan.audits.robustness import checks_for_robustness
+from arnold.pipelines.megaplan.workers.hermes import (
     _no_op_stream,
     _provider_requires_streaming,
     _streaming_run_kwargs,
     parse_agent_output,
 )
-from megaplan.orchestration.parallel_critique import _run_check
-from megaplan.prompts.critique import write_single_check_template
-from megaplan.types import CliError, PlanState
-from megaplan.workers import STEP_SCHEMA_FILENAMES
+from arnold.pipelines.megaplan.orchestration.parallel_critique import _run_check
+from arnold.pipelines.megaplan.prompts.critique import write_single_check_template
+from arnold.pipelines.megaplan.types import CliError, PlanState
+from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -127,7 +127,7 @@ def test_provider_requires_streaming_for_high_token_fireworks_and_direct_deepsee
 
 
 def test_streaming_run_kwargs_returns_callback_only_when_required() -> None:
-    from megaplan.workers.hermes import _streaming_run_kwargs, _StreamTracker
+    from arnold.pipelines.megaplan.workers.hermes import _streaming_run_kwargs, _StreamTracker
 
     # Fireworks high max_tokens → callback present
     kwargs = _streaming_run_kwargs("fireworks:foo", 8192)
@@ -224,7 +224,7 @@ def test_run_check_uses_streaming_for_fireworks_high_max_tokens(
     # The call must carry a stream_callback — that's how AIAgent decides to
     # request stream=true on the underlying chat.completions call.
     assert "stream_callback" in agent.calls[0]
-    from megaplan.workers.hermes import _StreamTracker
+    from arnold.pipelines.megaplan.workers.hermes import _StreamTracker
     assert isinstance(agent.calls[0]["stream_callback"], _StreamTracker)
 
 
@@ -422,5 +422,5 @@ def test_parse_agent_output_summary_prompt_carries_streaming_kwargs(tmp_path: Pa
     )
 
     assert len(agent.calls) == 1
-    from megaplan.workers.hermes import _StreamTracker
+    from arnold.pipelines.megaplan.workers.hermes import _StreamTracker
     assert isinstance(agent.calls[0].get("stream_callback"), _StreamTracker)

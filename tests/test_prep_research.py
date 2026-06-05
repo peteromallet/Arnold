@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan._core import WorkerUnit, WorkerUnitResult
-from megaplan.orchestration import prep_research
-from megaplan.types import CliError, PlanState
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan._core import WorkerUnit, WorkerUnitResult
+from arnold.pipelines.megaplan.orchestration import prep_research
+from arnold.pipelines.megaplan.types import CliError, PlanState
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 def _state(project_dir: Path) -> PlanState:
@@ -777,7 +777,7 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
 
     with (
         patch.object(prep_research, "scatter_worker_units", side_effect=fake_scatter_worker_units),
-        patch("megaplan._core.hermes_fanout.scatter_gather", side_effect=AssertionError("old thread fanout path should not be used")),
+        patch("arnold.pipelines.megaplan._core.hermes_fanout.scatter_gather", side_effect=AssertionError("old thread fanout path should not be used")),
     ):
         result = prep_research.run_research_fanout(
             state,

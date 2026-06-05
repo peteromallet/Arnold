@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.control import ControlProcessor, ControlTarget, ControlTargetResolver, process_pending_control_messages
-from megaplan.control_interface import ControlTransitionResult
-from megaplan.orchestration.progress import ProgressContext
-from megaplan.schemas import ControlMessage
-from megaplan.store import ControlMessageInput, FileStore, SprintItemInput
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.control import ControlProcessor, ControlTarget, ControlTargetResolver, process_pending_control_messages
+from arnold.pipelines.megaplan.control_interface import ControlTransitionResult
+from arnold.pipelines.megaplan.orchestration.progress import ProgressContext
+from arnold.pipelines.megaplan.schemas import ControlMessage
+from arnold.pipelines.megaplan.store import ControlMessageInput, FileStore, SprintItemInput
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _plan_dir(project_root: Path, name: str, state: dict) -> Path:
@@ -245,7 +245,7 @@ def test_approve_gate_uses_override_user_approval_emits_progress_and_continues(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan.auto import DriverOutcome
+    from arnold.pipelines.megaplan.auto import DriverOutcome
 
     store = FileStore(tmp_path / "store")
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
@@ -262,8 +262,8 @@ def test_approve_gate_uses_override_user_approval_emits_progress_and_continues(
         drive_calls.append({"plan": plan, **kwargs})
         return DriverOutcome(status="done", plan=plan, final_state="done", iterations=1)
 
-    monkeypatch.setattr("megaplan.control.handle_override", fake_override)
-    monkeypatch.setattr("megaplan.control.drive_auto", fake_drive)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.handle_override", fake_override)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.drive_auto", fake_drive)
     _put_control(
         store,
         epic_id=epic.id,
@@ -309,9 +309,9 @@ def test_reject_gate_attaches_user_note_and_does_not_auto_continue(
         override_calls.append(args)
         return {"success": True, "summary": "note added", "state": "critiqued"}
 
-    monkeypatch.setattr("megaplan.control.handle_override", fake_override)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.handle_override", fake_override)
     monkeypatch.setattr(
-        "megaplan.control.drive_auto",
+        "arnold.pipelines.megaplan.control.drive_auto",
         lambda *args, **kwargs: pytest.fail("reject_gate should not auto-continue"),
     )
     _put_control(
@@ -348,7 +348,7 @@ def test_gate_resolution_is_not_emitted_when_override_fails(
         del root, args
         raise CliError("strict_notes_blocked", "no")
 
-    monkeypatch.setattr("megaplan.control.handle_override", fail_override)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.handle_override", fail_override)
     _put_control(
         store,
         epic_id=epic.id,
@@ -396,8 +396,8 @@ def test_approve_gate_routes_to_control_interface_only_when_flagged(
         return ControlTransitionResult(accepted=True, mutated=True, reason="force-proceed")
 
     monkeypatch.setenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING", "1")
-    monkeypatch.setattr("megaplan.control.handle_override", fail_override)
-    monkeypatch.setattr("megaplan.control.apply_transition", fake_apply_transition)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.handle_override", fail_override)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.apply_transition", fake_apply_transition)
     _put_control(
         store,
         epic_id=epic.id,
@@ -462,8 +462,8 @@ def test_reject_gate_routes_to_control_interface_add_note_only_when_flagged(
         return ControlTransitionResult(accepted=True, mutated=False, reason="add-note")
 
     monkeypatch.setenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING", "1")
-    monkeypatch.setattr("megaplan.control.handle_override", fail_override)
-    monkeypatch.setattr("megaplan.control.apply_transition", fake_apply_transition)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.handle_override", fail_override)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.apply_transition", fake_apply_transition)
     _put_control(
         store,
         epic_id=epic.id,
@@ -500,7 +500,7 @@ def test_resume_plan_uses_workflow_runner_with_progress_env_and_can_continue(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan.auto import DriverOutcome
+    from arnold.pipelines.megaplan.auto import DriverOutcome
 
     store = FileStore(tmp_path / "store")
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
@@ -538,13 +538,13 @@ def test_resume_plan_uses_workflow_runner_with_progress_env_and_can_continue(
         return DriverOutcome(status="paused", plan=plan, final_state="paused", iterations=2, reason="waiting")
 
     monkeypatch.setenv("MEGAPLAN_CONTROL_INTERFACE_ROUTING", "1")
-    monkeypatch.setattr("megaplan.control.resume_plan", fake_resume)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.resume_plan", fake_resume)
     monkeypatch.setattr(
-        "megaplan.control.apply_transition",
+        "arnold.pipelines.megaplan.control.apply_transition",
         lambda *args, **kwargs: pytest.fail("resume_plan must stay on resume_plan(...)"),
     )
-    monkeypatch.setattr("megaplan.control.subprocess.run", fake_subprocess_run)
-    monkeypatch.setattr("megaplan.control.drive_auto", fake_drive)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.subprocess.run", fake_subprocess_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.drive_auto", fake_drive)
     _put_control(
         store,
         epic_id=epic.id,
@@ -574,7 +574,7 @@ def test_run_sprint_control_initializes_filesystem_plan_and_drives_auto(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan.auto import DriverOutcome
+    from arnold.pipelines.megaplan.auto import DriverOutcome
 
     store = FileStore(tmp_path / "store")
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
@@ -600,7 +600,7 @@ def test_run_sprint_control_initializes_filesystem_plan_and_drives_auto(
         captured["progress_env"] = kwargs.get("progress_env")
         return DriverOutcome(status="done", plan=plan, final_state="done", iterations=3, reason="complete")
 
-    monkeypatch.setattr("megaplan.control.drive_auto", fake_drive)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.drive_auto", fake_drive)
     message = _put_control(
         store,
         epic_id=epic.id,
@@ -645,7 +645,7 @@ def test_run_sprint_control_reuses_existing_filesystem_plan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan.auto import DriverOutcome
+    from arnold.pipelines.megaplan.auto import DriverOutcome
 
     store = FileStore(tmp_path / "store")
     epic = store.create_epic(title="Epic", goal="Goal", body="Body")
@@ -666,8 +666,8 @@ def test_run_sprint_control_reuses_existing_filesystem_plan(
         del kwargs
         return DriverOutcome(status="done", plan=plan, final_state="done", iterations=1)
 
-    monkeypatch.setattr("megaplan.control.handle_init", fail_init)
-    monkeypatch.setattr("megaplan.control.drive_auto", fake_drive)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.handle_init", fail_init)
+    monkeypatch.setattr("arnold.pipelines.megaplan.control.drive_auto", fake_drive)
     _put_control(
         store,
         epic_id=epic.id,

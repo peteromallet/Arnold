@@ -20,31 +20,31 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 PLANNING_IMPLEMENTATION_FILES = {
-    "megaplan/planning/__init__.py",
-    "megaplan/planning/control_binding.py",
-    "megaplan/planning/operations.py",
+    "arnold/pipelines/megaplan/planning/__init__.py",
+    "arnold/pipelines/megaplan/planning/control_binding.py",
+    "arnold/pipelines/megaplan/planning/operations.py",
 }
 
 MIGRATED_CONSUMER_FILES = {
-    "megaplan/auto.py",
-    "megaplan/control_interface.py",
-    "megaplan/control.py",
-    "megaplan/handlers/override.py",
-    "megaplan/observability/introspect.py",
-    "megaplan/cli/status_view.py",
-    "megaplan/cli/arnold.py",
-    "megaplan/_core/workflow.py",
-    "megaplan/_pipeline/run_cli.py",
-    "megaplan/supervisor/ladder.py",
-    "megaplan/supervisor/chain_runner.py",
+    "arnold/pipelines/megaplan/auto.py",
+    "arnold/pipelines/megaplan/control_interface.py",
+    "arnold/pipelines/megaplan/control.py",
+    "arnold/pipelines/megaplan/handlers/override.py",
+    "arnold/pipelines/megaplan/observability/introspect.py",
+    "arnold/pipelines/megaplan/cli/status_view.py",
+    "arnold/pipelines/megaplan/cli/arnold.py",
+    "arnold/pipelines/megaplan/_core/workflow.py",
+    "arnold/pipelines/megaplan/_pipeline/run_cli.py",
+    "arnold/pipelines/megaplan/supervisor/ladder.py",
+    "arnold/pipelines/megaplan/supervisor/chain_runner.py",
 }
 
 CORE_NO_PARK_FILES = {
-    "megaplan/control.py",
-    "megaplan/control_interface.py",
-    "megaplan/handlers/override.py",
-    "megaplan/observability/introspect.py",
-    "megaplan/cli/status_view.py",
+    "arnold/pipelines/megaplan/control.py",
+    "arnold/pipelines/megaplan/control_interface.py",
+    "arnold/pipelines/megaplan/handlers/override.py",
+    "arnold/pipelines/megaplan/observability/introspect.py",
+    "arnold/pipelines/megaplan/cli/status_view.py",
 }
 
 PARKED_ANNOTATION = "# m2b-parked:"
@@ -68,13 +68,13 @@ def _imports_planning_control_surface(rel_path: str) -> list[str]:
         if isinstance(node, ast.ImportFrom):
             module = node.module or ""
             imported = {alias.name for alias in node.names}
-            if module == "megaplan.planning.control_binding" and (
+            if module == "arnold.pipelines.megaplan.planning.control_binding" and (
                 {"planning_control_binding", "planning_run_state_view"} & imported
             ):
                 violations.append(
                     f"{rel_path}:{node.lineno}: direct import from {module}"
                 )
-            if module == "megaplan.planning" and (
+            if module == "arnold.pipelines.megaplan.planning" and (
                 {"planning_control_binding", "planning_run_state_view"} & imported
             ):
                 violations.append(
@@ -82,7 +82,7 @@ def _imports_planning_control_surface(rel_path: str) -> list[str]:
                 )
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "megaplan.planning.control_binding":
+                if alias.name == "arnold.pipelines.megaplan.planning.control_binding":
                     violations.append(
                         f"{rel_path}:{node.lineno}: direct import of {alias.name}"
                     )
@@ -135,9 +135,9 @@ def test_migrated_consumers_do_not_directly_import_planning_control_surface() ->
 
 def test_read_valid_targets_callers_pass_explicit_binding_or_plugin_id() -> None:
     caller_files = (
-        "megaplan/cli/status_view.py",
-        "megaplan/observability/introspect.py",
-        "megaplan/supervisor/ladder.py",
+        "arnold/pipelines/megaplan/cli/status_view.py",
+        "arnold/pipelines/megaplan/observability/introspect.py",
+        "arnold/pipelines/megaplan/supervisor/ladder.py",
     )
     violations: list[str] = []
     for rel_path in caller_files:
@@ -148,21 +148,21 @@ def test_read_valid_targets_callers_pass_explicit_binding_or_plugin_id() -> None
 
 def test_migrated_consumers_do_not_reintroduce_privileged_dispatch_literals() -> None:
     forbidden_literals = {
-        "megaplan/auto.py": (
+        "arnold/pipelines/megaplan/auto.py": (
             "PipelineRegistry(",
             ".run_phase(",
             "handle_override(",
             "_override_abort(",
             "_override_force_proceed(",
         ),
-        "megaplan/control_interface.py": (
+        "arnold/pipelines/megaplan/control_interface.py": (
             'binding="planning"',
             "binding='planning'",
             'plugin_id="planning"',
             "plugin_id='planning'",
         ),
-        "megaplan/_core/workflow.py": ("PipelineRegistry(", ".run_phase("),
-        "megaplan/_pipeline/run_cli.py": ("PipelineRegistry(", ".run_phase("),
+        "arnold/pipelines/megaplan/_core/workflow.py": ("PipelineRegistry(", ".run_phase("),
+        "arnold/pipelines/megaplan/_pipeline/run_cli.py": ("PipelineRegistry(", ".run_phase("),
     }
 
     violations: list[str] = []

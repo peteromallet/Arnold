@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from megaplan.resident import (
+from arnold.pipelines.megaplan.resident import (
     AuthorizationSubject,
     ConfirmationManager,
     EmitProtocol,
@@ -14,15 +14,15 @@ from megaplan.resident import (
     ResidentConfig,
     StoreBackedConfirmationManager,
 )
-from megaplan.resident.cloud import CloudToolRequest, CloudToolResult, classify_cloud_payload
-from megaplan.resident.cli import run_resident_cli
-from megaplan.resident.scheduler import (
+from arnold.pipelines.megaplan.resident.cloud import CloudToolRequest, CloudToolResult, classify_cloud_payload
+from arnold.pipelines.megaplan.resident.cli import run_resident_cli
+from arnold.pipelines.megaplan.resident.scheduler import (
     ResidentJobHandlers,
     ScheduledJobWorker,
     StoreScheduledJobBackend,
     make_store_scheduler,
 )
-from megaplan.store import CloudRunInput, FileStore, ResidentConversationInput, ScheduledJobInput
+from arnold.pipelines.megaplan.store import CloudRunInput, FileStore, ResidentConversationInput, ScheduledJobInput
 
 
 @dataclass

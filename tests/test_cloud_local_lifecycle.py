@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.cloud.cli import _materialized_deploy_dir
-from megaplan.cloud.providers.local import LocalProvider
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.cli import _materialized_deploy_dir
+from arnold.pipelines.megaplan.cloud.providers.local import LocalProvider
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     LocalSpec,

@@ -6,18 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.eval_judge_wrapper import (
+from arnold.pipelines.megaplan._pipeline.eval_judge_wrapper import (
     EvaluandClarityJudge,
     M5_WRAPPER_JUDGE_VERSION,
     M5_WRAPPER_PIECE_VERSION,
     M5_WRAPPER_RUBRIC_VERSION,
 )
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.types import Edge, Pipeline, Port, Stage, StepContext, StepResult
-from megaplan.observability import read_evaluand_events
-from megaplan.observability.evaluand import EvaluandRecord, better, write_evaluand_event
-from megaplan.observability.evaluand import _reset_for_tests
-from megaplan.observability.events import EventKind, read_events
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Port, Stage, StepContext, StepResult
+from arnold.pipelines.megaplan.observability import read_evaluand_events
+from arnold.pipelines.megaplan.observability.evaluand import EvaluandRecord, better, write_evaluand_event
+from arnold.pipelines.megaplan.observability.evaluand import _reset_for_tests
+from arnold.pipelines.megaplan.observability.events import EventKind, read_events
 
 
 @pytest.fixture(autouse=True)

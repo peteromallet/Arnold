@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from megaplan.observability.trace import (
+from arnold.pipelines.megaplan.observability.trace import (
     format_json,
     format_pretty,
     format_narrative,

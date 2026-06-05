@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._core.topology import (
+from arnold.pipelines.megaplan._core.topology import (
     RealizedGraph,
     RunTopologyConfig,
     STAGE_TO_STATE,
@@ -191,7 +191,7 @@ def test_override_handler_uses_topology_projection() -> None:
     """`override._override_recover_blocked` no longer reads a sidecar
     dict; the legacy `_BLOCKED_RECOVERY_STATES` constant is gone."""
 
-    from megaplan.handlers import override as override_mod
+    from arnold.pipelines.megaplan.handlers import override as override_mod
 
     assert not hasattr(override_mod, "_BLOCKED_RECOVERY_STATES")
 
@@ -200,6 +200,6 @@ def test_resume_plan_uses_topology_projection() -> None:
     """`workflow.resume_plan` no longer reads a sidecar dict; the legacy
     `_RESUME_ACTIVE_STATES` constant is gone."""
 
-    from megaplan._core import workflow as workflow_mod
+    from arnold.pipelines.megaplan._core import workflow as workflow_mod
 
     assert not hasattr(workflow_mod, "_RESUME_ACTIVE_STATES")

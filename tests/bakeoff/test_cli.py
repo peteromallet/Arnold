@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.bakeoff.cli import build_bakeoff_parser, run_bakeoff_cli
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.bakeoff.cli import build_bakeoff_parser, run_bakeoff_cli
+from arnold.pipelines.megaplan.types import CliError
 
 
 def test_bakeoff_run_robustness_parsing() -> None:
@@ -71,7 +71,7 @@ def test_run_bakeoff_cli_rejects_output_without_doc_mode(monkeypatch: pytest.Mon
         raise AssertionError("orchestrator should not be invoked when validation fails")
 
     monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.run_bakeoff_run_handler", boom
+        "arnold.pipelines.megaplan.bakeoff.orchestrator.run_bakeoff_run_handler", boom
     )
     with pytest.raises(CliError) as excinfo:
         run_bakeoff_cli(Path("/tmp"), args)
@@ -89,7 +89,7 @@ def test_run_bakeoff_cli_rejects_doc_mode_without_output(monkeypatch: pytest.Mon
         raise AssertionError("orchestrator should not be invoked when validation fails")
 
     monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.run_bakeoff_run_handler", boom
+        "arnold.pipelines.megaplan.bakeoff.orchestrator.run_bakeoff_run_handler", boom
     )
     with pytest.raises(CliError) as excinfo:
         run_bakeoff_cli(Path("/tmp"), args)
@@ -139,11 +139,11 @@ def test_bakeoff_run_flag_off_routes_to_old_orchestrator(
 
     monkeypatch.delenv("MEGAPLAN_SUPERVISOR_TIER", raising=False)
     monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
         fake_orchestrator,
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
         fake_supervisor,
     )
 
@@ -178,11 +178,11 @@ def test_bakeoff_run_flag_off_explicit_zero_routes_to_old_orchestrator(
 
     monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "0")
     monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
         fake_orchestrator,
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
         fake_supervisor,
     )
 
@@ -218,11 +218,11 @@ def test_bakeoff_run_flag_on_routes_to_supervisor(
 
     monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
     monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
         fake_orchestrator,
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
         fake_supervisor,
     )
 
@@ -258,11 +258,11 @@ def test_bakeoff_validation_before_routing_flag_on(
 
     monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
     monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
         fake_orchestrator,
     )
     monkeypatch.setattr(
-        "megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
         fake_supervisor,
     )
 
@@ -293,7 +293,7 @@ def test_bakeoff_validation_before_routing_flag_off(
 
     monkeypatch.delenv("MEGAPLAN_SUPERVISOR_TIER", raising=False)
     monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.bakeoff.orchestrator.run_bakeoff_run_handler",
         fake_orchestrator,
     )
 
@@ -328,7 +328,7 @@ def test_bakeoff_non_run_action_stays_old_path_with_flag_on(
     monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
     # Prevent the lazy supervisor import from succeeding
     monkeypatch.setattr(
-        "megaplan.bakeoff.cli._load_handlers",
+        "arnold.pipelines.megaplan.bakeoff.cli._load_handlers",
         lambda: {"status": fake_status},
     )
 
@@ -360,7 +360,7 @@ def test_bakeoff_run_flag_on_passes_through_args_to_supervisor(
 
     monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
     monkeypatch.setattr(
-        "megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
+        "arnold.pipelines.megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
         fake_supervisor,
     )
 
@@ -405,7 +405,7 @@ def test_bakeoff_flag_on_non_run_actions_never_import_supervisor(
 
         monkeypatch.setenv("MEGAPLAN_SUPERVISOR_TIER", "1")
         monkeypatch.setattr(
-            "megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
+            "arnold.pipelines.megaplan.supervisor.bakeoff_runner.run_bakeoff_run_handler",
             fake_supervisor,
         )
         # Provide fake handlers so we don't touch the real FS
@@ -419,7 +419,7 @@ def test_bakeoff_flag_on_non_run_actions_never_import_supervisor(
         handlers.setdefault("resume", fake_handler)
         handlers.setdefault("abandon", fake_handler)
         monkeypatch.setattr(
-            "megaplan.bakeoff.cli._load_handlers",
+            "arnold.pipelines.megaplan.bakeoff.cli._load_handlers",
             lambda: handlers,
         )
 

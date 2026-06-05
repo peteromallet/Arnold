@@ -12,8 +12,8 @@ import inspect
 
 import pytest
 
-from megaplan.auto import _phase_command
-from megaplan.cloud.cli import cloud_substrate
+from arnold.pipelines.megaplan.auto import _phase_command
+from arnold.pipelines.megaplan.cloud.cli import cloud_substrate
 
 
 # ---------------------------------------------------------------------------

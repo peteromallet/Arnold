@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     Pipeline,
     Stage,
@@ -30,8 +30,8 @@ from megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.profile import Profile, empty_profile, load_profile
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.profile import Profile, empty_profile, load_profile
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +261,7 @@ def test_every_shipped_profile_resolves_required_slots() -> None:
     """Profiles work for all kinds of tasks — every shipped profile
     must resolve the canonical phase slots a Step might query."""
 
-    from megaplan._pipeline.profile import list_profile_names
+    from arnold.pipelines.megaplan._pipeline.profile import list_profile_names
 
     required = ("plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review", "feedback")
     for name in list_profile_names():

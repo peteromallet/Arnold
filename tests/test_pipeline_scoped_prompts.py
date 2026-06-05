@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
-from megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 
 
 def _ctx(pipeline_name: str | None = None, mode: str = "code") -> StepContext:
@@ -83,8 +83,8 @@ def test_resolve_falls_back_to_global_when_pipeline_unknown() -> None:
 
 def test_run_by_name_injects_pipeline_into_ctx(tmp_path: Path) -> None:
     """The registry's run_pipeline_by_name auto-injects ctx.inputs['_pipeline']."""
-    from megaplan._pipeline.registry import register_pipeline, run_pipeline_by_name
-    from megaplan._pipeline.types import Edge, Pipeline, Stage, StepResult
+    from arnold.pipelines.megaplan._pipeline.registry import register_pipeline, run_pipeline_by_name
+    from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepResult
 
     captured_pipeline_name: list[str] = []
 

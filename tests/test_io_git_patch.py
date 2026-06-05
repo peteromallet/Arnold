@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.io import collect_git_diff_patch, collect_git_diff_summary
+from arnold.pipelines.megaplan._core.io import collect_git_diff_patch, collect_git_diff_summary
 
 
 def _git_init(repo: Path) -> None:
@@ -55,7 +55,7 @@ def test_collect_git_diff_patch_handles_missing_git_binary(monkeypatch: pytest.M
         del args, kwargs
         raise FileNotFoundError
 
-    monkeypatch.setattr("megaplan._core.io.subprocess.run", _raise)
+    monkeypatch.setattr("arnold.pipelines.megaplan._core.io.subprocess.run", _raise)
 
     assert collect_git_diff_patch(project_dir) == "git not found on PATH."
 
@@ -69,7 +69,7 @@ def test_collect_git_diff_patch_handles_timeout(monkeypatch: pytest.MonkeyPatch,
         del args, kwargs
         raise subprocess.TimeoutExpired(cmd=["git", "diff", "HEAD"], timeout=30)
 
-    monkeypatch.setattr("megaplan._core.io.subprocess.run", _raise)
+    monkeypatch.setattr("arnold.pipelines.megaplan._core.io.subprocess.run", _raise)
 
     assert collect_git_diff_patch(project_dir) == "git diff timed out."
 

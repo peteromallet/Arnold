@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.types import CliError
-from megaplan.workers import (
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers import (
     _extract_claude_usage,
     _recover_codex_payload,
     extract_session_id,

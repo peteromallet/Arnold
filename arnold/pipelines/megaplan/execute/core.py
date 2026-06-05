@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Canonical execute public facade."""
 
-from megaplan._core import load_config
+from arnold.pipelines.megaplan._core import load_config
 from arnold.pipelines.megaplan.execute.aggregation import (
     _build_aggregate_execution_payload,
     _compute_execute_scope_drift,

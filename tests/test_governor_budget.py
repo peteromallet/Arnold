@@ -9,10 +9,10 @@ from typing import Any
 
 import pytest
 
-from megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope, make_envelope
-from megaplan._pipeline.pattern_dynamic import dynamic_fanout
-from megaplan._pipeline.types import StepContext, StepResult, Step
-from megaplan.runtime.governor import (
+from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope, make_envelope
+from arnold.pipelines.megaplan._pipeline.pattern_dynamic import dynamic_fanout
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult, Step
+from arnold.pipelines.megaplan.runtime.governor import (
     BudgetExceeded,
     ExceedReason,
     Governor,
@@ -100,8 +100,8 @@ def test_set_and_reset_governor():
 
 
 def test_key_pool_acquire_charges_governor(monkeypatch):
-    from megaplan._pipeline.envelope import _envelope_ctx
-    from megaplan.runtime.key_pool import KeyEntry, KeyPool
+    from arnold.pipelines.megaplan._pipeline.envelope import _envelope_ctx
+    from arnold.pipelines.megaplan.runtime.key_pool import KeyEntry, KeyPool
 
     pool = KeyPool()
     pool._entries["deepseek"] = [KeyEntry(key="sk-test")]
@@ -121,8 +121,8 @@ def test_key_pool_acquire_charges_governor(monkeypatch):
 
 
 def test_key_pool_acquire_raises_on_cap(monkeypatch):
-    from megaplan._pipeline.envelope import _envelope_ctx
-    from megaplan.runtime.key_pool import KeyEntry, KeyPool
+    from arnold.pipelines.megaplan._pipeline.envelope import _envelope_ctx
+    from arnold.pipelines.megaplan.runtime.key_pool import KeyEntry, KeyPool
 
     pool = KeyPool()
     pool._entries["deepseek"] = [KeyEntry(key="sk-test")]
@@ -268,11 +268,11 @@ def test_restorable_boundary_precedes_budget_exceeded():
     ``restorable_boundary`` and ``Governor``.
     """
 
-    from megaplan._core.state import (
+    from arnold.pipelines.megaplan._core.state import (
         RestorableBoundaryViolation,
         restorable_boundary,
     )
-    from megaplan._pipeline.envelope import _fanout_active_ctx
+    from arnold.pipelines.megaplan._pipeline.envelope import _fanout_active_ctx
 
     gov = Governor(dollar_cap=0.001)
     gov_token = set_governor(gov)

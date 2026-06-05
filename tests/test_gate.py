@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan.orchestration.evaluation
-import megaplan.handlers
-import megaplan.workers
-from megaplan._core import load_plan
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.orchestration.evaluation as megaplan_orchestration_evaluation
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan._core import load_plan
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests.conftest import (
     PlanFixture,
     debt_registry_path,
@@ -198,7 +198,7 @@ def test_gate_proceed_with_accepted_tradeoffs_creates_debt(
     assert len(registry["entries"]) == 1
     assert registry["entries"][0]["flag_ids"] == [flag["id"]]
     # Verify phase_result.json is written via _finish_step
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after gate"
     assert pr.exit_kind == "success"
@@ -237,7 +237,7 @@ def test_gate_iterate_with_empty_accepted_tradeoffs_creates_no_debt(
     assert response["debt_entries_added"] == 0
     assert not debt_registry_path(plan_fixture.root).exists()
     # Verify phase_result.json is written for ITERATE gate too
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after gate"
     assert pr.exit_kind == "success"
@@ -1090,7 +1090,7 @@ def test_update_flags_after_critique_creates_new_flags(plan_fixture: PlanFixture
         "verified_flag_ids": [],
         "disputed_flag_ids": [],
     }
-    from megaplan.flags import update_flags_after_critique
+    from arnold.pipelines.megaplan.flags import update_flags_after_critique
 
     registry = update_flags_after_critique(plan_fixture.plan_dir, critique_payload, iteration=1)
     assert len(registry["flags"]) >= 1
@@ -1101,7 +1101,7 @@ def test_update_flags_after_critique_creates_new_flags(plan_fixture: PlanFixture
 
 def test_update_flags_after_critique_verifies_flags(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    from megaplan.flags import update_flags_after_critique
+    from arnold.pipelines.megaplan.flags import update_flags_after_critique
 
     critique1 = {
         "flags": [{"id": "FLAG-001", "concern": "x", "category": "other", "severity_hint": "likely-significant", "evidence": "y"}],
@@ -1122,7 +1122,7 @@ def test_update_flags_after_critique_verifies_flags(plan_fixture: PlanFixture) -
 
 def test_update_flags_after_critique_disputes_flags(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    from megaplan.flags import update_flags_after_critique
+    from arnold.pipelines.megaplan.flags import update_flags_after_critique
 
     critique1 = {
         "flags": [{"id": "FLAG-001", "concern": "x", "category": "other", "severity_hint": "likely-significant", "evidence": "y"}],
@@ -1142,7 +1142,7 @@ def test_update_flags_after_critique_disputes_flags(plan_fixture: PlanFixture) -
 
 def test_update_flags_after_critique_reuses_existing_ids(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    from megaplan.flags import update_flags_after_critique
+    from arnold.pipelines.megaplan.flags import update_flags_after_critique
 
     critique1 = {
         "flags": [{"id": "FLAG-001", "concern": "x", "category": "other", "severity_hint": "likely-significant", "evidence": "y"}],
@@ -1164,7 +1164,7 @@ def test_update_flags_after_critique_reuses_existing_ids(plan_fixture: PlanFixtu
 
 def test_update_flags_after_critique_autonumbers_missing_ids(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    from megaplan.flags import update_flags_after_critique
+    from arnold.pipelines.megaplan.flags import update_flags_after_critique
 
     critique = {
         "flags": [
@@ -1182,7 +1182,7 @@ def test_update_flags_after_critique_autonumbers_missing_ids(plan_fixture: PlanF
 
 def test_update_flags_after_critique_severity_from_hint(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    from megaplan.flags import update_flags_after_critique
+    from arnold.pipelines.megaplan.flags import update_flags_after_critique
 
     critique = {
         "flags": [
@@ -1202,8 +1202,8 @@ def test_update_flags_after_critique_severity_from_hint(plan_fixture: PlanFixtur
 
 def test_update_flags_after_revise_marks_addressed(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    from megaplan._core import save_flag_registry
-    from megaplan.flags import update_flags_after_critique, update_flags_after_revise  # noqa: F811
+    from arnold.pipelines.megaplan._core import save_flag_registry
+    from arnold.pipelines.megaplan.flags import update_flags_after_critique, update_flags_after_revise  # noqa: F811
 
     save_flag_registry(
         plan_fixture.plan_dir,
@@ -1273,7 +1273,7 @@ def test_override_add_note_logs_warning_when_emit_fails(
     def _raise_emit(*args, **kwargs):
         raise RuntimeError("emit broke")
 
-    monkeypatch.setattr("megaplan.observability.events.emit", _raise_emit)
+    monkeypatch.setattr("arnold.pipelines.megaplan.observability.events.emit", _raise_emit)
     caplog.set_level("WARNING", logger="megaplan")
 
     response = megaplan.handle_override(
@@ -1514,7 +1514,7 @@ def test_gate_logs_warning_when_flag_delta_emit_fails(
         make_worker_sequence([(worker, "claude", "persistent", False)], {"count": 0}),
     )
 
-    from megaplan.observability import events as events_module
+    from arnold.pipelines.megaplan.observability import events as events_module
 
     original_emit = events_module.emit
 
@@ -1523,7 +1523,7 @@ def test_gate_logs_warning_when_flag_delta_emit_fails(
             raise RuntimeError("emit broke")
         return original_emit(kind, *args, **kwargs)
 
-    monkeypatch.setattr("megaplan.observability.events.emit", _maybe_raise_emit)
+    monkeypatch.setattr("arnold.pipelines.megaplan.observability.events.emit", _maybe_raise_emit)
     caplog.set_level("WARNING", logger="megaplan")
 
     response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -1642,7 +1642,7 @@ def test_critique_robust_cap_higher_for_thorough(plan_fixture: PlanFixture) -> N
 
 
 def test_critique_no_progress_early_stop(plan_fixture: PlanFixture) -> None:
-    import megaplan._core as core
+    import arnold.pipelines.megaplan._core as core
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -1764,7 +1764,7 @@ def test_cap_with_significant_flag_halts_via_status_path(
     `status`/`auto.drive` use. Pre-fix this returned next_step="revise" (loop
     forever); post-fix the plan is BLOCKED and the loop halts.
     """
-    from megaplan.cli.status_view import _build_status_payload
+    from arnold.pipelines.megaplan.cli.status_view import _build_status_payload
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -1791,7 +1791,7 @@ def test_cap_with_significant_flag_halts_via_status_path(
     assert "revise" not in (status.get("valid_next") or [])
     assert status.get("next_step") != "revise"
     # BLOCKED is terminal with no recoverable next step -> auto halts.
-    from megaplan.planning.state import AUTOMATION_TERMINAL_STATES
+    from arnold.pipelines.megaplan.planning.state import AUTOMATION_TERMINAL_STATES
     assert status["state"] in AUTOMATION_TERMINAL_STATES
     assert not (status.get("valid_next") or [])
 
@@ -1800,7 +1800,7 @@ def test_cap_with_cosmetic_only_routes_to_finalize_via_status_path(
     plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Cap + cosmetic-only flags: derived next_step is finalize (force-proceed)."""
-    from megaplan.cli.status_view import _build_status_payload
+    from arnold.pipelines.megaplan.cli.status_view import _build_status_payload
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))

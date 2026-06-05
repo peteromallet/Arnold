@@ -11,9 +11,9 @@ import contextvars
 
 import pytest
 
-from megaplan._pipeline.envelope import EMPTY_ENVELOPE
-from megaplan.runtime import install_runtime_governor
-from megaplan.runtime.governor import (
+from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE
+from arnold.pipelines.megaplan.runtime import install_runtime_governor
+from arnold.pipelines.megaplan.runtime.governor import (
     Governor,
     current_governor,
     set_governor,
@@ -56,9 +56,9 @@ def test_executor_install_seam_on_when_flag_set(monkeypatch):
     def body():
         set_governor(None)
         # Mirror the executor's flag-gated install seam.
-        from megaplan._pipeline.flags import unified_dispatch_on
+        from arnold.pipelines.megaplan._pipeline.flags import unified_dispatch_on
         assert unified_dispatch_on() is True
-        from megaplan.runtime import install_runtime_governor as _install
+        from arnold.pipelines.megaplan.runtime import install_runtime_governor as _install
         _install(EMPTY_ENVELOPE)
         assert current_governor() is not None
         return True
@@ -71,7 +71,7 @@ def test_executor_install_seam_off_when_flag_unset(monkeypatch):
 
     def body():
         set_governor(None)
-        from megaplan._pipeline.flags import unified_dispatch_on
+        from arnold.pipelines.megaplan._pipeline.flags import unified_dispatch_on
         assert unified_dispatch_on() is False
         # No install path under the flag-off branch.
         assert current_governor() is None

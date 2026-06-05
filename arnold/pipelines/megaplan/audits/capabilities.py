@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from megaplan.runtime.capabilities import *  # noqa: F401,F403
+from arnold.pipelines.megaplan.runtime.capabilities import *  # noqa: F401,F403
 
 __all__ = [
     "ALL_CAPABILITIES",

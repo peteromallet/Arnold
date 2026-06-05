@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.chain import hinge_gate as hg
-from megaplan.observability.fold import OracleFailure, OracleResult
+from arnold.pipelines.megaplan.chain import hinge_gate as hg
+from arnold.pipelines.megaplan.observability.fold import OracleFailure, OracleResult
 
 
 pytestmark = pytest.mark.hinge_gate

@@ -17,12 +17,14 @@ Handlers re-exported (2):
     handle_tiebreaker_run, handle_tiebreaker_decide
 """
 
-from megaplan.handlers.tiebreaker import (  # noqa: F401 — re-export for stage consumption
+from arnold.pipelines.megaplan.handlers._tiebreaker_impl import (  # noqa: F401 — re-export for stage consumption
+    _build_tiebreaker_reprompt,
     handle_tiebreaker_run,
     handle_tiebreaker_decide,
 )
 
 __all__ = [
+    "_build_tiebreaker_reprompt",
     "handle_tiebreaker_run",
     "handle_tiebreaker_decide",
 ]

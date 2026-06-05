@@ -92,7 +92,7 @@ class TestBridgeImports:
 
     def test_megaplan_types_bridge_imports(self) -> None:
         """Symbols re-exported via megaplan._pipeline.types bridge from Arnold."""
-        from megaplan._pipeline.types import (
+        from arnold.pipelines.megaplan._pipeline.types import (
             CONTENT_TYPES,
             ContentTypeRegistry,
             Port,
@@ -113,7 +113,7 @@ class TestBridgeImports:
 
     def test_megaplan_pipeline_bridge_imports(self) -> None:
         """Core types still importable from megaplan._pipeline."""
-        from megaplan._pipeline import (
+        from arnold.pipelines.megaplan._pipeline import (
             Edge,
             ParallelStage,
             Pipeline,

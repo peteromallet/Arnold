@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from megaplan.schemas import (
+from arnold.pipelines.megaplan.schemas import (
     AutomationActor,
     BotTurn,
     Capsule,
@@ -44,7 +44,7 @@ from megaplan.schemas import (
     WarrantSourceCompleteness,
     WarrantSourceProjection,
 )
-from megaplan.store.snapshot import canonical_json_dumps
+from arnold.pipelines.megaplan.store.snapshot import canonical_json_dumps
 from tests.conftest import load_state
 
 
@@ -308,11 +308,11 @@ def test_storage_models_normalize_json_defaults_and_extensions() -> None:
 
 
 def test_resident_schema_exports_and_message_idempotency_fields() -> None:
-    from megaplan import schemas
-    from megaplan.schemas import models
-    from megaplan.store import CloudRun as StoreCloudRun
-    from megaplan.store import ResidentConversation as StoreResidentConversation
-    from megaplan.store import ScheduledJob as StoreScheduledJob
+    from arnold.pipelines.megaplan import schemas 
+    from arnold.pipelines.megaplan.schemas import models
+    from arnold.pipelines.megaplan.store import CloudRun as StoreCloudRun
+    from arnold.pipelines.megaplan.store import ResidentConversation as StoreResidentConversation
+    from arnold.pipelines.megaplan.store import ScheduledJob as StoreScheduledJob
 
     message = Message.model_validate(
         {

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.schemas import Plan
-from megaplan.store import FileStore, PlanRepository
-from megaplan._core.io import orphan_plans_root
+from arnold.pipelines.megaplan.schemas import Plan
+from arnold.pipelines.megaplan.store import FileStore, PlanRepository
+from arnold.pipelines.megaplan._core.io import orphan_plans_root
 
 
 FIXTURE_ROOT = Path("arnold-source/.megaplan/plans")

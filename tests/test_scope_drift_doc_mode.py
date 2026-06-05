@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-import megaplan.execute.aggregation as execute_agg
-from megaplan.types import CliError
+import arnold.pipelines.megaplan.execute.aggregation as execute_agg
+from arnold.pipelines.megaplan.types import CliError
 
 
 @pytest.fixture

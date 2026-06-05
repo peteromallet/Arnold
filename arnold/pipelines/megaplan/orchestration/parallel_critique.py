@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import (
+from arnold.pipelines.megaplan._core import (
     read_json,
     schemas_root,
     _merge_unique,
@@ -28,10 +28,10 @@ from arnold.pipelines.megaplan.orchestration.critique_status import (
     annotate_unverifiable_checks,
     unverifiable_detail,
 )
-from megaplan.prompts.critique import single_check_critique_prompt, write_single_check_template
-from megaplan.pipelines.creative.prompts.critique_joke import single_check_critique_joke_prompt
-from megaplan.types import CliError, PlanState
-from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
+from arnold.pipelines.megaplan.prompts.critique import single_check_critique_prompt, write_single_check_template
+from arnold.pipelines.megaplan.pipelines.creative.prompts.critique_joke import single_check_critique_joke_prompt
+from arnold.pipelines.megaplan.types import CliError, PlanState
+from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
 
 _CRITIQUE_WORKER_SHAPE_RETRIES = 2
@@ -91,8 +91,8 @@ def _run_check(
     """
     import uuid as _uuid
 
-    from megaplan._core import with_429_openrouter_fallback as _with_429_fallback
-    from megaplan.workers.hermes import (
+    from arnold.pipelines.megaplan._core import with_429_openrouter_fallback as _with_429_fallback
+    from arnold.pipelines.megaplan.workers.hermes import (
         _import_hermes_runtime,
         _streaming_run_kwargs,
         _toolsets_for_phase,
@@ -100,7 +100,7 @@ def _run_check(
         clean_parsed_payload,
         parse_agent_output,
     )
-    from megaplan.runtime.key_pool import resolve_model as _resolve_model
+    from arnold.pipelines.megaplan.runtime.key_pool import resolve_model as _resolve_model
 
     AIAgent, SessionDB = _import_hermes_runtime()
 

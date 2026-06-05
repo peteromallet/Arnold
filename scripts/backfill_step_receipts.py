@@ -69,8 +69,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from megaplan.pricing.fireworks import FIREWORKS_PRICING, cost_from_usage  # noqa: E402
-from megaplan.pricing.claude import (  # noqa: E402
+from arnold.pipelines.megaplan.pricing.fireworks import FIREWORKS_PRICING, cost_from_usage  # noqa: E402
+from arnold.pipelines.megaplan.pricing.claude import (  # noqa: E402
     DEFAULT_PROMPT_COMPLETION_RATIO,
     estimate_tokens_from_cost,
 )

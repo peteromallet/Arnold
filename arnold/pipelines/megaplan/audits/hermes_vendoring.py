@@ -71,7 +71,7 @@ class VendoredAgentHistoryAudit:
 
 
 def audit_vendored_agent_tree(repo_root: Path) -> VendoredAgentTreeAudit:
-    agent_root = repo_root / "megaplan" / "agent"
+    agent_root = repo_root / "arnold" / "pipelines" / "megaplan" / "agent"
 
     missing_runtime_entries = [
         entry for entry in RUNTIME_REQUIRED_ENTRIES if not (agent_root / entry).exists()
@@ -131,7 +131,7 @@ def find_retention_import_sites(
 
 def audit_vendored_agent_history(repo_root: Path) -> VendoredAgentHistoryAudit:
     log_result = subprocess.run(
-        ["git", "-C", str(repo_root), "log", "--oneline", "--", "megaplan/agent/"],
+        ["git", "-C", str(repo_root), "log", "--oneline", "--", "arnold/pipelines/megaplan/agent/"],
         capture_output=True,
         text=True,
         check=False,
@@ -152,7 +152,7 @@ def audit_vendored_agent_history(repo_root: Path) -> VendoredAgentHistoryAudit:
             str(repo_root),
             "ls-files",
             "--error-unmatch",
-            "megaplan/agent/run_agent.py",
+            "arnold/pipelines/megaplan/agent/run_agent.py",
         ],
         capture_output=True,
         text=True,

@@ -19,8 +19,8 @@ from typing import Any, Literal
 
 import pytest
 
-from megaplan._core import run_scheduler
-from megaplan._core.scheduler.types import Reduce
+from arnold.pipelines.megaplan._core import run_scheduler
+from arnold.pipelines.megaplan._core.scheduler.types import Reduce
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ def _core_root() -> Path:
     # megaplan/_core/io.py has a pre-existing conditional import from
     # megaplan.handlers.shared (io.py:255, inside an except handler) that
     # predates F5 and is out of scope for this test.
-    return Path(__file__).resolve().parent.parent / "megaplan" / "_core" / "scheduler"
+    return Path(__file__).resolve().parent.parent / "arnold" / "pipelines" / "megaplan" / "_core" / "scheduler"
 
 
 def _collect_banned_imports(path: Path) -> list[str]:

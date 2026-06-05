@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core import (
+from arnold.pipelines.megaplan._core import (
     WorkerUnit,
     WorkerUnitResult,
     atomic_write_json,
@@ -13,11 +13,11 @@ from megaplan._core import (
     scatter_worker_unit,
     scatter_worker_units,
 )
-from megaplan._core.hermes_fanout import GenericScatterResult
-from megaplan.review.parallel import _parse_parallel_review_result, run_parallel_review
-from megaplan.review.checks import checks_for_robustness
-from megaplan.types import AgentMode, CliError, PlanState
-from megaplan.workers import WorkerResult, _build_mock_payload
+from arnold.pipelines.megaplan._core.hermes_fanout import GenericScatterResult
+from arnold.pipelines.megaplan.review.parallel import _parse_parallel_review_result, run_parallel_review
+from arnold.pipelines.megaplan.review.checks import checks_for_robustness
+from arnold.pipelines.megaplan.types import AgentMode, CliError, PlanState
+from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -215,9 +215,9 @@ def test_run_parallel_review_merges_check_results_in_original_order(
             side_results=side_results,
         )
 
-    monkeypatch.setattr("megaplan.review.parallel._resolve_model", lambda model: ("qwen/qwen3-32b", {}))
-    monkeypatch.setattr("megaplan.review.parallel.single_check_review_prompt", fake_single_check_prompt)
-    monkeypatch.setattr("megaplan.review.parallel.scatter_worker_units", fake_scatter_worker_units)
+    monkeypatch.setattr("arnold.pipelines.megaplan.review.parallel._resolve_model", lambda model: ("qwen/qwen3-32b", {}))
+    monkeypatch.setattr("arnold.pipelines.megaplan.review.parallel.single_check_review_prompt", fake_single_check_prompt)
+    monkeypatch.setattr("arnold.pipelines.megaplan.review.parallel.scatter_worker_units", fake_scatter_worker_units)
 
     result = run_parallel_review(
         state,
@@ -348,8 +348,8 @@ def test_run_parallel_review_supports_zero_checks_with_criteria_side_unit(
             side_results=[parsed_side],
         )
 
-    monkeypatch.setattr("megaplan.review.parallel._resolve_model", lambda model: ("qwen/qwen3-32b", {}))
-    monkeypatch.setattr("megaplan.review.parallel.scatter_worker_units", fake_scatter_worker_units)
+    monkeypatch.setattr("arnold.pipelines.megaplan.review.parallel._resolve_model", lambda model: ("qwen/qwen3-32b", {}))
+    monkeypatch.setattr("arnold.pipelines.megaplan.review.parallel.scatter_worker_units", fake_scatter_worker_units)
 
     result = run_parallel_review(
         state=state,
@@ -395,7 +395,7 @@ def test_scatter_worker_unit_forwards_review_worker_options(monkeypatch: pytest.
         assert kwargs["worker_options"] == unit.extra["worker_options"]
         return worker, "hermes", "persistent", False
 
-    monkeypatch.setattr("megaplan.workers.run_step_with_worker", fake_run_step_with_worker)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.run_step_with_worker", fake_run_step_with_worker)
 
     index, payload, cost_usd, pt, ct, tt = scatter_worker_unit(
         0,

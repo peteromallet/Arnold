@@ -182,7 +182,7 @@ def test_arnold_docs_cli_source_family_identifies_source(monkeypatch) -> None:
         "## CLI Check and Doctor Facts",
         "## Control Vocabulary",
     )
-    assert "| module_verb | synthetic-verb | megaplan/cli/arnold.py |" in cli_section
+    assert "| module_verb | synthetic-verb | arnold/pipelines/megaplan/cli/arnold.py |" in cli_section
 
 
 def test_arnold_docs_control_source_family_identifies_source(monkeypatch) -> None:
@@ -198,4 +198,4 @@ def test_arnold_docs_control_source_family_identifies_source(monkeypatch) -> Non
         "## Control Vocabulary",
         "## Behavioral Manifest Projections",
     )
-    assert "| UserActionResolution | synthetic_resolution | megaplan/user_actions.py |" in control_section
+    assert "| UserActionResolution | synthetic_resolution | arnold/pipelines/megaplan/user_actions.py |" in control_section

@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import collect_git_diff_patch, intent_and_notes_block
-from megaplan.types import PlanState
+from arnold.pipelines.megaplan._core import collect_git_diff_patch, intent_and_notes_block
+from arnold.pipelines.megaplan.types import PlanState
 
 
 @dataclass

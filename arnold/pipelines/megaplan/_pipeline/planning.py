@@ -1,0 +1,171 @@
+"""Compile the canonical planning :class:`Pipeline`.
+
+The planning pipeline is keyed by phase name:
+``prep / plan / critique / gate / revise / finalize / execute / review /
+tiebreaker``. Gate recommendations are represented as typed
+``kind=\"decision\"`` edges on the ``gate`` stage. User-facing override
+command labels remain as normal fallback edges because the live gate
+handler still emits and reports those commands.
+"""
+
+from __future__ import annotations
+
+import os
+import dataclasses
+
+from arnold.pipelines.megaplan._pipeline.patterns import (
+    critique_revise_gate_loop,
+    phase_zero_gate,
+)
+from arnold.pipelines.megaplan._pipeline.types import (
+    Edge,
+    Pipeline,
+    Stage,
+)
+from arnold.pipelines.megaplan.routing import (
+    PLANNING_DECISIONS,
+    PLAN_ESCALATE,
+    PLAN_ITERATE,
+    PLAN_PROCEED,
+    tiebreaker_edges,
+)
+from arnold.pipelines.megaplan.pipeline import _planning_loop_should_halt
+
+
+def _discovered_planning_enabled() -> bool:
+    """Whether the planning compiler should route through the discovered package."""
+
+    return os.environ.get("MEGAPLAN_M6_DISCOVERED_PLANNING", "1") == "1"
+
+
+def compile_planning_pipeline() -> Pipeline:
+    """Return the canonical, runnable planning :class:`Pipeline`."""
+
+    if _discovered_planning_enabled():
+        from arnold.pipelines.megaplan.pipelines.planning import build_pipeline
+
+        return build_pipeline()
+    return _compile_legacy_planning_pipeline()
+
+
+def _compile_legacy_planning_pipeline() -> Pipeline:
+    """Return the legacy planning compiler body.
+
+    Sprint 5 Chunk A: this is the only canonical compile target. Stage
+    keys are phase names (``prep / plan / critique / gate / revise /
+    finalize / execute / review / tiebreaker``); the gate Step's
+    recommendation edges sit directly on the ``gate`` stage so the
+    executor's typed-verdict dispatch resolves cleanly.
+
+    Stage layout::
+
+        prep → plan → critique → gate
+                                  ├─ proceed → finalize → execute → review → halt
+                                  ├─ iterate → revise → critique  (loop)
+                                  ├─ tiebreaker → tiebreaker → critique
+                                  └─ escalate → (override edges)
+    """
+
+    from arnold.pipelines.megaplan.stages.prep import PrepStep
+    from arnold.pipelines.megaplan.stages.plan import PlanStep
+    from arnold.pipelines.megaplan.stages.critique import CritiqueStep
+    from arnold.pipelines.megaplan.stages.gate import GateStep
+    from arnold.pipelines.megaplan.stages.revise import ReviseStep
+    from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
+    from arnold.pipelines.megaplan.stages.execute import ExecuteStep
+    from arnold.pipelines.megaplan.stages.review import ReviewStep
+    from arnold.pipelines.megaplan.stages.tiebreaker import TiebreakerStep
+
+    # Phase 0: prep gate via patterns.phase_zero_gate.
+    prep_stage = phase_zero_gate(
+        PrepStep(),
+        name="prep",
+        on_pass="plan",
+        on_fail="halt",
+    )
+
+    # critique → gate → revise cycle assembled via the pattern library.
+    # gate_extra_edges carry the non-recommendation fallback/override
+    # labels that the live gate handler reports; critique_fallback_edges
+    # carry the label-fallback edges the existing CritiqueStep emits.
+    cycle = critique_revise_gate_loop(
+        CritiqueStep(),
+        GateStep(),
+        ReviseStep(),
+        on_proceed="finalize",
+        on_iterate="revise",
+        on_tiebreaker="tiebreaker",
+        on_escalate="finalize",
+        critique_fallback_edges=(
+            Edge(label="gate_unset:gate", target="gate"),
+            Edge(label="gate", target="gate"),
+        ),
+        gate_extra_edges=(
+            Edge(label="revise", target="revise"),
+            Edge(label="gate", target="finalize"),
+            Edge(label="override force-proceed", target="finalize"),
+            Edge(label="override abort", target="halt"),
+        ),
+        revise_target="critique",
+    )
+
+    stages: dict[str, Stage] = {
+        "prep": prep_stage,
+        "plan": Stage(
+            name="plan", step=PlanStep(),
+            edges=(Edge(label="critique", target="critique"),),
+        ),
+        "critique": cycle["critique"],
+        "gate": cycle["gate"],
+        "revise": cycle["revise"],
+        "finalize": Stage(
+            name="finalize", step=FinalizeStep(),
+            edges=(Edge(label="execute", target="execute"),),
+        ),
+        "execute": Stage(
+            name="execute", step=ExecuteStep(),
+            edges=(Edge(label="review", target="review"),),
+        ),
+        "review": Stage(
+            name="review", step=ReviewStep(),
+            edges=(Edge(label="review", target="halt"),
+                   Edge(label="halt", target="halt")),
+        ),
+        # T11 LOAD-BEARING: TiebreakerStep is a SubloopStep that emits a
+        # PipelineVerdict with a typed recommendation. The three kind='gate' edges
+        # below replace the legacy label-only edges; the legacy 'escalate
+        # folds into the finalize branch' semantics are preserved via
+        # escalate→finalize (anti-scope: no new pipeline branches this
+        # sprint).
+        "tiebreaker": Stage(
+            name="tiebreaker", step=TiebreakerStep(),
+            edges=tiebreaker_edges(
+                on_iterate="critique",
+                on_proceed="finalize",
+                on_escalate="finalize",
+            ),
+            decision_vocabulary=frozenset(
+                {PLAN_ITERATE, PLAN_PROCEED, PLAN_ESCALATE}
+            ),
+        ),
+    }
+    stages["gate"] = dataclasses.replace(
+        stages["gate"],
+        decision_vocabulary=frozenset(PLANNING_DECISIONS),
+        loop_condition=_planning_loop_should_halt,
+    )
+    return Pipeline(
+        stages=stages,
+        entry="prep",
+        resource_bundles=(
+            "prep",
+            "plan",
+            "critique",
+            "gate",
+            "revise",
+            "finalize",
+            "execute",
+            "review",
+            "tiebreaker",
+        ),
+    )

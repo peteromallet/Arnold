@@ -7,7 +7,7 @@ import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from megaplan.resident import (
+from arnold.pipelines.megaplan.resident import (
     EmitProtocol,
     FakeAgentRunner,
     FakeAgentStep,
@@ -18,9 +18,9 @@ from megaplan.resident import (
     ResidentRuntime,
     ToolRegistration,
 )
-from megaplan.resident.discord import DiscordDeliveryTarget, DiscordInboundMessage
-from megaplan.resident.tool_schemas import ToolInput, ToolResult
-from megaplan.store import CloudRunInput, FileStore, ResidentConversationInput
+from arnold.pipelines.megaplan.resident.discord import DiscordDeliveryTarget, DiscordInboundMessage
+from arnold.pipelines.megaplan.resident.tool_schemas import ToolInput, ToolResult
+from arnold.pipelines.megaplan.store import CloudRunInput, FileStore, ResidentConversationInput
 
 
 @dataclass

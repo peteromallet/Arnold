@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._pipeline.types import Step
+from arnold.pipelines.megaplan._pipeline.types import Step
 
 
 def _step_classes():
-    from megaplan._pipeline.steps.agent import AgentStep
-    from megaplan._pipeline.steps.panel import PanelReviewerStep
-    from megaplan._pipeline.steps.human_gate import HumanDecisionStep
-    from megaplan._pipeline.subloop import SubloopStep
-    from megaplan._pipeline.pattern_dynamic import (
+    from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
+    from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
+    from arnold.pipelines.megaplan._pipeline.steps.human_gate import HumanDecisionStep
+    from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
+    from arnold.pipelines.megaplan._pipeline.pattern_dynamic import (
         _ConsensusStep,
         _PairedRoundStep,
         _PanelFromArtifactStep,
@@ -28,13 +28,13 @@ def _step_classes():
     from arnold.pipelines.megaplan.stages.execute import ExecuteStep
     from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
     from arnold.pipelines.megaplan.stages.review import ReviewStep
-    from megaplan._pipeline.demo_judges import (
+    from arnold.pipelines.megaplan._pipeline.demo_judges import (
         JudgeClarity,
         JudgeConcreteness,
         JudgeBrevity,
         Synthesize,
     )
-    from megaplan._pipeline.demos.doc_critique import DocCritic, DocReviser
+    from arnold.pipelines.megaplan._pipeline.demos.doc_critique import DocCritic, DocReviser
 
     def _agent():
         return AgentStep(name="agent")

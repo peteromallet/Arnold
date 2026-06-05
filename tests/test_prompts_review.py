@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from megaplan._core import atomic_write_json
-from megaplan.prompts.review import _review_template_payload, _settled_decisions_block
+from arnold.pipelines.megaplan._core import atomic_write_json
+from arnold.pipelines.megaplan.prompts.review import _review_template_payload, _settled_decisions_block
 
 
 def test_settled_decisions_block_handles_string_legacy(caplog) -> None:

@@ -309,8 +309,8 @@ class TestMegaplanBridgeSteps:
 
     def test_megaplan_agent_step_uses_plan_dir(self, tmp_path: Path) -> None:
         """Legacy AgentStep writes under ctx.plan_dir."""
-        from megaplan._pipeline.steps.agent import AgentStep as MegaAgentStep
-        from megaplan._pipeline.types import StepContext as MegaStepContext
+        from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep as MegaAgentStep
+        from arnold.pipelines.megaplan._pipeline.types import StepContext as MegaStepContext
 
         # Create a prompt file so resolve_prompt_text can find it
         pipeline_dir = tmp_path / "pipeline"
@@ -339,8 +339,8 @@ class TestMegaplanBridgeSteps:
 
     def test_megaplan_panel_step_uses_plan_dir(self, tmp_path: Path) -> None:
         """Legacy PanelReviewerStep writes under ctx.plan_dir with reviewer_id."""
-        from megaplan._pipeline.steps.panel import PanelReviewerStep as MegaPanelStep
-        from megaplan._pipeline.types import StepContext as MegaStepContext
+        from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep as MegaPanelStep
+        from arnold.pipelines.megaplan._pipeline.types import StepContext as MegaStepContext
 
         # Create a prompt file so resolve_prompt_text can find it
         pipeline_dir = tmp_path / "pipeline"
@@ -389,9 +389,9 @@ class TestStepImports:
 
     def test_megaplan_steps_still_importable(self) -> None:
         """Megaplan bridge steps still import as expected."""
-        from megaplan._pipeline.steps.agent import AgentStep as MegaAS
-        from megaplan._pipeline.steps.panel import PanelReviewerStep as MegaPRS
-        from megaplan._pipeline.steps.human_gate import HumanDecisionStep
+        from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep as MegaAS
+        from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep as MegaPRS
+        from arnold.pipelines.megaplan._pipeline.steps.human_gate import HumanDecisionStep
 
         assert MegaAS is not None
         assert MegaPRS is not None

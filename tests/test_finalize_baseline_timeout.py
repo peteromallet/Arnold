@@ -5,8 +5,8 @@ from unittest import mock
 
 import pytest
 
-import megaplan.handlers
-from megaplan.orchestration.suite_runner import SuiteRunResult
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
 
 
 def _make_result(**overrides: object) -> SuiteRunResult:
@@ -38,14 +38,14 @@ def test_capture_test_baseline_default_timeout_is_900(
 ) -> None:
     """When no test_baseline_timeout key is present, the run_suite call
     should use deadline=monotonic+900 and the timeout note should reference 900."""
-    monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
+    monkeypatch.delenv(megaplan_handlers.MOCK_ENV_VAR, raising=False)
 
     fake_result = _make_result(status="timeout")
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
     ) as mock_run:
-        result = megaplan.handlers._capture_test_baseline(tmp_path, {})
+        result = megaplan_handlers._capture_test_baseline(tmp_path, {})
 
     assert result["baseline_test_failures"] is None
     assert "timed out" in result["baseline_test_note"].lower()
@@ -60,14 +60,14 @@ def test_capture_test_baseline_override_timeout_300(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When test_baseline_timeout is set to 300, timeout note should reference 300."""
-    monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
+    monkeypatch.delenv(megaplan_handlers.MOCK_ENV_VAR, raising=False)
 
     fake_result = _make_result(status="timeout")
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
     ) as mock_run:
-        result = megaplan.handlers._capture_test_baseline(
+        result = megaplan_handlers._capture_test_baseline(
             tmp_path, {"test_baseline_timeout": 300}
         )
 
@@ -81,14 +81,14 @@ def test_capture_test_baseline_override_timeout_1500(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When test_baseline_timeout is set to 1500, timeout note should reference 1500."""
-    monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
+    monkeypatch.delenv(megaplan_handlers.MOCK_ENV_VAR, raising=False)
 
     fake_result = _make_result(status="timeout")
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
     ) as mock_run:
-        result = megaplan.handlers._capture_test_baseline(
+        result = megaplan_handlers._capture_test_baseline(
             tmp_path, {"test_baseline_timeout": 1500}
         )
 
@@ -105,14 +105,14 @@ def test_capture_test_baseline_override_timeout_string(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """test_baseline_timeout as a string '600' should be coerced to int and used."""
-    monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
+    monkeypatch.delenv(megaplan_handlers.MOCK_ENV_VAR, raising=False)
 
     fake_result = _make_result(status="timeout")
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
     ) as mock_run:
-        result = megaplan.handlers._capture_test_baseline(
+        result = megaplan_handlers._capture_test_baseline(
             tmp_path, {"test_baseline_timeout": "600"}
         )
 
@@ -128,12 +128,12 @@ def test_capture_test_baseline_invalid_timeout_negative(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A negative timeout should produce an invalidity note early, before run_suite is invoked."""
-    monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
+    monkeypatch.delenv(megaplan_handlers.MOCK_ENV_VAR, raising=False)
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite"
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite"
     ) as mock_run:
-        result = megaplan.handlers._capture_test_baseline(
+        result = megaplan_handlers._capture_test_baseline(
             tmp_path, {"test_baseline_timeout": -1}
         )
 
@@ -147,12 +147,12 @@ def test_capture_test_baseline_invalid_timeout_zero(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Zero timeout should produce an invalidity note early."""
-    monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
+    monkeypatch.delenv(megaplan_handlers.MOCK_ENV_VAR, raising=False)
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite"
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite"
     ) as mock_run:
-        result = megaplan.handlers._capture_test_baseline(
+        result = megaplan_handlers._capture_test_baseline(
             tmp_path, {"test_baseline_timeout": 0}
         )
 
@@ -166,12 +166,12 @@ def test_capture_test_baseline_invalid_timeout_non_numeric(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A non-numeric timeout should produce an invalidity note early."""
-    monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
+    monkeypatch.delenv(megaplan_handlers.MOCK_ENV_VAR, raising=False)
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite"
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite"
     ) as mock_run:
-        result = megaplan.handlers._capture_test_baseline(
+        result = megaplan_handlers._capture_test_baseline(
             tmp_path, {"test_baseline_timeout": "fast"}
         )
 
@@ -188,7 +188,7 @@ def test_capture_test_baseline_override_passed_through_on_success(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When the command succeeds, the configured timeout is used and baseline is empty."""
-    monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
+    monkeypatch.delenv(megaplan_handlers.MOCK_ENV_VAR, raising=False)
 
     fake_result = _make_result(
         status="passed",
@@ -198,9 +198,9 @@ def test_capture_test_baseline_override_passed_through_on_success(
     )
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
     ) as mock_run:
-        result = megaplan.handlers._capture_test_baseline(
+        result = megaplan_handlers._capture_test_baseline(
             tmp_path, {"test_baseline_timeout": 1800}
         )
 

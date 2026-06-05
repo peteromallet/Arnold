@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.handlers.verifiability import get_human_verification_status, handle_verify_human
-from megaplan.run_outcome import RunOutcome
-from megaplan.types import CliError
-from megaplan.planning.state import (
+from arnold.pipelines.megaplan.handlers.verifiability import get_human_verification_status, handle_verify_human
+from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.planning.state import (
     STATE_AWAITING_HUMAN,
     STATE_AWAITING_HUMAN_VERIFY,
     STATE_DONE,
@@ -154,7 +154,7 @@ def test_handle_verify_human_requires_awaiting_human_verify_state(
     """``verify-human`` in verdict mode must reject non-awaiting states."""
     state = _make_plan_state(current_state=STATE_INITIALIZED)
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.load_plan",
+        "arnold.pipelines.megaplan.handlers.verifiability.load_plan",
         lambda root, name: (tmp_path, state),
     )
 
@@ -178,16 +178,16 @@ def test_handle_verify_human_accepts_awaiting_human_verify_state(
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.load_plan",
+        "arnold.pipelines.megaplan.handlers.verifiability.load_plan",
         lambda root, name: (tmp_path, state),
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.now_utc",
+        "arnold.pipelines.megaplan.handlers.verifiability.now_utc",
         lambda: "2026-05-31T12:00:00Z",
     )
     # Capture state transition
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.save_state_merge_meta",
+        "arnold.pipelines.megaplan.handlers.verifiability.save_state_merge_meta",
         lambda plan_dir, st: st.update({"current_state": STATE_DONE}),
     )
 
@@ -221,15 +221,15 @@ def test_handle_verify_human_transitions_to_done_when_all_verified(
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.load_plan",
+        "arnold.pipelines.megaplan.handlers.verifiability.load_plan",
         lambda root, name: (tmp_path, state),
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.now_utc",
+        "arnold.pipelines.megaplan.handlers.verifiability.now_utc",
         lambda: "2026-05-31T12:00:00Z",
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.save_state_merge_meta",
+        "arnold.pipelines.megaplan.handlers.verifiability.save_state_merge_meta",
         lambda plan_dir, st: st.update({"current_state": STATE_DONE}),
     )
 
@@ -264,15 +264,15 @@ def test_handle_verify_human_stays_awaiting_when_pending_remain(
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.load_plan",
+        "arnold.pipelines.megaplan.handlers.verifiability.load_plan",
         lambda root, name: (tmp_path, state),
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.now_utc",
+        "arnold.pipelines.megaplan.handlers.verifiability.now_utc",
         lambda: "2026-05-31T12:00:00Z",
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.save_state_merge_meta",
+        "arnold.pipelines.megaplan.handlers.verifiability.save_state_merge_meta",
         lambda plan_dir, st: None,  # should NOT be called
     )
 
@@ -323,15 +323,15 @@ def test_handle_verify_human_result_state_projects_to_awaiting_human(
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.load_plan",
+        "arnold.pipelines.megaplan.handlers.verifiability.load_plan",
         lambda root, name: (tmp_path, state),
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.now_utc",
+        "arnold.pipelines.megaplan.handlers.verifiability.now_utc",
         lambda: "2026-05-31T12:00:00Z",
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.save_state_merge_meta",
+        "arnold.pipelines.megaplan.handlers.verifiability.save_state_merge_meta",
         lambda plan_dir, st: None,
     )
 
@@ -365,15 +365,15 @@ def test_handle_verify_human_does_not_create_awaiting_user_json(
     assert not awaiting_path.exists(), "precondition: no awaiting_user.json"
 
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.load_plan",
+        "arnold.pipelines.megaplan.handlers.verifiability.load_plan",
         lambda root, name: (tmp_path, state),
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.now_utc",
+        "arnold.pipelines.megaplan.handlers.verifiability.now_utc",
         lambda: "2026-05-31T12:00:00Z",
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.save_state_merge_meta",
+        "arnold.pipelines.megaplan.handlers.verifiability.save_state_merge_meta",
         lambda plan_dir, st: st.update({"current_state": STATE_DONE}),
     )
 
@@ -405,15 +405,15 @@ def test_handle_verify_human_does_not_alter_existing_awaiting_user_json(
     awaiting_path.write_text(original_content, encoding="utf-8")
 
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.load_plan",
+        "arnold.pipelines.megaplan.handlers.verifiability.load_plan",
         lambda root, name: (tmp_path, state),
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.now_utc",
+        "arnold.pipelines.megaplan.handlers.verifiability.now_utc",
         lambda: "2026-05-31T12:00:00Z",
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.save_state_merge_meta",
+        "arnold.pipelines.megaplan.handlers.verifiability.save_state_merge_meta",
         lambda plan_dir, st: st.update({"current_state": STATE_DONE}),
     )
 
@@ -436,15 +436,15 @@ def test_handle_verify_human_preserves_pipeline_paused_stage(
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.load_plan",
+        "arnold.pipelines.megaplan.handlers.verifiability.load_plan",
         lambda root, name: (tmp_path, state),
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.now_utc",
+        "arnold.pipelines.megaplan.handlers.verifiability.now_utc",
         lambda: "2026-05-31T12:00:00Z",
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.save_state_merge_meta",
+        "arnold.pipelines.megaplan.handlers.verifiability.save_state_merge_meta",
         lambda plan_dir, st: st.update({"current_state": STATE_DONE}),
     )
 
@@ -470,15 +470,15 @@ def test_handle_verify_human_does_not_create_pipeline_paused_stage(
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.load_plan",
+        "arnold.pipelines.megaplan.handlers.verifiability.load_plan",
         lambda root, name: (tmp_path, state),
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.now_utc",
+        "arnold.pipelines.megaplan.handlers.verifiability.now_utc",
         lambda: "2026-05-31T12:00:00Z",
     )
     monkeypatch.setattr(
-        "megaplan.handlers.verifiability.save_state_merge_meta",
+        "arnold.pipelines.megaplan.handlers.verifiability.save_state_merge_meta",
         lambda plan_dir, st: st.update({"current_state": STATE_DONE}),
     )
 

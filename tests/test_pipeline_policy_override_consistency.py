@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     Pipeline,
     Stage,
@@ -13,9 +13,9 @@ from megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from megaplan._pipeline.executor import run_pipeline, run_pipeline_with_policy
-from megaplan._pipeline.override import override_edge
-from megaplan._pipeline.runtime import RuntimePolicy
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline, run_pipeline_with_policy
+from arnold.pipelines.megaplan._pipeline.override import override_edge
+from arnold.pipelines.megaplan._pipeline.runtime import RuntimePolicy
 
 
 @dataclass

@@ -1,8 +1,8 @@
 """W9b — fold_events and read_events unit tests."""
 from pathlib import Path
 
-from megaplan.observability.fold import fold_events, read_events
-from megaplan.observability.events import EventKind, emit_state_wal
+from arnold.pipelines.megaplan.observability.fold import fold_events, read_events
+from arnold.pipelines.megaplan.observability.events import EventKind, emit_state_wal
 
 
 def _make_state_written_event(seq: int, snapshot: dict) -> dict:

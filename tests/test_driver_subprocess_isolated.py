@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.types import StepContext, StepResult
-from megaplan.drivers.subprocess_isolated import SubprocessIsolatedDriver
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan.drivers.subprocess_isolated import SubprocessIsolatedDriver
 
 
 SCRIPT_HELLO = "import sys; sys.stdout.write('hello\\n'); sys.exit(0)"

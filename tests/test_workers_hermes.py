@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from megaplan.types import AgentMode
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.types import AgentMode
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests._workers_helpers import _mock_state
 
 
@@ -22,7 +22,7 @@ def test_is_agent_available_hermes_when_runtime_importable() -> None:
     always returned False on every install and the downstream phase wrongly
     raised agent_deps_missing even when the agent runtime was fully present.
     """
-    from megaplan.workers import _is_agent_available
+    from arnold.pipelines.megaplan.workers import _is_agent_available
 
     assert _is_agent_available("hermes") is True
 
@@ -34,7 +34,7 @@ def test_is_agent_available_hermes_when_runtime_missing() -> None:
     (e.g. a slim wheel that excludes megaplan/agent/). Patches the import via
     sys.modules to force ImportError on run_agent.
     """
-    from megaplan.workers import _is_agent_available
+    from arnold.pipelines.megaplan.workers import _is_agent_available
 
     saved_run_agent = sys.modules.pop("run_agent", None)
     sys.modules["run_agent"] = None  # type: ignore[assignment]  # sentinel: forces ImportError
@@ -48,21 +48,21 @@ def test_is_agent_available_hermes_when_runtime_missing() -> None:
 
 
 def test_hermes_high_token_streaming_matches_fireworks_for_direct_deepseek() -> None:
-    from megaplan.workers.hermes import _streaming_run_kwargs
+    from arnold.pipelines.megaplan.workers.hermes import _streaming_run_kwargs
 
     assert _streaming_run_kwargs("fireworks:accounts/fireworks/models/deepseek-v4-pro", 32768)
     assert _streaming_run_kwargs("deepseek:deepseek-v4-pro", 32768)
     assert not _streaming_run_kwargs("deepseek:deepseek-v4-pro", 4096)
 
 def test_hermes_deepseek_v4_does_not_force_reasoning_disabled() -> None:
-    from megaplan.workers.hermes import _reasoning_config_for_model
+    from arnold.pipelines.megaplan.workers.hermes import _reasoning_config_for_model
 
     assert _reasoning_config_for_model("deepseek-v4-pro") is None
     assert _reasoning_config_for_model("accounts/fireworks/models/deepseek-v4-pro") is None
     assert _reasoning_config_for_model("deepseek/deepseek-r1") == {"enabled": False}
 
 def test_hermes_reasoning_config_maps_profile_depth() -> None:
-    from megaplan.workers.hermes import _reasoning_config_for_model
+    from arnold.pipelines.megaplan.workers.hermes import _reasoning_config_for_model
 
     # Effort maps onto a route-safe reasoning budget.
     assert _reasoning_config_for_model("deepseek-v4-pro", "low") == {
@@ -94,7 +94,7 @@ def test_hermes_reasoning_config_maps_profile_depth() -> None:
 def test_run_step_with_worker_forwards_output_path_and_worker_options_to_hermes(
     tmp_path: Path,
 ) -> None:
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     args = Namespace(
@@ -122,7 +122,7 @@ def test_run_step_with_worker_forwards_output_path_and_worker_options_to_hermes(
         session_id="hermes-session",
     )
 
-    with patch("megaplan.workers.hermes.run_hermes_step", return_value=worker) as mocked_hermes:
+    with patch("arnold.pipelines.megaplan.workers.hermes.run_hermes_step", return_value=worker) as mocked_hermes:
         result, agent, _mode, _refreshed = run_step_with_worker(
             "review",
             state,
@@ -149,7 +149,7 @@ def test_run_step_with_worker_forwards_output_path_and_worker_options_to_hermes(
 def test_run_hermes_step_uses_worker_options_and_preserves_minimax_fallback(
     tmp_path: Path,
 ) -> None:
-    from megaplan.workers.hermes import run_hermes_step
+    from arnold.pipelines.megaplan.workers.hermes import run_hermes_step
 
     repo_root = Path(__file__).resolve().parents[1]
     plan_dir, state = _mock_state(tmp_path)
@@ -204,15 +204,15 @@ def test_run_hermes_step_uses_worker_options_and_preserves_minimax_fallback(
         return {"checks": []}, result.get("final_response", "")
 
     with (
-        patch("megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
-        patch("megaplan.workers.hermes.parse_agent_output", side_effect=_fake_parse_agent_output),
-        patch("megaplan.workers.hermes.clean_parsed_payload", return_value=None),
-        patch("megaplan.workers.hermes.validate_payload", return_value=None),
-        patch("megaplan.runtime.key_pool.resolve_model", return_value=("MiniMax-M2", {"api_key": "mm-key"})),
-        patch("megaplan.runtime.key_pool.acquire_key", return_value="or-key"),
-        patch("megaplan.runtime.key_pool.report_429", return_value=None),
-        patch("megaplan.runtime.key_pool.minimax_openrouter_model", return_value="openrouter/minimax"),
-        patch("megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
+        patch("arnold.pipelines.megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
+        patch("arnold.pipelines.megaplan.workers.hermes.parse_agent_output", side_effect=_fake_parse_agent_output),
+        patch("arnold.pipelines.megaplan.workers.hermes.clean_parsed_payload", return_value=None),
+        patch("arnold.pipelines.megaplan.workers.hermes.validate_payload", return_value=None),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.resolve_model", return_value=("MiniMax-M2", {"api_key": "mm-key"})),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.acquire_key", return_value="or-key"),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.report_429", return_value=None),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.minimax_openrouter_model", return_value="openrouter/minimax"),
+        patch("arnold.pipelines.megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
     ):
         result = run_hermes_step(
             "review",

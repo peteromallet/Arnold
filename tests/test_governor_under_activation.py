@@ -14,9 +14,9 @@ from typing import Any
 
 import pytest
 
-from megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope, make_envelope
-from megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult
-from megaplan.runtime.governor import (
+from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope, make_envelope
+from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult
+from arnold.pipelines.megaplan.runtime.governor import (
     BudgetExceeded,
     ExceedReason,
     Governor,
@@ -62,7 +62,7 @@ def _ctx(tmp_path: Path, envelope: RunEnvelope = EMPTY_ENVELOPE) -> StepContext:
 
 
 def _run(pipeline, ctx, tmp_path):
-    from megaplan._pipeline.executor import run_pipeline
+    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
     return run_pipeline(pipeline, ctx, artifact_root=tmp_path / "artifacts")
 
 
@@ -172,13 +172,13 @@ def test_budget_exceeded_activation_failed_event_emitted(tmp_path, monkeypatch):
     """BudgetExceeded at FIRING triggers ACTIVATION_TRANSITIONED to FAILED."""
     os.environ["ACTIVATION_EMIT"] = "1"
     try:
-        from megaplan.observability.events import EventKind
+        from arnold.pipelines.megaplan.observability.events import EventKind
         emitted = []
 
-        import megaplan._pipeline.executor as _exec_mod
+        import arnold.pipelines.megaplan._pipeline.executor as _exec_mod
         original_emit = None
 
-        import megaplan.observability.events as _ev_mod
+        import arnold.pipelines.megaplan.observability.events as _ev_mod
         original_emit = _ev_mod.emit
 
         def _capture_emit(kind, plan_dir, *, payload=None):

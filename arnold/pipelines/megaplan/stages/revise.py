@@ -7,11 +7,11 @@ from typing import Any, Mapping
 
 from arnold.pipelines.megaplan.handlers import handle_revise
 from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
-from megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepMixinProperty, StepResult
 
 
 @dataclass(frozen=True)
-class ReviseStep:
+class ReviseStep(StepMixinProperty):
     name: str = "revise"
     kind: str = "produce"
     prompt_key: str | None = "revise"

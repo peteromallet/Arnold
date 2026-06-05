@@ -4,8 +4,8 @@ import asyncio
 
 from pydantic import Field
 
-import megaplan.resident.agent_loop as agent_loop
-from megaplan.resident import (
+import arnold.pipelines.megaplan.resident.agent_loop as agent_loop
+from arnold.pipelines.megaplan.resident import (
     AgentLoopError,
     AgentRequest,
     AgentRunner,
@@ -17,7 +17,7 @@ from megaplan.resident import (
     ToolRegistration,
     ToolRegistry,
 )
-from megaplan.resident.tool_schemas import ToolInput, ToolResult
+from arnold.pipelines.megaplan.resident.tool_schemas import ToolInput, ToolResult
 
 
 class EchoInput(ToolInput):

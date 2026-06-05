@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.discovery.trust import (
+from arnold.pipelines.megaplan._pipeline.discovery.trust import (
     BLESSED_ALLOWLIST,
     KNOWN_CAPABILITIES,
     TrustTier,

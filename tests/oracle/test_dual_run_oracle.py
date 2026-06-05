@@ -14,12 +14,13 @@ from typing import Any, Mapping
 
 import pytest
 
-import megaplan
-import megaplan.cli
-import megaplan._core
-import megaplan._core.io as io_module
-from megaplan._pipeline.planning import compile_planning_pipeline
-from megaplan._pipeline.types import Pipeline, Stage, StepContext
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.cli as megaplan_cli
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan._core.io as io_module
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.types import Pipeline, Stage, StepContext
 
 from tests.conftest import make_args_factory
 
@@ -137,7 +138,6 @@ def _drive_throwaway_pipeline(
                     for name in (
                         "prep.json",
                         "plan_v1.md",
-                        "critique_output.json",
                         "gate.json",
                         "final.md",
                         "finalize.json",

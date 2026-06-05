@@ -31,6 +31,8 @@ valid_granularities:
 # Uncertain hybrid ownership must use legacy-hold or split-required rows.
 coverage_exclusions: []
 
+deferral_ledger: []
+
 # ── Disposition rows ──────────────────────────────────────────────────────
 #
 # Row field contract:
@@ -7637,7 +7639,7 @@ deferral_ledger:
   depends_on: T11 (registry core extraction)
   deferred_until: M3a batch 6
 - target: megaplan/_pipeline/subloop.py (SubloopStep.run imports run_pipeline)
-  reason: SubloopStep.run() imports run_pipeline from megaplan._pipeline.executor, uses ctx.plan_dir (Megaplan-specific), and RoutingKey(name, kind) from _forward_m2_m3 (Megaplan Protocol, not Arnold concrete RoutingKey(key)). Also depends on pattern_types.PromoteFn which references Megaplan StepContext/StepResult. T17 audit confirmed: deeply entangled — defer until executor, types, and RoutingKey bridges stabilize.
+  reason: SubloopStep.run() imports run_pipeline from megaplan._pipeline.executor, uses ctx.plan_dir (Megaplan-specific), and RoutingKey(name, kind) from _forward_m2_m3 (Megaplan Protocol, not Arnold concrete RoutingKey(key)). Also depends on pattern_types.PromoteFn which references Megaplan StepContext/StepResult. T17 audit confirmed; deeply entangled — defer until executor, types, and RoutingKey bridges stabilize.
   depends_on: T8 (executor split), T4 (type contract change)
   deferred_until: M3a batch 7 (subloop audit)
   audit_t17: confirmed_deferred 2026-06-03

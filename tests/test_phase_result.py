@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.orchestration.phase_result import (
+from arnold.pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,
@@ -20,7 +20,7 @@ from megaplan.orchestration.phase_result import (
     read_phase_result,
     validate_phase_result,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 # ---------------------------------------------------------------------------

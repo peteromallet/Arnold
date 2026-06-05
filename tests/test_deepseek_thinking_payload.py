@@ -11,7 +11,7 @@ Shapes match https://api-docs.deepseek.com/guides/thinking_mode.
 """
 from __future__ import annotations
 
-import megaplan.agent  # noqa: F401  (side-effect: sys.path setup)
+import arnold.pipelines.megaplan.agent  # noqa: F401  (side-effect: sys.path setup)
 from run_agent import AIAgent
 
 

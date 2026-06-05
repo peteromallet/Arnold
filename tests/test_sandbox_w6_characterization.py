@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.runtime.sandbox import install_sandbox
-from megaplan.workers import hermes as hermes_module
+from arnold.pipelines.megaplan.runtime.sandbox import install_sandbox
+from arnold.pipelines.megaplan.workers import hermes as hermes_module
 
 
 def test_install_sandbox_raises_on_missing_project_dir(tmp_path: Path) -> None:

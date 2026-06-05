@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from unittest.mock import patch, sentinel
 
-from megaplan._pipeline import planning
+from arnold.pipelines.megaplan._pipeline import planning
 
 
 def test_discovered_planning_helper_is_inline_env_default_on(monkeypatch) -> None:
@@ -28,7 +28,7 @@ def test_compile_planning_pipeline_flag_off_uses_legacy_compiler(monkeypatch) ->
         "_compile_legacy_planning_pipeline",
         return_value=sentinel.legacy_pipeline,
     ) as legacy_spy, patch(
-        "megaplan.pipelines.planning.build_pipeline",
+        "arnold.pipelines.megaplan.pipelines.planning.build_pipeline",
         return_value=sentinel.discovered_pipeline,
     ) as discovered_spy:
         pipeline = planning.compile_planning_pipeline()
@@ -46,7 +46,7 @@ def test_compile_planning_pipeline_flag_on_uses_discovered_package(monkeypatch) 
         "_compile_legacy_planning_pipeline",
         return_value=sentinel.legacy_pipeline,
     ) as legacy_spy, patch(
-        "megaplan.pipelines.planning.build_pipeline",
+        "arnold.pipelines.megaplan.pipelines.planning.build_pipeline",
         return_value=sentinel.discovered_pipeline,
     ) as discovered_spy:
         pipeline = planning.compile_planning_pipeline()

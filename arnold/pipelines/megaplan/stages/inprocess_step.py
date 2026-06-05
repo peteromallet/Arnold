@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from megaplan._pipeline.types import StepContext, StepResult, PipelineVerdict
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult, PipelineVerdict
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,8 @@ class InProcessHandlerStep:
     handler: Callable[[Path, Namespace], Mapping[str, Any]]
     prompt_key: str | None = None
     slot: str | None = None
+    consumes: tuple[Any, ...] = ()
+    produces: tuple[Any, ...] = ()
     arg_overrides: Mapping[str, Any] = field(default_factory=dict)
 
     def run(self, ctx: StepContext) -> StepResult:
@@ -118,7 +120,7 @@ def _resolve_project_dir(ctx: StepContext) -> Path:
 def _read_state(plan_dir: Path) -> dict[str, Any]:
     import json
 
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     path = Path(plan_dir) / "state.json"
     if not path.exists():

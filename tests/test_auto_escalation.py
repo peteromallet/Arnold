@@ -1,13 +1,13 @@
 """Tests for megaplan.auto_escalation."""
 from __future__ import annotations
 
-from megaplan.auto_escalation import (
+from arnold.pipelines.megaplan.auto_escalation import (
     CATEGORY_POLICY,
     FailureCategory,
     classify_failure,
 )
-from megaplan.auto import DEFAULT_MAX_BLOCKED_RETRIES
-from megaplan.orchestration.phase_result import BlockedTask, Deviation, ExitKind
+from arnold.pipelines.megaplan.auto import DEFAULT_MAX_BLOCKED_RETRIES
+from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation, ExitKind
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────

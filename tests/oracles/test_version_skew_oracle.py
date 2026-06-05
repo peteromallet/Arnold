@@ -41,14 +41,14 @@ from typing import Any
 
 import pytest
 
-import megaplan._legacy_subprocess as legacy
-from megaplan._legacy_subprocess import (
+import arnold.pipelines.megaplan._legacy_subprocess as legacy
+from arnold.pipelines.megaplan._legacy_subprocess import (
     PHASE_TIMEOUT_EXIT_CODE,
     legacy_supervise_subprocess,
 )
-from megaplan._pipeline.flags import unified_dispatch_on
-from megaplan._pipeline.types import StepContext, StepResult
-from megaplan.drivers.in_process import InProcessDriver
+from arnold.pipelines.megaplan._pipeline.flags import unified_dispatch_on
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan.drivers.in_process import InProcessDriver
 
 
 pytestmark = pytest.mark.hinge_gate
@@ -185,7 +185,7 @@ def _patch_spawn_to_worker(
     monkeypatch: pytest.MonkeyPatch, worker: Path, plan_dir: Path, mode: str
 ) -> None:
     """Redirect ``megaplan._legacy_subprocess.spawn`` so the legacy supervisor
-    runs OUR worker script instead of ``python -m megaplan``.
+    runs OUR worker script instead of ``python -m arnold.pipelines.megaplan``.
 
     The legacy watcher loop (timeout / idle_timeout / kill_group / heartbeat)
     is exercised verbatim; only the spawned argv changes.

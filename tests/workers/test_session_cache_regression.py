@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 import pytest
 
-import megaplan
-from megaplan._core import atomic_write_json, sha256_file
-from megaplan.planning.state import STATE_CRITIQUED
-from megaplan.workers import WorkerResult, _build_mock_payload, run_step_with_worker
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import atomic_write_json, sha256_file
+from arnold.pipelines.megaplan.planning.state import STATE_CRITIQUED
+from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload, run_step_with_worker
 from tests.conftest import PlanFixture, load_state, read_json
 
 
@@ -135,7 +135,7 @@ def test_dispatch_forces_fresh_for_non_execute_phases(tmp_path: Path, phase: str
         session_id="new-session",
     )
 
-    with patch("megaplan.workers._impl.run_codex_step", return_value=worker) as run_codex:
+    with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", return_value=worker) as run_codex:
         run_step_with_worker(
             phase,
             state,
@@ -180,7 +180,7 @@ def test_dispatch_preserves_execute_persistence(tmp_path: Path) -> None:
         session_id="old-session",
     )
 
-    with patch("megaplan.workers._impl.run_codex_step", return_value=worker) as run_codex:
+    with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", return_value=worker) as run_codex:
         run_step_with_worker(
             "execute",
             state,
@@ -204,9 +204,9 @@ def test_shannon_revise_uses_versioned_prompt_and_fresh_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, session_key_for
-    from megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, session_key_for
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
@@ -247,7 +247,7 @@ def test_shannon_revise_uses_versioned_prompt_and_fresh_session(
         duration_ms=12,
     )
 
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         result = run_shannon_step(
             "revise",
             state,

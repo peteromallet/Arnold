@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-import megaplan.workers as worker_module
-from megaplan._pipeline.flags import calibration_query_route_on
-from megaplan._core import (
+import arnold.pipelines.megaplan.workers as worker_module
+from arnold.pipelines.megaplan._pipeline.flags import calibration_query_route_on
+from arnold.pipelines.megaplan._core import (
     apply_session_update,
     append_history,
     atomic_write_json,
@@ -62,18 +62,18 @@ from arnold.pipelines.megaplan.execute.timeout import (
 from arnold.pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
 )
-from megaplan.calibration import query_route_if_enabled
-from megaplan.prompts import _execute_batch_prompt
-from megaplan.receipts import build_receipt
-from megaplan.receipts.extractors import execute_metrics
-from megaplan.receipts.writer import write_receipt
-from megaplan.types import (
+from arnold.pipelines.megaplan.calibration import query_route_if_enabled
+from arnold.pipelines.megaplan.prompts import _execute_batch_prompt
+from arnold.pipelines.megaplan.receipts import build_receipt
+from arnold.pipelines.megaplan.receipts.extractors import execute_metrics
+from arnold.pipelines.megaplan.receipts.writer import write_receipt
+from arnold.pipelines.megaplan.types import (
     CliError,
     PlanState,
     StepResponse,
 )
-from megaplan.planning.state import STATE_EXECUTED, STATE_FINALIZED
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.planning.state import STATE_EXECUTED, STATE_FINALIZED
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 log = logging.getLogger(__name__)
 
@@ -386,7 +386,7 @@ def _run_and_merge_batch(
     # ``run_codex_step`` to be invoked with ``model=None`` / ``effort=None`` and
     # leads to the codex CLI hanging at startup. See diagnostic
     # /tmp/codex_wedge_diagnostic.md.
-    from megaplan.types import AgentMode as _AgentMode
+    from arnold.pipelines.megaplan.types import AgentMode as _AgentMode
     am_for_worker = _AgentMode(
         agent=agent,
         mode=mode,

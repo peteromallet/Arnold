@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.calibration.ledger import (
+from arnold.pipelines.megaplan.calibration.ledger import (
     AggregationPolicy,
     CapabilityClaim,
     EvaluandRef,
@@ -47,7 +47,7 @@ from megaplan.calibration.ledger import (
     validate_capability_claim,
     write_capability_claim,
 )
-from megaplan.observability.events import EventKind, read_events
+from arnold.pipelines.megaplan.observability.events import EventKind, read_events
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +330,7 @@ class TestRoundTripNdjson:
         self, plan_dir: Path, sample_claim: CapabilityClaim
     ) -> None:
         """Write via an explicit NdjsonBackend event_sink."""
-        from megaplan.observability.event_sink import NdjsonBackend
+        from arnold.pipelines.megaplan.observability.event_sink import NdjsonBackend
 
         sink = NdjsonBackend(plan_dir)
         event = write_capability_claim(sample_claim, event_sink=sink)
@@ -534,7 +534,7 @@ class TestEvaluandJoin:
         self, plan_dir: Path, tmp_path: Path
     ) -> None:
         """After writing an Evaluand event, resolve_evaluand finds it."""
-        from megaplan.observability.evaluand import (
+        from arnold.pipelines.megaplan.observability.evaluand import (
             EvaluandRecord,
             write_evaluand_event,
         )
@@ -565,7 +565,7 @@ class TestEvaluandJoin:
         self, plan_dir: Path, tmp_path: Path
     ) -> None:
         """A mismatched attribution key returns UNAVAILABLE."""
-        from megaplan.observability.evaluand import (
+        from arnold.pipelines.megaplan.observability.evaluand import (
             EvaluandRecord,
             write_evaluand_event,
         )
@@ -1457,7 +1457,7 @@ class TestProjectionHelpers:
     def test_project_tier_models_reconstructs_complete_slots_without_fallback_masking(
         self, sample_ref: EvaluandRef
     ) -> None:
-        from megaplan.profiles import _validate_projected_tier_models
+        from arnold.pipelines.megaplan.profiles import _validate_projected_tier_models
 
         now = 10_000.0
         claims = [
@@ -1663,7 +1663,7 @@ class TestProjectionHelpers:
 
     def test_project_tier_models_matches_validated_profile_json(self) -> None:
         """Projected fallback matches the TOML-path view after canonical JSON."""
-        from megaplan.profiles import _validate_projected_tier_models
+        from arnold.pipelines.megaplan.profiles import _validate_projected_tier_models
 
         fallback = {
             "execute": {1: "hermes:deepseek-flash", 5: "codex:high"},
@@ -1677,7 +1677,7 @@ class TestProjectionHelpers:
 
     def test_project_tier_models_reuses_profile_validation(self) -> None:
         """Invalid projected specs are rejected by the existing profile grammar."""
-        from megaplan.types import CliError
+        from arnold.pipelines.megaplan.types import CliError
 
         with pytest.raises(CliError, match="unknown agent 'bogus'"):
             project_tier_models([], {"execute": {1: "bogus:low"}})

@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.auto import _supervise_subprocess, WatcherState
-from megaplan._legacy_subprocess import legacy_supervise_subprocess
-from megaplan.runtime.process import spawn
+from arnold.pipelines.megaplan.auto import _supervise_subprocess, WatcherState
+from arnold.pipelines.megaplan._legacy_subprocess import legacy_supervise_subprocess
+from arnold.pipelines.megaplan.runtime.process import spawn
 
 
 SCRIPT_HELLO = "import sys; sys.stdout.write('hello\\n'); sys.stderr.write('warn\\n'); sys.exit(0)"
@@ -111,7 +111,7 @@ def test_supervise_legacy_module_kill_timing_parity():
     rc_new, _o, _e, _s = _supervise_subprocess(proc_new, None, None, wall_cap)
     new_elapsed = time.monotonic() - t0
 
-    # Legacy module — spawns `python -m megaplan <bogus>`; we just want
+    # Legacy module — spawns `python -m arnold.pipelines.megaplan <bogus>`; we just want
     # to measure its kill timing on a wall_cap. It will exit quickly
     # (unknown subcommand) OR get timeout-killed; either way we cap the
     # comparison at the supervisor exit, not the script semantics.

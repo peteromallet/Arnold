@@ -7,26 +7,26 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 PHASE_DIRS = (
-    PROJECT_ROOT / "megaplan" / "handlers",
-    PROJECT_ROOT / "megaplan" / "orchestration",
-    PROJECT_ROOT / "megaplan" / "review",
+    PROJECT_ROOT / "arnold" / "pipelines" / "megaplan" / "handlers",
+    PROJECT_ROOT / "arnold" / "pipelines" / "megaplan" / "orchestration",
+    PROJECT_ROOT / "arnold" / "pipelines" / "megaplan" / "review",
 )
 
 ALLOWED_RAW_FANOUT_MODULES = {
-    Path("megaplan/_core/hermes_fanout.py"),
-    Path("megaplan/_core/process_fanout.py"),
-    Path("megaplan/_core/worker_fanout.py"),
-    Path("megaplan/workers/hermes.py"),
+    Path("arnold/pipelines/megaplan/_core/hermes_fanout.py"),
+    Path("arnold/pipelines/megaplan/_core/process_fanout.py"),
+    Path("arnold/pipelines/megaplan/_core/worker_fanout.py"),
+    Path("arnold/pipelines/megaplan/workers/hermes.py"),
     # Legacy compatibility shim for tests that still import _run_check.
     # The production run_parallel_critique path below this shim dispatches
     # through WorkerUnit/scatter_worker_units.
-    Path("megaplan/orchestration/parallel_critique.py"),
+    Path("arnold/pipelines/megaplan/orchestration/parallel_critique.py"),
 }
 
 PROHIBITED_IMPORTS = {
     "concurrent.futures",
     "multiprocessing",
-    "megaplan.workers.hermes",
+    "arnold.pipelines.megaplan.workers.hermes",
 }
 
 PROHIBITED_NAMES = {
@@ -84,7 +84,7 @@ def test_phase_modules_do_not_own_raw_agent_fanout() -> None:
 
 def test_boundary_guard_detects_prohibited_phase_level_import() -> None:
     source = "from concurrent.futures import ThreadPoolExecutor\nThreadPoolExecutor()\n"
-    fake_path = PROJECT_ROOT / "megaplan" / "orchestration" / "fake_phase.py"
+    fake_path = PROJECT_ROOT / "arnold" / "pipelines" / "megaplan" / "orchestration" / "fake_phase.py"
 
     violations = _raw_fanout_violations(fake_path, source)
 

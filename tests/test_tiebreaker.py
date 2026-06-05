@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 from jsonschema import validate, ValidationError
 
-from megaplan.schemas import SCHEMAS
-from megaplan.prompts.tiebreaker_researcher import researcher_prompt
-from megaplan.prompts.tiebreaker_challenger import challenger_prompt
-from megaplan.prompts.tiebreaker_synthesis import render_synthesis
-from megaplan.prompts.tiebreaker_orchestrator import _next_version_suffix, _run_tiebreaker_status
-from megaplan.types import PlanState
+from arnold.pipelines.megaplan.schemas import SCHEMAS
+from arnold.pipelines.megaplan.prompts.tiebreaker_researcher import researcher_prompt
+from arnold.pipelines.megaplan.prompts.tiebreaker_challenger import challenger_prompt
+from arnold.pipelines.megaplan.prompts.tiebreaker_synthesis import render_synthesis
+from arnold.pipelines.megaplan.prompts.tiebreaker_orchestrator import _next_version_suffix, _run_tiebreaker_status
+from arnold.pipelines.megaplan.types import PlanState
 
 
 # ---------------------------------------------------------------------------

@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan.handlers
-import megaplan.workers
-from megaplan._core import load_plan
-from megaplan.workers import WorkerResult, _build_mock_payload
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan._core import load_plan
+from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import PlanFixture, _make_plan_fixture_with_robustness, load_state
 
 
@@ -18,7 +18,7 @@ def test_tiny_critique_is_rejected(
 ) -> None:
     """At tiny robustness, calling critique manually errors — the phase is skipped
     in the workflow, so plan -> finalize is the canonical path."""
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     fixture = _make_plan_fixture_with_robustness(tmp_path, monkeypatch, robustness="tiny")
     megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
@@ -95,8 +95,8 @@ def test_handle_critique_records_unverifiable_without_blocking(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from megaplan._core import read_json
-    from megaplan.orchestration.evaluation import build_gate_signals
+    from arnold.pipelines.megaplan._core import read_json
+    from arnold.pipelines.megaplan.orchestration.evaluation import build_gate_signals
 
     def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, **kwargs):
         payload_checks = []
@@ -169,8 +169,8 @@ def test_handle_critique_parallel_shape_failure_completes_as_unverifiable(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import read_json
-    from megaplan._core.hermes_fanout import GenericScatterResult
+    from arnold.pipelines.megaplan._core import read_json
+    from arnold.pipelines.megaplan._core.hermes_fanout import GenericScatterResult
 
     bad_id = "issue_hints"
 
@@ -215,7 +215,7 @@ def test_handle_critique_parallel_shape_failure_completes_as_unverifiable(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         fake_scatter,
     )
 
@@ -237,7 +237,7 @@ def test_handle_critique_parallel_shape_failure_completes_as_unverifiable(
 def test_unverifiable_helpers_leave_normal_payload_unchanged() -> None:
     from copy import deepcopy
 
-    from megaplan.orchestration.critique_status import (
+    from arnold.pipelines.megaplan.orchestration.critique_status import (
         annotate_unverifiable_checks,
         build_unverifiable_warnings,
     )
@@ -267,7 +267,7 @@ def test_unverifiable_helpers_leave_normal_payload_unchanged() -> None:
 
 
 def test_high_complexity_unverifiable_gets_operator_warning() -> None:
-    from megaplan.orchestration.critique_status import (
+    from arnold.pipelines.megaplan.orchestration.critique_status import (
         annotate_unverifiable_checks,
         build_unverifiable_warnings,
     )
@@ -452,11 +452,11 @@ def test_critique_evaluator_model_assignment_does_not_drive_dispatch(
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.roster_rank",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.roster_rank",
         lambda _model: (_ for _ in ()).throw(ValueError("unknown model")),
     )
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -477,7 +477,7 @@ def test_critique_dispatch_carries_effort_into_agentmode(
     slot's effort never reached the codex-effort gate. The handler now carries
     an :class:`AgentMode` with ``effort`` and ``resolved_model`` into the
     critique dispatch path."""
-    from megaplan.types import AgentMode
+    from arnold.pipelines.megaplan.types import AgentMode
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     monkeypatch.setattr(megaplan.handlers.critique, "adaptive_critique_enabled", lambda state: False)
@@ -527,7 +527,7 @@ def test_critique_dispatch_carries_effort_into_agentmode(
 def test_critique_prompt_contains_robustness_instruction(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
-    from megaplan.prompts import create_claude_prompt
+    from arnold.pipelines.megaplan.prompts import create_claude_prompt
 
     prompt = create_claude_prompt("critique", state, plan_fixture.plan_dir)
     assert "Robustness level" in prompt
@@ -641,8 +641,8 @@ def test_handle_critique_adaptive_flag_off_uses_select_active_checks(
     """Regression guard: with adaptive_critique=False (default), handle_critique uses
     select_active_checks for active_checks, dispatches no evaluator worker, and
     writes no evaluator_verdict.json — locking the off-path byte-for-byte."""
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
 
     monkeypatch.setattr(
         critique_mod,
@@ -690,8 +690,8 @@ def test_apply_flag_verifications_verified_sets_status_and_verified_fields(
     tmp_path: Path,
 ) -> None:
     """'verified' outcome sets status=verified, verified=True, verified_in, and verify_rationale."""
-    from megaplan._core import save_flag_registry
-    from megaplan.flags import apply_flag_verifications
+    from arnold.pipelines.megaplan._core import save_flag_registry
+    from arnold.pipelines.megaplan.flags import apply_flag_verifications
 
     registry = {
         "flags": [
@@ -705,7 +705,7 @@ def test_apply_flag_verifications_verified_sets_status_and_verified_fields(
         [{"flag_id": "FLAG-001", "lens": "correctness", "outcome": "verified", "rationale": "diff supports fix"}],
     )
 
-    from megaplan._core import load_flag_registry
+    from arnold.pipelines.megaplan._core import load_flag_registry
     result = load_flag_registry(tmp_path)
     flag = result["flags"][0]
 
@@ -720,8 +720,8 @@ def test_apply_flag_verifications_open_resets_verified_fields(
     tmp_path: Path,
 ) -> None:
     """'open' outcome resets status=open, clears verified=False and removes verified_in."""
-    from megaplan._core import load_flag_registry, save_flag_registry
-    from megaplan.flags import apply_flag_verifications
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan.flags import apply_flag_verifications
 
     registry = {
         "flags": [
@@ -753,8 +753,8 @@ def test_apply_flag_verifications_open_resets_verified_fields(
 
 def test_apply_flag_verifications_accepted_tradeoff(tmp_path: Path) -> None:
     """'accepted_tradeoff' outcome sets status=accepted_tradeoff and writes rationale."""
-    from megaplan._core import load_flag_registry, save_flag_registry
-    from megaplan.flags import apply_flag_verifications
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan.flags import apply_flag_verifications
 
     registry = {
         "flags": [
@@ -778,8 +778,8 @@ def test_apply_flag_verifications_accepted_tradeoff(tmp_path: Path) -> None:
 
 def test_apply_flag_verifications_unknown_flag_ignored(tmp_path: Path) -> None:
     """Verifications for unknown flag_ids are silently skipped and not returned."""
-    from megaplan._core import save_flag_registry
-    from megaplan.flags import apply_flag_verifications
+    from arnold.pipelines.megaplan._core import save_flag_registry
+    from arnold.pipelines.megaplan.flags import apply_flag_verifications
 
     save_flag_registry(tmp_path, {"flags": []})
 
@@ -793,8 +793,8 @@ def test_apply_flag_verifications_unknown_flag_ignored(tmp_path: Path) -> None:
 
 def test_apply_flag_verifications_empty_list(tmp_path: Path) -> None:
     """Empty verifications list returns empty set without touching the registry."""
-    from megaplan._core import load_flag_registry, save_flag_registry
-    from megaplan.flags import apply_flag_verifications
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan.flags import apply_flag_verifications
 
     registry = {"flags": [{"id": "FLAG-001", "status": "open", "concern": "c"}]}
     save_flag_registry(tmp_path, registry)
@@ -812,8 +812,8 @@ def test_apply_flag_verifications_empty_list(tmp_path: Path) -> None:
 
 def test_apply_flag_updates_skip_verified_flag_ids_loop(tmp_path: Path) -> None:
     """skip_flag_ids prevents the critic's verified_flag_ids loop from overwriting evaluator state."""
-    from megaplan._core import load_flag_registry, save_flag_registry
-    from megaplan.flags import _apply_flag_updates
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan.flags import _apply_flag_updates
 
     registry = {
         "flags": [{"id": "FLAG-001", "status": "accepted_tradeoff", "verified": False, "concern": "x", "severity": "significant"}],
@@ -834,8 +834,8 @@ def test_apply_flag_updates_skip_verified_flag_ids_loop(tmp_path: Path) -> None:
 
 def test_apply_flag_updates_skip_disputed_flag_ids_loop(tmp_path: Path) -> None:
     """skip_flag_ids prevents the critic's disputed_flag_ids loop from overwriting evaluator state."""
-    from megaplan._core import load_flag_registry, save_flag_registry
-    from megaplan.flags import _apply_flag_updates
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan.flags import _apply_flag_updates
 
     registry = {
         "flags": [{"id": "FLAG-002", "status": "verified", "verified": True, "concern": "x", "severity": "significant"}],
@@ -856,8 +856,8 @@ def test_apply_flag_updates_skip_disputed_flag_ids_loop(tmp_path: Path) -> None:
 
 def test_apply_flag_updates_skip_flags_reraise_loop(tmp_path: Path) -> None:
     """skip_flag_ids prevents the flags[] re-raise loop from flipping an evaluator-set status back to open."""
-    from megaplan._core import load_flag_registry, save_flag_registry
-    from megaplan.flags import _apply_flag_updates
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan.flags import _apply_flag_updates
 
     registry = {
         "flags": [
@@ -897,13 +897,13 @@ def test_apply_flag_updates_skip_flags_reraise_loop(tmp_path: Path) -> None:
 
 def test_critique_prompt_renders_selection_why(plan_fixture: PlanFixture) -> None:
     """When selection_why is non-empty, the evaluator targeting notes appear in the prompt."""
-    from megaplan._core import load_plan
-    from megaplan.prompts import create_claude_prompt
+    from arnold.pipelines.megaplan._core import load_plan
+    from arnold.pipelines.megaplan.prompts import create_claude_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
 
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
     subset = [c for c in CRITIQUE_CHECKS if c["id"] in {"correctness", "scope"}]
 
     prompt_with_why = create_claude_prompt(
@@ -923,8 +923,8 @@ def test_critique_prompt_renders_selection_why(plan_fixture: PlanFixture) -> Non
 
 def test_critique_prompt_no_why_block_when_selection_why_empty(plan_fixture: PlanFixture) -> None:
     """When selection_why is empty or None, no targeting notes block is rendered."""
-    from megaplan._core import load_plan
-    from megaplan.prompts import create_claude_prompt
+    from arnold.pipelines.megaplan._core import load_plan
+    from arnold.pipelines.megaplan.prompts import create_claude_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
@@ -951,10 +951,10 @@ def test_handle_critique_adaptive_applies_verifications_and_skips_reraise(
     critic and the verified flag cannot be overridden by the critic's re-raise."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
 
@@ -966,7 +966,7 @@ def test_handle_critique_adaptive_applies_verifications_and_skips_reraise(
     state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
     # Pre-seed a flag in the registry so the evaluator can verify it.
-    from megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
     registry = load_flag_registry(plan_fixture.plan_dir)
     registry["flags"].append({
         "id": "FLAG-T7", "status": "addressed", "verified": False,
@@ -1035,10 +1035,10 @@ def test_handle_critique_pin_forces_critic_model_over_evaluator_assignment(
     the critic dispatches to DeepSeek's direct API."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
 
@@ -1115,8 +1115,8 @@ def test_regression_non_adaptive_prompt_has_no_revise_context_or_selection_why(
     must NOT contain revise_context or selection_why blocks — byte-for-byte unchanged."""
     import json
 
-    from megaplan._core import load_plan
-    from megaplan.prompts import create_claude_prompt
+    from arnold.pipelines.megaplan._core import load_plan
+    from arnold.pipelines.megaplan.prompts import create_claude_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
@@ -1160,8 +1160,8 @@ def test_back_compat_old_faults_without_resolution_loads(
     through load_flag_registry and survives the verify-flow context path."""
     import json
 
-    from megaplan._core import load_flag_registry
-    from megaplan.flags import flag_resolution_summary
+    from arnold.pipelines.megaplan._core import load_flag_registry
+    from arnold.pipelines.megaplan.flags import flag_resolution_summary
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
@@ -1216,8 +1216,8 @@ def test_evidence_survival_concern_and_evidence_preserved_after_revise(
 ) -> None:
     """After update_flags_after_revise, the original concern and evidence fields
     are preserved — not overwritten by the revise summary."""
-    from megaplan._core import load_flag_registry, save_flag_registry
-    from megaplan.flags import update_flags_after_revise
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan.flags import update_flags_after_revise
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
@@ -1283,7 +1283,7 @@ def test_consumer_migration_build_gate_signals_uses_flag_resolution_summary(
     """build_gate_signals populated the 'resolution' field via flag_resolution_summary."""
     import json
 
-    from megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
@@ -1325,7 +1325,7 @@ def test_consumer_migration_build_gate_signals_uses_flag_resolution_summary(
             "disputed_flag_ids": [],
         }, indent=2) + "\n", encoding="utf-8")
 
-    from megaplan.orchestration.evaluation import build_gate_signals
+    from arnold.pipelines.megaplan.orchestration.evaluation import build_gate_signals
 
     signals = build_gate_signals(plan_fixture.plan_dir, state, root=plan_fixture.root)
     resolved = signals["signals"].get("resolved_flags", [])
@@ -1340,7 +1340,7 @@ def test_consumer_migration_is_scope_creep_flag_keys_on_evidence(
 ) -> None:
     """is_scope_creep_flag keys on the original critique evidence — the scope-creep
     detector reads flag['concern'] + flag['evidence'] to detect scope creep terms."""
-    from megaplan._core import is_scope_creep_flag
+    from arnold.pipelines.megaplan._core import is_scope_creep_flag
 
     # A flag whose evidence contains a scope-creep term should match.
     scope_flag = {
@@ -1384,10 +1384,10 @@ def test_reconciliation_open_flag_not_overwritten_by_critic_verified(
     to verified. The skip-set must cover verified_flag_ids too."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
 
@@ -1399,7 +1399,7 @@ def test_reconciliation_open_flag_not_overwritten_by_critic_verified(
     state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
     # Pre-seed a flag that the evaluator will reopen.
-    from megaplan._core import load_flag_registry, save_flag_registry
+    from arnold.pipelines.megaplan._core import load_flag_registry, save_flag_registry
     registry = load_flag_registry(plan_fixture.plan_dir)
     registry["flags"].append({
         "id": "FLAG-RECON",
@@ -1488,16 +1488,16 @@ def test_catalog_checks_preserve_complexity_and_justification(
     _selection_why for that check must be the complexity_justification."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -1596,16 +1596,16 @@ def test_other_checks_preserve_separate_probe_why_and_routing_justification(
     as routing/targeting metadata — separate semantics."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -1709,16 +1709,16 @@ def test_sequential_fallback_receives_targeting_notes(
     critic receives readable evaluator targeting notes."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -1843,16 +1843,16 @@ def test_evaluator_complexity_drives_per_lens_tier_resolution(
     via the tier_models.critique lookup."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -1932,7 +1932,7 @@ def test_evaluator_complexity_drives_per_lens_tier_resolution(
         return ("hermes", "persistent", spec)
 
     monkeypatch.setattr(
-        "megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
+        "arnold.pipelines.megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
     )
 
     # Provide a critique tier ladder so the routing block activates.
@@ -1974,16 +1974,16 @@ def test_resolve_tier_spec_called_once_per_distinct_complexity(
     is called exactly once for that complexity (cache hit on subsequent checks)."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -2033,7 +2033,7 @@ def test_resolve_tier_spec_called_once_per_distinct_complexity(
         return ("hermes", "persistent", spec)
 
     monkeypatch.setattr(
-        "megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
+        "arnold.pipelines.megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
     )
 
     captured_checks: list[dict] = []
@@ -2123,16 +2123,16 @@ def test_missing_complexity_is_invariant_failure(
     than defaulting to a tier."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -2220,7 +2220,7 @@ def test_missing_complexity_is_invariant_failure(
             },
         )
 
-        from megaplan.types import CliError
+        from arnold.pipelines.megaplan.types import CliError
 
         with pytest.raises(CliError, match="missing or invalid complexity"):
             megaplan.handle_critique(plan_fixture.root, args)
@@ -2241,16 +2241,16 @@ def test_operator_pin_overrides_all_per_lens_complexity_routing(
     ``tier_models.critique`` is available."""
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -2382,16 +2382,16 @@ def test_non_hermes_adaptive_multi_check_can_fan_out(
     """
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -2473,7 +2473,7 @@ def test_non_hermes_adaptive_multi_check_can_fan_out(
         return ("hermes", "persistent", spec)
 
     monkeypatch.setattr(
-        "megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
+        "arnold.pipelines.megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
     )
 
     args = plan_fixture.make_args(
@@ -2528,16 +2528,16 @@ def test_non_hermes_adaptive_fan_out_failure_falls_back_sequentially(
     """
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 
@@ -2626,7 +2626,7 @@ def test_non_hermes_adaptive_fan_out_failure_falls_back_sequentially(
         return ("hermes", "persistent", spec)
 
     monkeypatch.setattr(
-        "megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
+        "arnold.pipelines.megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec
     )
 
     caplog.set_level("WARNING", logger="megaplan")
@@ -2686,16 +2686,16 @@ def test_operator_pin_forces_same_resolved_model_across_all_lenses_with_non_herm
     """
     import json
 
-    import megaplan.handlers as handlers_mod
-    import megaplan.handlers.critique as critique_mod
-    from megaplan.audits.robustness import CRITIQUE_CHECKS
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan.handlers as handlers_mod
+    import arnold.pipelines.megaplan.handlers.critique as critique_mod
+    from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
     monkeypatch.setattr(critique_mod, "adaptive_critique_enabled", lambda state: True)
     monkeypatch.setattr(critique_mod, "is_creative_mode", lambda state: False)
     monkeypatch.setattr(
-        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        "arnold.pipelines.megaplan.audits.critique_evaluator.validate_evaluator_verdict",
         lambda payload, **kwargs: None,
     )
 

@@ -4,7 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from megaplan.review.mechanical import run_pre_checks
+from arnold.pipelines.megaplan.review.mechanical import run_pre_checks
 
 
 def _git_init(repo: Path) -> None:

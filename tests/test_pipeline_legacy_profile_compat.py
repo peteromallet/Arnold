@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
 
 
-_PROFILE_DIR = Path(__file__).resolve().parent.parent / "megaplan" / "profiles"
+_PROFILE_DIR = Path(__file__).resolve().parent.parent / "arnold" / "pipelines" / "megaplan" / "profiles"
 
 # Slot keys that every profile is expected to expose. Sourced from
 # `megaplan/profiles/all-claude.toml` — the canonical full-surface

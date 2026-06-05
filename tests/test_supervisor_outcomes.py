@@ -16,8 +16,8 @@ from typing import Any
 
 import pytest
 
-from megaplan.run_outcome import RunOutcome, RunResultMetadata
-from megaplan.supervisor.outcomes import (
+from arnold.pipelines.megaplan.run_outcome import RunOutcome, RunResultMetadata
+from arnold.pipelines.megaplan.supervisor.outcomes import (
     NORMALIZED_FROM_DRIVER_SOURCE,
     NormalizedOutcome,
     _DOCUMENTED_STATUSES,

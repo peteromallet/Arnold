@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.chain.m3_dual_green import (
+from arnold.pipelines.megaplan.chain.m3_dual_green import (
     DualGreenResult,
     assert_no_oneshot_in_scoped_trees,
     assert_strangler_keep_alive_stub,
@@ -108,7 +108,7 @@ def test_run_dual_green_gate_returns_bool() -> None:
 
 
 def test_assert_no_oneshot_in_scoped_trees_passes() -> None:
-    """The word 'oneshot' must not appear in megaplan/_pipeline or megaplan/drivers."""
+    """The word 'oneshot' must not appear in arnold/pipelines/megaplan/_pipeline or arnold/pipelines/megaplan/drivers."""
     assert_no_oneshot_in_scoped_trees()  # must not raise
 
 
@@ -118,8 +118,8 @@ def test_shell_grep_oneshot_returns_zero() -> None:
         [
             "grep", "-rE", "oneshot",
             "--include=*.py",
-            str(REPO_ROOT / "megaplan" / "_pipeline"),
-            str(REPO_ROOT / "megaplan" / "drivers"),
+            str(REPO_ROOT / "arnold" / "pipelines" / "megaplan" / "_pipeline"),
+            str(REPO_ROOT / "arnold" / "pipelines" / "megaplan" / "drivers"),
         ],
         capture_output=True,
         text=True,
@@ -149,7 +149,7 @@ def test_strangler_keep_alive_stub_recreates_if_missing(tmp_path: Path) -> None:
     """If the stub is missing, it is re-created from the template."""
     (tmp_path / "briefs" / "validation" / "sequencing").mkdir(parents=True)
     # Temporary monkeypatch: redirect the function to use tmp_path
-    import megaplan.chain.m3_dual_green as mdg
+    import arnold.pipelines.megaplan.chain.m3_dual_green as mdg
 
     original_root = mdg.REPO_ROOT
     try:
@@ -172,7 +172,7 @@ def test_record_m3_dual_green_window(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    import megaplan.chain.m3_dual_green as mdg
+    import arnold.pipelines.megaplan.chain.m3_dual_green as mdg
 
     original_root = mdg.REPO_ROOT
     try:
@@ -197,7 +197,7 @@ def test_record_m3_dual_green_window_idempotent(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    import megaplan.chain.m3_dual_green as mdg
+    import arnold.pipelines.megaplan.chain.m3_dual_green as mdg
 
     original_root = mdg.REPO_ROOT
     try:
@@ -218,7 +218,7 @@ def test_record_m3_dual_green_window_idempotent(tmp_path: Path) -> None:
 
 def test_subprocess_isolated_driver_still_importable() -> None:
     """The subprocess driver code remains — not deleted by the M3 flip."""
-    from megaplan.drivers.subprocess_isolated import SubprocessIsolatedDriver
+    from arnold.pipelines.megaplan.drivers.subprocess_isolated import SubprocessIsolatedDriver
 
     drv = SubprocessIsolatedDriver(
         name="test",
@@ -230,6 +230,6 @@ def test_subprocess_isolated_driver_still_importable() -> None:
 
 def test_scoped_legacy_audit_returns_zero() -> None:
     """The renamed scoped_legacy_audit still returns 0."""
-    from megaplan.drivers import scoped_legacy_audit
+    from arnold.pipelines.megaplan.drivers import scoped_legacy_audit
 
     assert scoped_legacy_audit() == 0

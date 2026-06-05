@@ -16,18 +16,18 @@ import time
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import WorkerUnit, WorkerUnitResult, load_flag_registry, read_json, schemas_root, scatter_worker_units
-from megaplan.prompts.review import (
+from arnold.pipelines.megaplan._core import WorkerUnit, WorkerUnitResult, load_flag_registry, read_json, schemas_root, scatter_worker_units
+from arnold.pipelines.megaplan.prompts.review import (
     _filtered_prior_flags,
     _write_criteria_verdict_review_template,
     _write_single_check_review_template,
     parallel_criteria_review_prompt,
     single_check_review_prompt,
 )
-from megaplan.types import AgentMode, CliError, PlanState
-from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
+from arnold.pipelines.megaplan.types import AgentMode, CliError, PlanState
+from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
-from megaplan.runtime.key_pool import (
+from arnold.pipelines.megaplan.runtime.key_pool import (
     resolve_model as _resolve_model,
 )
 

@@ -26,14 +26,14 @@ from unittest import mock
 
 import pytest
 
-import megaplan
-from megaplan._core import (
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import (
     STATE_DONE,
     STATE_REVIEWED,
     load_plan,
     save_state,
 )
-from megaplan.orchestration.feedback import (
+from arnold.pipelines.megaplan.orchestration.feedback import (
     FEEDBACK_FILENAME,
     STAGES,
     PlanFeedback,
@@ -46,8 +46,8 @@ from megaplan.orchestration.feedback import (
     parse_feedback,
     render_template,
 )
-from megaplan.prompts.feedback import build_feedback_prompt
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.prompts.feedback import build_feedback_prompt
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 # ============================================================================
@@ -656,7 +656,7 @@ class TestRouting:
 
     def test_any_profile_loads_with_feedback_slot(self) -> None:
         """Loading any TOML profile with a valid feedback slot succeeds."""
-        from megaplan.profiles import load_profile_sources
+        from arnold.pipelines.megaplan.profiles import load_profile_sources
         sources = load_profile_sources()
         # sources is list[tuple[str, str, dict]]: (source, name, profile)
         builtin_sources = [(name, profile) for src, name, profile in sources if src == "built-in"]
@@ -678,7 +678,7 @@ class TestRouting:
 
     def test_vendor_rewrite_leaves_feedback_at_claude_low(self) -> None:
         """apply_vendor_rewrite('codex') leaves feedback at claude:low."""
-        from megaplan.profiles import apply_vendor_rewrite
+        from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
         profile = {
             "plan": "claude",
             "critique": "codex",
@@ -693,7 +693,7 @@ class TestRouting:
 
     def test_vendor_rewrite_claude_vendor_for_claude_profile(self) -> None:
         """apply_vendor_rewrite('claude') on a claude profile leaves feedback."""
-        from megaplan.profiles import apply_vendor_rewrite
+        from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
         profile = {
             "plan": "claude",
             "critique": "claude",
@@ -706,7 +706,7 @@ class TestRouting:
 
     def test_depth_rewrite_does_not_affect_feedback(self) -> None:
         """apply_depth_rewrite does NOT affect feedback slot."""
-        from megaplan.profiles import apply_depth_rewrite
+        from arnold.pipelines.megaplan.profiles import apply_depth_rewrite
         profile = {
             "plan": "claude",
             "feedback": "claude:low",
@@ -718,7 +718,7 @@ class TestRouting:
 
     def test_critic_rewrite_does_not_affect_feedback(self) -> None:
         """apply_critic_rewrite does NOT affect feedback slot."""
-        from megaplan.profiles import apply_critic_rewrite
+        from arnold.pipelines.megaplan.profiles import apply_critic_rewrite
         profile = {
             "plan": "claude",
             "critique": "codex",
@@ -734,7 +734,7 @@ class TestRouting:
     def test_vendor_rewrite_preserves_bare_feedback_not_normalized_or_swapped(self) -> None:
         """Bare feedback='claude' stays 'claude' — not normalized to 'claude:low'
         and not swapped to the target vendor."""
-        from megaplan.profiles import apply_vendor_rewrite
+        from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
         # all-claude.toml has bare feedback = "claude" (no effort suffix).
         # This test proves that behavior is intentional: bare values are
@@ -759,7 +759,7 @@ class TestRouting:
     def test_vendor_rewrite_defaults_feedback_when_absent(self) -> None:
         """When profile has no 'feedback' key, apply_vendor_rewrite defaults
         to 'claude:low'."""
-        from megaplan.profiles import apply_vendor_rewrite
+        from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
         profile: dict[str, str] = {
             "plan": "claude",
@@ -771,7 +771,7 @@ class TestRouting:
 
     def test_default_agent_routing_has_feedback(self) -> None:
         """DEFAULT_AGENT_ROUTING includes 'feedback' key."""
-        from megaplan.profiles import DEFAULT_AGENT_ROUTING
+        from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING
         assert "feedback" in DEFAULT_AGENT_ROUTING
         assert DEFAULT_AGENT_ROUTING["feedback"] == "claude:low"
 
@@ -834,10 +834,10 @@ class TestHandlerHappyPath:
 
         # Mock _run_worker to return the mock worker result
         with mock.patch(
-            "megaplan.handlers.shared._run_worker",
+            "arnold.pipelines.megaplan.handlers.shared._run_worker",
             return_value=(mock_worker, "claude", "low", False),
         ):
-            from megaplan.cli import handle_feedback
+            from arnold.pipelines.megaplan.cli import handle_feedback
 
             result = handle_feedback(
                 root,
@@ -918,10 +918,10 @@ class TestHandlerMalformedOutput:
         )
 
         with mock.patch(
-            "megaplan.handlers.shared._run_worker",
+            "arnold.pipelines.megaplan.handlers.shared._run_worker",
             return_value=(mock_worker, "claude", "low", False),
         ):
-            from megaplan.cli import handle_feedback
+            from arnold.pipelines.megaplan.cli import handle_feedback
 
             result = handle_feedback(
                 root,
@@ -984,10 +984,10 @@ class TestHandlerMalformedOutput:
 
         # Mock _run_worker to raise an exception
         with mock.patch(
-            "megaplan.handlers.shared._run_worker",
+            "arnold.pipelines.megaplan.handlers.shared._run_worker",
             side_effect=RuntimeError("Simulated worker crash"),
         ):
-            from megaplan.cli import handle_feedback
+            from arnold.pipelines.megaplan.cli import handle_feedback
 
             # Should NOT raise — exceptions are caught internally
             result = handle_feedback(
@@ -1081,10 +1081,10 @@ class TestHandlerForceMerge:
         )
 
         with mock.patch(
-            "megaplan.handlers.shared._run_worker",
+            "arnold.pipelines.megaplan.handlers.shared._run_worker",
             return_value=(mock_worker, "claude", "low", False),
         ):
-            from megaplan.cli import handle_feedback
+            from arnold.pipelines.megaplan.cli import handle_feedback
 
             result = handle_feedback(
                 root,
@@ -1185,10 +1185,10 @@ class TestHandlerIdempotency:
 
         # Worker must NOT be called
         with mock.patch(
-            "megaplan.handlers.shared._run_worker",
+            "arnold.pipelines.megaplan.handlers.shared._run_worker",
             side_effect=RuntimeError("Worker should NOT be invoked"),
         ) as mock_run:
-            from megaplan.cli import handle_feedback
+            from arnold.pipelines.megaplan.cli import handle_feedback
 
             result = handle_feedback(
                 root,
@@ -1223,7 +1223,7 @@ class TestDisplay:
 
     def test_render_table_shows_ai_rating(self) -> None:
         """_render_feedback_table shows AI rating when only ai_* is set."""
-        from megaplan.cli import _render_feedback_table
+        from arnold.pipelines.megaplan.cli import _render_feedback_table
 
         rows = [
             {
@@ -1250,7 +1250,7 @@ class TestDisplay:
 
     def test_render_table_shows_user_rating(self) -> None:
         """_render_feedback_table shows user rating without AI suffix."""
-        from megaplan.cli import _render_feedback_table
+        from arnold.pipelines.megaplan.cli import _render_feedback_table
 
         rows = [
             {
@@ -1275,7 +1275,7 @@ class TestDisplay:
 
     def test_render_table_handles_no_rating(self) -> None:
         """_render_feedback_table shows '—' when no rating is set."""
-        from megaplan.cli import _render_feedback_table
+        from arnold.pipelines.megaplan.cli import _render_feedback_table
 
         rows = [
             {
@@ -1298,7 +1298,7 @@ class TestDisplay:
 
     def test_render_table_empty_rows(self) -> None:
         """_render_feedback_table returns (no matches) for empty rows."""
-        from megaplan.cli import _render_feedback_table
+        from arnold.pipelines.megaplan.cli import _render_feedback_table
 
         result = _render_feedback_table([])
         assert result.strip() == "(no matches)"
@@ -1353,7 +1353,7 @@ class TestFilter:
 
     def test_min_rating_matches_ai_rating(self) -> None:
         """--min-rating 7 matches ai_rating: 8 with no user rating."""
-        from megaplan.cli import _filter_feedback_rows
+        from arnold.pipelines.megaplan.cli import _filter_feedback_rows
 
         rows = [
             {
@@ -1414,7 +1414,7 @@ class TestFilter:
 
     def test_max_rating_filters_out_high_ratings(self) -> None:
         """--max-rating 6 filters out ai_rating: 8."""
-        from megaplan.cli import _filter_feedback_rows
+        from arnold.pipelines.megaplan.cli import _filter_feedback_rows
 
         rows = [
             {
@@ -1452,7 +1452,7 @@ class TestFilter:
 
     def test_stage_filter_uses_effective_rating(self) -> None:
         """--stage plan filter matches ai_rating on stage entry."""
-        from megaplan.cli import _filter_feedback_rows
+        from arnold.pipelines.megaplan.cli import _filter_feedback_rows
 
         rows = [
             {
@@ -1485,7 +1485,7 @@ class TestFilter:
 
     def test_has_comment_matches_ai_comment(self) -> None:
         """--has-comment matches when only ai_comment is set."""
-        from megaplan.cli import _filter_feedback_rows
+        from arnold.pipelines.megaplan.cli import _filter_feedback_rows
 
         rows = [
             {
@@ -1516,7 +1516,7 @@ class TestFilter:
 
     def test_user_rating_overrides_ai_in_filter(self) -> None:
         """User rating 5 overrides ai_rating 9 → --min-rating 7 rejects it."""
-        from megaplan.cli import _filter_feedback_rows
+        from arnold.pipelines.megaplan.cli import _filter_feedback_rows
 
         rows = [
             {

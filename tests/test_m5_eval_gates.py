@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan.chain.m5_eval_gates import (
+from arnold.pipelines.megaplan.chain.m5_eval_gates import (
     assert_m5_eval_gates_before_calibration,
     check_better_join_is_pure,
     check_calibration_guard_targets,
@@ -37,7 +37,7 @@ def test_m5_eval_gate_rejects_bare_float_judgment_in_new_eval_module(tmp_path):
         tmp_path,
         rel_path,
         """
-from megaplan._pipeline.types import PipelineVerdict
+from arnold.pipelines.megaplan._pipeline.types import PipelineVerdict
 
 def run():
     return PipelineVerdict(score=0.72)
@@ -57,7 +57,7 @@ def test_m5_eval_gate_allows_old_path_bare_float_surface(tmp_path):
         tmp_path,
         rel_path,
         """
-from megaplan._pipeline.types import PipelineVerdict
+from arnold.pipelines.megaplan._pipeline.types import PipelineVerdict
 
 def run():
     return PipelineVerdict(score=0.72)
@@ -73,7 +73,7 @@ def test_m5_eval_gate_allows_evaluand_record_score_literals(tmp_path):
         tmp_path,
         rel_path,
         """
-from megaplan.observability import EvaluandRecord
+from arnold.pipelines.megaplan.observability import EvaluandRecord
 
 def run():
     return EvaluandRecord(
@@ -132,7 +132,7 @@ def test_m5_eval_gate_rejects_better_cost_import_judge_call_and_vendor_heuristic
         rel_path,
         """
 def better(*, plan_dir, judge):
-    from megaplan.observability.cost import _classify_vendor
+    from arnold.pipelines.megaplan.observability.cost import _classify_vendor
 
     vendor = _classify_vendor("claude-opus")
     return judge(plan_dir, vendor)
@@ -161,7 +161,7 @@ def test_calibration_guard_rejects_guarded_target_without_markers(tmp_path) -> N
         tmp_path,
         rel_path,
         """
-from megaplan.observability import better
+from arnold.pipelines.megaplan.observability import better
 
 def route(plan_dir):
     return better("a", "b", plan_dir=plan_dir, judge_version="j", rubric_version="r", input_set_hash="i")
@@ -179,7 +179,7 @@ def better(*, plan_dir, judge_version, rubric_version, input_set_hash):
         tmp_path,
         "megaplan/_pipeline/eval_judge_wrapper.py",
         """
-from megaplan._pipeline.types import PipelineVerdict
+from arnold.pipelines.megaplan._pipeline.types import PipelineVerdict
 
 def run():
     return PipelineVerdict(score=0.72)
@@ -200,7 +200,7 @@ def test_calibration_guard_allows_guarded_target_once_gate_and_marker_exist(
         tmp_path,
         "megaplan/observability/cost.py",
         """
-from megaplan.observability import better
+from arnold.pipelines.megaplan.observability import better
 
 def route(plan_dir):
     return better("a", "b", plan_dir=plan_dir, judge_version="j", rubric_version="r", input_set_hash="i")

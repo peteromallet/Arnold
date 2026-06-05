@@ -8,9 +8,9 @@ from pathlib import Path
 
 import yaml
 
-from megaplan.cloud.auth import seed_codex_oauth
-from megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.auth import seed_codex_oauth
+from arnold.pipelines.megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     MegaplanSpec,
@@ -143,9 +143,9 @@ mode: idle
             return 0
 
     provider = Provider()
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
     monkeypatch.setattr(
-        "megaplan.cloud.cli.seed_codex_oauth",
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
         lambda _spec, _provider: calls.append("seed"),
     )
 
@@ -188,10 +188,10 @@ def test_cloud_chain_invokes_codex_oauth_seed_before_launch(
             return subprocess.CompletedProcess(["ssh"], 0, stdout="\n", stderr="")
 
     provider = Provider()
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _spec())
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
     monkeypatch.setattr(
-        "megaplan.cloud.cli.seed_codex_oauth",
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
         lambda _spec, _provider: calls.append("seed"),
     )
 

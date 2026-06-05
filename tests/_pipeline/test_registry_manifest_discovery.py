@@ -7,12 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan._pipeline.behavioral_manifest import (
+from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
     StaticBehavioralManifest,
     static_behavioral_manifest_for_pipeline,
 )
-from megaplan._pipeline import registry
-from megaplan._pipeline.discovery.manifest import Manifest
+from arnold.pipelines.megaplan._pipeline import registry
+from arnold.pipelines.megaplan._pipeline.discovery.manifest import Manifest
 
 
 WELL_FORMED = '''\
@@ -120,7 +120,7 @@ capabilities = ("plan",)
 
 
 def build_pipeline():
-    from megaplan._pipeline.types import Pipeline
+    from arnold.pipelines.megaplan._pipeline.types import Pipeline
 
     return (
         Pipeline.builder("behavioral-demo", pipeline_dir=_PIPELINE_DIR)

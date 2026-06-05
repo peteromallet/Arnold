@@ -14,12 +14,12 @@ from typing import Any
 
 import pytest
 
-from megaplan.orchestration.completion_contract import (
+from arnold.pipelines.megaplan.orchestration.completion_contract import (
     extract_green_suite_info,
     normalize_contract_mode,
 )
-from megaplan.orchestration.suite_runner import SuiteRunResult, append_suite_run
-from megaplan.planning.state import STATE_CRITIQUED
+from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult, append_suite_run
+from arnold.pipelines.megaplan.planning.state import STATE_CRITIQUED
 
 
 # ---------------------------------------------------------------------------
@@ -135,13 +135,13 @@ def _read_state(plan_dir: Path) -> dict[str, Any]:
 
 def test_enforce_blocks_on_newly_failing(tmp_path, monkeypatch):
     """enforce mode + newly_failing → state patched to revise-routing, returns 'routed'."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(tmp_path, mode="enforce")
 
     # Verification: one new failure not in baseline.
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -162,12 +162,12 @@ def test_enforce_blocks_on_newly_failing(tmp_path, monkeypatch):
 
 def test_warn_is_advisory_not_blocking(tmp_path, monkeypatch, caplog):
     """warn mode + newly_failing → advisory WARNING logged, returns 'done' (no block)."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(tmp_path, mode="warn")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -191,12 +191,12 @@ def test_warn_is_advisory_not_blocking(tmp_path, monkeypatch, caplog):
 
 def test_shadow_ignores_newly_failing(tmp_path, monkeypatch):
     """shadow mode + newly_failing → no block, no warning, returns 'done'."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(tmp_path, mode="shadow")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -215,7 +215,7 @@ def test_shadow_ignores_newly_failing(tmp_path, monkeypatch):
 
 def test_enforce_blocks_on_deleted_tests(tmp_path, monkeypatch):
     """enforce mode + deleted_tests=1 (baseline collected test missing from verification) → blocks."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     # Baseline has test_a and test_b; verification only collects test_a.
     plan_dir, _ = _make_plan_dir(
@@ -226,7 +226,7 @@ def test_enforce_blocks_on_deleted_tests(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=[],
             passes=["tests/test_foo.py::test_a"],
@@ -245,12 +245,12 @@ def test_enforce_blocks_on_deleted_tests(tmp_path, monkeypatch):
 
 def test_enforce_runner_error_does_not_block(tmp_path, monkeypatch, caplog):
     """enforce mode + runner_error → NOT blocked, structured warning emitted."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(tmp_path, mode="enforce")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=[],
             passes=[],
@@ -274,7 +274,7 @@ def test_enforce_runner_error_does_not_block(tmp_path, monkeypatch, caplog):
 
 def test_enforce_revise_retry_cap_exhausted(tmp_path, monkeypatch):
     """enforce mode + retry cap exhausted → returns 'operator_required'."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(tmp_path, mode="enforce", enforce_revise_max_retries=2)
 
@@ -284,7 +284,7 @@ def test_enforce_revise_retry_cap_exhausted(tmp_path, monkeypatch):
     _write(plan_dir / "state.json", state)
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -301,12 +301,12 @@ def test_enforce_revise_retry_cap_exhausted(tmp_path, monkeypatch):
 
 def test_enforce_no_regressions_returns_done(tmp_path, monkeypatch):
     """enforce mode + zero newly_failing + zero deleted_tests → 'done' (no block)."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(tmp_path, mode="enforce")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=[],
             passes=["tests/test_foo.py::test_a"],
@@ -323,12 +323,12 @@ def test_enforce_no_regressions_returns_done(tmp_path, monkeypatch):
 
 def test_enforce_retry_increments_count(tmp_path, monkeypatch):
     """Each enforce block increments enforce_revise_count in state.json."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     plan_dir, _ = _make_plan_dir(tmp_path, mode="enforce", enforce_revise_max_retries=2)
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -361,7 +361,7 @@ def test_enforce_retry_increments_count(tmp_path, monkeypatch):
 
 def test_sticky_flag_reads_only_config_not_env(tmp_path, monkeypatch):
     """Sticky-flag: completion_contract_mode is read from state['config'], never os.getenv."""
-    from megaplan import auto
+    from arnold.pipelines.megaplan import auto 
 
     # Set env var to enforce; config says shadow → shadow must win.
     monkeypatch.setenv("MEGAPLAN_COMPLETION_CONTRACT_MODE", "enforce")
@@ -369,7 +369,7 @@ def test_sticky_flag_reads_only_config_not_env(tmp_path, monkeypatch):
     plan_dir, _ = _make_plan_dir(tmp_path, mode="shadow")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -455,14 +455,14 @@ def _make_chain_plan_dir(
 
 def test_chain_enforce_blocks_on_newly_failing(tmp_path, monkeypatch):
     """chain._shadow_milestone_completion_verdict returns True on newly_failing in enforce."""
-    from megaplan.chain import _shadow_milestone_completion_verdict
+    from arnold.pipelines.megaplan.chain import _shadow_milestone_completion_verdict
 
     root = tmp_path
     plan_name = "milestone-plan"
     _make_chain_plan_dir(root, plan_name, mode="enforce")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -481,14 +481,14 @@ def test_chain_enforce_blocks_on_newly_failing(tmp_path, monkeypatch):
 
 def test_chain_warn_advisory_not_blocking(tmp_path, monkeypatch, caplog):
     """chain._shadow_milestone_completion_verdict returns False in warn mode (advisory only)."""
-    from megaplan.chain import _shadow_milestone_completion_verdict
+    from arnold.pipelines.megaplan.chain import _shadow_milestone_completion_verdict
 
     root = tmp_path
     plan_name = "warn-plan"
     _make_chain_plan_dir(root, plan_name, mode="warn")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -510,14 +510,14 @@ def test_chain_warn_advisory_not_blocking(tmp_path, monkeypatch, caplog):
 
 def test_chain_shadow_not_blocking(tmp_path, monkeypatch):
     """chain._shadow_milestone_completion_verdict returns False in shadow mode."""
-    from megaplan.chain import _shadow_milestone_completion_verdict
+    from arnold.pipelines.megaplan.chain import _shadow_milestone_completion_verdict
 
     root = tmp_path
     plan_name = "shadow-plan"
     _make_chain_plan_dir(root, plan_name, mode="shadow")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -536,14 +536,14 @@ def test_chain_shadow_not_blocking(tmp_path, monkeypatch):
 
 def test_chain_enforce_runner_error_not_blocking(tmp_path, monkeypatch, caplog):
     """chain._shadow_milestone_completion_verdict returns False on runner_error."""
-    from megaplan.chain import _shadow_milestone_completion_verdict
+    from arnold.pipelines.megaplan.chain import _shadow_milestone_completion_verdict
 
     root = tmp_path
     plan_name = "err-plan"
     _make_chain_plan_dir(root, plan_name, mode="enforce")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=[],
             passes=[],
@@ -566,14 +566,14 @@ def test_chain_enforce_runner_error_not_blocking(tmp_path, monkeypatch, caplog):
 
 def test_chain_enforce_revise_retry_cap(tmp_path, monkeypatch):
     """chain runner halts with 'blocked' status when enforce retry cap is exhausted."""
-    from megaplan.chain import ChainState, _shadow_milestone_completion_verdict
+    from arnold.pipelines.megaplan.chain import ChainState, _shadow_milestone_completion_verdict
 
     root = tmp_path
     plan_name = "cap-plan"
     _make_chain_plan_dir(root, plan_name, mode="enforce")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],
@@ -601,7 +601,7 @@ def test_chain_enforce_revise_retry_cap(tmp_path, monkeypatch):
 
 def test_chain_state_enforce_revise_counts_roundtrip():
     """ChainState.enforce_revise_counts round-trips through to_dict/from_dict."""
-    from megaplan.chain import ChainState
+    from arnold.pipelines.megaplan.chain import ChainState
 
     cs = ChainState(enforce_revise_counts={"ms-1": 1, "ms-2": 2})
     restored = ChainState.from_dict(cs.to_dict())
@@ -610,7 +610,7 @@ def test_chain_state_enforce_revise_counts_roundtrip():
 
 def test_chain_state_enforce_revise_counts_defaults_empty():
     """Old chain state JSON with no enforce_revise_counts field defaults to {}."""
-    from megaplan.chain import ChainState
+    from arnold.pipelines.megaplan.chain import ChainState
 
     cs = ChainState.from_dict({})
     assert cs.enforce_revise_counts == {}
@@ -623,7 +623,7 @@ def test_chain_state_enforce_revise_counts_defaults_empty():
 
 def test_extract_green_suite_info_from_verdict(tmp_path, monkeypatch):
     """extract_green_suite_info correctly extracts delta + status from a verdict."""
-    from megaplan.orchestration.completion_contract import (
+    from arnold.pipelines.megaplan.orchestration.completion_contract import (
         CompletionContext,
         CompletionSubject,
         GreenSuiteProvider,
@@ -633,7 +633,7 @@ def test_extract_green_suite_info_from_verdict(tmp_path, monkeypatch):
     plan_dir, project_dir = _make_plan_dir(tmp_path, mode="shadow")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         lambda *a, **kw: _make_run_result(
             failures=["tests/test_foo.py::test_a"],
             passes=[],

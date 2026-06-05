@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan.chain import MilestoneSpec, _plan_artifact_paths_for_milestone
+from arnold.pipelines.megaplan.chain import MilestoneSpec, _plan_artifact_paths_for_milestone
 
 
 def _make_plan_dir(root: Path, plan_name: str) -> Path:

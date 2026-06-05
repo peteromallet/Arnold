@@ -11,18 +11,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import KNOWN_AGENTS
-from megaplan._core import (
+from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
+from arnold.pipelines.megaplan._core import (
     atomic_write_json,
     atomic_write_text,
-    read_json,
     resolve_plan_dir,
 )
-from megaplan.prompts.tiebreaker_challenger import challenger_prompt
-from megaplan.prompts.tiebreaker_researcher import researcher_prompt
-from megaplan.prompts.tiebreaker_synthesis import render_synthesis
-from megaplan.types import CliError, PlanState
-from megaplan.workers import run_step_with_worker
+from arnold.pipelines.megaplan._core.io import read_plan_state_cached
+from arnold.pipelines.megaplan.prompts.tiebreaker_challenger import challenger_prompt
+from arnold.pipelines.megaplan.prompts.tiebreaker_researcher import researcher_prompt
+from arnold.pipelines.megaplan.prompts.tiebreaker_synthesis import render_synthesis
+from arnold.pipelines.megaplan.types import CliError, PlanState
+from arnold.pipelines.megaplan.workers import run_step_with_worker
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ def _build_resolved(
     args: argparse.Namespace, step: str
 ) -> tuple[str, str, bool, str | None]:
     """Build a resolved tuple for ephemeral mode (FLAG-002)."""
-    from megaplan.workers import resolve_agent_mode
+    from arnold.pipelines.megaplan.workers import resolve_agent_mode
 
     am = resolve_agent_mode(step, args)
     return (am.agent, "ephemeral", True, am.model)
@@ -256,13 +256,13 @@ def run_tiebreaker_cli(root: Path, args: argparse.Namespace) -> int:
         return _run_tiebreaker_audit(root, plan_name)
 
     plan_dir = resolve_plan_dir(root, plan_name)
-    state: PlanState = read_json(plan_dir / "state.json")
+    state: PlanState = read_plan_state_cached(plan_dir, mode="authority")
 
     if action == "status":
         return _run_tiebreaker_status(root, plan_dir, state)
 
     if action == "decide":
-        from megaplan.handlers import handle_tiebreaker_decide
+        from arnold.pipelines.megaplan.handlers import handle_tiebreaker_decide
         response = handle_tiebreaker_decide(root, args)
         sys.stdout.write(json.dumps(response, indent=2) + "\n")
         return 0 if response.get("success") else 1
@@ -271,7 +271,7 @@ def run_tiebreaker_cli(root: Path, args: argparse.Namespace) -> int:
 
 
 def _run_tiebreaker_audit(root: Path, plan_name: str | None) -> int:
-    from megaplan.orchestration.plan_audit import (
+    from arnold.pipelines.megaplan.orchestration.plan_audit import (
         aggregate_tiebreaker_audit,
         load_tiebreaker_audit,
         render_audit_report,
@@ -279,7 +279,7 @@ def _run_tiebreaker_audit(root: Path, plan_name: str | None) -> int:
     if plan_name:
         plan_dir = resolve_plan_dir(root, plan_name)
         records = load_tiebreaker_audit(plan_dir)
-        from megaplan.orchestration.plan_audit import _compute_totals
+        from arnold.pipelines.megaplan.orchestration.plan_audit import _compute_totals
         data = {"plans": [{"plan_dir": plan_dir.name, "tiebreaker_count": len(records),
                            "tokens_spent": sum(r.get("tokens_spent", 0) for r in records),
                            "time_seconds": sum(r.get("time_seconds", 0) for r in records),

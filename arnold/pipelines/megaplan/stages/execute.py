@@ -12,7 +12,7 @@ from typing import Any, Mapping
 
 from arnold.pipelines.megaplan.handlers import handle_execute
 from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
-from megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepMixinProperty, StepResult
 
 
 _DEFAULTS: Mapping[str, Any] = {
@@ -22,7 +22,7 @@ _DEFAULTS: Mapping[str, Any] = {
 
 
 @dataclass(frozen=True)
-class ExecuteStep:
+class ExecuteStep(StepMixinProperty):
     name: str = "execute"
     kind: str = "produce"
     prompt_key: str | None = "execute"

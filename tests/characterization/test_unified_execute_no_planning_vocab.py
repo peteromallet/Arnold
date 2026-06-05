@@ -22,11 +22,12 @@ import pytest
 
 # The four targeted modules
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_MEGAPLAN_ROOT = _REPO_ROOT / "arnold" / "pipelines" / "megaplan"
 _TARGET_MODULES = [
-    _REPO_ROOT / "megaplan" / "_core" / "dispatch.py",
-    _REPO_ROOT / "megaplan" / "_core" / "scheduler" / "types.py",
-    _REPO_ROOT / "megaplan" / "_core" / "scheduler" / "topo.py",
-    _REPO_ROOT / "megaplan" / "_core" / "scheduler" / "run.py",
+    _MEGAPLAN_ROOT / "_core" / "dispatch.py",
+    _MEGAPLAN_ROOT / "_core" / "scheduler" / "types.py",
+    _MEGAPLAN_ROOT / "_core" / "scheduler" / "topo.py",
+    _MEGAPLAN_ROOT / "_core" / "scheduler" / "run.py",
 ]
 
 _BANNED_CONSTANTS: frozenset[str] = frozenset(

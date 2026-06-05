@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan.handlers.finalize import (
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan.handlers.finalize import (
     _apply_programmatic_coverage,
     _validate_finalize_payload,
     _write_finalize_artifacts,
 )
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests.conftest import PlanFixture, load_state, read_json
 
 

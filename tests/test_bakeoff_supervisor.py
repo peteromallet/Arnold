@@ -9,7 +9,7 @@ path.
 
 from __future__ import annotations
 
-from megaplan.control_interface import (
+from arnold.pipelines.megaplan.control_interface import (
     CONTROL_TARGET_ABORT,
     ControlTarget,
     ControlTargetRef,
@@ -17,8 +17,8 @@ from megaplan.control_interface import (
     apply_transition,
     read_valid_targets,
 )
-from megaplan.run_outcome import RunOutcome
-from megaplan.supervisor.bakeoff_binding import (
+from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.pipelines.megaplan.supervisor.bakeoff_binding import (
     BAKEOFF_TARGET_COMPARE,
     BAKEOFF_TARGET_MERGE,
     BAKEOFF_TARGET_RUN_PROFILES,
@@ -83,7 +83,7 @@ def test_bakeoff_binding_projects_running_targets_without_planning_conversion(
     def _boom(*_args, **_kwargs):
         raise AssertionError("planning conversion should not be used for bakeoff state")
 
-    monkeypatch.setattr("megaplan.planning.planning_run_state_view", _boom)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.planning_run_state_view", _boom)
 
     run_state = bakeoff_run_state_view(_state())
     projection = read_valid_targets(run_state, bakeoff_control_binding())
@@ -545,7 +545,7 @@ def test_binding_synthesize_artifacts_select_without_chosen_profile() -> None:
 
 def test_binding_apply_transition_via_control_transition() -> None:
     """ControlTransition (not ControlTransitionRequest) also works."""
-    from megaplan.control_interface import ControlTransition
+    from arnold.pipelines.megaplan.control_interface import ControlTransition
 
     view = bakeoff_run_state_view(_state(phase="picked", chosen_profile="alpha", terminal=True))
     transition = ControlTransition(op=BAKEOFF_TARGET_MERGE, target_id=BAKEOFF_TARGET_MERGE)
@@ -567,8 +567,8 @@ def test_no_planning_conversion_all_binding_methods(monkeypatch) -> None:
         call_count += 1
         raise AssertionError("planning_run_state_view must not be called for bakeoff")
 
-    monkeypatch.setattr("megaplan.planning.planning_run_state_view", _count_calls)
-    monkeypatch.setattr("megaplan.planning.planning_control_binding", _count_calls)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.planning_run_state_view", _count_calls)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.planning_control_binding", _count_calls)
 
     binding = bakeoff_control_binding()
     view = bakeoff_run_state_view(_state(terminal=True))
@@ -597,8 +597,8 @@ def test_no_planning_conversion_even_with_planning_like_state(monkeypatch) -> No
     def _boom(*_args, **_kwargs):
         raise AssertionError("planning must not be invoked for bakeoff")
 
-    monkeypatch.setattr("megaplan.planning.planning_run_state_view", _boom)
-    monkeypatch.setattr("megaplan.planning.planning_control_binding", _boom)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.planning_run_state_view", _boom)
+    monkeypatch.setattr("arnold.pipelines.megaplan.planning.planning_control_binding", _boom)
 
     # State that resembles planning state but is passed through bakeoff binding
     planning_like_state = {
@@ -641,7 +641,7 @@ def test_direct_injection_via_apply_transition() -> None:
 
 def test_direct_injection_via_synthesize_artifacts() -> None:
     """synthesize_artifacts works with direct BakeoffControlBinding injection."""
-    from megaplan.control_interface import synthesize_artifacts as synth
+    from arnold.pipelines.megaplan.control_interface import synthesize_artifacts as synth
 
     artifacts = synth(
         bakeoff_run_state_view(_state(terminal=True)),

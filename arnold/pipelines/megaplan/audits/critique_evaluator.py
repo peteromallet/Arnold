@@ -212,12 +212,12 @@ def roster_dispatch_spec(model: str) -> str:
     Raises:
         ValueError: *model* is not a known roster entry.
     """
-    from megaplan.profiles import (
+    from arnold.pipelines.megaplan.profiles import (
         DIRECT_DEEPSEEK_V4_FLASH_SPEC,
         DIRECT_DEEPSEEK_V4_PRO_SPEC,
     )
-    from megaplan.profiles import KNOWN_AGENTS
-    from megaplan.types import parse_agent_spec
+    from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
+    from arnold.pipelines.megaplan.types import parse_agent_spec
 
     mapping = {
         "claude-opus-4-7": "claude:claude-opus-4-7",
@@ -576,7 +576,7 @@ def probe_adaptive_critique_wiring() -> list[tuple[str, bool, str]]:
     results: list[tuple[str, bool, str]] = []
 
     try:
-        from megaplan.workers._impl import STEP_SCHEMA_FILENAMES
+        from arnold.pipelines.megaplan.workers._impl import STEP_SCHEMA_FILENAMES
     except ImportError as exc:  # pragma: no cover - defensive
         results.append((
             "STEP_SCHEMA_FILENAMES importable",
@@ -600,7 +600,7 @@ def probe_adaptive_critique_wiring() -> list[tuple[str, bool, str]]:
     ))
 
     try:
-        from megaplan.schemas import SCHEMAS
+        from arnold.pipelines.megaplan.schemas import SCHEMAS
     except ImportError as exc:  # pragma: no cover - defensive
         results.append(("SCHEMAS importable", False, f"ImportError: {exc}"))
         return results
@@ -615,7 +615,7 @@ def probe_adaptive_critique_wiring() -> list[tuple[str, bool, str]]:
         results.append((f"{schema_filename} registered in SCHEMAS", True, ""))
 
     try:
-        from megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
+        from arnold.pipelines.megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
     except ImportError as exc:
         results.append((
             "critique_evaluator prompt template importable",
@@ -630,7 +630,7 @@ def probe_adaptive_critique_wiring() -> list[tuple[str, bool, str]]:
     ))
 
     try:
-        from megaplan.workers._impl import _STEP_REQUIRED_KEYS
+        from arnold.pipelines.megaplan.workers._impl import _STEP_REQUIRED_KEYS
         required = set(_STEP_REQUIRED_KEYS.get("critique_evaluator", set()))
     except ImportError as exc:  # pragma: no cover - defensive
         results.append(("_STEP_REQUIRED_KEYS importable", False, f"ImportError: {exc}"))
@@ -648,7 +648,7 @@ def probe_adaptive_critique_wiring() -> list[tuple[str, bool, str]]:
 
 def assert_adaptive_critique_wired() -> None:
     """Raise if any static adaptive-critique wiring probe fails."""
-    from megaplan.types import AdaptiveCritiqueMisconfiguredError
+    from arnold.pipelines.megaplan.types import AdaptiveCritiqueMisconfiguredError
 
     results = probe_adaptive_critique_wiring()
     failures = [(label, detail) for label, passed, detail in results if not passed]

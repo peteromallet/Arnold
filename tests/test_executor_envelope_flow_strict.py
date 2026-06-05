@@ -15,14 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.envelope import (
+from arnold.pipelines.megaplan._pipeline.envelope import (
     EMPTY_ENVELOPE,
     EnvelopeDroppedError,
     RunEnvelope,
     make_envelope,
 )
-from megaplan._pipeline.executor import _assert_envelope_present, _record_error, run_pipeline
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.executor import _assert_envelope_present, _record_error, run_pipeline
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Stage,

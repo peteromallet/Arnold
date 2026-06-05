@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.resume import ResumeCursor, with_entry
-from megaplan._pipeline.types import Edge, Pipeline, Stage, StepResult, StepContext
+from arnold.pipelines.megaplan._pipeline.resume import ResumeCursor, with_entry
+from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepResult, StepContext
 
 
 def test_load_none_when_no_state_file(tmp_path: Path) -> None:

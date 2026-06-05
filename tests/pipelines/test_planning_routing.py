@@ -9,7 +9,7 @@ class TestPlanningLiterals:
     """Verify the four planning decision literals and override spelling."""
 
     def test_four_planning_decision_literals_defined(self) -> None:
-        from megaplan.pipelines.planning.routing import (
+        from arnold.pipelines.megaplan.pipelines.planning.routing import (
             PLAN_ESCALATE,
             PLAN_ITERATE,
             PLAN_PROCEED,
@@ -22,12 +22,12 @@ class TestPlanningLiterals:
         assert PLAN_ESCALATE == "escalate"
 
     def test_planning_decisions_tuple_contains_all_four(self) -> None:
-        from megaplan.pipelines.planning.routing import PLANNING_DECISIONS
+        from arnold.pipelines.megaplan.pipelines.planning.routing import PLANNING_DECISIONS
 
         assert PLANNING_DECISIONS == ("proceed", "iterate", "tiebreaker", "escalate")
 
     def test_override_spelling_force_proceed(self) -> None:
-        from megaplan.pipelines.planning.routing import (
+        from arnold.pipelines.megaplan.pipelines.planning.routing import (
             OVERRIDE_FORCE_PROCEED,
             OVERRIDE_FORCE_PROCEED_CLI,
         )
@@ -36,17 +36,17 @@ class TestPlanningLiterals:
         assert OVERRIDE_FORCE_PROCEED_CLI == "force-proceed"
 
     def test_cli_to_internal_override_maps_force_proceed(self) -> None:
-        from megaplan.pipelines.planning.routing import cli_to_internal_override
+        from arnold.pipelines.megaplan.pipelines.planning.routing import cli_to_internal_override
 
         assert cli_to_internal_override("force-proceed") == "force_proceed"
 
     def test_internal_to_cli_override_maps_force_proceed(self) -> None:
-        from megaplan.pipelines.planning.routing import internal_to_cli_override
+        from arnold.pipelines.megaplan.pipelines.planning.routing import internal_to_cli_override
 
         assert internal_to_cli_override("force_proceed") == "force-proceed"
 
     def test_override_spelling_roundtrip(self) -> None:
-        from megaplan.pipelines.planning.routing import (
+        from arnold.pipelines.megaplan.pipelines.planning.routing import (
             cli_to_internal_override,
             internal_to_cli_override,
         )
@@ -54,7 +54,7 @@ class TestPlanningLiterals:
         assert internal_to_cli_override(cli_to_internal_override("force-proceed")) == "force-proceed"
 
     def test_unknown_override_passthrough(self) -> None:
-        from megaplan.pipelines.planning.routing import (
+        from arnold.pipelines.megaplan.pipelines.planning.routing import (
             cli_to_internal_override,
             internal_to_cli_override,
         )
@@ -67,7 +67,7 @@ class TestPlanningGateEdges:
     """Tests for :func:`planning_gate_edges`."""
 
     def test_four_decision_edges_with_correct_targets(self) -> None:
-        from megaplan.pipelines.planning.routing import planning_gate_edges
+        from arnold.pipelines.megaplan.pipelines.planning.routing import planning_gate_edges
 
         edges = planning_gate_edges(
             on_proceed="finalize",
@@ -89,7 +89,7 @@ class TestPlanningGateEdges:
         assert label_to_target["escalate"] == "finalize"
 
     def test_no_kind_gate_edges(self) -> None:
-        from megaplan.pipelines.planning.routing import planning_gate_edges
+        from arnold.pipelines.megaplan.pipelines.planning.routing import planning_gate_edges
 
         edges = planning_gate_edges(
             on_proceed="p",
@@ -102,7 +102,7 @@ class TestPlanningGateEdges:
         )
 
     def test_gate_extra_edges_appended(self) -> None:
-        from megaplan.pipelines.planning.routing import planning_gate_edges
+        from arnold.pipelines.megaplan.pipelines.planning.routing import planning_gate_edges
 
         extra = (Edge(label="custom", target="somewhere", kind="normal"),)
         edges = planning_gate_edges(
@@ -118,7 +118,7 @@ class TestPlanningGateEdges:
 
     def test_preserves_existing_targets(self) -> None:
         """Edges must preserve the exact target names passed by the caller."""
-        from megaplan.pipelines.planning.routing import planning_gate_edges
+        from arnold.pipelines.megaplan.pipelines.planning.routing import planning_gate_edges
 
         edges = planning_gate_edges(
             on_proceed="finalize_phase",
@@ -137,7 +137,7 @@ class TestTiebreakerEdges:
     """Tests for :func:`tiebreaker_edges`."""
 
     def test_three_decision_edges_with_populated_labels(self) -> None:
-        from megaplan.pipelines.planning.routing import tiebreaker_edges
+        from arnold.pipelines.megaplan.pipelines.planning.routing import tiebreaker_edges
 
         edges = tiebreaker_edges(
             on_iterate="revise",
@@ -154,7 +154,7 @@ class TestTiebreakerEdges:
         assert labels == {"iterate", "proceed", "escalate"}
 
     def test_tiebreaker_labels_are_populated_not_empty(self) -> None:
-        from megaplan.pipelines.planning.routing import tiebreaker_edges
+        from arnold.pipelines.megaplan.pipelines.planning.routing import tiebreaker_edges
 
         edges = tiebreaker_edges(
             on_iterate="r",
@@ -165,7 +165,7 @@ class TestTiebreakerEdges:
             assert edge.label, f"Tiebreaker edge has empty label (target={edge.target!r})"
 
     def test_tiebreaker_preserves_existing_targets(self) -> None:
-        from megaplan.pipelines.planning.routing import tiebreaker_edges
+        from arnold.pipelines.megaplan.pipelines.planning.routing import tiebreaker_edges
 
         edges = tiebreaker_edges(
             on_iterate="revise_stage",
@@ -182,7 +182,7 @@ class TestPlanningOverrideEdges:
     """Tests for :func:`planning_override_edges`."""
 
     def test_override_edges_use_correct_kind_and_label(self) -> None:
-        from megaplan.pipelines.planning.routing import planning_override_edges
+        from arnold.pipelines.megaplan.pipelines.planning.routing import planning_override_edges
 
         edges = planning_override_edges(
             overrides={"force_proceed": "finalize", "abort": "halt"}
@@ -194,7 +194,7 @@ class TestPlanningOverrideEdges:
         assert labels == {"override force_proceed", "override abort"}
 
     def test_empty_overrides_returns_empty(self) -> None:
-        from megaplan.pipelines.planning.routing import planning_override_edges
+        from arnold.pipelines.megaplan.pipelines.planning.routing import planning_override_edges
 
         edges = planning_override_edges(overrides={})
         assert edges == ()
@@ -204,7 +204,7 @@ class TestCritiqueReviseGateRouting:
     """Tests for :func:`critique_revise_gate_routing`."""
 
     def test_returns_three_keys(self) -> None:
-        from megaplan.pipelines.planning.routing import critique_revise_gate_routing
+        from arnold.pipelines.megaplan.pipelines.planning.routing import critique_revise_gate_routing
 
         result = critique_revise_gate_routing(
             on_proceed="finalize",
@@ -215,7 +215,7 @@ class TestCritiqueReviseGateRouting:
         assert set(result.keys()) == {"critique", "gate", "revise"}
 
     def test_critique_edge_targets_gate(self) -> None:
-        from megaplan.pipelines.planning.routing import critique_revise_gate_routing
+        from arnold.pipelines.megaplan.pipelines.planning.routing import critique_revise_gate_routing
 
         result = critique_revise_gate_routing(
             on_proceed="p",
@@ -230,7 +230,7 @@ class TestCritiqueReviseGateRouting:
         assert critique_edges[0].target == "gate"
 
     def test_gate_has_four_decision_edges(self) -> None:
-        from megaplan.pipelines.planning.routing import critique_revise_gate_routing
+        from arnold.pipelines.megaplan.pipelines.planning.routing import critique_revise_gate_routing
 
         result = critique_revise_gate_routing(
             on_proceed="finalize",
@@ -243,7 +243,7 @@ class TestCritiqueReviseGateRouting:
         assert all(e.kind == "decision" for e in gate_edges)
 
     def test_revise_edge_loops_back_to_critique_by_default(self) -> None:
-        from megaplan.pipelines.planning.routing import critique_revise_gate_routing
+        from arnold.pipelines.megaplan.pipelines.planning.routing import critique_revise_gate_routing
 
         result = critique_revise_gate_routing(
             on_proceed="p",
@@ -258,7 +258,7 @@ class TestCritiqueReviseGateRouting:
         assert revise_edges[0].target == "critique"
 
     def test_revise_target_customizable(self) -> None:
-        from megaplan.pipelines.planning.routing import critique_revise_gate_routing
+        from arnold.pipelines.megaplan.pipelines.planning.routing import critique_revise_gate_routing
 
         result = critique_revise_gate_routing(
             on_proceed="p",
@@ -270,7 +270,7 @@ class TestCritiqueReviseGateRouting:
         assert result["revise"][0].target == "gate"
 
     def test_gate_extra_edges_preserved(self) -> None:
-        from megaplan.pipelines.planning.routing import critique_revise_gate_routing
+        from arnold.pipelines.megaplan.pipelines.planning.routing import critique_revise_gate_routing
 
         extra = (Edge(label="extra", target="somewhere", kind="override"),)
         result = critique_revise_gate_routing(
@@ -284,7 +284,7 @@ class TestCritiqueReviseGateRouting:
         assert result["gate"][4].label == "extra"
 
     def test_no_kind_gate_in_output(self) -> None:
-        from megaplan.pipelines.planning.routing import critique_revise_gate_routing
+        from arnold.pipelines.megaplan.pipelines.planning.routing import critique_revise_gate_routing
 
         result = critique_revise_gate_routing(
             on_proceed="p",
@@ -299,7 +299,7 @@ class TestCritiqueReviseGateRouting:
                 )
 
     def test_preserves_existing_targets(self) -> None:
-        from megaplan.pipelines.planning.routing import critique_revise_gate_routing
+        from arnold.pipelines.megaplan.pipelines.planning.routing import critique_revise_gate_routing
 
         result = critique_revise_gate_routing(
             on_proceed="target_proceed",

@@ -14,16 +14,16 @@ from typing import Any
 
 import pytest
 
-from megaplan._core.scheduler.types import Reduce
-from megaplan.execute._binding.reducer import (
+from arnold.pipelines.megaplan._core.scheduler.types import Reduce
+from arnold.pipelines.megaplan.execute._binding.reducer import (
     BatchOutcome,
     BatchReduceResult,
     apply_outcome_to_state,
     reduce_batch,
 )
 from arnold.pipelines.megaplan.execute.batch import BatchResult
-from megaplan.planning.state import STATE_EXECUTED
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.planning.state import STATE_EXECUTED
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 # ---------------------------------------------------------------------------

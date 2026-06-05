@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Final, TypedDict
 
-from megaplan.profiles import normalize_robustness
+from arnold.pipelines.megaplan.profiles import normalize_robustness
 
 
 VALID_SEVERITY_HINTS: Final[set[str]] = {"likely-significant", "likely-minor", "uncertain"}
@@ -242,8 +242,8 @@ def creative_checks_for_robustness(form: Any, robustness: str) -> tuple[Critique
     robustness = normalize_robustness(robustness)
     if robustness == "bare":
         return ()
-    from megaplan.forms import Form
-    from megaplan.forms.provocations import select_active_checks
+    from arnold.pipelines.megaplan.forms import Form
+    from arnold.pipelines.megaplan.forms.provocations import select_active_checks
 
     form_id = form.id if isinstance(form, Form) else str(form)
     state = {"config": {"mode": "creative", "form": form_id}, "iteration": 1}
@@ -251,7 +251,7 @@ def creative_checks_for_robustness(form: Any, robustness: str) -> tuple[Critique
 
 
 def joke_checks_for_robustness(robustness: str) -> tuple[CritiqueCheckSpec, ...]:
-    from megaplan.forms import get_form
+    from arnold.pipelines.megaplan.forms import get_form
 
     return creative_checks_for_robustness(get_form("joke"), robustness)
 

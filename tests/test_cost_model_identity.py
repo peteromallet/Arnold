@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from megaplan.observability.cost import _aggregate
-from megaplan.observability.events import EventKind, compute_model_identity
+from arnold.pipelines.megaplan.observability.cost import _aggregate
+from arnold.pipelines.megaplan.observability.events import EventKind, compute_model_identity
 
 
 def test_compute_model_identity_is_deterministic_sha256() -> None:
@@ -65,7 +65,7 @@ def test_aggregate_surfaces_cache_hit_rate_and_monoculture_index() -> None:
 def test_no_control_flow_consumer_of_model_identity_or_sensors() -> None:
     """Structural grep: no megaplan module reads model_identity / the
     derived sensors for control flow. They are recorded-only telemetry."""
-    repo_root = Path(__file__).resolve().parent.parent / "megaplan"
+    repo_root = Path(__file__).resolve().parent.parent / "arnold" / "pipelines" / "megaplan"
     hits: list[tuple[Path, str]] = []
     needles = ["model_identity", "phase_prefix_cache_hit_rate", "monoculture_index"]
     for path in repo_root.rglob("*.py"):

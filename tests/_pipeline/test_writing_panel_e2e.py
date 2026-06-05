@@ -30,13 +30,13 @@ from pathlib import Path
 # builder (.panel()/.agent()/.human_gate()), so its step instances and stage
 # types are megaplan bridge types.  HumanDecisionStep is explicitly a megaplan
 # bridge (human-gate pause/resume), not an Arnold neutral primitive.
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.resume import with_entry
-from megaplan._pipeline.steps.agent import AgentStep
-from megaplan._pipeline.steps.human_gate import HumanDecisionStep
-from megaplan._pipeline.steps.panel import PanelReviewerStep
-from megaplan._pipeline.types import ParallelStage, Pipeline, Stage, StepContext
-from megaplan.pipelines.writing_panel_strict import build_pipeline
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.resume import with_entry
+from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
+from arnold.pipelines.megaplan._pipeline.steps.human_gate import HumanDecisionStep
+from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
+from arnold.pipelines.megaplan._pipeline.types import ParallelStage, Pipeline, Stage, StepContext
+from arnold.pipelines.megaplan.pipelines.writing_panel_strict import build_pipeline
 
 
 # ── Helpers ────────────────────────────────────────────────────────────

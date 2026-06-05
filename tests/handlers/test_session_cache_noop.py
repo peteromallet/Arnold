@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan._core import atomic_write_json
-from megaplan.planning.state import STATE_CRITIQUED
-from megaplan.workers import WorkerResult, _build_mock_payload
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import atomic_write_json
+from arnold.pipelines.megaplan.planning.state import STATE_CRITIQUED
+from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import PlanFixture, load_state
 
 

@@ -13,14 +13,14 @@ from dataclasses import fields
 
 import pytest
 
-from megaplan._pipeline.dispatch import (
+from arnold.pipelines.megaplan._pipeline.dispatch import (
     Dispatcher,
     DispatchRequest,
     DispatchResult,
 )
-from megaplan._pipeline.dispatch_async import AsyncDispatcher
-from megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope, make_envelope
-from megaplan.resident.agent_loop import AgentResponse
+from arnold.pipelines.megaplan._pipeline.dispatch_async import AsyncDispatcher
+from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope, make_envelope
+from arnold.pipelines.megaplan.resident.agent_loop import AgentResponse
 
 
 class _FakeRunner:

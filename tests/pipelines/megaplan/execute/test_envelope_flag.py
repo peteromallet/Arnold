@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-import megaplan.workers as worker_module
-from megaplan._core import resolve_dispatch_spec
-from megaplan.execute._binding.tier import select_batch_tier
+import arnold.pipelines.megaplan.workers as worker_module
+from arnold.pipelines.megaplan._core import resolve_dispatch_spec
+from arnold.pipelines.megaplan.execute._binding.tier import select_batch_tier
 from arnold.pipelines.megaplan.execute._envelope import unified_execute_enabled
 
 
@@ -106,7 +106,7 @@ class TestEnvelopeFlagParity:
         batch_ids = ["T1", "T2"]
 
         # Flag-off path: compute_batch_complexity + tier_map.get
-        from megaplan._core import compute_batch_complexity
+        from arnold.pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = self.TIER_MAP.get(complexity_off)
@@ -141,7 +141,7 @@ class TestEnvelopeFlagParity:
         )
         batch_ids = ["T1"]
 
-        from megaplan._core import compute_batch_complexity
+        from arnold.pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = self.TIER_MAP.get(complexity_off)
@@ -186,7 +186,7 @@ class TestEnvelopeFlagParity:
         )
         batch_ids = ["T1", "T2"]
 
-        from megaplan._core import compute_batch_complexity
+        from arnold.pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = self.TIER_MAP.get(complexity_off)
@@ -211,7 +211,7 @@ class TestEnvelopeFlagParity:
         payload = _build_finalize_payload([])
         batch_ids: list[str] = []
 
-        from megaplan._core import compute_batch_complexity
+        from arnold.pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = self.TIER_MAP.get(complexity_off)
@@ -242,7 +242,7 @@ class TestEnvelopeFlagParity:
         )
         batch_ids = ["T1"]
 
-        from megaplan._core import compute_batch_complexity
+        from arnold.pipelines.megaplan._core import compute_batch_complexity
 
         complexity_off = compute_batch_complexity(payload, batch_ids)
         spec_off = sparse_map.get(complexity_off)
@@ -265,10 +265,14 @@ class TestEnvelopeFlagParity:
 class TestUnifiedExecuteEnabled:
     """Tests for the ``unified_execute_enabled()`` flag reader."""
 
-    def test_default_off(self):
+    def test_default_off(self, monkeypatch):
         """Without the env var set, returns False."""
-        # The module caches, so we test directly against the env logic
-        assert not unified_execute_enabled()
+        monkeypatch.delenv("MEGAPLAN_UNIFIED_EXECUTE", raising=False)
+        import importlib
+        import arnold.pipelines.megaplan.execute._envelope as mod
+
+        importlib.reload(mod)
+        assert not mod.unified_execute_enabled()
 
     def test_explicit_zero_is_off(self, monkeypatch):
         """MEGAPLAN_UNIFIED_EXECUTE=0 → False."""

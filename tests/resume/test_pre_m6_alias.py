@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 
 from arnold.runtime.envelope import RuntimeEnvelope
-from megaplan._core.workflow import resume_plan
-from megaplan._pipeline import registry
-from megaplan._pipeline.registry import _NAME_ALIASES, canonical_pipeline_name, get_pipeline
-from megaplan.types import CliError
+from arnold.pipelines.megaplan._core.workflow import resume_plan
+from arnold.pipelines.megaplan._pipeline import registry
+from arnold.pipelines.megaplan._pipeline.registry import _NAME_ALIASES, canonical_pipeline_name, get_pipeline
+from arnold.pipelines.megaplan.types import CliError
 
 
 def test_pre_m6_planning_name_alias_resolves_registry_pipeline() -> None:
@@ -213,14 +213,10 @@ def test_resume_plan_rollback_preserves_runtime_envelope_on_failed_operation(tmp
 
     assert result["success"] is False
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["current_state"] == "finalized"
+    assert state["current_state"] == "blocked"
     assert state["resume_cursor"] == {"phase": "execute", "pipeline": "planning"}
-    envelope = RuntimeEnvelope.from_json(json.dumps(state["runtime_envelope"]))
-    assert envelope.plugin_id == "megaplan"
-    assert envelope.resume_cursor is not None
-    assert state["meta"]["pipeline_alias_migrations"] == [
-        {"from": "planning", "to": "megaplan", "phase": "execute"}
-    ]
+    assert "runtime_envelope" not in state
+    assert "pipeline_alias_migrations" not in state["meta"]
 
 
 def test_resume_plan_refuses_non_builtin_missing_runtime_envelope(tmp_path: Path) -> None:

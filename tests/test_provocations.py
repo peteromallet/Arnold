@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from megaplan.forms import get_form
-from megaplan.forms.provocations import select_provocateur_voice, select_provocations
+from arnold.pipelines.megaplan.forms import get_form
+from arnold.pipelines.megaplan.forms.provocations import select_provocateur_voice, select_provocations
 
 
 def test_provocation_firing_patterns_and_voice_rotation() -> None:

@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.contracts import PortBindError
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.step_helpers import resolve_inputs
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.contracts import PortBindError
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.step_helpers import resolve_inputs
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Port,

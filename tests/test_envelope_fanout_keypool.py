@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from megaplan._pipeline.envelope import (
+from arnold.pipelines.megaplan._pipeline.envelope import (
     EMPTY_ENVELOPE,
     RunEnvelope,
     _envelope_ctx,
@@ -16,12 +16,12 @@ from megaplan._pipeline.envelope import (
     current_envelope,
     make_envelope,
 )
-from megaplan._pipeline.pattern_dynamic import (
+from arnold.pipelines.megaplan._pipeline.pattern_dynamic import (
     _DynamicFanoutStep,
     _PanelFromArtifactStep,
 )
-from megaplan._pipeline.types import StepContext, StepResult
-from megaplan.runtime.key_pool import KeyPool
+from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult
+from arnold.pipelines.megaplan.runtime.key_pool import KeyPool
 
 
 @dataclass(frozen=True)

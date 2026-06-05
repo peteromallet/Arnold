@@ -247,11 +247,11 @@
   "halt_visits": [
     "initialized->prep=plan",
     "prepped->plan=critique",
-    "planned->critique=gate",
+    "planned->critique=gate_unset:gate",
     "critiqued->gate=revise",
     "revise=critique",
-    "planned->critique=gate",
-    "critiqued->gate=finalize",
+    "planned->critique=gate_unset:gate",
+    "critiqued->gate=gate",
     "gated->finalize=execute"
   ],
   "json_artifacts": {

@@ -22,12 +22,13 @@ from arnold.pipelines.megaplan.handlers.tiebreaker import (
     handle_tiebreaker_decide,
 )
 from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
-from megaplan._pipeline.subloop import SubloopStep
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Stage,
     StepContext,
+    StepMixinProperty,
     StepResult,
 )
 
@@ -69,7 +70,7 @@ def _promote_from_child_state(state: dict[str, Any]) -> str:
 
 
 @dataclass(frozen=True)
-class TiebreakerStep:
+class TiebreakerStep(StepMixinProperty):
     """Single-Step tiebreaker — runs both legacy phases as a child pipeline."""
 
     name: str = "tiebreaker"

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.editorial.body import edit_section, read_body, update_body
-from megaplan.editorial.errors import EditorialValidationError, EditorialWorkflowError
-from megaplan.store import RevisionConflict
-from megaplan.store.snapshot import canonical_json_dumps
+from arnold.pipelines.megaplan.editorial.body import edit_section, read_body, update_body
+from arnold.pipelines.megaplan.editorial.errors import EditorialValidationError, EditorialWorkflowError
+from arnold.pipelines.megaplan.store import RevisionConflict
+from arnold.pipelines.megaplan.store.snapshot import canonical_json_dumps
 
 
 def _body() -> str:

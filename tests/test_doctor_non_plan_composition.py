@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.observability import doctor
-from megaplan.observability.composition_obs import InMemoryCompositionObs
+from arnold.pipelines.megaplan.observability import doctor
+from arnold.pipelines.megaplan.observability.composition_obs import InMemoryCompositionObs
 
 CHECK_FUNCTIONS = [
     doctor._check_stale_lock,

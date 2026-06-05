@@ -18,7 +18,7 @@ from arnold.pipelines.megaplan.orchestration.progress import (
     ProgressEmitter,
     strip_progress_env,
 )
-from megaplan.store import FileStore
+from arnold.pipelines.megaplan.store import FileStore
 
 
 def test_progress_emitter_noops_without_store_or_context() -> None:
@@ -120,7 +120,7 @@ def test_strip_progress_env_removes_only_progress_keys() -> None:
 
 
 def test_cli_handler_gets_progress_emitter_from_env(tmp_path, monkeypatch) -> None:
-    from megaplan import cli
+    from arnold.pipelines.megaplan import cli 
 
     setup_store = FileStore(tmp_path / "store")
     epic = setup_store.create_epic(title="Epic", goal="Goal", body="Body")
@@ -151,7 +151,7 @@ def test_cli_handler_gets_progress_emitter_from_env(tmp_path, monkeypatch) -> No
 
 
 def test_cli_phase_command_emits_lifecycle_events_from_runtime(tmp_path, monkeypatch) -> None:
-    from megaplan import cli
+    from arnold.pipelines.megaplan import cli 
 
     setup_store = FileStore(tmp_path / "store")
     epic = setup_store.create_epic(title="Epic", goal="Goal", body="Body")
@@ -183,8 +183,8 @@ def test_cli_phase_command_emits_lifecycle_events_from_runtime(tmp_path, monkeyp
 
 
 def test_auto_lifecycle_failure_emits_progress_without_losing_resume_cursor(tmp_path, monkeypatch) -> None:
-    from megaplan import auto
-    from megaplan._core import atomic_write_json
+    from arnold.pipelines.megaplan import auto 
+    from arnold.pipelines.megaplan._core import atomic_write_json
 
     setup_store = FileStore(tmp_path / "store")
     epic = setup_store.create_epic(title="Epic", goal="Goal", body="Body")

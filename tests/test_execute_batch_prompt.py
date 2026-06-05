@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan._core import atomic_write_json, atomic_write_text
-from megaplan.prompts import _execute_batch_prompt
-from megaplan.types import PlanState
+from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text
+from arnold.pipelines.megaplan.prompts import _execute_batch_prompt
+from arnold.pipelines.megaplan.types import PlanState
 
 
 def _state(project_dir: Path) -> PlanState:

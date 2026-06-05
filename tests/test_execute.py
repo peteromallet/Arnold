@@ -7,26 +7,27 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan.execute.aggregation
-import megaplan.execute.batch
-import megaplan.execute.core
-import megaplan.handlers
-import megaplan.handlers.critique as critique_handler
-import megaplan.handlers.execute as execute_handler
-import megaplan.workers
-from megaplan._core import compute_task_batches, load_plan, split_oversized_batches
-from megaplan.calibration import RouteSuggestion
-from megaplan.execute.quality import (
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan.execute.aggregation as megaplan_execute_aggregation
+import arnold.pipelines.megaplan.execute.batch as megaplan_execute_batch
+import arnold.pipelines.megaplan.execute.core as megaplan_execute_core
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+import arnold.pipelines.megaplan.handlers.critique as critique_handler
+import arnold.pipelines.megaplan.handlers.execute as execute_handler
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan._core import compute_task_batches, load_plan, split_oversized_batches
+from arnold.pipelines.megaplan.calibration import RouteSuggestion
+from arnold.pipelines.megaplan.execute.quality import (
     _auto_attribute_unclaimed_paths,
     _capture_git_status_snapshot,
     _capture_git_status_snapshot_recursive,
     _check_done_task_evidence,
     _check_done_task_evidence_by_kind,
 )
-from megaplan.types import CliError
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests.conftest import (
     PlanFixture,
     _make_plan_fixture_with_robustness,
@@ -1088,8 +1089,8 @@ def test_one_batch_handler_splits_wide_independent_wave_at_ceiling(
 
 
 def test_capture_test_baseline_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from megaplan.orchestration.suite_runner import SuiteRunResult
-    import megaplan.orchestration.suite_runner as suite_runner
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+    import arnold.pipelines.megaplan.orchestration.suite_runner as suite_runner
 
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
     monkeypatch.setattr(
@@ -1129,8 +1130,8 @@ def test_capture_test_baseline_success(monkeypatch: pytest.MonkeyPatch, tmp_path
 
 
 def test_capture_test_baseline_no_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from megaplan.orchestration.suite_runner import SuiteRunResult
-    import megaplan.orchestration.suite_runner as suite_runner
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+    import arnold.pipelines.megaplan.orchestration.suite_runner as suite_runner
 
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
     monkeypatch.setattr(
@@ -1161,8 +1162,8 @@ def test_capture_test_baseline_no_runner(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
 
 def test_capture_test_baseline_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from megaplan.orchestration.suite_runner import SuiteRunResult
-    import megaplan.orchestration.suite_runner as suite_runner
+    from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
+    import arnold.pipelines.megaplan.orchestration.suite_runner as suite_runner
 
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
     monkeypatch.setattr(
@@ -1258,7 +1259,7 @@ def test_execute_succeeds_in_auto_approve_mode(tmp_path: Path, monkeypatch: pyte
     # ~/.config/megaplan/config.json doesn't leak into the test and drive the
     # critique handler down the adaptive-evaluator path (which the mock worker
     # doesn't implement). Mirrors _make_plan_fixture_with_robustness.
-    import megaplan._core.io as _io_module
+    import arnold.pipelines.megaplan._core.io as _io_module
 
     def _config_dir(home: Path | None = None) -> Path:
         del home
@@ -1333,14 +1334,14 @@ def test_step_failure_uses_message_when_no_raw_output(plan_fixture: PlanFixture,
 
 
 def test_run_command_raises_on_timeout() -> None:
-    from megaplan.workers import run_command
+    from arnold.pipelines.megaplan.workers import run_command
 
     with pytest.raises(megaplan.CliError, match="timed out"):
         run_command(["sleep", "60"], cwd=Path.cwd(), timeout=1)
 
 
 def test_run_command_raises_on_file_not_found() -> None:
-    from megaplan.workers import run_command
+    from arnold.pipelines.megaplan.workers import run_command
 
     with pytest.raises(megaplan.CliError, match="not found"):
         run_command(["nonexistent_command_xyz"], cwd=Path.cwd())
@@ -1355,7 +1356,7 @@ def test_execute_prompt_includes_approval_note(plan_fixture: PlanFixture) -> Non
     )
     megaplan.handle_finalize(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
-    from megaplan.prompts import create_claude_prompt
+    from arnold.pipelines.megaplan.prompts import create_claude_prompt
 
     prompt = create_claude_prompt("execute", state, plan_fixture.plan_dir)
     assert "Review mode" in prompt or "auto-approve" in prompt or "approved" in prompt
@@ -2839,7 +2840,7 @@ def test_execute_auto_loop_stops_when_existing_task_is_blocked(
     assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
     assert state["history"][-1]["result"] == "blocked"
     # Verify phase_result.json is written with correct exit_kind
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written for every execute exit"
     assert pr.exit_kind == "blocked_by_prereq"
@@ -2894,7 +2895,7 @@ def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
     )
     assert last_execute["result"] != "blocked"
     # Verify phase_result.json is written with success exit_kind
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written for every execute exit"
     assert pr.exit_kind == "success"
@@ -2939,7 +2940,7 @@ def test_execute_auto_loop_short_circuits_when_flag_unset(
     assert response["blocked_task_ids"] == ["T1"]
     assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
     # Verify phase_result.json is written with blocked_by_prereq exit_kind
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written for every execute exit"
     assert pr.exit_kind == "blocked_by_prereq"
@@ -3004,7 +3005,7 @@ def test_execute_auto_loop_stops_when_batch_creates_blocked_task(
     assert "task(s) reported status=blocked by the worker: T1" in response["summary"]
     assert state["history"][-1]["result"] == "blocked"
     # Verify phase_result.json is written with blocked_by_prereq and blocked_task_ids
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written for every execute exit"
     assert pr.exit_kind == "blocked_by_prereq"

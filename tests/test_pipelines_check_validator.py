@@ -14,16 +14,16 @@ import sys
 import os
 from argparse import Namespace
 
-from megaplan._pipeline.judge_manifest import (
+from arnold.pipelines.megaplan._pipeline.judge_manifest import (
     EVALUAND_RECORD_CONTENT_TYPE,
     JudgeManifestPort,
     dump_judge_manifest,
     make_judge_manifest,
 )
-from megaplan._pipeline.judge_manifest_discovery import validate_judge_manifest
-from megaplan._pipeline.registry import get_pipeline
-from megaplan._pipeline.types import Edge, Pipeline, Stage
-from megaplan._pipeline.validator import Diagnostics, validate
+from arnold.pipelines.megaplan._pipeline.judge_manifest_discovery import validate_judge_manifest
+from arnold.pipelines.megaplan._pipeline.registry import get_pipeline
+from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
+from arnold.pipelines.megaplan._pipeline.validator import Diagnostics, validate
 
 
 class _NoopStep:
@@ -126,7 +126,7 @@ def test_diagnostics_ok_property() -> None:
 
 def _run_cli(*argv: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", "megaplan", *argv],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", *argv],
         capture_output=True,
         text=True,
         env=env,
@@ -200,7 +200,7 @@ def test_m5_judge_manifest_shape_validates() -> None:
 def test_cli_pipelines_check_registered_m5_manifest_does_not_import_wrapper(
     monkeypatch,
 ) -> None:
-    from megaplan.cli import _handle_pipelines
+    from arnold.pipelines.megaplan.cli import _handle_pipelines
 
     def blocked_import(name, package=None):
         if name == "megaplan._pipeline.eval_judge_wrapper":

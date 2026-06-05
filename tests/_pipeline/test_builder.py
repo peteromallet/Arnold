@@ -20,11 +20,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from megaplan._pipeline.builder import PipelineBuilder
-from megaplan._pipeline.steps.agent import AgentStep
-from megaplan._pipeline.steps.human_gate import HumanDecisionStep
-from megaplan._pipeline.steps.panel import PanelReviewerStep
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.builder import PipelineBuilder
+from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
+from arnold.pipelines.megaplan._pipeline.steps.human_gate import HumanDecisionStep
+from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     ParallelStage,
     Pipeline,
@@ -247,8 +247,8 @@ class TestHumanGateConstruction:
 def test_build_with_binding_flag_off_keeps_binding_map_none(monkeypatch):
     """Flag-OFF: build_with_binding returns pipeline with binding_map None."""
     monkeypatch.delenv("MEGAPLAN_TYPED_PORTS", raising=False)
-    from megaplan._core.workflow import build_with_binding
-    from megaplan._pipeline.types import Edge, Pipeline, Stage
+    from arnold.pipelines.megaplan._core.workflow import build_with_binding
+    from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
 
     class _S:
         name = "s"; kind = "produce"; prompt_key = None; slot = None

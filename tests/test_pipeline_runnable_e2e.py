@@ -15,15 +15,16 @@ from typing import Any
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan._core.io as io_module
+import arnold.pipelines.megaplan.cli as megaplan_cli
 
-from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan._pipeline.planning import compile_planning_pipeline
-from megaplan._pipeline.runtime import policy_from_cli_args
-from megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.runtime import policy_from_cli_args
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 
 
 def _mock_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -153,8 +154,8 @@ def test_runnable_pipeline_uses_named_step_classes() -> None:
 
 def test_runnable_pipeline_gate_has_typed_recommendation_edges() -> None:
     """The runnable pipeline's gate stage carries all four typed
-    recommendation edges — proving the dispatch is on the right node."""
+    decision edges — proving the dispatch is on the right node."""
     pipeline = compile_planning_pipeline()
-    gate_edges = [e for e in pipeline.stages["gate"].edges if e.kind == "gate"]
-    recs = sorted(e.recommendation for e in gate_edges)
+    gate_edges = [e for e in pipeline.stages["gate"].edges if e.kind == "decision"]
+    recs = sorted(e.label for e in gate_edges)
     assert recs == ["escalate", "iterate", "proceed", "tiebreaker"], recs

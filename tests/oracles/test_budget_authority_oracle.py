@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.runtime.budget_authority import BudgetAuthority, install, uninstall
+from arnold.pipelines.megaplan.runtime.budget_authority import BudgetAuthority, install, uninstall
 
 
 @pytest.fixture(autouse=True)

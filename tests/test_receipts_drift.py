@@ -3,8 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from megaplan.execute.quality import _capture_git_status_snapshot
-from megaplan.receipts.drift import collect_loc_by_file, compute_scope_drift
+from arnold.pipelines.megaplan.execute.quality import _capture_git_status_snapshot
+from arnold.pipelines.megaplan.receipts.drift import collect_loc_by_file, compute_scope_drift
 
 
 def test_scope_drift_none_when_diff_is_claimed() -> None:

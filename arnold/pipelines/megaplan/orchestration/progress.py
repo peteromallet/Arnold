@@ -7,8 +7,8 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-from megaplan.schemas import ProgressEvent
-from megaplan.store import DBStore, FileStore, MultiStore, ProgressEventInput, Store, deterministic_idempotency_key
+from arnold.pipelines.megaplan.schemas import ProgressEvent
+from arnold.pipelines.megaplan.store import DBStore, FileStore, MultiStore, ProgressEventInput, Store, deterministic_idempotency_key
 
 ENV_PREFIX = "MEGAPLAN_PROGRESS_"
 ENV_ENABLED = f"{ENV_PREFIX}ENABLED"

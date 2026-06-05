@@ -6,7 +6,7 @@ import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
-from megaplan.runtime.capabilities import ALL_CAPABILITIES, HUMAN_CAPABILITIES
+from arnold.pipelines.megaplan.runtime.capabilities import ALL_CAPABILITIES, HUMAN_CAPABILITIES
 
 
 @dataclass

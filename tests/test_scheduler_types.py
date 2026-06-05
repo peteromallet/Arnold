@@ -7,7 +7,7 @@ import textwrap
 
 import pytest
 
-from megaplan._core.scheduler.types import Reduce
+from arnold.pipelines.megaplan._core.scheduler.types import Reduce
 
 
 class TestReduce:
@@ -44,7 +44,7 @@ def test_scheduler_types_no_planning_vocabulary():
     """The scheduler types module must contain zero planning vocabulary:
     no ``_PHASE_OUTCOMES`` literal, no ``STATE_BLOCKED`` name, no ``BatchOutcome``,
     no ``BatchReduceResult``."""
-    import megaplan._core.scheduler.types as mod
+    import arnold.pipelines.megaplan._core.scheduler.types as mod
 
     source = textwrap.dedent(open(mod.__file__).read())
     tree = ast.parse(source)

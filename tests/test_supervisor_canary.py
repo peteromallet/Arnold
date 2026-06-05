@@ -4,8 +4,8 @@ import json
 import shutil
 from pathlib import Path
 
-from megaplan.auto import DriverOutcome
-from megaplan.control_interface import (
+from arnold.pipelines.megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan.control_interface import (
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
     CONTROL_TARGET_RECOVER_FROM_STUCK,
@@ -15,11 +15,11 @@ from megaplan.control_interface import (
     ControlTransitionResult,
     RunStateView,
 )
-from megaplan.supervisor.chain_runner import run_chain
-from megaplan.supervisor.driver import RunRequest
-from megaplan.supervisor.ladder import SupervisorLadderPolicy
-from megaplan.supervisor.model import RunNode
-from megaplan.supervisor.state import load_supervisor_state
+from arnold.pipelines.megaplan.supervisor.chain_runner import run_chain
+from arnold.pipelines.megaplan.supervisor.driver import RunRequest
+from arnold.pipelines.megaplan.supervisor.ladder import SupervisorLadderPolicy
+from arnold.pipelines.megaplan.supervisor.model import RunNode
+from arnold.pipelines.megaplan.supervisor.state import load_supervisor_state
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "supervisor_canary"

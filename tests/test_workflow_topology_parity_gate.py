@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._core.topology import RunTopologyConfig, build_topology
-from megaplan._core.workflow import (
+from arnold.pipelines.megaplan._core.topology import RunTopologyConfig, build_topology
+from arnold.pipelines.megaplan._core.workflow import (
     _STEP_CONTEXT_STATES,
     _transition_matches,
     _workflow_for_robustness,

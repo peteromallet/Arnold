@@ -28,7 +28,9 @@ import pytest
 
 # Locate the demo module path.
 _DEMO_PATH = (
-    Path(__file__).parent.parent.parent
+    Path(__file__).resolve().parents[2]
+    / "arnold"
+    / "pipelines"
     / "megaplan"
     / "_pipeline"
     / "demos"
@@ -89,14 +91,14 @@ def test_contracts_bind_clean_flag_on(monkeypatch: pytest.MonkeyPatch) -> None:
     """build_pipeline() flag-ON must pass contracts.bind without RepairGradient."""
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
     # Re-import flags so the env change is visible.
-    import megaplan._pipeline.flags as _flags
+    import arnold.pipelines.megaplan._pipeline.flags as _flags
     monkeypatch.setattr(_flags, "typed_ports_on", lambda: True)
 
     # Force reimport of tournament module so flags are re-evaluated.
-    mod_name = "megaplan._pipeline.demos.tournament"
+    mod_name = "arnold.pipelines.megaplan._pipeline.demos.tournament"
     if mod_name in sys.modules:
         del sys.modules[mod_name]
-    import megaplan._pipeline.demos.tournament as tournament  # noqa: PLC0415
+    import arnold.pipelines.megaplan._pipeline.demos.tournament as tournament # noqa: PLC0415
 
     pipeline = tournament.build_pipeline(max_rounds=4)
     assert pipeline.binding_map is not None, "binding_map should be set flag-ON"
@@ -114,7 +116,7 @@ def test_state_update_mock_function_scoped(monkeypatch: pytest.MonkeyPatch) -> N
     We patch megaplan._pipeline.executor's state.update call point and record
     every patch dict that passes through.
     """
-    import megaplan._pipeline.executor as executor_mod
+    import arnold.pipelines.megaplan._pipeline.executor as executor_mod
 
     recorded_patches: list[dict] = []
     _original_update = dict.update  # capture before patch
@@ -140,10 +142,10 @@ def test_state_update_mock_function_scoped(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(executor_mod, "run_pipeline", _spy_run)
 
-    mod_name = "megaplan._pipeline.demos.tournament"
+    mod_name = "arnold.pipelines.megaplan._pipeline.demos.tournament"
     if mod_name in sys.modules:
         del sys.modules[mod_name]
-    import megaplan._pipeline.demos.tournament as tournament  # noqa: PLC0415
+    import arnold.pipelines.megaplan._pipeline.demos.tournament as tournament # noqa: PLC0415
 
     # Run with flag-OFF so we exercise the non-CAS path without complications.
     with monkeypatch.context() as m:
@@ -168,13 +170,13 @@ def test_tournament_terminates_with_champion_flag_on(
 ) -> None:
     """Flag-ON: tournament runs to completion and state['champion'] is set."""
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
-    import megaplan._pipeline.flags as _flags
+    import arnold.pipelines.megaplan._pipeline.flags as _flags
     monkeypatch.setattr(_flags, "typed_ports_on", lambda: True)
 
-    mod_name = "megaplan._pipeline.demos.tournament"
+    mod_name = "arnold.pipelines.megaplan._pipeline.demos.tournament"
     if mod_name in sys.modules:
         del sys.modules[mod_name]
-    import megaplan._pipeline.demos.tournament as tournament  # noqa: PLC0415
+    import arnold.pipelines.megaplan._pipeline.demos.tournament as tournament # noqa: PLC0415
 
     result = tournament.run_tournament(max_rounds=6)
     state = result.get("state", {})
@@ -203,13 +205,13 @@ def test_build_pipeline_raises_port_bind_error_flag_off(
     PortBindError — proving the bind machinery is wired correctly.
     """
     monkeypatch.delenv("MEGAPLAN_TYPED_PORTS", raising=False)
-    import megaplan._pipeline.flags as _flags
+    import arnold.pipelines.megaplan._pipeline.flags as _flags
     monkeypatch.setattr(_flags, "typed_ports_on", lambda: False)
 
-    mod_name = "megaplan._pipeline.demos.tournament"
+    mod_name = "arnold.pipelines.megaplan._pipeline.demos.tournament"
     if mod_name in sys.modules:
         del sys.modules[mod_name]
-    import megaplan._pipeline.demos.tournament as tournament  # noqa: PLC0415
+    import arnold.pipelines.megaplan._pipeline.demos.tournament as tournament # noqa: PLC0415
 
     # Flag-OFF: build succeeds, binding_map is None.
     pipeline = tournament.build_pipeline(max_rounds=4)
@@ -218,8 +220,8 @@ def test_build_pipeline_raises_port_bind_error_flag_off(
     )
 
     # Now force-invoke bind with a mismatched PortRef to prove PortBindError fires.
-    from megaplan._pipeline.contracts import PortBindError as PBE, bind, RepairGradient
-    from megaplan._pipeline.types import Port, PortRef, Stage, StepResult, StepContext
+    from arnold.pipelines.megaplan._pipeline.contracts import PortBindError as PBE, bind, RepairGradient
+    from arnold.pipelines.megaplan._pipeline.types import Port, PortRef, Stage, StepResult, StepContext
 
     class _FakeStep:
         name = "fake"
@@ -246,7 +248,7 @@ def test_build_pipeline_raises_port_bind_error_flag_off(
         def run(self, ctx: StepContext) -> StepResult:  # pragma: no cover
             return StepResult()
 
-    from megaplan._pipeline.types import Edge
+    from arnold.pipelines.megaplan._pipeline.types import Edge
     stages = {
         "src": Stage(name="src", step=_FakeStep(), edges=(Edge("go", "dst"),),
                      produces=(Port(name="x", content_type="text/markdown"),)),

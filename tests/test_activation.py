@@ -16,14 +16,14 @@ import sys
 
 import pytest
 
-from megaplan._core.activation import (
+from arnold.pipelines.megaplan._core.activation import (
     Activation,
     LifecycleState,
     ReadinessRule,
     compute_activation_id,
 )
-from megaplan.observability.events import EventKind
-from megaplan.store.snapshot import canonical_json_dumps, canonical_sha256
+from arnold.pipelines.megaplan.observability.events import EventKind
+from arnold.pipelines.megaplan.store.snapshot import canonical_json_dumps, canonical_sha256
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ def test_compute_activation_id_is_hex():
 def test_compute_activation_id_cross_process():
     """id produced in a child process matches the id produced here."""
     script = (
-        "from megaplan._core.activation import compute_activation_id;"
+        "from arnold.pipelines.megaplan._core.activation import compute_activation_id;"
         "print(compute_activation_id('n', ['a', 'b'], 'default'))"
     )
     result = subprocess.run(
@@ -191,5 +191,5 @@ def test_activation_transitioned_event_exists():
 
 
 def test_activation_transitioned_in_all_event_kinds():
-    from megaplan.observability.events import _ALL_EVENT_KINDS
+    from arnold.pipelines.megaplan.observability.events import _ALL_EVENT_KINDS
     assert "activation_transitioned" in _ALL_EVENT_KINDS

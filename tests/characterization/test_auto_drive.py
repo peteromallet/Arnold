@@ -35,8 +35,8 @@ from typing import Any
 
 import pytest
 
-from megaplan import auto
-from megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan import auto 
+from arnold.pipelines.megaplan.auto import DriverOutcome
 
 # ---------------------------------------------------------------------------
 # Corpus directory
@@ -2144,9 +2144,9 @@ def test_auto_drive_branch(
         )
     elif mode == "stateful_run":
         from tests.conftest import make_fake_phase_result
-        from megaplan.orchestration.phase_result import BlockedTask as _BlockedTask
-        from megaplan.orchestration.phase_result import Deviation as _Deviation
-        from megaplan.orchestration.phase_result import ExternalError as _ExternalError
+        from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask as _BlockedTask
+        from arnold.pipelines.megaplan.orchestration.phase_result import Deviation as _Deviation
+        from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError as _ExternalError
 
         run_effects = recipe.get("run_side_effects", [])
         _call_idx: dict[str, int] = {"n": 0}
@@ -2337,7 +2337,7 @@ def test_auto_drive_corpus_covers_every_outcome_branch() -> None:
     name (via ``exit_kind_or_status`` or ``_KIND_TO_BRANCH``), and fails
     with the missing literal name if any branch is uncovered.
     """
-    auto_py_path = Path(__file__).resolve().parents[2] / "megaplan" / "auto.py"
+    auto_py_path = Path(__file__).resolve().parents[2] / "arnold" / "pipelines" / "megaplan" / "auto.py"
     source = auto_py_path.read_text(encoding="utf-8")
 
     # ── Extract every _outcome("X"  status literal ─────────────────────

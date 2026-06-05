@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.runtime import capacity_lease as cl
-from megaplan.runtime.capacity_lease import (
+from arnold.pipelines.megaplan.runtime import capacity_lease as cl
+from arnold.pipelines.megaplan.runtime.capacity_lease import (
     CapacityLease,
     StaleLeaseError,
     acquire,

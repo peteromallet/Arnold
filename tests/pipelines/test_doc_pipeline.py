@@ -42,7 +42,7 @@ def _make_run_args(
 # ── (a) Stage-keys assertion — iterate ``.keys()`` (mapping), not ``.name`` ─
 
 def test_doc_pipeline_stage_keys_in_canonical_order() -> None:
-    from megaplan.pipelines.doc import build_pipeline
+    from arnold.pipelines.megaplan.pipelines.doc import build_pipeline
 
     pipeline = build_pipeline()
     # ``pipeline.stages`` is Mapping[str, Stage|ParallelStage] — iterate keys.
@@ -66,7 +66,7 @@ def test_doc_pipeline_stage_keys_in_canonical_order() -> None:
 # ── (b) supported_modes + description surface through PipelineRegistry ───
 
 def test_doc_pipeline_metadata_surfaces_through_registry() -> None:
-    from megaplan._pipeline.registry import (
+    from arnold.pipelines.megaplan._pipeline.registry import (
         pipeline_metadata,
         registered_pipelines,
     )
@@ -84,8 +84,8 @@ def test_doc_pipeline_metadata_surfaces_through_registry() -> None:
 # ── (c) section_drafts is a dynamic_fanout-produced SubloopStep ──────────
 
 def test_doc_pipeline_section_drafts_is_subloopstep() -> None:
-    from megaplan._pipeline.subloop import SubloopStep
-    from megaplan.pipelines.doc import build_pipeline
+    from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
+    from arnold.pipelines.megaplan.pipelines.doc import build_pipeline
 
     pipeline = build_pipeline()
     section_drafts_stage = pipeline.stages["section_drafts"]
@@ -109,8 +109,8 @@ def test_doc_pipeline_fanout_invokes_base_prompt_per_section(
     Uses the Arnold executor (M3a migration).
     """
 
-    from megaplan.pipelines.doc import build_pipeline
-    from megaplan.pipelines.doc.steps import SectionDraftStep
+    from arnold.pipelines.megaplan.pipelines.doc import build_pipeline
+    from arnold.pipelines.megaplan.pipelines.doc.steps import SectionDraftStep
     from arnold.pipeline import run_pipeline
     from arnold.runtime.envelope import RuntimeEnvelope
 
@@ -169,8 +169,8 @@ def test_doc_pipeline_runs_through_cli_run(
     so cli_run continues to work.
     """
 
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     # Neutralise the credential preflight — the doc pipeline's stage
     # shells write placeholders directly and never invoke a worker, so

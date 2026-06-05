@@ -10,9 +10,9 @@ import pytest
 import yaml
 from unittest.mock import patch
 
-from megaplan.auto import DriverOutcome
-from megaplan import chain as chain_module
-from megaplan.chain import (
+from arnold.pipelines.megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan import chain as chain_module 
+from arnold.pipelines.megaplan.chain import (
     ChainState,
     FailurePolicy,
     MilestoneSpec,
@@ -22,7 +22,7 @@ from megaplan.chain import (
     load_spec,
     run_chain,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _write_spec(tmp_path: Path, spec_dict: dict, *, name: str = "chain.yaml") -> Path:
@@ -279,9 +279,9 @@ def test_ladder_does_not_infinite_loop_on_deterministic_failure(tmp_path: Path) 
         init_profiles.append(profile)
         return f"plan-{Path(idea_path).stem}"
 
-    with patch("megaplan.chain._init_plan", side_effect=fake_init), patch(
-        "megaplan.chain.auto_drive", side_effect=fake_drive
-    ), patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=fake_init), patch(
+        "arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive
+    ), patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "stopped"
@@ -342,10 +342,10 @@ def test_retry_milestone_resumes_resumable_current_plan(tmp_path: Path) -> None:
         drive_calls.append(plan)
         return _fake_outcome(plan, "failed" if len(drive_calls) == 1 else "done")
 
-    with patch("megaplan.chain._init_plan", side_effect=fake_init), patch(
-        "megaplan.chain._drive_plan", side_effect=fake_drive
-    ), patch("megaplan.chain._plan_state", return_value="finalized"), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=fake_init), patch(
+        "arnold.pipelines.megaplan.chain._drive_plan", side_effect=fake_drive
+    ), patch("arnold.pipelines.megaplan.chain._plan_state", return_value="finalized"), patch(
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         result = run_chain(spec_path, tmp_path, writer=messages.append)
 
@@ -454,13 +454,13 @@ def test_require_clean_base_auto_cleans_carried_wip_local(tmp_path: Path) -> Non
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True, exist_ok=True)
 
     with patch(
-        "megaplan.chain._init_plan",
+        "arnold.pipelines.megaplan.chain._init_plan",
         side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}",
     ), patch(
-        "megaplan.chain.auto_drive",
+        "arnold.pipelines.megaplan.chain.auto_drive",
         side_effect=lambda plan, **_k: _fake_outcome(plan, "done"),
     ), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         result = run_chain(
             spec_path, tmp_path, writer=lambda _m: None, no_push=True
@@ -499,13 +499,13 @@ def test_require_clean_base_fails_loud_when_pushing(tmp_path: Path) -> None:
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True, exist_ok=True)
 
     with patch(
-        "megaplan.chain._init_plan",
+        "arnold.pipelines.megaplan.chain._init_plan",
         side_effect=lambda root, idea_path, **_k: "plan-m1",
     ), patch(
-        "megaplan.chain.auto_drive",
+        "arnold.pipelines.megaplan.chain.auto_drive",
         side_effect=lambda plan, **_k: _fake_outcome(plan, "done"),
     ), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         with pytest.raises(CliError) as info:
             run_chain(spec_path, tmp_path, writer=lambda _m: None, no_push=False)

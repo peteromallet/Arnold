@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from megaplan._pipeline.taint import port_value_hash, propagate_taint
-from megaplan._pipeline.types import Port, PortRef
+from arnold.pipelines.megaplan._pipeline.taint import port_value_hash, propagate_taint
+from arnold.pipelines.megaplan._pipeline.types import Port, PortRef
 
 
 def test_identical_value_different_taint_produces_different_hash():

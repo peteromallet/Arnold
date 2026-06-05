@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope, make_envelope
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope, make_envelope
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Stage,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from megaplan.observability.composition_obs import (
+from arnold.pipelines.megaplan.observability.composition_obs import (
     InMemoryCompositionObs,
     trace_from_composition,
 )
@@ -36,5 +36,5 @@ def test_legacy_plan_scoped_trace_path_still_importable():
     assert "MEGAPLAN_UNIFIED_EMIT" not in os.environ or os.environ.get(
         "MEGAPLAN_UNIFIED_EMIT"
     ) in (None, "", "0")
-    from megaplan.observability import read_events  # noqa: F401
-    from megaplan._core import find_plan_dir  # noqa: F401
+    from arnold.pipelines.megaplan.observability import read_events  # noqa: F401
+    from arnold.pipelines.megaplan._core import find_plan_dir  # noqa: F401

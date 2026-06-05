@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from megaplan.audits.hermes_vendoring import (
+from arnold.pipelines.megaplan.audits.hermes_vendoring import (
     JOB_B_SCOPE_FENCE_ENTRIES,
     RUNTIME_REQUIRED_ENTRIES,
     audit_vendored_agent_history,
@@ -32,7 +32,7 @@ def _init_git_repo(repo_root: Path) -> None:
 
 def test_audit_vendored_agent_tree_flags_missing_entries_and_dead_weight(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
-    agent_root = repo_root / "megaplan" / "agent"
+    agent_root = repo_root / "arnold" / "pipelines" / "megaplan" / "agent"
     agent_root.mkdir(parents=True)
 
     for entry in RUNTIME_REQUIRED_ENTRIES:
@@ -93,14 +93,14 @@ def test_audit_vendored_agent_history_passes_for_multi_commit_git_history(tmp_pa
     repo_root.mkdir()
     _init_git_repo(repo_root)
 
-    tracked_file = repo_root / "megaplan" / "agent" / "run_agent.py"
+    tracked_file = repo_root / "arnold" / "pipelines" / "megaplan" / "agent" / "run_agent.py"
     tracked_file.parent.mkdir(parents=True)
     tracked_file.write_text("print('v1')\n", encoding="utf-8")
-    subprocess.run(["git", "add", "megaplan/agent/run_agent.py"], cwd=repo_root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "add", "arnold/pipelines/megaplan/agent/run_agent.py"], cwd=repo_root, check=True, capture_output=True, text=True)
     subprocess.run(["git", "commit", "-m", "add vendored agent"], cwd=repo_root, check=True, capture_output=True, text=True)
 
     tracked_file.write_text("print('v2')\n", encoding="utf-8")
-    subprocess.run(["git", "add", "megaplan/agent/run_agent.py"], cwd=repo_root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "add", "arnold/pipelines/megaplan/agent/run_agent.py"], cwd=repo_root, check=True, capture_output=True, text=True)
     subprocess.run(["git", "commit", "-m", "update vendored agent"], cwd=repo_root, check=True, capture_output=True, text=True)
 
     audit = audit_vendored_agent_history(repo_root)
@@ -121,7 +121,7 @@ def test_audit_vendored_agent_history_reports_untracked_copy(tmp_path: Path) -> 
     subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True, capture_output=True, text=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
 
-    untracked_file = repo_root / "megaplan" / "agent" / "run_agent.py"
+    untracked_file = repo_root / "arnold" / "pipelines" / "megaplan" / "agent" / "run_agent.py"
     untracked_file.parent.mkdir(parents=True)
     untracked_file.write_text("print('copy')\n", encoding="utf-8")
 

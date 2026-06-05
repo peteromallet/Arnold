@@ -32,8 +32,8 @@ from arnold.runtime.operations import (
     OperationRequest,
     OperationResult,
 )
-from megaplan._pipeline.discovery.trust import TrustTier
-from megaplan._pipeline.registry import (
+from arnold.pipelines.megaplan._pipeline.discovery.trust import TrustTier
+from arnold.pipelines.megaplan._pipeline.registry import (
     PipelineRegistry,
     control_status_result_from_operation_result,
     discover_python_pipelines,
@@ -51,7 +51,7 @@ from megaplan._pipeline.registry import (
 
 
 def test_registered_pipelines_lists_builtins_plus_writing_panel_strict_and_epic_blitz() -> None:
-    from megaplan._pipeline.registry import registered_pipelines
+    from arnold.pipelines.megaplan._pipeline.registry import registered_pipelines
 
     names = registered_pipelines()
     for required in ("megaplan", "writing-panel-strict", "epic-blitz"):
@@ -71,7 +71,7 @@ def test_registered_pipelines_lists_builtins_plus_writing_panel_strict_and_epic_
 
 
 def test_writing_panel_strict_metadata_exposes_module_constants() -> None:
-    from megaplan._pipeline.registry import pipeline_metadata
+    from arnold.pipelines.megaplan._pipeline.registry import pipeline_metadata
 
     meta = pipeline_metadata("writing-panel-strict")
     assert meta.get("description"), (
@@ -84,7 +84,7 @@ def test_writing_panel_strict_metadata_exposes_module_constants() -> None:
 # ── (b) epic-blitz metadata exposes module constants ────────────────────
 
 def test_epic_blitz_metadata_exposes_module_constants() -> None:
-    from megaplan._pipeline.registry import pipeline_metadata
+    from arnold.pipelines.megaplan._pipeline.registry import pipeline_metadata
 
     meta = pipeline_metadata("epic-blitz")
     assert meta.get("description"), (
@@ -97,11 +97,13 @@ def test_epic_blitz_metadata_exposes_module_constants() -> None:
 # ── (c) read_skill_md returns epic-blitz SKILL.md contents ───────────────
 
 def test_read_skill_md_returns_epic_blitz_contents() -> None:
-    from megaplan._pipeline.registry import read_pipeline_skill_md
+    from arnold.pipelines.megaplan._pipeline.registry import read_pipeline_skill_md
 
     contents = read_pipeline_skill_md("epic-blitz")
     on_disk = (
         Path(__file__).resolve().parents[2]
+        / "arnold"
+        / "pipelines"
         / "megaplan"
         / "pipelines"
         / "epic-blitz"
@@ -115,11 +117,13 @@ def test_read_skill_md_returns_epic_blitz_contents() -> None:
 # ── (d) read_skill_md returns the on-disk SKILL.md text ─────────────────
 
 def test_read_skill_md_returns_writing_panel_strict_contents() -> None:
-    from megaplan._pipeline.registry import read_pipeline_skill_md
+    from arnold.pipelines.megaplan._pipeline.registry import read_pipeline_skill_md
 
     contents = read_pipeline_skill_md("writing-panel-strict")
     on_disk = (
         Path(__file__).resolve().parents[2]
+        / "arnold"
+        / "pipelines"
         / "megaplan"
         / "pipelines"
         / "writing-panel-strict"
@@ -157,7 +161,7 @@ def test_user_pipeline_is_discovered_and_runnable(
     user_dir.mkdir(parents=True)
     foo_py = user_dir / "foo.py"
     foo_py.write_text(
-        "from megaplan._pipeline.types import Pipeline, Stage, Edge, "
+        "from arnold.pipelines.megaplan._pipeline.types import Pipeline, Stage, Edge, "
         "StepContext, StepResult, Step\n"
         "from dataclasses import dataclass\n"
         "\n"
@@ -180,7 +184,7 @@ def test_user_pipeline_is_discovered_and_runnable(
 
     monkeypatch.setenv("HOME", str(tmp_path))
     # Drop any prior user-module import so the fresh discovery re-execs.
-    sys.modules.pop("megaplan._user_pipelines.foo", None)
+    sys.modules.pop("arnold.pipelines.megaplan._user_pipelines.foo", None)
 
     registry = PipelineRegistry()
     names = registry.names()
@@ -196,7 +200,7 @@ def test_user_pipeline_is_discovered_and_runnable(
     assert meta.get("source_path") == str(foo_py)
 
     # Pipeline is runnable: build_pipeline() returns a real Pipeline value.
-    from megaplan._pipeline.types import Pipeline as _PipelineCls
+    from arnold.pipelines.megaplan._pipeline.types import Pipeline as _PipelineCls
 
     pipeline = registry.get("foo")
     assert isinstance(pipeline, _PipelineCls)
@@ -222,7 +226,7 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
     user_dir.mkdir(parents=True)
     planted = user_dir / "planning.py"
     planted.write_text(
-        "from megaplan._pipeline.types import Pipeline, Stage, Edge, "
+        "from arnold.pipelines.megaplan._pipeline.types import Pipeline, Stage, Edge, "
         "StepContext, StepResult, Step\n"
         "from dataclasses import dataclass\n"
         "\n"
@@ -244,7 +248,7 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
     )
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    sys.modules.pop("megaplan._user_pipelines.planning", None)
+    sys.modules.pop("arnold.pipelines.megaplan._user_pipelines.planning", None)
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
@@ -268,7 +272,7 @@ def test_discover_python_pipelines_skips_user_duplicate_of_planning(
 
     # And the registry still resolves the in-tree planning pipeline via
     # the module-level API.
-    from megaplan._pipeline.registry import (
+    from arnold.pipelines.megaplan._pipeline.registry import (
         get_pipeline,
         pipeline_metadata,
     )
@@ -298,7 +302,7 @@ def test_operation_helpers_discover_factories_and_metadata(
         "    OperationRequest,\n"
         "    OperationResult,\n"
         ")\n"
-        "from megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
+        "from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
         "from dataclasses import dataclass\n"
         "\n"
         "description = 'ops demo'\n"
@@ -330,11 +334,11 @@ def test_operation_helpers_discover_factories_and_metadata(
     (pkg / "SKILL.md").write_text("# skill\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        "megaplan._pipeline.registry.classify",
+        "arnold.pipelines.megaplan._pipeline.registry.classify",
         lambda *args, **kwargs: TrustTier.BLESSED,
     )
     monkeypatch.setattr(
-        "megaplan._pipeline.registry._get_scan_roots",
+        "arnold.pipelines.megaplan._pipeline.registry._get_scan_roots",
         lambda: [(pkg.parent, None)],
     )
     reg = PipelineRegistry()
@@ -362,7 +366,7 @@ def test_operation_helpers_fail_closed_for_absent_and_untrusted_factories(
     user_pkg.mkdir()
     (user_pkg / "__init__.py").write_text(
         "from arnold.runtime.operations import OperationKind, OperationRequest, OperationResult\n"
-        "from megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
+        "from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
         "from dataclasses import dataclass\n"
         "\n"
         "description = 'user ops'\n"
@@ -394,7 +398,7 @@ def test_operation_helpers_fail_closed_for_absent_and_untrusted_factories(
     (user_pkg / "SKILL.md").write_text("# skill\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        "megaplan._pipeline.registry._get_scan_roots",
+        "arnold.pipelines.megaplan._pipeline.registry._get_scan_roots",
         lambda: [(user_dir, None)],
     )
     reg = PipelineRegistry()
@@ -406,7 +410,7 @@ def test_operation_helpers_fail_closed_for_absent_and_untrusted_factories(
 
 
 def test_operation_helpers_canonicalize_planning_alias_to_megaplan_operations() -> None:
-    from megaplan._pipeline import registry as registry_module
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
 
     registry_module._GLOBAL_REGISTRY = registry_module.PipelineRegistry()
     assert supported_operations_for("planning") == supported_operations_for("megaplan")
@@ -420,7 +424,7 @@ def test_operation_helpers_canonicalize_planning_alias_to_megaplan_operations() 
 def test_dispatch_operation_for_returns_exact_unsupported_result_without_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._pipeline import registry as registry_module
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
 
     calls: list[str] = []
 
@@ -544,7 +548,7 @@ class TestEpicBlitzTopology:
     """Assert the exact 6-stage order, reviewer composition, and artifact chaining."""
 
     def test_stage_graph_has_exact_6_stage_insertion_order(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
 
         pipeline = build_pipeline()
 
@@ -566,9 +570,9 @@ class TestEpicBlitzTopology:
         )
 
     def test_high_panel_is_parallel_with_5_exact_reviewer_ids(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
-        from megaplan._pipeline.types import ParallelStage
-        from megaplan._pipeline.steps.panel import PanelReviewerStep
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan._pipeline.types import ParallelStage
+        from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
 
         pipeline = build_pipeline()
         high_panel = pipeline.stages["high_panel"]
@@ -583,9 +587,9 @@ class TestEpicBlitzTopology:
         ]
 
     def test_mid_panel_is_parallel_with_5_exact_reviewer_ids(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
-        from megaplan._pipeline.types import ParallelStage
-        from megaplan._pipeline.steps.panel import PanelReviewerStep
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan._pipeline.types import ParallelStage
+        from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
 
         pipeline = build_pipeline()
         mid_panel = pipeline.stages["mid_panel"]
@@ -600,9 +604,9 @@ class TestEpicBlitzTopology:
         ]
 
     def test_low_panel_is_parallel_with_5_exact_reviewer_ids(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
-        from megaplan._pipeline.types import ParallelStage
-        from megaplan._pipeline.steps.panel import PanelReviewerStep
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan._pipeline.types import ParallelStage
+        from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
 
         pipeline = build_pipeline()
         low_panel = pipeline.stages["low_panel"]
@@ -617,8 +621,8 @@ class TestEpicBlitzTopology:
         ]
 
     def test_agent_step_input_refs_prove_artifact_chaining(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
-        from megaplan._pipeline.steps.agent import AgentStep
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
 
         pipeline = build_pipeline()
 

@@ -5,11 +5,11 @@ import hashlib
 import tarfile
 from pathlib import Path
 
-import megaplan.cli
-from megaplan.store import MultiStore, deterministic_idempotency_key
-from megaplan.store.file import FileStore
-from megaplan.store.export import collect_epic_export, write_epic_export_tar
-from megaplan.types import CliError
+import arnold.pipelines.megaplan.cli as megaplan_cli
+from arnold.pipelines.megaplan.store import MultiStore, deterministic_idempotency_key
+from arnold.pipelines.megaplan.store.file import FileStore
+from arnold.pipelines.megaplan.store.export import collect_epic_export, write_epic_export_tar
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _project(tmp_path: Path) -> Path:
@@ -52,9 +52,9 @@ def test_epic_snapshot_writes_offline_json(
     )
     monkeypatch.chdir(project)
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", lambda root, actor_id=None: store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", lambda root, actor_id=None: store)
 
-    exit_code = megaplan.cli.main(["epic", "snapshot", epic.id])
+    exit_code = megaplan_cli.main(["epic", "snapshot", epic.id])
     response = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
@@ -81,9 +81,9 @@ def test_epic_migrate_requires_actor_before_store_creation(
     def fail_build_store(root: Path, *, actor_id: str | None = None) -> MultiStore:
         raise AssertionError("store should not be built without actor")
 
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", fail_build_store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", fail_build_store)
 
-    exit_code = megaplan.cli.main(["epic", "migrate", "epic_1", "--to", "db"])
+    exit_code = megaplan_cli.main(["epic", "migrate", "epic_1", "--to", "db"])
     response = json.loads(capsys.readouterr().out)
 
     assert exit_code == 1
@@ -105,9 +105,9 @@ def test_epic_migrate_and_resume_print_final_state(
         assert actor_id == "actor"
         return store
 
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", build_store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", build_store)
 
-    exit_code = megaplan.cli.main(["epic", "migrate", epic.id, "--to", "db", "--actor", "actor", "--ttl", "60"])
+    exit_code = megaplan_cli.main(["epic", "migrate", epic.id, "--to", "db", "--actor", "actor", "--ttl", "60"])
     migrate_response = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
@@ -117,7 +117,7 @@ def test_epic_migrate_and_resume_print_final_state(
     assert migrate_response["epic_id"] == epic.id
     assert migrate_response["target_backend"] == "db"
 
-    exit_code = megaplan.cli.main(["epic", "migrate", "--resume", migrate_response["migration_id"], "--actor", "actor"])
+    exit_code = megaplan_cli.main(["epic", "migrate", "--resume", migrate_response["migration_id"], "--actor", "actor"])
     resume_response = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
@@ -131,7 +131,7 @@ def test_migrate_local_plans_requires_explicit_source_selection(tmp_path: Path, 
     project = _project(tmp_path)
     monkeypatch.chdir(project)
 
-    exit_code = megaplan.cli.main([
+    exit_code = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(tmp_path / "home"),
@@ -159,7 +159,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
     monkeypatch.chdir(project)
     monkeypatch.setenv("HOME", str(tmp_path / "target-home"))
 
-    dry_exit = megaplan.cli.main([
+    dry_exit = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(home),
@@ -175,7 +175,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
     assert dry["created"][0]["file_count"] == 2
     assert not MultiStore.canonical_filestore_root(project).exists()
 
-    import_exit = megaplan.cli.main([
+    import_exit = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(home),
@@ -195,7 +195,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
     assert [ref.name for ref in store.list_plan_artifacts(plan_id)] == ["nested/blob.bin", "state.json"]
     assert store.read_plan_artifact(plan_id, "nested/blob.bin") == binary
 
-    rerun_exit = megaplan.cli.main([
+    rerun_exit = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(home),
@@ -209,7 +209,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
     assert rerun["skipped"] == [{"plan_id": plan_id, "reason": "unchanged"}]
 
     (source_plan / "state.json").write_text("{\"legacy\": false}\n", encoding="utf-8")
-    conflict_exit = megaplan.cli.main([
+    conflict_exit = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(home),
@@ -241,7 +241,7 @@ def test_migrate_local_plans_all_projects_legacy_epic_and_db_promotion_preserve_
     monkeypatch.chdir(project)
     monkeypatch.setenv("HOME", str(tmp_path / "target-home"))
 
-    exit_code = megaplan.cli.main([
+    exit_code = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(home),
@@ -328,15 +328,15 @@ def test_epic_export_writes_deterministic_tar_and_gzip(tmp_path: Path, monkeypat
         idempotency_key=deterministic_idempotency_key("cli", plan.id, "tar-artifact"),
     )
     monkeypatch.chdir(project)
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", lambda root, actor_id=None: store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", lambda root, actor_id=None: store)
 
     tar_path = tmp_path / "backup.tar"
-    exit_code = megaplan.cli.main(["epic", "export", epic.id, "--output", str(tar_path)])
+    exit_code = megaplan_cli.main(["epic", "export", epic.id, "--output", str(tar_path)])
     response = json.loads(capsys.readouterr().out)
     first_bytes = tar_path.read_bytes()
     direct_tar_path = tmp_path / "direct.tar"
     direct_response = write_epic_export_tar(collect_epic_export(store, epic.id), direct_tar_path)
-    exit_code_2 = megaplan.cli.main(["epic", "export", epic.id, "--output", str(tar_path)])
+    exit_code_2 = megaplan_cli.main(["epic", "export", epic.id, "--output", str(tar_path)])
     response_2 = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
@@ -359,7 +359,7 @@ def test_epic_export_writes_deterministic_tar_and_gzip(tmp_path: Path, monkeypat
         assert tar.extractfile(f"plan_artifacts/{plan.id}/nested/blob.bin").read() == data
 
     gz_path = tmp_path / "backup.tar.gz"
-    gz_exit = megaplan.cli.main(["epic", "export", epic.id, "--output", str(gz_path), "--gzip"])
+    gz_exit = megaplan_cli.main(["epic", "export", epic.id, "--output", str(gz_path), "--gzip"])
     gz_response = json.loads(capsys.readouterr().out)
     assert gz_exit == 0
     assert gz_response["gzip"] is True
@@ -393,17 +393,17 @@ def test_epic_export_db_home_includes_binary_artifacts_and_snapshot_stays_json(
     )
     monkeypatch.chdir(project)
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", lambda root, actor_id=None: store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", lambda root, actor_id=None: store)
 
     export_path = tmp_path / "db-home.tar"
-    export_exit = megaplan.cli.main(["epic", "export", epic.id, "--output", str(export_path)])
+    export_exit = megaplan_cli.main(["epic", "export", epic.id, "--output", str(export_path)])
     export_response = json.loads(capsys.readouterr().out)
     assert export_exit == 0
     assert export_response["success"] is True
     with tarfile.open(export_path, "r") as tar:
         assert tar.extractfile(f"plan_artifacts/{plan.id}/nested/binary.bin").read() == binary
 
-    snapshot_exit = megaplan.cli.main(["epic", "snapshot", epic.id])
+    snapshot_exit = megaplan_cli.main(["epic", "snapshot", epic.id])
     snapshot_response = json.loads(capsys.readouterr().out)
     assert snapshot_exit == 0
     snapshot = json.loads(Path(snapshot_response["path"]).read_text(encoding="utf-8"))
@@ -426,20 +426,20 @@ def test_epic_export_missing_epic_and_missing_blob_behaviors(tmp_path: Path, mon
     )
     store.file.blobs.delete(image.blob_id)
     monkeypatch.chdir(project)
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", lambda root, actor_id=None: store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", lambda root, actor_id=None: store)
 
-    missing_exit = megaplan.cli.main(["epic", "export", "missing", "--output", str(tmp_path / "missing.tar")])
+    missing_exit = megaplan_cli.main(["epic", "export", "missing", "--output", str(tmp_path / "missing.tar")])
     missing_response = json.loads(capsys.readouterr().out)
     assert missing_exit == 1
     assert missing_response["error"] == "not_found"
 
-    fail_exit = megaplan.cli.main(["epic", "export", epic.id, "--output", str(tmp_path / "fail.tar")])
+    fail_exit = megaplan_cli.main(["epic", "export", epic.id, "--output", str(tmp_path / "fail.tar")])
     fail_response = json.loads(capsys.readouterr().out)
     assert fail_exit == 1
     assert fail_response["error"] == "export_failed"
     assert not (tmp_path / "fail.tar").exists()
 
-    allowed_exit = megaplan.cli.main([
+    allowed_exit = megaplan_cli.main([
         "epic",
         "export",
         epic.id,
@@ -463,9 +463,9 @@ def test_epic_capsule_commands_are_refused_with_m7_sinks_flag_off(
     epic = store.create_epic(title="Capsule", goal="g", body="body", home_backend="file")
     monkeypatch.chdir(project)
     monkeypatch.delenv("MEGAPLAN_M7_SINKS", raising=False)
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", lambda root, actor_id=None: store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", lambda root, actor_id=None: store)
 
-    exit_code = megaplan.cli.main(["epic", "capsule", "build", epic.id])
+    exit_code = megaplan_cli.main(["epic", "capsule", "build", epic.id])
     response = json.loads(capsys.readouterr().out)
 
     assert exit_code == 1
@@ -496,9 +496,9 @@ def test_epic_capsule_build_list_inspect_and_fork_with_m7_sinks_flag_on(
     )
     monkeypatch.chdir(project)
     monkeypatch.setenv("MEGAPLAN_M7_SINKS", "1")
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", lambda root, actor_id=None: store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", lambda root, actor_id=None: store)
 
-    exit_code = megaplan.cli.main(["epic", "capsule", "build", epic.id, "--created-by", "test"])
+    exit_code = megaplan_cli.main(["epic", "capsule", "build", epic.id, "--created-by", "test"])
     build_response = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
@@ -507,13 +507,13 @@ def test_epic_capsule_build_list_inspect_and_fork_with_m7_sinks_flag_on(
     assert build_response["epic_id"] == epic.id
     capsule_hash = build_response["capsule_hash"]
 
-    exit_code = megaplan.cli.main(["epic", "capsule", "list"])
+    exit_code = megaplan_cli.main(["epic", "capsule", "list"])
     list_response = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
     assert list_response["capsules"] == [capsule_hash]
 
-    exit_code = megaplan.cli.main(["epic", "capsule", "inspect", capsule_hash])
+    exit_code = megaplan_cli.main(["epic", "capsule", "inspect", capsule_hash])
     inspect_response = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
@@ -521,7 +521,7 @@ def test_epic_capsule_build_list_inspect_and_fork_with_m7_sinks_flag_on(
     assert inspect_response["capsule"]["capsule_hash"] == capsule_hash
     assert inspect_response["capsule"]["contract_ok"] is True
 
-    exit_code = megaplan.cli.main(
+    exit_code = megaplan_cli.main(
         [
             "epic",
             "capsule",
@@ -576,15 +576,15 @@ def test_resume_command_uses_actor_store_for_epic_backed_plan(
     )
     monkeypatch.chdir(project)
     monkeypatch.setenv("MEGAPLAN_ACTOR_ID", "actor")
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", lambda root, actor_id=None: store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", lambda root, actor_id=None: store)
 
     def fail_resume(root: Path, plan: str, *, store=None):
         assert store is not None
         raise CliError("revision_conflict", "expected revision 1, found 2")
 
-    monkeypatch.setattr(megaplan.cli, "resume_plan", fail_resume)
+    monkeypatch.setattr(megaplan_cli, "resume_plan", fail_resume)
 
-    exit_code = megaplan.cli.main(["resume", "--plan", "blocked-plan"])
+    exit_code = megaplan_cli.main(["resume", "--plan", "blocked-plan"])
     response = json.loads(capsys.readouterr().out)
 
     assert exit_code == 1

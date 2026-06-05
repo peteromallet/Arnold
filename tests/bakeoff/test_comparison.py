@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from megaplan.bakeoff.comparison import build_comparison, write_comparison
+from arnold.pipelines.megaplan.bakeoff.comparison import build_comparison, write_comparison
 
 
 def test_comparison_schema_stable_for_mixed_profiles_and_relative_receipts(tmp_path: Path) -> None:

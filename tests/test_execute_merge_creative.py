@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from megaplan.execute.core import _merge_batch_results
+from arnold.pipelines.megaplan.execute.core import _merge_batch_results
 
 
 def test_merge_batch_results_propagates_creative_stance_and_stop_signal():

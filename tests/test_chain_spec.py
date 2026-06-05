@@ -16,8 +16,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from megaplan.chain import spec as chain_spec
-from megaplan.chain.spec import (
+from arnold.pipelines.megaplan.chain import spec as chain_spec
+from arnold.pipelines.megaplan.chain.spec import (
     APEX_EXTREME_RETRY_CAP,
     BLOCKED_EXECUTE_OUTCOME_STATUSES,
     DEFAULT_MILESTONE_RETRY_CAP,
@@ -47,7 +47,7 @@ from megaplan.chain.spec import (
     save_runtime_policy,
     validate_paths,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 # ---------------------------------------------------------------------------
@@ -820,13 +820,13 @@ class TestExportSurfaceParity:
     def test_chain_init_re_exports_store_via_chain_spec(self) -> None:
         """load_spec, load_chain_state, etc. imported from megaplan.chain delegate
         to chain_spec."""
-        from megaplan.chain import load_spec as top_load_spec
-        from megaplan.chain import load_chain_state as top_load_chain_state
-        from megaplan.chain import save_chain_state as top_save_chain_state
-        from megaplan.chain import ChainSpec as top_ChainSpec
-        from megaplan.chain import ChainState as top_ChainState
-        from megaplan.chain import FailurePolicy as top_FailurePolicy
-        from megaplan.chain import MilestoneSpec as top_MilestoneSpec
+        from arnold.pipelines.megaplan.chain import load_spec as top_load_spec
+        from arnold.pipelines.megaplan.chain import load_chain_state as top_load_chain_state
+        from arnold.pipelines.megaplan.chain import save_chain_state as top_save_chain_state
+        from arnold.pipelines.megaplan.chain import ChainSpec as top_ChainSpec
+        from arnold.pipelines.megaplan.chain import ChainState as top_ChainState
+        from arnold.pipelines.megaplan.chain import FailurePolicy as top_FailurePolicy
+        from arnold.pipelines.megaplan.chain import MilestoneSpec as top_MilestoneSpec
 
         # All should be the exact same object (module-level assignment)
         assert top_load_spec is chain_spec.load_spec
@@ -839,7 +839,7 @@ class TestExportSurfaceParity:
 
     def test_load_spec_from_chain_init_same_result_as_from_spec(self, tmp_path: Path) -> None:
         """Calling load_spec through chain.__init__ or chain.spec yields the same result."""
-        from megaplan.chain import load_spec as top_load_spec
+        from arnold.pipelines.megaplan.chain import load_spec as top_load_spec
 
         idea = _touch_idea(tmp_path, "m1.txt")
         spec_path = _write_spec(

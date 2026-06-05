@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def test_doc_critique_three_iterations(tmp_path: Path) -> None:
-    from megaplan._pipeline.demos.doc_critique import run_demo
+    from arnold.pipelines.megaplan._pipeline.demos.doc_critique import run_demo
 
     fixture = tmp_path / "fixture.md"
     fixture.write_text(

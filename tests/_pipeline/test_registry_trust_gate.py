@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan._pipeline import registry
+from arnold.pipelines.megaplan._pipeline import registry
 
 
 WELL_FORMED_PIPELINE = '''\
@@ -78,6 +78,7 @@ def isolated_scan_roots(tmp_path, monkeypatch):
     in_tree_root.mkdir(parents=True)
     out_root = tmp_path / "user" / "pipelines"
     out_root.mkdir(parents=True)
+    monkeypatch.setenv("MEGAPLAN_BUDGET_AUTHORITY_DIR", str(tmp_path / "budget-ledger"))
     monkeypatch.setattr(
         registry,
         "_get_scan_roots",

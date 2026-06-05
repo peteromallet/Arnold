@@ -18,9 +18,9 @@ from typing import Any
 
 import pytest
 
-import megaplan
+import arnold.pipelines.megaplan as megaplan
 
-from megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
 from arnold.pipelines.megaplan.stages.inprocess_step import (
     InProcessHandlerStep,
     _read_state,
@@ -28,8 +28,8 @@ from arnold.pipelines.megaplan.stages.inprocess_step import (
     build_revise_step,
     build_review_step,
 )
-from megaplan.types import CliError
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Stage,

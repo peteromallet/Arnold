@@ -23,8 +23,8 @@ from arnold.pipelines.megaplan.orchestration.iteration_pressure import (
     has_mechanical_recurrence,
 )
 from arnold.pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
-from megaplan._core import compute_global_batches, split_oversized_batches
-from megaplan.execute._binding.tier import select_batch_tier
+from arnold.pipelines.megaplan._core import compute_global_batches, split_oversized_batches
+from arnold.pipelines.megaplan.execute._binding.tier import select_batch_tier
 
 __all__ = [
     "PolicySettingSpec",
@@ -282,7 +282,7 @@ def _report_tier_selection(ctx: _PolicyContext, spec: PolicySettingSpec) -> Repo
         source=(
             "args.tier_models.execute + megaplan.execute._binding.tier.select_batch_tier"
             if tier_map
-            else "megaplan.execute._binding.tier.select_batch_tier"
+            else "arnold.pipelines.megaplan.execute._binding.tier.select_batch_tier"
         ),
         notes="Tier-map reporting is omitted when no execute tier_models are active.",
     )
@@ -354,7 +354,7 @@ SETTING_SPECS: tuple[PolicySettingSpec, ...] = (
         key="tier_selection",
         owner="arnold.pipelines.megaplan.execute",
         summary="Complexity-derived execute tier selection and optional tier-map routing.",
-        resolver_ref="megaplan.handlers.execute._extract_execute_tier_map + megaplan.execute._binding.tier.select_batch_tier",
+        resolver_ref="arnold.pipelines.megaplan.handlers.execute._extract_execute_tier_map + megaplan.execute._binding.tier.select_batch_tier",
         reporter=_report_tier_selection,
     ),
     PolicySettingSpec(

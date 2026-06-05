@@ -7,8 +7,8 @@ from pathlib import Path
 
 from jsonschema import Draft7Validator
 
-from megaplan._core.io import _enforce_openai_strict_mode
-from megaplan.schemas import GateArtifact, GatePayload, GateSignals, SCHEMAS, TiebreakerDecision, strict_schema
+from arnold.pipelines.megaplan._core.io import _enforce_openai_strict_mode
+from arnold.pipelines.megaplan.schemas import GateArtifact, GatePayload, GateSignals, SCHEMAS, TiebreakerDecision, strict_schema
 
 
 def _review_disk_schema() -> dict[str, object]:
@@ -416,7 +416,7 @@ def test_stored_artifact_schema_has_single_source_no_duplicate_definitions() -> 
     exactly — legacy, catalog, and `other` — and that they carry the
     ``x-preserve-explicit-required`` marker used by the builder.
     """
-    from megaplan.schemas.runtime import _build_critique_evaluator_schema
+    from arnold.pipelines.megaplan.schemas.runtime import _build_critique_evaluator_schema
 
     schema = SCHEMAS["critique_evaluator.json"]
 
@@ -446,7 +446,7 @@ def test_stored_artifact_compatibility_separate_from_live_validate_evaluator_ver
     `megaplan/audits/critique_evaluator.py` is for *live* evaluator output and
     explicitly rejects per-lens ``critic_model`` selections.
     """
-    from megaplan.audits.critique_evaluator import validate_evaluator_verdict
+    from arnold.pipelines.megaplan.audits.critique_evaluator import validate_evaluator_verdict
 
     schema = SCHEMAS["critique_evaluator.json"]
     legacy_payload = {

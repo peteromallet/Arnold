@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.bakeoff import handlers
-from megaplan.bakeoff.judge import auto_select_judge_model
-from megaplan.bakeoff.state import load_bakeoff_state, save_bakeoff_state
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.bakeoff import handlers
+from arnold.pipelines.megaplan.bakeoff.judge import auto_select_judge_model
+from arnold.pipelines.megaplan.bakeoff.state import load_bakeoff_state, save_bakeoff_state
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _state(root: Path, profiles: list[str]) -> dict:
@@ -77,7 +77,7 @@ def test_auto_judge_uses_canonical_agent_and_model_identities(
         "gpt5-profile": {"plan": "hermes:openai/gpt-5", "execute": "hermes:openai/gpt-5"},
     }
 
-    import megaplan.bakeoff.judge as judge_module
+    import arnold.pipelines.megaplan.bakeoff.judge as judge_module
 
     monkeypatch.setattr(judge_module, "load_profiles", lambda project_dir: {})
     monkeypatch.setattr(judge_module, "resolve_profile", lambda name, profiles: phase_maps[name])

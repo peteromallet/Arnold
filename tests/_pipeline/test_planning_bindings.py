@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from megaplan._pipeline.planning_bindings import (
+from arnold.pipelines.megaplan._pipeline.planning_bindings import (
     EVALUAND_GATE_ARTIFACT_KEY,
     planning_promote,
     planning_reduce,
 )
-from megaplan._pipeline.types import ReduceResult
+from arnold.pipelines.megaplan._pipeline.types import ReduceResult
 
 
 def test_planning_promote_matches_legacy_mapping():

@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from megaplan._pipeline.patterns import (
+from arnold.pipelines.megaplan._pipeline.patterns import (
     alternating_turns,
     critique_revise_gate_loop,
     escalate_if,
@@ -40,8 +40,8 @@ from megaplan._pipeline.patterns import (
 )
 import pytest
 
-from megaplan._pipeline.subloop import SubloopStep
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     ParallelStage,
     Pipeline,

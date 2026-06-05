@@ -7,24 +7,24 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.canonical import canonical_projection_bytes, sha256_hex
-from megaplan._core.io import (
+from arnold.pipelines.megaplan._core.canonical import canonical_projection_bytes, sha256_hex
+from arnold.pipelines.megaplan._core.io import (
     journal_blob_promotion,
     prepare_journal_transaction,
     recover_journal,
     write_journal_commit_marker,
 )
-from megaplan._pipeline.contracts import legal_coercions
-from megaplan.schemas import (
+from arnold.pipelines.megaplan._pipeline.contracts import legal_coercions
+from arnold.pipelines.megaplan.schemas import (
     Capsule,
     CapsuleContract,
     CapsuleDefinition,
     CapsuleEvidence,
     CapsuleLineage,
 )
-from megaplan.store import MultiStore, deterministic_idempotency_key
-from megaplan.store.blob import BlobRef, BlobStore, LocalDirBlobStore
-from megaplan.store.capsule import (
+from arnold.pipelines.megaplan.store import MultiStore, deterministic_idempotency_key
+from arnold.pipelines.megaplan.store.blob import BlobRef, BlobStore, LocalDirBlobStore
+from arnold.pipelines.megaplan.store.capsule import (
     CAPSULE_INDEX_ID_PREFIX,
     CAPSULE_RECORD_ID_PREFIX,
     CapsuleIntegrityError,
@@ -41,8 +41,8 @@ from megaplan.store.capsule import (
     put_capsule_record,
     write_capsule,
 )
-from megaplan.store.export import collect_epic_export, write_epic_export_tar
-from megaplan.store.file import FileStore
+from arnold.pipelines.megaplan.store.export import collect_epic_export, write_epic_export_tar
+from arnold.pipelines.megaplan.store.file import FileStore
 
 
 NOW = datetime(2026, 6, 1, tzinfo=timezone.utc)
@@ -617,7 +617,7 @@ def test_build_capsule_fails_loud_on_export_errors_unless_missing_blobs_is_expli
             "errors": [{"error": "blob_store_unavailable"}],
         }
 
-    monkeypatch.setattr("megaplan.store.capsule.collect_epic_export", fake_export)
+    monkeypatch.setattr("arnold.pipelines.megaplan.store.capsule.collect_epic_export", fake_export)
     blob_store = LocalDirBlobStore(tmp_path / "capsule-blobs")
 
     with pytest.raises(CapsuleStorageError) as exc_info:
@@ -675,7 +675,7 @@ def test_build_capsule_keeps_allow_degraded_alias(tmp_path: Path, monkeypatch: p
             "errors": [{"error": "blob_store_unavailable"}],
         }
 
-    monkeypatch.setattr("megaplan.store.capsule.collect_epic_export", fake_export)
+    monkeypatch.setattr("arnold.pipelines.megaplan.store.capsule.collect_epic_export", fake_export)
 
     result = build_capsule(
         object(),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     EVALUAND_RECORD_CONTENT_TYPE,
     JUDGE_MANIFEST_SCHEMA,
     JudgeManifestPort,
@@ -13,9 +13,9 @@ from megaplan._pipeline import (
     load_judge_manifest,
     make_judge_manifest,
 )
-from megaplan._pipeline.judge_manifest import JUDGE_KIND
-from megaplan._pipeline.judge_manifest_discovery import validate_judge_manifest
-from megaplan._pipeline.types import CONTENT_TYPES
+from arnold.pipelines.megaplan._pipeline.judge_manifest import JUDGE_KIND
+from arnold.pipelines.megaplan._pipeline.judge_manifest_discovery import validate_judge_manifest
+from arnold.pipelines.megaplan._pipeline.types import CONTENT_TYPES
 
 
 def test_piece_version_is_canonical_and_changes_with_piece_identity() -> None:

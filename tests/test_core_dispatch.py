@@ -8,7 +8,7 @@ import textwrap
 
 import pytest
 
-from megaplan._core.dispatch import resolve_dispatch_spec, resolve_dispatch_agent
+from arnold.pipelines.megaplan._core.dispatch import resolve_dispatch_spec, resolve_dispatch_agent
 
 # ---------------------------------------------------------------------------
 # resolve_dispatch_spec
@@ -82,7 +82,7 @@ class TestResolveDispatchAgent:
             return ("test_agent", "test_mode", False, "test_model")
 
         monkeypatch.setattr(
-            "megaplan.workers.resolve_agent_mode",
+            "arnold.pipelines.megaplan.workers.resolve_agent_mode",
             fake_resolve_agent_mode,
         )
 
@@ -117,7 +117,7 @@ class TestResolveDispatchAgent:
 def test_dispatch_module_no_rubric_tokens():
     """The dispatch module must contain zero rubric-shaped literals:
     no ``1..5`` (as a string), ``tier 4``, ``Opus``, or ``Sonnet``."""
-    import megaplan._core.dispatch as mod
+    import arnold.pipelines.megaplan._core.dispatch as mod
 
     source = textwrap.dedent(open(mod.__file__).read())
     tree = ast.parse(source)
@@ -157,4 +157,4 @@ def test_dispatch_module_no_deleted_handler_symbol():
     """``_resolve_execute_tier_spec`` must NOT be importable from
     ``megaplan.handlers.execute``."""
     with pytest.raises(ImportError):
-        from megaplan.handlers.execute import _resolve_execute_tier_spec  # noqa: F401
+        from arnold.pipelines.megaplan.handlers.execute import _resolve_execute_tier_spec  # noqa: F401

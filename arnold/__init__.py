@@ -6,8 +6,9 @@ logic, no CAS semantics, no gate recommendations — only the minimal shapes
 that let Megaplan (and alternative runtimes) describe pipelines, stages,
 steps, and state transitions.
 
-Version is inherited from the megaplan harness distribution so that the
-whole monorepo moves in lockstep.
+Version is tracked here directly so that importing ``arnold`` never triggers
+a ``megaplan`` import (the old ``from megaplan import __version__`` created
+a circular dependency after the rename).
 """
 
-from megaplan import __version__  # noqa: F401
+__version__ = "0.23.0"

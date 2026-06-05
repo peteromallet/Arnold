@@ -4,8 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
-from megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     LocalSpec,
@@ -68,13 +68,13 @@ def test_session_override_is_accepted_for_railway(monkeypatch) -> None:
     )()
     captured_specs: list[CloudSpec] = []
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _base_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _base_spec("railway"))
 
     def fake_get_provider(_name: str, spec: CloudSpec):
         captured_specs.append(spec)
         return provider
 
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", fake_get_provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", fake_get_provider)
 
     assert run_cloud_cli(Path("/tmp/project"), args) == 0
     assert len(captured_specs) == 2
@@ -92,7 +92,7 @@ def test_session_override_is_rejected_when_railway_provider_lacks_session_suppor
     captured_specs: list[CloudSpec] = []
     captured_names: list[str] = []
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _base_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _base_spec("railway"))
 
     def fake_get_provider(_name: str, spec: CloudSpec):
         captured_names.append(_name)
@@ -103,7 +103,7 @@ def test_session_override_is_rejected_when_railway_provider_lacks_session_suppor
             {"supports_session": False, "attach": lambda self: 0},
         )()
 
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", fake_get_provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", fake_get_provider)
 
     assert run_cloud_cli(Path("/tmp/project"), args) == 1
     assert captured_names == ["railway"]
@@ -120,7 +120,7 @@ def test_session_override_is_rejected_for_local(monkeypatch, capsys) -> None:
     args = parser.parse_args(["cloud", "attach", "--session", "debug-session"])
     captured_specs: list[CloudSpec] = []
     captured_names: list[str] = []
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _base_spec("local"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _base_spec("local"))
 
     def fake_get_provider(_name: str, spec: CloudSpec):
         captured_names.append(_name)
@@ -131,7 +131,7 @@ def test_session_override_is_rejected_for_local(monkeypatch, capsys) -> None:
             {"supports_session": False, "attach": lambda self: 0},
         )()
 
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", fake_get_provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", fake_get_provider)
 
     assert run_cloud_cli(Path("/tmp/project"), args) == 1
     assert captured_names == ["local"]
@@ -148,7 +148,7 @@ def test_session_override_is_rejected_for_ssh(monkeypatch, capsys) -> None:
     args = parser.parse_args(["cloud", "attach", "--session", "debug-session"])
     captured_specs: list[CloudSpec] = []
     captured_names: list[str] = []
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _base_spec("ssh"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _base_spec("ssh"))
 
     def fake_get_provider(_name: str, spec: CloudSpec):
         captured_names.append(_name)
@@ -159,7 +159,7 @@ def test_session_override_is_rejected_for_ssh(monkeypatch, capsys) -> None:
             {"supports_session": False, "attach": lambda self: 0},
         )()
 
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", fake_get_provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", fake_get_provider)
 
     assert run_cloud_cli(Path("/tmp/project"), args) == 1
     assert captured_names == ["ssh"]
@@ -177,7 +177,7 @@ def test_session_override_uses_provider_capability_not_provider_name(monkeypatch
     captured_specs: list[CloudSpec] = []
     captured_names: list[str] = []
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _base_spec("local"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _base_spec("local"))
 
     def fake_get_provider(_name: str, spec: CloudSpec):
         captured_names.append(_name)
@@ -188,7 +188,7 @@ def test_session_override_uses_provider_capability_not_provider_name(monkeypatch
             {"supports_session": True, "attach": lambda self: 0},
         )()
 
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", fake_get_provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", fake_get_provider)
 
     assert run_cloud_cli(Path("/tmp/project"), args) == 0
     assert captured_names == ["local", "local"]

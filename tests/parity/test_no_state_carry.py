@@ -7,36 +7,36 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TYPES_PATH = REPO_ROOT / "megaplan/types.py"
+TYPES_PATH = REPO_ROOT / "arnold/pipelines/megaplan/types.py"
 
 STATE_OWNER_OR_ADAPTER_FILES = frozenset(
     {
-        "megaplan/__init__.py",
-        "megaplan/_core/__init__.py",
-        "megaplan/_core/state.py",
-        "megaplan/_core/workflow.py",
-        "megaplan/_core/workflow_data.py",
-        "megaplan/_legacy_subprocess/__init__.py",
-        "megaplan/auto.py",
-        "megaplan/chain/__init__.py",
-        "megaplan/cli/__init__.py",
-        "megaplan/cli/feedback.py",
-        "megaplan/cli/status_view.py",
-        "megaplan/execute/_binding/reducer.py",
-        "megaplan/execute/batch.py",
-        "megaplan/execute/step_edit.py",
-        "megaplan/execute/timeout.py",
-        "megaplan/handlers/critique.py",
-        "megaplan/handlers/execute.py",
-        "megaplan/handlers/finalize.py",
-        "megaplan/handlers/gate.py",
-        "megaplan/handlers/init.py",
-        "megaplan/handlers/override.py",
-        "megaplan/handlers/plan.py",
-        "megaplan/handlers/review.py",
-        "megaplan/handlers/tiebreaker.py",
-        "megaplan/handlers/verifiability.py",
-        "megaplan/planning/control_binding.py",
+        "arnold/pipelines/megaplan/__init__.py",
+        "arnold/pipelines/megaplan/_core/__init__.py",
+        "arnold/pipelines/megaplan/_core/state.py",
+        "arnold/pipelines/megaplan/_core/workflow.py",
+        "arnold/pipelines/megaplan/_core/workflow_data.py",
+        "arnold/pipelines/megaplan/_legacy_subprocess/__init__.py",
+        "arnold/pipelines/megaplan/auto.py",
+        "arnold/pipelines/megaplan/chain/__init__.py",
+        "arnold/pipelines/megaplan/cli/__init__.py",
+        "arnold/pipelines/megaplan/cli/feedback.py",
+        "arnold/pipelines/megaplan/cli/status_view.py",
+        "arnold/pipelines/megaplan/execute/_binding/reducer.py",
+        "arnold/pipelines/megaplan/execute/batch.py",
+        "arnold/pipelines/megaplan/execute/step_edit.py",
+        "arnold/pipelines/megaplan/execute/timeout.py",
+        "arnold/pipelines/megaplan/handlers/critique.py",
+        "arnold/pipelines/megaplan/handlers/execute.py",
+        "arnold/pipelines/megaplan/handlers/finalize.py",
+        "arnold/pipelines/megaplan/handlers/gate.py",
+        "arnold/pipelines/megaplan/handlers/init.py",
+        "arnold/pipelines/megaplan/handlers/override.py",
+        "arnold/pipelines/megaplan/handlers/plan.py",
+        "arnold/pipelines/megaplan/handlers/review.py",
+        "arnold/pipelines/megaplan/handlers/tiebreaker.py",
+        "arnold/pipelines/megaplan/handlers/verifiability.py",
+        "arnold/pipelines/megaplan/planning/control_binding.py",
     }
 )
 
@@ -85,9 +85,9 @@ def test_no_planning_state_symbols_escape_state_owners_or_adapters() -> None:
     state_symbols = _planning_state_symbols()
     violations: list[str] = []
 
-    for path in sorted((REPO_ROOT / "megaplan").rglob("*.py")):
+    for path in sorted((REPO_ROOT / "arnold" / "pipelines" / "megaplan").rglob("*.py")):
         rel_path = _relative(path)
-        if rel_path == "megaplan/types.py" or rel_path.startswith("megaplan/agent/"):
+        if rel_path == "arnold/pipelines/megaplan/types.py" or rel_path.startswith("arnold/pipelines/megaplan/agent/"):
             continue
         refs = _state_identifier_refs(path, state_symbols)
         if refs and rel_path not in STATE_OWNER_OR_ADAPTER_FILES:
@@ -104,15 +104,15 @@ def test_shared_mechanism_surfaces_do_not_bind_to_planning_state_symbols() -> No
     """The shared M5c/M6 mechanism surfaces stay app-vocabulary free."""
     state_symbols = _planning_state_symbols()
     mechanism_surfaces = (
-        "megaplan/control_interface.py",
-        "megaplan/run_outcome.py",
-        "megaplan/_pipeline/pattern_types.py",
-        "megaplan/_pipeline/pattern_dynamic.py",
-        "megaplan/_pipeline/pattern_joins.py",
-        "megaplan/_pipeline/pattern_topology.py",
-        "megaplan/_pipeline/patterns.py",
-        "megaplan/_pipeline/subloop.py",
-        "megaplan/_pipeline/builder.py",
+        "arnold/pipelines/megaplan/control_interface.py",
+        "arnold/pipelines/megaplan/run_outcome.py",
+        "arnold/pipelines/megaplan/_pipeline/pattern_types.py",
+        "arnold/pipelines/megaplan/_pipeline/pattern_dynamic.py",
+        "arnold/pipelines/megaplan/_pipeline/pattern_joins.py",
+        "arnold/pipelines/megaplan/_pipeline/pattern_topology.py",
+        "arnold/pipelines/megaplan/_pipeline/patterns.py",
+        "arnold/pipelines/megaplan/_pipeline/subloop.py",
+        "arnold/pipelines/megaplan/_pipeline/builder.py",
     )
     violations = {
         rel_path: _state_identifier_refs(REPO_ROOT / rel_path, state_symbols)

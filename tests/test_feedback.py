@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan.orchestration.feedback import (
+from arnold.pipelines.megaplan.orchestration.feedback import (
     FEEDBACK_FILENAME,
     PlanFeedback,
     STAGES,
@@ -130,7 +130,7 @@ def _row(plan: str, profile: str | None, repo: str, *, overall: int | None, comm
 
 def test_filter_by_profile_substring() -> None:
     from argparse import Namespace
-    from megaplan.cli import _filter_feedback_rows
+    from arnold.pipelines.megaplan.cli import _filter_feedback_rows
 
     rows = [
         _row("a", "all-claude", "/r1", overall=8),
@@ -143,7 +143,7 @@ def test_filter_by_profile_substring() -> None:
 
 def test_filter_by_repo_substring() -> None:
     from argparse import Namespace
-    from megaplan.cli import _filter_feedback_rows
+    from arnold.pipelines.megaplan.cli import _filter_feedback_rows
 
     rows = [
         _row("a", "p", "/Users/me/reigh-workspace", overall=8),
@@ -155,7 +155,7 @@ def test_filter_by_repo_substring() -> None:
 
 def test_filter_by_rating_range_and_comment() -> None:
     from argparse import Namespace
-    from megaplan.cli import _filter_feedback_rows
+    from arnold.pipelines.megaplan.cli import _filter_feedback_rows
 
     rows = [
         _row("a", "p", "/r", overall=8, comment="solid"),
@@ -168,7 +168,7 @@ def test_filter_by_rating_range_and_comment() -> None:
 
 def test_filter_by_stage() -> None:
     from argparse import Namespace
-    from megaplan.cli import _filter_feedback_rows
+    from arnold.pipelines.megaplan.cli import _filter_feedback_rows
 
     rows = [
         _row("a", "p", "/r", overall=8, stages={"execute": 6}),
@@ -179,7 +179,7 @@ def test_filter_by_stage() -> None:
 
 
 def test_render_feedback_table_empty_and_populated() -> None:
-    from megaplan.cli import _render_feedback_table
+    from arnold.pipelines.megaplan.cli import _render_feedback_table
 
     assert _render_feedback_table([]) == "(no matches)"
     out = _render_feedback_table([_row("demo", "apex", "/repo/x", overall=8, comment="solid run")])
@@ -192,8 +192,8 @@ def test_render_feedback_table_empty_and_populated() -> None:
 def test_collect_feedback_rows_walks_plan_tree(tmp_path: Path, monkeypatch) -> None:
     """End-to-end: a plan dir with feedback.md should be discovered."""
 
-    from megaplan._core.io import atomic_write_text
-    from megaplan.cli import _collect_feedback_rows
+    from arnold.pipelines.megaplan._core.io import atomic_write_text
+    from arnold.pipelines.megaplan.cli import _collect_feedback_rows
 
     # Make a plausible megaplan project root with one plan dir under it
     project = tmp_path / "proj"

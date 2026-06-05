@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.cloud.providers.local import LocalProvider
-from megaplan.cloud.providers.railway import RailwayProvider
-from megaplan.cloud.providers.ssh import SshProvider
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.providers.local import LocalProvider
+from arnold.pipelines.megaplan.cloud.providers.railway import RailwayProvider
+from arnold.pipelines.megaplan.cloud.providers.ssh import SshProvider
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     LocalSpec,
@@ -15,7 +15,7 @@ from megaplan.cloud.spec import (
     ResourcesSpec,
     SshSpec,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _base_spec(provider: str) -> dict[str, object]:
@@ -37,7 +37,7 @@ def _base_spec(provider: str) -> dict[str, object]:
 
 
 def test_missing_railway_cli_raises_provider_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("megaplan.cloud.providers.railway.shutil.which", lambda _name: None)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.railway.shutil.which", lambda _name: None)
 
     with pytest.raises(CliError) as excinfo:
         RailwayProvider(
@@ -53,7 +53,7 @@ def test_missing_railway_cli_raises_provider_unavailable(monkeypatch: pytest.Mon
 
 
 def test_missing_docker_cli_raises_provider_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("megaplan.cloud.providers.local.shutil.which", lambda _name: None)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.local.shutil.which", lambda _name: None)
 
     with pytest.raises(CliError) as excinfo:
         LocalProvider(
@@ -69,7 +69,7 @@ def test_missing_docker_cli_raises_provider_unavailable(monkeypatch: pytest.Monk
 
 
 def test_missing_ssh_cli_raises_provider_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("megaplan.cloud.providers.ssh.shutil.which", lambda _name: None)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.ssh.shutil.which", lambda _name: None)
 
     with pytest.raises(CliError) as excinfo:
         SshProvider(

@@ -14,10 +14,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.resume import check_awaiting_user, with_entry
-from megaplan._pipeline.steps.human_gate import HumanDecisionStep
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.resume import check_awaiting_user, with_entry
+from arnold.pipelines.megaplan._pipeline.steps.human_gate import HumanDecisionStep
+from arnold.pipelines.megaplan._pipeline.types import (
     Pipeline,
     Stage,
     StepContext,
@@ -483,7 +483,7 @@ class TestFreshArtifactReRead:
         (artifact_dir / "v2.md").write_text("Fresh re-revised version v2")
 
         # Now the _latest_artifact function should pick up v2
-        from megaplan._pipeline.step_helpers import latest_artifact as _latest_artifact
+        from arnold.pipelines.megaplan._pipeline.step_helpers import latest_artifact as _latest_artifact
         latest = _latest_artifact(artifact_dir)
         assert latest is not None
         assert latest.name == "v2.md"
@@ -495,7 +495,7 @@ class TestFreshArtifactReRead:
         d.mkdir()
         (d / "v1.md").write_text("original")
 
-        from megaplan._pipeline.step_helpers import latest_artifact as _latest_artifact
+        from arnold.pipelines.megaplan._pipeline.step_helpers import latest_artifact as _latest_artifact
         first = _latest_artifact(d)
         assert first is not None
         assert first.read_text() == "original"

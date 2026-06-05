@@ -9,14 +9,14 @@ from typing import Any
 
 import pytest
 
-from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
-from megaplan._core.hermes_fanout import GenericScatterResult
-from megaplan.audits.robustness import checks_for_robustness
-from megaplan.workers.hermes import parse_agent_output
-from megaplan.orchestration.parallel_critique import _run_check, run_parallel_critique
-from megaplan.prompts.critique import write_single_check_template
-from megaplan.types import AgentMode, CliError, PlanState
-from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
+from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
+from arnold.pipelines.megaplan._core.hermes_fanout import GenericScatterResult
+from arnold.pipelines.megaplan.audits.robustness import checks_for_robustness
+from arnold.pipelines.megaplan.workers.hermes import parse_agent_output
+from arnold.pipelines.megaplan.orchestration.parallel_critique import _run_check, run_parallel_critique
+from arnold.pipelines.megaplan.prompts.critique import write_single_check_template
+from arnold.pipelines.megaplan.types import AgentMode, CliError, PlanState
+from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -159,7 +159,7 @@ def test_run_parallel_critique_merges_in_original_order(monkeypatch: pytest.Monk
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -201,7 +201,7 @@ def test_run_parallel_critique_accepts_multi_check_payload_when_one_matches_unit
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -242,7 +242,7 @@ def test_run_parallel_critique_disputed_flags_override_verified(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -293,7 +293,7 @@ def test_run_parallel_critique_retries_malformed_worker_shape(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -345,7 +345,7 @@ def test_run_parallel_critique_retry_budget_exhaustion_marks_check_unverifiable(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -424,7 +424,7 @@ def test_run_parallel_critique_contains_zero_and_multi_check_shapes(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -473,7 +473,7 @@ def test_run_parallel_critique_well_formed_output_does_not_retry(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -568,7 +568,7 @@ def test_run_parallel_critique_reraises_subagent_failures(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -614,7 +614,7 @@ def test_run_parallel_critique_does_not_mutate_session_state(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -656,7 +656,7 @@ def test_run_parallel_critique_builds_read_only_worker_units(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -703,7 +703,7 @@ def test_run_parallel_critique_uses_per_lens_resolved_agent_mode(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -743,7 +743,7 @@ def test_run_parallel_critique_unique_output_paths_per_check(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -778,7 +778,7 @@ def test_run_parallel_critique_missing_resolved_agent_mode_raises_invariant_erro
     for chk in bare_checks:
         chk.pop("_resolved_agent_mode", None)
 
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="No _resolved_agent_mode metadata"):
         run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(bare_checks))
@@ -837,7 +837,7 @@ def test_run_parallel_critique_accepts_unverifiable_result_without_retry(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -880,7 +880,7 @@ def test_run_parallel_critique_worker_units_have_unique_step_paths(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 

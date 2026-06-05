@@ -20,34 +20,34 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from megaplan._pipeline import registry
-from megaplan._pipeline.behavioral_manifest import (
+from arnold.pipelines.megaplan._pipeline import registry
+from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
     RuntimeTopologyProjection,
     StaticBehavioralInput,
     StaticBehavioralManifest,
     UnresolvedDynamicInput,
 )
-from megaplan._pipeline import contracts, validator
-from megaplan._pipeline.discovery import manifest as discovery_manifest
-from megaplan._pipeline import judge_manifest, judge_manifest_discovery
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline import contracts, validator
+from arnold.pipelines.megaplan._pipeline.discovery import manifest as discovery_manifest
+from arnold.pipelines.megaplan._pipeline import judge_manifest, judge_manifest_discovery
+from arnold.pipelines.megaplan._pipeline.types import (
     CONTENT_TYPES,
     EdgeKind,
     Port,
     PortRef,
     RoutingKey,
 )
-from megaplan.cli import arnold as arnold_cli
-from megaplan.cli.parser import build_parser
-from megaplan import control_interface
-from megaplan.control_interface import (
+from arnold.pipelines.megaplan.cli import arnold as arnold_cli
+from arnold.pipelines.megaplan.cli.parser import build_parser
+from arnold.pipelines.megaplan import control_interface 
+from arnold.pipelines.megaplan.control_interface import (
     CONTROL_TARGET_ABORT,
     CONTROL_TARGET_FORCE_ADVANCE,
     CONTROL_TARGET_RECOVER_FROM_STUCK,
     CONTROL_TARGET_REROUTE,
 )
-from megaplan.run_outcome import RunOutcome
-from megaplan.schemas import (
+from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.pipelines.megaplan.schemas import (
     Capsule,
     CapsuleContract,
     CapsuleDefinition,
@@ -61,8 +61,8 @@ from megaplan.schemas import (
     WarrantSourceCompleteness,
     WarrantSourceProjection,
 )
-from megaplan import quality_resolutions, user_actions
-from megaplan import types as megaplan_types
+from arnold.pipelines.megaplan import quality_resolutions, user_actions 
+from arnold.pipelines.megaplan import types as megaplan_types 
 
 
 DEFAULT_DOCS_ROOT = REPO_ROOT / "docs"
@@ -159,7 +159,7 @@ EXAMPLE_PACKS: tuple[ExamplePack, ...] = (
         slug="jokes",
         doc_slug="jokes",
         title="Jokes Graph Pipeline",
-        source_dir=REPO_ROOT / "megaplan" / "pipelines" / "jokes",
+        source_dir=REPO_ROOT / "arnold" / "pipelines" / "megaplan" / "pipelines" / "jokes",
         required=True,
         init_symbols=(
             "name",
@@ -181,7 +181,7 @@ EXAMPLE_PACKS: tuple[ExamplePack, ...] = (
         slug="megaplan",
         doc_slug="planning-as-composition",
         title="Planning as Composition",
-        source_dir=REPO_ROOT / "megaplan" / "pipelines" / "planning",
+        source_dir=REPO_ROOT / "arnold" / "pipelines" / "megaplan" / "pipelines" / "planning",
         required=False,
         init_symbols=(
             "name",
@@ -202,7 +202,7 @@ EXAMPLE_PACKS: tuple[ExamplePack, ...] = (
         slug="select-tournament",
         doc_slug="select-tournament",
         title="Select Tournament Port Pipeline",
-        source_dir=REPO_ROOT / "megaplan" / "pipelines" / "select-tournament",
+        source_dir=REPO_ROOT / "arnold" / "pipelines" / "megaplan" / "pipelines" / "select-tournament",
         required=True,
         init_symbols=(
             "name",
@@ -348,7 +348,7 @@ def _source_lines_for_symbols(path: Path, symbols: Iterable[str]) -> str:
 def _pipeline_check_result(name: str) -> tuple[bool, str]:
     from argparse import Namespace
 
-    from megaplan.cli import _handle_pipelines
+    from arnold.pipelines.megaplan.cli import _handle_pipelines
 
     args = Namespace(pipelines_action="check", pipeline_name=name)
     stdout = io.StringIO()

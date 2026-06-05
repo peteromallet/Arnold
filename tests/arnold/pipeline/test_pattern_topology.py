@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from arnold.pipeline.types import StepContext, StepResult
-from megaplan._pipeline.types import Edge, ParallelStage
+from arnold.pipelines.megaplan._pipeline.types import Edge, ParallelStage
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ class _ReviewerStep:
 
 class TestPanelParallel:
     def test_returns_parallel_stage(self) -> None:
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         r1 = _ReviewerStep("r1")
         stage = panel_parallel("panel", (("reviewer_a", r1),))
@@ -51,7 +51,7 @@ class TestPanelParallel:
         assert len(stage.steps) == 1
 
     def test_multiple_reviewers_fan_out(self) -> None:
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         r1 = _ReviewerStep("r1", {"draft": "/tmp/r1.md"})
         r2 = _ReviewerStep("r2", {"draft": "/tmp/r2.md"})
@@ -64,7 +64,7 @@ class TestPanelParallel:
         assert len(stage.steps) == 3
 
     def test_default_next_label_is_next(self) -> None:
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         r1 = _ReviewerStep("r1")
         stage = panel_parallel("p", (("x", r1),))
@@ -76,7 +76,7 @@ class TestPanelParallel:
         assert result.next == "next"
 
     def test_custom_next_label(self) -> None:
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         r1 = _ReviewerStep("r1")
         stage = panel_parallel("p", (("x", r1),), next_label="done")
@@ -85,7 +85,7 @@ class TestPanelParallel:
         assert result.next == "done"
 
     def test_custom_edges_passed_through(self) -> None:
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         r1 = _ReviewerStep("r1")
         stage = panel_parallel(
@@ -97,7 +97,7 @@ class TestPanelParallel:
         assert stage.edges[0].label == "done"
 
     def test_max_workers_passed_through(self) -> None:
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         r1 = _ReviewerStep("r1")
         r2 = _ReviewerStep("r2")
@@ -105,14 +105,14 @@ class TestPanelParallel:
         assert stage.max_workers == 1
 
     def test_merge_strategy_accepted_but_ignored(self) -> None:
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         r1 = _ReviewerStep("r1")
         stage = panel_parallel("p", (("x", r1),), merge_strategy="structural")
         assert isinstance(stage, ParallelStage)  # doesn't crash
 
     def test_empty_reviewers_works(self) -> None:
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         stage = panel_parallel("empty_panel", ())
         assert len(stage.steps) == 0
@@ -120,7 +120,7 @@ class TestPanelParallel:
 
     def test_join_collates_per_reviewer_outputs(self) -> None:
         """The built-in join prefixes each reviewer's outputs with reviewer_id."""
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         r1 = _ReviewerStep("r1", {"draft": "/tmp/d1.md", "score": 0.9})
         r2 = _ReviewerStep("r2", {"draft": "/tmp/d2.md"})
@@ -143,7 +143,7 @@ class TestPanelParallel:
 
     def test_join_with_custom_next_label(self) -> None:
         """Join forwards the configured next_label."""
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         r1 = _ReviewerStep("r1", {"x": 1})
         stage = panel_parallel("p", (("a", r1),), next_label="synthesize")
@@ -161,7 +161,7 @@ class TestPanelParallelBoundary:
     def test_panel_parallel_uses_no_forbidden_literals(self) -> None:
         """panel_parallel() uses only neutral types, no gate/tiebreaker."""
         import inspect
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         src = inspect.getsource(panel_parallel)
         forbidden = ["tiebreaker", "proceed", "iterate", "escalate", "planning"]
@@ -173,7 +173,7 @@ class TestPanelParallelBoundary:
     def test_panel_parallel_uses_parallel_stage_type(self) -> None:
         """The function body constructs a ParallelStage — the neutral primitive."""
         import inspect
-        from megaplan._pipeline.pattern_topology import panel_parallel
+        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
 
         src = inspect.getsource(panel_parallel)
         assert "ParallelStage" in src

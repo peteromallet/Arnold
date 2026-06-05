@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from megaplan._core.config_resolver import (
+from arnold.pipelines.megaplan._core.config_resolver import (
     ConfigResolver,
     set_state_override,
     state_override_slot,
@@ -197,10 +197,10 @@ def test_io_get_effective_flag_off_uses_legacy_path(monkeypatch, tmp_path):
     # An env var that the resolver would honour MUST be ignored by the legacy
     # path — proves we're not delegating.
     monkeypatch.setenv("MEGAPLAN_EXECUTION_KNOB", "would-pollute-resolver")
-    from megaplan._core import io
+    from arnold.pipelines.megaplan._core import io
     # Pick a real DEFAULTS entry so we don't depend on the synthetic catalog.
     val = io.get_effective("execution", "robustness")
-    from megaplan.types import DEFAULTS
+    from arnold.pipelines.megaplan.types import DEFAULTS
     assert val == DEFAULTS["execution.robustness"]
 
 
@@ -208,14 +208,14 @@ def test_io_get_effective_flag_on_delegates_to_resolver(monkeypatch):
     monkeypatch.setenv("UNIFIED_CONFIG", "1")
     # The resolver reads MEGAPLAN_<SECTION>_<KEY> from env.
     monkeypatch.setenv("MEGAPLAN_EXECUTION_ROBUSTNESS", "ENV_WINS")
-    from megaplan._core import io
+    from arnold.pipelines.megaplan._core import io
     assert io.get_effective("execution", "robustness") == "ENV_WINS"
 
 
 def test_io_setting_is_explicit_flag_on_reports_env_layer(monkeypatch):
     monkeypatch.setenv("UNIFIED_CONFIG", "1")
     monkeypatch.setenv("MEGAPLAN_EXECUTION_ROBUSTNESS", "ENV_WINS")
-    from megaplan._core import io
+    from arnold.pipelines.megaplan._core import io
     assert io.setting_is_explicit("execution", "robustness") is True
 
 
@@ -223,6 +223,6 @@ def test_io_setting_is_explicit_flag_off_legacy(monkeypatch, tmp_path):
     monkeypatch.delenv("UNIFIED_CONFIG", raising=False)
     monkeypatch.delenv("MEGAPLAN_UNIFIED_DISPATCH", raising=False)
     monkeypatch.setenv("MEGAPLAN_EXECUTION_ROBUSTNESS", "ignored-by-legacy")
-    from megaplan._core import io
+    from arnold.pipelines.megaplan._core import io
     # With no user config file, legacy path returns False.
     assert io.setting_is_explicit("execution", "robustness", home=tmp_path) is False

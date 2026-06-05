@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from megaplan.calibration import (
+from arnold.pipelines.megaplan.calibration import (
     CALIBRATION_EXPERIMENT_EVENT_KIND,
     CalibrationExperimentFinding,
     CheapestRoutingExperiment,
@@ -15,11 +15,11 @@ from megaplan.calibration import (
     run_monoculture_experiment,
     write_experiment_finding,
 )
-from megaplan.calibration.experiments import (
+from arnold.pipelines.megaplan.calibration.experiments import (
     _canonical_json,
     _compute_cheap_route_pressure,
 )
-from megaplan.observability.events import EventKind, _ALL_EVENT_KINDS, read_events
+from arnold.pipelines.megaplan.observability.events import EventKind, _ALL_EVENT_KINDS, read_events
 
 
 @pytest.fixture

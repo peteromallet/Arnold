@@ -65,7 +65,7 @@ def _make_run_args(
 
 
 def test_creative_form_joke_dispatches_joke_prompt_keys() -> None:
-    from megaplan.pipelines.creative import build_pipeline
+    from arnold.pipelines.megaplan.pipelines.creative import build_pipeline
 
     pipeline = build_pipeline(form="joke")
     stage_prompt_keys = {
@@ -80,7 +80,7 @@ def test_creative_form_joke_dispatches_joke_prompt_keys() -> None:
 
 
 def test_creative_form_poem_dispatches_generic_prompt_keys() -> None:
-    from megaplan.pipelines.creative import build_pipeline
+    from arnold.pipelines.megaplan.pipelines.creative import build_pipeline
 
     pipeline = build_pipeline(form="poem")
     stage_prompt_keys = {
@@ -96,8 +96,8 @@ def test_creative_form_poem_dispatches_generic_prompt_keys() -> None:
 def test_creative_pipeline_registers_generic_and_joke_prompt_slots() -> None:
     """The creative prompt bundle owns generic and joke slots only."""
 
-    from megaplan.pipelines.creative.prompts import CREATIVE_PROMPT_BUNDLE
-    from megaplan.forms import available_form_ids
+    from arnold.pipelines.megaplan.pipelines.creative.prompts import CREATIVE_PROMPT_BUNDLE
+    from arnold.pipelines.megaplan.forms import available_form_ids
 
     keys = set(CREATIVE_PROMPT_BUNDLE.prompts)
     for base in ("prep", "execute_creative", "critique_creative", "revise_creative"):
@@ -124,8 +124,8 @@ def test_creative_pipeline_registers_generic_and_joke_prompt_slots() -> None:
 def test_generic_creative_poem_prompts_render_from_fresh_state(
     tmp_path: Path,
 ) -> None:
-    from megaplan.pipelines.creative.prompts import render_prompt
-    from megaplan._pipeline.types import StepContext
+    from arnold.pipelines.megaplan.pipelines.creative.prompts import render_prompt
+    from arnold.pipelines.megaplan._pipeline.types import StepContext
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -191,8 +191,8 @@ def test_generic_creative_poem_prompts_render_from_fresh_state(
 def test_joke_specific_prompts_render_from_fresh_state_without_planning_artifacts(
     tmp_path: Path,
 ) -> None:
-    from megaplan.pipelines.creative.prompts import render_prompt
-    from megaplan._pipeline.types import StepContext
+    from arnold.pipelines.megaplan.pipelines.creative.prompts import render_prompt
+    from arnold.pipelines.megaplan._pipeline.types import StepContext
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -261,10 +261,10 @@ def test_creative_critique_prompt_module_wires_provocations_and_directors_notes(
     directors_notes.json reads that the legacy --mode creative path
     relied on; the relocated module preserves the wiring."""
 
-    from megaplan.pipelines.creative.prompts import critique_creative as cc
+    from arnold.pipelines.megaplan.pipelines.creative.prompts import critique_creative as cc
 
     # Provocations: the canonical selector is imported.
-    from megaplan.forms.provocations import select_active_checks
+    from arnold.pipelines.megaplan.forms.provocations import select_active_checks
 
     assert cc.select_active_checks is select_active_checks
     # Directors notes sidecar: the module body references the canonical
@@ -280,7 +280,7 @@ def test_creative_execute_prompt_module_includes_stance_contract() -> None:
     in its rendered prompt so the worker returns stance fields that
     downstream stance-validation can enforce."""
 
-    from megaplan.pipelines.creative.prompts import execute_creative as ec
+    from arnold.pipelines.megaplan.pipelines.creative.prompts import execute_creative as ec
 
     src = Path(ec.__file__).read_text(encoding="utf-8")
     # The prompt body documents the stance contract: fields,
@@ -297,7 +297,7 @@ def test_creative_pipeline_validate_stance_remains_callable() -> None:
     the prompt relocation (the forms package is NOT moved per T1's
     audit; 25+ non-creative consumers depend on it)."""
 
-    from megaplan.forms.stance import validate_stance
+    from arnold.pipelines.megaplan.forms.stance import validate_stance
 
     assert callable(validate_stance)
 
@@ -306,8 +306,8 @@ def test_creative_pipeline_validate_stance_remains_callable() -> None:
 
 
 def test_creative_pipeline_unknown_form_raises_cli_error() -> None:
-    from megaplan.pipelines.creative import build_pipeline
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.pipelines.creative import build_pipeline
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as excinfo:
         build_pipeline(form="not-a-real-form-xyz")
@@ -318,7 +318,7 @@ def test_creative_pipeline_unknown_form_raises_cli_error() -> None:
     msg = str(err)
     assert "not-a-real-form-xyz" in msg
     # The error advertises the canonical registry's allowed values.
-    from megaplan.forms import available_form_ids
+    from arnold.pipelines.megaplan.forms import available_form_ids
 
     for form_id in available_form_ids():
         assert form_id in msg, (
@@ -330,7 +330,7 @@ def test_creative_pipeline_unknown_form_raises_cli_error() -> None:
 
 
 def test_creative_pipeline_primary_criterion_threads_through_all_stages() -> None:
-    from megaplan.pipelines.creative import build_pipeline
+    from arnold.pipelines.megaplan.pipelines.creative import build_pipeline
 
     pipeline = build_pipeline(form="joke", primary_criterion="weirdest coherent")
     for name, stage in pipeline.stages.items():
@@ -340,7 +340,7 @@ def test_creative_pipeline_primary_criterion_threads_through_all_stages() -> Non
 
 
 def test_creative_pipeline_primary_criterion_default_none() -> None:
-    from megaplan.pipelines.creative import build_pipeline
+    from arnold.pipelines.megaplan.pipelines.creative import build_pipeline
 
     pipeline = build_pipeline(form="joke")
     for name, stage in pipeline.stages.items():
@@ -358,8 +358,8 @@ def test_creative_pipeline_runs_through_cli_run(
     """End-to-end smoke via ``cli_run`` — drives the creative pipeline
     to its terminal ``finalize`` stage with the default ``form='joke'``."""
 
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     monkeypatch.setattr(
         preflight_module, "preflight_or_raise", lambda *a, **kw: None
@@ -405,8 +405,8 @@ def test_creative_pipeline_runs_through_cli_run(
 def test_creative_pipeline_cli_run_threads_form_and_primary_criterion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from megaplan._pipeline import preflight as preflight_module
-    from megaplan._pipeline.run_cli import cli_run
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
 
     monkeypatch.setattr(
         preflight_module, "preflight_or_raise", lambda *a, **kw: None
@@ -443,7 +443,7 @@ def test_creative_pipeline_cli_run_threads_form_and_primary_criterion(
 
 
 def test_creative_run_builder_receives_cli_parameters() -> None:
-    from megaplan._pipeline.run_cli import _build_pipeline_for_run
+    from arnold.pipelines.megaplan._pipeline.run_cli import _build_pipeline_for_run
 
     args = _make_run_args(
         pipeline_name="creative",

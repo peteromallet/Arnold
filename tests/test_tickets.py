@@ -29,9 +29,9 @@ from unittest import mock
 import pytest
 import yaml
 
-from megaplan.store import MultiStore, StoreError
-from megaplan.store.file import FileStore
-from megaplan.tickets import (
+from arnold.pipelines.megaplan.store import MultiStore, StoreError
+from arnold.pipelines.megaplan.store.file import FileStore
+from arnold.pipelines.megaplan.tickets import (
     address_resolved_by_epic,
     addressed,
     create_ticket,
@@ -45,7 +45,7 @@ from megaplan.tickets import (
     show,
     unlink,
 )
-from megaplan.tickets.files import (
+from arnold.pipelines.megaplan.tickets.files import (
     iterate_ticket_files,
     read_ticket_file,
     slugify,
@@ -53,7 +53,7 @@ from megaplan.tickets.files import (
     tickets_dir,
     write_ticket_file,
 )
-from megaplan.tickets.identity import repo_codebase_identity, repo_root_sha
+from arnold.pipelines.megaplan.tickets.identity import repo_codebase_identity, repo_root_sha
 
 
 # ---------------------------------------------------------------------------
@@ -500,7 +500,7 @@ class TestFileStoreHook:
         # Create a FileStore that uses repo_root (which has .megaplan/tickets/)
         fs = FileStore(repo_root)
 
-        from megaplan.store.base import EpicEvent
+        from arnold.pipelines.megaplan.store.base import EpicEvent
         from datetime import datetime, timezone
 
         fs.record_epic_event(

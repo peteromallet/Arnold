@@ -17,8 +17,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from arnold.pipeline.pattern_topology import decision_edges
-from arnold.pipeline.types import Edge
+from arnold.pipelines.megaplan._pipeline.types import Edge
 
 # ---------------------------------------------------------------------------
 # Planning decision literals
@@ -73,6 +72,25 @@ def internal_to_cli_override(internal_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _decision_edges(
+    *,
+    decisions: Mapping[str, str],
+    overrides: Mapping[str, str] | None = None,
+    fallback_edges: tuple[Edge, ...] = (),
+) -> tuple[Edge, ...]:
+    result = [
+        Edge(label=key, target=target, kind="decision")
+        for key, target in decisions.items()
+    ]
+    if overrides:
+        result.extend(
+            Edge(label=f"override {action}", target=target, kind="override")
+            for action, target in overrides.items()
+        )
+    result.extend(fallback_edges)
+    return tuple(result)
+
+
 def planning_gate_edges(
     *,
     on_proceed: str,
@@ -98,7 +116,7 @@ def planning_gate_edges(
         A tuple of :class:`Edge` objects (decision edges first, then
         *gate_extra_edges*).
     """
-    return decision_edges(
+    return _decision_edges(
         decisions={
             PLAN_PROCEED: on_proceed,
             PLAN_ITERATE: on_iterate,
@@ -135,7 +153,7 @@ def tiebreaker_edges(
         A tuple of three :class:`Edge` objects with
         ``kind='decision'`` and populated labels.
     """
-    return decision_edges(
+    return _decision_edges(
         decisions={
             PLAN_ITERATE: on_iterate,
             PLAN_PROCEED: on_proceed,
@@ -164,7 +182,7 @@ def planning_override_edges(
     Returns:
         A tuple of ``kind='override'`` :class:`Edge` objects.
     """
-    return decision_edges(decisions={}, overrides=overrides)
+    return _decision_edges(decisions={}, overrides=overrides)
 
 
 # ---------------------------------------------------------------------------

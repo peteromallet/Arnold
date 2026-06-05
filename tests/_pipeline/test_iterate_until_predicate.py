@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.pattern_stops import LoopState
-from megaplan._pipeline.pattern_topology import iterate_until
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.pattern_stops import LoopState
+from arnold.pipelines.megaplan._pipeline.pattern_topology import iterate_until
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Stage,

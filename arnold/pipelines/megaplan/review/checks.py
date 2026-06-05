@@ -109,7 +109,7 @@ def build_check_category_map() -> dict[str, str]:
 
 
 def checks_for_robustness(robustness: str) -> tuple[ReviewCheckSpec, ...]:
-    from megaplan.profiles import normalize_robustness
+    from arnold.pipelines.megaplan.profiles import normalize_robustness
 
     robustness = normalize_robustness(robustness)
     if robustness in {"thorough", "extreme"}:

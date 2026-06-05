@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from megaplan.forms.stance import validate_stance
+from arnold.pipelines.megaplan.forms.stance import validate_stance
 
 
 def test_valid_stance_passes() -> None:

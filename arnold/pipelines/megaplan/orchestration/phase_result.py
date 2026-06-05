@@ -342,7 +342,7 @@ def atomic_write_phase_result(plan_dir: Path, result: PhaseResult) -> None:
     Uses the existing ``atomic_write_json`` helper from ``_core/io.py``
     (write to .tmp → fsync → rename).
     """
-    from megaplan._core.io import atomic_write_json
+    from arnold.pipelines.megaplan._core.io import atomic_write_json
 
     path = plan_dir / PHASE_RESULT_FILENAME
     atomic_write_json(path, result.to_dict())
@@ -353,7 +353,7 @@ def read_phase_result(plan_dir: Path) -> PhaseResult | None:
     path = plan_dir / PHASE_RESULT_FILENAME
     if not path.is_file():
         return None
-    from megaplan._core.io import read_json
+    from arnold.pipelines.megaplan._core.io import read_json
 
     raw = read_json(path)
     return PhaseResult.from_dict(raw)
@@ -395,7 +395,7 @@ def validate_phase_result(payload: dict[str, Any]) -> None:
     - ``phase``, ``invocation_id`` are strings; ``artifacts_written`` is a
       list of strings; ``cli_provenance`` is a dict.
     """
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     if not isinstance(payload, dict):
         raise CliError("parse_error", "phase_result payload must be a dict")
