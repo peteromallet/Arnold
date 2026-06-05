@@ -252,7 +252,13 @@ export function claudeProjectsRoot(
   claudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR,
   home = Bun.env.HOME ?? "",
 ): string {
-  if (claudeConfigDir) return join(claudeConfigDir, "projects");
+  // Claude Code v2.1.x scopes only the config file (.claude.json) to
+  // CLAUDE_CONFIG_DIR; transcripts/projects ALWAYS land under
+  // ~/.claude/projects (verified live: isolated config dir gets
+  // .claude.json+backups written, transcripts appear in the home root).
+  // Polling <configDir>/projects therefore waits forever on a folder
+  // Claude never writes.
+  void claudeConfigDir;
   return join(home, ".claude", "projects");
 }
 
@@ -823,7 +829,16 @@ export async function runShannon(options: CliOptions) {
     }
 
     const _mpScrubKeys = Object.keys(Bun.env).filter((k) => /^(MEGAPLAN_|SHANNON_)/.test(k));
-    const _mpEnvPrefix = _mpScrubKeys.length > 0 ? ["env", ..._mpScrubKeys.flatMap((k) => ["-u", k])] : [];
+    // tmux spawns the command with the SERVER's environment (not this
+    // process's) when a server already exists, so CLAUDE_CONFIG_DIR silently
+    // vanishes: Claude then writes transcripts to ~/.claude while we poll the
+    // isolated dir (transcript timeout), and deterministic --session-id
+    // retries collide with the stray ~/.claude session file (instant exit,
+    // "can't find pane"). Inject it explicitly into the spawned command.
+    const _mpEnvSets = Bun.env.CLAUDE_CONFIG_DIR ? [`CLAUDE_CONFIG_DIR=${Bun.env.CLAUDE_CONFIG_DIR}`] : [];
+    const _mpEnvPrefix = _mpScrubKeys.length > 0 || _mpEnvSets.length > 0
+      ? ["env", ..._mpScrubKeys.flatMap((k) => ["-u", k]), ..._mpEnvSets]
+      : [];
     const claudeLaunchArgs = [
       ..._mpEnvPrefix,
       "claude",
@@ -1112,6 +1127,16 @@ export function classifyClaudeStartupBlocker(pane: string): StartupBlocker | und
     || normalized.includes("trust this workspace")
   ) {
     return { kind: "trust", detail: "workspace trust confirmation is blocking startup" };
+  }
+
+  if (
+    // One-time "Bypass Permissions mode" acceptance dialog (fresh config dir).
+    // Its "❯ 1. No, exit" default both matches the readiness regex AND exits
+    // Claude when Enter confirms it — classify it before readiness can see it.
+    normalized.includes("you accept all responsibility")
+    || normalized.includes("yes, i accept")
+  ) {
+    return { kind: "permission", detail: "bypass-permissions acceptance dialog is blocking startup" };
   }
 
   if (

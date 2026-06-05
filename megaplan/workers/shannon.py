@@ -1896,6 +1896,14 @@ def _ensure_workspace_trusted(
         if not isinstance(projects, dict):
             return
         changed = False
+        # Global first-run onboarding (theme picker) blocks the composer just
+        # like the trust dialog does. An isolated CLAUDE_CONFIG_DIR starts
+        # empty, so claude treats it as a fresh install and the readiness
+        # probe times out staring at the theme wizard. Pre-complete it.
+        if not data.get("hasCompletedOnboarding"):
+            data["hasCompletedOnboarding"] = True
+            data.setdefault("theme", "dark")
+            changed = True
         for path in candidates:
             entry = projects.get(path)
             if not isinstance(entry, dict):
