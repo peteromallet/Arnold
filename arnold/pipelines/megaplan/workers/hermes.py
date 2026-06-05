@@ -487,8 +487,14 @@ def _start_heartbeat(
     *only* liveness signal a silently-streaming provider (e.g. DeepSeek on the
     execute phase) produces: ``quiet_mode`` agents write nothing to stderr, so
     the ``_ActivityStream`` stderr wrapper never fires, and without this the
-    phase-idle monitor — which watches the ``state.json`` mtime — sees the file
-    frozen at phase-start and false-stalls a healthy long-running batch.
+    phase-idle monitor — which reads ``active_step.last_activity_at`` out of
+    ``state.json`` — sees the timestamp frozen at phase-start and false-stalls a
+    healthy long-running batch.
+
+    The persisted content write is coalesced in ``_core.state``: each beat that
+    observes progress refreshes the in-memory timestamp and bumps the file mtime
+    cheaply, while the full state.json re-serialize happens at most once per
+    persist interval.
     """
 
     def _beat() -> None:

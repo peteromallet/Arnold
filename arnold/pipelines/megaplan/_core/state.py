@@ -21,6 +21,7 @@ import copy
 import hashlib
 import json
 import os
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -60,6 +61,21 @@ if TYPE_CHECKING:
 
 
 DEFAULT_ACTIVE_STEP_STALE_SECONDS = DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS
+
+
+def _heartbeat_persist_interval_seconds() -> float:
+    raw = os.environ.get("MEGAPLAN_HEARTBEAT_PERSIST_INTERVAL_S")
+    if raw:
+        try:
+            value = float(raw)
+            if value >= 0:
+                return value
+        except ValueError:
+            pass
+    return 30.0
+
+
+_last_heartbeat_persist_at: dict[str, float] = {}
 
 # ---------------------------------------------------------------------------
 # Plan resolution
@@ -718,6 +734,24 @@ def write_plan_state(
                     if detail:
                         active_step["last_activity_detail"] = detail[-500:]
                     next_state["active_step"] = active_step
+                    interval = _heartbeat_persist_interval_seconds()
+                    key = str(state_path)
+                    now_mono = time.monotonic()
+                    last = _last_heartbeat_persist_at.get(key)
+                    due = (
+                        interval <= 0
+                        or last is None
+                        or (now_mono - last) >= interval
+                    )
+                    if due:
+                        _last_heartbeat_persist_at[key] = now_mono
+                    else:
+                        should_write = False
+                        try:
+                            if state_path.exists():
+                                os.utime(state_path, None)
+                        except OSError:
+                            pass
             elif mode == "merge-meta-list":
                 if state is None:
                     raise TypeError("state is required for merge-meta-list mode")
