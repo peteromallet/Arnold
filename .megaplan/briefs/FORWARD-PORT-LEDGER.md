@@ -36,7 +36,7 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 21 | `c88c283c` | Infra-marker rework items do not trip genuine-rejection | PORT | `arnold/pipelines/megaplan/review`, tests | pending | Live re-derived commit. |
 | 22 | `3f94c5ea` | Structured infra signals win before rejection inference | PORT | `arnold/pipelines/megaplan/review`, tests | pending | Live re-derived commit. |
 | 23 | `9063df70` | Context-aware tool caps and prep fanout tolerance | PORT | `arnold/pipelines/megaplan/orchestration/prep_research.py`, agent/prep tests | pending | Live re-derived commit. |
-| 24 | `ee93b4f4` | DeepSeek-V4 context window metadata | PORT | `arnold/pipelines/megaplan/agent/agent/model_metadata.py` | pending | Live re-derived commit. |
+| 24 | `ee93b4f4` | DeepSeek-V4 context window metadata | PORT | `arnold/pipelines/megaplan/agent/agent/model_metadata.py` | verified | Ported DeepSeek-V4 1,048,576 context default with focused metadata regression; `test_model_metadata.py` passed. |
 | 25 | `0b0581da` | Fork milestones from origin and count committed evidence | PORT | `arnold/pipelines/megaplan/chain`, tests | pending | Live re-derived commit. |
 | 26 | `a17ddc21` | Worker stall fixes: stdin, session bloat, composer detection | PORT | `arnold/pipelines/megaplan/workers`, vendor/shannon, tests | pending | Live re-derived commit. |
 | 27 | `7e5cdc86` | Tighten complexity rubrics against tier inflation | PORT | `arnold/pipelines/megaplan/data`, prompts/skills | pending | Live re-derived commit. |

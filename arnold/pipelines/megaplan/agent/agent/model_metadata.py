@@ -102,7 +102,7 @@ DEFAULT_CONTEXT_LENGTHS = {
     # Google
     "gemini": 1048576,
     # DeepSeek
-    "deepseek-v4": 1000000,
+    "deepseek-v4": 1048576,
     "deepseek": 128000,
     # Meta
     "llama": 131072,

@@ -132,6 +132,11 @@ class TestDefaultContextLengths:
             if "gemini" in key:
                 assert value == 1048576, f"{key} should be 1048576"
 
+    def test_deepseek_v4_models_1m_binary(self):
+        for key, value in DEFAULT_CONTEXT_LENGTHS.items():
+            if key == "deepseek-v4":
+                assert value == 1048576, f"{key} should be 1048576"
+
     def test_all_values_positive(self):
         for key, value in DEFAULT_CONTEXT_LENGTHS.items():
             assert value > 0, f"{key} has non-positive context length"
