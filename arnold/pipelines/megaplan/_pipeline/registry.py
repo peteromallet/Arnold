@@ -521,6 +521,43 @@ class PipelineRegistry:
 _GLOBAL_REGISTRY = PipelineRegistry()
 
 
+def _builtin_megaplan_builder() -> Pipeline:
+    from arnold.pipelines.megaplan.pipelines.planning import build_pipeline
+
+    return build_pipeline()
+
+
+def _ensure_builtin_pipelines_registered() -> None:
+    """Reassert built-ins after tests or long-lived workers mutate global state."""
+
+    if CANONICAL_BUILTIN_PIPELINE in _GLOBAL_REGISTRY.builders:
+        return
+
+    from arnold.pipelines.megaplan.pipelines import planning
+
+    module_file = Path(planning.__file__).resolve()
+    description = str(getattr(planning, "description", "") or "")
+    metadata = {
+        "description": description,
+        "name": CANONICAL_BUILTIN_PIPELINE,
+        "source_path": str(module_file),
+        "supported_modes": tuple(getattr(planning, "supported_modes", ()) or ()),
+        "capabilities": tuple(getattr(planning, "capabilities", ()) or ()),
+        "arnold_api_version": str(getattr(planning, "arnold_api_version", "") or ""),
+    }
+    default_profile = getattr(planning, "default_profile", None)
+    if default_profile:
+        metadata["default_profile"] = default_profile
+
+    _GLOBAL_REGISTRY.register(
+        CANONICAL_BUILTIN_PIPELINE,
+        _builtin_megaplan_builder,
+        description=description,
+        metadata=metadata,
+    )
+    _GLOBAL_REGISTRY._module_files[CANONICAL_BUILTIN_PIPELINE] = module_file
+
+
 def register_pipeline(
     name: str,
     builder: PipelineBuilder,
@@ -534,23 +571,28 @@ def register_pipeline(
 
 
 def get_pipeline(name: str) -> Pipeline | None:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.get(name)
 
 
 def registered_pipelines() -> tuple[str, ...]:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.names()
 
 
 def describe_pipeline(name: str) -> str:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.describe(name)
 
 
 def pipeline_metadata(name: str) -> dict[str, Any]:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.metadata_for(name)
 
 
 def operation_registry_for(name: str) -> OperationRegistry:
     name = canonical_pipeline_name(name)
+    _ensure_builtin_pipelines_registered()
     try:
         return _GLOBAL_REGISTRY.operation_registry_for(name)
     except RuntimeError:
@@ -563,6 +605,7 @@ def operation_registry_for(name: str) -> OperationRegistry:
 
 def supported_operations_for(name: str) -> frozenset[OperationKind]:
     name = canonical_pipeline_name(name)
+    _ensure_builtin_pipelines_registered()
     try:
         return _GLOBAL_REGISTRY.supported_operations_for(name)
     except RuntimeError:
@@ -737,6 +780,7 @@ def control_status_result_from_operation_result(
 
 def override_catalog_for(name: str) -> dict[str, Any]:
     name = canonical_pipeline_name(name)
+    _ensure_builtin_pipelines_registered()
     try:
         return _GLOBAL_REGISTRY.override_catalog_for(name)
     except RuntimeError:
@@ -748,6 +792,7 @@ def override_catalog_for(name: str) -> dict[str, Any]:
 
 
 def read_pipeline_skill_md(name: str) -> str | None:
+    _ensure_builtin_pipelines_registered()
     return _GLOBAL_REGISTRY.read_skill_md(name)
 
 
