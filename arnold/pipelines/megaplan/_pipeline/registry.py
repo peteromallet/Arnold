@@ -548,6 +548,22 @@ def _ensure_builtin_pipelines_registered() -> None:
     default_profile = getattr(planning, "default_profile", None)
     if default_profile:
         metadata["default_profile"] = default_profile
+    if _manifest_discovery_enabled():
+        manifest_result = read_manifest(module_file)
+        if isinstance(manifest_result, Manifest):
+            metadata.update(
+                _manifest_metadata(
+                    CANONICAL_BUILTIN_PIPELINE,
+                    Disposition(
+                        path=module_file,
+                        origin="in_tree",
+                        status="discovered",
+                        reason="ok (manifest)",
+                        cli_name=CANONICAL_BUILTIN_PIPELINE,
+                        manifest=manifest_result,
+                    ),
+                )
+            )
 
     _GLOBAL_REGISTRY.register(
         CANONICAL_BUILTIN_PIPELINE,

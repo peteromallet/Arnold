@@ -114,10 +114,10 @@ class TestSystemProfileDefaults:
         )
         assert isinstance(profile, dict)
         # Resolved profile must be the SYSTEM_DEFAULT_PROFILE ("partnered").
-        # partnered uses claude:low for author phases and DeepSeek for
-        # mechanical/critique phases.
-        assert profile.get("plan") == "claude:low", (
-            f"expected partnered plan=claude:low, got {profile.get('plan')!r}"
+        # partnered uses symbolic premium specs for author phases and DeepSeek
+        # for mechanical/critique phases.
+        assert profile.get("plan") == "premium:low", (
+            f"expected partnered plan=premium:low, got {profile.get('plan')!r}"
         )
         assert "deepseek" in profile.get("critique", "").lower(), (
             f"expected partnered critique=DeepSeek, got {profile.get('critique')!r}"

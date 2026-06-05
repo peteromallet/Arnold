@@ -364,14 +364,20 @@ def test_handle_review_superrobust_path_merges_parallel_review_and_creates_revie
                     "id": coverage.id,
                     "question": coverage.question,
                     "findings": [
-                        {
-                            "detail": "Coverage review found an issue example from the original bug report that the diff still does not address.",
-                            "flagged": True,
-                            "status": "blocking",
-                            "evidence_file": "pkg/module.py",
-                        }
-                    ],
-                }
+                            {
+                                "detail": "Coverage review found an issue example from the original bug report that the diff still does not address.",
+                                "flagged": True,
+                                "status": "blocking",
+                                "evidence_file": "pkg/module.py",
+                                "deterministic_check": {
+                                    "command": "pytest tests/test_issue_example.py",
+                                    "baseline_status": "failed",
+                                    "post_status": "failed",
+                                    "evidence_file": "pkg/module.py",
+                                },
+                            }
+                        ],
+                    }
             ],
             "verified_flag_ids": ["REVIEW-OLD-001"],
             "disputed_flag_ids": ["REVIEW-OLD-002"],

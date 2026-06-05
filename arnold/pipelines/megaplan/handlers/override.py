@@ -1171,7 +1171,7 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
                 f"set-model is only supported for claude/codex phases. "
                 f"Phase '{phase}' resolves to agent '{agent}'.",
             )
-        target_agent = agent if agent in _PREMIUM_VENDORS else inferred_agent
+        target_agent = inferred_agent or agent
         target_model = model_arg
         target_effort = effort
 

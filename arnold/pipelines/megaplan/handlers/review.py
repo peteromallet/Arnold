@@ -631,17 +631,19 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
                 )
                 concerned_task_ids = [f"REVIEW-{check_id}"]
             for task_id in concerned_task_ids:
-                rework_items.append(
-                    {
-                        "task_id": task_id,
-                        "issue": issue,
-                        "expected": expected,
-                        "actual": actual,
-                        "evidence_file": evidence_file,
-                        "flag_id": f"REVIEW-{check_id}",
-                        "source": f"review_{check_id}",
-                    }
-                )
+                item = {
+                    "task_id": task_id,
+                    "issue": issue,
+                    "expected": expected,
+                    "actual": actual,
+                    "evidence_file": evidence_file,
+                    "flag_id": f"REVIEW-{check_id}",
+                    "source": f"review_{check_id}",
+                }
+                deterministic_check = finding.get("deterministic_check")
+                if isinstance(deterministic_check, dict):
+                    item["deterministic_check"] = deterministic_check
+                rework_items.append(item)
     return rework_items
 
 

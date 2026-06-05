@@ -35,6 +35,7 @@ from arnold.pipelines.megaplan.control_interface import (
     RunStateView,
 )
 from arnold.pipelines.megaplan.run_outcome import RunOutcome
+from arnold.pipelines.megaplan.profiles import effective_premium_vendor
 from arnold.pipelines.megaplan.profiles.policy import DEFAULT_AGENT_ROUTING, ROBUSTNESS_ACCEPTED, normalize_robustness
 from arnold.pipelines.megaplan.types import (
     AgentSpec,
@@ -42,7 +43,9 @@ from arnold.pipelines.megaplan.types import (
     _PREMIUM_EFFORT_TOKENS,
     _PREMIUM_VENDORS,
     format_agent_spec,
+    is_premium_placeholder_spec,
     parse_agent_spec,
+    resolve_premium_placeholder_spec,
 )
 from arnold.pipelines.megaplan.planning.state import (
     STATE_ABORTED,
@@ -658,14 +661,15 @@ def _infer_phase_agent(phase: str, state: Mapping[str, object]) -> str | None:
             if isinstance(raw, str) and "=" in raw:
                 pm_phase, pm_spec = raw.split("=", 1)
                 if pm_phase == phase:
-                    return parse_agent_spec(pm_spec).agent
+                    return parse_agent_spec(_resolve_symbolic_phase_spec(pm_spec, state)).agent
     try:
         resolved = _load_resolved_profile(state)
     except Exception:
         resolved = None
     if resolved and phase in resolved:
-        return parse_agent_spec(resolved[phase]).agent
-    return DEFAULT_AGENT_ROUTING.get(phase)
+        return parse_agent_spec(_resolve_symbolic_phase_spec(resolved[phase], state)).agent
+    default_spec = DEFAULT_AGENT_ROUTING.get(phase, "")
+    return parse_agent_spec(_resolve_symbolic_phase_spec(default_spec, state)).agent if default_spec else None
 
 
 def _current_phase_spec(phase: str, state: Mapping[str, object]) -> str:
@@ -676,14 +680,22 @@ def _current_phase_spec(phase: str, state: Mapping[str, object]) -> str:
             if isinstance(raw, str) and "=" in raw:
                 pm_phase, pm_spec = raw.split("=", 1)
                 if pm_phase == phase:
-                    return pm_spec
+                    return _resolve_symbolic_phase_spec(pm_spec, state)
     try:
         resolved = _load_resolved_profile(state)
     except Exception:
         resolved = None
     if resolved and phase in resolved:
-        return resolved[phase]
-    return DEFAULT_AGENT_ROUTING.get(phase, "")
+        return _resolve_symbolic_phase_spec(resolved[phase], state)
+    return _resolve_symbolic_phase_spec(DEFAULT_AGENT_ROUTING.get(phase, ""), state)
+
+
+def _resolve_symbolic_phase_spec(spec: str, state: Mapping[str, object]) -> str:
+    if not spec or not is_premium_placeholder_spec(spec):
+        return spec
+    config = state.get("config")
+    vendor = effective_premium_vendor(config=config if isinstance(config, Mapping) else {})
+    return format_agent_spec(resolve_premium_placeholder_spec(spec, vendor))
 
 
 def _replace_phase_model(
@@ -1261,13 +1273,20 @@ class PlanningControlBinding:
                     "Use --phase-model on the phase command for hermes/shannon routing.",
                 )
             else:
-                if agent not in _PREMIUM_VENDORS:
+                inferred_agent = None
+                if str(model_arg).startswith("claude-"):
+                    inferred_agent = "claude"
+                elif str(model_arg).startswith(("gpt-", "o1", "o3", "o4")):
+                    inferred_agent = "codex"
+                if agent == "shannon":
+                    inferred_agent = None
+                if agent not in _PREMIUM_VENDORS and inferred_agent is None:
                     raise CliError(
                         "invalid_args",
                         f"set-model is only supported for claude/codex phases. "
                         f"Phase '{phase}' resolves to agent '{agent}'.",
                     )
-                target_agent = agent
+                target_agent = inferred_agent or agent
                 target_model = model_arg
                 target_effort = effort
             if target_model in _PREMIUM_EFFORT_TOKENS:
@@ -1288,7 +1307,7 @@ class PlanningControlBinding:
                 state,
                 phase=phase,
                 new_spec=new_spec,
-                default_previous_spec=DEFAULT_AGENT_ROUTING.get(phase, ""),
+                default_previous_spec=_current_phase_spec(phase, state),
             )
             return ControlTransitionResult(
                 accepted=True,

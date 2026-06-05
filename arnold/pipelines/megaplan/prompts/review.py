@@ -257,6 +257,13 @@ def _review_template_payload(plan_dir: Path, state: PlanState | None = None) -> 
 
 
 def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]:
+    def _read_optional_json(name: str) -> dict[str, Any]:
+        path = plan_dir / name
+        if not path.exists():
+            return {}
+        value = read_json(path)
+        return value if isinstance(value, dict) else {}
+
     project_dir = Path(state["config"]["project_dir"])
     gate = _gate_summary_or_skipped(plan_dir)
     settled_decisions = gate.get("settled_decisions", [])
@@ -289,11 +296,9 @@ def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]
         "diff_summary": diff_summary,
         "changed_files": changed_files,
         "prior_unmet_block": _prior_unmet_review_block(plan_dir, state) if large_diff else "",
-        "finalize_data": read_json(plan_dir / "finalize.json"),
-        "execution_data": read_json(plan_dir / "execution.json"),
-        "execution_audit_data": read_json(plan_dir / "execution_audit.json")
-        if (plan_dir / "execution_audit.json").exists()
-        else None,
+        "finalize_data": _read_optional_json("finalize.json"),
+        "execution_data": _read_optional_json("execution.json"),
+        "execution_audit_data": _read_optional_json("execution_audit.json") or None,
         "settled_decisions": settled_decisions,
         "prior_flags": load_flag_registry(plan_dir).get("flags", []),
     }

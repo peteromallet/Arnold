@@ -5823,7 +5823,7 @@ class AIAgent:
 
             function_result = _truncate_tool_result_for_context(
                 function_result,
-                getattr(self.context_compressor, "context_length", None),
+                getattr(getattr(self, "context_compressor", None), "context_length", None),
             )
 
             # Dedup identical re-issues to avoid context-bloat tool loops.
@@ -6080,7 +6080,7 @@ class AIAgent:
             # context window, while allowing larger reads on large-window models.
             function_result = _truncate_tool_result_for_context(
                 function_result,
-                getattr(self.context_compressor, "context_length", None),
+                getattr(getattr(self, "context_compressor", None), "context_length", None),
             )
 
             # Dedup identical re-issues to avoid context-bloat tool loops.

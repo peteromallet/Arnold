@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text
+from arnold.pipelines.megaplan.prompts._projection import MAX_META_COMMENTARY_CHARS
 from arnold.pipelines.megaplan.prompts import _execute_batch_prompt
 from arnold.pipelines.megaplan.types import PlanState
 
@@ -181,7 +182,7 @@ def test_batch_prompt_includes_meta_commentary_truncated(tmp_path: Path) -> None
     prompt = _execute_batch_prompt(state, plan_dir, ["T1"], set())
 
     assert "## Inter-task guidance from finalize" in prompt
-    assert "A" * 1500 in prompt
+    assert ("A" * (MAX_META_COMMENTARY_CHARS - 3)) + "..." in prompt
     assert "TAIL_SHOULD_NOT_RENDER" not in prompt
 
 

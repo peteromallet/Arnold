@@ -223,6 +223,7 @@ class Plan(StorageModel):
     revision: int
     schema_version: int = 0
     idea: str
+    idea_snapshot_path: str | None = None
     current_state: str
     iteration: int
     config: dict[str, Any]
@@ -275,6 +276,7 @@ class Plan(StorageModel):
             sprint_id=sprint_id,
             revision=revision,
             idea=raw["idea"],
+            idea_snapshot_path=raw.get("idea_snapshot_path"),
             current_state=raw["current_state"],
             iteration=raw["iteration"],
             config=raw["config"],
@@ -316,6 +318,8 @@ class Plan(StorageModel):
             "last_gate": cast(LastGateRecord, deepcopy(self.last_gate)),
             "schema_version": self.schema_version,
         }
+        if self.idea_snapshot_path is not None:
+            state["idea_snapshot_path"] = self.idea_snapshot_path
         if self.active_step is not None:
             state["active_step"] = cast(ActivePhase, deepcopy(self.active_step))
         if self.clarification is not None:
