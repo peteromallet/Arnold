@@ -42,11 +42,11 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 27 | `7e5cdc86` | Tighten complexity rubrics against tier inflation | PORT | `arnold/pipelines/megaplan/data`, prompts/skills | pending | Live re-derived commit. |
 | 28 | `4c223df0` | Active-step orphan clear and review-grounding core | PORT | `arnold/pipelines/megaplan/auto*`, review/tests | pending | Live re-derived commit. |
 | 29 | `c3fe84a0` | Merge review rework redesign and audit fixes | SUPERSEDED | n/a | superseded | Merge commit; component commits are tracked separately. |
-| 30 | `0e017861` | Add evidence-first epic briefs | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | pending | Live re-derived commit. |
+| 30 | `0e017861` | Add evidence-first epic briefs | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | verified | Applied from committed range as docs/spec batch. |
 | 31 | `ad988d18` | Resolve premium vendor funneling | PORT | `arnold/pipelines/megaplan/profiles`, routing/tests | pending | Live re-derived commit. |
 | 32 | `c18e0aa8` | Shannon native launch hardening checkpoint | PORT | `arnold/pipelines/megaplan/vendor/shannon`, workers/tests | pending | Live re-derived commit. |
 | 33 | `b489ade9` | Merge premium vendor routing funnel | SUPERSEDED | n/a | superseded | Merge commit; component commits are tracked separately. |
-| 34 | `2b25128b` | Point evidence-first epic at working branch | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/chain.yaml` | pending | Port as corrected value: `base_branch: arnold-epic`, not literal `working-branch`. |
+| 34 | `2b25128b` | Point evidence-first epic at working branch | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/chain.yaml` | verified | Ported as corrected value: `base_branch: arnold-epic`; grep confirms no stale `working-branch` references. |
 | 35 | `13fb614f` | Resolve Megaplan from engine for phase subprocesses | PORT | `arnold/pipelines/megaplan/chain`, auto/tests | pending | Live re-derived commit. |
 | 36 | `a18a2da5` | Idempotent restart, strict spec validation, checkout-free refresh | PORT | `arnold/pipelines/megaplan/chain`, tests | pending | Live re-derived commit. |
 | 37 | `02b34ccb` | Harden Shannon native parity | PORT | `arnold/pipelines/megaplan/vendor/shannon`, workers/tests | pending | Live re-derived commit. |
@@ -63,17 +63,17 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 48 | `958a669c` | Honor persisted phase model/vendor overrides | PORT | `arnold/pipelines/megaplan/profiles`, runtime/tests | pending | Live re-derived commit. |
 | 49 | `df3440df` | Premium execute routing recognizes CLI subscription auth | PORT | `arnold/pipelines/megaplan/profiles`, workers/tests | pending | Live re-derived commit. |
 | 50 | `5f8045f3` | Record loud model-floor routing degradations | PORT | `arnold/pipelines/megaplan/profiles`, status/tests | pending | Live re-derived commit. |
-| 51 | `36cd544a` | Evidence-first v2 authority-kernel restructure | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | pending | Live re-derived commit. |
-| 52 | `d3111214` | Evidence-first m0 write-isolation focus | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | pending | Live re-derived commit. |
+| 51 | `36cd544a` | Evidence-first v2 authority-kernel restructure | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | verified | Applied from committed range as docs/spec batch. |
+| 52 | `d3111214` | Evidence-first m0 write-isolation focus | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | verified | Applied from committed range as docs/spec batch. |
 | 53 | `c4e5a8ba` | Shannon readiness detector misses pane padding | PORT | `arnold/pipelines/megaplan/vendor/shannon`, tests | pending | New live commit after old triage. |
 | 54 | `57015c39` | Shannon fresh-config gates and v2.1.x transcript root | PORT | `arnold/pipelines/megaplan/vendor/shannon`, workers/tests | pending | New live commit after old triage. |
 | 55 | `74d439bc` | Register `--no-prep-clarify` and guard chain/init flag drift | PORT | `arnold/pipelines/megaplan/handlers/init.py`, chain/tests | pending | New live commit after old triage. |
-| 56 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m0-engine-target-isolation.md` | Add L1 cwd and environment-contract evidence-first detail | PORT | same path | pending | Live dirty source file. |
-| 57 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m4-review-evidence-service.md` | Evidence-first review evidence-service addition | PORT | same path | pending | Live dirty source file; absent from old D-list. |
-| 58 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m5-objective-gates.md` | Evidence-first objective-gates addition | PORT | same path | pending | Live dirty source file; absent from old D-list. |
-| 59 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m6-provenance-and-workspace-assertions.md` | Worker-sweep ownership manifest requirement | PORT | same path | pending | Live dirty source file. |
-| 60 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m7-transition-validator-routing.md` | Verified GitHub merge transition requirement | PORT | same path | pending | Live dirty source file. |
-| 61 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m9-atomic-reset-reconcile.md` | Recoverable merge failure and worktree-safe merge fallback | PORT | same path | pending | Live dirty source file. |
+| 56 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m0-engine-target-isolation.md` | Add L1 cwd and environment-contract evidence-first detail | PORT | same path | verified | Applied dirty doc patch on top of committed brief batch. |
+| 57 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m4-review-evidence-service.md` | Evidence-first review evidence-service addition | PORT | same path | verified | Applied dirty doc patch on top of committed brief batch. |
+| 58 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m5-objective-gates.md` | Evidence-first objective-gates addition | PORT | same path | verified | Applied dirty doc patch on top of committed brief batch. |
+| 59 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m6-provenance-and-workspace-assertions.md` | Worker-sweep ownership manifest requirement | PORT | same path | verified | Applied dirty doc patch on top of committed brief batch. |
+| 60 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m7-transition-validator-routing.md` | Verified GitHub merge transition requirement | PORT | same path | verified | Applied dirty doc patch on top of committed brief batch. |
+| 61 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m9-atomic-reset-reconcile.md` | Recoverable merge failure and worktree-safe merge fallback | PORT | same path | verified | Applied dirty doc patch on top of committed brief batch. |
 | 62 | dirty `megaplan/chain/__init__.py` | Resolve spec-relative idea path against project root | PORT | `arnold/pipelines/megaplan/chain/__init__.py` | verified | Applied via remapped dirty patch; covered by focused init/prep/worker gate. |
 | 63 | dirty `megaplan/chain/git_ops.py` | Worktree-safe `gh pr merge --delete-branch` fallback | PORT | `arnold/pipelines/megaplan/chain/git_ops.py` | verified | Applied via remapped dirty patch; no conflict. |
 | 64 | dirty `megaplan/data/_codex_skills/babysit/SKILL.md` | Babysit skill hardening | PORT | `arnold/pipelines/megaplan/data/_codex_skills/babysit/SKILL.md` | verified | Applied via remapped dirty patch. |
