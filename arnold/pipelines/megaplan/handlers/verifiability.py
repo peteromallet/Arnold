@@ -146,7 +146,14 @@ def handle_verify_human(root: Path, args: argparse.Namespace) -> StepResponse:
     # works for completed, stale, diagnostic, and awaiting plans.
     if list_flag:
         plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
-        hv_status = get_human_verification_status(plan_dir, plan_meta)
+        from arnold.pipelines.megaplan.audits.capabilities import get_worker_capabilities
+
+        worker_caps = get_worker_capabilities(state)
+        hv_status = get_human_verification_status(
+            plan_dir,
+            plan_meta,
+            worker_caps=worker_caps,
+        )
         rows = hv_status["rows"]
 
         if json_flag:
