@@ -1075,9 +1075,14 @@ export function rowContainsPromptAfter(
 
 async function waitForPrompt(tmuxSession: string) {
   const startedAt = Date.now();
+  const dbg = Bun.env.SHANNON_DEBUG_READINESS_LOG;
 
   while (Date.now() - startedAt < START_TIMEOUT_MS) {
     const pane = await runCommand(["tmux", "capture-pane", "-pt", tmuxSession, "-S", "-40"]);
+    if (dbg) {
+      const ready = paneLooksReadyForUserMessage(pane.stdout);
+      await Bun.write(dbg, `[${Date.now() - startedAt}ms] exit=${pane.exitCode} ready=${ready} len=${pane.stdout.length}\n--PANE--\n${pane.stdout}\n--END--\n`, { createPath: true });
+    }
     const blocker = classifyClaudeStartupBlocker(pane.stdout);
     if (blocker) {
       throw new Error(
@@ -1147,6 +1152,10 @@ export function classifyClaudeStartupBlocker(pane: string): StartupBlocker | und
 
 export function paneLooksReadyForUserMessage(pane: string) {
   const lines = pane.split(/\r?\n/).map((line) => line.trimEnd());
+  // tmux capture-pane pads the capture to the full pane height, so a short
+  // TUI leaves trailing blank lines that push the composer line out of a
+  // fixed last-N window. Drop the padding before windowing.
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
   const recent = lines.slice(-12);
   return recent.some((line) => {
     // Legacy: a bare prompt marker at end of line ("❯" / "│ ❯").
