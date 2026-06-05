@@ -3666,6 +3666,171 @@ def test_handle_execute_one_batch_falls_back_for_malformed_calibration_suggestio
     assert response["tier_model_spec"] == "codex:high"
 
 
+def test_execution_batch_artifact_persists_routing_and_actual_model(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+
+    def worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        base = _hermes_style_worker(plan_fixture.project_dir)(
+            step, state, plan_dir, args, root=root, resolved=resolved, prompt_override=prompt_override
+        )
+        result, agent, mode, refreshed = base
+        result.model_actual = "gpt-5.4"
+        return result, agent, mode, refreshed
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker)
+    state = load_state(plan_fixture.plan_dir)
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        model="gpt-5.4",
+        resolved_model="gpt-5.4",
+        tier_map=None,
+    )
+
+    batch = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
+    assert response["success"] is True
+    assert batch["routing"] == {
+        "batch_complexity": None,
+        "selected_tier": None,
+        "selected_spec": None,
+        "resolved_agent": "codex",
+        "resolved_mode": "persistent",
+        "resolved_model": "gpt-5.4",
+        "actual_agent": "codex",
+        "actual_model": "gpt-5.4",
+        "tier_map_configured": False,
+        "tier_routing_active": False,
+        "warnings": [],
+    }
+
+
+def test_string_keyed_execute_tier_map_routes_by_integer_complexity(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["tasks"][0]["complexity"] = 4
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    seen_models: list[str | None] = []
+
+    def worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        seen_models.append(getattr(resolved, "model", None))
+        base = _hermes_style_worker(plan_fixture.project_dir)(
+            step, state, plan_dir, args, root=root, resolved=resolved, prompt_override=prompt_override
+        )
+        result, agent, mode, refreshed = base
+        result.model_actual = "premium-model"
+        return result, agent, mode, refreshed
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker)
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_resolve_tier_spec",
+        lambda args, tier_spec: ("codex", "persistent", "premium-model"),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        model="base-model",
+        resolved_model="base-model",
+        tier_map={"4": "codex:premium-model"},
+    )
+
+    batch = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
+    assert response["tier_model_spec"] == "codex:premium-model"
+    assert response["batch_complexity"] == 4
+    assert seen_models == ["premium-model"]
+    assert batch["routing"]["resolved_model"] == "premium-model"
+    assert batch["routing"]["actual_model"] == "premium-model"
+
+
+def test_routing_actual_model_mismatch_blocks_recoverably(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+
+    def worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        base = _hermes_style_worker(plan_fixture.project_dir)(
+            step, state, plan_dir, args, root=root, resolved=resolved, prompt_override=prompt_override
+        )
+        result, agent, mode, refreshed = base
+        result.model_actual = "base-model"
+        return result, agent, mode, refreshed
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker)
+    state = load_state(plan_fixture.plan_dir)
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        model="premium-model",
+        resolved_model="premium-model",
+    )
+
+    state_after = load_state(plan_fixture.plan_dir)
+    events = [
+        json.loads(line)
+        for line in (plan_fixture.plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert response["success"] is False
+    assert response["result"] == "blocked"
+    assert response["state"] == megaplan.STATE_BLOCKED
+    assert state_after["current_state"] == megaplan.STATE_BLOCKED
+    assert state_after["resume_cursor"]["reason"] == "routing_degradation"
+    assert any(event["kind"] == "routing_degradation" for event in events)
+    assert any("selected model premium-model" in d for d in response["deviations"])
+
+
 def test_handle_execute_one_batch_response_omits_tier_metadata_for_flat_profile(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,

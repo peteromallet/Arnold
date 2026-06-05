@@ -280,7 +280,7 @@ def test_resolve_review_outcome_uses_standard_and_robust_caps_separately(tmp_pat
     )
 
     assert standard_result == ("needs_rework", megaplan.STATE_FINALIZED, "execute")
-    assert robust_result == ("success", megaplan.STATE_DONE, None)
+    assert robust_result == ("force_proceeded", megaplan.STATE_DONE, None)
     assert any("Max review rework cycles (2) reached" in issue for issue in robust_issues)
 
 
@@ -331,7 +331,7 @@ def test_force_proceed_with_only_cosmetic_items_still_ships_done(
         rework_items=[{"task_id": "T1", "issue": "nit: wording", "severity": "minor"}],
     )
 
-    assert (result, next_state, next_step) == ("success", megaplan.STATE_DONE, None)
+    assert (result, next_state, next_step) == ("force_proceeded", megaplan.STATE_DONE, None)
     assert any("non-blocking/cosmetic" in issue for issue in issues)
     assert not any("recoverable blocked" in issue for issue in issues)
 

@@ -514,6 +514,81 @@ def test_review_softens_substantive_verdict_without_evidence_files_and_can_kick_
     assert pr.exit_kind == "success"
 
 
+def test_review_force_proceed_records_outcome_matching_hashed_artifact(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+    state = load_state(plan_fixture.plan_dir)
+    state["history"].extend(
+        {"step": "review", "result": "needs_rework"} for _ in range(3)
+    )
+    megaplan._core.atomic_write_json(plan_fixture.plan_dir / "state.json", state)
+
+    worker = WorkerResult(
+        payload={
+            "review_verdict": "needs_rework",
+            "criteria": [
+                {"name": "copy polish", "priority": "should", "pass": False, "evidence": "Minor wording remains."}
+            ],
+            "issues": ["Minor cosmetic wording remains."],
+            "summary": "Needs cosmetic rework.",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "issue": "nit: wording",
+                    "expected": "Cleaner copy.",
+                    "actual": "Acceptable but not polished.",
+                    "severity": "minor",
+                }
+            ],
+            "task_verdicts": [
+                {"task_id": "T1", "reviewer_verdict": "Pass with cosmetic nit.", "evidence_files": ["IMPLEMENTED_BY_MEGAPLAN.txt"]},
+                {"task_id": "T2", "reviewer_verdict": "Pass with command evidence.", "evidence_files": ["IMPLEMENTED_BY_MEGAPLAN.txt"]},
+            ],
+            "sense_check_verdicts": [
+                {"sense_check_id": "SC1", "verdict": "Confirmed."},
+                {"sense_check_id": "SC2", "verdict": "Confirmed."},
+            ],
+        },
+        raw_output="review cosmetic rework",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="review-force-proceeded",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "codex", "persistent", False),
+    )
+
+    response = megaplan.handle_review(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    state_after = load_state(plan_fixture.plan_dir)
+    stored_review = read_json(plan_fixture.plan_dir / "review.json")
+    receipt = read_json(plan_fixture.plan_dir / "step_receipt_review_v1.json")
+    artifact_hash = megaplan._core.sha256_file(plan_fixture.plan_dir / "review.json")
+
+    assert response["success"] is True
+    assert response["state"] == megaplan.STATE_DONE
+    assert state_after["current_state"] == megaplan.STATE_DONE
+    assert state_after["history"][-1]["result"] == "force_proceeded"
+    assert state_after["history"][-1]["artifact_hash"] == artifact_hash
+    assert stored_review["review_verdict"] == "needs_rework"
+    assert stored_review["outcome"]["result"] == "force_proceeded"
+    assert receipt["verdict"] == "force_proceeded"
+
+
 def test_review_incomplete_rework_payload_stays_in_review(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,

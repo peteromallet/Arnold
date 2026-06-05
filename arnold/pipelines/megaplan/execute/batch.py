@@ -218,6 +218,130 @@ class BatchResult:
     execution_audit: dict[str, Any]
     finalize_hash: str
     attribution_records: list[dict[str, Any]] = field(default_factory=list)
+    routing_degradations: list[str] = field(default_factory=list)
+
+
+def normalize_tier_map(tier_map: dict[Any, Any] | None) -> dict[int, str] | None:
+    if not isinstance(tier_map, dict) or not tier_map:
+        return None
+    normalized: dict[int, str] = {}
+    for raw_key, raw_value in tier_map.items():
+        try:
+            key = int(raw_key)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(raw_value, str) and raw_value:
+            normalized[key] = raw_value
+    return normalized or None
+
+
+def _strip_provider_prefix(model: str | None) -> str | None:
+    if not isinstance(model, str) or not model.strip():
+        return None
+    value = model.strip()
+    provider, sep, bare = value.partition(":")
+    known_prefixes = {
+        "anthropic",
+        "claude",
+        "codex",
+        "deepseek",
+        "fireworks",
+        "hermes",
+        "local",
+        "minimax",
+        "nous",
+        "openai",
+        "openrouter",
+        "zhipu",
+    }
+    if sep and provider.lower() in known_prefixes and bare:
+        return bare
+    return value
+
+
+def _models_match(selected: str | None, actual: str | None) -> bool:
+    if not selected or not actual:
+        return True
+    return selected == actual or _strip_provider_prefix(selected) == _strip_provider_prefix(actual)
+
+
+def _build_routing_record(
+    *,
+    batch_complexity: int | None,
+    selected_tier: int | None,
+    selected_spec: str | None,
+    resolved_agent: str,
+    resolved_mode: str,
+    resolved_model: str | None,
+    tier_map_configured: bool,
+    tier_routing_active: bool,
+) -> dict[str, Any]:
+    return {
+        "batch_complexity": batch_complexity,
+        "selected_tier": selected_tier,
+        "selected_spec": selected_spec,
+        "resolved_agent": resolved_agent,
+        "resolved_mode": resolved_mode,
+        "resolved_model": resolved_model,
+        "actual_agent": None,
+        "actual_model": None,
+        "tier_map_configured": tier_map_configured,
+        "tier_routing_active": tier_routing_active,
+        "warnings": [],
+    }
+
+
+def _finalize_routing_record(
+    routing: dict[str, Any] | None,
+    *,
+    actual_agent: str,
+    actual_model: str | None,
+    plan_dir: Path,
+    batch_number: int,
+) -> list[str]:
+    if routing is None:
+        return []
+    routing["actual_agent"] = actual_agent
+    routing["actual_model"] = actual_model
+    warnings = routing.setdefault("warnings", [])
+    if routing.get("resolved_model") and not actual_model:
+        warnings.append("actual_model_missing")
+
+    degradations: list[str] = []
+    if routing.get("tier_map_configured") and not routing.get("tier_routing_active"):
+        degradations.append("tier map configured but tier routing was inactive")
+    if routing.get("tier_map_configured") and routing.get("selected_spec") is None:
+        degradations.append(
+            f"tier map configured but no spec matched selected tier {routing.get('selected_tier')}"
+        )
+    if routing.get("resolved_agent") and routing.get("actual_agent") != routing.get("resolved_agent"):
+        degradations.append(
+            f"selected agent {routing.get('resolved_agent')} but worker returned {routing.get('actual_agent')}"
+        )
+    if not _models_match(routing.get("resolved_model"), actual_model):
+        degradations.append(
+            f"selected model {routing.get('resolved_model')} but provider reported {actual_model}"
+        )
+    if degradations:
+        try:
+            from arnold.pipelines.megaplan.observability.events import EventKind, emit
+
+            emit(
+                EventKind.ROUTING_DEGRADATION,
+                plan_dir=plan_dir,
+                phase="execute",
+                payload={
+                    "batch_number": batch_number,
+                    "degradations": degradations,
+                    "routing": dict(routing),
+                },
+            )
+        except Exception:
+            log.warning("Routing degradation event emission failed", exc_info=True)
+    return [
+        "Routing audit degradation: " + degradation
+        for degradation in degradations
+    ]
 
 
 def _positive_int_or_default(value: Any, default: int) -> int:
@@ -374,6 +498,7 @@ def _run_and_merge_batch(
     batch_number: int,
     batches_total: int,
     quality_config: dict[str, Any],
+    routing_record: dict[str, Any] | None = None,
     capture_git_status_snapshot_fn: Callable[
         [Path], tuple[dict[str, str], str | None]
     ] = _capture_git_status_snapshot,
@@ -411,7 +536,17 @@ def _run_and_merge_batch(
         prompt_override=prompt_override,
     )
     payload = dict(worker.payload)
+    routing_degradations = _finalize_routing_record(
+        routing_record,
+        actual_agent=agent,
+        actual_model=worker.model_actual,
+        plan_dir=plan_dir,
+        batch_number=batch_number,
+    )
+    if routing_record is not None:
+        payload["routing"] = routing_record
     deviations = list(payload.get("deviations", []))
+    deviations.extend(routing_degradations)
     batch_task_id_set = set(batch_task_ids)
     if not is_prose_mode(state):
         deviations.extend(
@@ -509,6 +644,7 @@ def _run_and_merge_batch(
         execution_audit=execution_audit,
         finalize_hash=sha256_file(plan_dir / "finalize.json"),
         attribution_records=list(attribution_result.records),
+        routing_degradations=routing_degradations,
     )
 
 
@@ -539,6 +675,7 @@ def handle_execute_one_batch(
     resolved_model: str | None = None,
     tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
+    tier_map = normalize_tier_map(tier_map)
     finalize_data = read_json(plan_dir / "finalize.json")
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
@@ -615,6 +752,7 @@ def handle_execute_one_batch(
     )
     # Tier routing observability — populated only when tier_map is active.
     tier_routing_active = bool(tier_map)
+    raw_batch_complexity: int | None = None
     tier_complexity: int | None = None
     tier_spec_raw: str | None = None
     tier_resolved_model: str | None = None
@@ -625,6 +763,7 @@ def handle_execute_one_batch(
     tier_low_confidence: bool = False
     if tier_map:
         batch_complexity = compute_batch_complexity(finalize_data, batch_task_ids)
+        raw_batch_complexity = batch_complexity
         tier_complexity = batch_complexity
         resolution = _calibration_tier_spec(
             plan_dir=plan_dir,
@@ -658,6 +797,18 @@ def handle_execute_one_batch(
             )
             save_state_merge_meta(plan_dir, state)
 
+    selected_resolved_model = model if model is not None else resolved_model
+    routing_record = _build_routing_record(
+        batch_complexity=raw_batch_complexity,
+        selected_tier=tier_complexity,
+        selected_spec=tier_spec_raw,
+        resolved_agent=agent,
+        resolved_mode=mode,
+        resolved_model=selected_resolved_model,
+        tier_map_configured=bool(tier_map),
+        tier_routing_active=tier_routing_active,
+    )
+
     try:
         result = _run_and_merge_batch(
             root=root,
@@ -677,6 +828,7 @@ def handle_execute_one_batch(
             batch_number=batch_number,
             batches_total=batches_total,
             quality_config=quality_config,
+            routing_record=routing_record,
             capture_git_status_snapshot_fn=_capture_git_status_snapshot,
         )
     except CliError as error:
@@ -730,6 +882,8 @@ def handle_execute_one_batch(
     blocked_task_reason = _blocked_task_reason(batch_blocked_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
+    if result.routing_degradations:
+        blocking_reasons.extend(result.routing_degradations)
     all_tracked = all(
         task.get("status") in {"done", "skipped"}
         for task in tracked_tasks
@@ -764,9 +918,21 @@ def handle_execute_one_batch(
             state=state,
             phase_context=f"final execute batch {batch_number}/{batches_total}",
         )
+    if drift is not None:
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
+    routing_blocked = any(
+        reason in blocking_reasons for reason in result.routing_degradations
+    )
     blocked = bool(blocking_reasons)
+    if routing_blocked:
+        state["current_state"] = STATE_BLOCKED
+        state["resume_cursor"] = {
+            "phase": "execute",
+            "batch_index": batch_number,
+            "retry_strategy": "fresh_session",
+            "reason": "routing_degradation",
+        }
     if is_final_batch and all_tracked and not blocked:
         state["current_state"] = STATE_EXECUTED
 
@@ -863,7 +1029,7 @@ def handle_execute_one_batch(
             + ". Re-run execute to complete tracking."
         )
         next_step = "execute"
-        response_state = STATE_FINALIZED
+        response_state = STATE_BLOCKED if routing_blocked else STATE_FINALIZED
     elif is_final_batch and all_tracked:
         summary = result.payload.get("output", "Batch complete.") + tracking_note
         next_step = "review"
@@ -907,6 +1073,8 @@ def handle_execute_one_batch(
         "blocked_task_ids": batch_blocked_ids,
         "_phase_outcome": phase_outcome,
     }
+    if routing_blocked:
+        response["result"] = "blocked"
     # Tier routing observability — omitted for flat profiles.
     if tier_routing_active:
         response["batch_complexity"] = tier_complexity
@@ -1214,6 +1382,7 @@ def handle_execute_auto_loop(
     resolved_model: str | None = None,
     tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
+    tier_map = normalize_tier_map(tier_map)
     finalize_data = read_json(plan_dir / "finalize.json")
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
@@ -1461,6 +1630,7 @@ def handle_execute_auto_loop(
     timeout_error: CliError | None = None
     latest_session_id: str | None = None
     blocking_reasons: list[str] = []
+    routing_degradations: list[str] = []
     timeout_recovery: StepResponse | None = None
     # Per-batch tier routing: track the previous batch's resolved (agent, model)
     # identity so we can force a fresh session when the model changes.
@@ -1505,6 +1675,7 @@ def handle_execute_auto_loop(
             agent, mode, refreshed, model
         )
         # Tier routing per-batch observability (only populated when active).
+        batch_raw_complexity: int | None = None
         batch_tier_complexity: int | None = None
         batch_tier_spec: str | None = None
         batch_tier_source: str | None = None
@@ -1515,6 +1686,7 @@ def handle_execute_auto_loop(
             batch_complexity = compute_batch_complexity(
                 finalize_data, batch_task_ids
             )
+            batch_raw_complexity = batch_complexity
             batch_tier_complexity = batch_complexity
             resolution = _calibration_tier_spec(
                 plan_dir=plan_dir,
@@ -1559,6 +1731,20 @@ def handle_execute_auto_loop(
                 )
                 save_state_merge_meta(plan_dir, state)
 
+        batch_resolved_model = (
+            batch_model if batch_model is not None else resolved_model
+        )
+        routing_record = _build_routing_record(
+            batch_complexity=batch_raw_complexity,
+            selected_tier=batch_tier_complexity,
+            selected_spec=batch_tier_spec,
+            resolved_agent=batch_agent,
+            resolved_mode=batch_mode,
+            resolved_model=batch_resolved_model,
+            tier_map_configured=bool(tier_map),
+            tier_routing_active=tier_routing_active,
+        )
+
         try:
             # Per-batch tier routing may have replaced ``batch_model`` with a
             # tier-resolved literal (already a real model name). For the
@@ -1566,9 +1752,6 @@ def handle_execute_auto_loop(
             # ``model`` and ``resolved_model`` carries the default-applied
             # version. Use the tier-resolved literal when present (it is
             # already concrete), otherwise the caller-supplied resolved_model.
-            batch_resolved_model = (
-                batch_model if batch_model is not None else resolved_model
-            )
             result = _run_and_merge_batch(
                 root=root,
                 plan_dir=plan_dir,
@@ -1587,6 +1770,7 @@ def handle_execute_auto_loop(
                 batch_number=batch_number_for_artifact,
                 batches_total=batches_total_for_observation,
                 quality_config=quality_config,
+                routing_record=routing_record,
                 capture_git_status_snapshot_fn=_capture_git_status_snapshot,
             )
         except CliError as error:
@@ -1649,6 +1833,8 @@ def handle_execute_auto_loop(
                 "resolved_agent": batch_agent,
                 "resolved_mode": batch_mode,
                 "resolved_model": batch_model,
+                "actual_agent": result.payload.get("routing", {}).get("actual_agent"),
+                "actual_model": result.payload.get("routing", {}).get("actual_model"),
                 "routing_source": batch_tier_source,
                 "projected_tier": batch_tier_projected,
                 "counterfactual_tag": batch_tier_counterfactual_tag,
@@ -1656,6 +1842,7 @@ def handle_execute_auto_loop(
             })
         batch_payloads.append(result.payload)
         all_attribution_records.extend(result.attribution_records)
+        routing_degradations.extend(result.routing_degradations)
         if result.worker.trace_output is not None:
             trace_chunks.append(result.worker.trace_output)
         completed_task_ids.update(
@@ -1809,9 +1996,20 @@ def handle_execute_auto_loop(
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
     _append_scope_drift_blocker(blocking_reasons, state, drift)
+    if routing_degradations:
+        blocking_reasons.extend(routing_degradations)
 
+    routing_blocked = any(reason in blocking_reasons for reason in routing_degradations)
     blocked = bool(blocking_reasons)
-    if not blocked and timeout_error is None:
+    if routing_blocked:
+        state["current_state"] = STATE_BLOCKED
+        state["resume_cursor"] = {
+            "phase": "execute",
+            "batch_index": None,
+            "retry_strategy": "fresh_session",
+            "reason": "routing_degradation",
+        }
+    elif not blocked and timeout_error is None:
         state["current_state"] = STATE_EXECUTED
     if timeout_error is not None and latest_session_id is not None:
         apply_session_update(
@@ -1937,7 +2135,9 @@ def handle_execute_auto_loop(
         "monitor_hint": build_monitor_hint(plan_dir),
         "next_step": "execute" if blocked or timeout_error is not None else "review",
         "state": (
-            STATE_FINALIZED if blocked or timeout_error is not None else STATE_EXECUTED
+            STATE_BLOCKED
+            if routing_blocked
+            else STATE_FINALIZED if blocked or timeout_error is not None else STATE_EXECUTED
         ),
         "files_changed": aggregate_payload.get("files_changed", []),
         "deviations": deviations,
@@ -1948,6 +2148,8 @@ def handle_execute_auto_loop(
     }
     if active_blocked_task_ids:
         response["blocked_task_ids"] = sorted(active_blocked_task_ids)
+    if routing_blocked:
+        response["result"] = "blocked"
     if blocked_task_notes:
         response["blocked_task_notes"] = blocked_task_notes
     _attach_next_step_runtime(response)
