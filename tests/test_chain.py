@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import inspect
 import json
+import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from unittest.mock import ANY, patch
 
@@ -95,6 +99,34 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=True,
     )
+
+
+def _subparser(parser: argparse.ArgumentParser, name: str) -> argparse.ArgumentParser:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action.choices[name]
+    raise AssertionError(f"{name!r} subparser not found")
+
+
+def _long_options(parser: argparse.ArgumentParser) -> set[str]:
+    return {
+        option
+        for action in parser._actions
+        for option in action.option_strings
+        if option.startswith("--")
+    }
+
+
+def _static_long_option_literals(func: object) -> set[str]:
+    source = textwrap.dedent(inspect.getsource(func))
+    tree = ast.parse(source)
+    return {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("--")
+    }
 
 
 class _CliSmokeDriver:
@@ -1662,25 +1694,8 @@ def test_no_git_refresh_suppresses_subprocess_calls(tmp_path: Path) -> None:
     assert any("skipping git refresh" in m for m in msgs)
 
 
-def test_refresh_base_branch_default_invokes_git(tmp_path: Path) -> None:
-    """Default behavior (no_git_refresh=False) still issues the git commands."""
-    from arnold.pipelines.megaplan.chain import _refresh_base_branch
-
-    class _Proc:
-        returncode = 0
-
-    with patch("arnold.pipelines.megaplan.chain.subprocess.run", return_value=_Proc()) as mock_run:
-        _refresh_base_branch(tmp_path, "setup/cloud", writer=lambda _m: None)
-    # fetch + checkout + pull
-    assert mock_run.call_count == 3
-    cmds = [call.args[0] for call in mock_run.call_args_list]
-    assert cmds[0] == ["git", "fetch", "origin", "setup/cloud"]
-    assert cmds[1] == ["git", "checkout", "setup/cloud"]
-    assert cmds[2] == ["git", "pull", "--ff-only", "origin", "setup/cloud"]
-
-
-def test_refresh_base_branch_aborts_on_git_failure(tmp_path: Path) -> None:
-    """A failed checkout/pull must stop the chain before stale work executes."""
+def test_refresh_base_branch_default_fetches_without_checkout(tmp_path: Path) -> None:
+    """Default refresh must not checkout a base that may be locked in another worktree."""
     from arnold.pipelines.megaplan.chain import _refresh_base_branch
 
     calls = [
@@ -1691,10 +1706,32 @@ def test_refresh_base_branch_aborts_on_git_failure(tmp_path: Path) -> None:
             stderr="",
         ),
         subprocess.CompletedProcess(
-            args=["git", "checkout", "setup/cloud"],
-            returncode=1,
+            args=["git", "symbolic-ref", "--short", "HEAD"],
+            returncode=0,
+            stdout="feature\n",
+            stderr="",
+        ),
+    ]
+    msgs: list[str] = []
+
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", side_effect=calls) as mock_run:
+        _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append)
+    cmds = [call.args[0] for call in mock_run.call_args_list]
+    assert cmds[0] == ["git", "fetch", "origin", "setup/cloud"]
+    assert ["git", "checkout", "setup/cloud"] not in cmds
+    assert any("local setup/cloud checkout refresh skipped" in msg for msg in msgs)
+
+
+def test_refresh_base_branch_aborts_on_fetch_failure(tmp_path: Path) -> None:
+    """A failed fetch still stops the chain before stale work executes."""
+    from arnold.pipelines.megaplan.chain import _refresh_base_branch
+
+    calls = [
+        subprocess.CompletedProcess(
+            args=["git", "fetch", "origin", "setup/cloud"],
+            returncode=128,
             stdout="",
-            stderr="local changes would be overwritten",
+            stderr="fatal: unable to access origin",
         ),
     ]
     msgs: list[str] = []
@@ -1704,8 +1741,8 @@ def test_refresh_base_branch_aborts_on_git_failure(tmp_path: Path) -> None:
             _refresh_base_branch(tmp_path, "setup/cloud", writer=msgs.append)
 
     assert excinfo.value.code == "git_refresh_failed"
-    assert "git checkout setup/cloud exited 1" in excinfo.value.message
-    assert any("local changes would be overwritten" in msg for msg in msgs)
+    assert "git fetch origin setup/cloud exited 128" in excinfo.value.message
+    assert any("unable to access origin" in msg for msg in msgs)
 
 
 def test_plan_state_uses_module_launcher(tmp_path: Path) -> None:
@@ -1723,9 +1760,14 @@ def test_plan_state_uses_module_launcher(tmp_path: Path) -> None:
         "-m",
         "arnold.pipelines.megaplan",
         "status",
+        "--project-dir",
+        str(tmp_path),
         "--plan",
         "demo-plan",
     ]
+    assert mock_run.call_args.kwargs["cwd"] == str(chain_module.megaplan_engine_root())
+    env = mock_run.call_args.kwargs["env"]
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(chain_module.megaplan_engine_root())
 
 
 def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
@@ -1785,6 +1827,18 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
         "--idea-file",
         str(idea_path),
     ]
+    assert mock_run.call_args.kwargs["cwd"] == str(chain_module.megaplan_engine_root())
+    env = mock_run.call_args.kwargs["env"]
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == str(chain_module.megaplan_engine_root())
+
+
+def test_init_plan_long_options_are_registered_on_init_parser() -> None:
+    from arnold.pipelines.megaplan.cli import build_parser
+
+    emitted = _static_long_option_literals(chain_module._init_plan)
+    registered = _long_options(_subparser(build_parser(), "init"))
+
+    assert emitted <= registered
 
 
 def test_init_plan_warns_when_vendor_ignored_by_locked_profile(tmp_path: Path) -> None:

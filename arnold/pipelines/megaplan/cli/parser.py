@@ -100,6 +100,16 @@ def _add_workflow_shape_args(parser: argparse.ArgumentParser) -> None:
         "fill in afterward. Runs non-interactively under megaplan auto "
         "\u2014 never blocks on human input.",
     )
+    parser.add_argument(
+        "--no-prep-clarify",
+        dest="prep_clarify",
+        action="store_false",
+        default=True,
+        help="Disable the prep clarify gate so the prep phase never halts at "
+        "awaiting_human_verify to ask a clarifying question (it proceeds with "
+        "its best understanding instead). Only effective when prep runs. "
+        "Used by chain milestones with prep_clarify: false for unattended runs.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
