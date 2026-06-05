@@ -16,6 +16,7 @@ caller can intervene.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -1094,6 +1095,73 @@ def _next_escalation_tier(
     return None
 
 
+def _read_finalize_data(plan_dir: Path | None) -> dict[str, Any] | None:
+    if plan_dir is None:
+        return None
+    try:
+        with (plan_dir / "finalize.json").open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _pin_tasks_to_tier(
+    plan_dir: Path | None,
+    task_ids: list[str],
+    new_tier: int,
+) -> list[str]:
+    """Pin every task in *task_ids* to at least *new_tier* in ``finalize.json``."""
+    data = _read_finalize_data(plan_dir)
+    if data is None:
+        return []
+    tasks = data.get("tasks")
+    if not isinstance(tasks, list):
+        return []
+    wanted = set(task_ids)
+    mutated: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or task_id not in wanted:
+            continue
+        existing = task.get("tier_override")
+        task["tier_override"] = max(existing, new_tier) if isinstance(existing, int) else new_tier
+        mutated.append(task_id)
+    if mutated and plan_dir is not None:
+        try:
+            _write_json_atomic(plan_dir / "finalize.json", data)
+        except OSError:
+            logging.getLogger("megaplan").warning(
+                "_pin_tasks_to_tier: failed writing finalize.json", exc_info=True
+            )
+            return []
+    return mutated
+
+
+def _current_task_override(plan_dir: Path | None, task_id: str) -> int | None:
+    data = _read_finalize_data(plan_dir)
+    if data is None:
+        return None
+    tasks = data.get("tasks")
+    if not isinstance(tasks, list):
+        return None
+    for task in tasks:
+        if isinstance(task, dict) and task.get("id") == task_id:
+            override = task.get("tier_override")
+            if isinstance(override, int) and 1 <= override <= 5:
+                return override
+            return None
+    return None
+
+
 def _get_review_marker(plan_dir: Path | None) -> float | None:
     """Return a monotonically-advancing marker for the current review cycle.
 
@@ -1114,6 +1182,105 @@ def _get_review_marker(plan_dir: Path | None) -> float | None:
         return review_path.stat().st_mtime
     except (OSError, FileNotFoundError):
         return None
+
+
+def _issue_signature(item: dict[str, Any]) -> str:
+    flag_id = item.get("flag_id")
+    if isinstance(flag_id, str) and flag_id.strip():
+        return f"flag:{flag_id.strip()}"
+    source = item.get("source")
+    issue = item.get("issue")
+    evidence_file = item.get("evidence_file")
+    text = "|".join(
+        str(value or "").strip().lower()
+        for value in (source, issue, evidence_file)
+    )
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    return f"issue:{digest}"
+
+
+def _review_rework_signatures_by_task(review_data: dict[str, Any]) -> dict[str, set[str]]:
+    if review_data.get("review_verdict") != "needs_rework":
+        return {}
+    result: dict[str, set[str]] = {}
+    for item in review_data.get("rework_items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        task_id = item.get("task_id")
+        if not isinstance(task_id, str) or not task_id or task_id.startswith("REVIEW"):
+            continue
+        result.setdefault(task_id, set()).add(_issue_signature(item))
+    return result
+
+
+def _load_review_rework_signatures(plan_dir: Path | None) -> dict[str, set[str]]:
+    if plan_dir is None:
+        return {}
+    try:
+        with (plan_dir / "review.json").open(encoding="utf-8") as handle:
+            review_data = json.load(handle)
+    except (FileNotFoundError, OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    if not isinstance(review_data, dict):
+        return {}
+    return _review_rework_signatures_by_task(review_data)
+
+
+def _nonconverging_rework_tasks(
+    *,
+    previous: dict[str, set[str]],
+    current: dict[str, set[str]],
+    streaks: dict[str, int],
+) -> list[str]:
+    nonconverging: list[str] = []
+    for task_id, current_signatures in current.items():
+        prior_signatures = previous.get(task_id, set())
+        if not prior_signatures:
+            streaks[task_id] = 1
+            continue
+        if current_signatures < prior_signatures:
+            streaks[task_id] = 1
+            continue
+        repeated_issue = bool(prior_signatures & current_signatures)
+        non_shrinking = prior_signatures <= current_signatures
+        if repeated_issue or non_shrinking:
+            streaks[task_id] = streaks.get(task_id, 1) + 1
+        else:
+            streaks[task_id] = 1
+        if streaks[task_id] >= 2:
+            nonconverging.append(task_id)
+    for task_id in set(streaks) - set(current):
+        streaks.pop(task_id, None)
+    return sorted(nonconverging)
+
+
+def _task_complexity(plan_dir: Path | None, task_id: str) -> int | None:
+    data = _read_finalize_data(plan_dir)
+    if data is None:
+        return None
+    for task in data.get("tasks", []) or []:
+        if not isinstance(task, dict) or task.get("id") != task_id:
+            continue
+        complexity = task.get("complexity")
+        if isinstance(complexity, int) and 1 <= complexity <= 5:
+            return complexity
+    return None
+
+
+def _review_nonconvergence_escalation_plan(
+    *,
+    plan_dir: Path | None,
+    task_id: str,
+    ladder: dict[int, str],
+) -> tuple[int | None, tuple[int, str] | None]:
+    baseline = _current_task_override(plan_dir, task_id)
+    observed_tier = _latest_execute_max_tier(plan_dir)
+    task_complexity = _task_complexity(plan_dir, task_id)
+    for candidate in (observed_tier, task_complexity):
+        if candidate is None:
+            continue
+        baseline = max(baseline, candidate) if baseline is not None else candidate
+    return baseline, _next_escalation_tier(ladder, current_tier=baseline)
 
 
 def _latest_artifact_name(plan_dir: Path | None) -> str | None:
@@ -1770,6 +1937,9 @@ def drive(
     progress_emitter = ProgressEmitter.from_env(progress_env)
     last_review_marker = _get_review_marker(plan_dir)
     rework_cycles_observed = 0
+    review_rework_signatures = _load_review_rework_signatures(plan_dir)
+    review_rework_streaks: dict[str, int] = {}
+    review_rework_escalated_tasks: set[str] = set()
 
     def _record_failure(**kwargs: Any) -> None:
         _record_lifecycle_failure(**kwargs, progress_emitter=progress_emitter)
@@ -2173,6 +2343,106 @@ def drive(
                     rework_cycles_observed=rework_cycles_observed,
                 )
                 stall_count = 0
+                current_signatures = _load_review_rework_signatures(plan_dir)
+                nonconverging_tasks = _nonconverging_rework_tasks(
+                    previous=review_rework_signatures,
+                    current=current_signatures,
+                    streaks=review_rework_streaks,
+                )
+                review_rework_signatures = current_signatures
+                if nonconverging_tasks:
+                    from arnold.pipelines.megaplan.auto_escalation import CATEGORY_POLICY, FailureCategory
+
+                    policy = CATEGORY_POLICY[FailureCategory.review_non_convergence]
+                    if policy.escalate:
+                        ladder = _read_execute_tier_ladder(plan_dir)
+                        for task_id in nonconverging_tasks:
+                            if task_id in review_rework_escalated_tasks:
+                                continue
+                            baseline_tier, next_tier = _review_nonconvergence_escalation_plan(
+                                plan_dir=plan_dir,
+                                task_id=task_id,
+                                ladder=ladder,
+                            )
+                            if next_tier is None:
+                                log(
+                                    "review non-convergence at escalation ceiling — "
+                                    f"task {task_id} remains subject to review rework cap",
+                                    task_id=task_id,
+                                    baseline_tier=baseline_tier,
+                                    category=FailureCategory.review_non_convergence.value,
+                                )
+                                continue
+                            new_tier, new_spec = next_tier
+                            pinned = _pin_tasks_to_tier(plan_dir, [task_id], new_tier)
+                            if not pinned:
+                                continue
+                            review_rework_escalated_tasks.add(task_id)
+                            tier_escalations_used += 1
+                            log(
+                                "review non-convergence — escalating task "
+                                f"{task_id} to tier {new_tier}",
+                                task_id=task_id,
+                                from_tier=baseline_tier,
+                                to_tier=new_tier,
+                                to_spec=new_spec,
+                                category=FailureCategory.review_non_convergence.value,
+                            )
+                            if plan_dir is not None:
+                                try:
+                                    emit_event(
+                                        EventKind.TIER_ESCALATED,
+                                        plan_dir=plan_dir,
+                                        phase="execute",
+                                        payload={
+                                            "from_tier": baseline_tier,
+                                            "to_tier": new_tier,
+                                            "from_model": (
+                                                ladder.get(baseline_tier)
+                                                if baseline_tier is not None
+                                                else None
+                                            ),
+                                            "to_model": new_spec,
+                                            "failure_count": review_rework_streaks.get(task_id, 0),
+                                            "escalations_used": tier_escalations_used,
+                                            "scope": "review_non_convergence",
+                                            "category": FailureCategory.review_non_convergence.value,
+                                            "failing_task_ids": [task_id],
+                                        },
+                                    )
+                                except Exception:
+                                    _warn_best_effort_emit_failure(
+                                        "M3A_WARN_EMIT_REVIEW_NONCONVERGENCE",
+                                        action="auto-review-nonconvergence",
+                                        plan_dir=plan_dir,
+                                        phase="execute",
+                                        event_kind="tier_escalated",
+                                        context={"task_id": task_id},
+                                    )
+                                state_data = _read_state_data(plan_dir)
+                                if isinstance(state_data, dict):
+                                    state_data.setdefault("history", [])
+                                    history = state_data.get("history")
+                                    if isinstance(history, list):
+                                        history.append(
+                                            {
+                                                "step": "escalation",
+                                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                                "duration_ms": 0,
+                                                "cost_usd": 0.0,
+                                                "result": FailureCategory.review_non_convergence.value,
+                                                "category": FailureCategory.review_non_convergence.value,
+                                                "scope": "review_non_convergence",
+                                                "from_tier": baseline_tier,
+                                                "to_tier": new_tier,
+                                                "to_model": new_spec,
+                                                "failing_task_ids": [task_id],
+                                            }
+                                        )
+                                        try:
+                                            _write_json_atomic(plan_dir / "state.json", state_data)
+                                        except OSError:
+                                            pass
             last_review_marker = current_review_marker
 
             if (

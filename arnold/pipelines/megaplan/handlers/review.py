@@ -113,7 +113,7 @@ def _is_substantive_reviewer_verdict(text: str) -> bool:
     return not is_rubber_stamp(text, strict=True)
 
 
-_REVIEW_INFRASTRUCTURE_SOURCES = {"review_incomplete"}
+_REVIEW_INFRASTRUCTURE_SOURCES = {"review_incomplete", "review_process_error"}
 _NO_REPOSITORY_INSPECTION_MARKERS = (
     "no repository inspection",
     "without repository inspection",
@@ -122,6 +122,16 @@ _NO_REPOSITORY_INSPECTION_MARKERS = (
     "could not inspect the repository",
     "no repo inspection",
     "without repo inspection",
+    "no verification commands",
+    "without verification commands",
+    "no file inspection",
+    "without file inspection",
+    "did not inspect files",
+    "didn't inspect files",
+    "premature final verdict",
+    "premature verdict",
+    "placeholder review",
+    "review could not complete",
 )
 
 
