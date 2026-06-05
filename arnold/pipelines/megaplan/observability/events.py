@@ -150,6 +150,7 @@ class EventKind:
     # ── Diagnostics (2) ────────────────────────────────────────────────
     HEALTH_CHECK_FAILED: str = "health_check_failed"
     DRIFT_DETECTED: str = "drift_detected"
+    ROUTING_DEGRADATION: str = "routing_degradation"
 
     # ── Activation (1) ─────────────────────────────────────────────────
     ACTIVATION_TRANSITIONED: str = "activation_transitioned"
@@ -203,6 +204,7 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.EVALUAND_RECORDED,
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,
+        EventKind.ROUTING_DEGRADATION,
         EventKind.ACTIVATION_TRANSITIONED,
         EventKind.STATE_CACHE_DRIFT,
         EventKind.CAPABILITY_CLAIM,
@@ -239,6 +241,7 @@ _SYSTEM_EVENT_KINDS: Set[str] = frozenset(
         EventKind.LOCK_RELEASED,
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,
+        EventKind.ROUTING_DEGRADATION,
     }
 )
 
