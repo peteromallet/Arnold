@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXTENSION_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "vibecomfy_roundtrip.js");
+const ADAPTER_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "comfy_adapter.js");
 
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -117,6 +118,10 @@ class FakeElement {
     }
   }
 
+  focus() {
+    this.ownerDocument.activeElement = this;
+  }
+
   addEventListener(type, listener) {
     if (!this.eventListeners[type]) {
       this.eventListeners[type] = [];
@@ -175,14 +180,24 @@ class FakeDocument {
 }
 
 function makeResponse(status, body) {
+  let normalizedBody = clone(body);
+  if (
+    normalizedBody
+    && typeof normalizedBody === "object"
+    && !Array.isArray(normalizedBody)
+    && "route_options" in normalizedBody
+    && !("ready" in normalizedBody)
+  ) {
+    normalizedBody.ready = true;
+  }
   return {
     ok: status >= 200 && status < 300,
     status,
     async json() {
-      return clone(body);
+      return clone(normalizedBody);
     },
     async text() {
-      return JSON.stringify(body);
+      return JSON.stringify(normalizedBody);
     },
   };
 }
@@ -255,6 +270,9 @@ export async function createBrowserHarness({
 
   const app = {
     canvas: {
+      // Instance-level onDrawForeground — ComfyUI 1.39.x assigns a function
+      // at build time. Capability detection checks typeof === 'function'.
+      onDrawForeground: function onDrawForeground(_ctx) { /* ComfyUI default */ },
       graph: {
         serialize() {
           const snapshot = clone(currentGraph);
@@ -340,8 +358,52 @@ export async function createBrowserHarness({
       operationLog.push({ kind: "response", url: key, status: 404 });
       return makeResponse(404, { error: `No mock for ${key}` });
     }
+    if (options.signal?.aborted) {
+      const abortError = new Error("The operation was aborted.");
+      abortError.name = "AbortError";
+      throw abortError;
+    }
+    const withAbort = (promise) => new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        if (options.signal) {
+          options.signal.removeEventListener("abort", onAbort);
+        }
+      };
+      const onAbort = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        const abortError = new Error("The operation was aborted.");
+        abortError.name = "AbortError";
+        reject(abortError);
+      };
+      if (options.signal) {
+        options.signal.addEventListener("abort", onAbort);
+      }
+      Promise.resolve(promise).then((value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(value);
+      }, (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(error);
+      });
+    });
     if (typeof entry === "function") {
-      const value = await entry({ url: key, options: clone(options) });
+      const value = await withAbort(entry({
+        url: key,
+        options: { ...clone(options), signal: options.signal },
+      }));
       operationLog.push({ kind: "response", url: key, status: value.status || 200 });
       return makeResponse(value.status || 200, value.body);
     }
@@ -359,6 +421,7 @@ export async function createBrowserHarness({
   await writeFile(path.join(scriptsRoot, "app.js"), "export const app = globalThis.__VIBECOMFY_BROWSER_APP__;\n");
   await writeFile(path.join(scriptsRoot, "api.js"), "export const api = globalThis.__VIBECOMFY_BROWSER_API__;\n");
   await writeFile(path.join(webRoot, "vibecomfy_roundtrip.js"), await readFile(EXTENSION_SOURCE, "utf8"));
+  await writeFile(path.join(webRoot, "comfy_adapter.js"), await readFile(ADAPTER_SOURCE, "utf8"));
 
   const apiEventListeners = {};
   const mockApi = {
@@ -498,6 +561,10 @@ export async function createBrowserHarness({
     registeredExtensions,
     async loadExtension() {
       return loadExtension();
+    },
+    async loadAdapter() {
+      const target = pathToFileURL(path.join(webRoot, "comfy_adapter.js")).href;
+      return import(`${target}?t=${Date.now()}`);
     },
     async setup() {
       const extension = getExtension();
