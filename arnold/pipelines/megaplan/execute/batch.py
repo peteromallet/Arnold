@@ -72,12 +72,18 @@ from arnold.pipelines.megaplan.types import (
     PlanState,
     StepResponse,
 )
-from arnold.pipelines.megaplan.planning.state import STATE_EXECUTED, STATE_FINALIZED
+from arnold.pipelines.megaplan.planning.state import (
+    STATE_BLOCKED,
+    STATE_EXECUTED,
+    STATE_FINALIZED,
+)
 from arnold.pipelines.megaplan.workers import WorkerResult
 
 log = logging.getLogger(__name__)
 
 _BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
+_UNROUTABLE_REWORK_ATTEMPTS_KEY = "unroutable_rework_attempts"
+_MAX_UNROUTABLE_REWORK_RERUNS = 2
 
 
 def _batch_task_signature(batch_task_ids: Iterable[str], batch_complexity: int) -> str:
@@ -969,6 +975,185 @@ def _reset_blocked_tasks_to_pending(finalize_data: dict[str, Any]) -> list[str]:
     return sorted(reset_ids)
 
 
+def _review_requests_rework(review_data: dict[str, Any]) -> bool:
+    return (
+        review_data.get("review_verdict") == "needs_rework"
+        or bool(review_data.get("rework_items"))
+    )
+
+
+def _review_rework_task_ids(
+    review_data: dict[str, Any],
+    finalize_data: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    task_ids = {
+        task["id"]
+        for task in finalize_data.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    }
+    runnable: list[str] = []
+    unrunnable: list[str] = []
+    seen: set[str] = set()
+    for item in review_data.get("rework_items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source")
+        task_id = item.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            unrunnable.append(str(task_id or "<missing>"))
+            continue
+        if source == "review_incomplete":
+            unrunnable.append(task_id)
+            continue
+        if task_id not in task_ids:
+            unrunnable.append(task_id)
+            continue
+        if task_id in seen:
+            continue
+        seen.add(task_id)
+        runnable.append(task_id)
+    return runnable, unrunnable
+
+
+def _block_no_runnable_rework(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    auto_approve: bool,
+    reason: str,
+    unrunnable_task_ids: list[str] | None = None,
+) -> StepResponse:
+    summary = f"Blocked: {reason}"
+    append_history(
+        state,
+        make_history_entry(
+            "execute",
+            duration_ms=0,
+            cost_usd=0.0,
+            result="blocked",
+            message=summary,
+        ),
+    )
+    save_state_merge_meta(plan_dir, state)
+    response: StepResponse = {
+        "success": False,
+        "step": "execute",
+        "summary": summary,
+        "artifacts": ["review.json", "finalize.json", "final.md"],
+        "monitor_hint": build_monitor_hint(plan_dir),
+        "next_step": "execute",
+        "state": STATE_FINALIZED,
+        "files_changed": [],
+        "deviations": [summary],
+        "warnings": [summary],
+        "auto_approve": auto_approve,
+        "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
+        "_phase_outcome": "blocked_by_quality",
+    }
+    if unrunnable_task_ids:
+        response["unrunnable_rework_task_ids"] = sorted(set(unrunnable_task_ids))
+    _attach_next_step_runtime(response)
+    return response
+
+
+def _handle_unroutable_review_rework(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    auto_approve: bool,
+    unrunnable_task_ids: list[str],
+) -> StepResponse:
+    meta = state.setdefault("meta", {})
+    prior_attempts = meta.get(_UNROUTABLE_REWORK_ATTEMPTS_KEY, 0)
+    attempts = prior_attempts + 1 if isinstance(prior_attempts, int) else 1
+    unmatched = ", ".join(sorted(set(unrunnable_task_ids))) or "<none>"
+    reason = (
+        "review requested rework but no runnable finalize task IDs could be derived. "
+        f"Unmatched rework task_id(s): {unmatched}. "
+        "Re-run review so rework_items reference concrete finalize task IDs."
+    )
+    meta[_UNROUTABLE_REWORK_ATTEMPTS_KEY] = attempts
+
+    if attempts <= _MAX_UNROUTABLE_REWORK_RERUNS:
+        state["current_state"] = STATE_EXECUTED
+        summary = (
+            "Review requested rework with only unroutable task IDs "
+            f"({unmatched}); re-running review "
+            f"({attempts}/{_MAX_UNROUTABLE_REWORK_RERUNS}) instead of blocking execute."
+        )
+        append_history(
+            state,
+            make_history_entry(
+                "execute",
+                duration_ms=0,
+                cost_usd=0.0,
+                result="rerun_review",
+                message=summary,
+            ),
+        )
+        save_state_merge_meta(plan_dir, state)
+        from arnold.pipelines.megaplan.observability.events import EventKind, emit
+
+        emit(
+            EventKind.PHASE_RETRY,
+            plan_dir=plan_dir,
+            phase="review",
+            payload={
+                "reason": "unroutable_review_rework",
+                "attempt": attempts,
+                "max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS,
+                "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
+            },
+        )
+        response: StepResponse = {
+            "success": True,
+            "step": "execute",
+            "summary": summary,
+            "artifacts": ["review.json", "finalize.json", "final.md"],
+            "monitor_hint": build_monitor_hint(plan_dir),
+            "next_step": "review",
+            "state": STATE_EXECUTED,
+            "files_changed": [],
+            "deviations": [],
+            "warnings": [summary],
+            "auto_approve": auto_approve,
+            "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
+            "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
+            "_phase_outcome": "success",
+        }
+        _attach_next_step_runtime(response)
+        return response
+
+    from arnold.pipelines.megaplan.observability.events import EventKind, emit
+
+    emit(
+        EventKind.STATE_TRANSITION,
+        plan_dir=plan_dir,
+        phase="execute",
+        payload={
+            "reason": "unroutable_review_rework",
+            "from": STATE_FINALIZED,
+            "to": STATE_BLOCKED,
+            "attempt": attempts,
+            "max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS,
+            "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
+        },
+    )
+    response = _block_no_runnable_rework(
+        plan_dir=plan_dir,
+        state=state,
+        auto_approve=auto_approve,
+        reason=(
+            f"{reason} Review re-run attempts exhausted "
+            f"({attempts - 1}/{_MAX_UNROUTABLE_REWORK_RERUNS}); "
+            "resolve the quality blocker or recover-blocked after operator review."
+        ),
+        unrunnable_task_ids=unrunnable_task_ids,
+    )
+    response["result"] = "blocked"
+    return response
+
+
 def handle_execute_auto_loop(
     *,
     root: Path,
@@ -1034,6 +1219,47 @@ def handle_execute_auto_loop(
         for task in tasks
         if task.get("status") == "pending" and isinstance(task.get("id"), str)
     ]
+    review_data: dict[str, Any] = {}
+    review_rework_task_ids: list[str] = []
+    unrunnable_rework_task_ids: list[str] = []
+    rework_mode = False
+    if not pending_tasks and (plan_dir / "review.json").exists():
+        try:
+            loaded_review = read_json(plan_dir / "review.json")
+        except (OSError, UnicodeDecodeError, ValueError):
+            loaded_review = {}
+        if isinstance(loaded_review, dict):
+            review_data = loaded_review
+            if _review_requests_rework(review_data):
+                review_rework_task_ids, unrunnable_rework_task_ids = _review_rework_task_ids(
+                    review_data,
+                    finalize_data,
+                )
+                if not review_rework_task_ids:
+                    if unrunnable_rework_task_ids:
+                        return _handle_unroutable_review_rework(
+                            plan_dir=plan_dir,
+                            state=state,
+                            auto_approve=auto_approve,
+                            unrunnable_task_ids=unrunnable_rework_task_ids,
+                        )
+                    return _block_no_runnable_rework(
+                        plan_dir=plan_dir,
+                        state=state,
+                        auto_approve=auto_approve,
+                        reason=(
+                            "review requested rework but did not provide any "
+                            "rework_items with concrete finalize task IDs."
+                        ),
+                        unrunnable_task_ids=unrunnable_rework_task_ids,
+                    )
+                state.setdefault("meta", {}).pop(_UNROUTABLE_REWORK_ATTEMPTS_KEY, None)
+                rework_mode = True
+                pending_tasks = [
+                    task
+                    for task in tasks
+                    if task.get("id") in set(review_rework_task_ids)
+                ]
     if blocked_task_ids:
         # Cross-session retry detection: if any blocked task was recorded
         # under a *different* invocation_id, this is a fresh session and we
@@ -1144,10 +1370,16 @@ def handle_execute_auto_loop(
     global_batch_lookup = {
         tuple(batch): index + 1 for index, batch in enumerate(global_batches)
     }
-    batches_to_run = [all_task_ids] if single_batch_mode else split_batches
+    batches_to_run = (
+        [review_rework_task_ids]
+        if rework_mode
+        else ([all_task_ids] if single_batch_mode else split_batches)
+    )
     total_batches = len(batches_to_run) or 1
     active_task_ids = set(
-        all_task_ids if single_batch_mode else [task["id"] for task in pending_tasks]
+        review_rework_task_ids
+        if rework_mode
+        else (all_task_ids if single_batch_mode else [task["id"] for task in pending_tasks])
     )
     active_sense_check_ids = set(
         all_sense_check_ids
