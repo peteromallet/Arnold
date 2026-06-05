@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from arnold.pipelines.megaplan.handlers import verifiability as verifiability_module
 from arnold.pipelines.megaplan.handlers.verifiability import get_human_verification_status, handle_verify_human
 from arnold.pipelines.megaplan.run_outcome import RunOutcome
 from arnold.pipelines.megaplan.types import CliError
@@ -83,6 +84,62 @@ def test_get_human_verification_status_same_timestamp_uses_last_file_entry(tmp_p
     assert status["all_deferred_must_verified"] is True
     assert status["rows"][0]["latest_verdict"] == "pass"
     assert status["rows"][0]["latest_timestamp"] == "2026-05-25T10:00:00Z"
+
+
+def test_verify_human_list_uses_worker_capabilities_for_pending_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_meta = {
+        "success_criteria": [
+            {
+                "criterion": "unit tests pass",
+                "priority": "must",
+                "requires": ["run_tests"],
+            },
+            {
+                "criterion": "browser inspected",
+                "priority": "must",
+                "requires": ["drive_browser"],
+            },
+        ]
+    }
+    meta_path = tmp_path / "plan-v1.meta.json"
+    meta_path.write_text(json.dumps(plan_meta), encoding="utf-8")
+    (tmp_path / "human_verifications.json").write_text(
+        json.dumps(
+            [
+                {
+                    "criterion_idx": 1,
+                    "timestamp": "2026-05-25T10:00:00Z",
+                    "verdict": "pass",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state = _make_plan_state(current_state=STATE_DONE)
+
+    monkeypatch.setattr(
+        verifiability_module,
+        "load_plan",
+        lambda _root, _plan: (tmp_path, state),
+    )
+    monkeypatch.setattr(
+        verifiability_module,
+        "latest_plan_meta_path",
+        lambda _plan_dir, _state: meta_path,
+    )
+
+    result = verifiability_module.handle_verify_human(
+        tmp_path,
+        argparse.Namespace(plan="test-plan", list_flag=True, json_flag=True),
+    )
+
+    assert result["pending"] == 0
+    assert result["all_deferred_must_verified"] is True
+    assert result["rows"][0]["deferred_must"] is False
+    assert result["rows"][1]["deferred_must"] is True
 
 
 # ---------------------------------------------------------------------------
