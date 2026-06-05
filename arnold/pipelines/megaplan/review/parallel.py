@@ -189,6 +189,7 @@ def run_parallel_review(
                 extra={
                     "index": index,
                     "check_id": check_id,
+                    "ledger_step_label": check_id,
                     "worker_options": _review_worker_options(
                         output_path=output_path,
                         session_db_path=_review_worker_db_path(plan_dir, f"review_{check_id}"),
@@ -206,6 +207,7 @@ def run_parallel_review(
         output_path=criteria_output_path,
         read_only=True,
         extra={
+            "ledger_step_label": "criteria_verdict",
             "worker_options": _review_worker_options(
                 output_path=criteria_output_path,
                 session_db_path=_review_worker_db_path(plan_dir, "review_criteria_verdict"),
