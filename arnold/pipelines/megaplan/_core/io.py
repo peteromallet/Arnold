@@ -950,13 +950,13 @@ def detect_available_agents() -> list[str]:
 # Runtime layout / path helpers
 # ---------------------------------------------------------------------------
 
-def _enforce_openai_strict_mode(node: Any) -> Any:
+def _enforce_openai_strict_mode(node: Any, _path: tuple[str, ...] = ()) -> Any:
     # OpenAI structured outputs reject any object schema where `required` doesn't
     # cover every key in `properties`. Some megaplan schemas use an explicit-required
     # carve-out that violates this rule. Make non-required properties nullable and
     # promote them to required so the submission is strict-mode-safe.
     if isinstance(node, dict):
-        node = {key: _enforce_openai_strict_mode(value) for key, value in node.items()}
+        node = {key: _enforce_openai_strict_mode(value, _path + (key,)) for key, value in node.items()}
         if "oneOf" in node and "anyOf" not in node:
             # Codex/OpenAI structured output accepts nested anyOf, but rejects
             # oneOf in output schemas. Megaplan's stored-artifact schemas can
@@ -968,7 +968,15 @@ def _enforce_openai_strict_mode(node: Any) -> Any:
         if node.get("type") == "object" and isinstance(node.get("properties"), dict):
             properties: dict[str, Any] = node["properties"]
             required = set(node.get("required", []))
-            missing = [key for key in properties if key not in required]
+            missing = [
+                key
+                for key in properties
+                if key not in required
+                and not (
+                    key == "deterministic_check"
+                    and _path[-3:] == ("properties", "rework_items", "items")
+                )
+            ]
             if missing:
                 for key in missing:
                     prop = properties[key]
@@ -983,7 +991,7 @@ def _enforce_openai_strict_mode(node: Any) -> Any:
                 node["required"] = list(properties.keys())
         return node
     if isinstance(node, list):
-        return [_enforce_openai_strict_mode(item) for item in node]
+        return [_enforce_openai_strict_mode(item, _path) for item in node]
     return node
 
 
