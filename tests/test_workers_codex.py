@@ -578,7 +578,8 @@ def test_run_codex_execute_runs_subprocess_in_work_dir(tmp_path: Path) -> None:
             duration_ms=1,
         )
 
-    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -885,7 +886,8 @@ def test_run_codex_step_recovers_execute_payload_from_jsonl_agent_message(tmp_pa
             duration_ms=25,
         )
 
-    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -960,7 +962,8 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
             duration_ms=25,
         )
 
-    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -1008,7 +1011,8 @@ def test_run_codex_step_execute_resume_omits_add_dir_for_current_codex_cli(tmp_p
             duration_ms=12,
         )
 
-    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -1022,6 +1026,54 @@ def test_run_codex_step_execute_resume_omits_add_dir_for_current_codex_cli(tmp_p
     assert result.payload == execute_payload
     assert result.session_id == "execute-session-2"
     assert result.duration_ms == 12
+
+
+def test_run_codex_step_execute_defaults_to_fresh_session(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    state["sessions"]["codex_executor"] = {
+        "id": "execute-session-2",
+        "created_at": "2026-01-01T00:00:00Z",
+        "last_used_at": "2026-01-01T00:00:00Z",
+        "mode": "persistent",
+        "refreshed": False,
+    }
+    execute_payload = _build_mock_payload("execute", state, plan_dir, output="done")
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        assert command[:3] == ["codex", "exec", "--skip-git-repo-check"]
+        assert "resume" not in command
+        assert "--add-dir" in command
+        output_idx = command.index("-o") + 1
+        output_path = Path(command[output_idx])
+        output_path.write_text(json.dumps(execute_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout='{"type":"thread.started","thread_id":"execute-session-fresh"}\n',
+            stderr="",
+            duration_ms=12,
+        )
+
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=True,
+            fresh=False,
+            prompt_override="execute prompt",
+        )
+
+    assert result.payload == execute_payload
+    assert result.session_id == "execute-session-fresh"
+    assert "codex_executor" not in state["sessions"]
+
 
 def test_diagnose_codex_failure_prefers_connection_errors_over_thread_id_numbers() -> None:
     from arnold.pipelines.megaplan.workers import _diagnose_codex_failure
@@ -1408,8 +1460,9 @@ def test_run_codex_step_resumed_session_retries_fresh_on_poisoned_output(
             duration_ms=5,
         )
 
-    with patch("arnold.pipelines.megaplan.workers._impl.create_codex_prompt", return_value="prompt"):
-        with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.create_codex_prompt", return_value="prompt"), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
             result = run_codex_step(
                 "execute",
                 state,

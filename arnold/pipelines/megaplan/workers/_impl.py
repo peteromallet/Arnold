@@ -164,7 +164,7 @@ DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 # slug-correct probe is the primary path and kills a wedge at ~the idle bound
 # (~5 min). Override via SHANNON_PROBE_RESCUE_CAP_SECONDS.
 DEFAULT_PROBE_RESCUE_CAP_SECONDS = 600.0
-DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS = 80_000_000
+DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS = 1_000_000
 CODEX_EXECUTOR_SESSION_HEADROOM_ENV = "MEGAPLAN_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS"
 
 
@@ -439,6 +439,7 @@ def run_command(
                 process = subprocess.run(
                     command,
                     input=stdin_text,
+                    stdin=subprocess.DEVNULL if stdin_text is None else None,
                     text=True,
                     cwd=str(cwd),
                     capture_output=True,
@@ -479,7 +480,7 @@ def run_command(
             process = spawn(
                 command,
                 cwd=str(cwd),
-                stdin=subprocess.PIPE if stdin_text is not None else None,
+                stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=env,
@@ -1991,6 +1992,8 @@ def run_codex_step(
     if effort is not None and effort not in _VALID_CODEX_EFFORTS:
         raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
     fresh = fresh or step not in _CROSS_CALL_PERSISTENT_STEPS
+    if step == "execute" and os.getenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION") != "1":
+        fresh = True
     if os.getenv(MOCK_ENV_VAR) == "1":
         _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
@@ -2170,6 +2173,10 @@ def run_codex_step(
             )
         except (TypeError, ValueError):
             pre_first_byte_s = 180.0
+        try:
+            codex_idle_s = float(os.getenv("MEGAPLAN_CODEX_IDLE_TIMEOUT_S", "600"))
+        except (TypeError, ValueError):
+            codex_idle_s = 600.0
         result = run_command(
             command,
             cwd=work_dir,
@@ -2178,6 +2185,7 @@ def run_codex_step(
             timeout=timeout_seconds,
             activity_callback=_activity_callback_for_state(state, plan_dir),
             pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
+            idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
         )
     except CliError as error:
         error.extra["raw_output"] = _merge_partial_output(
@@ -2638,6 +2646,28 @@ def _runtime_fallback_candidates(current_agent: str) -> list[str]:
     return [agent for agent in detect_available_agents() if agent != current_agent]
 
 
+_VENDOR_AWARE_DEFAULT_STEPS = frozenset({"critique_evaluator", "feedback"})
+
+
+def _effective_premium_vendor(args: argparse.Namespace) -> str | None:
+    vendor = getattr(args, "_effective_vendor", None) or getattr(args, "vendor", None)
+    return vendor if vendor in {"claude", "codex"} else None
+
+
+def _vendor_adjusted_default_spec(step: str, spec: str, args: argparse.Namespace) -> str:
+    vendor = _effective_premium_vendor(args)
+    if step not in _VENDOR_AWARE_DEFAULT_STEPS or vendor is None:
+        return spec
+    parsed = parse_agent_spec(spec)
+    if parsed.agent not in {"claude", "codex"} or parsed.agent == vendor:
+        return spec
+    if parsed.model is None and parsed.effort is None:
+        return vendor
+    if parsed.model is None and parsed.effort is not None:
+        return f"{vendor}:{parsed.effort}"
+    return spec
+
+
 def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None = None) -> AgentMode:
     """Returns an :class:`AgentMode` with agent, mode, refreshed, model, effort, resolved_model.
 
@@ -2707,7 +2737,9 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
             else:
                 # Fall back to config / defaults
                 config = load_config(home)
-                spec = config.get("agents", {}).get(step) or DEFAULT_AGENT_ROUTING[step]
+                configured_spec = config.get("agents", {}).get(step)
+                spec = configured_spec or DEFAULT_AGENT_ROUTING[step]
+                spec = _vendor_adjusted_default_spec(step, spec, args)
                 spec_parsed = parse_agent_spec(spec)
                 agent = spec_parsed.agent
                 model = spec_parsed.model

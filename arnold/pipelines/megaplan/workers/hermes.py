@@ -971,6 +971,8 @@ def run_hermes_step(
         _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override)
     fresh = fresh or step != "execute"
+    if step == "execute" and os.getenv("MEGAPLAN_HERMES_EXECUTE_PERSIST_SESSION") != "1":
+        fresh = True
 
     AIAgent, SessionDB = _import_hermes_runtime()
     # Logging is configured once at process startup by entry points such as
