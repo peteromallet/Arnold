@@ -69,9 +69,12 @@ type AssistantDiscovery = {
 };
 
 const POLL_MS = 100;
-const START_TIMEOUT_MS = 20_000;
+const START_TIMEOUT_MS = Number(Bun.env.SHANNON_START_TIMEOUT_MS ?? 20_000);
 const TURN_TIMEOUT_MS = Number(Bun.env.SHANNON_TURN_TIMEOUT_MS ?? 900_000);
 const WEB_SEARCH_COST_USD = 0.01;
+const SEND_DELAY_MIN_MS = Number(Bun.env.SHANNON_SEND_DELAY_MIN_MS ?? 350);
+const SEND_DELAY_MAX_MS = Number(Bun.env.SHANNON_SEND_DELAY_MAX_MS ?? 2500);
+const TYPE_PROMPT_MAX_CHARS = Number(Bun.env.SHANNON_TYPE_PROMPT_MAX_CHARS ?? 0);
 
 type ModelPricing = {
   inputPerMTok: number;
@@ -245,8 +248,26 @@ export function projectKeyForCwd(cwd: string): string {
   return resolve(cwd).normalize("NFC").replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
-export function claudeProjectFolder(cwd: string, home = Bun.env.HOME ?? ""): string {
-  return join(home, ".claude", "projects", projectKeyForCwd(cwd));
+export function claudeProjectsRoot(
+  claudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR,
+  home = Bun.env.HOME ?? "",
+): string {
+  // Claude Code v2.1.x scopes only the config file (.claude.json) to
+  // CLAUDE_CONFIG_DIR; transcripts/projects ALWAYS land under
+  // ~/.claude/projects (verified live: isolated config dir gets
+  // .claude.json+backups written, transcripts appear in the home root).
+  // Polling <configDir>/projects therefore waits forever on a folder
+  // Claude never writes.
+  void claudeConfigDir;
+  return join(home, ".claude", "projects");
+}
+
+export function claudeProjectFolder(
+  cwd: string,
+  claudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR,
+  home = Bun.env.HOME ?? "",
+): string {
+  return join(claudeProjectsRoot(claudeConfigDir, home), projectKeyForCwd(cwd));
 }
 
 function isRootProcess() {
@@ -290,26 +311,26 @@ async function maybeSendStartupEnterKeys(tmuxSession: string) {
 }
 
 // >>> megaplan-shannon-helpers v1 >>>
-function megaplanSlashCommand(prompt) {
+function megaplanSlashCommand(prompt: unknown): string | undefined {
   if (typeof prompt !== "string") return undefined;
   const trimmed = prompt.trimStart();
   if (!trimmed.startsWith("/")) return undefined;
   return trimmed.trim().split(/\s+/)[0];
 }
 
-function megaplanSlashPromptMatches(prompt, content) {
+function megaplanSlashPromptMatches(prompt: unknown, content: unknown): boolean {
   const cmd = megaplanSlashCommand(prompt);
   if (!cmd || typeof content !== "string") return false;
   return content.includes("<command-name>" + cmd);
 }
 
-function megaplanRowText(row) {
+function megaplanRowText(row: TranscriptRow): string {
   const top = typeof row.content === "string" ? row.content : "";
   const msg = typeof row.message?.content === "string" ? row.message.content : "";
   return top + "\n" + msg;
 }
 
-function megaplanSlashSynthReply(cmd, sessionId, row) {
+function megaplanSlashSynthReply(cmd: string, sessionId: string | undefined, row: TranscriptRow): JsonRecord {
   const sid = (row && (row.sessionId ?? row.session_id)) ?? sessionId;
   return {
     type: "assistant",
@@ -326,7 +347,7 @@ function megaplanSlashSynthReply(cmd, sessionId, row) {
   };
 }
 
-function megaplanSlashCompletionRow(prompt, rows) {
+function megaplanSlashCompletionRow(prompt: unknown, rows: TranscriptRow[]): JsonRecord | undefined {
   const cmd = megaplanSlashCommand(prompt);
   if (!cmd) return undefined;
   let cmdIdx = -1;
@@ -496,13 +517,27 @@ export function toSdkHookStarted(row: TranscriptRow): JsonRecord | undefined {
   };
 }
 
-export function toSdkInit(meta: SessionMetadata, rows: TranscriptRow[]): JsonRecord {
+export function toSdkInit(meta: SessionMetadata, rows: TranscriptRow[], claudeArgs: string[] = []): JsonRecord {
+  const nativeInit = rows.find((row) => row.type === "system" && row.subtype === "init");
+  if (nativeInit) {
+    return {
+      ...nativeInit,
+      cwd: typeof nativeInit.cwd === "string" ? nativeInit.cwd : meta.cwd,
+      session_id: nativeInit.session_id ?? nativeInit.sessionId ?? meta.sessionId,
+      uuid: nativeInit.uuid ?? randomUUID(),
+    };
+  }
+
   const userRow = rows.find((row) => row.type === "user");
   const versionedRow = rows.find((row) => typeof row.version === "string");
   const assistantRow = rows.find((row) => typeof row.message?.model === "string");
   const skillNames = skillNamesFromRows(rows);
-  const mcpServers = mcpServersFromRows(rows);
-  const tools = toolsFromMcpServers(mcpServers);
+  const rowMcpServers = firstArrayField(rows, "mcp_servers");
+  const mcpServers = rowMcpServers ?? mcpServersFromRows(rows);
+  const rowTools = firstArrayField(rows, "tools");
+  const tools = rowTools ?? toolsFromMcpServers(mcpServers as Array<{ name: string }>);
+  const rowAgents = firstArrayField(rows, "agents");
+  const rowPlugins = firstArrayField(rows, "plugins");
 
   return {
     type: "system",
@@ -511,17 +546,34 @@ export function toSdkInit(meta: SessionMetadata, rows: TranscriptRow[]): JsonRec
     session_id: meta.sessionId,
     tools,
     mcp_servers: mcpServers,
-    model: assistantRow?.message?.model ?? "unknown",
-    permissionMode: typeof userRow?.permissionMode === "string" ? userRow.permissionMode : "unknown",
+    model: assistantRow?.message?.model ?? stringArgValue(claudeArgs, "--model") ?? "unknown",
+    permissionMode: typeof userRow?.permissionMode === "string"
+      ? userRow.permissionMode
+      : stringArgValue(claudeArgs, "--permission-mode") ?? "unknown",
     apiKeySource: "none",
     claude_code_version: typeof versionedRow?.version === "string" ? versionedRow.version : undefined,
     output_style: "default",
-    agents: [],
+    agents: rowAgents ?? [],
     slash_commands: skillNames,
     skills: skillNames,
-    plugins: [],
+    plugins: rowPlugins ?? [],
     uuid: randomUUID(),
   };
+}
+
+function firstArrayField(rows: TranscriptRow[], field: string): unknown[] | undefined {
+  for (const row of rows) {
+    const value = row[field];
+    if (Array.isArray(value)) return value;
+  }
+  return undefined;
+}
+
+function stringArgValue(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  return typeof value === "string" && !value.startsWith("--") ? value : undefined;
 }
 
 export function toolsFromMcpServers(mcpServers: Array<{ name: string }>): string[] {
@@ -755,7 +807,12 @@ export async function runShannon(options: CliOptions) {
   };
 
   const emitMetadataOnce = () => {
-    if (!meta || metadataEmitted || options.outputFormat !== "stream-json") return;
+    if (
+      !meta
+      || metadataEmitted
+      || options.outputFormat !== "stream-json"
+      || Bun.env.SHANNON_EMIT_METADATA !== "1"
+    ) return;
     metadataEmitted = true;
     emitJson(toShannonMetadata(meta, cleanup));
   };
@@ -771,14 +828,22 @@ export async function runShannon(options: CliOptions) {
       throw new Error("Expected at least one user message on stdin for --input-format=stream-json");
     }
 
-    const firstPromptSentAt = Date.now();
     const _mpScrubKeys = Object.keys(Bun.env).filter((k) => /^(MEGAPLAN_|SHANNON_)/.test(k));
-    const _mpEnvPrefix = _mpScrubKeys.length > 0 ? ["env", ..._mpScrubKeys.flatMap((k) => ["-u", k])] : [];
-    const claudeLaunchArgs = isRootProcess()
-      ? [..._mpEnvPrefix, "claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]
-      : (Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN
-          ? [..._mpEnvPrefix, "claude", ...options.claudeArgs]
-          : [..._mpEnvPrefix, "claude", ...options.claudeArgs, prompt]);
+    // tmux spawns the command with the SERVER's environment (not this
+    // process's) when a server already exists, so CLAUDE_CONFIG_DIR silently
+    // vanishes: Claude then writes transcripts to ~/.claude while we poll the
+    // isolated dir (transcript timeout), and deterministic --session-id
+    // retries collide with the stray ~/.claude session file (instant exit,
+    // "can't find pane"). Inject it explicitly into the spawned command.
+    const _mpEnvSets = Bun.env.CLAUDE_CONFIG_DIR ? [`CLAUDE_CONFIG_DIR=${Bun.env.CLAUDE_CONFIG_DIR}`] : [];
+    const _mpEnvPrefix = _mpScrubKeys.length > 0 || _mpEnvSets.length > 0
+      ? ["env", ..._mpScrubKeys.flatMap((k) => ["-u", k]), ..._mpEnvSets]
+      : [];
+    const claudeLaunchArgs = [
+      ..._mpEnvPrefix,
+      "claude",
+      ...(isRootProcess() ? rootSafeClaudeArgs(options.claudeArgs) : options.claudeArgs),
+    ];
     await runCommand([
       "tmux",
       "new-session",
@@ -792,15 +857,12 @@ export async function runShannon(options: CliOptions) {
 
     void maybeSendStartupEnterKeys(tmuxSession);
 
-    let launchedWithPrompt = !(Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN && !isRootProcess());
     while (prompt) {
       promptCount += 1;
 
-      const promptSentAt = launchedWithPrompt ? firstPromptSentAt : Date.now();
-      if (!launchedWithPrompt) {
-        await waitForPrompt(tmuxSession);
-        await sendPrompt(tmuxSession, prompt);
-      }
+      await waitUntilReadyToSend(tmuxSession);
+      const promptSentAt = Date.now();
+      await sendPrompt(tmuxSession, prompt);
 
       if (options.replayUserMessages && options.outputFormat === "stream-json") {
         emitJson(toUserReplay(prompt));
@@ -837,7 +899,7 @@ export async function runShannon(options: CliOptions) {
           }
         }
 
-        const init = toSdkInit(meta, discovery.rows);
+        const init = toSdkInit(meta, discovery.rows, options.claudeArgs);
         if (options.outputFormat === "stream-json") {
           emitJson(init);
         } else if (options.outputFormat === "json") {
@@ -860,7 +922,6 @@ export async function runShannon(options: CliOptions) {
         emitOutput(options.outputFormat, turnMessages);
       }
 
-      launchedWithPrompt = false;
       prompt = await nextPrompt(promptIterator);
     }
 
@@ -1029,10 +1090,21 @@ export function rowContainsPromptAfter(
 
 async function waitForPrompt(tmuxSession: string) {
   const startedAt = Date.now();
+  const dbg = Bun.env.SHANNON_DEBUG_READINESS_LOG;
 
   while (Date.now() - startedAt < START_TIMEOUT_MS) {
     const pane = await runCommand(["tmux", "capture-pane", "-pt", tmuxSession, "-S", "-40"]);
-    if (pane.stdout.includes("❯") || pane.stdout.includes(">")) return;
+    if (dbg) {
+      const ready = paneLooksReadyForUserMessage(pane.stdout);
+      await Bun.write(dbg, `[${Date.now() - startedAt}ms] exit=${pane.exitCode} ready=${ready} len=${pane.stdout.length}\n--PANE--\n${pane.stdout}\n--END--\n`, { createPath: true });
+    }
+    const blocker = classifyClaudeStartupBlocker(pane.stdout);
+    if (blocker) {
+      throw new Error(
+        `Claude is waiting at a ${blocker.kind} prompt before Shannon can send a message: ${blocker.detail}\n\nCaptured tmux pane:\n${pane.stdout}`,
+      );
+    }
+    if (paneLooksReadyForUserMessage(pane.stdout)) return;
     await sleep(POLL_MS);
   }
 
@@ -1040,16 +1112,142 @@ async function waitForPrompt(tmuxSession: string) {
   throw new Error(`Timed out waiting for Claude prompt\n\nCaptured tmux pane:\n${pane}`);
 }
 
-async function sendPrompt(tmuxSession: string, prompt: string) {
-  const _mpBuf = `shannon-${tmuxSession}`;
-  const _mpLoad = Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  _mpLoad.stdin.write(prompt);
-  await _mpLoad.stdin.end();
-  if ((await _mpLoad.exited) !== 0) {
-    throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);
+type StartupBlocker = {
+  kind: "approval" | "auth" | "trust" | "onboarding";
+  detail: string;
+};
+
+export function classifyClaudeStartupBlocker(pane: string): StartupBlocker | undefined {
+  const normalized = pane.toLowerCase().replace(/\s+/g, " ");
+
+  if (
+    normalized.includes("do you trust")
+    || normalized.includes("project you trust")
+    || normalized.includes("trust this folder")
+    || normalized.includes("trust this workspace")
+  ) {
+    return { kind: "trust", detail: "workspace trust confirmation is blocking startup" };
   }
-  await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
-  await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+
+  if (
+    // One-time "Bypass Permissions mode" acceptance dialog (fresh config dir).
+    // Its "❯ 1. No, exit" default both matches the readiness regex AND exits
+    // Claude when Enter confirms it — classify it before readiness can see it.
+    normalized.includes("you accept all responsibility")
+    || normalized.includes("yes, i accept")
+  ) {
+    return { kind: "permission", detail: "bypass-permissions acceptance dialog is blocking startup" };
+  }
+
+  if (
+    normalized.includes("not logged in")
+    || normalized.includes("run /login")
+    || normalized.includes("please log in")
+    || normalized.includes("please login")
+    || normalized.includes("login required")
+    || normalized.includes("authentication required")
+  ) {
+    return { kind: "auth", detail: "Claude authentication is required" };
+  }
+
+  if (
+    normalized.includes("do you want to proceed")
+    || normalized.includes("allow this command")
+    || normalized.includes("approve this")
+    || normalized.includes("approval required")
+    || normalized.includes("permission required")
+    || normalized.includes("yes, and don't ask again")
+    || normalized.includes("yes, and don’t ask again")
+    || normalized.includes("no, and tell")
+  ) {
+    return { kind: "approval", detail: "Claude is waiting for an approval decision" };
+  }
+
+  if (
+    normalized.includes("press enter to continue")
+    || normalized.includes("accept the terms")
+    || normalized.includes("cost threshold")
+    || normalized.includes("onboarding")
+  ) {
+    return { kind: "onboarding", detail: "Claude onboarding or acknowledgement is blocking startup" };
+  }
+
+  return undefined;
+}
+
+export function paneLooksReadyForUserMessage(pane: string) {
+  const lines = pane.split(/\r?\n/).map((line) => line.trimEnd());
+  // tmux capture-pane pads the capture to the full pane height, so a short
+  // TUI leaves trailing blank lines that push the composer line out of a
+  // fixed last-N window. Drop the padding before windowing.
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+  const recent = lines.slice(-12);
+  return recent.some((line) => {
+    // Legacy: a bare prompt marker at end of line ("❯" / "│ ❯").
+    if (/(^|\s)[❯>]\s*$/.test(line)) return true;
+    // Composer input line with placeholder/typed text. Claude Code >=2.1.x
+    // renders the empty composer as `❯ Try "how do I log an error?"`, so the
+    // marker is no longer at end-of-line and the legacy regex misses a visibly
+    // ready prompt (Shannon then times out its readiness probe). Match the
+    // marker at the START of the line (after any box-drawing/whitespace prefix)
+    // followed by text — robust to the placeholder without matching a "❯" that
+    // appears mid-output.
+    const stripped = line.replace(/^[│|\s]+/, "");
+    return /^[❯>]\s+\S/.test(stripped);
+  });
+}
+
+async function waitUntilReadyToSend(tmuxSession: string) {
+  await waitForPrompt(tmuxSession);
+  await sleep(randomSendDelayMs());
+}
+
+function randomSendDelayMs() {
+  const min = Number.isFinite(SEND_DELAY_MIN_MS) ? Math.max(0, SEND_DELAY_MIN_MS) : 350;
+  const maxRaw = Number.isFinite(SEND_DELAY_MAX_MS) ? Math.max(0, SEND_DELAY_MAX_MS) : 2500;
+  const max = Math.max(min, maxRaw);
+  return Math.floor(min + Math.random() * (max - min + 1));
+}
+
+async function sendPrompt(tmuxSession: string, prompt: string) {
+  if (canTypePromptLiterally(prompt)) {
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "-l", prompt]);
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+    return;
+  }
+
+  const _mpBuf = randomUUID();
+  let primaryError: unknown;
+  try {
+    const _mpLoad = Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    _mpLoad.stdin.write(prompt);
+    await _mpLoad.stdin.end();
+    if ((await _mpLoad.exited) !== 0) {
+      throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);
+    }
+    await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    try {
+      await runCommand(["tmux", "delete-buffer", "-b", _mpBuf]);
+    } catch (deleteError) {
+      if (primaryError === undefined) {
+        throw deleteError;
+      }
+    }
+  }
+}
+
+function canTypePromptLiterally(prompt: string) {
+  return (
+    Number.isFinite(TYPE_PROMPT_MAX_CHARS)
+    && TYPE_PROMPT_MAX_CHARS > 0
+    && prompt.length <= TYPE_PROMPT_MAX_CHARS
+    && !/[\r\n\x00-\x1F\x7F]/.test(prompt)
+  );
 }
 
 async function nextPrompt(iterator: AsyncIterator<string>): Promise<string | undefined> {

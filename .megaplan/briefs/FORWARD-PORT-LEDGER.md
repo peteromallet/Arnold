@@ -51,12 +51,12 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 36 | `a18a2da5` | Idempotent restart, strict spec validation, checkout-free refresh | PORT | `arnold/pipelines/megaplan/chain`, tests | pending | Live re-derived commit. |
 | 37 | `02b34ccb` | Harden Shannon native parity | PORT | `arnold/pipelines/megaplan/vendor/shannon`, workers/tests | pending | Live re-derived commit. |
 | 38 | `7680cd81` | Create run artifact dir before empty MCP config | PORT | `arnold/pipelines/megaplan/workers`, vendor/shannon tests | pending | Live re-derived commit. |
-| 39 | `e4a46d12` | Project prompt context for review and execute | PORT | `arnold/pipelines/megaplan/prompts`, execute/review/tests | pending | Live re-derived commit. |
+| 39 | `e4a46d12` | Project prompt context for review and execute | PORT | `arnold/pipelines/megaplan/prompts`, execute/review/tests | pending | Partially ported prompt projection helpers for Shannon dependency; full row still needs audit. |
 | 40 | `c2007519` | Align native handoff and codex resume expectations | PORT | worker tests | pending | Live re-derived commit. |
-| 41 | `6b2697ba` | Never hard-fail review on large diffs | PORT | `arnold/pipelines/megaplan/review`, tests | pending | Live re-derived commit. |
+| 41 | `6b2697ba` | Never hard-fail review on large diffs | PORT | `arnold/pipelines/megaplan/review`, tests | pending | Partially ported `compact_review_prompt` dependency; full row still needs audit. |
 | 42 | `e1170b05` | Invariant model floor routing | PORT | `arnold/pipelines/megaplan/profiles`, routing, CLI/tests | pending | Live re-derived commit. |
-| 43 | `3aae6d0f` | Stop injecting technical-debt registry into prompts | PORT | `arnold/pipelines/megaplan/prompts`, prep/review/tests | pending | Live re-derived commit. |
-| 44 | `78efcf4a` | Calibrate prompt caps to context windows | PORT | `arnold/pipelines/megaplan/prompts`, model metadata/tests | pending | Live re-derived commit. |
+| 43 | `3aae6d0f` | Stop injecting technical-debt registry into prompts | PORT | `arnold/pipelines/megaplan/prompts`, prep/review/tests | pending | Prompt projection files touched as Shannon dependency; full row still needs audit. |
+| 44 | `78efcf4a` | Calibrate prompt caps to context windows | PORT | `arnold/pipelines/megaplan/prompts`, model metadata/tests | pending | `check_prompt_size` dependency ported; full row still needs audit. |
 | 45 | `e03c5206` | CLI status project-dir resolves plan from target | PORT | `arnold/pipelines/megaplan/cli`, tests | pending | Live re-derived commit. |
 | 46 | `0e365bcb` | Submit large prompts via file reference | DISCARD | n/a | rejected | Reject: explicitly reverted by `fc2c1a8b`. |
 | 47 | `fc2c1a8b` | Revert large-prompt file reference | DISCARD | n/a | rejected | Reject: only reverts rejected commit `0e365bcb`. |
@@ -65,8 +65,8 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 50 | `5f8045f3` | Record loud model-floor routing degradations | PORT | `arnold/pipelines/megaplan/profiles`, status/tests | pending | Live re-derived commit. |
 | 51 | `36cd544a` | Evidence-first v2 authority-kernel restructure | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | verified | Applied from committed range as docs/spec batch. |
 | 52 | `d3111214` | Evidence-first m0 write-isolation focus | PORT | `.megaplan/briefs/evidence-first-pipeline-semantics/**` | verified | Applied from committed range as docs/spec batch. |
-| 53 | `c4e5a8ba` | Shannon readiness detector misses pane padding | PORT | `arnold/pipelines/megaplan/vendor/shannon`, tests | pending | New live commit after old triage. |
-| 54 | `57015c39` | Shannon fresh-config gates and v2.1.x transcript root | PORT | `arnold/pipelines/megaplan/vendor/shannon`, workers/tests | pending | New live commit after old triage. |
+| 53 | `c4e5a8ba` | Shannon readiness detector misses pane padding | PORT | `arnold/pipelines/megaplan/vendor/shannon`, tests | verified | Applied to vendored `index.ts`; `bun test pane_ready.test.ts` passed. |
+| 54 | `57015c39` | Shannon fresh-config gates and v2.1.x transcript root | PORT | `arnold/pipelines/megaplan/vendor/shannon`, workers/tests | verified | Applied to vendored `index.ts` and `workers/shannon.py`; focused Shannon/Claude/tmux suite passed. |
 | 55 | `74d439bc` | Register `--no-prep-clarify` and guard chain/init flag drift | PORT | `arnold/pipelines/megaplan/handlers/init.py`, chain/tests | pending | New live commit after old triage. |
 | 56 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m0-engine-target-isolation.md` | Add L1 cwd and environment-contract evidence-first detail | PORT | same path | verified | Applied dirty doc patch on top of committed brief batch. |
 | 57 | dirty `.megaplan/briefs/evidence-first-pipeline-semantics/m4-review-evidence-service.md` | Evidence-first review evidence-service addition | PORT | same path | verified | Applied dirty doc patch on top of committed brief batch. |
@@ -79,11 +79,11 @@ Status lifecycle: `pending` -> `ported` -> `verified`, or terminal `superseded` 
 | 64 | dirty `megaplan/data/_codex_skills/babysit/SKILL.md` | Babysit skill hardening | PORT | `arnold/pipelines/megaplan/data/_codex_skills/babysit/SKILL.md` | verified | Applied via remapped dirty patch. |
 | 65 | dirty `megaplan/data/babysit_skill.md` | Babysit skill hardening | PORT | `arnold/pipelines/megaplan/data/babysit_skill.md` | verified | Applied via remapped dirty patch. |
 | 66 | dirty `megaplan/handlers/init.py` | High-fidelity missing idea-file diagnostic | PORT | `arnold/pipelines/megaplan/handlers/init.py` | verified | Applied via remapped dirty patch; `tests/test_handle_init_idea_file.py` passed. |
-| 67 | dirty `megaplan/vendor/shannon/VENDOR.md` | Document and complete Shannon P16/P17 | PORT | `arnold/pipelines/megaplan/vendor/shannon/VENDOR.md`, implementation/tests | ported | VENDOR doc applied; implementation/test rows remain pending in rows 53, 54, and 72. |
+| 67 | dirty `megaplan/vendor/shannon/VENDOR.md` | Document and complete Shannon P16/P17 | PORT | `arnold/pipelines/megaplan/vendor/shannon/VENDOR.md`, implementation/tests | verified | VENDOR doc applied; P16/P17 implementation and tests verified via rows 53, 54, and 72. |
 | 68 | dirty `megaplan/workers/_impl.py` | L1 cwd fix: Codex execute subprocess runs in `work_dir` | PORT | `arnold/pipelines/megaplan/workers/_impl.py` | verified | Applied via remapped dirty patch; `test_run_codex_execute_runs_subprocess_in_work_dir` passed. |
 | 69 | dirty `tests/test_handle_init_idea_file.py` | Regression for init idea-file diagnostic | PORT | same path | verified | Applied via remapped dirty patch; focused test file passed. |
 | 70 | dirty `tests/test_prep.py` | Prep regression update | PORT | same path | superseded | No net diff after M6; focused prep tests passed. |
 | 71 | dirty `tests/test_workers_codex.py` | Regression for Codex execute cwd behavior | PORT | same path | verified | Added manually in M6 import layout; focused worker test passed. |
-| 72 | untracked `megaplan/vendor/shannon/pane_ready.test.ts` | Shannon P16 pane-ready regression | PORT | `arnold/pipelines/megaplan/vendor/shannon/pane_ready.test.ts` | pending | Live untracked source file. |
+| 72 | untracked `megaplan/vendor/shannon/pane_ready.test.ts` | Shannon P16 pane-ready regression | PORT | `arnold/pipelines/megaplan/vendor/shannon/pane_ready.test.ts` | verified | Added under Arnold-hosted vendor path; Bun pane-ready test passed. |
 | 73 | untracked `.hypothesis/**` | Hypothesis generated examples | DISCARD | n/a | rejected | Generated local test cache; not forward-ported. |
 | 74 | untracked `runs/visual-understanding/**` | Generated visual-understanding crops | DISCARD | n/a | rejected | Generated local run output; not forward-ported. |
