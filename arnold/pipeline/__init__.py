@@ -26,6 +26,12 @@ a pipeline without reference to Megaplan-specific semantics:
 * ``Provenance``        — lineage sub-record of ``ContractResult``.
 * ``Freshness``         — TTL sub-record of ``ContractResult``.
 * ``CONTRACT_RESULT_SCHEMA_VERSION`` — SHA-256 hex digest of the contract shape.
+* ``ValidationResult``  — aggregate structural validation outcome.
+* ``ValidationDiagnostic`` — single deterministic validation failure.
+* ``ContractSchemaRegistry`` — neutral retained schema storage with hash-first lookup.
+* ``AcceptedVersionRange``   — inclusive logical-type history bounds for a consumer.
+* ``ContentValidatorRegistry`` — instance-local validator registry keyed by content_type.
+* ``select_audit_mode`` — deterministic full/manifest audit-mode selector.
 
 Sub-modules:
 
@@ -35,6 +41,10 @@ Sub-modules:
 * ``pattern_select``  — tournament selection primitives (top_1, top_k, threshold).
 * ``pattern_stops``   — loop-stop predicates (plateau, max_iters, etc.).
 * ``pattern_types``   — PromoteFn / JoinFn type aliases.
+* ``contract_validation`` — pure structural validation of ContractResult.payload.
+* ``schema_registry`` — neutral file-backed schema registry with atomic writes.
+* ``content_validation`` — content-type keyed validation hooks for blob metadata.
+* ``audit_policy``    — deterministic audit-mode selection for size-threshold seams.
 
 All public names are re-exported here.  Import from ``arnold.pipeline``:
 
@@ -43,7 +53,19 @@ All public names are re-exported here.  Import from ``arnold.pipeline``:
 No Megaplan re-exports appear here; this is the neutral surface.
 """
 
+from arnold.pipeline.audit_policy import AuditMode, AuditPolicyHook, select_audit_mode
 from arnold.pipeline.builder import PipelineBuilder
+from arnold.pipeline.content_validation import (
+    ContentValidator,
+    ContentValidatorRegistry,
+    no_op_content_validator,
+)
+from arnold.pipeline.contract_validation import (
+    ValidationDiagnostic,
+    ValidationResult,
+    validate_contract_result,
+    validate_payload_against_schema,
+)
 from arnold.pipeline.contracts import ContractLedger, coerce, is_legal_coercion, legal_coercions
 from arnold.pipeline.discovery import Manifest, ManifestError, TrustTier, classify, derive_tenant_id, read_manifest
 from arnold.pipeline.executor import (
@@ -68,6 +90,16 @@ from arnold.pipeline.profiles import (
     validate_declared_stage_keys,
 )
 from arnold.pipeline.registry import PipelineRegistry
+from arnold.pipeline.schema_registry import (
+    AcceptedVersionRange,
+    ContractSchemaRegistry,
+    SchemaRegistryError,
+    accepts_version,
+    canonical_schema_bytes,
+    canonical_schema_json,
+    normalize_schema_version,
+    schema_version_for,
+)
 from arnold.pipeline.state import StateDelta, apply_delta
 from arnold.pipeline.types import (
     CONTENT_TYPES,
@@ -96,11 +128,17 @@ from arnold.pipeline.types import (
 )
 
 __all__ = [
+    "AcceptedVersionRange",
+    "AuditMode",
+    "AuditPolicyHook",
     "CONTENT_TYPES",
     "CONTRACT_RESULT_SCHEMA_VERSION",
+    "ContentValidator",
+    "ContentValidatorRegistry",
     "ContentTypeRegistry",
     "ContractLedger",
     "ContractResult",
+    "ContractSchemaRegistry",
     "ContractStatus",
     "DEFAULT_PARALLEL_SAFE",
     "Edge",
@@ -130,8 +168,14 @@ __all__ = [
     "StepContext",
     "StepResult",
     "Suspension",
+    "SchemaRegistryError",
     "TrustTier",
+    "ValidationDiagnostic",
+    "ValidationResult",
     "apply_delta",
+    "accepts_version",
+    "canonical_schema_bytes",
+    "canonical_schema_json",
     "classify",
     "coerce",
     "derive_tenant_id",
@@ -144,19 +188,25 @@ __all__ = [
     "max_iters",
     "merge_profile_layers",
     "no_improvement",
+    "no_op_content_validator",
+    "normalize_schema_version",
     "parse_agent_spec_shape",
     "parse_profiles_doc",
     "plateau",
     "read_manifest",
     "register_schema",
+    "resolve_default_profile",
     "run_pipeline",
+    "schema_version_for",
     "select",
-    "threshold_reached",
+    "select_audit_mode",
     "threshold",
+    "threshold_reached",
     "top_1",
     "top_k",
-    "resolve_default_profile",
+    "validate_contract_result",
     "validate_declared_stage_keys",
+    "validate_payload_against_schema",
     "weighted_vote",
     "AgentSpecShape",
 ]
