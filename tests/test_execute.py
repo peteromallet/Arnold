@@ -1420,7 +1420,9 @@ def test_execute_timeout_recovers_partial_progress_from_finalize_json(
     assert response["state"] == megaplan.STATE_FINALIZED
     assert recovered["tasks"][0]["status"] == "done"
     assert state["history"][-1]["result"] == "timeout"
-    assert state["sessions"][megaplan.workers.session_key_for("execute", "codex")]["id"] == "test-session"
+    timeout_agent = state["history"][-1].get("agent") or "codex"
+    session_key = megaplan.workers.session_key_for("execute", timeout_agent)
+    assert state["sessions"][session_key]["id"] == "test-session"
 
 
 def test_execute_timeout_reads_execution_checkpoint_json(

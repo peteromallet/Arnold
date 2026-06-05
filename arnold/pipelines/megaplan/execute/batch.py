@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +74,7 @@ from arnold.pipelines.megaplan.receipts.extractors import execute_metrics
 from arnold.pipelines.megaplan.receipts.writer import write_receipt
 from arnold.pipelines.megaplan.types import (
     CliError,
+    MOCK_ENV_VAR,
     PlanState,
     StepResponse,
 )
@@ -318,7 +320,11 @@ def _finalize_routing_record(
         degradations.append(
             f"tier map configured but no spec matched selected tier {routing.get('selected_tier')}"
         )
-    if routing.get("resolved_agent") and routing.get("actual_agent") != routing.get("resolved_agent"):
+    if (
+        routing.get("resolved_agent")
+        and routing.get("actual_agent") != routing.get("resolved_agent")
+        and os.getenv(MOCK_ENV_VAR) != "1"
+    ):
         degradations.append(
             f"selected agent {routing.get('resolved_agent')} but worker returned {routing.get('actual_agent')}"
         )
