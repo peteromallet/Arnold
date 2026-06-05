@@ -3,9 +3,10 @@
 # Canonical name for the tier-1 profile (legacy alias: `basic` — both names
 # remain loadable while consumers migrate).
 #
-# DeepSeek V4 Pro handles every phase end-to-end — author, mechanical, and
-# sense-check (plan, prep, critique, revise, gate, finalize, execute, review,
-# loop_*, tiebreakers). No premium models wired in at all.
+# DeepSeek V4 Pro handles reasoning phases end-to-end — author, mechanical,
+# and sense-check (plan, prep, critique, revise, gate, review, loop_*,
+# tiebreakers). Finalize uses the premium floor when premium credentials are
+# available, with DeepSeek fallback handled by the resolver.
 #
 # Use for discovery, docs, and most routine programming — the rubric's tier-1
 # bucket where the patterns are stable and the variables are few. Don't
@@ -14,9 +15,9 @@
 #
 # Flag interactions:
 #
-#   * `--vendor claude|codex` — silent no-op. Tier 1 has no premium slots to
-#     flip, so the flag is preserved as a config preference but doesn't
-#     change the resolved phase map.
+#   * `--vendor claude|codex` — picks the premium finalize and high execute
+#     tier vendor when that credential is available. Reasoning phases stay
+#     DeepSeek.
 #   * `--critic cross` — would expand to "the other premium" relative to the
 #     resolved vendor, but since there's no premium in the profile to begin
 #     with this is mostly a footgun — prefer to step up to `directed` or
@@ -31,7 +32,7 @@ prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-
 critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 revise                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+finalize              = "claude:low"
 execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 feedback              = "claude:low"
 loop_plan             = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
@@ -44,8 +45,8 @@ tiebreaker_challenger = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-
 1 = "hermes:deepseek:deepseek-v4-flash"
 2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-4 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-5 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+4 = "claude:claude-sonnet-4-6"
+5 = "claude:claude-opus-4-7"
 
 [profiles.solo.tier_models.critique]
 1 = "hermes:deepseek:deepseek-v4-flash"

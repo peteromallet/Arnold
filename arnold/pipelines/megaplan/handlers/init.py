@@ -435,9 +435,14 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["depth"] = args.depth
     if getattr(args, "deepseek_provider", None):
         state["config"]["deepseek_provider"] = args.deepseek_provider
+    if getattr(args, "max_execute_tier", None) is not None:
+        state["config"]["max_execute_tier"] = args.max_execute_tier
     tier_models = getattr(args, "tier_models", None)
     if tier_models:
         state["config"]["tier_models"] = tier_models
+    routing_degradations = getattr(args, "routing_degradations", None)
+    if routing_degradations:
+        state["config"]["routing_degradations"] = routing_degradations
     prep_models = getattr(args, "prep_models", None)
     if prep_models:
         state["config"]["prep_models"] = prep_models
@@ -450,7 +455,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["with_feedback"] = True
     # Resolve prep_clarify: CLI > [defaults] > True.
     # Only written to config when False to keep state lean (absent == True).
-    if not args.prep_clarify:
+    if not getattr(args, "prep_clarify", True):
         state["config"]["prep_clarify"] = False
     else:
         from arnold.pipelines.megaplan._core.user_config import default_prep_clarify

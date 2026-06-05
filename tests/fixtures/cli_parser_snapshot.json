@@ -3434,6 +3434,27 @@
             },
             {
               "action": "_StoreAction",
+              "choices": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "const": null,
+              "default": null,
+              "dest": "max_execute_tier",
+              "help": "Cap tier-routed execute lookup at N (1-5). A complexity above N routes as tier N; unset means no cap.",
+              "metavar": "N",
+              "nargs": null,
+              "option_strings": [
+                "--max-execute-tier"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
               "choices": null,
               "const": null,
               "default": null,
@@ -4645,6 +4666,42 @@
               ],
               "required": false,
               "type": null
+            },
+            {
+              "action": "_StoreFalseAction",
+              "choices": null,
+              "const": false,
+              "default": true,
+              "dest": "prep_clarify",
+              "help": "Disable the prep clarify gate so the prep phase never halts at awaiting_human_verify to ask a clarifying question (it proceeds with its best understanding instead). Only effective when prep runs. Used by chain milestones with prep_clarify: false for unattended runs.",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--no-prep-clarify"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "const": null,
+              "default": null,
+              "dest": "max_execute_tier",
+              "help": "Cap tier-routed execute lookup at N (1-5). A complexity above N routes as tier N; unset means no cap.",
+              "metavar": "N",
+              "nargs": null,
+              "option_strings": [
+                "--max-execute-tier"
+              ],
+              "required": false,
+              "type": "int"
             },
             {
               "action": "_StoreAction",

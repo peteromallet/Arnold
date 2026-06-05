@@ -833,6 +833,13 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
             summary
             + " No active step. The `.plan.lock` file may remain on disk even when no process holds the lock."
         )
+    routing_degradations = state.get("config", {}).get("routing_degradations")
+    routing_degradation_summary = None
+    if isinstance(routing_degradations, list) and routing_degradations:
+        routing_degradation_summary = _format_routing_degradation_summary(
+            routing_degradations
+        )
+        summary = summary + f" WARNING routing degraded: {routing_degradation_summary}."
     response: StepResponse = {
         "success": True,
         "step": "status",
@@ -862,6 +869,9 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
             if isinstance(value, dict)
         ],
     }
+    if routing_degradation_summary is not None:
+        response["routing_degradations"] = routing_degradations
+        response["routing_degradation_summary"] = routing_degradation_summary
     # Add blocked_tasks resolution context when finalize.json exists
     finalize_path = plan_dir / "finalize.json"
     if finalize_path.exists():
@@ -911,6 +921,28 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
         response["progress"] = progress
         response["summary"] = response["summary"] + " " + progress["summary"]
     return response
+
+
+def _format_routing_degradation_summary(degradations: list[Any]) -> str:
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for item in degradations:
+        if not isinstance(item, dict):
+            continue
+        phase = str(item.get("phase") or "?")
+        to_spec = str(item.get("to") or "?")
+        reason = str(item.get("reason") or "unknown reason")
+        tier = item.get("tier")
+        tier_label = str(tier) if tier is not None else ""
+        grouped.setdefault((phase, to_spec, reason), []).append(tier_label)
+
+    parts: list[str] = []
+    for (phase, to_spec, reason), tiers in grouped.items():
+        tier_values = [tier for tier in tiers if tier]
+        if tier_values:
+            parts.append(f"{phase} tier {','.join(tier_values)} -> {to_spec} ({reason})")
+        else:
+            parts.append(f"{phase} -> {to_spec} ({reason})")
+    return "; ".join(parts) or "unknown"
 
 
 def _parse_user_action_evidence(raw: Any) -> list[str] | None:

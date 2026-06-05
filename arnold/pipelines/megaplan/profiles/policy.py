@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -537,6 +538,154 @@ def apply_deepseek_provider_rewrite(
     }
 
 
+_PREMIUM_CREDENTIAL_ENV: dict[str, str] = {
+    "claude": "ANTHROPIC_API_KEY",
+    "codex": "OPENAI_API_KEY",
+}
+
+
+def _credential_configured(env_var: str) -> bool:
+    if os.environ.get(env_var, "").strip():
+        return True
+    try:
+        from ..runtime.key_pool import _get_api_credential
+
+        return bool(_get_api_credential(env_var))
+    except Exception:
+        return False
+
+
+def _premium_cli_route_available(vendor: str) -> bool:
+    if vendor not in _PREMIUM_VENDORS:
+        return False
+    try:
+        from ..workers._impl import _is_agent_available
+    except Exception:
+        return False
+    if vendor == "claude":
+        return _is_agent_available("claude") or _is_agent_available("shannon")
+    return _is_agent_available(vendor)
+
+
+def _premium_credential_configured(vendor: str) -> bool:
+    env_var = _PREMIUM_CREDENTIAL_ENV.get(vendor)
+    if env_var and _credential_configured(env_var):
+        return True
+    return _premium_cli_route_available(vendor)
+
+
+def _deepseek_credential_configured() -> bool:
+    return (
+        _credential_configured("DEEPSEEK_API_KEY")
+        or _credential_configured("FIREWORKS_API_KEY")
+    )
+
+
+def _best_available_floor_spec(spec: str) -> tuple[str, str | None]:
+    parsed = parse_agent_spec(spec)
+    if parsed.agent not in _PREMIUM_VENDORS:
+        return spec, None
+    missing_primary = (
+        f"no premium credential or CLI route detected for vendor={parsed.agent}"
+    )
+    if _premium_credential_configured(parsed.agent):
+        return spec, None
+    other = "codex" if parsed.agent == "claude" else "claude"
+    missing_other = f"no premium credential or CLI route detected for vendor={other}"
+    if _premium_credential_configured(other):
+        return _swap_premium_spec(spec, other), missing_primary
+    if _deepseek_credential_configured():
+        return (
+            DIRECT_DEEPSEEK_V4_PRO_SPEC,
+            f"{missing_primary}; {missing_other}; using DeepSeek credential floor",
+        )
+    return spec, None
+
+
+def _record_routing_degradation(
+    degradations: list[dict[str, Any]],
+    *,
+    phase: str,
+    tier: int | None,
+    from_spec: str,
+    to_spec: str,
+    reason: str | None,
+) -> None:
+    if from_spec == to_spec or not reason:
+        return
+    item: dict[str, Any] = {
+        "phase": phase,
+        "from": from_spec,
+        "to": to_spec,
+        "reason": reason,
+    }
+    if tier is not None:
+        item["tier"] = tier
+    degradations.append(item)
+
+
+def _warn_routing_degradations(degradations: list[dict[str, Any]]) -> None:
+    if not degradations:
+        return
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for item in degradations:
+        phase = str(item.get("phase") or "?")
+        to_spec = str(item.get("to") or "?")
+        reason = str(item.get("reason") or "unknown reason")
+        tier = item.get("tier")
+        grouped.setdefault((phase, to_spec, reason), []).append(
+            str(tier) if tier is not None else ""
+        )
+    parts: list[str] = []
+    for (phase, to_spec, reason), tiers in grouped.items():
+        tier_values = [tier for tier in tiers if tier]
+        if tier_values:
+            parts.append(f"{phase} tier {','.join(tier_values)} -> {to_spec} ({reason})")
+        else:
+            parts.append(f"{phase} -> {to_spec} ({reason})")
+    log.warning("M_WARN_ROUTING_DEGRADED %s", "; ".join(parts))
+
+
+def apply_available_model_floor(
+    profile: dict[str, str],
+    *,
+    tier_models: dict[str, dict[int, str]] | None = None,
+    degradations: list[dict[str, Any]] | None = None,
+) -> dict[str, str]:
+    result = dict(profile)
+    local_degradations: list[dict[str, Any]] = []
+    if "finalize" in result:
+        original = result["finalize"]
+        floored, reason = _best_available_floor_spec(original)
+        result["finalize"] = floored
+        _record_routing_degradation(
+            local_degradations,
+            phase="finalize",
+            tier=None,
+            from_spec=original,
+            to_spec=floored,
+            reason=reason,
+        )
+    if tier_models is not None:
+        execute_tiers = tier_models.get("execute")
+        if isinstance(execute_tiers, dict):
+            for tier_int, spec in list(execute_tiers.items()):
+                floored, reason = _best_available_floor_spec(spec)
+                execute_tiers[tier_int] = floored
+                _record_routing_degradation(
+                    local_degradations,
+                    phase="execute",
+                    tier=tier_int,
+                    from_spec=spec,
+                    to_spec=floored,
+                    reason=reason,
+                )
+    if degradations is not None:
+        degradations.extend(local_degradations)
+    _warn_routing_degradations(local_degradations)
+    return result
+
+
 def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
     for spec in profile.values():
         parsed = parse_agent_spec(spec)
@@ -702,6 +851,12 @@ def apply_profile_expansion(
         elif effective_depth_flag is not None:
             resolved = apply_depth_rewrite(resolved, effective_depth_flag, tier_models=tier_models)
 
+        routing_degradations: list[dict[str, Any]] = []
+        resolved = apply_available_model_floor(
+            resolved,
+            tier_models=tier_models,
+            degradations=routing_degradations,
+        )
         resolved = apply_deepseek_provider_rewrite(resolved, effective_deepseek_provider_flag, tier_models=tier_models)
 
         _validate_named_profile_invariants(profile_name, resolved, tier_models=tier_models)
@@ -716,6 +871,7 @@ def apply_profile_expansion(
                 if phase in cli_steps:
                     tier_models.pop(phase, None)
         args.tier_models = tier_models
+        args.routing_degradations = routing_degradations
         args.prep_models = prep_models
         args.prep_model_resolver_trace = prep_trace
 
@@ -745,10 +901,17 @@ def apply_profile_expansion(
             if isinstance(entry, str) and "=" in entry:
                 _ps, _pv = entry.split("=", 1)
                 profile_default_specs.setdefault(_ps, _pv)
-        for pm in persisted:
+        latest_persisted_index_by_step = {
+            pm.split("=", 1)[0]: index
+            for index, pm in enumerate(persisted)
+            if isinstance(pm, str) and "=" in pm
+        }
+        for index, pm in enumerate(persisted):
             if "=" not in pm:
                 continue
             step = pm.split("=", 1)[0]
+            if latest_persisted_index_by_step.get(step) != index:
+                continue
             persisted_spec = pm.split("=", 1)[1]
             if step in cli_steps:
                 continue
@@ -804,6 +967,7 @@ __all__ = [
     "_validate_named_profile_invariants",
     "_validate_projected_tier_models",
     "apply_critic_rewrite",
+    "apply_available_model_floor",
     "apply_deepseek_provider_rewrite",
     "apply_depth_rewrite",
     "apply_profile_expansion",
