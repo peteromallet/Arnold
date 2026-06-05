@@ -76,6 +76,14 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Reset this chain's remote state before launch",
     )
+    chain_parser.add_argument(
+        "--no-git-refresh",
+        action="store_true",
+        help=(
+            "Pass --no-git-refresh to the remote `arnold chain start`, "
+            "skipping the automatic base-branch refresh."
+        ),
+    )
     _add_repo_override_args(chain_parser)
 
     bootstrap_parser = cloud_sub.add_parser(
@@ -727,6 +735,7 @@ def _chain_start_command(
     remote_spec_path: str,
     *,
     one_shot: bool = False,
+    no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
 ) -> str:
     """Construct the ``arnold chain start`` command with canonical quoting.
@@ -738,6 +747,8 @@ def _chain_start_command(
     flags = f"--spec {shlex.quote(remote_spec_path)}"
     if one_shot:
         flags += " --one"
+    if no_git_refresh:
+        flags += " --no-git-refresh"
     return (
         f"MEGAPLAN_TRUSTED_CONTAINER=1 arnold chain start {flags} "
         f">> {shlex.quote(log_relative)} 2>&1"
@@ -782,12 +793,13 @@ def _refresh_then_chain_start_command(
     *,
     spec: CloudSpec | None = None,
     one_shot: bool = False,
+    no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
 ) -> str:
     refresh = _megaplan_refresh_command(spec)
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 || true; "
-        f"{_chain_start_command(remote_spec_path, one_shot=one_shot, log_relative=log_relative)}"
+        f"{_chain_start_command(remote_spec_path, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative)}"
     )
 
 
@@ -796,6 +808,7 @@ def _tmux_chain_launch_command(
     remote_spec_path: str,
     *,
     one_shot: bool = False,
+    no_git_refresh: bool = False,
     session_name: str | None = None,
     spec: CloudSpec | None = None,
     log_relative: str = _CHAIN_LOG_RELATIVE,
@@ -818,6 +831,7 @@ def _tmux_chain_launch_command(
         remote_spec_path,
         spec=spec,
         one_shot=one_shot,
+        no_git_refresh=no_git_refresh,
         log_relative=log_relative,
     )
     marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
@@ -1186,6 +1200,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             marker_path=launch_ctx.marker_path,
             identity_digest=launch_ctx.digest,
             marker_payload=marker_payload,
+            no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
         )
     )
     _relay_output(result, secret_names=spec.secrets, env=os.environ)
