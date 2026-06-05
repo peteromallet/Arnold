@@ -2625,7 +2625,7 @@ def run_codex_step(
         session_id=session_id,
         trace_output=trace_output,
         rendered_prompt=prompt,
-        model_actual=model_actual,
+        model_actual=model_actual or model,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
@@ -3151,6 +3151,9 @@ def run_step_with_worker(
                             effective_refreshed = step not in _CROSS_CALL_PERSISTENT_STEPS
                         continue
             if record_routing and (step != "execute" or ledger_step_label is not None):
+                actual_model = getattr(worker, "model_actual", None)
+                if actual_model is None and agent == "codex":
+                    actual_model = resolved_model
                 record_step_routing(
                     plan_dir,
                     phase=ledger_phase or normalize_routing_phase(step),
@@ -3159,7 +3162,7 @@ def run_step_with_worker(
                     selected_spec=ledger_selected_spec
                     or format_selected_spec(agent, model, effort),
                     resolved_model=resolved_model,
-                    actual_model=getattr(worker, "model_actual", None),
+                    actual_model=actual_model,
                     tier=ledger_tier,
                     complexity=ledger_complexity,
                     tier_routing_active=ledger_tier_routing_active,
