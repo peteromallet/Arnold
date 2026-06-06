@@ -132,6 +132,7 @@ export const LIFECYCLE_STATE_FIELDS = Object.freeze([
 
   // Epoch
   "chatRehydrateEpoch",
+  "chatRehydrateCommittedEpoch",
 
   // Synthetic chat
   "syntheticAgentMessage",
@@ -202,6 +203,7 @@ export function createAgentEditState() {
 
     // Epoch
     chatRehydrateEpoch: 0,
+    chatRehydrateCommittedEpoch: 0,
 
     // Synthetic chat
     syntheticAgentMessage: null,
@@ -851,7 +853,12 @@ function _handleChatRehydrateMissingSession(panel, payload) {
 
 function _handleChatRehydrateSuccess(panel, payload) {
   if (_isStaleChatRehydrate(panel, payload?.requestEpoch)) {
-    return { render: false, stale: true };
+    const committedEpoch = Number.isFinite(panel.state.chatRehydrateCommittedEpoch)
+      ? panel.state.chatRehydrateCommittedEpoch
+      : 0;
+    if (committedEpoch > payload?.requestEpoch) {
+      return { render: false, stale: true };
+    }
   }
   panel.state.chatMessages = Array.isArray(payload?.messages) ? payload.messages : [];
   panel.state.chatLoaded = true;
@@ -861,6 +868,12 @@ function _handleChatRehydrateSuccess(panel, payload) {
   const sessionId = typeof payload?.sessionId === "string" && payload.sessionId ? payload.sessionId : null;
   if (sessionId) {
     panel.state.sessionId = sessionId;
+  }
+  if (Number.isFinite(payload?.requestEpoch)) {
+    panel.state.chatRehydrateCommittedEpoch = Math.max(
+      Number.isFinite(panel.state.chatRehydrateCommittedEpoch) ? panel.state.chatRehydrateCommittedEpoch : 0,
+      payload.requestEpoch,
+    );
   }
   return _obligations({
     render: false,

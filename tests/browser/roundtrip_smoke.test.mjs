@@ -2436,6 +2436,7 @@ test("VibeComfy falls back to panel-only changed-node and queue warnings when li
     await harness.setup();
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled === false);
 
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "fallback";
     await harness.clickButton("Submit");
@@ -4961,6 +4962,146 @@ test("VibeComfy status resolution after panel open enables Submit and renders re
   }
 });
 
+test("VibeComfy setup-created panel commits delayed status and chat after sidebar mount move", async () => {
+  const SESSION_ID = "sess-setup-created-mount-move";
+  const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+  let resolveStatus;
+  let resolveChat;
+  const statusPromise = new Promise((resolve) => {
+    resolveStatus = resolve;
+  });
+  const chatPromise = new Promise((resolve) => {
+    resolveChat = resolve;
+  });
+
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": async () => statusPromise,
+      [CHAT_URL]: async () => chatPromise,
+    },
+  });
+
+  globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+
+    const rootBeforeOpen = harness.getPanelRoots()[0];
+    assert.equal(rootBeforeOpen.parentNode, harness.document.body, "setup creates the closed panel on the body");
+
+    const sidebarTab = harness.getSidebarTabs()[0][0];
+    const sidebarContainer = harness.document.createElement("div");
+    sidebarContainer.id = "comfyui-sidebar-vibecomfy-delayed-commit";
+    harness.document.body.appendChild(sidebarContainer);
+    sidebarTab.render({ container: sidebarContainer });
+
+    await waitFor(() => harness.getPanelRoots()[0]?.parentNode === sidebarContainer);
+    await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"));
+    await waitFor(() => harness.requests.some((r) => r.url === CHAT_URL));
+
+    const submit = harness.document.getElementById("vibecomfy-agent-panel-submit");
+    assert.equal(submit.disabled, true);
+    assert.match(harness.textDump(), /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+
+    resolveChat({
+      status: 200,
+      body: {
+        ok: true,
+        exists: true,
+        session_id: SESSION_ID,
+        messages: [
+          { role: "user", text: "mount move delayed user prompt", turn_id: "0001" },
+          { role: "agent", text: "mount move delayed agent answer", turn_id: "0001" },
+        ],
+        session_path: `out/editor_sessions/${SESSION_ID}/`,
+        detail_json_path: `out/editor_sessions/${SESSION_ID}/session.json`,
+      },
+    });
+    resolveStatus({
+      status: 200,
+      body: {
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "deepseek",
+        requested_route: "auto",
+        route_options: {
+          auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+        },
+      },
+    });
+
+    await waitFor(() => submit.disabled === false);
+    await waitFor(() => /mount move delayed agent answer/.test(harness.textDump()));
+
+    const text = harness.textDump();
+    assert.doesNotMatch(text, /Try an example/);
+    assert.doesNotMatch(text, /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+    assert.match(text, /mount move delayed user prompt/);
+    assert.match(text, /mount move delayed agent answer/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy current status response commits even if inactive model input changes while in flight", async () => {
+  let resolveStatus;
+  const statusPromise = new Promise((resolve) => {
+    resolveStatus = resolve;
+  });
+
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": async () => statusPromise,
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+
+    await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"));
+    const panel = extensionModule.ensureAgentPanel();
+    const submit = harness.document.getElementById("vibecomfy-agent-panel-submit");
+    assert.equal(submit.disabled, true);
+
+    panel.fields.model.value = "typed-while-status-in-flight";
+
+    resolveStatus({
+      status: 200,
+      body: {
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "deepseek",
+        requested_route: "auto",
+        route_options: {
+          auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+        },
+      },
+    });
+
+    await waitFor(() => submit.disabled === false);
+    assert.equal(panel.state.routeStatus.kind, "ready");
+    assert.equal(panel.state.statusSnapshot?.ready, true);
+    assert.doesNotMatch(harness.textDump(), /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy live sidebar tab mount dispatches status fetch and chat rehydrate", async () => {
   const SESSION_ID = "sess-sidebar-live-path-1";
   const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
@@ -5465,6 +5606,93 @@ test("Lifecycle E2 page reload rehydrate restores the latest open candidate and 
     assert.match(harness.textDump(), /Candidate restored/);
     expandAgentBubbleDetails(harness.document.body);
     assert.match(harness.textDump(), /queue_allowed=false/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("Lifecycle E3 same-session rehydrate can commit after an epoch bump until a newer response lands", async () => {
+  const SESSION_ID = "sess-rehydrate-same-session-stale-before-commit";
+  const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+  let chatRequestCount = 0;
+  let resolveFirstChat;
+  let resolveSecondChat;
+  const firstChatPromise = new Promise((resolve) => {
+    resolveFirstChat = resolve;
+  });
+  const secondChatPromise = new Promise((resolve) => {
+    resolveSecondChat = resolve;
+  });
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          ready: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+      [CHAT_URL]: async () => {
+        chatRequestCount += 1;
+        return chatRequestCount === 1 ? firstChatPromise : secondChatPromise;
+      },
+    },
+  });
+  globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => chatRequestCount === 1);
+
+    const root = harness.document.getElementById("vibecomfy-agent-panel-root");
+    root.dataset.open = "0";
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => chatRequestCount === 2);
+
+    resolveFirstChat({
+      status: 200,
+      body: {
+        ok: true,
+        exists: true,
+        session_id: SESSION_ID,
+        messages: [
+          { role: "user", text: "first same-session user prompt", turn_id: "0001" },
+          { role: "agent", text: "first same-session answer", turn_id: "0001" },
+        ],
+      },
+    });
+
+    await waitFor(() => /first same-session answer/.test(harness.textDump()));
+    let panel = extensionModule.ensureAgentPanel();
+    assert.equal(panel.state.chatLoaded, true);
+    assert.equal(panel.state.sessionId, SESSION_ID);
+
+    resolveSecondChat({
+      status: 200,
+      body: {
+        ok: true,
+        exists: true,
+        session_id: SESSION_ID,
+        messages: [
+          { role: "user", text: "second same-session user prompt", turn_id: "0002" },
+          { role: "agent", text: "second same-session answer", turn_id: "0002" },
+        ],
+      },
+    });
+
+    await waitFor(() => /second same-session answer/.test(harness.textDump()));
+    panel = extensionModule.ensureAgentPanel();
+    assert.equal(panel.state.chatMessages.at(-1)?.text, "second same-session answer");
   } finally {
     await harness.dispose();
   }

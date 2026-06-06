@@ -78,9 +78,9 @@ test("PANEL_STATE exports frozen phase taxonomy with 6 phases matching the contr
 
 // ── LIFECYCLE_STATE_FIELDS ──────────────────────────────────────────────────
 
-test("LIFECYCLE_STATE_FIELDS exports frozen array with 38 field names", () => {
+test("LIFECYCLE_STATE_FIELDS exports frozen array with 39 field names", () => {
   assert.ok(Object.isFrozen(LIFECYCLE_STATE_FIELDS));
-  assert.equal(LIFECYCLE_STATE_FIELDS.length, 38);
+  assert.equal(LIFECYCLE_STATE_FIELDS.length, 39);
 
   // Spot-check key categories
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("phase"));
@@ -106,15 +106,16 @@ test("LIFECYCLE_STATE_FIELDS exports frozen array with 38 field names", () => {
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("lastAppliedChanges"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("changeDetails"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("chatRehydrateEpoch"));
+  assert.ok(LIFECYCLE_STATE_FIELDS.includes("chatRehydrateCommittedEpoch"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("syntheticAgentMessage"));
 
   // No duplicates
-  assert.equal(new Set(LIFECYCLE_STATE_FIELDS).size, 38);
+  assert.equal(new Set(LIFECYCLE_STATE_FIELDS).size, 39);
 });
 
 // ── createAgentEditState ────────────────────────────────────────────────────
 
-test("createAgentEditState initializes all 38 lifecycle fields to defaults", () => {
+test("createAgentEditState initializes all 39 lifecycle fields to defaults", () => {
   const state = createAgentEditState();
 
   // Every field from LIFECYCLE_STATE_FIELDS must exist on the returned object
@@ -125,9 +126,9 @@ test("createAgentEditState initializes all 38 lifecycle fields to defaults", () 
     );
   }
 
-  // No extra own keys beyond the 38 fields
+  // No extra own keys beyond the 39 fields
   const ownKeys = Object.keys(state);
-  assert.equal(ownKeys.length, 38);
+  assert.equal(ownKeys.length, 39);
 
   // Phase default
   assert.equal(state.phase, PANEL_STATE.IDLE);
@@ -179,6 +180,7 @@ test("createAgentEditState initializes all 38 lifecycle fields to defaults", () 
 
   // Epoch
   assert.equal(state.chatRehydrateEpoch, 0);
+  assert.equal(state.chatRehydrateCommittedEpoch, 0);
 
   // Synthetic chat
   assert.equal(state.syntheticAgentMessage, null);

@@ -1598,6 +1598,9 @@ function populateRouteSelect(selectNode, routeOptions, {
 async function refreshAgentStatus(panel, { quiet = false } = {}) {
   const route = normalizeRoutePreference(panel.fields.route.value);
   const model = normalizeModelPreference(panel.fields.model.value);
+  const requestEpoch =
+    (Number.isFinite(panel.state.statusRequestEpoch) ? panel.state.statusRequestEpoch : 0) + 1;
+  panel.state.statusRequestEpoch = requestEpoch;
   const priorRetry = panel.state.statusRetry;
   const retryAttempts =
     priorRetry?.route === route && priorRetry?.model === model && Number.isFinite(priorRetry?.attempts)
@@ -1626,6 +1629,9 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
     try {
       status = await res.json();
     } catch (error) {
+      if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
+        return;
+      }
       console.warn("[vibecomfy] malformed /vibecomfy/agent/status payload", error);
       panel.state.statusSnapshot = null;
       panel.state.routeStatus = {
@@ -1645,10 +1651,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
       }
       return;
     }
-    if (
-      normalizeRoutePreference(panel.fields.route.value) !== route
-      || normalizeModelPreference(panel.fields.model.value) !== model
-    ) {
+    if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
       return;
     }
     if (!res.ok) {
@@ -1714,6 +1717,9 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
       panel.fields.model.value = status.model;
     }
   } catch (e) {
+    if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
+      return;
+    }
     panel.state.settingsMessage = `Status unavailable: ${String(e)}`;
     panel.state.statusSnapshot = null;
     panel.state.routeStatus = {
@@ -2447,6 +2453,7 @@ function createAgentPanel() {
       settingsMessage: null,
       statusSnapshot: null,
       statusRetry: null,
+      statusRequestEpoch: 0,
       routeStatus: {
         kind: ROUTE_STATUS_KIND.LOADING,
         requestedRoute: "auto",
