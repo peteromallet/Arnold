@@ -1083,6 +1083,7 @@ def handle_execute_one_batch(
             aggregate_payload=aggregate_payload,
             state=state,
             phase_context=f"final execute batch {batch_number}/{batches_total}",
+            plan_dir=plan_dir,
         )
     if drift is not None:
         _append_scope_drift_blocker(blocking_reasons, state, drift)
@@ -2115,6 +2116,7 @@ def handle_execute_auto_loop(
         aggregate_payload=aggregate_payload,
         state=state,
         phase_context=f"execute auto-loop aggregate after {len(batch_payloads)}/{total_batches} completed batches",
+        plan_dir=plan_dir,
     )
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
