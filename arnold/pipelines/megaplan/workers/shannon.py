@@ -65,9 +65,9 @@ from arnold.pipelines.megaplan.model_seam import (
     ModelTier,
     ModelStructuralAuditError,
     capture_step_output,
+    render_compact_review_prompt,
     render_step_message,
 )
-from arnold.pipelines.megaplan.prompts.review import compact_review_prompt
 from arnold.pipelines.megaplan.schemas import get_execution_schema_key
 from arnold.pipelines.megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
@@ -2126,28 +2126,20 @@ def run_shannon_step(
         except ModelBudgetError as error:
             if step != "review":
                 raise
-            compacted_prompt = compact_review_prompt(
+            rendered_step = render_compact_review_prompt(
+                session_agent,
+                step,
                 state,
                 plan_dir,
-                root,
+                root=root,
+                worker=session_agent,
+                model=model,
+                normalized_model=model,
+                tier=ModelTier.NON_ENFORCED,
+                schema=schema,
                 prompt_size_error={"message": str(error)},
                 pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
                 projection_capabilities=projection_capabilities,
-            )
-            rendered_step = render_step_message(
-                StepInvocation(
-                    kind="model",
-                    metadata={
-                        "tier": ModelTier.NON_ENFORCED.value,
-                        "worker": session_agent,
-                        "model": model,
-                        "normalized_model": model,
-                        "validation_step": step,
-                        "prompt": compacted_prompt,
-                        "prompt_components": compacted_prompt,
-                        "schema": schema,
-                    },
-                )
             )
     base_prompt = rendered_step.prompt
     if output_path is not None:
@@ -2159,14 +2151,22 @@ def run_shannon_step(
     except CliError as error:
         if step != "review" or error.code != "prompt_oversized":
             raise
-        base_prompt = compact_review_prompt(
+        compacted = render_compact_review_prompt(
+            session_agent,
+            step,
             state,
             plan_dir,
-            root,
+            root=root,
+            worker=session_agent,
+            model=model,
+            normalized_model=model,
+            tier=ModelTier.NON_ENFORCED,
+            schema=schema,
             prompt_size_error=error.extra,
             pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
             projection_capabilities=projection_capabilities,
         )
+        base_prompt = compacted.prompt
         prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
         check_prompt_size(prompt, phase=step)
 

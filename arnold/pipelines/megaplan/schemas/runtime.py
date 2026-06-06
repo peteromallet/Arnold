@@ -455,7 +455,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "object",
                     "properties": {
                         "flag_id": {"type": "string"},
-                        "action": {"type": "string", "enum": ["dispute", "accept_tradeoff"]},
+                        "action": {
+                            "type": "string",
+                            "enum": ["dispute", "accept_tradeoff", "verify_fixed"],
+                        },
                         "evidence": {"type": "string"},
                         "rationale": {"type": "string"},
                     },
@@ -741,7 +744,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "type": "object",
                     "properties": {
                         "task_id": {"type": "string"},
-                        "status": {"type": "string", "enum": ["done", "skipped", "blocked"]},
+                        "status": {"type": "string", "enum": ["done", "skipped", "completed", "blocked"]},
                         "executor_notes": {"type": "string"},
                         "files_changed": {"type": "array", "items": {"type": "string"}},
                         "commands_run": {"type": "array", "items": {"type": "string"}},

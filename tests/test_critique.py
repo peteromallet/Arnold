@@ -5,8 +5,6 @@ from pathlib import Path
 import pytest
 
 import arnold.pipelines.megaplan as megaplan
-import arnold.pipelines.megaplan.handlers as megaplan_handlers
-import arnold.pipelines.megaplan.workers as megaplan_workers
 from arnold.pipelines.megaplan._core import load_plan
 from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import PlanFixture, _make_plan_fixture_with_robustness, load_state
@@ -76,18 +74,165 @@ def test_handle_critique_rejects_invalid_check_payload(plan_fixture: PlanFixture
     assert not (plan_fixture.plan_dir / "critique_v1.json").exists()
 
 
-def test_handle_critique_accepts_validated_checks(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_critique_runs_schema_audit_before_semantic_validation(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    def fake_parallel(*args, **kwargs):
+        return WorkerResult(
+            payload={
+                "checks": [],
+                "flags": "not-a-list",
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+            raw_output="parallel-invalid-schema",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id="critique-schema-invalid",
+        )
+
+    monkeypatch.setattr(megaplan.handlers.critique, "run_parallel_critique", fake_parallel)
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "validate_critique_checks",
+        lambda payload, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "_build_verifiability_flags",
+        lambda *args, **kwargs: [],
+    )
+
+    with pytest.raises(megaplan.CliError, match="Critique output failed schema audit"):
+        megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    state = load_state(plan_fixture.plan_dir)
+    assert state["history"][-1]["result"] == "error"
+    assert not (plan_fixture.plan_dir / "critique_v1.json").exists()
+
+
+def test_recover_valid_critique_output_requires_schema_valid_payload(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    payload = _build_mock_payload(
+        "critique",
+        load_state(plan_fixture.plan_dir),
+        plan_fixture.plan_dir,
+    )
+    payload["flags"] = "not-a-list"
+    (plan_fixture.plan_dir / "critique_output.json").write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         megaplan.handlers.critique,
         "validate_critique_checks",
         lambda payload, **kwargs: [],
     )
 
+    recovered = megaplan.handlers.critique._recover_valid_critique_output(
+        plan_fixture.plan_dir,
+        expected_ids=[check["id"] for check in payload["checks"]],
+    )
+
+    assert recovered is None
+
+
+def test_handle_critique_accepts_validated_checks(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "validate_critique_checks",
+        lambda payload, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "_build_verifiability_flags",
+        lambda *args, **kwargs: [],
+    )
+
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    critique_worker = WorkerResult(
+        payload=_build_mock_payload(
+            "critique",
+            load_state(plan_fixture.plan_dir),
+            plan_fixture.plan_dir,
+        ),
+        raw_output="mock critique",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="critique-session",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (critique_worker, "codex", "oneshot", False),
+    )
     response = megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
     assert response["success"] is True
     assert (plan_fixture.plan_dir / "critique_v1.json").exists()
+
+
+def test_handle_critique_writes_artifacts_updates_flags_and_receipt_metrics(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.conftest import read_json
+
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "validate_critique_checks",
+        lambda payload, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "_build_verifiability_flags",
+        lambda *args, **kwargs: [],
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    critique_worker = WorkerResult(
+        payload=_build_mock_payload(
+            "critique",
+            load_state(plan_fixture.plan_dir),
+            plan_fixture.plan_dir,
+        ),
+        raw_output="mock critique",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="critique-session",
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "run_parallel_critique",
+        lambda *args, **kwargs: critique_worker,
+    )
+    response = megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    critique_payload = read_json(plan_fixture.plan_dir / "critique_v1.json")
+    registry = read_json(plan_fixture.plan_dir / "faults.json")
+    receipt = read_json(plan_fixture.plan_dir / "step_receipt_critique_v1.json")
+
+    assert response["success"] is True
+    assert critique_payload["flags"]
+    assert [flag["id"] for flag in critique_payload["flags"]] == ["FLAG-001", "FLAG-002"]
+    registry_by_id = {flag["id"]: flag for flag in registry["flags"]}
+    assert {"FLAG-001", "FLAG-002"} <= set(registry_by_id)
+    assert registry_by_id["FLAG-001"]["status"] == "open"
+    assert registry_by_id["FLAG-002"]["status"] == "open"
+    assert receipt["phase"] == "critique"
+    assert receipt["metrics"]["flagged_checks_count"] == len(critique_payload["checks"])
+    assert receipt["metrics"]["clean_checks_count"] == 0
+    assert set(receipt["metrics"]["findings_per_check"]) == {
+        check["id"] for check in critique_payload["checks"]
+    }
 
 
 def test_handle_critique_records_unverifiable_without_blocking(
@@ -329,6 +474,7 @@ def test_parallel_critique_sets_and_clears_active_step(
                 "checks": [
                     {
                         "id": check["id"],
+                        "question": check["question"],
                         "summary": "ok",
                         "findings": [],
                     }
@@ -1000,7 +1146,12 @@ def test_handle_critique_adaptive_applies_verifications_and_skips_reraise(
             )
         # Critic re-raises FLAG-T7 as open — the skip-set must block this.
         payload = {
-            "checks": [{"id": selected_cid, "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}],
+            "checks": [{
+                "id": selected_cid,
+                "question": "Selected critique question.",
+                "summary": "ok",
+                "findings": [{"detail": "d", "flagged": False}],
+            }],
             "flags": [{"id": "FLAG-T7", "concern": "re-raised", "category": "correctness", "severity_hint": "likely-significant", "evidence": "e2"}],
             "verified_flag_ids": [],
             "disputed_flag_ids": [],
@@ -1074,7 +1225,12 @@ def test_handle_critique_pin_forces_critic_model_over_evaluator_assignment(
             )
         captured["critic_resolved"] = resolved
         payload = {
-            "checks": [{"id": selected_cid, "summary": "ok", "findings": []}],
+            "checks": [{
+                "id": selected_cid,
+                "question": "Selected critique question.",
+                "summary": "ok",
+                "findings": [],
+            }],
             "flags": [], "verified_flag_ids": [], "disputed_flag_ids": [],
         }
         # ``resolved`` is now an AgentMode (carries effort/resolved_model) — it
@@ -1440,7 +1596,12 @@ def test_reconciliation_open_flag_not_overwritten_by_critic_verified(
             )
         # Critic tries to re-verify FLAG-RECON — the skip-set MUST block this.
         payload = {
-            "checks": [{"id": selected_cid, "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}],
+            "checks": [{
+                "id": selected_cid,
+                "question": "Selected critique question.",
+                "summary": "ok",
+                "findings": [{"detail": "d", "flagged": False}],
+            }],
             "flags": [],
             "verified_flag_ids": ["FLAG-RECON"],  # Critic claims it's verified
             "disputed_flag_ids": [],
@@ -1542,7 +1703,7 @@ def test_catalog_checks_preserve_complexity_and_justification(
         return WorkerResult(
             payload={
                 "checks": [
-                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    {"id": c["id"], "question": c["question"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                     for c in checks
                 ],
                 "flags": [],
@@ -1647,7 +1808,7 @@ def test_other_checks_preserve_separate_probe_why_and_routing_justification(
         return WorkerResult(
             payload={
                 "checks": [
-                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    {"id": c["id"], "question": c["question"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                     for c in checks
                 ],
                 "flags": [],
@@ -1765,7 +1926,7 @@ def test_sequential_fallback_receives_targeting_notes(
             WorkerResult(
                 payload={
                     "checks": [
-                        {"id": cid, "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                        {"id": cid, "question": f"Question for {cid}", "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                         for cid in ["correctness", "other_performance_audit"]
                     ],
                     "flags": [],
@@ -1892,7 +2053,7 @@ def test_evaluator_complexity_drives_per_lens_tier_resolution(
         return WorkerResult(
             payload={
                 "checks": [
-                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    {"id": c["id"], "question": c["question"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                     for c in checks
                 ],
                 "flags": [],
@@ -2043,7 +2204,7 @@ def test_resolve_tier_spec_called_once_per_distinct_complexity(
         return WorkerResult(
             payload={
                 "checks": [
-                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    {"id": c["id"], "question": c["question"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                     for c in checks
                 ],
                 "flags": [],
@@ -2180,7 +2341,7 @@ def test_missing_complexity_is_invariant_failure(
             return WorkerResult(
                 payload={
                     "checks": [
-                        {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                        {"id": c["id"], "question": c["question"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                         for c in checks
                     ],
                     "flags": [],
@@ -2295,7 +2456,7 @@ def test_operator_pin_overrides_all_per_lens_complexity_routing(
         return WorkerResult(
             payload={
                 "checks": [
-                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    {"id": c["id"], "question": c["question"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                     for c in checks
                 ],
                 "flags": [],
@@ -2433,7 +2594,7 @@ def test_non_hermes_adaptive_multi_check_can_fan_out(
         return WorkerResult(
             payload={
                 "checks": [
-                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    {"id": c["id"], "question": c["question"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                     for c in checks
                 ],
                 "flags": [],
@@ -2584,7 +2745,7 @@ def test_non_hermes_adaptive_fan_out_failure_falls_back_sequentially(
             WorkerResult(
                 payload={
                     "checks": [
-                        {"id": cid, "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                        {"id": cid, "question": f"Question for {cid}", "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                         for cid in ["correctness", "scope"]
                     ],
                     "flags": [],
@@ -2745,7 +2906,7 @@ def test_operator_pin_forces_same_resolved_model_across_all_lenses_with_non_herm
         return WorkerResult(
             payload={
                 "checks": [
-                    {"id": c["id"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
+                    {"id": c["id"], "question": c["question"], "summary": "ok", "findings": [{"detail": "d", "flagged": False}]}
                     for c in checks
                 ],
                 "flags": [],

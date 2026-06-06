@@ -8,6 +8,7 @@ from arnold.pipelines.megaplan._core import atomic_write_json, read_json, save_s
 from arnold.pipelines.megaplan.handlers.review import (
     _finalize_review_outcome,
     _format_review_success_summary,
+    _prepare_review_payload,
     _review_infrastructure_failure,
     _synthesize_review_rework_items,
 )
@@ -403,3 +404,109 @@ def test_review_final_md_preserves_contract_sections(tmp_path: Path) -> None:
     assert "## Provides" in final_md
     assert "## Assumes" in final_md
     assert "`Planner.run`" in final_md
+
+
+# ── T17: _prepare_review_payload bookkeeping default tests ──────────────────
+# These prove that migrated review bookkeeping defaults come from the handler's
+# _prepare_review_payload(), not from _normalize_worker_payload().
+
+def test_prepare_review_payload_sets_missing_bookkeeping_arrays() -> None:
+    """Prove _prepare_review_payload defaults checks/pre_check_flags/
+    verified_flag_ids/disputed_flag_ids when missing from the payload."""
+    payload: dict[str, object] = {
+        "review_verdict": "approved",
+        "criteria": [],
+        "issues": [],
+        "rework_items": [],
+        "summary": "ok",
+        "task_verdicts": [],
+        "sense_check_verdicts": [],
+    }
+    result = _prepare_review_payload(payload)
+
+    assert result["checks"] == []
+    assert result["pre_check_flags"] == []
+    assert result["verified_flag_ids"] == []
+    assert result["disputed_flag_ids"] == []
+
+
+def test_prepare_review_payload_preserves_existing_bookkeeping_arrays() -> None:
+    """Prove _prepare_review_payload preserves existing bookkeeping values."""
+    payload: dict[str, object] = {
+        "review_verdict": "needs_rework",
+        "criteria": [],
+        "issues": [],
+        "rework_items": [],
+        "checks": [{"id": "coverage", "question": "...", "findings": []}],
+        "pre_check_flags": [{"id": "X", "check": "source_touch", "detail": "ok", "severity": "minor", "evidence_file": ""}],
+        "verified_flag_ids": ["FLAG-1"],
+        "disputed_flag_ids": ["FLAG-2"],
+    }
+    result = _prepare_review_payload(payload)
+
+    assert result["checks"] == payload["checks"]
+    assert result["verified_flag_ids"] == ["FLAG-1"]
+    assert result["disputed_flag_ids"] == ["FLAG-2"]
+    # pre_check_flags get normalized — the provided flags should be preserved
+    assert len(result["pre_check_flags"]) == 1
+    assert result["pre_check_flags"][0]["id"] == "X"
+
+
+def test_prepare_review_payload_uses_explicit_pre_check_flags() -> None:
+    """Prove _prepare_review_payload normalizes and uses explicitly provided
+    pre_check_flags even when the payload also carries its own."""
+    payload: dict[str, object] = {
+        "review_verdict": "approved",
+        "pre_check_flags": [{"id": "FROM_PAYLOAD", "check": "old", "detail": "old"}],
+    }
+    supplied = [
+        {"id": "FROM_SUPPLIED", "check": "source_touch", "detail": "The diff touches src", "severity": "minor"},
+    ]
+    result = _prepare_review_payload(payload, pre_check_flags=supplied)
+
+    assert result["pre_check_flags"][0]["id"] == "FROM_SUPPLIED"
+    assert result["pre_check_flags"][0]["check"] == "source_touch"
+
+
+def test_prepare_review_payload_handles_none_bookkeeping_keys() -> None:
+    """Prove _prepare_review_payload replaces None-valued bookkeeping keys
+    with empty lists instead of leaving them as None."""
+    payload: dict[str, object] = {
+        "review_verdict": "approved",
+        "checks": None,
+        "verified_flag_ids": None,
+        "disputed_flag_ids": None,
+    }
+    result = _prepare_review_payload(payload)
+
+    assert result["checks"] == []
+    assert result["verified_flag_ids"] == []
+    assert result["disputed_flag_ids"] == []
+
+
+def test_prepare_review_payload_is_not_powered_by_normalize_worker_payload() -> None:
+    """Prove _normalize_worker_payload does not inject review bookkeeping
+    arrays — the handler-level _prepare_review_payload is the sole source."""
+    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
+
+    payload: dict[str, object] = {
+        "review_verdict": "approved",
+        "criteria": [],
+        "issues": [],
+        "rework_items": [],
+        "summary": "ok",
+        "task_verdicts": [],
+        "sense_check_verdicts": [],
+    }
+    # _normalize_worker_payload must NOT add bookkeeping arrays for review
+    normalized = _normalize_worker_payload("review", dict(payload))
+    assert "checks" not in normalized
+    assert "pre_check_flags" not in normalized
+    assert "verified_flag_ids" not in normalized
+    assert "disputed_flag_ids" not in normalized
+    # But _prepare_review_payload must add them
+    prepared = _prepare_review_payload(dict(payload))
+    assert prepared["checks"] == []
+    assert prepared["pre_check_flags"] == []
+    assert prepared["verified_flag_ids"] == []
+    assert prepared["disputed_flag_ids"] == []

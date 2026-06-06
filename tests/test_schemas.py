@@ -31,6 +31,15 @@ def _minimal_review_payload() -> dict[str, object]:
     }
 
 
+def _deterministic_check() -> dict[str, object]:
+    return {
+        "command": "python -m pytest tests/test_example.py -q",
+        "baseline_status": "passed",
+        "post_status": "failed",
+        "evidence_file": None,
+    }
+
+
 def test_schema_registry_matches_5_step_workflow() -> None:
     required = {"plan.json", "prep.json", "revise.json", "gate.json", "critique.json", "finalize.json", "execution.json", "review.json"}
     assert required.issubset(set(SCHEMAS))
@@ -548,7 +557,7 @@ def test_execution_schema_requires_task_updates() -> None:
     assert "sense_check_acknowledgments" in execution["properties"]
     assert "sense_check_acknowledgments" in execution["required"]
     item_schema = execution["properties"]["task_updates"]["items"]
-    assert item_schema["properties"]["status"]["enum"] == ["done", "skipped", "blocked"]
+    assert item_schema["properties"]["status"]["enum"] == ["done", "skipped", "completed", "blocked"]
     assert "files_changed" in item_schema["properties"]
     assert "commands_run" in item_schema["properties"]
     assert "auto_attributed_files" in item_schema["properties"]
@@ -592,9 +601,19 @@ def test_review_schema_requires_task_and_sense_check_verdicts() -> None:
     assert "evidence_file" in rework_item["properties"]
     assert "flag_id" in rework_item["properties"]
     assert "source" in rework_item["properties"]
-    assert set(rework_item["required"]) == {"task_id", "issue", "expected", "actual", "evidence_file", "flag_id", "source"}
+    assert set(rework_item["required"]) == {
+        "task_id",
+        "issue",
+        "expected",
+        "actual",
+        "evidence_file",
+        "flag_id",
+        "source",
+        "deterministic_check",
+    }
     assert rework_item["properties"]["flag_id"]["type"] == ["string", "null"]
     assert rework_item["properties"]["source"]["type"] == ["string", "null"]
+    assert rework_item["properties"]["deterministic_check"]["type"] == ["object", "null"]
 
 
 def test_review_schema_accepts_new_review_shape_without_checks() -> None:
@@ -649,6 +668,7 @@ def test_review_schema_accepts_parallel_mode_extensions_in_both_copies() -> None
                 "evidence_file": "pkg/module.py",
                 "flag_id": None,
                 "source": "review_coverage",
+                "deterministic_check": _deterministic_check(),
             }
         ],
         "summary": "Heavy review found a blocking issue.",
@@ -680,6 +700,7 @@ def test_review_schema_accepts_optional_rework_item_flag_id() -> None:
             "evidence_file": "megaplan/prompts/review.py",
             "flag_id": "FLAG-001",
             "source": "review_flag_reverify",
+            "deterministic_check": None,
         }
     ]
     disk_schema = _review_disk_schema()
@@ -701,6 +722,7 @@ def test_review_schema_still_accepts_rework_items_without_flag_id() -> None:
             "evidence_file": "megaplan/handlers.py",
             "flag_id": None,
             "source": None,
+            "deterministic_check": None,
         }
     ]
     disk_schema = _review_disk_schema()
@@ -833,7 +855,11 @@ def test_gate_schema_flag_resolutions_stay_codex_compatible() -> None:
 
     assert set(item_schema["required"]) == {"flag_id", "action", "evidence", "rationale"}
     assert "oneOf" not in item_schema
-    assert set(item_schema["properties"]["action"]["enum"]) == {"dispute", "accept_tradeoff"}
+    assert set(item_schema["properties"]["action"]["enum"]) == {
+        "dispute",
+        "accept_tradeoff",
+        "verify_fixed",
+    }
     assert "evidence" in item_schema["properties"]
     assert "rationale" in item_schema["properties"]
 

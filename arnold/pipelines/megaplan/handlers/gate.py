@@ -15,6 +15,7 @@ from arnold.pipelines.megaplan.orchestration.gate_checks import (
 from arnold.pipelines.megaplan.orchestration.gate_signals import build_gate_signals
 from arnold.pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
 from arnold.pipelines.megaplan.profiles import apply_profile_expansion
+from arnold.pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold.pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, StepResponse
 from arnold.pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_CRITIQUED, STATE_GATED, STATE_PLANNED
 from arnold.pipelines.megaplan.workers import WorkerResult
@@ -43,6 +44,7 @@ from .shared import (
     _append_to_meta,
     _build_gate_prompt_override,
     _finish_step,
+    _raise_step_validation_error,
     _run_worker,
     _warn_best_effort_emit_failure,
     _warn_read_fallback,
@@ -711,6 +713,18 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             resolved=resolved,
         )
         gate_payload = worker.payload
+        try:
+            audit_step_payload("gate", gate_payload)
+        except ModelStructuralAuditError as error:
+            _raise_step_validation_error(
+                plan_dir=plan_dir,
+                state=state,
+                step="gate",
+                iteration=iteration,
+                worker=worker,
+                code="invalid_gate",
+                message=f"Gate output failed schema audit: {error.details}",
+            )
         strict_notes_flag = bool(state["config"].get("strict_notes", False))
         guidance = build_orchestrator_guidance(
             gate_payload=gate_payload,
@@ -760,6 +774,18 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             )
             worker = _merge_gate_worker_attempt(worker, retry_worker)
             gate_payload = worker.payload
+            try:
+                audit_step_payload("gate", gate_payload)
+            except ModelStructuralAuditError as error:
+                _raise_step_validation_error(
+                    plan_dir=plan_dir,
+                    state=state,
+                    step="gate",
+                    iteration=iteration,
+                    worker=worker,
+                    code="invalid_gate",
+                    message=f"Gate output failed schema audit: {error.details}",
+                )
             guidance = build_orchestrator_guidance(
                 gate_payload=gate_payload,
                 signals=signals_artifact["signals"],

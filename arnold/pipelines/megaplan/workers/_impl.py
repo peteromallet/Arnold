@@ -68,8 +68,10 @@ from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan.model_seam import (
     ModelTier,
     ModelStructuralAuditError,
+    audit_step_payload,
     capture_step_output,
     render_prompt_for_dispatch,
+    schema_audits_step_payload,
 )
 from arnold.pipelines.megaplan.runtime.process import TmuxSession, kill_group, spawn
 
@@ -106,6 +108,7 @@ _STEP_REQUIRED_KEYS: dict[str, list[str]] = {
     step: SCHEMAS.get(filename, {}).get("required", [])
     for step, filename in STEP_SCHEMA_FILENAMES.items()
 }
+_RETIRED_VALIDATE_PAYLOAD_STEPS = frozenset({"finalize", "critique", "review", "gate"})
 
 
 @dataclass
@@ -1573,6 +1576,34 @@ def _build_json_repair_prompt(error: json.JSONDecodeError, raw: str) -> str:
     return prompt
 
 
+def _critique_completeness_score(item: RecoveredCodexPayload) -> tuple[int, int]:
+    """Rank a recovered critique candidate by completed checks and total findings.
+
+    This helper is independent of fuzzy normalization and only ranks
+    schema-valid candidates.  The caller is responsible for filtering
+    to schema-valid payloads before ranking.
+
+    Returns a (completed_checks, total_findings) tuple so that ties on
+    completed_checks are broken by total_findings, and ties on both
+    preserve the insertion order that the recovery functions maintain
+    (output-file, fallback-file, raw-transcript).
+    """
+    checks = item.payload.get("checks", [])
+    if not isinstance(checks, list):
+        return (0, 0)
+    completed_checks = 0
+    total_findings = 0
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        findings = check.get("findings", [])
+        if not isinstance(findings, list) or not findings:
+            continue
+        completed_checks += 1
+        total_findings += len(findings)
+    return (completed_checks, total_findings)
+
+
 def _recover_payload_from_candidates(
     step: str,
     candidates: list[dict[str, Any]],
@@ -1581,10 +1612,20 @@ def _recover_payload_from_candidates(
     validate: bool,
 ) -> dict[str, Any] | None:
     validation_errors: list[str] = []
+    schema_audited = schema_audits_step_payload(step)
     for candidate in candidates:
-        normalized = _normalize_worker_payload(step, candidate)
         if not validate:
-            return normalized
+            return dict(candidate) if schema_audited else _normalize_worker_payload(step, candidate)
+        if schema_audited:
+            payload = dict(candidate)
+            try:
+                audit_step_payload(step, payload)
+            except ModelStructuralAuditError as error:
+                if _looks_like_step_payload(step, payload):
+                    validation_errors.append(error.details)
+                continue
+            return payload
+        normalized = _normalize_worker_payload(step, candidate)
         try:
             validate_payload(step, normalized)
         except CliError as error:
@@ -1638,35 +1679,6 @@ def _repair_worker_json_once(
 
 
 def _normalize_worker_payload(step: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if step == "execute":
-        normalized = dict(payload)
-        task_updates = normalized.get("task_updates")
-        if isinstance(task_updates, list):
-            normalized_updates: list[Any] = []
-            for update in task_updates:
-                if not isinstance(update, dict):
-                    normalized_updates.append(update)
-                    continue
-                item = dict(update)
-                if "task_id" not in item and isinstance(item.get("id"), str):
-                    item["task_id"] = item["id"]
-                if item.get("status") == "completed":
-                    item["status"] = "done"
-                normalized_updates.append(item)
-            normalized["task_updates"] = normalized_updates
-        acknowledgments = normalized.get("sense_check_acknowledgments")
-        if isinstance(acknowledgments, list):
-            normalized_acknowledgments: list[Any] = []
-            for acknowledgment in acknowledgments:
-                if not isinstance(acknowledgment, dict):
-                    normalized_acknowledgments.append(acknowledgment)
-                    continue
-                item = dict(acknowledgment)
-                if "sense_check_id" not in item and isinstance(item.get("id"), str):
-                    item["sense_check_id"] = item["id"]
-                normalized_acknowledgments.append(item)
-            normalized["sense_check_acknowledgments"] = normalized_acknowledgments
-        return normalized
     if step == "revise" and "changes_summary" not in payload:
         normalized = dict(payload)
         flags_addressed = normalized.get("flags_addressed", [])
@@ -1675,23 +1687,12 @@ def _normalize_worker_payload(step: str, payload: dict[str, Any]) -> dict[str, A
         else:
             normalized["changes_summary"] = "No critique flags were raised; refined the plan for execution."
         return normalized
-    if step == "review":
-        normalized = dict(payload)
-        for key in ("checks", "pre_check_flags", "verified_flag_ids", "disputed_flag_ids"):
-            if normalized.get(key) is None:
-                normalized[key] = []
-            else:
-                normalized.setdefault(key, [])
-        return normalized
-    # Defensive defaults: Opus occasionally drops top-level array keys even when
-    # the prompt schema lists them as required. Default them to [] so the chain
-    # can proceed; missing string-typed required keys still fail validation.
+    # Legacy-only defaults: remaining long-tail steps still rely on key-presence
+    # validation until m6, so missing optional arrays are scoped here instead of
+    # leaking fuzzy repair back into migrated native-capture steps.
     _STEP_OPTIONAL_ARRAY_DEFAULTS: dict[str, tuple[str, ...]] = {
         "plan": ("questions", "success_criteria", "assumptions"),
-        "critique": ("flags", "verified_flag_ids", "disputed_flag_ids"),
         "revise": ("flags_addressed", "assumptions", "success_criteria", "questions"),
-        "gate": ("warnings", "settled_decisions", "flag_resolutions", "accepted_tradeoffs"),
-        "finalize": ("watch_items", "sense_checks", "user_actions"),
         "prep": ("relevant_code", "test_expectations", "constraints"),
         "loop_plan": ("spec_updates",),
         "loop_execute": ("files_to_change",),
@@ -1754,6 +1755,7 @@ def _recover_codex_payload_with_provenance(
     raw: str,
     prefer_output_file: bool = True,
 ) -> RecoveredCodexPayload | None:
+    schema_audited = schema_audits_step_payload(step)
     file_payload = None
     template_payload = None
     candidate_payloads: list[RecoveredCodexPayload] = []
@@ -1801,19 +1803,24 @@ def _recover_codex_payload_with_provenance(
         and file_payload is not None
         and (step != "critique" or output_is_template_file or output_is_single_critique_check)
     ):
-        normalized_file_payload = _normalize_worker_payload(step, file_payload)
+        preferred_payload = dict(file_payload) if schema_audited else _normalize_worker_payload(step, file_payload)
         try:
-            validate_payload(step, normalized_file_payload)
-        except CliError as error:
-            if _looks_like_step_payload(step, normalized_file_payload):
+            if schema_audited:
+                audit_step_payload(step, preferred_payload)
+            else:
+                validate_payload(step, preferred_payload)
+        except (CliError, ModelStructuralAuditError) as error:
+            if _looks_like_step_payload(step, preferred_payload):
                 candidate_payloads.insert(
                     0,
                     RecoveredCodexPayload(payload=file_payload, provenance="output_file"),
                 )
-                validation_errors.append(error.message)
+                validation_errors.append(
+                    error.details if isinstance(error, ModelStructuralAuditError) else error.message
+                )
         else:
             return RecoveredCodexPayload(
-                payload=normalized_file_payload,
+                payload=preferred_payload,
                 provenance="output_file",
             )
     raw_candidates = _extract_json_candidates_from_raw(raw)
@@ -1835,14 +1842,19 @@ def _recover_codex_payload_with_provenance(
     )
     valid_payloads: list[RecoveredCodexPayload] = []
     for candidate in candidate_payloads:
-        normalized = _normalize_worker_payload(step, candidate.payload)
+        payload = dict(candidate.payload) if schema_audited else _normalize_worker_payload(step, candidate.payload)
         try:
-            validate_payload(step, normalized)
-        except CliError as error:
-            if _looks_like_step_payload(step, normalized):
-                validation_errors.append(error.message)
+            if schema_audited:
+                audit_step_payload(step, payload)
+            else:
+                validate_payload(step, payload)
+        except (CliError, ModelStructuralAuditError) as error:
+            if _looks_like_step_payload(step, payload):
+                validation_errors.append(
+                    error.details if isinstance(error, ModelStructuralAuditError) else error.message
+                )
             continue
-        valid_payloads.append(RecoveredCodexPayload(payload=normalized, provenance=candidate.provenance))
+        valid_payloads.append(RecoveredCodexPayload(payload=payload, provenance=candidate.provenance))
     if not valid_payloads:
         if validation_errors:
             unique_errors = list(dict.fromkeys(validation_errors))
@@ -1854,22 +1866,6 @@ def _recover_codex_payload_with_provenance(
             )
         return None
     if step == "critique" and len(valid_payloads) > 1:
-        def _critique_completeness_score(item: RecoveredCodexPayload) -> tuple[int, int]:
-            checks = item.payload.get("checks", [])
-            if not isinstance(checks, list):
-                return (0, 0)
-            completed_checks = 0
-            total_findings = 0
-            for check in checks:
-                if not isinstance(check, dict):
-                    continue
-                findings = check.get("findings", [])
-                if not isinstance(findings, list) or not findings:
-                    continue
-                completed_checks += 1
-                total_findings += len(findings)
-            return (completed_checks, total_findings)
-
         return max(valid_payloads, key=_critique_completeness_score)
     return valid_payloads[0]
 
@@ -1879,6 +1875,11 @@ def validate_payload(step: str, payload: dict[str, Any]) -> None:
         from arnold.pipelines.megaplan.orchestration.phase_result import validate_phase_result
         validate_phase_result(payload)
         return
+    if step in _RETIRED_VALIDATE_PAYLOAD_STEPS:
+        raise CliError(
+            "parse_error",
+            f"Legacy validate_payload() is retired for {step}; use schema-backed capture/audit instead.",
+        )
     if step == "execute":
         full_required = _STEP_REQUIRED_KEYS.get(step, [])
         missing_full = [key for key in full_required if key not in payload]
@@ -2197,26 +2198,25 @@ def run_codex_step(
     else:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-    rendered_prompt = None
     seam_tier = (
         ModelTier.NON_ENFORCED
         if persistent and session.get("id") and not fresh and not read_only
         else ModelTier.ENFORCED
     )
-    if prompt_override is None:
-        rendered_prompt = render_prompt_for_dispatch(
-            "codex",
-            step,
-            state,
-            plan_dir,
-            root=root,
-            model=model,
-            normalized_model=model,
-            tier=seam_tier,
-            schema=read_json(schema_file),
-            **(prompt_kwargs or {}),
-        )
-    prompt = prompt_override if prompt_override is not None else rendered_prompt.prompt
+    rendered_prompt = render_prompt_for_dispatch(
+        "codex",
+        step,
+        state,
+        plan_dir,
+        root=root,
+        model=model,
+        normalized_model=model,
+        tier=seam_tier,
+        schema=read_json(schema_file),
+        prompt_override=prompt_override,
+        **(prompt_kwargs or {}),
+    )
+    prompt = rendered_prompt.prompt
     timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
     if read_only:
@@ -2752,21 +2752,20 @@ def run_codex_prep_step(
     out_handle.close()
     output_path = Path(out_handle.name)
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
-    rendered_prompt = None
-    if prompt_override is None:
-        rendered_prompt = render_prompt_for_dispatch(
-            "codex",
-            step,
-            state,
-            plan_dir,
-            root=root,
-            model=model,
-            normalized_model=model,
-            tier=ModelTier.ENFORCED,
-            schema=read_json(schema_file),
-            **(prompt_kwargs or {}),
-        )
-    prompt = prompt_override if prompt_override is not None else rendered_prompt.prompt
+    rendered_prompt = render_prompt_for_dispatch(
+        "codex",
+        step,
+        state,
+        plan_dir,
+        root=root,
+        model=model,
+        normalized_model=model,
+        tier=ModelTier.ENFORCED,
+        schema=read_json(schema_file),
+        prompt_override=prompt_override,
+        **(prompt_kwargs or {}),
+    )
+    prompt = rendered_prompt.prompt
     command = [
         "codex",
         "exec",

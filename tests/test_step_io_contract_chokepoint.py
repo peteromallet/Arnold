@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from arnold.pipeline import (
     ContractSchemaRegistry,
@@ -13,6 +15,7 @@ from arnold.pipeline import (
     StepIOOperation,
     TELEMETRY_FILENAME,
     decide_step_io_read,
+    decide_step_io_write,
     decision_blocks_read,
     load_step_io_policy,
     read_violation_records,
@@ -975,3 +978,366 @@ def test_telemetry_emit_decision_returns_record_for_schema_unavailable(tmp_path)
     assert records[0]["classification"] == "schema_unavailable"
     assert records[0]["logical_type"] == "execute"
     assert records[0]["operation"] == "read"
+
+
+# ---------------------------------------------------------------------------
+# T1 characterization: confirm that the Step IO chokepoint (classify +
+# enforce) can recognize and enforce typed envelopes for all four
+# migrated artifact types (finalize, critique, review, gate).
+#
+# The classification enum (StepIOClassification) tells you whether a
+# payload is TYPED_VALID, TYPED_INVALID, etc. — it does NOT enumerate
+# logical types.  What matters is that the chokepoint's route-to-schema
+# machinery can classify and enforce a typed envelope whose logical_type
+# is one of the four migrated sites.
+# ---------------------------------------------------------------------------
+
+# Canonical classification outcomes the chokepoint supports today.
+_EXPECTED_CLASSIFICATIONS = frozenset(
+    {"TYPED_VALID", "TYPED_INVALID", "LEGACY_UNKNOWN", "SCHEMA_UNAVAILABLE",
+     "BINDING_UNAVAILABLE"}
+)
+
+
+def test_step_io_classification_enum_covers_all_expected_outcomes() -> None:
+    """Characterization: the classification enum has all the outcomes
+    that migrated-site enforcement depends on (typed valid/invalid,
+    schema unavailable, etc.).
+
+    This test is a canary: if a needed classification is missing at
+    classification-time, the chokepoint can't flag bad outputs for
+    migrated sites.
+    """
+    known = set(StepIOClassification.__members__.keys())
+    missing = _EXPECTED_CLASSIFICATIONS - known
+    assert not missing, (
+        f"StepIOClassification missing expected outcomes: {sorted(missing)}; "
+        f"known: {sorted(known)}"
+    )
+
+
+def test_chokepoint_route_resolves_schema_for_migrated_types() -> None:
+    """Characterization: the ContractSchemaRegistry can register and
+    retrieve schemas for all four migrated logical types.  This is the
+    minimum precondition for the chokepoint to enforce typed reads/writes
+    for those types."""
+    registry = ContractSchemaRegistry(Path("/tmp/_t1_registry_test"))
+    versions: dict[str, str] = {}
+    for logical_type in ("finalize", "critique", "review", "gate"):
+        schema = {
+            "type": "object",
+            "required": ["_t1_marker"],
+            "properties": {"_t1_marker": {"const": logical_type}},
+        }
+        version = registry.register(logical_type, schema)
+        assert version is not None, (
+            f"Failed to register schema for migrated type {logical_type!r}"
+        )
+        versions[logical_type] = version
+    # Verify we can retrieve each schema by version string.
+    for logical_type, version in versions.items():
+        retrieved = registry.get_schema(version)
+        assert retrieved is not None, (
+            f"Failed to retrieve schema for {logical_type!r} v{version}"
+        )
+        assert retrieved["required"] == ["_t1_marker"]
+
+
+# ── T6: StepIOContractContext wiring for migrated handler artifact writes ────
+# These tests verify that when a handler passes a real StepIOContractContext
+# to write_plan_artifact_json / write_artifact_json with a legacy (non-envelope)
+# payload, the write behaves correctly per the resolved step-IO policy mode:
+#   shadow → payload passes through, payload shape unchanged on disk
+#   warn   → payload passes through, payload shape unchanged on disk
+#   enforce → payload blocked (ValueError)
+
+
+_MIGRATED_TYPES = ("finalize", "critique", "review", "gate")
+
+# Canonical legacy payload shapes for each migrated type so the tests pin
+# the expected on-disk shape and can detect accidental envelope wrapping.
+_LEGACY_PAYLOADS: dict[str, dict[str, Any]] = {
+    "finalize": {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Wire contract context into finalize",
+                "status": "pending",
+                "complexity": 3,
+                "complexity_justification": "Test-driven wiring.",
+                "depends_on": [],
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+                "reviewer_verdict": "",
+                "kind": "code",
+                "stance": None,
+                "stop_signal": None,
+            }
+        ],
+        "sense_checks": [],
+        "watch_items": [],
+        "validation": {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "T6 test payload.",
+            "coverage_complete": True,
+        },
+    },
+    "critique": {
+        "checks": [
+            {
+                "check_id": "coverage",
+                "status": "pass",
+                "findings": [],
+                "evidence": "All code paths covered.",
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+    },
+    "review": {
+        "review_verdict": "approved",
+        "checks": [],
+        "pre_check_flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+        "criteria": [],
+        "issues": [],
+        "rework_items": [],
+        "summary": "T6 test review payload.",
+        "task_verdicts": [],
+        "sense_check_verdicts": [],
+    },
+    "gate": {
+        "recommendation": "PROCEED",
+        "rationale": "T6 test gate payload.",
+        "signals_assessment": "",
+        "warnings": [],
+        "settled_decisions": [],
+        "passed": True,
+        "flag_resolutions": [],
+        "unresolved_flags": [],
+        "preflight_results": {},
+        "orchestrator_guidance": "",
+    },
+}
+
+
+def _write_policy(plan_dir: Path, mode: str, *, producer_typed: bool = True, consumer_typed: bool = True) -> None:
+    write_step_io_policy(
+        plan_dir,
+        resolve_step_io_policy(
+            configured_mode=mode,
+            producer_typed=producer_typed,
+            consumer_typed=consumer_typed,
+        ),
+    )
+
+
+def test_t6_legacy_payload_passes_through_in_shadow_mode_for_all_migrated_types(
+    tmp_path,
+) -> None:
+    """Legacy payloads with a real StepIOContractContext(WRITE) pass through
+    when the step-IO policy is shadow, and the on-disk JSON shape is unchanged.
+    """
+    for logical_type in _MIGRATED_TYPES:
+        plan_dir = tmp_path / logical_type
+        plan_dir.mkdir()
+        _write_minimal_state(plan_dir)
+        repo = PlanRepository.from_plan_dir(plan_dir)
+
+        _write_policy(plan_dir, "shadow")
+
+        payload = deepcopy(_LEGACY_PAYLOADS[logical_type])
+        filename = f"{logical_type}.json"
+
+        out = repo.write_artifact_json(
+            filename,
+            payload,
+            contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+            contract_binding=_Binding(producer_typed=True, consumer_typed=True),
+        )
+        assert out == plan_dir / filename
+
+        # On-disk shape must be exactly the legacy payload, not a typed envelope.
+        on_disk = json.loads((plan_dir / filename).read_text(encoding="utf-8"))
+        assert on_disk == payload, (
+            f"shadow write for {logical_type} changed the on-disk payload shape"
+        )
+
+
+def test_t6_legacy_payload_passes_through_in_warn_mode_for_all_migrated_types(
+    tmp_path,
+) -> None:
+    """Legacy payloads with a real StepIOContractContext(WRITE) pass through
+    when the step-IO policy is warn, and the on-disk JSON shape is unchanged.
+    """
+    for logical_type in _MIGRATED_TYPES:
+        plan_dir = tmp_path / logical_type
+        plan_dir.mkdir()
+        _write_minimal_state(plan_dir)
+        repo = PlanRepository.from_plan_dir(plan_dir)
+
+        _write_policy(plan_dir, "warn")
+
+        payload = deepcopy(_LEGACY_PAYLOADS[logical_type])
+        filename = f"{logical_type}.json"
+
+        out = repo.write_artifact_json(
+            filename,
+            payload,
+            contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+            contract_binding=_Binding(producer_typed=True, consumer_typed=True),
+        )
+        assert out == plan_dir / filename
+
+        on_disk = json.loads((plan_dir / filename).read_text(encoding="utf-8"))
+        assert on_disk == payload, (
+            f"warn write for {logical_type} changed the on-disk payload shape"
+        )
+
+
+def test_t6_legacy_payload_blocked_in_enforce_mode_for_all_migrated_types(
+    tmp_path,
+) -> None:
+    """Legacy payloads with a real StepIOContractContext(WRITE) are BLOCKED
+    when the step-IO policy is enforce, because enforce mode requires typed
+    envelopes.
+    """
+    for logical_type in _MIGRATED_TYPES:
+        plan_dir = tmp_path / logical_type
+        plan_dir.mkdir()
+        _write_minimal_state(plan_dir)
+        repo = PlanRepository.from_plan_dir(plan_dir)
+
+        _write_policy(plan_dir, "enforce")
+
+        payload = deepcopy(_LEGACY_PAYLOADS[logical_type])
+        filename = f"{logical_type}.json"
+
+        try:
+            repo.write_artifact_json(
+                filename,
+                payload,
+                contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+                contract_binding=_Binding(producer_typed=True, consumer_typed=True),
+            )
+        except ValueError as exc:
+            assert "typed artifact write blocked" in str(exc), (
+                f"enforce block for {logical_type} missing expected message: {exc}"
+            )
+            assert "enforce" in str(exc).lower(), (
+                f"enforce block for {logical_type} should mention enforce mode: {exc}"
+            )
+        else:
+            raise AssertionError(
+                f"enforce mode must block legacy {logical_type} write "
+                "when contract_context is provided"
+            )
+
+        # File must NOT exist after blocked write.
+        assert not (plan_dir / filename).exists(), (
+            f"enforce-blocked write for {logical_type} must not create file"
+        )
+
+
+def test_t6_off_mode_still_writes_legacy_payload_with_contract_context(
+    tmp_path,
+) -> None:
+    """Off mode should still allow legacy writes even with contract_context."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write_minimal_state(plan_dir)
+    repo = PlanRepository.from_plan_dir(plan_dir)
+
+    _write_policy(plan_dir, "off")
+
+    payload = deepcopy(_LEGACY_PAYLOADS["finalize"])
+    repo.write_artifact_json(
+        "finalize.json",
+        payload,
+        contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+    )
+    on_disk = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    assert on_disk == payload
+
+
+def test_t6_contract_context_is_passed_through_to_decide_step_io_write_for_typed_envelopes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """When a typed envelope is written with a contract_context, that context
+    is forwarded to decide_step_io_write."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write_minimal_state(plan_dir)
+    repo = PlanRepository.from_plan_dir(plan_dir)
+
+    registry = ContractSchemaRegistry(tmp_path)
+    schema = {
+        "type": "object",
+        "required": ["answer"],
+        "properties": {"answer": {"type": "integer"}},
+        "additionalProperties": False,
+    }
+    version = registry.register("review", schema)
+
+    _write_policy(plan_dir, "enforce")
+
+    seen: list[StepIOContractContext] = []
+    original = decide_step_io_write
+
+    def _capture(value, context):
+        seen.append(context)
+        return original(value, context)
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.store.plan_repository.decide_step_io_write",
+        _capture,
+    )
+
+    envelope = {
+        "logical_type": "review",
+        "schema_version": version,
+        "payload": {"answer": 7},
+    }
+    ctx = StepIOContractContext(operation=StepIOOperation.WRITE, registry=registry)
+    repo.write_artifact_json(
+        "review.json",
+        envelope,
+        contract_context=ctx,
+        contract_binding=_Binding(producer_typed=True, consumer_typed=True),
+    )
+
+    assert len(seen) == 1
+    assert seen[0] is ctx
+
+
+def test_t6_legacy_write_with_context_preserves_payload_shape_across_roundtrip(
+    tmp_path,
+) -> None:
+    """Write a legacy payload with contract_context, then read it back —
+    the read must return the identical legacy dict."""
+    for logical_type in _MIGRATED_TYPES:
+        plan_dir = tmp_path / logical_type
+        plan_dir.mkdir()
+        _write_minimal_state(plan_dir)
+        repo = PlanRepository.from_plan_dir(plan_dir)
+
+        _write_policy(plan_dir, "shadow")
+
+        payload = deepcopy(_LEGACY_PAYLOADS[logical_type])
+        filename = f"{logical_type}.json"
+
+        repo.write_artifact_json(
+            filename,
+            payload,
+            contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+        )
+
+        read_back = repo.read_artifact_json(filename)
+        assert read_back == payload, (
+            f"roundtrip for {logical_type} changed payload shape"
+        )

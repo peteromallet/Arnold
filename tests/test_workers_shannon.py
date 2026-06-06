@@ -3397,3 +3397,405 @@ def test_session_plan_reproducible_from_state(
         f"  run 1: {result1.shannon_plan}\n"
         f"  run 2: {result2.shannon_plan}"
     )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T15 — review compaction via seam (render_compact_review_prompt)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_no_direct_compact_review_prompt_import_in_shannon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prove shannon.py no longer imports or calls compact_review_prompt directly."""
+    import ast
+    from pathlib import Path as _Path
+
+    shannon_path = _Path(__file__).resolve().parents[1] / "arnold" / "pipelines" / "megaplan" / "workers" / "shannon.py"
+    source = shannon_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    direct_compact_imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == "arnold.pipelines.megaplan.prompts.review":
+                for alias in node.names:
+                    if alias.name == "compact_review_prompt":
+                        direct_compact_imports.append(
+                            f"line {node.lineno}: from {node.module} import {alias.name}"
+                        )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if "compact_review_prompt" in alias.name:
+                    direct_compact_imports.append(
+                        f"line {node.lineno}: import {alias.name}"
+                    )
+
+    bare_calls: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == "compact_review_prompt":
+                bare_calls.append(f"line {node.lineno}: compact_review_prompt(...)")
+
+    assert not direct_compact_imports, (
+        f"shannon.py must not import compact_review_prompt directly. Found: {direct_compact_imports}"
+    )
+    assert not bare_calls, (
+        f"shannon.py must not call compact_review_prompt directly. Found: {bare_calls}"
+    )
+
+
+def test_model_budget_error_review_fallback_uses_seam_compact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ModelBudgetError on review → render_compact_review_prompt is called."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, RenderedStepMessage
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult, _build_mock_payload
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Review batch 1.\n- task_updates: [T1]\n- sense_check_acknowledgments: [SC1]"
+
+    def _raise_budget(*args: object, **kwargs: object) -> object:
+        raise ModelBudgetError("prompt is too large")
+
+    review_payload = _build_mock_payload("review", state, plan_dir)
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(review_payload),
+            "session_id": "review-session",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=100,
+    )
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
+            return_value=built_prompt,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_step_message",
+            side_effect=_raise_budget,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            return_value=fake_result,
+        ),
+    ):
+        mock_compact.return_value = RenderedStepMessage(
+            text="compacted",
+            prompt="compacted",
+        )
+        run_shannon_step(
+            "review",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            session_agent="shannon",
+            model="claude-sonnet-4-5",
+        )
+
+    mock_compact.assert_called_once()
+    call_args, call_kwargs = mock_compact.call_args
+    assert call_args[0] == "shannon"
+    assert call_args[1] == "review"
+    assert call_kwargs.get("root") == tmp_path
+    assert call_kwargs.get("worker") == "shannon"
+    assert call_kwargs.get("model") == "claude-sonnet-4-5"
+    assert call_kwargs.get("tier") == ModelTier.NON_ENFORCED
+    assert "prompt_size_error" in call_kwargs
+
+
+def test_prompt_oversized_review_fallback_uses_seam_compact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """prompt_oversized on review → render_compact_review_prompt is called."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.types import CliError
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult, _build_mock_payload
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Review batch 1.\n- task_updates: [T1]\n- sense_check_acknowledgments: [SC1]"
+
+    _call_count = 0
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        nonlocal _call_count
+        _call_count += 1
+        if _call_count == 1:
+            raise CliError("prompt_oversized", "too large", extra={"token_count": 500_000})
+        # second call (post-compaction) passes
+
+    review_payload = _build_mock_payload("review", state, plan_dir)
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(review_payload),
+            "session_id": "review-session",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=100,
+    )
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
+            return_value=built_prompt,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
+            side_effect=fake_check_prompt_size,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            return_value=fake_result,
+        ),
+    ):
+        from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
+        mock_compact.return_value = RenderedStepMessage(
+            text="compacted text",
+            prompt="compacted text",
+        )
+        run_shannon_step(
+            "review",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            session_agent="shannon",
+            model="claude-sonnet-4-5",
+        )
+
+    mock_compact.assert_called_once()
+    call_args, call_kwargs = mock_compact.call_args
+    assert call_args[0] == "shannon"
+    assert call_args[1] == "review"
+    assert call_kwargs.get("root") == tmp_path
+    assert call_kwargs.get("prompt_size_error") == {"token_count": 500_000}
+
+
+def test_non_review_model_budget_error_still_raised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ModelBudgetError on non-review step is NOT caught — it propagates."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import ModelBudgetError
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Execute batch 1."
+
+    def _raise_budget(*args: object, **kwargs: object) -> object:
+        raise ModelBudgetError("too large")
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
+            return_value=built_prompt,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_step_message",
+            side_effect=_raise_budget,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+    ):
+        with pytest.raises(ModelBudgetError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+            )
+
+    mock_compact.assert_not_called()
+
+
+def test_non_review_prompt_oversized_still_raised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """prompt_oversized on non-review step is NOT caught — it propagates."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.types import CliError
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Execute batch 1."
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
+            return_value=built_prompt,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
+            side_effect=fake_check_prompt_size,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+            )
+
+    mock_compact.assert_not_called()
+
+
+def test_compact_review_fidelity_preserves_prompt_string(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compact path produces a usable prompt string for downstream processing."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.types import CliError
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult, _build_mock_payload
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Review batch 1.\n- task_updates: [T1]\n- sense_check_acknowledgments: [SC1]"
+
+    compacted_text = "COMPACTED: review with limited context"
+
+    _call_count = 0
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        nonlocal _call_count
+        _call_count += 1
+        if _call_count == 1:
+            raise CliError("prompt_oversized", "too large", extra={"token_count": 500_000})
+        # second call (post-compaction) passes — we just verify content
+
+    review_payload = _build_mock_payload("review", state, plan_dir)
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(review_payload),
+            "session_id": "fidelity-session",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=100,
+    )
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
+            return_value=built_prompt,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
+            side_effect=fake_check_prompt_size,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon._write_prompt_file",
+        ) as mock_write,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            return_value=fake_result,
+        ),
+    ):
+        from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
+        mock_compact.return_value = RenderedStepMessage(
+            text=compacted_text,
+            prompt=compacted_text,
+        )
+        run_shannon_step(
+            "review",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            session_agent="shannon",
+            model="claude-sonnet-4-5",
+        )
+
+    # The prompt written to disk must contain the compacted text
+    prompt_written = mock_write.call_args.args[2]
+    assert compacted_text in prompt_written, (
+        f"Compacted text must appear in the written prompt file.\n"
+        f"Expected to find: {compacted_text!r}\n"
+        f"In: {prompt_written!r}"
+    )

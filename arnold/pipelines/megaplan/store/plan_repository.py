@@ -20,6 +20,7 @@ from arnold.pipeline.step_io_policy import (
     decision_blocks_read,
     decision_blocks_write,
     policy_for_envelope,
+    resolve_step_io_policy,
 )
 from arnold.pipeline.step_io_telemetry import TELEMETRY_FILENAME, emit_decision_telemetry
 from arnold.pipelines.megaplan._core.io import (
@@ -236,7 +237,23 @@ class PlanRepository:
     ) -> Path:
         path = self._resolve_artifact_path(name)
         if contract_context is not None and not is_step_io_envelope(data):
-            raise ValueError("typed artifact write blocked: missing typed step-IO envelope")
+            # When a contract_context is explicitly provided but the data is legacy
+            # (not a typed envelope), the writer intends to participate in typed
+            # enforcement.  Resolve the policy as though the producer is typed so
+            # that enforce mode can block legacy payloads until they are upgraded
+            # to typed envelopes.  The binding (when available) supplies the
+            # actual typed status of both sides of the seam.
+            policy = resolve_step_io_policy(
+                plan_dir=self.plan_dir,
+                binding=contract_binding,
+                producer_typed=True,
+            )
+            if policy.enforces:
+                raise ValueError(
+                    "typed artifact write blocked: missing typed step-IO envelope "
+                    "required in enforce mode"
+                )
+            # shadow / warn / off: legacy payloads pass through unchanged
         if is_step_io_envelope(data):
             envelope = StepIOEnvelope.from_json(data)
             policy = policy_for_envelope(envelope, plan_dir=self.plan_dir, binding=contract_binding)

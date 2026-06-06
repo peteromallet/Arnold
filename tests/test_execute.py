@@ -2869,6 +2869,12 @@ def test_light_batch_1_on_single_batch_plan_transitions_to_done(
     assert state["current_state"] == megaplan.STATE_DONE
     assert "review.json" in response["artifacts"]
     assert stored_review["review_verdict"] == "approved"
+    assert stored_review["checks"] == []
+    assert stored_review["pre_check_flags"] == []
+    assert stored_review["task_verdicts"] == []
+    assert stored_review["sense_check_verdicts"] == []
+    assert stored_review["criteria"]
+    assert all(item["pass"] == "pass" for item in stored_review["criteria"])
     assert (plan_fixture.plan_dir / "execution_batch_1.json").exists()
     assert (plan_fixture.plan_dir / "execution.json").exists()
 
