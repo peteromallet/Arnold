@@ -3291,6 +3291,10 @@ function outcomeRequiresClarification(outcome) {
   return outcome.kind === "clarify" || outcome.kind === "edit+clarify";
 }
 
+function outcomeIsNoop(outcome) {
+  return Boolean(outcome && typeof outcome === "object" && outcome.kind === "noop");
+}
+
 function clarificationMessageFromOutcome(outcome, fallbackMessage = null) {
   if (!outcome || typeof outcome !== "object") {
     return fallbackMessage;
@@ -7507,6 +7511,9 @@ function isSubmitResponseValid(result, outcome, candidateGraph) {
   if (outcomeRequiresClarification(outcome)) {
     return true; // clarify-only turns do not require a candidate graph
   }
+  if (outcomeIsNoop(outcome)) {
+    return true; // no-op turns intentionally have no candidate graph
+  }
   return candidateGraph && typeof candidateGraph === "object";
 }
 
@@ -7832,6 +7839,51 @@ async function submitAgentEdit(panel) {
         session_id: result.session_id,
         clarification: panel.state.clarification,
         message: clarifyMessage,
+      });
+      renderLifecycleTransition(panel, obligations);
+      return;
+    }
+
+    if (outcomeIsNoop(outcome)) {
+      const noopMessage =
+        (typeof result.message === "string" && result.message.trim())
+          ? result.message.trim()
+          : (typeof outcome.reason === "string" && outcome.reason.trim())
+            ? outcome.reason.trim()
+            : "No change needed.";
+      const lastSubmitFieldChanges = normalizeFieldChangesFromSubmit(result);
+      const changeDetails = result.change_details && typeof result.change_details === "object"
+        ? clonePlainData(result.change_details)
+        : null;
+      const obligations = transition(panel, "NOOP_RESPONSE", {
+        result,
+        message: noopMessage,
+        lastSubmitFieldChanges,
+        changeDetails,
+        debugPayload: {
+          ...result,
+          last_submit: panel.state.lastSubmit,
+        },
+      });
+      fulfillLifecycleTransitionObligations(panel, obligations);
+      reconcileResponseBatchTurns(panel, result);
+      pushHistory(panel, "noop", noopMessage);
+      pushTurnStatus(panel, "noop", {
+        session_id: result.session_id,
+        turn_id: result.turn_id,
+        baseline_turn_id: result.baseline_turn_id,
+        task,
+        message: noopMessage,
+        graph_unchanged: true,
+        audit_ref: result.audit_ref,
+        raw_payload: result,
+      });
+      rememberTurnDetailSnapshot(panel, {
+        turn_id: result.turn_id,
+        session_id: result.session_id,
+        outcome,
+        message: noopMessage,
+        changeDetails,
       });
       renderLifecycleTransition(panel, obligations);
       return;

@@ -299,6 +299,9 @@ export function transition(panel, event, payload = {}) {
     case "CLARIFY_ONLY_RESPONSE":
       return _handleClarifyOnlyResponse(panel, payload);
 
+    case "NOOP_RESPONSE":
+      return _handleNoopResponse(panel, payload);
+
     case "ARRIVAL_SERIALIZE_FAILURE":
       return _handleArrivalSerializeFailure(panel, payload);
 
@@ -685,6 +688,37 @@ function _handleClarifyOnlyResponse(panel, payload) {
   panel.state.queueAllowed = false;
   panel.state.auditRef = result.audit_ref || null;
   panel.state.lastSubmitFieldChanges = payload?.lastSubmitFieldChanges || null;
+  panel.state.debugPayload = payload?.debugPayload || {
+    ...result,
+    last_submit: panel.state.lastSubmit,
+  };
+  return _obligations({
+    render: true,
+    dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+    persistSession: panel.state.sessionId || null,
+    refreshQueueGuard: true,
+    rehydrateChat: true,
+    invalidateCandidate: true,
+  });
+}
+
+function _handleNoopResponse(panel, payload) {
+  const result = payload?.result || {};
+  panel.state.phase = PANEL_STATE.IDLE;
+  panel.state.sessionId = _stringOrCurrent(result.session_id, panel.state.sessionId);
+  panel.state.turnId = typeof result.turn_id === "string" ? result.turn_id : null;
+  _handleSyncBaseline(panel, result);
+  _handleInvalidateCandidate(panel, { repaint: false });
+  panel.state.clarification = null;
+  panel.state.message = payload?.message || result.message || null;
+  panel.state.failure = null;
+  panel.state.canvasApplyAllowed = false;
+  panel.state.applyAllowed = false;
+  panel.state.applyEligibility = null;
+  panel.state.queueAllowed = false;
+  panel.state.auditRef = result.audit_ref || null;
+  panel.state.lastSubmitFieldChanges = payload?.lastSubmitFieldChanges || null;
+  panel.state.changeDetails = payload?.changeDetails || null;
   panel.state.debugPayload = payload?.debugPayload || {
     ...result,
     last_submit: panel.state.lastSubmit,
@@ -1264,7 +1298,63 @@ function _syncRebaselineRecovery(panel, payload) {
     panel.state.rebaselineRecovery = payload.rebaselineRecovery || null;
   } else if (payload.clearRebaselineRecovery) {
     panel.state.rebaselineRecovery = null;
+  } else {
+    const recovery = _extractRebaselineRecovery(payload);
+    if (recovery) {
+      panel.state.rebaselineRecovery = recovery;
+    }
   }
+}
+
+function _normalizeRebaselineRecovery(recovery) {
+  if (!recovery || typeof recovery !== "object") {
+    return null;
+  }
+  return {
+    action: typeof recovery.action === "string" ? recovery.action : null,
+    endpoint: typeof recovery.endpoint === "string" ? recovery.endpoint : null,
+    reason: typeof recovery.reason === "string" ? recovery.reason : null,
+    last_known_baseline_graph_hash:
+      typeof recovery.last_known_baseline_graph_hash === "string"
+        ? recovery.last_known_baseline_graph_hash
+        : null,
+    submit_graph_hash:
+      typeof recovery.submit_graph_hash === "string" ? recovery.submit_graph_hash : null,
+    submit_structural_graph_hash:
+      typeof recovery.submit_structural_graph_hash === "string"
+        ? recovery.submit_structural_graph_hash
+        : null,
+    client_graph_hash:
+      typeof recovery.client_graph_hash === "string" ? recovery.client_graph_hash : null,
+    client_structural_graph_hash:
+      typeof recovery.client_structural_graph_hash === "string"
+        ? recovery.client_structural_graph_hash
+        : null,
+  };
+}
+
+function _extractRebaselineRecovery(payload) {
+  const topLevel = _normalizeRebaselineRecovery(payload?.rebaseline_recovery);
+  if (topLevel) {
+    return topLevel;
+  }
+  const issueSources = [
+    payload?.agent_failure_context?.issues,
+    payload?.outcome?.agent_failure_context?.issues,
+    payload?.debug?.failure?.agent_failure_context?.issues,
+  ];
+  for (const issues of issueSources) {
+    if (!Array.isArray(issues)) {
+      continue;
+    }
+    for (const issue of issues) {
+      const recovery = _normalizeRebaselineRecovery(issue?.rebaseline_recovery);
+      if (recovery) {
+        return recovery;
+      }
+    }
+  }
+  return null;
 }
 
 function _stringOrCurrent(value, current) {

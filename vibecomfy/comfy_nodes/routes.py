@@ -13,7 +13,14 @@ from .agent_contracts import (
     derive_apply_eligibility,
     failure_envelope,
 )
-from .agent_edit import _SESSION_ROOT, _safe_session_id, handle_agent_edit, read_session_chat, read_session_json
+from .agent_edit import (
+    DEFAULT_CHAT_DISPLAY_MESSAGES,
+    _SESSION_ROOT,
+    _safe_session_id,
+    handle_agent_edit,
+    read_session_chat,
+    read_session_json,
+)
 from .agent_provider import readiness, handle_credential_submission
 from .agent_session import accept_turn, payload_hash, rebaseline_session, reject_turn, session_dir_for, turn_dir_for
 from .agent_audit import artifact_ref_for_path, write_audit
@@ -336,9 +343,14 @@ def _handle_agent_edit_chat(
         ).to_dict()
 
     root = _root(session_root)
-    max_messages = 5
-    if isinstance(params.get("max_messages"), int) and int(params.get("max_messages", 0)) > 0:
-        max_messages = int(params["max_messages"])
+    max_messages = DEFAULT_CHAT_DISPLAY_MESSAGES
+    raw_max_messages = params.get("max_messages")
+    try:
+        parsed_max_messages = int(raw_max_messages) if raw_max_messages is not None else max_messages
+    except (TypeError, ValueError):
+        parsed_max_messages = max_messages
+    if parsed_max_messages > 0:
+        max_messages = min(parsed_max_messages, DEFAULT_CHAT_DISPLAY_MESSAGES)
 
     try:
         return read_session_chat(root, session_id_raw, max_messages=max_messages)

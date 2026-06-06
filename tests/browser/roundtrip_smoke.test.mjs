@@ -782,6 +782,245 @@ test("VibeComfy renders a clarify turn as a question, not a no-op candidate", as
   }
 });
 
+test("VibeComfy stale-canvas submit failure renders Rebaseline & retry and auto-resubmits", async () => {
+  const submitBodies = [];
+  const rebaselineBodies = [];
+  const initialGraph = {
+    nodes: [{ id: 1, type: "EmptyLatentImage", properties: { vibecomfy_uid: "latent" } }],
+    links: [],
+  };
+  const candidateGraph = {
+    nodes: [
+      { id: 1, type: "EmptyLatentImage", properties: { vibecomfy_uid: "latent" } },
+      { id: 2, type: "KSampler", properties: { vibecomfy_uid: "sampler" } },
+    ],
+    links: [],
+  };
+  const recoveryButtonsFor = () => harness.document.body.querySelectorAll(
+    (node) => node.tagName === "BUTTON" && node.dataset?.vibecomfyRecoveryAction === "stale-rebaseline-retry",
+  );
+  const harness = await createBrowserHarness({
+    graph: initialGraph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          },
+        },
+      },
+      "/vibecomfy/agent-edit": async ({ options }) => {
+        const body = JSON.parse(options.body);
+        submitBodies.push(body);
+        if (submitBodies.length === 1) {
+          return {
+            status: 409,
+            body: {
+              ok: false,
+              kind: "StaleStateMismatch",
+              stage: "ingest",
+              retryable: true,
+              graph_unchanged: true,
+              user_facing_message: "The canvas changed since the current backend baseline. Rebaseline and resubmit from the current canvas.",
+              next_action: "Rebaseline and retry from the current canvas.",
+              session_id: "session-stale-submit",
+              turn_id: "0005",
+              baseline_turn_id: "0004",
+              baseline_graph_hash: "baseline-old",
+              rebaseline_recovery: {
+                action: "rebaseline",
+                endpoint: "/vibecomfy/agent-edit/rebaseline",
+                reason: "stale_state_recovery",
+                last_known_baseline_graph_hash: "baseline-old",
+                submit_graph_hash: "submit-old",
+                submit_structural_graph_hash: "submit-structural-old",
+                client_graph_hash: body.client_graph_hash,
+                client_structural_graph_hash: body.client_structural_graph_hash,
+              },
+            },
+          };
+        }
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            session_id: "session-stale-submit",
+            turn_id: "0006",
+            baseline_turn_id: null,
+            baseline_graph_hash: "baseline-current-canvas",
+            baseline_graph_hash_kind: "structural",
+            baseline_graph_hash_version: 2,
+            baseline_source: "rebaseline",
+            baseline_rebaseline_id: "rebaseline-0001",
+            baseline_graph_source_path: "_rebaseline/rebaseline-0001/graph.ui.json",
+            canvas_apply_allowed: true,
+            apply_allowed: true,
+            queue_allowed: false,
+            apply_eligibility: {
+              applyable: true,
+              reason: "queue_blocked_warning",
+              message: "Apply is allowed, but Queue remains blocked for this candidate.",
+              warnings: ["queue_blocked"],
+            },
+            message: "Recovered candidate ready.",
+            submit_graph_hash: "submit-after-rebaseline",
+            candidate_graph_hash: "candidate-after-rebaseline",
+            graph: candidateGraph,
+            candidate: { state: "candidate", graph: candidateGraph, graph_hash: "candidate-after-rebaseline" },
+            report: { change: { content_edits: { edited: ["sampler"] } }, recovery: [] },
+          },
+        };
+      },
+      "/vibecomfy/agent-edit/rebaseline": async ({ options }) => {
+        const body = JSON.parse(options.body);
+        rebaselineBodies.push(body);
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            action: "rebaseline",
+            session_id: "session-stale-submit",
+            baseline_turn_id: null,
+            baseline_graph_hash: "baseline-current-canvas",
+            baseline_graph_hash_kind: "structural",
+            baseline_graph_hash_version: 2,
+            baseline_source: "rebaseline",
+            baseline_rebaseline_id: "rebaseline-0001",
+            baseline_graph_source_path: "_rebaseline/rebaseline-0001/graph.ui.json",
+            apply_allowed: false,
+            canvas_apply_allowed: false,
+            queue_allowed: false,
+            apply_eligibility: {
+              applyable: false,
+              reason: "no_candidate",
+              message: "No candidate is available to apply.",
+              warnings: [],
+            },
+          },
+        };
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+
+    const panel = extensionModule.ensureAgentPanel();
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "set the batch size to 2";
+    await harness.clickButton("Submit");
+    await waitFor(() => recoveryButtonsFor().length === 1);
+
+    assert.equal(panel.state.phase, "ERROR");
+    assert.equal(panel.state.rebaselineRecovery?.last_known_baseline_graph_hash, "baseline-old");
+    assert.match(harness.textDump(), /Rebaseline & retry/);
+
+    recoveryButtonsFor()[0].click();
+    await waitFor(() => rebaselineBodies.length === 1);
+    await waitFor(() => submitBodies.length === 2);
+    await waitFor(() => panel.state.phase === "AWAITING_REVIEW");
+
+    assert.equal(rebaselineBodies[0].reason, "stale_state_recovery");
+    assert.equal(rebaselineBodies[0].last_known_baseline_graph_hash, "baseline-old");
+    assert.equal(submitBodies[1].task, "set the batch size to 2");
+    assert.equal(submitBodies[1].session_id, "session-stale-submit");
+    assert.equal(panel.state.candidateGraphHash, "candidate-after-rebaseline");
+    assert.equal(panel.state.rebaselineRecovery, null);
+    assert.equal(recoveryButtonsFor().length, 0);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy renders no-op edit turns without entering review", async () => {
+  const graph = {
+    nodes: [{ id: 1, type: "KSampler", properties: { vibecomfy_uid: "ksampler" } }],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          },
+        },
+      },
+      "/vibecomfy/agent-edit": {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: "session-noop",
+          turn_id: "0001",
+          baseline_turn_id: null,
+          outcome: {
+            kind: "noop",
+            reason: "KSampler cfg is already 6.5; no change needed.",
+          },
+          candidate: null,
+          graph_unchanged: true,
+          canvas_apply_allowed: false,
+          apply_allowed: false,
+          queue_allowed: false,
+          apply_eligibility: {
+            applyable: false,
+            reason: "no_candidate",
+            message: "No candidate is available to apply.",
+            warnings: [],
+          },
+          message: "KSampler cfg is already 6.5; no change needed.",
+          graph,
+          report: { done_summary: "No change needed." },
+        },
+      },
+    },
+  });
+
+  let submitPromise;
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "set the main sampler cfg to 6.5";
+    submitPromise = harness.clickButton("Submit");
+    await submitPromise;
+
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-status")?.textContent, "Ready");
+    assert.match(harness.textDump(), /already 6\.5; no change needed/i);
+    assert.doesNotMatch(harness.textDump(), /Review Changes/);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled, true);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-reject")?.disabled, true);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled, false);
+    assert.equal(harness.loadGraphDataCalls.length, 0);
+  } finally {
+    await Promise.allSettled([submitPromise].filter(Boolean));
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy preserves Apply controls for edit+clarify candidates", async () => {
   const SESSION_ID = "session-edit-clarify";
   const initialGraph = {

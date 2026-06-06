@@ -542,6 +542,12 @@ test("Submit response transitions return deterministic dirty sections and invali
     baseline_turn_id: "0001",
     baseline_graph_hash: "base-failure",
     audit_ref: { path: "failure-audit.json" },
+    rebaseline_recovery: {
+      action: "rebaseline",
+      endpoint: "/vibecomfy/agent-edit/rebaseline",
+      reason: "stale_state_recovery",
+      last_known_baseline_graph_hash: "base-failure",
+    },
   };
   const failurePanel = makePanel({
     phase: PANEL_STATE.SUBMITTING,
@@ -556,6 +562,16 @@ test("Submit response transitions return deterministic dirty sections and invali
     persistSession: "sess-failure",
     refreshQueueGuard: true,
     rehydrateChat: true,
+  });
+  assert.deepEqual(failurePanel.state.rebaselineRecovery, {
+    action: "rebaseline",
+    endpoint: "/vibecomfy/agent-edit/rebaseline",
+    reason: "stale_state_recovery",
+    last_known_baseline_graph_hash: "base-failure",
+    submit_graph_hash: null,
+    submit_structural_graph_hash: null,
+    client_graph_hash: null,
+    client_structural_graph_hash: null,
   });
 
   const clarifyPanel = makePanel({
@@ -583,6 +599,39 @@ test("Submit response transitions return deterministic dirty sections and invali
     rehydrateChat: true,
     invalidateCandidate: true,
   });
+
+  const noopPanel = makePanel({
+    phase: PANEL_STATE.SUBMITTING,
+    candidateGraph: { stale: true },
+    candidateGraphHash: "stale-noop",
+    _previewDiff: { stale: true },
+    _previewDiffGraphHash: "preview-noop",
+  });
+  const noopObligations = transition(noopPanel, "NOOP_RESPONSE", {
+    result: {
+      session_id: "sess-noop",
+      turn_id: "0005",
+      baseline_turn_id: "0004",
+      baseline_graph_hash: "base-noop",
+      message: "KSampler cfg is already 6.5; no change needed.",
+      apply_eligibility: { applyable: false, reason: "no_candidate" },
+    },
+    message: "KSampler cfg is already 6.5; no change needed.",
+    debugPayload: { response: "noop" },
+  });
+  assert.deepEqual(noopObligations, {
+    render: true,
+    dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+    persistSession: "sess-noop",
+    refreshQueueGuard: true,
+    rehydrateChat: true,
+    invalidateCandidate: true,
+  });
+  assert.equal(noopPanel.state.phase, PANEL_STATE.IDLE);
+  assert.equal(noopPanel.state.candidateGraph, null);
+  assert.equal(noopPanel.state.applyAllowed, false);
+  assert.equal(noopPanel.state.queueAllowed, false);
+  assert.equal(noopPanel.state.message, "KSampler cfg is already 6.5; no change needed.");
 
   const candidatePanel = makePanel({
     phase: PANEL_STATE.SUBMITTING,

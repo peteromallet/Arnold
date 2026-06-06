@@ -2155,6 +2155,52 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert events[1][1]["done_summary"] == result["done_summary"]
 
 
+def test_handle_agent_edit_batch_repl_noop_does_not_enter_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "set the save prefix to before",
+            "session_id": "batch-noop",
+            "max_batches": 2,
+            "max_consecutive_errors": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: {
+            "batch": 'saveimage.filename_prefix = "before"\ndone()',
+            "message": "No change needed.",
+        },
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "noop"
+    assert result["candidate"] is None
+    assert result["apply_allowed"] is False
+    assert result["canvas_apply_allowed"] is False
+    assert result["queue_allowed"] is False
+    assert result["apply_eligibility"]["reason"] == "no_candidate"
+    assert result["graph_unchanged"] is True
+    assert result["debug"]["batch_repl"]["exit_mode"] == "noop"
+    assert result["change_details"]["landed_operation_count"] == 0
+    assert result["change_details"]["operations"] == []
+    assert result["batch_turns"][0]["field_changes"] == []
+    assert result["batch_turns"][0]["noop_field_changes"] == [
+        {
+            "uid": "2",
+            "field_path": "filename_prefix",
+            "old": "before",
+            "new": "before",
+        }
+    ]
+    assert result["message"] == "SaveImage filename_prefix is already before; no change needed."
+
+
 def test_handle_agent_edit_batch_repl_clarify_after_edit_returns_edit_and_clarify_outcome(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5858,6 +5904,25 @@ def test_operation_detail_payload_mixed_null_and_present_old() -> None:
     ]
 
 
+def test_operation_detail_payload_filters_noop_field_changes() -> None:
+    payload = _operation_detail_payload(
+        (
+            FieldChange(uid="ksampler", field_path="cfg", old=6.5, new=6.5),
+            FieldChange(uid="ksampler", field_path="steps", old=20, new=30),
+        )
+    )
+
+    assert payload == [
+        {
+            "uid": "ksampler",
+            "field_path": "steps",
+            "old": 20,
+            "new": 30,
+            "summary": "Changed ksampler.steps from 20 to 30.",
+        }
+    ]
+
+
 def test_humanized_edit_message_set_wording_for_single_absent_old() -> None:
     """_humanized_edit_message produces 'Set ...' for a single change with absent old."""
     state = _make_state(
@@ -6299,6 +6364,57 @@ def test_read_session_chat_last_five_messages(tmp_path: Path) -> None:
     assert messages[1]["turn_id"] == "0003"
     assert messages[4]["role"] == "agent"
     assert messages[4]["turn_id"] == "0004"
+
+
+def test_read_session_chat_default_display_window_returns_more_than_five_messages(
+    tmp_path: Path,
+) -> None:
+    session_id = "default-window-test"
+    turns_dir = session_dir_for(tmp_path, session_id) / "turns"
+
+    for index in range(9):
+        tid = f"{index:04d}"
+        _write_chat_artifact(
+            turns_dir / tid, session_id, tid,
+            f"user-{tid}", f"agent-{tid}",
+        )
+
+    result = read_session_chat(tmp_path, session_id)
+
+    assert result["ok"] is True
+    assert len(result["messages"]) == 18
+    assert result["messages"][0]["turn_id"] == "0000"
+    assert result["messages"][-1]["turn_id"] == "0008"
+
+
+def test_agent_edit_chat_endpoint_defaults_to_bounded_fifty_message_window(
+    tmp_path: Path,
+) -> None:
+    routes = importlib.import_module("vibecomfy.comfy_nodes.routes")
+    session_id = "endpoint-window-test"
+    turns_dir = session_dir_for(tmp_path, session_id) / "turns"
+
+    for index in range(30):
+        tid = f"{index:04d}"
+        _write_chat_artifact(
+            turns_dir / tid, session_id, tid,
+            f"user-{tid}", f"agent-{tid}",
+        )
+
+    default_result = routes._handle_agent_edit_chat(
+        {"session_id": session_id},
+        session_root=tmp_path,
+    )
+    oversized_result = routes._handle_agent_edit_chat(
+        {"session_id": session_id, "max_messages": "500"},
+        session_root=tmp_path,
+    )
+
+    assert default_result["ok"] is True
+    assert len(default_result["messages"]) == 50
+    assert default_result["messages"][0]["turn_id"] == "0005"
+    assert oversized_result["ok"] is True
+    assert len(oversized_result["messages"]) == 50
 
 
 def test_read_session_chat_fallback_from_request_response(tmp_path: Path) -> None:

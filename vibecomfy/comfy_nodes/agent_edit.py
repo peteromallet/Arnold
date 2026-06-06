@@ -72,6 +72,8 @@ if TYPE_CHECKING:
 DeepSeekClient = Callable[[list[dict[str, str]]], dict[str, str]]
 
 _SESSION_ROOT = Path("out/editor_sessions")
+DEFAULT_CHAT_DISPLAY_MESSAGES = 50
+PROMPT_MEMORY_MESSAGES = 5
 LOGGER = logging.getLogger(__name__)
 _WARNED_LEGACY_CONTRACTS: set[str] = set()
 _WARNED_IGNORED_PUBLIC_PROTOCOL_ENVS: set[str] = set()
@@ -123,6 +125,7 @@ class AgentEditState:
     batch_signature_catalog: str = ""
     batch_turns: list[dict[str, Any]] = field(default_factory=list)
     batch_field_changes: tuple[FieldChange, ...] = ()
+    batch_noop_field_changes: tuple[FieldChange, ...] = ()
     batch_budget_state: dict[str, Any] = field(default_factory=dict)
     batch_turn_count: int = 0
     batch_max_turns: int = 20
@@ -250,6 +253,24 @@ def _total_landed_edit_count(state: AgentEditState) -> int:
         if isinstance(landed, int) and landed > 0:
             total += landed
     return total
+
+
+def _field_change_is_noop(change: FieldChange) -> bool:
+    return change.old is not _ABSENT_FIELD_OLD and change.old == change.new
+
+
+def _real_field_changes(changes: tuple[FieldChange, ...]) -> tuple[FieldChange, ...]:
+    return tuple(change for change in changes if not _field_change_is_noop(change))
+
+
+def _noop_field_changes(changes: tuple[FieldChange, ...]) -> tuple[FieldChange, ...]:
+    return tuple(change for change in changes if _field_change_is_noop(change))
+
+
+def _batch_candidate_graph_changed(state: AgentEditState) -> bool:
+    if not isinstance(state.ui_payload, Mapping):
+        return False
+    return structural_graph_hash(state.ui_payload) != structural_graph_hash(state.graph)
 
 
 def _landed_edit_lead(state: AgentEditState) -> str:
@@ -386,7 +407,7 @@ def _sentence_case(text: str) -> str:
 
 
 def _humanized_edit_message(state: AgentEditState) -> str:
-    changes = tuple(state.batch_field_changes or ())
+    changes = _real_field_changes(tuple(state.batch_field_changes or ()))
     labels = _node_label_by_uid(state.graph)
     if not changes:
         return ensure_sentence_message(
@@ -412,6 +433,25 @@ def _humanized_edit_message(state: AgentEditState) -> str:
     return _sentence_case(ensure_sentence_message(text, fallback=f"Updated {len(changes)} workflow fields."))
 
 
+def _humanized_noop_message(state: AgentEditState) -> str:
+    changes = tuple(state.batch_noop_field_changes or ())
+    labels = _node_label_by_uid(state.graph)
+    if len(changes) == 1:
+        change = changes[0]
+        return _sentence_case(
+            ensure_sentence_message(
+                f"{_change_subject(change, labels)} is already {_display_value(change.new)}; no change needed",
+                fallback="No change needed.",
+            )
+        )
+    if len(changes) > 1:
+        return "The requested fields already match the current graph; no change needed."
+    return ensure_sentence_message(
+        state.batch_done_summary,
+        fallback="No graph changes were needed.",
+    )
+
+
 def _operation_detail_payload(changes: tuple[FieldChange, ...]) -> list[dict[str, Any]]:
     return [
         {
@@ -425,7 +465,7 @@ def _operation_detail_payload(changes: tuple[FieldChange, ...]) -> list[dict[str
                 )
             ),
         }
-        for change in changes
+        for change in _real_field_changes(changes)
     ]
 
 
@@ -506,10 +546,7 @@ def _synthesize_batch_repl_message(
             fallback=state.batch_final_summary or state.user_message,
         )
     if outcome.kind == "noop":
-        return ensure_sentence_message(
-            state.batch_done_summary,
-            fallback="No graph changes were applied.",
-        )
+        return _humanized_noop_message(state)
     return ensure_sentence_message(state.user_message, fallback="The agent edit turn completed.")
 
 
@@ -1203,14 +1240,14 @@ def read_session_chat(
     session_root: Path,
     session_id: str,
     *,
-    max_messages: int = 5,
+    max_messages: int = DEFAULT_CHAT_DISPLAY_MESSAGES,
 ) -> dict[str, Any]:
     """Read conversation history for a session from persisted turn artifacts.
 
     Scans turn directories under the session root in deterministic order,
     reads ``chat.json`` where present, falls back to same-turn
-    ``request.json`` + ``response.json``, and returns the last
-    *max_messages* display messages with session metadata.
+    ``request.json`` + ``response.json``, and returns a bounded display
+    history with session metadata.
 
     Returns:
         dict with keys: ``ok``, ``session_id``, ``session_path``,
@@ -1969,7 +2006,7 @@ def _stage_agent_batch_repl(
             state.batch_turn_count = turn_number + 1
             state.batch_exit_mode = (
                 _BATCH_EXIT_EDIT_CLARIFY
-                if _batch_has_landed_edits(state)
+                if _batch_candidate_graph_changed(state)
                 else _BATCH_EXIT_PURE_CLARIFY
             )
             state.batch_final_summary = (
@@ -2095,7 +2132,10 @@ def _stage_agent_batch_repl(
             state.graph,
             tuple(batch_result.field_changes),
         )
-        state.batch_field_changes = state.batch_field_changes + field_changes
+        real_field_changes = _real_field_changes(field_changes)
+        noop_field_changes = _noop_field_changes(field_changes)
+        state.batch_field_changes = state.batch_field_changes + real_field_changes
+        state.batch_noop_field_changes = state.batch_noop_field_changes + noop_field_changes
         turn_record = {
             "turn_number": turn_number,
             "batch": turn_result.batch,
@@ -2108,10 +2148,12 @@ def _stage_agent_batch_repl(
             "landed_op_count": len(batch_result.landed_ops),
             "diagnostics": report_json["diagnostics"],
             "statements": report_json["statements"],
-            "field_changes": _field_changes_payload(field_changes),
+            "field_changes": _field_changes_payload(real_field_changes),
             "diff": diff_text,
             "report": report_text,
         }
+        if noop_field_changes:
+            turn_record["noop_field_changes"] = _field_changes_payload(noop_field_changes)
         if clarify_message is not None:
             turn_record["clarification_required"] = True
             turn_record["clarification_message"] = clarify_message
@@ -2151,7 +2193,7 @@ def _stage_agent_batch_repl(
         if clarify_message is not None:
             state.batch_exit_mode = (
                 _BATCH_EXIT_EDIT_CLARIFY
-                if _batch_has_landed_edits(state)
+                if _batch_candidate_graph_changed(state)
                 else _BATCH_EXIT_PURE_CLARIFY
             )
             state.batch_final_summary = (
@@ -2267,7 +2309,7 @@ def _stage_agent_batch_repl(
                 "consecutive_errors": consecutive_errors,
             }
             state.batch_exit_mode = (
-                _BATCH_EXIT_DONE if _batch_has_landed_edits(state) else _BATCH_EXIT_NOOP
+                _BATCH_EXIT_DONE if _batch_candidate_graph_changed(state) else _BATCH_EXIT_NOOP
             )
             state.batch_done_summary = done_result.summary
             state.batch_final_summary = done_result.summary
@@ -2934,7 +2976,10 @@ def _build_batch_repl_response(
     state: AgentEditState,
     context: TurnContext,
 ) -> dict[str, Any]:
-    has_candidate = state.batch_exit_mode in {_BATCH_EXIT_EDIT_CLARIFY, _BATCH_EXIT_DONE}
+    has_candidate = (
+        state.batch_exit_mode in {_BATCH_EXIT_EDIT_CLARIFY, _BATCH_EXIT_DONE}
+        and _batch_candidate_graph_changed(state)
+    )
     compatibility_fields = _build_compatibility_response_fields(state)
     response_apply_eligibility = derive_apply_eligibility(
         context,
@@ -2956,11 +3001,11 @@ def _build_batch_repl_response(
     elif state.batch_exit_mode == _BATCH_EXIT_EDIT_CLARIFY:
         question = state.user_message or None
         outcome = TurnOutcome.edit_and_clarify(
-            changes=state.batch_field_changes,
+            changes=_real_field_changes(state.batch_field_changes),
             question=question,
         )
     elif state.batch_exit_mode == _BATCH_EXIT_DONE:
-        outcome = TurnOutcome.edit(changes=state.batch_field_changes)
+        outcome = TurnOutcome.edit(changes=_real_field_changes(state.batch_field_changes))
     elif state.batch_exit_mode == _BATCH_EXIT_BUDGET:
         outcome = TurnOutcome.budget(reason=state.batch_final_summary or None)
     else:
@@ -2996,6 +3041,10 @@ def _build_batch_repl_response(
     if state.batch_exit_mode in {_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY}:
         response["clarification_required"] = True
         response["graph_unchanged"] = state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY
+    elif state.batch_exit_mode == _BATCH_EXIT_NOOP:
+        response["graph_unchanged"] = True
+        if state.batch_done_summary:
+            response["done_summary"] = state.batch_done_summary
     elif state.batch_done_summary:
         response["done_summary"] = state.batch_done_summary
     response["batch_turns"] = _json_safe(state.batch_turns)
@@ -3394,7 +3443,7 @@ def handle_agent_edit(
     conversation_messages: list[dict[str, Any]] | None = None
     if contract == "batch_repl":
         try:
-            chat = read_session_chat(root, session_id, max_messages=5)
+            chat = read_session_chat(root, session_id, max_messages=PROMPT_MEMORY_MESSAGES)
             if chat.get("ok") and isinstance(chat.get("messages"), list):
                 conversation_messages = chat["messages"]
         except Exception:
