@@ -854,6 +854,7 @@ def capture_step_output(
     """
 
     legacy_payload, capture_sources = _capture_payload(invocation, output)
+    legacy_payload = _normalize_native_capture_payload(invocation, legacy_payload)
     legacy_payload = _compatibility_projection(invocation, legacy_payload)
     telemetry = ModelSeamTelemetry.from_invocation(
         invocation,
@@ -974,6 +975,32 @@ def _compatibility_projection(invocation: StepInvocation, payload: dict[str, Any
     return normalized
 
 
+def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[str, Any]) -> dict[str, Any]:
+    step = _optional_str(
+        invocation.metadata.get("compatibility_validation_step")
+        or invocation.metadata.get("validation_step")
+    )
+    if step != "finalize":
+        return payload
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return payload
+    normalized = dict(payload)
+    normalized["tasks"] = [
+        _strip_null_finalize_task_optionals(task) if isinstance(task, Mapping) else task
+        for task in tasks
+    ]
+    return normalized
+
+
+def _strip_null_finalize_task_optionals(task: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(task)
+    for optional_object_field in ("stance", "stop_signal"):
+        if normalized.get(optional_object_field) is None:
+            normalized.pop(optional_object_field, None)
+    return normalized
+
+
 def schema_audits_step_payload(step: str | None) -> bool:
     return _compatibility_mode_for_step(step) is CompatibilityMode.NATIVE
 
@@ -1008,6 +1035,7 @@ def _audit_capture_payload(
     if not isinstance(schema, Mapping):
         schema = _capture_schema_for_invocation(invocation)
     if isinstance(schema, Mapping):
+        payload = _normalize_native_capture_payload(invocation, dict(payload))
         result = validate_payload_against_schema(payload, schema)
     else:
         result = validate_contract_result(contract, _capture_outcome_schema())

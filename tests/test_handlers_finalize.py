@@ -144,6 +144,27 @@ def test_strict_finalize_validation_accepts_missing_final_test_task(
     _validate_finalize_payload(plan_fixture.plan_dir, state, worker)
 
 
+def test_validate_finalize_payload_strips_nullable_optional_task_objects(
+    plan_fixture: PlanFixture,
+) -> None:
+    state = load_state(plan_fixture.plan_dir)
+    payload = _payload("Implement test idea")
+    payload["tasks"][0]["stance"] = None
+    payload["tasks"][0]["stop_signal"] = None
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="nullable optional objects",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="strict-finalize-null-optionals",
+    )
+
+    _validate_finalize_payload(plan_fixture.plan_dir, state, worker)
+
+    assert "stance" not in payload["tasks"][0]
+    assert "stop_signal" not in payload["tasks"][0]
+
+
 # ---------------------------------------------------------------------------
 # T8: finalize seam audit migration tests
 # ---------------------------------------------------------------------------
