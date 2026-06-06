@@ -2787,6 +2787,14 @@ function restoreLatestCandidateFromChat(panel, payload) {
   if (!panel?.state || !latest || typeof latest !== "object") {
     return;
   }
+  // No-op turns carry nothing to restore — restoring one would drag the panel
+  // back into review after _handleNoopResponse settled it in IDLE.
+  if (latest.outcome && typeof latest.outcome === "object" && latest.outcome.kind === "noop") {
+    return;
+  }
+  if (latest.graph_unchanged === true && latest.apply_allowed === false) {
+    return;
+  }
   const candidateGraph = candidateGraphFromResult(latest);
   if (!candidateGraph || typeof candidateGraph !== "object") {
     return;

@@ -1412,6 +1412,13 @@ def _latest_session_candidate_payload(session_dir: Path, turn_ids: list[str]) ->
             response = {}
         if not isinstance(response, Mapping):
             response = {}
+        # No-op turns have nothing to restore/apply — never surface them as the
+        # session's latest candidate (they would drag the panel back into review).
+        outcome = response.get("outcome")
+        if isinstance(outcome, Mapping) and outcome.get("kind") == "noop":
+            continue
+        if response.get("graph_unchanged") is True and response.get("apply_allowed") is False:
+            continue
         candidate_path = turn_dir / "candidate.ui.json"
         graph = response.get("graph")
         if not isinstance(graph, Mapping) and candidate_path.is_file():
