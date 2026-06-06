@@ -312,6 +312,8 @@ let _adapterCapabilities = null;
 let _progressPulseInjected = false;
 let _scheduledAgentPanelRender = null;
 let _scheduledAgentPanelRenderQueued = false;
+let _agentPanelFlushCount = 0;
+let _lastAgentPanelFlushReason = "";
 let _overlayDrawModelCache = null;
 
 function isIntentClassType(classType) {
@@ -2751,12 +2753,26 @@ function agentPanelPendingDirtySections(panel) {
   return panel.pendingDirtySections;
 }
 
-function isAgentPanelMountedInCurrentDocument(panel) {
-  return Boolean(
-    panel?.root
-    && typeof document !== "undefined"
-    && panel.root.ownerDocument === document,
-  );
+function isAgentPanelRootConnected(panel) {
+  if (typeof document === "undefined") {
+    return false;
+  }
+  return Boolean(panel?.root?.isConnected);
+}
+
+function hasPendingAgentPanelFlush() {
+  return Boolean(_scheduledAgentPanelRenderQueued || _scheduledAgentPanelRender);
+}
+
+function ensureScheduledAgentPanelDirtyFlush(panel, reason = "dirty-sections") {
+  if (
+    panel
+    && agentPanelPendingDirtySections(panel).length
+    && !hasPendingAgentPanelFlush()
+    && isAgentPanelRootConnected(panel)
+  ) {
+    scheduleRenderAgentPanel(reason, panel, undefined, { dirtyOnly: true });
+  }
 }
 
 export function markAgentPanelDirty(panel, sections, options = {}) {
@@ -2775,7 +2791,7 @@ export function markAgentPanelDirty(panel, sections, options = {}) {
       seen.add(section);
     }
   }
-  if (options.schedule !== false && isAgentPanelMountedInCurrentDocument(panel)) {
+  if (options.schedule !== false && isAgentPanelRootConnected(panel)) {
     scheduleRenderAgentPanel("dirty-sections", panel, undefined, { dirtyOnly: true });
   }
   return pending;
@@ -2805,17 +2821,14 @@ function rerenderAgentPanelIfMounted(panel = agentPanel) {
   if (!panel?.root) {
     return;
   }
-  if (typeof document === "undefined") {
-    return;
-  }
-  if (panel.root.ownerDocument !== document) {
+  if (!isAgentPanelRootConnected(panel)) {
     return;
   }
   renderDirtyAgentPanelSections(panel);
 }
 
 export function scheduleRenderAgentPanel(reason = "scheduled", panel = agentPanel, fallbackSections = undefined, options = {}) {
-  if (!panel?.root || typeof document === "undefined" || panel.root.ownerDocument !== document) {
+  if (!isAgentPanelRootConnected(panel)) {
     return;
   }
   if (fallbackSections !== undefined) {
@@ -2831,10 +2844,9 @@ export function scheduleRenderAgentPanel(reason = "scheduled", panel = agentPane
     const scheduled = _scheduledAgentPanelRender;
     _scheduledAgentPanelRender = null;
     _scheduledAgentPanelRenderQueued = false;
-    if (
-      typeof document !== "undefined"
-      && scheduled?.panel?.root?.ownerDocument === document
-    ) {
+    _agentPanelFlushCount += 1;
+    _lastAgentPanelFlushReason = typeof scheduled?.reason === "string" ? scheduled.reason : "";
+    if (isAgentPanelRootConnected(scheduled?.panel)) {
       if (
         scheduled.dirtyOnly
         && scheduled.fallbackSections === undefined
@@ -2896,6 +2908,7 @@ function openAgentPanel({ mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, container = nu
   });
   renderAgentPanel(panel);
   refreshAgentStatus(panel, { quiet: true });
+  ensureScheduledAgentPanelDirtyFlush(panel, "open-backstop");
   return panel;
 }
 
@@ -4608,6 +4621,10 @@ function buildAgentPanelDebugSnapshot(panel = agentPanel) {
     visibleMessageCount: displayEntries.length,
     dirtySections: Array.isArray(panel?.pendingDirtySections) ? panel.pendingDirtySections.slice() : [],
     mountMode: panel?.state?.mountMode || null,
+    flushPending: hasPendingAgentPanelFlush(),
+    flushCount: _agentPanelFlushCount,
+    lastFlushReason: _lastAgentPanelFlushReason,
+    mountedCheck: isAgentPanelRootConnected(panel),
     epochs: {
       status: Number.isFinite(panel?.state?.statusRequestEpoch) ? panel.state.statusRequestEpoch : 0,
       chatRehydrate: Number.isFinite(panel?.state?.chatRehydrateEpoch) ? panel.state.chatRehydrateEpoch : 0,
@@ -7002,10 +7019,7 @@ function renderAgentPanelSections(panel, dirtySections = ALL_AGENT_PANEL_RENDER_
   if (!panel?.root) {
     return;
   }
-  if (typeof document === "undefined") {
-    return;
-  }
-  if (panel.root.ownerDocument !== document) {
+  if (!isAgentPanelRootConnected(panel)) {
     return;
   }
   const requestedSections = Array.isArray(dirtySections)
@@ -7041,10 +7055,7 @@ export function renderDirtyAgentPanelSections(panel, obligations = {}) {
   if (!panel?.root) {
     return [];
   }
-  if (typeof document === "undefined") {
-    return [];
-  }
-  if (panel.root.ownerDocument !== document) {
+  if (!isAgentPanelRootConnected(panel)) {
     return [];
   }
   const normalized = normalizeObligationDirtySections(obligations) || obligations;

@@ -4963,6 +4963,122 @@ test("VibeComfy status resolution after panel open enables Submit and renders re
   }
 });
 
+test("VibeComfy launcher panel flushes delayed dirty commits without synthetic input", async () => {
+  const SESSION_ID = "sess-launcher-delayed-dirty-flush";
+  const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+  let resolveStatus;
+  let resolveChat;
+  const statusPromise = new Promise((resolve) => {
+    resolveStatus = resolve;
+  });
+  const chatPromise = new Promise((resolve) => {
+    resolveChat = resolve;
+  });
+
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": async () => statusPromise,
+      [CHAT_URL]: async () => chatPromise,
+    },
+  });
+
+  globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const launcher = harness.document.getElementById("vibecomfy-agent-launcher");
+    assert.ok(launcher, "legacy launcher must be installed");
+    launcher.click();
+
+    await waitFor(() => harness.getPanelRoots().length === 1);
+    const root = harness.getPanelRoots()[0];
+    assert.equal(root.parentNode, harness.document.body, "legacy launcher opens the panel on the body");
+
+    await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"));
+    await waitFor(() => harness.requests.some((r) => r.url === CHAT_URL));
+
+    const initialDebug = harness.window.__vibecomfyPanelDebug();
+    assert.equal(initialDebug.mountMode, "launcher");
+    assert.equal(initialDebug.mountedCheck, true);
+    assert.equal(initialDebug.flushPending, false);
+
+    const submit = harness.document.getElementById("vibecomfy-agent-panel-submit");
+    assert.equal(submit.disabled, true);
+    assert.match(harness.textDump(), /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+
+    resolveChat({
+      status: 200,
+      body: {
+        ok: true,
+        exists: true,
+        session_id: SESSION_ID,
+        messages: [
+          { role: "user", text: "launcher delayed user prompt", turn_id: "0001" },
+          { role: "agent", text: "launcher delayed agent answer", turn_id: "0001" },
+        ],
+        session_path: `out/editor_sessions/${SESSION_ID}/`,
+        detail_json_path: `out/editor_sessions/${SESSION_ID}/session.json`,
+      },
+    });
+    resolveStatus({
+      status: 200,
+      body: {
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "deepseek",
+        requested_route: "auto",
+        route_options: {
+          auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+        },
+      },
+    });
+
+    const panel = extensionModule.ensureAgentPanel();
+    await waitFor(() =>
+      panel.state.statusSnapshot?.ready === true
+      && panel.state.routeStatus?.kind === "ready"
+      && Array.isArray(panel.state.chatMessages)
+      && panel.state.chatMessages.length === 2
+      && panel.state.chatRehydrateCommittedEpoch === 1,
+    );
+
+    await waitFor(() => {
+      const debug = harness.window.__vibecomfyPanelDebug();
+      return debug.flushCount > initialDebug.flushCount
+        && debug.flushPending === false
+        && debug.dirtySections.length === 0;
+    });
+
+    const debug = harness.window.__vibecomfyPanelDebug();
+    assert.equal(debug.mountMode, "launcher");
+    assert.equal(debug.mountedCheck, true);
+    assert.equal(debug.flushPending, false);
+    assert.equal(debug.messageCount, 2);
+    assert.equal(debug.visibleMessageCount, 2);
+    assert.deepEqual(debug.dirtySections, []);
+    assert.match(debug.lastFlushReason, /^(dirty-sections|status|rehydrate)$/);
+
+    await waitFor(() => submit.disabled === false);
+    await waitFor(() => /launcher delayed agent answer/.test(harness.textDump()));
+
+    const text = harness.textDump();
+    assert.doesNotMatch(text, /Try an example/);
+    assert.doesNotMatch(text, /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+    assert.match(text, /launcher delayed user prompt/);
+    assert.match(text, /launcher delayed agent answer/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy setup-created panel commits delayed status and chat after sidebar mount move", async () => {
   const SESSION_ID = "sess-setup-created-mount-move";
   const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;

@@ -98,6 +98,13 @@ class FakeElement {
     this.eventListeners = {};
   }
 
+  get isConnected() {
+    if (this === this.ownerDocument.body || this === this.ownerDocument.head) {
+      return true;
+    }
+    return Boolean(this.parentNode?.isConnected);
+  }
+
   appendChild(child) {
     if (child.parentNode && child.parentNode !== this) {
       child.parentNode.removeChild(child);
