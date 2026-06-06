@@ -308,6 +308,56 @@ def test_capture_step_output_uses_finalize_schema_for_wrong_typed_named_payload(
         raise AssertionError("finalize capture must reject wrong-typed named payloads")
 
 
+def test_capture_step_output_strips_finalize_null_optional_task_objects() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "validation_step": "finalize",
+        },
+    )
+
+    outcome = capture_step_output(
+        invocation,
+        {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "description": "Implement the change.",
+                    "depends_on": [],
+                    "status": "pending",
+                    "complexity": 2,
+                    "complexity_justification": "Small scoped edit.",
+                    "executor_notes": "",
+                    "files_changed": [],
+                    "commands_run": [],
+                    "auto_attributed_files": None,
+                    "evidence_files": [],
+                    "reviewer_verdict": "",
+                    "stance": None,
+                    "stop_signal": None,
+                }
+            ],
+            "watch_items": [],
+            "sense_checks": [],
+            "user_actions": [],
+            "meta_commentary": "",
+            "validation": {
+                "plan_steps_covered": [],
+                "orphan_tasks": [],
+                "completeness_notes": "",
+                "coverage_complete": True,
+            },
+        },
+    )
+
+    task = outcome.legacy_payload["tasks"][0]
+    assert "stance" not in task
+    assert "stop_signal" not in task
+    assert task["auto_attributed_files"] is None
+
+
 def test_capture_step_output_uses_review_schema_to_reject_hallucinated_named_keys() -> None:
     invocation = StepInvocation(
         kind="model",

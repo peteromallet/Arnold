@@ -245,6 +245,12 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
     tasks = payload.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         _reject("Finalize output must include a non-empty `tasks` list.")
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        for optional_object_field in ("stance", "stop_signal"):
+            if task.get(optional_object_field) is None:
+                task.pop(optional_object_field, None)
     if not isinstance(payload.get("sense_checks"), list):
         _reject("Finalize output must include a `sense_checks` list.")
     if not isinstance(payload.get("watch_items"), list):
