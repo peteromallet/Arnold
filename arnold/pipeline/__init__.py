@@ -67,6 +67,7 @@ from arnold.pipeline.contract_validation import (
     validate_contract_result,
     validate_payload_against_schema,
 )
+from arnold.pipeline.contract_reduce import ReducePolicy, reduce_contract_results
 from arnold.pipeline.contracts import ContractLedger, coerce, is_legal_coercion, legal_coercions
 from arnold.pipeline.discovery import Manifest, ManifestError, TrustTier, classify, derive_tenant_id, read_manifest
 from arnold.pipeline.executor import (
@@ -215,6 +216,7 @@ __all__ = [
     "Provenance",
     "ReduceResult",
     "RoutingKey",
+    "ReducePolicy",
     "SelectionResult",
     "Stage",
     "StateDelta",
@@ -272,6 +274,7 @@ __all__ = [
     "parse_profiles_doc",
     "plateau",
     "read_manifest",
+    "reduce_contract_results",
     "register_schema",
     "resolve_default_profile",
     "ModelAdapterNotImplementedError",

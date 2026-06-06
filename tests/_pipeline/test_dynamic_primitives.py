@@ -16,6 +16,7 @@ from typing import Any, Mapping
 import pytest
 
 from arnold.pipeline import ContractResult
+from arnold.pipeline.types import ContractStatus, Suspension
 import arnold.pipelines.megaplan._pipeline.patterns as patterns_module
 from arnold.pipelines.megaplan._pipeline.patterns import (
     dynamic_fanout,
@@ -168,6 +169,27 @@ class _AdvocateStep:
             contract_result=self.contract_result,
             next="done",
         )
+
+
+def _contract(
+    status: ContractStatus,
+    *,
+    cursor: dict[str, Any] | None = None,
+    payload: Mapping[str, Any] | None = None,
+) -> ContractResult:
+    suspension = None
+    if status is ContractStatus.SUSPENDED:
+        suspension = Suspension(
+            kind="human",
+            awaitable="user",
+            prompt="Paused",
+            resume_cursor=json.dumps(cursor or {"phase": "gate"}),
+        )
+    return ContractResult(
+        status=status,
+        suspension=suspension,
+        payload=dict(payload or {}),
+    )
 
 
 # ── (a) panel_from_artifact ────────────────────────────────────────────
@@ -488,6 +510,69 @@ class TestIterateUntilConsensus:
 
         assert result.contract_result is second
 
+    def test_preserves_earlier_suspended_contract_until_executor_can_observe_it(
+        self, tmp_path: Path
+    ) -> None:
+        suspended = _contract(
+            ContractStatus.SUSPENDED,
+            cursor={"phase": "review", "attempt": 1},
+        )
+        panel = _AggregateStep(
+            recs_per_call=[
+                ["iterate", "proceed"],
+                ["proceed", "proceed"],
+            ],
+            contract_results_per_call=[suspended, _contract(ContractStatus.COMPLETED)],
+        )
+        primitive = iterate_until_consensus(
+            panel=panel, min_agreement=0.8, max_iters=3, name="suspend_then_finish"
+        )
+
+        result = primitive.run(
+            StepContext(plan_dir=tmp_path, state={}, profile=None, mode="t")
+        )
+
+        assert result.contract_result is not None
+        assert result.contract_result.status is ContractStatus.SUSPENDED
+        assert result.contract_result.suspension is suspended.suspension
+        pending = result.contract_result.payload["pending_suspensions"]
+        assert pending == [
+            {
+                "child_id": "iteration_1",
+                "status": "suspended",
+                "cursor": json.dumps({"phase": "review", "attempt": 1}),
+                "suspension": suspended.suspension.to_json(),
+            }
+        ]
+
+    def test_preserves_earlier_failed_contract_when_later_iteration_completes(
+        self, tmp_path: Path
+    ) -> None:
+        failed = _contract(
+            ContractStatus.FAILED,
+            payload={"reason": "blocked"},
+        )
+        panel = _AggregateStep(
+            recs_per_call=[
+                ["iterate", "proceed"],
+                ["proceed", "proceed"],
+            ],
+            contract_results_per_call=[failed, _contract(ContractStatus.COMPLETED)],
+        )
+        primitive = iterate_until_consensus(
+            panel=panel, min_agreement=0.8, max_iters=3, name="fail_then_finish"
+        )
+
+        result = primitive.run(
+            StepContext(plan_dir=tmp_path, state={}, profile=None, mode="t")
+        )
+
+        assert result.contract_result is not None
+        assert result.contract_result.status is ContractStatus.FAILED
+        source_contracts = result.contract_result.payload["source_contracts"]
+        assert source_contracts[0]["child_id"] == "iteration_1"
+        assert source_contracts[0]["status"] == "failed"
+
 
 # ── (e) paired_round ───────────────────────────────────────────────────
 
@@ -541,6 +626,53 @@ class TestPairedRound:
         assert "alice.arg" in result.outputs
         assert "bob.arg" in result.outputs
         assert result.contract_result is bob_contract
+
+    def test_preserves_earlier_suspended_advocate_contract(self, tmp_path: Path) -> None:
+        suspended = _contract(
+            ContractStatus.SUSPENDED,
+            cursor={"phase": "alice", "attempt": 2},
+        )
+        alice = _AdvocateStep(name="alice", label="arg", contract_result=suspended)
+        bob = _AdvocateStep(
+            name="bob",
+            label="arg",
+            contract_result=_contract(ContractStatus.COMPLETED),
+        )
+        stage = paired_round([alice, bob], sees_other=True, name="round")
+
+        result = stage.step.run(
+            StepContext(plan_dir=tmp_path, state={}, profile=None, mode="t", inputs={})
+        )
+
+        assert result.contract_result is not None
+        assert result.contract_result.status is ContractStatus.SUSPENDED
+        assert result.contract_result.suspension is suspended.suspension
+        pending = result.contract_result.payload["pending_suspensions"]
+        assert pending[0]["child_id"] == "alice"
+        assert pending[0]["cursor"] == json.dumps({"phase": "alice", "attempt": 2})
+
+    def test_preserves_earlier_failed_advocate_contract(self, tmp_path: Path) -> None:
+        failed = _contract(
+            ContractStatus.FAILED,
+            payload={"reason": "no_consensus"},
+        )
+        alice = _AdvocateStep(name="alice", label="arg", contract_result=failed)
+        bob = _AdvocateStep(
+            name="bob",
+            label="arg",
+            contract_result=_contract(ContractStatus.COMPLETED),
+        )
+        stage = paired_round([alice, bob], sees_other=True, name="round")
+
+        result = stage.step.run(
+            StepContext(plan_dir=tmp_path, state={}, profile=None, mode="t", inputs={})
+        )
+
+        assert result.contract_result is not None
+        assert result.contract_result.status is ContractStatus.FAILED
+        source_contracts = result.contract_result.payload["source_contracts"]
+        assert source_contracts[0]["child_id"] == "alice"
+        assert source_contracts[0]["status"] == "failed"
 
     def test_empty_advocates_raises(self) -> None:
         with pytest.raises(ValueError):

@@ -85,6 +85,10 @@ class SubloopStep:
     ``artifact_subdir``: subdir under ``ctx.plan_dir`` where the child
     pipeline's state.json + per-stage artifacts land. Defaults to the
     Step's name.
+    ``suspension_scope``: reserved seam for scoped suspension propagation
+    (e.g. fan-out vs subloop).  When ``None`` (default), suspension is
+    lifted as-is to the parent.  Non-``None`` values are reserved for a
+    later milestone and raise ``NotImplementedError``.
     """
 
     name: str = "subloop"
@@ -95,6 +99,7 @@ class SubloopStep:
     promote: PromoteFn = field(default=_DEFAULT_PROMOTE)
     promote_delta: PromoteDeltaFn | None = None
     artifact_subdir: str | None = None
+    suspension_scope: str | None = None
     produces: tuple[Port, ...] = field(default_factory=tuple)
     consumes: tuple[PortRef, ...] = field(default_factory=tuple)
 
@@ -104,17 +109,72 @@ class SubloopStep:
         if self.child_pipeline is None:
             raise ValueError(f"SubloopStep {self.name!r} has no child_pipeline")
 
+        if self.suspension_scope is not None:
+            raise NotImplementedError("suspension_scope is reserved for a later milestone")
+
         subdir = self.artifact_subdir or self.name
         child_root = Path(ctx.plan_dir) / subdir
         child_root.mkdir(parents=True, exist_ok=True)
 
         import dataclasses
 
-        child_ctx = dataclasses.replace(ctx, plan_dir=child_root, state=dict(ctx.state) if isinstance(ctx.state, Mapping) else {})
+        child_ctx = dataclasses.replace(
+            ctx,
+            plan_dir=child_root,
+            state=dict(ctx.state) if isinstance(ctx.state, Mapping) else {},
+        )
         result = run_pipeline(self.child_pipeline, child_ctx, artifact_root=child_root)
         child_state: dict[str, Any] = result.get("state", {})
 
-        # Normalise the Megaplan executor result into Arnold ChildRunResult
+        # ── Build state_patch (always emitted) ────────────────────────
+        state_patch: dict[str, Any] = {
+            f"subloop:{self.name}:state": child_state,
+        }
+
+        # ── Lift child suspension before legacy promotion ─────────────
+        child_contract_json = result.get("contract_result")
+        if isinstance(child_contract_json, Mapping):
+            try:
+                from arnold.pipeline import ContractResult, ContractStatus
+
+                child_contract = ContractResult.from_json(child_contract_json)
+                if child_contract.status is ContractStatus.SUSPENDED:
+                    # Suspended children always halt — do NOT invoke the legacy
+                    # promote callable (its routing decision is irrelevant and
+                    # calling it would couple suspension lift to an unrelated
+                    # concern).  Use a fixed recommendation for the state_patch.
+                    _name = "halt"
+                    state_patch[f"subloop:{self.name}:recommendation"] = _name
+
+                    # Include child resume_cursor in the state_patch so it
+                    # is not dropped even if the parent discards the
+                    # contract_result suspension.
+                    child_suspension = child_contract.suspension
+                    if child_suspension is not None:
+                        raw_cursor = getattr(child_suspension, "resume_cursor", None)
+                        if raw_cursor is not None:
+                            state_patch[f"subloop:{self.name}:resume_cursor"] = raw_cursor
+
+                    return StepResult(
+                        outputs={},
+                        verdict=PipelineVerdict(
+                            score=float(child_state.get("score", 1.0)),
+                            recommendation=_name,
+                            payload={
+                                "subloop_final_stage": result.get("final_stage"),
+                                "subloop_state": child_state,
+                            },
+                        ),
+                        next="halt",
+                        state_patch=state_patch,
+                        contract_result=child_contract,
+                    )
+            except Exception:
+                # If from_json fails (e.g. schema version mismatch), fall
+                # through to normal promotion — do not lose the child run.
+                pass
+
+        # ── Normalise the Megaplan executor result into Arnold ChildRunResult
         child_run_result = ChildRunResult(
             final_state=child_state,
             final_stage=result.get("final_stage"),
@@ -125,7 +185,8 @@ class SubloopStep:
 
         # ── Legacy promote path ──────────────────────────────────────
         recommendation = self.promote(child_state)
-        _name = getattr(recommendation, 'name', recommendation)
+        _name = getattr(recommendation, "name", recommendation)
+        state_patch[f"subloop:{self.name}:recommendation"] = _name
         verdict = PipelineVerdict(
             score=float(child_state.get("score", 1.0)),
             recommendation=_name,
@@ -134,12 +195,6 @@ class SubloopStep:
                 "subloop_state": child_state,
             },
         )
-
-        # ── Build state_patch ────────────────────────────────────────
-        state_patch: dict[str, Any] = {
-            f"subloop:{self.name}:recommendation": _name,
-            f"subloop:{self.name}:state": child_state,
-        }
 
         # ── Opt-in promote_delta path ────────────────────────────────
         if self.promote_delta is not None:
