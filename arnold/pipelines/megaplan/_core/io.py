@@ -427,12 +427,46 @@ def journal_blob_promotion(
 
 
 def framed_json_record_bytes(record: Mapping[str, Any]) -> bytes:
-    payload = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    normalized = dict(record)
+    payload = json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    if len(payload) > MAX_FRAMED_JSON_RECORD_BYTES:
+        normalized = _compact_oversized_framed_record(normalized)
+        payload = json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(payload) > MAX_FRAMED_JSON_RECORD_BYTES:
         raise ValueError(
             f"Framed JSON record exceeds {MAX_FRAMED_JSON_RECORD_BYTES} bytes: {len(payload)}",
         )
     return struct.pack(">I", len(payload)) + payload + b"\n"
+
+
+def _compact_oversized_framed_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Drop redundant large state snapshots from framed event-log records.
+
+    File-store event logs have a hard per-record frame limit. State-change
+    events can embed an entire emitted state snapshot in ``post_state``; keep a
+    deterministic hash/size stub so journal recovery can complete without
+    making the framed log unbounded.
+    """
+
+    if record.get("event_type") != "state_change":
+        return record
+    compacted = dict(record)
+    for field in ("prior_state", "pre_state", "post_state"):
+        value = compacted.get(field)
+        if value is None:
+            continue
+        payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if len(payload) <= MAX_FRAMED_JSON_RECORD_BYTES // 4:
+            continue
+        compacted[field] = {
+            "_omitted_for_framed_log": True,
+            "reason": "state snapshot exceeds framed event-log record budget",
+            "original_size_bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    compacted["pre_state_canonical_json"] = None
+    compacted["post_state_canonical_json"] = None
+    return compacted
 
 
 def append_framed_json_records(path: Path, records: Sequence[Mapping[str, Any]]) -> None:
