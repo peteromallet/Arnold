@@ -135,6 +135,10 @@ const SETTINGS_STATUS_RENDER_SECTIONS = Object.freeze([
 ]);
 const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
 const AGENT_SIDEBAR_TAB_ID = "vibecomfy.agent-edit";
+const AGENT_PANEL_MOUNT_MODE = Object.freeze({
+  LAUNCHER: "launcher",
+  SIDEBAR: "sidebar",
+});
 
 const PANEL_IDS = Object.freeze({
   root: "vibecomfy-agent-panel-root",
@@ -2459,8 +2463,126 @@ function createAgentPanel() {
       chatError: null,
       chatSessionPath: null,
       chatDetailJsonPath: null,
+      mountMode: AGENT_PANEL_MOUNT_MODE.LAUNCHER,
+      mountContainer: null,
     },
   };
+}
+
+function getPanelElementById(panel, id) {
+  if (!id) {
+    return null;
+  }
+  if (panel?.root?.querySelector) {
+    const match = panel.root.querySelector(`#${id}`);
+    if (match) {
+      return match;
+    }
+  }
+  if (panel?.root?.querySelectorAll) {
+    try {
+      const matches = panel.root.querySelectorAll((node) => node?.id === id);
+      if (matches?.[0]) {
+        return matches[0];
+      }
+    } catch (_error) {
+      // Browser querySelectorAll expects a selector string; the function
+      // predicate path is for the local smoke-test DOM shim.
+    }
+  }
+  if (typeof document !== "undefined" && typeof document.getElementById === "function") {
+    return document.getElementById(id);
+  }
+  return null;
+}
+
+function isAppendableElement(value) {
+  return Boolean(value && typeof value.appendChild === "function");
+}
+
+function resolveAgentSidebarMountContainer(candidate) {
+  if (isAppendableElement(candidate)) {
+    return candidate;
+  }
+  if (!candidate || typeof candidate !== "object") {
+    return null;
+  }
+  const directKeys = ["container", "element", "el", "root", "target", "mount", "$el"];
+  for (const key of directKeys) {
+    if (isAppendableElement(candidate[key])) {
+      return candidate[key];
+    }
+  }
+  for (const key of directKeys) {
+    const nested = candidate[key];
+    if (!nested || typeof nested !== "object") {
+      continue;
+    }
+    for (const nestedKey of directKeys) {
+      if (isAppendableElement(nested[nestedKey])) {
+        return nested[nestedKey];
+      }
+    }
+  }
+  return null;
+}
+
+function applyAgentPanelMount(panel, { mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, container = null } = {}) {
+  if (!panel?.root || typeof document === "undefined") {
+    return null;
+  }
+  const sidebarContainer =
+    mode === AGENT_PANEL_MOUNT_MODE.SIDEBAR
+      ? resolveAgentSidebarMountContainer(container)
+      : null;
+  const target = sidebarContainer || document.body;
+  if (target && panel.root.parentNode !== target) {
+    target.appendChild(panel.root);
+  }
+
+  panel.state.mountMode = sidebarContainer
+    ? AGENT_PANEL_MOUNT_MODE.SIDEBAR
+    : AGENT_PANEL_MOUNT_MODE.LAUNCHER;
+  panel.state.mountContainer = sidebarContainer;
+  panel.root.dataset.mountMode = panel.state.mountMode;
+
+  if (sidebarContainer) {
+    Object.assign(panel.root.style, {
+      position: "relative",
+      inset: "auto",
+      top: "auto",
+      right: "auto",
+      width: "100%",
+      height: "100%",
+      minHeight: "0",
+      zIndex: "auto",
+      pointerEvents: "auto",
+      transform: "none",
+      transition: "none",
+    });
+    Object.assign(panel.shell.style, {
+      borderLeft: "none",
+      boxShadow: "none",
+    });
+  } else {
+    Object.assign(panel.root.style, {
+      position: "fixed",
+      top: "0",
+      right: "0",
+      width: "420px",
+      height: "100vh",
+      minHeight: "",
+      zIndex: "9999",
+      pointerEvents: "none",
+      transform: "translateX(432px)",
+      transition: "transform 140ms ease",
+    });
+    Object.assign(panel.shell.style, {
+      borderLeft: "1px solid #282a32",
+      boxShadow: "-10px 0 28px rgba(0,0,0,0.38)",
+    });
+  }
+  return target;
 }
 
 // ── Chat rehydration ──────────────────────────────────────────────────────
@@ -2723,8 +2845,9 @@ export function ensureAgentPanel() {
   return agentPanel;
 }
 
-function openAgentPanel() {
+function openAgentPanel({ mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, container = null } = {}) {
   const panel = ensureAgentPanel();
+  applyAgentPanelMount(panel, { mode, container });
   panel.root.dataset.open = "1";
   panel.root.style.pointerEvents = "auto";
   panel.root.style.transform = "translateX(0)";
@@ -2743,15 +2866,11 @@ function openAgentPanel() {
 }
 
 function mountAgentSidebarPanel(container = null) {
-  const panel = openAgentPanel();
+  const panel = openAgentPanel({
+    mode: AGENT_PANEL_MOUNT_MODE.SIDEBAR,
+    container,
+  });
   panel.root.dataset.lastCommand = "agent-sidebar";
-  if (
-    container
-    && typeof container.appendChild === "function"
-    && panel.root.parentNode !== container
-  ) {
-    container.appendChild(panel.root);
-  }
   renderAgentPanel(panel);
   return panel.root;
 }
@@ -6537,8 +6656,11 @@ function renderSettings(panel) {
     clearCredentialInput(panel);
   }
 
-  const statusNode = document.getElementById(PANEL_IDS.settingsStatus);
-  const guidanceNode = document.getElementById(PANEL_IDS.settingsGuidance);
+  const statusNode = getPanelElementById(panel, PANEL_IDS.settingsStatus);
+  const guidanceNode = getPanelElementById(panel, PANEL_IDS.settingsGuidance);
+  if (!statusNode || !guidanceNode) {
+    return;
+  }
   if (!controlsReady) {
     if (routeStatus.kind === ROUTE_STATUS_KIND.LOADING) {
       statusNode.textContent = panel.state.settingsMessage || "Loading route/model status…";
@@ -7033,7 +7155,7 @@ function renderLifecycleTransition(panel, obligations = {}) {
     renderDirtyAgentPanelSections(panel, obligations);
   }
   if (obligations.focusPrompt) {
-    const promptEl = document.getElementById(PANEL_IDS.prompt) || panel?.fields?.prompt;
+    const promptEl = getPanelElementById(panel, PANEL_IDS.prompt) || panel?.fields?.prompt;
     if (promptEl && typeof promptEl.focus === "function") {
       panel.fields.prompt = promptEl;
       promptEl.focus();
@@ -7061,7 +7183,7 @@ async function submitAgentEdit(panel) {
     // Re-resolve the prompt element from the live DOM at submit time: a durable
     // panel re-render can replace the textarea, leaving panel.fields.prompt as a
     // stale, detached reference whose .value reads empty — a false "MissingTask".
-    const promptEl = document.getElementById(PANEL_IDS.prompt) || panel.fields.prompt;
+    const promptEl = getPanelElementById(panel, PANEL_IDS.prompt) || panel.fields.prompt;
     if (promptEl && promptEl !== panel.fields.prompt) {
       panel.fields.prompt = promptEl;
     }
@@ -8167,7 +8289,7 @@ async function openRoundtrip() {
 }
 
 function openAgentEdit() {
-  const panel = openAgentPanel();
+  const panel = openAgentPanel({ mode: AGENT_PANEL_MOUNT_MODE.LAUNCHER });
   panel.root.dataset.lastCommand = "agent-edit";
   renderAgentPanel(panel);
 }
@@ -8202,7 +8324,10 @@ function ensureAgentLauncher() {
   });
   btn.addEventListener("click", () => {
     const panel = ensureAgentPanel();
-    if (panel.root.dataset.open === "1") {
+    if (
+      panel.root.dataset.open === "1"
+      && panel.state.mountMode === AGENT_PANEL_MOUNT_MODE.LAUNCHER
+    ) {
       closeAgentPanel(panel);
     } else {
       openAgentEdit();

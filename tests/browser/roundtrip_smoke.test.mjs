@@ -5045,6 +5045,190 @@ test("VibeComfy live sidebar tab mount dispatches status fetch and chat rehydrat
   }
 });
 
+test("VibeComfy agent panel moves one live instance from legacy launcher into sidebar tab mount", async () => {
+  const SESSION_ID = "sess-dual-mount-legacy-first";
+  const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+  let resolveStatus;
+  const statusPromise = new Promise((resolve) => {
+    resolveStatus = resolve;
+  });
+
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": async () => statusPromise,
+      [CHAT_URL]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: SESSION_ID,
+          messages: [
+            { role: "user", text: "legacy first user prompt", turn_id: "0001" },
+            { role: "agent", text: "legacy first agent answer", turn_id: "0001" },
+          ],
+          session_path: `out/editor_sessions/${SESSION_ID}/`,
+          detail_json_path: `out/editor_sessions/${SESSION_ID}/session.json`,
+        },
+      },
+    },
+  });
+
+  globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+
+    const launcher = harness.document.getElementById("vibecomfy-agent-launcher");
+    assert.ok(launcher, "legacy launcher must be installed");
+    launcher.click();
+
+    await waitFor(() => harness.getPanelRoots().length === 1);
+    let root = harness.getPanelRoots()[0];
+    assert.equal(root.parentNode, harness.document.body, "legacy launcher opens the single panel as the body shell");
+
+    const sidebarTab = harness.getSidebarTabs()[0][0];
+    const sidebarContainer = harness.document.createElement("div");
+    sidebarContainer.id = "comfyui-sidebar-vibecomfy-dual-mount-legacy-first";
+    harness.document.body.appendChild(sidebarContainer);
+    sidebarTab.render({ container: sidebarContainer });
+
+    await waitFor(() => harness.getPanelRoots().length === 1);
+    root = harness.getPanelRoots()[0];
+    assert.equal(root.parentNode, sidebarContainer, "sidebar render must move the same panel root into its container");
+    assert.equal(sidebarContainer.children.filter((node) => node.dataset?.vibecomfyPanelRoot === "1").length, 1);
+
+    await waitFor(() =>
+      harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"),
+    );
+    await waitFor(() => harness.requests.some((r) => r.url === CHAT_URL));
+
+    const submit = harness.document.getElementById("vibecomfy-agent-panel-submit");
+    assert.equal(submit.disabled, true);
+
+    resolveStatus({
+      status: 200,
+      body: {
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "deepseek",
+        requested_route: "auto",
+        route_options: {
+          auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+        },
+      },
+    });
+
+    await waitFor(() => submit.disabled === false);
+    await waitFor(() => /legacy first agent answer/.test(harness.textDump()));
+
+    const text = harness.textDump();
+    assert.doesNotMatch(text, /Send unavailable/);
+    assert.doesNotMatch(text, /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+    assert.match(text, /legacy first user prompt/);
+    assert.match(text, /legacy first agent answer/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy agent panel moves one live instance from sidebar tab mount back to legacy launcher", async () => {
+  const SESSION_ID = "sess-dual-mount-sidebar-first";
+  const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+  let resolveStatus;
+  const statusPromise = new Promise((resolve) => {
+    resolveStatus = resolve;
+  });
+
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": async () => statusPromise,
+      [CHAT_URL]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: SESSION_ID,
+          messages: [
+            { role: "user", text: "sidebar first user prompt", turn_id: "0001" },
+            { role: "agent", text: "sidebar first agent answer", turn_id: "0001" },
+          ],
+          session_path: `out/editor_sessions/${SESSION_ID}/`,
+          detail_json_path: `out/editor_sessions/${SESSION_ID}/session.json`,
+        },
+      },
+    },
+  });
+
+  globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+
+    const sidebarTab = harness.getSidebarTabs()[0][0];
+    const sidebarContainer = harness.document.createElement("div");
+    sidebarContainer.id = "comfyui-sidebar-vibecomfy-dual-mount-sidebar-first";
+    harness.document.body.appendChild(sidebarContainer);
+    sidebarTab.render({ container: sidebarContainer });
+
+    await waitFor(() => harness.getPanelRoots().length === 1);
+    let root = harness.getPanelRoots()[0];
+    assert.equal(root.parentNode, sidebarContainer, "sidebar opens the single panel in its container");
+
+    const launcher = harness.document.getElementById("vibecomfy-agent-launcher");
+    assert.ok(launcher, "legacy launcher must still be installed");
+    launcher.click();
+
+    await waitFor(() => harness.getPanelRoots().length === 1);
+    root = harness.getPanelRoots()[0];
+    assert.equal(root.parentNode, harness.document.body, "legacy launcher must move the same panel root back to the body shell");
+    assert.equal(root.dataset.open, "1");
+
+    await waitFor(() =>
+      harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"),
+    );
+    await waitFor(() => harness.requests.some((r) => r.url === CHAT_URL));
+
+    const submit = harness.document.getElementById("vibecomfy-agent-panel-submit");
+    assert.equal(submit.disabled, true);
+
+    resolveStatus({
+      status: 200,
+      body: {
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "deepseek",
+        requested_route: "auto",
+        route_options: {
+          auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+        },
+      },
+    });
+
+    await waitFor(() => submit.disabled === false);
+    await waitFor(() => /sidebar first agent answer/.test(harness.textDump()));
+
+    const text = harness.textDump();
+    assert.doesNotMatch(text, /Send unavailable/);
+    assert.doesNotMatch(text, /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+    assert.match(text, /sidebar first user prompt/);
+    assert.match(text, /sidebar first agent answer/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy stores render:false dirty sections on the panel and consumes them through the scheduled render gateway", async () => {
   const harness = await createBrowserHarness({
     responses: {
