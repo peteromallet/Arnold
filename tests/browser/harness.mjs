@@ -99,6 +99,11 @@ class FakeElement {
   }
 
   appendChild(child) {
+    if (child.parentNode && child.parentNode !== this) {
+      child.parentNode.removeChild(child);
+    } else if (child.parentNode === this) {
+      this.removeChild(child);
+    }
     child.parentNode = this;
     this.children.push(child);
     return child;
@@ -222,6 +227,7 @@ export async function createBrowserHarness({
   const serializeCalls = [];
   const toasts = [];
   const registeredExtensions = [];
+  const registeredSidebarTabs = [];
   let liveCanvasRevision = 1;
   let currentGraph = clone(
     graph || {
@@ -315,6 +321,10 @@ export async function createBrowserHarness({
         add(entry) {
           toasts.push(clone(entry));
         },
+      },
+      registerSidebarTab(...args) {
+        registeredSidebarTabs.push(args);
+        operationLog.push({ kind: "extensionManager.registerSidebarTab", args: args.map((arg) => typeof arg) });
       },
     },
     registerExtension(extension) {
@@ -561,6 +571,7 @@ export async function createBrowserHarness({
     serializeCalls,
     toasts,
     registeredExtensions,
+    registeredSidebarTabs,
     async loadExtension() {
       return loadExtension();
     },
@@ -578,6 +589,9 @@ export async function createBrowserHarness({
     getExtension,
     getMenuCommands() {
       return getExtension().menuCommands || [];
+    },
+    getSidebarTabs() {
+      return registeredSidebarTabs;
     },
     getCommands() {
       return getExtension().commands || [];

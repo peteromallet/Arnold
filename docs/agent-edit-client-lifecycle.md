@@ -25,6 +25,11 @@ submit and rebaseline payloads; it never blocks Apply locally.
 
 ### 1.1 Entry events (not phases)
 
+- **Panel open**: Commands, the edge launcher, and the ComfyUI sidebar-tab
+  render callback must all enter through `openAgentPanel()` in
+  `vibecomfy_roundtrip.js`. That gateway opens the existing panel shell,
+  refreshes `/vibecomfy/agent/status`, starts chat rehydration when a stored
+  session id exists, and repaints readiness-consuming regions.
 - **Panel closed/reopened**: Re-fetches chat, restores candidate from
   `latest_candidate` only under backend eligibility, resets transient
   in-flight/per-panel state.
@@ -175,7 +180,8 @@ browser smoke test.
 
 | # | Event | From | To | Local invalidations | Backend obligation | Epoch/race | Render | Covering test |
 |---|---|---|---|---|---|---|---|---|
-| E1 | Panel reopen (chat re-fetch) | Entry | (restored) | Re-fetch `/chat`, rehydrate messages and turns; restore `latest_candidate` only under eligibility | `GET /vibecomfy/agent-edit/chat` | `chatRehydrateEpoch` incremented; stale responses ignored | Repaint after rehydrate | "VibeComfy agent panel re-fetches chat on reopen and localStorage persists across close/reopen" |
+| E0 | Panel open (command, launcher, or ComfyUI sidebar tab) | Entry | (restored) | Open existing shell; refresh provider readiness; re-fetch `/chat` when a stored session id exists; restore `latest_candidate` only under eligibility | `GET /vibecomfy/agent/status`; `GET /vibecomfy/agent-edit/chat` when stored session exists | `chatRehydrateEpoch` incremented; stale responses ignored; status retry/backoff owned by roundtrip | Repaint immediately, after status, and after rehydrate | "VibeComfy live sidebar tab mount dispatches status fetch and chat rehydrate" |
+| E1 | Panel reopen (chat re-fetch) | Entry | (restored) | Re-fetch `/chat`, rehydrate messages and turns; restore `latest_candidate` only under eligibility | `GET /vibecomfy/agent-edit/chat`; status refresh is also re-run by `openAgentPanel()` | `chatRehydrateEpoch` incremented; stale responses ignored | Repaint after rehydrate | "VibeComfy agent panel re-fetches chat on reopen and localStorage persists across close/reopen" |
 | E2 | Page reload / rehydrate | Entry | `IDLE` or `AWAITING_REVIEW` | Run chat rehydration; if `latest_candidate` exists with eligibility, restore via `restoreLatestCandidateFromChat` | `GET /vibecomfy/agent-edit/chat` | `chatRehydrateEpoch` incremented; stale responses silently dropped | Repaint | "Lifecycle E2 page reload rehydrate restores the latest open candidate and Apply controls" |
 | E3 | Stale rehydrate ignored | Any | (no change) | None (stale response silently dropped) | None | `chatRehydrateEpoch` mismatch | None | "Lifecycle E3 stale rehydrate responses after an epoch bump do not restore prior candidate state" |
 

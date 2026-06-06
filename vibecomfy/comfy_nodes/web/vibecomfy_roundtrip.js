@@ -134,6 +134,7 @@ const SETTINGS_STATUS_RENDER_SECTIONS = Object.freeze([
   RENDER_SECTIONS.NOTICE,
 ]);
 const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
+const AGENT_SIDEBAR_TAB_ID = "vibecomfy.agent-edit";
 
 const PANEL_IDS = Object.freeze({
   root: "vibecomfy-agent-panel-root",
@@ -291,6 +292,7 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${typeof alpha === "number" ? alpha : 1})`;
 }
 let agentPanel = null;
+let agentSidebarTabRegistered = false;
 let agentTurnEventListener = null;
 let agentTurnEventListenerRegistered = false;
 let changedNodeFeedbackTimer = null;
@@ -2738,6 +2740,20 @@ function openAgentPanel() {
   renderAgentPanel(panel);
   refreshAgentStatus(panel, { quiet: true });
   return panel;
+}
+
+function mountAgentSidebarPanel(container = null) {
+  const panel = openAgentPanel();
+  panel.root.dataset.lastCommand = "agent-sidebar";
+  if (
+    container
+    && typeof container.appendChild === "function"
+    && panel.root.parentNode !== container
+  ) {
+    container.appendChild(panel.root);
+  }
+  renderAgentPanel(panel);
+  return panel.root;
 }
 
 function closeAgentPanel(panel) {
@@ -8195,6 +8211,44 @@ function ensureAgentLauncher() {
   document.body.appendChild(btn);
 }
 
+function ensureAgentSidebarTab() {
+  const manager = app?.extensionManager;
+  if (!manager || typeof manager.registerSidebarTab !== "function") {
+    return false;
+  }
+  if (agentSidebarTabRegistered) {
+    return true;
+  }
+  const tab = {
+    id: AGENT_SIDEBAR_TAB_ID,
+    title: "VibeComfy Agent",
+    tooltip: "Open the VibeComfy agent edit panel",
+    icon: "pi pi-sparkles",
+    type: "custom",
+    render: mountAgentSidebarPanel,
+    mount: mountAgentSidebarPanel,
+  };
+  try {
+    manager.registerSidebarTab(tab);
+    agentSidebarTabRegistered = true;
+    return true;
+  } catch (error) {
+    try {
+      manager.registerSidebarTab(
+        AGENT_SIDEBAR_TAB_ID,
+        "VibeComfy Agent",
+        "pi pi-sparkles",
+        mountAgentSidebarPanel,
+      );
+      agentSidebarTabRegistered = true;
+      return true;
+    } catch (fallbackError) {
+      console.warn("[vibecomfy] failed to register agent sidebar tab", fallbackError || error);
+      return false;
+    }
+  }
+}
+
 // ── DOM helpers ───────────────────────────────────────────────────────────
 function el(tag, text) {
   const node = document.createElement(tag);
@@ -8342,6 +8396,7 @@ app.registerExtension({
       };
     }
     ensureAgentPanel();
+    ensureAgentSidebarTab();
     ensureAgentLauncher();
   },
 });

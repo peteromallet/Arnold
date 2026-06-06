@@ -4961,6 +4961,90 @@ test("VibeComfy status resolution after panel open enables Submit and renders re
   }
 });
 
+test("VibeComfy live sidebar tab mount dispatches status fetch and chat rehydrate", async () => {
+  const SESSION_ID = "sess-sidebar-live-path-1";
+  const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+  let resolveStatus;
+  const statusPromise = new Promise((resolve) => {
+    resolveStatus = resolve;
+  });
+
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": async () => statusPromise,
+      [CHAT_URL]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: SESSION_ID,
+          messages: [
+            { role: "user", text: "sidebar rehydrated user prompt", turn_id: "0001" },
+            { role: "agent", text: "sidebar rehydrated agent answer", turn_id: "0001" },
+          ],
+          session_path: `out/editor_sessions/${SESSION_ID}/`,
+          detail_json_path: `out/editor_sessions/${SESSION_ID}/session.json`,
+        },
+      },
+    },
+  });
+
+  globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+
+    const registrations = harness.getSidebarTabs();
+    assert.equal(registrations.length, 1, "setup must register the live ComfyUI sidebar tab");
+    const sidebarTab = registrations[0][0];
+    assert.equal(sidebarTab.id, "vibecomfy.agent-edit");
+    assert.equal(typeof sidebarTab.render, "function");
+
+    const sidebarContainer = harness.document.createElement("div");
+    sidebarContainer.id = "comfyui-sidebar-vibecomfy-test-container";
+    harness.document.body.appendChild(sidebarContainer);
+    sidebarTab.render(sidebarContainer);
+
+    await waitFor(() =>
+      harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"),
+    );
+    await waitFor(() => harness.requests.some((r) => r.url === CHAT_URL));
+
+    const submit = harness.document.getElementById("vibecomfy-agent-panel-submit");
+    assert.equal(submit.disabled, true);
+    assert.match(harness.textDump(), /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+
+    resolveStatus({
+      status: 200,
+      body: {
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "deepseek",
+        requested_route: "auto",
+        route_options: {
+          auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+        },
+      },
+    });
+
+    await waitFor(() => submit.disabled === false);
+    await waitFor(() => /sidebar rehydrated agent answer/.test(harness.textDump()));
+
+    const text = harness.textDump();
+    assert.doesNotMatch(text, /Try an example/);
+    assert.match(text, /sidebar rehydrated user prompt/);
+    assert.match(text, /sidebar rehydrated agent answer/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy stores render:false dirty sections on the panel and consumes them through the scheduled render gateway", async () => {
   const harness = await createBrowserHarness({
     responses: {
