@@ -5954,6 +5954,165 @@ def test_humanized_edit_message_mixed_absent_and_present() -> None:
     assert "updated ksampler steps from 20 to 30" in msg.lower()
 
 
+def test_humanized_edit_message_describes_added_nodes_not_internal_widget_uid() -> None:
+    """Add-only turns describe the added node classes and key values, not n-prefixed uids."""
+    original_graph = {
+        "nodes": [
+            {
+                "id": 18,
+                "type": "Upscale Image (using Model)",
+                "title": "Upscale Image (using Model)",
+                "properties": {"vibecomfy_uid": "upscale"},
+                "outputs": [{"name": "IMAGE"}],
+            }
+        ],
+        "links": [],
+    }
+    candidate_graph = {
+        "nodes": [
+            *original_graph["nodes"],
+            {
+                "id": "n11",
+                "type": "ImageScaleBy",
+                "properties": {"vibecomfy_uid": "n11"},
+                "inputs": [{"name": "image", "link": 101}],
+                "widgets": [{"name": "scale_by"}, {"name": "upscale_method"}],
+                "widgets_values": [0.5, "area"],
+            },
+            {
+                "id": "n12",
+                "type": "SaveImage",
+                "properties": {"vibecomfy_uid": "n12"},
+                "inputs": [{"name": "images", "link": 102}],
+                "widgets": [{"name": "filename_prefix"}],
+                "widgets_values": ["crane/half"],
+            },
+        ],
+        "links": [
+            [101, 18, 0, "n11", 0, "IMAGE"],
+            [102, "n11", 0, "n12", 0, "IMAGE"],
+        ],
+    }
+    state = _make_state(
+        graph=original_graph,
+        ui_payload=candidate_graph,
+        batch_done_summary="Gate A passed: 2 edit operation(s) verified.",
+        batch_field_changes=(
+            FieldChange(uid="n11", field_path="upscale_method", old=None, new="area"),
+        ),
+    )
+
+    msg = _synthesize_batch_repl_message(state, outcome=TurnOutcome.edit())
+
+    assert "Added" in msg
+    assert "ImageScaleBy" in msg
+    assert "50%" in msg
+    assert "area" in msg
+    assert "SaveImage" in msg
+    assert "crane/half" in msg
+    assert "{" not in msg
+    assert "Gate A" not in msg
+    assert "n11" not in msg
+    assert "n12" not in msg
+
+
+def test_humanized_edit_message_describes_removed_nodes_without_gate_dump() -> None:
+    """Remove-only turns synthesize a human summary instead of leaking done() gate text."""
+    original_graph = {
+        "nodes": [
+            {"id": 1, "type": "VAE Decode", "properties": {"vibecomfy_uid": "vae"}},
+            {
+                "id": "imagescaleby",
+                "type": "ImageScaleBy",
+                "properties": {"vibecomfy_uid": "imagescaleby"},
+                "widgets": [{"name": "scale_by"}, {"name": "upscale_method"}],
+                "widgets_values": [0.5, "area"],
+            },
+            {
+                "id": "saveimage_3",
+                "type": "SaveImage",
+                "properties": {"vibecomfy_uid": "saveimage_3"},
+                "widgets": [{"name": "filename_prefix"}],
+                "widgets_values": ["crane/half"],
+            },
+        ],
+        "links": [],
+    }
+    candidate_graph = {"nodes": [original_graph["nodes"][0]], "links": []}
+    state = _make_state(
+        graph=original_graph,
+        ui_payload=candidate_graph,
+        batch_done_summary=(
+            "Gate A passed: 2 edit operation(s) verified. Gate B passed: touched compile "
+            "region is isomorphic. Summary: Removed ImageScaleBy node 'imagescaleby'."
+        ),
+        batch_field_changes=(),
+    )
+
+    msg = _synthesize_batch_repl_message(state, outcome=TurnOutcome.edit())
+
+    assert "Removed" in msg
+    assert "ImageScaleBy" in msg
+    assert "SaveImage" in msg
+    assert "crane/half" in msg
+    assert "{" not in msg
+    assert "Gate A" not in msg
+    assert "Gate B" not in msg
+    assert "imagescaleby" not in msg
+    assert "saveimage_3" not in msg
+
+
+def test_humanized_edit_message_describes_rewire_link_refs_without_raw_dicts() -> None:
+    """Link FieldChange mapping values resolve to node labels instead of raw dict text."""
+    graph = {
+        "nodes": [
+            {
+                "id": 8,
+                "type": "VAEDecode",
+                "title": "VAE Decode",
+                "properties": {"vibecomfy_uid": "vae_decode"},
+                "outputs": [{"name": "IMAGE"}],
+            },
+            {
+                "id": 18,
+                "type": "ImageUpscaleWithModel",
+                "title": "Upscale Image (using Model)",
+                "properties": {"vibecomfy_uid": "upscale_image"},
+                "outputs": [{"name": "IMAGE"}],
+            },
+            {
+                "id": 19,
+                "type": "SaveImage",
+                "properties": {"vibecomfy_uid": "final_save"},
+                "inputs": [{"name": "images", "link": 12}],
+            },
+        ],
+        "links": [[12, 18, 0, 19, 0, "IMAGE"]],
+    }
+    state = _make_state(
+        graph=graph,
+        ui_payload=graph,
+        batch_field_changes=(
+            FieldChange(
+                uid="final_save",
+                field_path="images",
+                old={"scope_path": "", "uid": "upscale_image", "output_slot": 0},
+                new={"scope_path": "", "uid": "vae_decode", "output_slot": 0},
+            ),
+        ),
+    )
+
+    msg = _synthesize_batch_repl_message(state, outcome=TurnOutcome.edit())
+
+    assert "Rewired SaveImage images" in msg
+    assert "VAE Decode" in msg
+    assert "Upscale Image (using Model)" in msg
+    assert "{" not in msg
+    assert "scope_path" not in msg
+    assert "uid" not in msg
+    assert "Gate A" not in msg
+
+
 def test_absent_field_old_not_serialized_in_to_dict() -> None:
     """FieldChange.to_dict() serializes absent old as null, not a sentinel object."""
     change = FieldChange(uid="x", field_path="y", old=None, new=1)

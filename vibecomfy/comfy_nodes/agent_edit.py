@@ -299,17 +299,20 @@ def _display_value(value: Any, *, limit: int = 48) -> str:
     return text
 
 
-def _node_label_by_uid(graph: Mapping[str, Any]) -> dict[str, str]:
+def _node_label_by_uid(*graphs: Mapping[str, Any] | None) -> dict[str, str]:
     labels: dict[str, str] = {}
-    for node in _iter_ui_graph_nodes(graph):
-        uid = _ui_node_uid(node)
-        if not uid:
+    for graph in graphs:
+        if not isinstance(graph, Mapping):
             continue
-        class_type = node.get("type") or node.get("class_type")
-        title = node.get("title")
-        label = title if isinstance(title, str) and title.strip() else class_type
-        if isinstance(label, str) and label.strip():
-            labels[str(uid)] = label.strip()
+        for node in _iter_ui_graph_nodes(graph):
+            uid = _ui_node_uid(node)
+            if not uid:
+                continue
+            class_type = node.get("type") or node.get("class_type")
+            title = node.get("title")
+            label = title if isinstance(title, str) and title.strip() else class_type
+            if isinstance(label, str) and label.strip():
+                labels[str(uid)] = label.strip()
     return labels
 
 
@@ -319,25 +322,44 @@ def _change_subject(change: FieldChange, labels: Mapping[str, str] | None = None
     label = labels.get(uid) if labels else None
     if isinstance(label, str) and label.strip():
         return f"{label.strip()} {field}"
+    if labels is not None and _looks_internal_uid(uid):
+        return f"node {field}"
     return f"{uid}.{field}"
 
 
-def _is_link_endpoint(value: Any) -> bool:
-    """Return True when *value* is a ComfyUI link endpoint ``[node_uid: str, output_slot: int]``.
+def _looks_internal_uid(uid: str) -> bool:
+    return bool(re.fullmatch(r"n\d+|.*_\d+|\d+", uid.strip()))
 
-    Accepts both ``list`` and ``tuple`` because ``FieldChange.__post_init__`` freezes
-    lists into tuples via ``_freeze_jsonish``.
+
+def _link_endpoint_parts(value: Any) -> tuple[str, int | str] | None:
+    """Return ``(uid, output_slot)`` for supported FieldChange link endpoint shapes.
+
+    Accepts both ``list`` / ``tuple`` and the batch editor's mapping form because
+    ``FieldChange.__post_init__`` freezes JSON-ish mappings into ``MappingProxyType``.
     """
-    return (
+    if (
         isinstance(value, (list, tuple))
         and len(value) == 2
         and isinstance(value[0], str)
         and isinstance(value[1], int)
-    )
+    ):
+        return value[0], value[1]
+    if isinstance(value, Mapping):
+        uid = value.get("uid")
+        output_slot = value.get("output_slot")
+        if isinstance(uid, str) and isinstance(output_slot, (int, str)):
+            return uid, output_slot
+    return None
 
 
-def _resolve_output_slot_name(graph: Mapping[str, Any], uid: str, slot_index: int) -> str | None:
+def _is_link_endpoint(value: Any) -> bool:
+    return _link_endpoint_parts(value) is not None
+
+
+def _resolve_output_slot_name(graph: Mapping[str, Any], uid: str, slot_index: int | str) -> str | None:
     """Return the human-readable output-slot name for *uid* / *slot_index*, or None."""
+    if isinstance(slot_index, str):
+        return slot_index
     for node in _iter_ui_graph_nodes(graph):
         if _ui_node_uid(node) != uid:
             continue
@@ -353,22 +375,165 @@ def _resolve_output_slot_name(graph: Mapping[str, Any], uid: str, slot_index: in
 
 
 def _resolve_endpoint_label(
-    endpoint: list,
+    endpoint: Any,
     node_labels: Mapping[str, str],
     graph: Mapping[str, Any],
 ) -> str:
     """Resolve a link endpoint ``[uid, slot]`` to a label like ``'VAE Decode IMAGE'``."""
-    uid = str(endpoint[0])
-    slot = int(endpoint[1])
+    parts = _link_endpoint_parts(endpoint)
+    if parts is None:
+        return "unknown source"
+    uid, slot = parts
     node_label = node_labels.get(uid)
     slot_name = _resolve_output_slot_name(graph, uid, slot)
     if node_label and slot_name:
         return f"{node_label} {slot_name}"
     if node_label:
-        return f"{node_label} output #{slot}"
+        return node_label
     if slot_name:
-        return f"node {uid} {slot_name}"
-    return f"node {uid} output #{slot}"
+        return slot_name
+    return "unknown source"
+
+
+def _ui_node_by_uid(graph: Mapping[str, Any] | None) -> dict[str, Mapping[str, Any]]:
+    if not isinstance(graph, Mapping):
+        return {}
+    result: dict[str, Mapping[str, Any]] = {}
+    for node in _iter_ui_graph_nodes(graph):
+        uid = _ui_node_uid(node)
+        if uid:
+            result[str(uid)] = node
+    return result
+
+
+def _node_class_label(node: Mapping[str, Any]) -> str:
+    class_type = node.get("type") or node.get("class_type")
+    if isinstance(class_type, str) and class_type.strip():
+        return class_type.strip()
+    title = node.get("title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    return "node"
+
+
+def _ui_display_widget_value_for_field(node: Mapping[str, Any], field: str) -> Any:
+    widgets = node.get("widgets")
+    widgets_values = node.get("widgets_values")
+    if isinstance(widgets, list) and isinstance(widgets_values, list):
+        for index, widget in enumerate(widgets):
+            if (
+                isinstance(widget, Mapping)
+                and widget.get("name") == field
+                and index < len(widgets_values)
+            ):
+                return widgets_values[index]
+    return _ui_widget_value_for_field(node, field)
+
+
+def _node_key_values(node: Mapping[str, Any]) -> list[str]:
+    values: list[str] = []
+    for field in ("scale_by", "scale", "upscale_method", "filename_prefix", "seed", "steps", "denoise"):
+        value = _ui_display_widget_value_for_field(node, field)
+        if value is _MISSING_FIELD_CHANGE_OLD:
+            continue
+        if field in {"scale_by", "scale"} and isinstance(value, (int, float)) and 0 < float(value) <= 1:
+            values.append(f"{round(float(value) * 100):g}%")
+        elif field == "filename_prefix":
+            values.append(str(value))
+        else:
+            values.append(_display_value(value, limit=28))
+    return values[:3]
+
+
+def _node_phrase(node: Mapping[str, Any]) -> str:
+    label = _node_class_label(node)
+    values = _node_key_values(node)
+    if values:
+        return f"{label} ({', '.join(values)})"
+    return label
+
+
+def _article_for(text: str) -> str:
+    first = text[:1].lower()
+    return "an" if first in {"a", "e", "i", "o", "u"} else "a"
+
+
+def _first_link_source_label(
+    node: Mapping[str, Any],
+    graph: Mapping[str, Any] | None,
+    labels: Mapping[str, str],
+) -> str | None:
+    if not isinstance(graph, Mapping):
+        return None
+    inputs = node.get("inputs")
+    links = graph.get("links")
+    if not isinstance(inputs, list) or not isinstance(links, list):
+        return None
+    link_id = None
+    for input_slot in inputs:
+        if isinstance(input_slot, Mapping) and isinstance(input_slot.get("link"), (int, float)):
+            link_id = int(input_slot["link"])
+            break
+    if link_id is None:
+        return None
+    by_id: dict[int, Any] = {}
+    for link in links:
+        if isinstance(link, Mapping) and isinstance(link.get("id"), (int, float)):
+            by_id[int(link["id"])] = link
+        elif isinstance(link, (list, tuple)) and link and isinstance(link[0], (int, float)):
+            by_id[int(link[0])] = link
+    link = by_id.get(link_id)
+    if isinstance(link, Mapping):
+        source_id = link.get("origin_id")
+        source_slot = link.get("origin_slot", 0)
+    elif isinstance(link, (list, tuple)) and len(link) >= 3:
+        source_id = link[1]
+        source_slot = link[2]
+    else:
+        return None
+    source_uid = None
+    for candidate in _iter_ui_graph_nodes(graph):
+        if candidate.get("id") == source_id:
+            source_uid = _ui_node_uid(candidate)
+            break
+    if not source_uid:
+        return None
+    return _resolve_endpoint_label({"uid": source_uid, "output_slot": source_slot}, labels, graph)
+
+
+def _structural_change_phrases(state: AgentEditState, labels: Mapping[str, str]) -> list[str]:
+    before_by_uid = _ui_node_by_uid(state.graph)
+    after_by_uid = _ui_node_by_uid(state.ui_payload)
+    if not before_by_uid or not after_by_uid:
+        return []
+    added = [after_by_uid[uid] for uid in sorted(set(after_by_uid) - set(before_by_uid))]
+    removed = [before_by_uid[uid] for uid in sorted(set(before_by_uid) - set(after_by_uid))]
+    phrases: list[str] = []
+    if added:
+        parts: list[str] = []
+        for node in added[:3]:
+            node_text = _node_phrase(node)
+            source = _first_link_source_label(node, state.ui_payload, labels)
+            if source:
+                node_text = f"{node_text} fed by {source}"
+            parts.append(node_text)
+        text = _join_human_list(parts)
+        article = _article_for(parts[0]) if len(parts) == 1 else ""
+        phrases.append(f"added {article + ' ' if article else ''}{text}")
+    if removed:
+        parts = [_node_phrase(node) for node in removed[:3]]
+        phrases.append(f"removed {_join_human_list(parts)}")
+    return phrases
+
+
+def _join_human_list(parts: list[str]) -> str:
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    return f"{parts[0]}, {parts[1]}, and {parts[2]}"
 
 
 def _human_change_phrase(
@@ -384,7 +549,7 @@ def _human_change_phrase(
         if old_link and new_link:
             old_label = _resolve_endpoint_label(change.old, labels, graph)
             new_label = _resolve_endpoint_label(change.new, labels, graph)
-            return f"rewired {subject} from {old_label} to {new_label}"
+            return f"rewired {subject} to come from {new_label} instead of {old_label}"
         if new_link and not old_link:
             new_label = _resolve_endpoint_label(change.new, labels, graph)
             return f"connected {subject} to {new_label}"
@@ -408,10 +573,18 @@ def _sentence_case(text: str) -> str:
 
 def _humanized_edit_message(state: AgentEditState) -> str:
     changes = _real_field_changes(tuple(state.batch_field_changes or ()))
-    labels = _node_label_by_uid(state.graph)
+    labels = _node_label_by_uid(state.graph, state.ui_payload)
+    structural_phrases = _structural_change_phrases(state, labels)
+    if structural_phrases:
+        return _sentence_case(
+            ensure_sentence_message(
+                _join_human_list(structural_phrases),
+                fallback="Updated the workflow structure.",
+            )
+        )
     if not changes:
         return ensure_sentence_message(
-            state.batch_done_summary or state.user_message,
+            "",
             fallback="The candidate is ready to review.",
         )
     if len(changes) == 1:
@@ -435,7 +608,7 @@ def _humanized_edit_message(state: AgentEditState) -> str:
 
 def _humanized_noop_message(state: AgentEditState) -> str:
     changes = tuple(state.batch_noop_field_changes or ())
-    labels = _node_label_by_uid(state.graph)
+    labels = _node_label_by_uid(state.graph, state.ui_payload)
     if len(changes) == 1:
         change = changes[0]
         return _sentence_case(

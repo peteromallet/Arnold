@@ -5852,11 +5852,12 @@ export function drawPreviewOverlay(ctx, diff) {
     }
 
     var editedColor = VC_COLORS.edited;
+    var editedFill = hexToRgba(VC_COLORS.edited, 0.16);
     var addedColor = VC_COLORS.added;
     var addedFill = hexToRgba(VC_COLORS.added, 0.18);
     var addedTextColor = hexToRgba(VC_COLORS.added, 0.92);
     var removedColor = VC_COLORS.removed;
-    var lineWidth = 3;
+    var removedFill = hexToRgba(VC_COLORS.removed, 0.16);
     var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
     var SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
     var WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
@@ -5882,6 +5883,16 @@ export function drawPreviewOverlay(ctx, diff) {
       ctx.textBaseline = "middle";
       ctx.fillText(text, bx + padX, by - bh / 2 + 1);
       ctx.restore();
+    };
+
+    var _drawFullBoxMarker = function (bounds, strokeColor, fillColor, dashed) {
+      ctx.setLineDash(dashed ? [6, 3] : []);
+      ctx.fillStyle = fillColor;
+      ctx.fillRect(bounds.x - 2, bounds.y - 2, bounds.w + 4, bounds.h + 4);
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bounds.x - 2, bounds.y - 2, bounds.w + 4, bounds.h + 4);
+      ctx.setLineDash([]);
     };
 
     // ── Truncation helper (Unicode ellipsis, SD3) ────────────────────────
@@ -5910,11 +5921,8 @@ export function drawPreviewOverlay(ctx, diff) {
       var collapsed = !!(enode.flags && enode.flags.collapsed);
       var eh = collapsed ? 0 : esize.h;
       var eb = readNodeBounding(enode, TITLE_H);
-      ctx.setLineDash([]);
-      ctx.strokeStyle = editedColor;
-      ctx.lineWidth = lineWidth;
-      // Box the WHOLE node: title bar (above pos[1]) + body.
-      ctx.strokeRect(eb.x - 2, eb.y - 2, eb.w + 4, eb.h + 4);
+      // Mark the WHOLE node: title bar (above pos[1]) + body.
+      _drawFullBoxMarker(eb, editedColor, editedFill, false);
       if (collapsed) {
         continue; // no widget rows to tint when collapsed
       }
@@ -6010,10 +6018,7 @@ export function drawPreviewOverlay(ctx, diff) {
       var ry = rb.y;
       var rw = rb.w;
       var rh = rb.h;
-      ctx.setLineDash([]);
-      ctx.strokeStyle = removedColor;
-      ctx.lineWidth = lineWidth;
-      ctx.strokeRect(rx - 2, ry - 2, rw + 4, rh + 4);
+      _drawFullBoxMarker(rb, removedColor, removedFill, false);
       _drawBadge(rx + rw - 2 - 140, ry + rh - 2, "\u2212 will be removed", removedColor);
     }
 
@@ -6052,14 +6057,8 @@ export function drawPreviewOverlay(ctx, diff) {
           ch = dims.h;
         }
 
-        // ── Ghost fill + dashed border ───────────────────────────────────
-        ctx.fillStyle = addedFill;
-        ctx.fillRect(cx - 2, cy - 2, cw + 4, ch + 4);
-        ctx.strokeStyle = addedColor;
-        ctx.lineWidth = lineWidth;
-        ctx.setLineDash([6, 3]);
-        ctx.strokeRect(cx - 2, cy - 2, cw + 4, ch + 4);
-        ctx.setLineDash([]);
+        // ── Ghost full-box marker + dashed border ────────────────────────
+        _drawFullBoxMarker({ x: cx, y: cy, w: cw, h: ch }, addedColor, addedFill, true);
 
         // ── Render ghost content: title, slot labels, widget rows ────────
         ctx.save();

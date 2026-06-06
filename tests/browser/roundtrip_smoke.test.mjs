@@ -4964,15 +4964,23 @@ test("VibeComfy edited-node overlay box encloses the title bar (LiteGraph pos[1]
 
     // Find the amber (#ffc107) edited box: a strokeStyle set followed by strokeRect.
     let lastStroke = null;
+    let lastFill = null;
+    let editedFillRect = null;
     let editedRect = null;
     for (const op of drawOps) {
       if (op.kind === "strokeStyle") lastStroke = op.args[0];
+      if (op.kind === "fillStyle") lastFill = op.args[0];
+      if (op.kind === "fillRect" && lastFill === "rgba(255,193,7,0.16)") {
+        editedFillRect = op.args;
+      }
       if (op.kind === "strokeRect" && lastStroke === "#ffc107") {
         editedRect = op.args; // [x, y, w, h]
         break;
       }
     }
+    assert.ok(editedFillRect, "must fill the full edited node box with translucent amber");
     assert.ok(editedRect, "must stroke an amber (#ffc107) rect for the edited node");
+    assert.deepEqual(editedFillRect, editedRect, "edited fill must cover the same full box as the border");
     const [rx, ry, rw, rh] = editedRect;
     // Top edge must be at or above pos[1] - TITLE_H (encloses the title bar).
     assert.ok(
@@ -4988,6 +4996,77 @@ test("VibeComfy edited-node overlay box encloses the title bar (LiteGraph pos[1]
     assert.ok(ry + rh >= NODE_POS[1] + NODE_SIZE[1], "box must reach the body bottom");
     // Width tracks the node width.
     assert.ok(rw >= NODE_SIZE[0], "box width must cover the node width");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy removed-node overlay fills the full node box and keeps the removed badge", async () => {
+  const TITLE_H = 30;
+  const NODE_POS = [70, 180];
+  const NODE_SIZE = [220, 90];
+  const graph = {
+    nodes: [
+      {
+        id: 4,
+        type: "SaveImage",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-remove" },
+        inputs: [],
+        outputs: [],
+        widgets_values: ["crane/half"],
+      },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    const drawOps = await harness.drawPreviewOverlay({
+      edited: [],
+      edited_fields: [],
+      added: [],
+      removed: [{ uid: "uid-remove", class_type: "SaveImage" }],
+      removed_named: [],
+      added_links: [],
+      removed_links: [],
+      _candidateGraph: { nodes: [], links: [] },
+    });
+
+    let lastStroke = null;
+    let lastFill = null;
+    let removedFillRect = null;
+    let removedRect = null;
+    for (const op of drawOps) {
+      if (op.kind === "strokeStyle") lastStroke = op.args[0];
+      if (op.kind === "fillStyle") lastFill = op.args[0];
+      if (op.kind === "fillRect" && lastFill === "rgba(244,67,54,0.16)") {
+        removedFillRect = op.args;
+      }
+      if (op.kind === "strokeRect" && lastStroke === "#f44336") {
+        removedRect = op.args;
+        break;
+      }
+    }
+
+    assert.ok(removedFillRect, "must fill the full removed node box with translucent red");
+    assert.ok(removedRect, "must stroke a red (#f44336) rect for the removed node");
+    assert.deepEqual(removedFillRect, removedRect, "removed fill must cover the same full box as the border");
+    const [_rx, ry, _rw, rh] = removedRect;
+    assert.ok(ry <= NODE_POS[1] - TITLE_H, "removed box must include the title bar");
+    assert.ok(rh >= NODE_SIZE[1] + TITLE_H, "removed box must include body plus title");
+    assert.ok(
+      drawOps.some((op) => op.kind === "fillText" && op.args[0] === "\u2212 will be removed"),
+      "removed marker must keep the existing badge label",
+    );
   } finally {
     await harness.dispose();
   }
