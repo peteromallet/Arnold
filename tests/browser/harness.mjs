@@ -586,6 +586,10 @@ export async function createBrowserHarness({
     async loadExtension() {
       return loadExtension();
     },
+    async loadFreshExtension() {
+      const target = pathToFileURL(path.join(webRoot, "vibecomfy_roundtrip.js")).href;
+      return import(`${target}?fresh=${Date.now()}-${Math.random()}`);
+    },
     async loadAdapter() {
       const target = pathToFileURL(path.join(webRoot, "comfy_adapter.js")).href;
       return import(`${target}?t=${Date.now()}`);

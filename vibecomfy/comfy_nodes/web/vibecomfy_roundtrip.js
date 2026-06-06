@@ -136,6 +136,7 @@ const SETTINGS_STATUS_RENDER_SECTIONS = Object.freeze([
 const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
 const AGENT_PANEL_RENDER_TIMEOUT_MS = 100;
 const AGENT_SIDEBAR_TAB_ID = "vibecomfy.agent-edit";
+const AGENT_PANEL_SINGLETON_KEY = "__vibecomfyAgentPanelSingleton";
 const AGENT_PANEL_MOUNT_MODE = Object.freeze({
   LAUNCHER: "launcher",
   SIDEBAR: "sidebar",
@@ -317,7 +318,66 @@ let _scheduledAgentPanelRender = null;
 let _scheduledAgentPanelRenderQueued = false;
 let _agentPanelFlushCount = 0;
 let _lastAgentPanelFlushReason = "";
+let _agentPanelCreationCounter = 0;
+let _lastThreadRender = null;
+let _lastNoticeRender = null;
 let _overlayDrawModelCache = null;
+
+function agentPanelSingletonHost() {
+  return typeof window !== "undefined" ? window : null;
+}
+
+function agentPanelSingletonRecord(create = false) {
+  const host = agentPanelSingletonHost();
+  if (!host) {
+    return null;
+  }
+  const current = host[AGENT_PANEL_SINGLETON_KEY];
+  if (current && typeof current === "object") {
+    return current;
+  }
+  if (!create) {
+    return null;
+  }
+  const record = { panel: null, panelsCreated: 0 };
+  host[AGENT_PANEL_SINGLETON_KEY] = record;
+  return record;
+}
+
+function currentAgentPanel() {
+  const sharedPanel = agentPanelSingletonRecord(false)?.panel || null;
+  if (sharedPanel) {
+    agentPanel = sharedPanel;
+    return sharedPanel;
+  }
+  return agentPanel;
+}
+
+function setCurrentAgentPanel(panel) {
+  agentPanel = panel || null;
+  const record = agentPanelSingletonRecord(true);
+  if (record) {
+    record.panel = agentPanel;
+  }
+  return agentPanel;
+}
+
+function panelsCreatedCount() {
+  const sharedCount = agentPanelSingletonRecord(false)?.panelsCreated;
+  return Number.isFinite(sharedCount) ? sharedCount : _agentPanelCreationCounter;
+}
+
+function nextAgentPanelId() {
+  const record = agentPanelSingletonRecord(true);
+  if (record) {
+    const nextCount = Number.isFinite(record.panelsCreated) ? record.panelsCreated + 1 : 1;
+    record.panelsCreated = nextCount;
+    _agentPanelCreationCounter = nextCount;
+    return `${Date.now()}-${nextCount}`;
+  }
+  _agentPanelCreationCounter += 1;
+  return `${Date.now()}-${_agentPanelCreationCounter}`;
+}
 
 function isIntentClassType(classType) {
   return INTENT_NODE_CLASS_TYPES.has(String(classType || "").trim());
@@ -575,7 +635,7 @@ function installAgentPreviewOverlay() {
   // Draw the pending-candidate preview overlay onto whatever canvas/context
   // LiteGraph is currently rendering.
   const overlayDraw = app.__vibecomfyAgentPreviewOverlayDraw || function (ctx) {
-    const panel = agentPanel;
+    const panel = currentAgentPanel();
     if (!panel) {
       return;
     }
@@ -2077,8 +2137,10 @@ async function buildCanvasSnapshot() {
 
 function createAgentPanelShell() {
   const root = el("aside");
+  const panelId = nextAgentPanelId();
   root.id = PANEL_IDS.root;
   root.className = "vibecomfy-agent-panel-root";
+  root.dataset.vibecomfyPanelId = panelId;
   root.dataset.vibecomfyPanelRoot = "1";
   root.dataset.open = "0";
   Object.assign(root.style, {
@@ -2156,13 +2218,14 @@ function createAgentPanelShell() {
   headerRight.appendChild(status);
 
   const settingsGearBtn = button("\u2699", () => {
-    if (agentPanel) {
-      const popover = agentPanel.settingsPopover;
+    const panel = currentAgentPanel();
+    if (panel) {
+      const popover = panel.settingsPopover;
       if (popover) {
         const isOpen = popover.style.display !== "none";
-        if (!isOpen && !agentPanel.__settingsPopoverEverOpened) {
-          agentPanel.__settingsPopoverEverOpened = true;
-          renderAgentPanel(agentPanel, { dirtySections: [RENDER_SECTIONS.SETTINGS, RENDER_SECTIONS.DEVELOPER] });
+        if (!isOpen && !panel.__settingsPopoverEverOpened) {
+          panel.__settingsPopoverEverOpened = true;
+          renderAgentPanel(panel, { dirtySections: [RENDER_SECTIONS.SETTINGS, RENDER_SECTIONS.DEVELOPER] });
         }
         popover.style.display = isOpen ? "none" : "block";
       }
@@ -2175,7 +2238,7 @@ function createAgentPanelShell() {
     lineHeight: "1",
   });
 
-  const closeBtn = button("Close", () => closeAgentPanel(agentPanel));
+  const closeBtn = button("Close", () => closeAgentPanel(currentAgentPanel()));
   closeBtn.id = PANEL_IDS.close;
   closeBtn.style.padding = "4px 8px";
   closeBtn.style.fontSize = "11px";
@@ -2287,17 +2350,17 @@ function createAgentPanelShell() {
     flexWrap: "wrap",
   });
 
-  const submitBtn = button("Submit", () => submitAgentEdit(agentPanel));
+  const submitBtn = button("Submit", () => submitAgentEdit(currentAgentPanel()));
   submitBtn.id = PANEL_IDS.submit;
-  const stopBtn = button("Stop", () => stopAgentSubmit(agentPanel));
+  const stopBtn = button("Stop", () => stopAgentSubmit(currentAgentPanel()));
   stopBtn.style.display = "none";
-  const applyBtn = button("Apply Candidate", () => applyAgentCandidate(agentPanel));
+  const applyBtn = button("Apply Candidate", () => applyAgentCandidate(currentAgentPanel()));
   applyBtn.id = PANEL_IDS.apply;
-  const rejectBtn = button("Reject Candidate", () => rejectAgentCandidate(agentPanel));
+  const rejectBtn = button("Reject Candidate", () => rejectAgentCandidate(currentAgentPanel()));
   rejectBtn.id = PANEL_IDS.reject;
-  const undoBtn = button("Undo Last Apply", () => undoLastApply(agentPanel));
+  const undoBtn = button("Undo Last Apply", () => undoLastApply(currentAgentPanel()));
   undoBtn.id = PANEL_IDS.undo;
-  const newConvBtn = button("New conversation", () => newAgentConversation(agentPanel));
+  const newConvBtn = button("New conversation", () => newAgentConversation(currentAgentPanel()));
   newConvBtn.id = "vibecomfy-agent-panel-new-conversation";
 
   composerButtons.appendChild(submitBtn);
@@ -2403,15 +2466,16 @@ function createAgentPanelShell() {
     gap: "8px",
     flexWrap: "wrap",
   });
-  const settingsSave = button("Save Settings", () => saveAgentSettings(agentPanel));
+  const settingsSave = button("Save Settings", () => saveAgentSettings(currentAgentPanel()));
   settingsSave.id = PANEL_IDS.settingsSave;
-  const settingsTest = button("Test Provider", () => testAgentSettings(agentPanel));
+  const settingsTest = button("Test Provider", () => testAgentSettings(currentAgentPanel()));
   settingsTest.id = PANEL_IDS.settingsTest;
   routeSelect.onchange = () => {
-    if (agentPanel) {
-      agentPanel.fields.route.value = normalizeRoutePreference(routeSelect.value);
-      renderAgentPanel(agentPanel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-      refreshAgentStatus(agentPanel, { quiet: true });
+    const panel = currentAgentPanel();
+    if (panel) {
+      panel.fields.route.value = normalizeRoutePreference(routeSelect.value);
+      renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
+      refreshAgentStatus(panel, { quiet: true });
     }
   };
   settingsButtons.appendChild(settingsSave);
@@ -2443,6 +2507,7 @@ function createAgentPanelShell() {
   root.appendChild(shell);
 
   return {
+    panelId,
     root,
     shell,
     thread,
@@ -2858,7 +2923,7 @@ export function consumeAgentPanelDirtySections(panel, fallbackSections = ALL_AGE
   ]) || [];
 }
 
-function rerenderAgentPanelIfMounted(panel = agentPanel) {
+function rerenderAgentPanelIfMounted(panel = currentAgentPanel()) {
   if (!panel?.root) {
     return;
   }
@@ -2868,7 +2933,7 @@ function rerenderAgentPanelIfMounted(panel = agentPanel) {
   renderDirtyAgentPanelSections(panel);
 }
 
-export function scheduleRenderAgentPanel(reason = "scheduled", panel = agentPanel, fallbackSections = undefined, options = {}) {
+export function scheduleRenderAgentPanel(reason = "scheduled", panel = currentAgentPanel(), fallbackSections = undefined, options = {}) {
   if (!isAgentPanelRootConnected(panel)) {
     return;
   }
@@ -2934,16 +2999,20 @@ export function scheduleRenderAgentPanel(reason = "scheduled", panel = agentPane
 }
 
 export function ensureAgentPanel() {
+  const existingPanel = currentAgentPanel();
+  if (existingPanel) {
+    return existingPanel;
+  }
   if (!agentPanel) {
     // Create the panel shell only. Chat rehydration happens on open
     // (openAgentPanel), not on mere creation, so extension setup and launcher
     // wiring don't trigger a premature/duplicate chat fetch.
-    agentPanel = createAgentPanel();
+    setCurrentAgentPanel(createAgentPanel());
   }
-  return agentPanel;
+  return currentAgentPanel();
 }
 
-export function debugAgentPanelSnapshot(panel = agentPanel) {
+export function debugAgentPanelSnapshot(panel = currentAgentPanel()) {
   return buildAgentPanelDebugSnapshot(panel);
 }
 
@@ -3692,7 +3761,7 @@ function shouldAcceptAgentTurnEvent(panel, payload) {
 }
 
 function handleAgentTurnEvent(event) {
-  const panel = agentPanel;
+  const panel = currentAgentPanel();
   if (!panel || panel.root?.dataset?.open !== "1") {
     return;
   }
@@ -4632,6 +4701,15 @@ function renderChatThread(panel) {
 
   const threadEntries = collectThreadMessageEntries(panel);
   if (!threadEntries.length) {
+    _lastThreadRender = {
+      panelId: panel?.panelId || null,
+      messagesSeen: 0,
+      branch: "picker",
+      at: new Date().toISOString(),
+    };
+    if (panel) {
+      panel.lastThreadRender = _lastThreadRender;
+    }
     renderShowEarlierMessages(panel, olderMount, 0);
     clearNode(messagesMount);
     ensureThreadRenderState(panel).renderedKeyOrder = [];
@@ -4654,17 +4732,30 @@ function renderChatThread(panel) {
   emptyMount.style.display = "none";
   clearNode(emptyMount);
   const { displayEntries, hiddenCount } = computeThreadDisplayEntries(panel, threadEntries);
+  _lastThreadRender = {
+    panelId: panel?.panelId || null,
+    messagesSeen: threadEntries.length,
+    branch: "messages",
+    at: new Date().toISOString(),
+  };
+  if (panel) {
+    panel.lastThreadRender = _lastThreadRender;
+  }
   renderShowEarlierMessages(panel, olderMount, hiddenCount);
   reconcileChatBubbles(panel, messagesMount, displayEntries);
   return true;
 }
 
-function buildAgentPanelDebugSnapshot(panel = agentPanel) {
+function buildAgentPanelDebugSnapshot(panel = currentAgentPanel()) {
   const routeStatus = routeStatusState(panel);
   const readinessState = submitReadinessState(panel);
   const threadEntries = collectThreadMessageEntries(panel);
   const { displayEntries } = computeThreadDisplayEntries(panel, threadEntries);
   return {
+    panelId: panel?.panelId || null,
+    panelsCreated: panelsCreatedCount(),
+    lastThreadRender: _lastThreadRender,
+    lastNoticeRender: _lastNoticeRender,
     phase: panel?.state?.phase || null,
     readiness: {
       kind: routeStatus.kind || null,
@@ -4698,7 +4789,7 @@ function installAgentPanelDebugHook() {
   if (!targetWindow) {
     return;
   }
-  targetWindow.__vibecomfyPanelDebug = () => buildAgentPanelDebugSnapshot(agentPanel);
+  targetWindow.__vibecomfyPanelDebug = () => buildAgentPanelDebugSnapshot(currentAgentPanel());
 }
 
 function populateAgentBubbleDetail(target, panel, message, snapshot = null) {
@@ -4850,9 +4941,10 @@ function _renderWelcomeExamples(body) {
       border: "1px solid #1e3355",
     });
     row.onclick = () => {
-      if (agentPanel?.fields?.prompt) {
-        agentPanel.fields.prompt.value = example;
-        agentPanel.fields.prompt.focus();
+      const panel = currentAgentPanel();
+      if (panel?.fields?.prompt) {
+        panel.fields.prompt.value = example;
+        panel.fields.prompt.focus();
       }
     };
     welcome.appendChild(row);
@@ -5112,7 +5204,7 @@ function clearCandidateInvalidationSideEffects(repaint = true) {
 
 export function computePreviewDiff(candidateGraph, candidateReport) {
   try {
-    const panel = agentPanel;
+    const panel = currentAgentPanel();
     const candidateGraphHash = panel?.state?.candidateGraphHash;
     if (
       candidateGraphHash
@@ -5448,7 +5540,7 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
 }
 
 function getOrBuildPreviewDiff() {
-  const panel = agentPanel;
+  const panel = currentAgentPanel();
   if (!panel) {
     return null;
   }
@@ -5528,7 +5620,7 @@ function readNodeBounding(node, titleHeight) {
 function _overlayDrawCacheKey(diff, candidateGraph) {
   const candidateHash =
     diff?._candidateGraphHash
-    || agentPanel?.state?.candidateGraphHash
+    || currentAgentPanel()?.state?.candidateGraphHash
     || `inline:${_graphNodeCount(candidateGraph)}:${Array.isArray(candidateGraph?.links) ? candidateGraph.links.length : 0}`;
   const liveRevision = captureLiveCanvasRevision();
   return `${candidateHash}:${liveRevision == null ? "unknown" : liveRevision}`;
@@ -5681,7 +5773,8 @@ export function drawPreviewOverlay(ctx, diff) {
     var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
     var SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
     var WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
-    var candidateGraph = (diff && diff._candidateGraph) || (agentPanel && agentPanel.state && agentPanel.state.candidateGraph);
+    var panel = currentAgentPanel();
+    var candidateGraph = (diff && diff._candidateGraph) || (panel && panel.state && panel.state.candidateGraph);
     var drawModel = _buildOverlayDrawModel(ctx, diff, candidateGraph);
     var liveByUid = drawModel.liveByUid;
     var candidateByUid = drawModel.candidateByUid;
@@ -6213,8 +6306,9 @@ function setQueueGuardContext(nextContext) {
   if (!queueGuardContext || queueGuardContext.queueAllowed !== false) {
     queueGuardBlockNotice = null;
   }
-  if (agentPanel) {
-    agentPanel.state.queueGuard = getQueueGuardStateForPanel();
+  const panel = currentAgentPanel();
+  if (panel) {
+    panel.state.queueGuard = getQueueGuardStateForPanel();
   }
 }
 
@@ -6253,9 +6347,10 @@ function installQueueGuard() {
           sessionId: blockInfo.sessionId,
         };
       }
-      if (agentPanel) {
-        agentPanel.state.queueGuard = getQueueGuardStateForPanel();
-        renderAgentPanel(agentPanel);
+      const panel = currentAgentPanel();
+      if (panel) {
+        panel.state.queueGuard = getQueueGuardStateForPanel();
+        renderAgentPanel(panel);
       }
       toast("Queue blocked: this applied turn is canvas-reviewable only.");
     },
@@ -6868,6 +6963,14 @@ function renderComposerNotice(panel, readinessState) {
   if (!notice) {
     return;
   }
+  _lastNoticeRender = {
+    panelId: panel?.panelId || null,
+    readySeen: Boolean(readinessState?.ready),
+    at: new Date().toISOString(),
+  };
+  if (panel) {
+    panel.lastNoticeRender = _lastNoticeRender;
+  }
   clearNode(notice);
   let hasContent = false;
   const recovery = panel.state.phase === PANEL_STATE.ERROR ? panel.state.rebaselineRecovery : null;
@@ -7310,7 +7413,7 @@ function renderLifecycleTransition(panel, obligations = {}) {
   }
   if (obligations.rehydrateChat) {
     _rehydrateChat(panel)
-      .then(() => { scheduleRenderAgentPanel("rehydrate", agentPanel); })
+      .then(() => { scheduleRenderAgentPanel("rehydrate", panel); })
       .catch((err) => { console.warn("[vibecomfy] chat rehydration render failed", err); });
   }
 }

@@ -5073,6 +5073,8 @@ test("VibeComfy launcher panel flushes delayed dirty commits without synthetic i
     await waitFor(() => harness.requests.some((r) => r.url === CHAT_URL));
 
     const initialDebug = harness.window.__vibecomfyPanelDebug();
+    assert.equal(initialDebug.panelsCreated, 1);
+    assert.equal(initialDebug.panelId, root.dataset.vibecomfyPanelId);
     assert.equal(initialDebug.mountMode, "launcher");
     assert.equal(initialDebug.mountedCheck, true);
     assert.equal(initialDebug.flushPending, false);
@@ -5127,6 +5129,13 @@ test("VibeComfy launcher panel flushes delayed dirty commits without synthetic i
     });
 
     const debug = harness.window.__vibecomfyPanelDebug();
+    assert.equal(debug.panelsCreated, 1);
+    assert.equal(debug.panelId, root.dataset.vibecomfyPanelId);
+    assert.equal(debug.lastThreadRender?.panelId, debug.panelId);
+    assert.equal(debug.lastThreadRender?.messagesSeen, 2);
+    assert.equal(debug.lastThreadRender?.branch, "messages");
+    assert.equal(debug.lastNoticeRender?.panelId, debug.panelId);
+    assert.equal(debug.lastNoticeRender?.readySeen, true);
     assert.equal(debug.mountMode, "launcher");
     assert.equal(debug.mountedCheck, true);
     assert.equal(debug.flushPending, false);
@@ -5152,6 +5161,40 @@ test("VibeComfy launcher panel flushes delayed dirty commits without synthetic i
     assert.doesNotMatch(text, /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
     assert.match(text, /launcher delayed user prompt/);
     assert.match(text, /launcher delayed agent answer/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy duplicate extension evaluation reuses the same live agent panel singleton", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const firstModule = await harness.loadExtension();
+    const secondModule = await harness.loadFreshExtension();
+    assert.notEqual(firstModule, secondModule, "fresh import should create a second module instance");
+    assert.equal(harness.registeredExtensions.length, 2);
+
+    await harness.registeredExtensions[0].setup();
+    await harness.registeredExtensions[1].setup();
+
+    const firstPanel = firstModule.ensureAgentPanel();
+    const secondPanel = secondModule.ensureAgentPanel();
+    assert.equal(firstPanel, secondPanel, "both module instances must resolve the same panel object");
+    assert.equal(harness.getPanelRoots().length, 1, "duplicate module setup must not create a second panel root");
+
+    const root = harness.getPanelRoots()[0];
+    const debug = harness.window.__vibecomfyPanelDebug();
+    assert.equal(debug.panelsCreated, 1);
+    assert.equal(debug.panelId, firstPanel.panelId);
+    assert.equal(debug.panelId, root.dataset.vibecomfyPanelId);
   } finally {
     await harness.dispose();
   }
