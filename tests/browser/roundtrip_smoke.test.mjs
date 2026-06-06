@@ -5166,6 +5166,144 @@ test("VibeComfy link-rewired target nodes get the full edited-node overlay box",
   }
 });
 
+test("VibeComfy link rewire promotion ignores identical LiteGraph link re-emissions", async () => {
+  const liveNodes = [
+    {
+      id: 1,
+      type: "CheckpointLoaderSimple",
+      pos: [20, 120],
+      size: [240, 120],
+      properties: { vibecomfy_uid: "loader" },
+      inputs: [],
+      outputs: [{ name: "MODEL" }, { name: "CLIP" }, { name: "VAE" }],
+    },
+    {
+      id: 2,
+      type: "CLIPTextEncode",
+      pos: [300, 80],
+      size: [220, 90],
+      properties: { vibecomfy_uid: "positive" },
+      inputs: [{ name: "clip" }],
+      outputs: [{ name: "CONDITIONING" }],
+    },
+    {
+      id: 3,
+      type: "CLIPTextEncode",
+      pos: [300, 220],
+      size: [220, 90],
+      properties: { vibecomfy_uid: "negative" },
+      inputs: [{ name: "clip" }],
+      outputs: [{ name: "CONDITIONING" }],
+    },
+    {
+      id: 4,
+      type: "KSampler",
+      pos: [580, 150],
+      size: [240, 150],
+      properties: { vibecomfy_uid: "sampler" },
+      inputs: [
+        { name: "model" },
+        { name: "positive" },
+        { name: "negative" },
+      ],
+      outputs: [{ name: "LATENT" }],
+    },
+    {
+      id: 5,
+      type: "VAEDecode",
+      pos: [880, 150],
+      size: [220, 90],
+      properties: { vibecomfy_uid: "decode" },
+      inputs: [{ name: "samples" }, { name: "vae" }],
+      outputs: [{ name: "IMAGE" }],
+    },
+    {
+      id: 6,
+      type: "ImageUpscaleWithModel",
+      pos: [1160, 150],
+      size: [240, 100],
+      properties: { vibecomfy_uid: "upscale" },
+      inputs: [{ name: "image" }],
+      outputs: [{ name: "IMAGE" }],
+    },
+    {
+      id: 7,
+      type: "SaveImage",
+      pos: [1440, 150],
+      size: [240, 100],
+      properties: { vibecomfy_uid: "save" },
+      inputs: [{ name: "images" }],
+      outputs: [],
+    },
+  ];
+  const cloneNodes = (nodes) => nodes.map((node) => ({
+    ...node,
+    pos: [...node.pos],
+    size: [...node.size],
+    properties: { ...node.properties },
+    inputs: (node.inputs || []).map((input) => ({ ...input })),
+    outputs: (node.outputs || []).map((output) => ({ ...output })),
+  }));
+  const liveGraph = {
+    nodes: cloneNodes(liveNodes),
+    links: [
+      [101, 1, 1, 2, 0, "CLIP"],
+      [102, 1, 1, 3, 0, "CLIP"],
+      [103, 1, 0, 4, 0, "MODEL"],
+      [104, 2, 0, 4, 1, "CONDITIONING"],
+      [105, 3, 0, 4, 2, "CONDITIONING"],
+      [106, 4, 0, 5, 0, "LATENT"],
+      [107, 1, 2, 5, 1, "VAE"],
+      [108, 5, 0, 6, 0, "IMAGE"],
+      [109, 6, 0, 7, 0, "IMAGE"],
+    ],
+  };
+  const candidateGraph = {
+    nodes: cloneNodes(liveNodes),
+    links: [
+      [201, 1, 1, 2, 0, "CLIP"],
+      [202, 1, 1, 3, 0, "CLIP"],
+      [203, 1, 0, 4, 0, "MODEL"],
+      [204, 2, 0, 4, 1, "CONDITIONING"],
+      [205, 3, 0, 4, 2, "CONDITIONING"],
+      [206, 4, 0, 5, 0, "LATENT"],
+      [207, 1, 2, 5, 1, "VAE"],
+      [208, 5, 0, 6, 0, "IMAGE"],
+      [209, 5, 0, 7, 0, "IMAGE"],
+    ],
+  };
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const diff = extensionModule.computePreviewDiff(candidateGraph, {
+      change: { content_edits: { preserved: [], edited: [], removed_named: [] } },
+      recovery: [],
+    });
+
+    assert.deepEqual(diff.edited.map((entry) => entry.uid), ["save"]);
+    assert.deepEqual(diff.added_links, ["decode::IMAGE->save::images"]);
+    assert.deepEqual(diff.removed_links, ["upscale::IMAGE->save::images"]);
+
+    const drawOps = await harness.drawPreviewOverlay({ ...diff, _candidateGraph: candidateGraph });
+    const editedBoxFills = drawOps.filter(
+      (op, index) => op.kind === "fillRect"
+        && drawOps.slice(0, index).reverse().find((prior) => prior.kind === "fillStyle")?.args[0]
+          === "rgba(255,193,7,0.16)",
+    );
+    assert.equal(editedBoxFills.length, 1, "only the changed link target should get a full amber box");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy removed-node overlay fills the full node box and keeps the removed badge", async () => {
   const TITLE_H = 30;
   const NODE_POS = [70, 180];

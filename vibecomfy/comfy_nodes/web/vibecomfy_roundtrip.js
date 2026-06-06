@@ -5547,12 +5547,14 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
     }
 
     function _normalizeLinkEndpoint(link, uidById, nodesById) {
-      // link may be an array [origin_id, origin_slot, target_id, target_slot, …]
+      // link may be an array [origin_id, origin_slot, target_id, target_slot, …],
+      // a LiteGraph array [link_id, origin_id, origin_slot, target_id, target_slot, …],
       // or an object { origin_id, origin_slot, target_id, target_slot, … }
-      const originId = Array.isArray(link) ? link[0] : link?.origin_id;
-      const originSlot = Array.isArray(link) ? link[1] : link?.origin_slot;
-      const targetId = Array.isArray(link) ? link[2] : link?.target_id;
-      const targetSlot = Array.isArray(link) ? link[3] : link?.target_slot;
+      const hasLeadingLinkId = Array.isArray(link) && link.length >= 6;
+      const originId = Array.isArray(link) ? link[hasLeadingLinkId ? 1 : 0] : link?.origin_id;
+      const originSlot = Array.isArray(link) ? link[hasLeadingLinkId ? 2 : 1] : link?.origin_slot;
+      const targetId = Array.isArray(link) ? link[hasLeadingLinkId ? 3 : 2] : link?.target_id;
+      const targetSlot = Array.isArray(link) ? link[hasLeadingLinkId ? 4 : 3] : link?.target_slot;
 
       const fromUid = uidById.get(String(originId));
       const toUid = uidById.get(String(targetId));
@@ -5619,14 +5621,65 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
     }
 
     const linkEditedUids = new Set();
-    const _linkTarget = (key) => {
-      const match = String(key || "").match(/^.+?::.+?->([^:]+)::(.+)$/);
-      return match ? { uid: match[1], port: match[2] } : null;
+    const _parseLinkKey = (key) => {
+      const text = String(key || "");
+      const arrowIndex = text.indexOf("->");
+      if (arrowIndex < 0) return null;
+      const sourceText = text.slice(0, arrowIndex);
+      const targetText = text.slice(arrowIndex + 2);
+      const sourceSep = sourceText.indexOf("::");
+      const targetSep = targetText.indexOf("::");
+      if (sourceSep < 0 || targetSep < 0) return null;
+      const fromUid = sourceText.slice(0, sourceSep);
+      const fromPort = sourceText.slice(sourceSep + 2);
+      const toUid = targetText.slice(0, targetSep);
+      const toPort = targetText.slice(targetSep + 2);
+      if (!fromUid || !toUid) return null;
+      return {
+        fromUid,
+        fromPort,
+        toUid,
+        toPort,
+        sourceKey: `${fromUid}::${fromPort}`,
+        targetKey: `${toUid}::${toPort}`,
+      };
     };
-    for (const key of [...added_links, ...removed_links]) {
-      const target = _linkTarget(key);
-      if (target && liveByUid.has(target.uid) && candidateByUid.has(target.uid)) {
-        linkEditedUids.add(target.uid);
+    const _sourcesByTarget = (keys) => {
+      const grouped = new Map();
+      for (const key of keys) {
+        const parsed = _parseLinkKey(key);
+        if (!parsed) continue;
+        if (!grouped.has(parsed.targetKey)) {
+          grouped.set(parsed.targetKey, { uid: parsed.toUid, sources: new Set() });
+        }
+        grouped.get(parsed.targetKey).sources.add(parsed.sourceKey);
+      }
+      return grouped;
+    };
+    const _sameSet = (left, right) => {
+      if (left.size !== right.size) return false;
+      for (const value of left) {
+        if (!right.has(value)) return false;
+      }
+      return true;
+    };
+    const addedSourcesByTarget = _sourcesByTarget(added_links);
+    const removedSourcesByTarget = _sourcesByTarget(removed_links);
+    const changedTargetKeys = new Set([
+      ...addedSourcesByTarget.keys(),
+      ...removedSourcesByTarget.keys(),
+    ]);
+    for (const targetKey of changedTargetKeys) {
+      const addedTarget = addedSourcesByTarget.get(targetKey);
+      const removedTarget = removedSourcesByTarget.get(targetKey);
+      const uid = addedTarget?.uid || removedTarget?.uid || null;
+      if (!uid || !liveByUid.has(uid) || !candidateByUid.has(uid)) {
+        continue;
+      }
+      const addedSources = addedTarget?.sources || new Set();
+      const removedSources = removedTarget?.sources || new Set();
+      if (!_sameSet(addedSources, removedSources)) {
+        linkEditedUids.add(uid);
       }
     }
     const editedByUid = new Map(edited.map((entry) => [entry.uid, entry]));

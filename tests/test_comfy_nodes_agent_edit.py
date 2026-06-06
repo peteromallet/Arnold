@@ -6143,6 +6143,158 @@ def test_humanized_edit_message_describes_rewire_link_refs_without_raw_dicts() -
     assert "Gate A" not in msg
 
 
+def test_humanized_edit_message_resolves_live_rewire_link_id_endpoint_shape() -> None:
+    """Live response artifacts may carry LiteGraph id uid + stale link id as output_slot."""
+    response_artifact = {
+        "graph": {
+            "nodes": [
+                {
+                    "id": 8,
+                    "type": "VAEDecode",
+                    "properties": {"Node name for S&R": "VAEDecode", "vibecomfy_uid": "8"},
+                    "outputs": [
+                        {
+                            "localized_name": "IMAGE",
+                            "name": "IMAGE",
+                            "slot_index": 0,
+                            "type": "IMAGE",
+                            "links": [23, 43, 47],
+                        }
+                    ],
+                },
+                {
+                    "id": 18,
+                    "type": "ImageUpscaleWithModel",
+                    "properties": {
+                        "Node name for S&R": "ImageUpscaleWithModel",
+                        "vibecomfy_id": "ImageUpscaleWithModel_0",
+                        "vibecomfy_uid": "n3",
+                    },
+                    "outputs": [
+                        {
+                            "localized_name": "IMAGE",
+                            "name": "IMAGE",
+                            "slot_index": 0,
+                            "type": "IMAGE",
+                            "links": [],
+                        }
+                    ],
+                },
+                {
+                    "id": 25,
+                    "type": "SaveImage",
+                    "properties": {
+                        "Node name for S&R": "SaveImage",
+                        "vibecomfy_id": "SaveImage_0",
+                        "vibecomfy_uid": "n10",
+                    },
+                    "inputs": [
+                        {"localized_name": "images", "name": "images", "type": "IMAGE", "link": 47},
+                        {
+                            "localized_name": "filename_prefix",
+                            "name": "filename_prefix",
+                            "type": "STRING",
+                            "widget": {"name": "filename_prefix"},
+                            "link": None,
+                        },
+                    ],
+                    "outputs": [],
+                },
+            ],
+            "links": [[47, 8, 0, 25, 0, "IMAGE"]],
+        },
+        "candidate": {
+            "graph": {
+                "nodes": [
+                    {
+                        "id": 8,
+                        "type": "VAEDecode",
+                        "properties": {"Node name for S&R": "VAEDecode", "vibecomfy_uid": "8"},
+                        "outputs": [
+                            {
+                                "localized_name": "IMAGE",
+                                "name": "IMAGE",
+                                "slot_index": 0,
+                                "type": "IMAGE",
+                                "links": [23, 43, 47],
+                            }
+                        ],
+                    },
+                    {
+                        "id": 18,
+                        "type": "ImageUpscaleWithModel",
+                        "properties": {
+                            "Node name for S&R": "ImageUpscaleWithModel",
+                            "vibecomfy_id": "ImageUpscaleWithModel_0",
+                            "vibecomfy_uid": "n3",
+                        },
+                        "outputs": [
+                            {
+                                "localized_name": "IMAGE",
+                                "name": "IMAGE",
+                                "slot_index": 0,
+                                "type": "IMAGE",
+                                "links": [],
+                            }
+                        ],
+                    },
+                    {
+                        "id": 25,
+                        "type": "SaveImage",
+                        "properties": {
+                            "Node name for S&R": "SaveImage",
+                            "vibecomfy_id": "SaveImage_0",
+                            "vibecomfy_uid": "n10",
+                        },
+                        "inputs": [
+                            {"localized_name": "images", "name": "images", "type": "IMAGE", "link": 47},
+                            {
+                                "localized_name": "filename_prefix",
+                                "name": "filename_prefix",
+                                "type": "STRING",
+                                "widget": {"name": "filename_prefix"},
+                                "link": None,
+                            },
+                        ],
+                        "outputs": [],
+                    },
+                ],
+                "links": [[47, 8, 0, 25, 0, "IMAGE"]],
+            }
+        },
+        "batch_turns": [
+            {
+                "field_changes": [
+                    {
+                        "uid": "n10",
+                        "field_path": "images",
+                        "old": {"output_slot": 25, "scope_path": "", "uid": "18"},
+                        "new": {"output_slot": "IMAGE", "scope_path": "", "uid": "8"},
+                    }
+                ]
+            }
+        ],
+    }
+    changes = tuple(
+        FieldChange(**item)
+        for item in response_artifact["batch_turns"][0]["field_changes"]
+    )
+    state = _make_state(
+        graph=response_artifact["graph"],
+        ui_payload=response_artifact["candidate"]["graph"],
+        batch_field_changes=changes,
+    )
+
+    msg = _humanized_edit_message(state)
+
+    assert msg == (
+        "Rewired SaveImage images to come from VAEDecode IMAGE instead of "
+        "ImageUpscaleWithModel."
+    )
+    assert "unknown source" not in msg
+    assert "{" not in msg
+
+
 def test_absent_field_old_not_serialized_in_to_dict() -> None:
     """FieldChange.to_dict() serializes absent old as null, not a sentinel object."""
     change = FieldChange(uid="x", field_path="y", old=None, new=1)

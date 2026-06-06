@@ -305,14 +305,12 @@ def _node_label_by_uid(*graphs: Mapping[str, Any] | None) -> dict[str, str]:
         if not isinstance(graph, Mapping):
             continue
         for node in _iter_ui_graph_nodes(graph):
-            uid = _ui_node_uid(node)
-            if not uid:
-                continue
             class_type = node.get("type") or node.get("class_type")
             title = node.get("title")
             label = title if isinstance(title, str) and title.strip() else class_type
             if isinstance(label, str) and label.strip():
-                labels[str(uid)] = label.strip()
+                for uid in _ui_node_uid_aliases(node):
+                    labels[str(uid)] = label.strip()
     return labels
 
 
@@ -361,7 +359,7 @@ def _resolve_output_slot_name(graph: Mapping[str, Any], uid: str, slot_index: in
     if isinstance(slot_index, str):
         return slot_index
     for node in _iter_ui_graph_nodes(graph):
-        if _ui_node_uid(node) != uid:
+        if uid not in _ui_node_uid_aliases(node):
             continue
         outputs = node.get("outputs")
         if isinstance(outputs, list) and 0 <= slot_index < len(outputs):
@@ -1200,6 +1198,19 @@ def _ui_node_uid(node: Mapping[str, Any]) -> str | None:
     if isinstance(node_id, int):
         return str(node_id)
     return None
+
+
+def _ui_node_uid_aliases(node: Mapping[str, Any]) -> tuple[str, ...]:
+    aliases: list[str] = []
+    primary = _ui_node_uid(node)
+    if primary:
+        aliases.append(primary)
+    node_id = node.get("id")
+    if isinstance(node_id, (int, str)) and str(node_id):
+        node_id_key = str(node_id)
+        if node_id_key not in aliases:
+            aliases.append(node_id_key)
+    return tuple(aliases)
 
 
 def _iter_ui_graph_nodes(graph: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
