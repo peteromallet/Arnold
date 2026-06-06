@@ -572,6 +572,7 @@ test("VibeComfy disables Submit while provider readiness is loading", async () =
     await harness.setup();
     await harness.invokeCommand("VibeComfy.AgentEdit");
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled, true);
+    assert.notEqual(harness.document.getElementById("vibecomfy-agent-panel-submit")?.style.display, "none");
     releaseStatus();
     await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled === false);
   } finally {
@@ -5038,6 +5039,7 @@ test("VibeComfy setup-created panel commits delayed status and chat after sideba
     });
 
     await waitFor(() => submit.disabled === false);
+    await waitFor(() => submit.style.display !== "none");
     await waitFor(() => /mount move delayed agent answer/.test(harness.textDump()));
 
     const text = harness.textDump();
@@ -5045,6 +5047,20 @@ test("VibeComfy setup-created panel commits delayed status and chat after sideba
     assert.doesNotMatch(text, /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
     assert.match(text, /mount move delayed user prompt/);
     assert.match(text, /mount move delayed agent answer/);
+
+    assert.equal(typeof harness.window.__vibecomfyPanelDebug, "function");
+    const debug = harness.window.__vibecomfyPanelDebug();
+    assert.deepEqual(debug.readiness, { kind: "ready", ready: true, reason: "ready" });
+    assert.equal(debug.phase, "IDLE");
+    assert.equal(debug.sessionId, SESSION_ID);
+    assert.equal(debug.messageCount, 2);
+    assert.equal(debug.visibleMessageCount, 2);
+    assert.equal(debug.mountMode, "sidebar");
+    assert.equal(debug.epochs.status, 1);
+    assert.equal(debug.epochs.chatRehydrate, 1);
+    assert.equal(debug.epochs.chatRehydrateCommitted, 1);
+    assert.equal(debug.epochs.submit, 0);
+    assert.deepEqual(debug.dirtySections, []);
   } finally {
     await harness.dispose();
   }

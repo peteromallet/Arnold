@@ -2852,6 +2852,10 @@ export function ensureAgentPanel() {
   return agentPanel;
 }
 
+export function debugAgentPanelSnapshot(panel = agentPanel) {
+  return buildAgentPanelDebugSnapshot(panel);
+}
+
 function openAgentPanel({ mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, container = null } = {}) {
   const panel = ensureAgentPanel();
   applyAgentPanelMount(panel, { mode, container });
@@ -4560,6 +4564,44 @@ function renderChatThread(panel) {
   renderShowEarlierMessages(panel, olderMount, hiddenCount);
   reconcileChatBubbles(panel, messagesMount, displayEntries);
   return true;
+}
+
+function buildAgentPanelDebugSnapshot(panel = agentPanel) {
+  const routeStatus = routeStatusState(panel);
+  const readinessState = submitReadinessState(panel);
+  const threadEntries = collectThreadMessageEntries(panel);
+  const { displayEntries } = computeThreadDisplayEntries(panel, threadEntries);
+  return {
+    phase: panel?.state?.phase || null,
+    readiness: {
+      kind: routeStatus.kind || null,
+      ready: Boolean(readinessState.ready),
+      reason: readinessState.reason || null,
+    },
+    sessionId: panel?.state?.sessionId || null,
+    turnId: panel?.state?.turnId || null,
+    baselineTurnId: panel?.state?.baselineTurnId || null,
+    messageCount: threadEntries.length,
+    visibleMessageCount: displayEntries.length,
+    dirtySections: Array.isArray(panel?.pendingDirtySections) ? panel.pendingDirtySections.slice() : [],
+    mountMode: panel?.state?.mountMode || null,
+    epochs: {
+      status: Number.isFinite(panel?.state?.statusRequestEpoch) ? panel.state.statusRequestEpoch : 0,
+      chatRehydrate: Number.isFinite(panel?.state?.chatRehydrateEpoch) ? panel.state.chatRehydrateEpoch : 0,
+      chatRehydrateCommitted: Number.isFinite(panel?.state?.chatRehydrateCommittedEpoch)
+        ? panel.state.chatRehydrateCommittedEpoch
+        : 0,
+      submit: Number.isFinite(panel?.state?.submitEpoch) ? panel.state.submitEpoch : 0,
+    },
+  };
+}
+
+function installAgentPanelDebugHook() {
+  const targetWindow = typeof window !== "undefined" ? window : null;
+  if (!targetWindow) {
+    return;
+  }
+  targetWindow.__vibecomfyPanelDebug = () => buildAgentPanelDebugSnapshot(agentPanel);
 }
 
 function populateAgentBubbleDetail(target, panel, message, snapshot = null) {
@@ -6905,6 +6947,10 @@ function renderComposerActions(panel) {
   });
 
   setButtonEmphasis(panel.buttons.submit, (canSubmit && readinessState.ready) || submitting, "primary");
+  if (canSubmit && !submitting) {
+    panel.buttons.submit.style.display = "inline-flex";
+    panel.buttons.submit.style.opacity = "1";
+  }
   setButtonEmphasis(panel.buttons.stop, submitting, "danger");
   setButtonEmphasis(panel.buttons.apply, reviewing || applying, "primary");
   setButtonEmphasis(panel.buttons.reject, reviewing || applying, "danger");
@@ -8516,6 +8562,7 @@ app.registerExtension({
     decorateLiveIntentNodes();
     installQueueGuard();
     ensureAgentTurnListener();
+    installAgentPanelDebugHook();
     const proto = window.LiteGraph?.LGraphCanvas?.prototype;
     if (proto && !proto.__vibecomfyRoundtripPatched) {
       proto.__vibecomfyRoundtripPatched = true;

@@ -391,6 +391,39 @@ corresponding side effects.
 
 ## 8. `dirtySections` taxonomy and deterministic rules
 
+### 8.0 Live debugging hook
+
+The browser extension installs a cheap, scrubbed diagnostics hook for live
+forensics:
+
+```js
+window.__vibecomfyPanelDebug()
+```
+
+It returns only panel lifecycle metadata:
+
+```js
+{
+  phase,
+  readiness: { kind, ready, reason },
+  sessionId,
+  turnId,
+  baselineTurnId,
+  messageCount,
+  visibleMessageCount,
+  dirtySections,
+  mountMode,
+  epochs: { status, chatRehydrate, chatRehydrateCommitted, submit },
+}
+```
+
+The hook intentionally omits graph payloads, API keys, prompts beyond rendered
+message counts, raw status snapshots, and debug payload bodies. `readiness` is
+computed through the same helper that gates Submit and the composer notice;
+`messageCount` / `visibleMessageCount` are computed through the same thread
+collection and windowing helpers that decide whether the transcript or example
+picker renders.
+
 ### 8.1 Section definitions
 
 The `RENDER_SECTIONS` frozen export in `agent_edit_lifecycle.js` defines six
