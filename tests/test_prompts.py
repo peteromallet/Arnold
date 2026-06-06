@@ -33,6 +33,7 @@ from arnold.pipelines.megaplan.prompts.tiebreaker_challenger import challenger_p
 from arnold.pipelines.megaplan.prompts.tiebreaker_researcher import researcher_prompt
 from arnold.pipelines.megaplan.prompts._shared import _gate_summary_or_skipped
 from arnold.pipelines.megaplan.prompts import (
+    PromptComponents,
     _execute_batch_prompt,
     _execute_doc_batch_prompt,
     _execute_doc_prompt,
@@ -43,6 +44,7 @@ from arnold.pipelines.megaplan.prompts import (
     _prep_triage_prompt,
     _render_prep_block,
     create_claude_prompt,
+    create_claude_prompt_components,
     create_codex_prompt,
 )
 from arnold.pipelines.megaplan.prompts.execute import _execute_approval_note, _execute_prompt
@@ -245,6 +247,34 @@ def _scaffold(tmp_path: Path, *, iteration: int = 1) -> tuple[Path, PlanState]:
         },
     )
     return plan_dir, state
+
+
+def test_prompt_components_preserve_legacy_string_prompt_api(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+
+    legacy_prompt = create_claude_prompt("plan", state, plan_dir, root=tmp_path)
+    components = create_claude_prompt_components(
+        "plan",
+        state,
+        plan_dir,
+        root=tmp_path,
+        system="system rules",
+        schema={"type": "object", "properties": {"plan": {"type": "string"}}},
+        template={"plan": "..."},
+        metadata={"worker": "claude"},
+    )
+
+    assert isinstance(legacy_prompt, str)
+    assert isinstance(components, PromptComponents)
+    assert components.as_prompt_text() == legacy_prompt
+    assert components.to_model_metadata()["prompt"] == legacy_prompt
+    assert components.to_model_metadata()["system"] == "system rules"
+    assert components.to_model_metadata()["schema"] == {
+        "type": "object",
+        "properties": {"plan": {"type": "string"}},
+    }
+    assert components.to_model_metadata()["template"] == {"plan": "..."}
+    assert components.to_model_metadata()["worker"] == "claude"
 
 
 def _render_codex_review_prompt(

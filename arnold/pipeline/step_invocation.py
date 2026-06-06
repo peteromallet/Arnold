@@ -62,6 +62,15 @@ class StepInvocationAdapterRegistry:
             raise ValueError(f"adapter kind {kind!r} already registered")
         self._adapters[kind] = adapter
 
+    def replace_reserved(self, kind: str, adapter: StepInvocationAdapter) -> None:
+        """Replace a reserved placeholder adapter with a concrete implementation."""
+        current = self.resolve(kind)
+        if not isinstance(current, _ModelAdapterPlaceholder):
+            raise ValueError(
+                f"adapter kind {kind!r} is not a reserved placeholder and cannot be replaced"
+            )
+        self._adapters[kind] = adapter
+
     def resolve(self, kind: str) -> StepInvocationAdapter:
         """Return the registered adapter for *kind* or fail closed."""
         if kind not in self._adapters:
@@ -70,8 +79,11 @@ class StepInvocationAdapterRegistry:
             )
         return self._adapters[kind]
 
+    def invoke(self, invocation: StepInvocation) -> Any:
+        """Resolve *invocation.kind* and delegate to the registered adapter."""
+        return self.resolve(invocation.kind).invoke(invocation)
+
     @property
     def registered_kinds(self) -> tuple[str, ...]:
         """Return the registry contents in deterministic order."""
         return tuple(sorted(self._adapters))
-

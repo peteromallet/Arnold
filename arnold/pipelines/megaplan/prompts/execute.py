@@ -690,11 +690,12 @@ def _execute_batch_prompt(
         Requirements:
         - Execute only the actionable tasks in this batch.
         - Treat completed tasks as dependency context, not new work.
-        - Return structured JSON only.
-        - Only produce `task_updates` for these tasks: [{", ".join(batch_task_ids)}]
-        - Only produce `sense_check_acknowledgments` for these sense checks: [{", ".join(batch_sense_check_ids)}]
-        - Do not include updates for tasks or sense checks outside this batch.
-        - Keep `executor_notes` verification-focused.
+    - Return structured JSON only.
+    - Only produce `task_updates` for these tasks: [{", ".join(batch_task_ids)}]
+    - Only produce `sense_check_acknowledgments` for these sense checks: [{", ".join(batch_sense_check_ids)}]
+    - Do not include updates for tasks or sense checks outside this batch.
+    - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+    - Keep `executor_notes` verification-focused.
         - {_checkpoint_summary_requirement(checkpoint_path, projection_capabilities)}
         - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
         - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.

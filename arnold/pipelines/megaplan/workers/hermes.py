@@ -26,6 +26,12 @@ from arnold.pipelines.megaplan.workers._impl import (
 )
 from arnold.pipelines.megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
 from arnold.pipelines.megaplan.forms.provocations import select_active_checks
+from arnold.pipeline import StepInvocation
+from arnold.pipelines.megaplan.model_seam import (
+    ModelTier,
+    capture_step_output,
+    render_prompt_for_dispatch,
+)
 from arnold.pipelines.megaplan.prompts import create_hermes_prompt
 
 
@@ -1040,6 +1046,9 @@ def run_hermes_step(
     )
     schema = read_json(schemas_root(root) / schema_name)
     normalized_worker_options = _normalize_worker_options(worker_options)
+    from arnold.pipelines.megaplan.runtime.key_pool import resolve_model as _resolve_model, acquire_key, report_429
+    resolved_model, agent_kwargs = _resolve_model(model)
+    effective_resolved_model = str(normalized_worker_options.get("resolved_model") or resolved_model or "")
     explicit_output_path = output_path
     if explicit_output_path is None and normalized_worker_options.get("output_path"):
         explicit_output_path = Path(str(normalized_worker_options["output_path"]))
@@ -1073,12 +1082,28 @@ def run_hermes_step(
         import uuid
         session_id = str(uuid.uuid4())
 
+    toolsets = _toolsets_for_phase(step)
+    seam_tier = ModelTier.ENFORCED if not toolsets else ModelTier.NON_ENFORCED
+
     # Build prompt — megaplan prompts embed the JSON schema, but some models
     # ignore formatting instructions buried in long prompts.  Append a clear
     # reminder so the final response is valid JSON, not markdown.
-    prompt = prompt_override if prompt_override is not None else create_hermes_prompt(
-        step, state, plan_dir, root=root
-    )
+    rendered_step = None
+    if prompt_override is None:
+        prompt_override = create_hermes_prompt(step, state, plan_dir, root=root)
+        rendered_step = render_prompt_for_dispatch(
+            "hermes",
+            step,
+            state,
+            plan_dir,
+            root=root,
+            model=resolved_model,
+            normalized_model=resolved_model,
+            tier=seam_tier,
+            schema=schema,
+            prompt_override=prompt_override,
+        )
+    prompt = prompt_override if prompt_override is not None else rendered_step.prompt
     # Add web search guidance for phases that have it
     if step in ("plan", "critique", "revise"):
         prompt += (
@@ -1097,8 +1122,6 @@ def run_hermes_step(
             "\n\nIMPORTANT: Do NOT rename, modify, or delete EVAL.ts or any test files. "
             "They are used for scoring after execution and must remain unchanged."
         )
-
-    toolsets = _toolsets_for_phase(step)
 
     # Critique and review: use custom template writers that pre-populate IDs.
     # Other template-file phases: hermes_worker writes a generic template.
@@ -1172,13 +1195,6 @@ def run_hermes_step(
         kwargs.pop('file', None)
         print(*args, file=activity_stderr, **kwargs)
 
-    # Resolve model provider — support direct API providers via prefix
-    # e.g. "zhipu:glm-5.1" → base_url=Zhipu API, model="glm-5.1"
-    # Uses the key pool for key rotation and cooldown on 429s.
-    from arnold.pipelines.megaplan.runtime.key_pool import resolve_model as _resolve_model, acquire_key, report_429
-    resolved_model, agent_kwargs = _resolve_model(model)
-    effective_resolved_model = str(normalized_worker_options.get("resolved_model") or resolved_model or "")
-
     # Resolve the reasoning override from model family + profile depth. Off
     # families (which return structured output outside the content field) stay
     # disabled; otherwise the requested effort sets the thinking budget. DeepSeek
@@ -1223,7 +1239,7 @@ def run_hermes_step(
             **extra_kwargs,
         )
         current_agent._print_fn = activity_print
-        if not toolsets:
+        if seam_tier is ModelTier.ENFORCED:
             current_agent.set_response_format(schema, name=f"megaplan_{step}")
         return current_agent
 
@@ -1455,15 +1471,42 @@ def run_hermes_step(
             )
 
             try:
-                validate_payload(step, current_payload)
+                capture_outcome = capture_step_output(
+                    StepInvocation(
+                        kind="model",
+                        metadata={
+                            "tier": seam_tier.value,
+                            "worker": "hermes",
+                            "model": effective_resolved_model or resolved_model,
+                            "normalized_model": effective_resolved_model or resolved_model,
+                            "validation_step": step,
+                            "compatibility_validation_step": step,
+                        },
+                    ),
+                    current_payload,
+                )
+                current_payload = dict(capture_outcome.legacy_payload)
             except CliError as error:
                 # For execute, try reconstructed payload if validation fails
                 if step == "execute":
                     reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
                     if reconstructed is not None:
                         try:
-                            validate_payload(step, reconstructed)
-                            current_payload = reconstructed
+                            capture_outcome = capture_step_output(
+                                StepInvocation(
+                                    kind="model",
+                                    metadata={
+                                        "tier": seam_tier.value,
+                                        "worker": "hermes",
+                                        "model": effective_resolved_model or resolved_model,
+                                        "normalized_model": effective_resolved_model or resolved_model,
+                                        "validation_step": step,
+                                        "compatibility_validation_step": step,
+                                    },
+                                ),
+                                reconstructed,
+                            )
+                            current_payload = dict(capture_outcome.legacy_payload)
                             print(
                                 "[hermes-worker] Using reconstructed payload (original failed validation)",
                                 file=activity_stderr,

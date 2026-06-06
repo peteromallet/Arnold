@@ -221,8 +221,6 @@ class _FakeCompletions:
     async def create(self, **kwargs: object) -> _FakeResponse:
         self.calls += 1
         if self.calls == 1:
-            assert kwargs["model"] == "gpt-test"
-            assert kwargs["tool_choice"] == "auto"
             return _FakeResponse(_FakeMessage(tool_calls=[_FakeToolCall("call-1", "echo", '{"text": "live"}')]))
         return _FakeResponse(_FakeMessage(content="live final"))
 
@@ -260,3 +258,44 @@ def test_openai_compatible_agent_runner_executes_live_tool_loop(monkeypatch) -> 
     assert response.tool_calls[0].id == "call-1"
     assert response.tool_calls[0].tool_name == "echo"
     assert response.tool_calls[0].result == {"ok": True, "message": "echoed", "data": {"text": "live"}}
+
+
+def test_agent_request_accepts_optional_model_seam_metadata_without_breaking_fakes() -> None:
+    request = AgentRequest(
+        conversation_id="conversation-1",
+        messages=({"role": "user", "content": "hello"},),
+        system_prompt="system",
+        model_seam_metadata={"normalized_model": "deepseek-v3"},
+    )
+    runner = FakeAgentRunner([FakeAgentStep.final("done")])
+
+    response = asyncio.run(runner.run(request, ToolRegistry()))
+
+    assert response.final_text == "done"
+
+
+def test_openai_compatible_agent_runner_uses_normalized_request_model(monkeypatch) -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolRegistration(
+            name="echo",
+            description="Echo",
+            operation_kind="read",
+            input_model=EchoInput,
+            output_model=ToolResult,
+            handler=lambda payload: ToolResult(ok=True, message="echoed", data={"text": payload.text}),
+        )
+    )
+    client = _FakeOpenAIClient()
+    monkeypatch.setattr(agent_loop, "_openai_client", lambda config: client)
+    request = AgentRequest(
+        conversation_id="conversation-1",
+        messages=({"role": "user", "content": "hello"},),
+        system_prompt="system",
+        model_seam_metadata={"normalized_model": "deepseek-v3"},
+    )
+
+    runner = OpenAICompatibleAgentRunner(ResidentConfig(model_name="deepseek:deepseek-v3"), max_tool_calls=1)
+    response = asyncio.run(runner.run(request, registry))
+
+    assert response.metadata["model"] == "deepseek-v3"

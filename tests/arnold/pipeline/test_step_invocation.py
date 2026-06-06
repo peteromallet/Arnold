@@ -30,6 +30,15 @@ class TestStepInvocation:
 
 
 class TestStepInvocationAdapterRegistry:
+    class _CustomAdapter:
+        def __init__(self, response: Any) -> None:
+            self._response = response
+            self.calls: list[StepInvocation] = []
+
+        def invoke(self, invocation: StepInvocation) -> Any:
+            self.calls.append(invocation)
+            return self._response
+
     def test_registry_starts_with_only_model_placeholder(self) -> None:
         registry = StepInvocationAdapterRegistry()
         assert registry.registered_kinds == ("model",)
@@ -60,11 +69,33 @@ class TestStepInvocationAdapterRegistry:
             registry.resolve(kind)
 
     def test_duplicate_registration_is_rejected(self) -> None:
-        class _CustomAdapter:
-            def invoke(self, invocation: StepInvocation) -> Any:
-                return invocation.metadata
-
         registry = StepInvocationAdapterRegistry()
-        registry.register("tool", _CustomAdapter())
+        registry.register("tool", self._CustomAdapter(response={"ok": True}))
         with pytest.raises(ValueError, match="already registered"):
-            registry.register("tool", _CustomAdapter())
+            registry.register("tool", self._CustomAdapter(response={"ok": False}))
+
+    def test_duplicate_normal_model_registration_is_rejected(self) -> None:
+        registry = StepInvocationAdapterRegistry()
+        with pytest.raises(ValueError, match="already registered"):
+            registry.register("model", self._CustomAdapter(response={"ok": False}))
+
+    def test_replace_reserved_requires_reserved_placeholder(self) -> None:
+        registry = StepInvocationAdapterRegistry()
+        registry.register("tool", self._CustomAdapter(response={"ok": True}))
+        with pytest.raises(ValueError, match="reserved placeholder"):
+            registry.replace_reserved("tool", self._CustomAdapter(response={"ok": False}))
+
+    def test_replace_reserved_unknown_kind_fails_closed(self) -> None:
+        registry = StepInvocationAdapterRegistry()
+        with pytest.raises(KeyError, match="unknown adapter kind 'tool'"):
+            registry.replace_reserved("tool", self._CustomAdapter(response={"ok": False}))
+
+    def test_replace_reserved_installs_concrete_model_adapter(self) -> None:
+        registry = StepInvocationAdapterRegistry()
+        adapter = self._CustomAdapter(response={"rendered": True})
+        registry.replace_reserved("model", adapter)
+
+        invocation = StepInvocation(kind="model", metadata={"prompt": "hi"})
+        assert registry.resolve("model") is adapter
+        assert registry.invoke(invocation) == {"rendered": True}
+        assert adapter.calls == [invocation]

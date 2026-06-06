@@ -993,7 +993,7 @@ def _review_prompt(
             Do not trust pre-execute promises or plan claims; check the diff itself.
             Add resolved flag IDs to `verified_flag_ids`.
             Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
-            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with `task_id: "REVIEW"`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
             """
         ).strip()
     pre_check_block = ""
@@ -1099,7 +1099,8 @@ def _review_prompt(
         }}
         ```
         - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
-          - `task_id`: which finalize task this issue relates to
+          - `target`: typed route for the rework. Use `{{"kind": "task", "task_id": "T6"}}` for one finalize task, `{{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}}` for bulk-operation findings, or `{{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
           - `issue`: what is wrong
           - `expected`: what correct behavior looks like
           - `actual`: what was observed

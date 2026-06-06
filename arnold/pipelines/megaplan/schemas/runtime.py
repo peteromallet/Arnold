@@ -1082,7 +1082,28 @@ def _build_execution_doc_schema() -> dict[str, Any]:
     return schema
 
 
+def _build_execution_batch_relaxed_schema() -> dict[str, Any]:
+    """Execute capture schema for batch-shaped outputs.
+
+    Execute workers may legitimately return only per-task evidence during batch
+    execution. This relaxed variant keeps the same property/item contracts as
+    ``execution.json`` while requiring only the batch-specific keys.
+    """
+
+    schema = deepcopy(SCHEMAS["execution.json"])
+    task_update_schema = schema["properties"]["task_updates"]["items"]
+    task_update_schema["required"] = []
+    sense_check_schema = schema["properties"]["sense_check_acknowledgments"]["items"]
+    sense_check_schema["required"] = []
+    schema["required"] = [
+        "task_updates",
+        "sense_check_acknowledgments",
+    ]
+    return schema
+
+
 SCHEMAS["execution_doc.json"] = _build_execution_doc_schema()
+SCHEMAS["execution_batch_relaxed.json"] = _build_execution_batch_relaxed_schema()
 
 
 def get_execution_schema_key(mode: str, form: str | None = None) -> str:

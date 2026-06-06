@@ -7,7 +7,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from pydantic import BaseModel, ValidationError
 
@@ -22,6 +22,7 @@ class AgentRequest:
     messages: tuple[dict[str, Any], ...]
     system_prompt: str
     hot_context: dict[str, Any] = field(default_factory=dict)
+    model_seam_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -177,9 +178,10 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
         audit_records: list[ToolCallAuditRecord] = []
 
         for step_index in range(1, self.max_tool_calls + 2):
+            model_name = _request_model_name(request, self.config.model_name)
             response = await asyncio.wait_for(
                 client.chat.completions.create(
-                    model=self.config.model_name,
+                    model=model_name,
                     messages=messages,
                     tools=openai_tools or None,
                     tool_choice="auto" if openai_tools else None,
@@ -194,7 +196,7 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
                 return AgentResponse(
                     final_text=final_text,
                     tool_calls=tuple(audit_records),
-                    metadata={"steps_executed": step_index, "tool_calls_executed": len(audit_records), "model": self.config.model_name},
+                    metadata={"steps_executed": step_index, "tool_calls_executed": len(audit_records), "model": model_name},
                 )
             if len(audit_records) + len(tool_calls) > self.max_tool_calls:
                 raise AgentLoopError(f"resident tool-call limit exceeded: {self.max_tool_calls}")
@@ -249,6 +251,11 @@ def _coerce_tool_result(output_model: type[BaseModel], value: Any) -> BaseModel:
     if isinstance(value, BaseModel):
         return output_model.model_validate(value.model_dump(mode="python"))
     return output_model.model_validate(value)
+
+
+def _request_model_name(request: AgentRequest, default: str) -> str:
+    model_name = request.model_seam_metadata.get("normalized_model")
+    return str(model_name) if model_name else default
 
 
 async def _execute_registered_tool(

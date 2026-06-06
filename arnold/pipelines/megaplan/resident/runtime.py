@@ -9,6 +9,9 @@ from typing import Any, Protocol
 from arnold.pipelines.megaplan.schemas import Message, ProgressEvent, ResidentConversation, SystemLog
 from arnold.pipelines.megaplan.store import ProgressEventInput, ResidentConversationInput, Store, deterministic_idempotency_key
 from arnold.pipelines.megaplan.schemas.base import utc_now
+from arnold.pipelines.megaplan.model_seam import render_step_message
+from arnold.pipelines.megaplan.runtime.key_pool import resolve_model
+from arnold.pipeline import StepInvocation
 
 from .agent_loop import AgentRequest, AgentResponse, AgentRunner
 from .auth import AuthorizationSubject, ResidentAuthorizer
@@ -195,11 +198,18 @@ class ResidentRuntime:
                 in_burst_with=[msg_id for msg_id in message_ids if msg_id != item.message.id] or None,
                 idempotency_key=deterministic_idempotency_key("resident-message-turn", item.message.id, turn.id),
             )
+        model_seam_metadata = self._model_seam_metadata(
+            conversation_id=conversation.id,
+            messages=tuple({"role": "user", "content": item.event.content} for item in items),
+            system_prompt=system_prompt,
+            hot_context=hot_context,
+        )
         request = AgentRequest(
             conversation_id=conversation.id,
             messages=tuple({"role": "user", "content": item.event.content} for item in items),
             system_prompt=system_prompt,
             hot_context=hot_context,
+            model_seam_metadata=model_seam_metadata,
         )
         try:
             response = await self.runner.run(request, self.profile.tools())
@@ -257,6 +267,43 @@ class ResidentRuntime:
                 duration_ms=record.duration_ms,
                 idempotency_key=deterministic_idempotency_key("resident-tool-call", turn_id, record.id),
             )
+
+    def _model_seam_metadata(
+        self,
+        *,
+        conversation_id: str,
+        messages: tuple[dict[str, Any], ...],
+        system_prompt: str,
+        hot_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            normalized_model, agent_kwargs = resolve_model(self.config.model_name)
+        except Exception:
+            if ":" in self.config.model_name:
+                raise
+            normalized_model, agent_kwargs = self.config.model_name, {}
+        rendered = render_step_message(
+            StepInvocation(
+                kind="model",
+                metadata={
+                    "tier": "non_enforced",
+                    "worker": "resident",
+                    "model": normalized_model,
+                    "normalized_model": normalized_model,
+                    "system": system_prompt,
+                    "messages": messages,
+                    "history": messages,
+                    "hot_context": hot_context,
+                    "prompt": "\n".join(str(message.get("content", "")) for message in messages),
+                },
+            )
+        )
+        return {
+            "conversation_id": conversation_id,
+            "normalized_model": normalized_model,
+            "agent_kwargs": agent_kwargs,
+            "rendered": rendered.to_json(),
+        }
 
 
 def _dedupe_persisted_events(items: Sequence[PersistedInboundEvent]) -> tuple[PersistedInboundEvent, ...]:
