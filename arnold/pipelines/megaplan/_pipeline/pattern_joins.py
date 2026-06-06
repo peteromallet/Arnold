@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Callable, Mapping
 
+from arnold.pipeline.contract_reduce import ReducePolicy
 from arnold.pipeline.pattern_joins import majority_vote as _arnold_majority_vote
 from arnold.pipeline.pattern_joins import weighted_vote as _arnold_weighted_vote
 from arnold.pipelines.megaplan._pipeline.flags import typed_ports_on
@@ -26,6 +27,8 @@ def majority_vote(
     *,
     label_extractor: Callable | None = None,
     default_on_tie: str | None = "tiebreaker",
+    reduce_policy: ReducePolicy = ReducePolicy.MAX_WINS,
+    suspension_scope: str | None = None,
 ) -> JoinFn:
     """Return a join callable that picks the majority recommendation.
 
@@ -39,6 +42,8 @@ def majority_vote(
         label_extractor=label_extractor,
         default_on_tie=default_on_tie,
         typed_reduce=typed_ports_on(),
+        reduce_policy=reduce_policy,
+        suspension_scope=suspension_scope,
     )
 
 
@@ -47,6 +52,8 @@ def weighted_vote(
     *,
     label_extractor: Callable | None = None,
     default_on_tie: str | None = "tiebreaker",
+    reduce_policy: ReducePolicy = ReducePolicy.MAX_WINS,
+    suspension_scope: str | None = None,
 ) -> JoinFn:
     """Return a join callable that picks the highest-weighted recommendation.
 
@@ -60,4 +67,6 @@ def weighted_vote(
         label_extractor=label_extractor,
         default_on_tie=default_on_tie,
         typed_reduce=typed_ports_on(),
+        reduce_policy=reduce_policy,
+        suspension_scope=suspension_scope,
     )

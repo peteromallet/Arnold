@@ -164,6 +164,178 @@ def _verify_outputs(stage_name: str, outputs: Mapping[str, Path]) -> None:
             )
 
 
+def _contract_status_value(contract_result: Any | None) -> str:
+    if contract_result is None:
+        return "completed"
+    status = getattr(contract_result, "status", None)
+    return str(getattr(status, "value", status) or "completed")
+
+
+def _contract_result_json(contract_result: Any | None) -> dict[str, Any] | None:
+    if contract_result is None:
+        return None
+    to_json = getattr(contract_result, "to_json", None)
+    if callable(to_json):
+        return dict(to_json())
+    if isinstance(contract_result, Mapping):
+        return dict(contract_result)
+    return {"payload": repr(contract_result)}
+
+
+def _terminal_result(
+    *,
+    state: dict[str, Any],
+    final_stage: str,
+    envelope: "RunEnvelope",
+    contract_result: Any | None,
+    halt_reason: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "state": state,
+        "final_stage": final_stage,
+        "envelope": envelope,
+        "status": status or _contract_status_value(contract_result),
+        "contract_result": _contract_result_json(contract_result),
+    }
+    if halt_reason is not None:
+        payload["halt_reason"] = halt_reason
+    return payload
+
+
+def _is_suspended_contract(contract_result: Any | None) -> bool:
+    return _contract_status_value(contract_result) == "suspended"
+
+
+def _jsonable_cursor(raw: Any) -> Any | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+    return raw
+
+
+def _legacy_awaiting_user_contract(
+    *,
+    plan_dir: Path,
+    state: Mapping[str, Any],
+    stage_name: str,
+) -> Any | None:
+    if not state.get("_pipeline_paused"):
+        return None
+
+    from arnold.pipeline import ContractResult, ContractStatus, Suspension
+    from arnold.pipelines.megaplan._pipeline.resume import check_awaiting_user
+
+    awaiting = check_awaiting_user(plan_dir) or {}
+    paused_stage = state.get("_pipeline_paused_stage")
+    stage = paused_stage if isinstance(paused_stage, str) and paused_stage else stage_name
+    choices = awaiting.get("choices") if isinstance(awaiting.get("choices"), list) else []
+    artifact_path = awaiting.get("artifact_path")
+    display_refs = ()
+    if isinstance(artifact_path, str) and artifact_path:
+        from arnold.pipeline import EvidenceArtifactRef
+
+        display_refs = (
+            EvidenceArtifactRef(
+                uri=artifact_path,
+                content_type="application/octet-stream",
+                name=Path(artifact_path).name,
+            ),
+        )
+    cursor = {
+        "phase": stage,
+        "retry_strategy": "awaiting_user",
+        "kind": "awaiting_user",
+    }
+    if choices:
+        cursor["choices"] = [str(choice) for choice in choices]
+    return ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=Suspension(
+            kind="human",
+            awaitable="user",
+            prompt=str(awaiting.get("message") or f"Pipeline paused at stage '{stage}'."),
+            display_refs=display_refs,
+            resume_input_schema={
+                "type": "object",
+                "properties": {
+                    "choice": {
+                        "type": "string",
+                        "enum": [str(choice) for choice in choices],
+                    }
+                },
+                "required": ["choice"],
+                "additionalProperties": False,
+            },
+            resume_cursor=json.dumps(cursor, sort_keys=True),
+            thread_ref=str(awaiting.get("pipeline")) if awaiting.get("pipeline") else None,
+            actor="human",
+        ),
+        payload={
+            "source": "awaiting_user.json",
+            "awaiting_user": dict(awaiting),
+        },
+    )
+
+
+def _resume_cursor_for_contract(contract_result: Any | None) -> Any | None:
+    if contract_result is None:
+        return None
+    suspension = getattr(contract_result, "suspension", None)
+    payload = getattr(contract_result, "payload", None)
+    if isinstance(payload, Mapping):
+        pending = payload.get("pending_suspensions")
+        if isinstance(pending, list) and pending:
+            children: dict[str, Any] = {}
+            for item in pending:
+                if not isinstance(item, Mapping):
+                    continue
+                child_id = item.get("child_id")
+                if not isinstance(child_id, str) or not child_id:
+                    continue
+                children[child_id] = _jsonable_cursor(item.get("cursor"))
+            if children:
+                cursor: dict[str, Any] = {
+                    "kind": "composite_suspension",
+                    "version": 1,
+                    "children": children,
+                    "pending_suspensions": pending,
+                }
+                if suspension is not None:
+                    awaitable = getattr(suspension, "awaitable", None)
+                    thread_ref = getattr(suspension, "thread_ref", None)
+                    actor = getattr(suspension, "actor", None)
+                    if awaitable is not None:
+                        cursor["shared_awaitable"] = awaitable
+                    if thread_ref is not None:
+                        cursor["shared_thread_ref"] = thread_ref
+                    if actor is not None:
+                        cursor["shared_actor"] = actor
+                return cursor
+    if suspension is None:
+        return None
+    if _contract_status_value(contract_result) not in {"suspended", "failed"}:
+        return None
+    return _jsonable_cursor(getattr(suspension, "resume_cursor", None))
+
+
+def _persist_suspension_cursor(
+    *,
+    state: dict[str, Any],
+    executor_owned_keys: set[str],
+    contract_result: Any | None,
+) -> None:
+    cursor = _resume_cursor_for_contract(contract_result)
+    if cursor is None:
+        return
+    state["resume_cursor"] = cursor
+    executor_owned_keys.add("resume_cursor")
+
+
 def _record_error(
     artifact_root: Path,
     stage_name: str,
@@ -417,6 +589,42 @@ def _is_safe_for_parallel(parallel_stage: ParallelStage) -> bool:
     )
 
 
+def _compose_parallel_join_contract(
+    node: ParallelStage,
+    results: list[StepResult],
+    joined: StepResult,
+) -> StepResult:
+    child_contracts = [result.contract_result for result in results]
+    if not any(contract is not None for contract in child_contracts):
+        return joined
+
+    from arnold.pipeline import reduce_contract_results
+
+    child_ids = [getattr(step, "name", f"child_{index}") for index, step in enumerate(node.steps)]
+    reduced = reduce_contract_results(child_contracts, child_ids=child_ids)
+    explicit = joined.contract_result
+    child_needs_reduction = any(
+        _contract_status_value(contract) in {"suspended", "failed"}
+        for contract in child_contracts
+    )
+
+    if explicit is None:
+        return dataclasses.replace(joined, contract_result=reduced)
+    if not child_needs_reduction:
+        return joined
+
+    payload = dict(reduced.payload)
+    payload["executor_composition"] = {
+        "source": "_run_parallel_stage.post_join",
+        "join_contract": explicit.to_json(),
+        "join_payload": dict(explicit.payload),
+    }
+    return dataclasses.replace(
+        joined,
+        contract_result=dataclasses.replace(reduced, payload=payload),
+    )
+
+
 def _run_parallel_stage(node: ParallelStage, ctx: StepContext) -> StepResult:
     """Run a ParallelStage with thread-safe context isolation.
 
@@ -456,6 +664,7 @@ def _run_parallel_stage(node: ParallelStage, ctx: StepContext) -> StepResult:
             results[idx] = fut.result()
 
     joined = node.join(results, ctx)
+    joined = _compose_parallel_join_contract(node, results, joined)
     # M4 T3 — fold the reduced envelope's shard spend into the active
     # Governor accumulator (if installed).  No-op when no Governor is
     # attached or when the envelope lacks lease_id / fencing_token, which
@@ -525,9 +734,16 @@ def run_pipeline(
     cursor = pipeline.entry
     iterations = 0
     loop_iters: dict[str, int] = {}
+    latest_contract_result: Any | None = None
     while True:
         if policy is not None and iterations >= policy.max_iterations:
-            return {"state": state, "final_stage": cursor, "halt_reason": "max_iterations", "envelope": envelope}
+            return _terminal_result(
+                state=state,
+                final_stage=cursor,
+                halt_reason="max_iterations",
+                envelope=envelope,
+                contract_result=latest_contract_result,
+            )
         iterations += 1
         node = pipeline.stages[cursor]
 
@@ -664,6 +880,7 @@ def run_pipeline(
         _activation = _act_transition(_activation, _LS.SUCCEEDED)
 
         _verify_outputs(node.name, result.outputs)
+        latest_contract_result = result.contract_result
 
         patch = dict(result.state_patch)
         if _tpo():
@@ -691,6 +908,18 @@ def run_pipeline(
         if _gov_s is not None:
             _gov_s.fold_shard_spend(envelope)
 
+        if latest_contract_result is None:
+            latest_contract_result = _legacy_awaiting_user_contract(
+                plan_dir=ctx.plan_dir,
+                state=state,
+                stage_name=node.name,
+            )
+        _persist_suspension_cursor(
+            state=state,
+            executor_owned_keys=executor_owned_keys,
+            contract_result=latest_contract_result,
+        )
+
         _assert_envelope_present(envelope, "_merge_state_to_disk")
         # T24: gated behind UNIFIED_EVALUAND — wrap the state-merge +
         # receipt write in a Store.transaction so state.json + receipt
@@ -707,14 +936,46 @@ def run_pipeline(
             _assert_envelope_present(envelope, "stall_cost_observer")
             policy.stall.observe(state)
             if policy.stall.is_stalled():
-                return {"state": state, "final_stage": node.name, "halt_reason": "stalled", "envelope": envelope}
+                return _terminal_result(
+                    state=state,
+                    final_stage=node.name,
+                    halt_reason="stalled",
+                    envelope=envelope,
+                    contract_result=latest_contract_result,
+                )
             if policy.cost.should_abort(state):
-                return {"state": state, "final_stage": node.name, "halt_reason": "cost_cap", "envelope": envelope}
+                return _terminal_result(
+                    state=state,
+                    final_stage=node.name,
+                    halt_reason="cost_cap",
+                    envelope=envelope,
+                    contract_result=latest_contract_result,
+                )
+
+        if _is_suspended_contract(latest_contract_result):
+            return _terminal_result(
+                state=state,
+                final_stage=node.name,
+                halt_reason="awaiting_user" if state.get("_pipeline_paused") else "suspended",
+                envelope=envelope,
+                contract_result=latest_contract_result,
+            )
 
         if result.next == "halt":
             if state.get("_pipeline_paused"):
-                return {"state": state, "final_stage": node.name, "halt_reason": "awaiting_user", "envelope": envelope}
-            return {"state": state, "final_stage": node.name, "envelope": envelope}
+                return _terminal_result(
+                    state=state,
+                    final_stage=node.name,
+                    halt_reason="awaiting_user",
+                    envelope=envelope,
+                    contract_result=latest_contract_result,
+                )
+            return _terminal_result(
+                state=state,
+                final_stage=node.name,
+                envelope=envelope,
+                contract_result=latest_contract_result,
+            )
 
         # Stage.loop_condition (M2 / T9b): per-iteration evaluation of a
         # caller-supplied predicate. True ⇒ exit the loop.
@@ -731,7 +992,13 @@ def run_pipeline(
                 iteration=loop_iters[node.name],
             )
             if cond(ls):
-                return {"state": state, "final_stage": node.name, "halt_reason": "loop_condition", "envelope": envelope}
+                return _terminal_result(
+                    state=state,
+                    final_stage=node.name,
+                    halt_reason="loop_condition",
+                    envelope=envelope,
+                    contract_result=latest_contract_result,
+                )
 
         # M3b: delegate edge dispatch to the shared Arnold routing resolver.
         # The resolver handles halt (returns None for result.next == 'halt'),
@@ -769,9 +1036,19 @@ def run_pipeline(
 
         if edge is None:
             # halt — resolve_edge returns None for result.next == "halt"
-            return {"state": state, "final_stage": node.name, "envelope": envelope}
+            return _terminal_result(
+                state=state,
+                final_stage=node.name,
+                envelope=envelope,
+                contract_result=latest_contract_result,
+            )
         if edge.target == "halt":
-            return {"state": state, "final_stage": node.name, "envelope": envelope}
+            return _terminal_result(
+                state=state,
+                final_stage=node.name,
+                envelope=envelope,
+                contract_result=latest_contract_result,
+            )
         _evaluate_cursor_handoff(
             pipeline=pipeline,
             binding=_enforcement_binding,

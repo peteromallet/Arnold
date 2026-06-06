@@ -14,8 +14,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Callable, Mapping
 
+from arnold.pipeline.contract_reduce import ReducePolicy, reduce_contract_results
 from arnold.pipeline.pattern_types import JoinFn
 from arnold.pipeline.types import (
+    ContractResult,
     PipelineVerdict,
     ReduceResult,
     StepContext,
@@ -31,6 +33,8 @@ def majority_vote(
     label_extractor: Callable[[StepResult], str | None] | None = None,
     default_on_tie: str | None = None,
     typed_reduce: bool = False,
+    reduce_policy: ReducePolicy = ReducePolicy.MAX_WINS,
+    suspension_scope: str | None = None,
 ) -> JoinFn:
     """Return a join callable that picks the majority recommendation.
 
@@ -47,6 +51,10 @@ def majority_vote(
             the recommendation string in ``verdict.recommendation``
             (plain payload).  Callers should set this based on whether
             their runtime's typed-ports mode is active.
+        reduce_policy: contract-reduction policy forwarded to
+            :func:`reduce_contract_results`.  Defaults to ``MAX_WINS``.
+        suspension_scope: reserved for a later milestone; must be
+            ``None`` today.
     """
 
     del panel_output_key  # reserved for future per-key tallying
@@ -105,9 +113,27 @@ def majority_vote(
             recommendation=recommendation,  # type: ignore[arg-type]
             payload={"reduce_result": reduce_result} if typed_reduce else {},
         )
+
+        # Collect child ContractResult values and reduce them into a
+        # single parent contract.  This preserves the existing
+        # verdict/next behaviour unchanged and simply attaches the
+        # reduced contract as supplementary metadata.
+        child_contracts: list[ContractResult | None] = [
+            r.contract_result for r in results
+        ]
+        any_contract = any(c is not None for c in child_contracts)
+        contract_result: ContractResult | None = None
+        if any_contract:
+            contract_result = reduce_contract_results(
+                child_contracts,
+                reduce_policy=reduce_policy,
+                suspension_scope=suspension_scope,
+            )
+
         return StepResult(
             verdict=verdict,
             next=next_label,
+            contract_result=contract_result,
         )
 
     return _join
@@ -119,6 +145,8 @@ def weighted_vote(
     label_extractor: Callable[[StepResult], str | None] | None = None,
     default_on_tie: str | None = None,
     typed_reduce: bool = False,
+    reduce_policy: ReducePolicy = ReducePolicy.MAX_WINS,
+    suspension_scope: str | None = None,
 ) -> JoinFn:
     """Return a join callable that picks the highest-weighted recommendation.
 
@@ -135,6 +163,10 @@ def weighted_vote(
             the recommendation string in ``verdict.recommendation``
             (plain payload).  Callers should set this based on whether
             their runtime's typed-ports mode is active.
+        reduce_policy: contract-reduction policy forwarded to
+            :func:`reduce_contract_results`.  Defaults to ``MAX_WINS``.
+        suspension_scope: reserved for a later milestone; must be
+            ``None`` today.
     """
 
     weights_map: dict[str, float] = dict(weights)
@@ -208,9 +240,27 @@ def weighted_vote(
             recommendation=recommendation,  # type: ignore[arg-type]
             payload={"reduce_result": reduce_result} if typed_reduce else {},
         )
+
+        # Collect child ContractResult values and reduce them into a
+        # single parent contract.  This preserves the existing
+        # verdict/next behaviour unchanged and simply attaches the
+        # reduced contract as supplementary metadata.
+        child_contracts: list[ContractResult | None] = [
+            r.contract_result for r in results
+        ]
+        any_contract = any(c is not None for c in child_contracts)
+        contract_result: ContractResult | None = None
+        if any_contract:
+            contract_result = reduce_contract_results(
+                child_contracts,
+                reduce_policy=reduce_policy,
+                suspension_scope=suspension_scope,
+            )
+
         return StepResult(
             verdict=verdict,
             next=next_label,
+            contract_result=contract_result,
         )
 
     return _join

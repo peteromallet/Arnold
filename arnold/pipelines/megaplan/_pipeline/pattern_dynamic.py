@@ -22,6 +22,8 @@ from arnold.pipeline.pattern_dynamic import (
     _specialize_step as _arnold_specialize_step,
     run_fanout as _arnold_run_fanout,
 )
+from arnold.pipeline.types import ContractResult, ContractStatus
+from arnold.pipeline import reduce_contract_results
 
 # ── Megaplan bridge hooks ────────────────────────────────────────────────
 from arnold.pipelines.megaplan._pipeline.envelope import (
@@ -47,6 +49,30 @@ LAST_FANOUT_RESULTS_PORT: Port = Port(
     name="last_fanout_results",
     content_type="application/x-fanout-results+json",
 )
+
+
+def _passthrough_contract_result(
+    results: Sequence[StepResult],
+    *,
+    child_ids: Sequence[str],
+) -> ContractResult | None:
+    """Preserve earlier suspended/failed child contracts across pass-through wrappers."""
+    seen_contract = False
+    saw_non_completed = False
+    contracts: list[ContractResult | None] = []
+    for result in results:
+        contract = result.contract_result
+        contracts.append(contract)
+        if contract is None:
+            continue
+        seen_contract = True
+        if contract.status is not ContractStatus.COMPLETED:
+            saw_non_completed = True
+    if not seen_contract:
+        return None
+    if not saw_non_completed:
+        return results[-1].contract_result
+    return reduce_contract_results(contracts, child_ids=child_ids)
 
 
 def _governor_check_fanout(envelope, width: int) -> None:
@@ -285,9 +311,11 @@ class _ConsensusStep(SubloopStep):
 
         last_result: StepResult | None = None
         last_ratio = 0.0
+        iteration_results: list[StepResult] = []
         for iteration in range(max(1, self.max_iters)):
             result = panel_step.run(ctx)
             last_result = result
+            iteration_results.append(result)
             last_ratio = _agreement_ratio(result)
             if self.condition is not None:
                 loop_state = type("LoopState", (), {
@@ -308,7 +336,13 @@ class _ConsensusStep(SubloopStep):
                         verdict=result.verdict,
                         next="halt",
                         state_patch=merged,
-                        contract_result=result.contract_result,
+                        contract_result=_passthrough_contract_result(
+                            iteration_results,
+                            child_ids=[
+                                f"iteration_{index + 1}"
+                                for index in range(len(iteration_results))
+                            ],
+                        ),
                     )
                 continue
             if last_ratio >= self.min_agreement:
@@ -324,7 +358,13 @@ class _ConsensusStep(SubloopStep):
                     verdict=result.verdict,
                     next="halt",
                     state_patch=merged,
-                    contract_result=result.contract_result,
+                    contract_result=_passthrough_contract_result(
+                        iteration_results,
+                        child_ids=[
+                            f"iteration_{index + 1}"
+                            for index in range(len(iteration_results))
+                        ],
+                    ),
                 )
 
         assert last_result is not None
@@ -340,7 +380,12 @@ class _ConsensusStep(SubloopStep):
             verdict=last_result.verdict,
             next="halt",
             state_patch=merged,
-            contract_result=last_result.contract_result,
+            contract_result=_passthrough_contract_result(
+                iteration_results,
+                child_ids=[
+                    f"iteration_{index + 1}" for index in range(len(iteration_results))
+                ],
+            ),
         )
 
 
@@ -384,6 +429,7 @@ class _PairedRoundStep:
         prior_outputs: Mapping[str, Path] = {}
         outputs_accum: dict[str, Path] = {}
         last_result: StepResult | None = None
+        advocate_results: list[StepResult] = []
 
         for advocate in self.advocates:
             base_inputs: dict[str, Path] = (
@@ -395,6 +441,7 @@ class _PairedRoundStep:
             advocate_ctx = dataclasses.replace(ctx, inputs=base_inputs)
             result = advocate.run(advocate_ctx)
             last_result = result
+            advocate_results.append(result)
             prior_outputs = (
                 dict(result.outputs) if isinstance(result.outputs, Mapping) else {}
             )
@@ -407,7 +454,10 @@ class _PairedRoundStep:
             verdict=last_result.verdict,
             next=last_result.next,
             state_patch=last_result.state_patch,
-            contract_result=last_result.contract_result,
+            contract_result=_passthrough_contract_result(
+                advocate_results,
+                child_ids=[advocate.name for advocate in self.advocates],
+            ),
         )
 
 
