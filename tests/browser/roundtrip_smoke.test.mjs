@@ -4989,7 +4989,7 @@ test("VibeComfy setup-created panel commits delayed status and chat after sideba
   globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
 
   try {
-    await harness.loadExtension();
+    const extensionModule = await harness.loadExtension();
     await harness.setup();
 
     const rootBeforeOpen = harness.getPanelRoots()[0];
@@ -5038,12 +5038,22 @@ test("VibeComfy setup-created panel commits delayed status and chat after sideba
       },
     });
 
+    const panel = extensionModule.ensureAgentPanel();
+    await waitFor(() =>
+      panel.state.statusSnapshot?.ready === true
+      && panel.state.routeStatus?.kind === "ready"
+      && Array.isArray(panel.state.chatMessages)
+      && panel.state.chatMessages.length === 2
+      && panel.state.chatRehydrateCommittedEpoch === 1,
+    );
+    await waitFor(() => harness.window.__vibecomfyPanelDebug().dirtySections.length === 0);
+
     await waitFor(() => submit.disabled === false);
     await waitFor(() => submit.style.display !== "none");
-    await waitFor(() => /mount move delayed agent answer/.test(harness.textDump()));
 
     const text = harness.textDump();
     assert.doesNotMatch(text, /Try an example/);
+    assert.doesNotMatch(text, /Send unavailable/);
     assert.doesNotMatch(text, /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
     assert.match(text, /mount move delayed user prompt/);
     assert.match(text, /mount move delayed agent answer/);
@@ -5419,6 +5429,95 @@ test("VibeComfy stores render:false dirty sections on the panel and consumes the
 
     assert.deepEqual(panel.lastRenderedDirtySections, ["THREAD", "META"]);
     assert.deepEqual(panel.pendingDirtySections, []);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy dirty section marking schedules a mounted panel flush without an external event", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const panel = extensionModule.ensureAgentPanel();
+    extensionModule.renderAgentPanel(panel);
+    assert.deepEqual(panel.pendingDirtySections, []);
+
+    panel.state.chatMessages = [
+      { role: "user", text: "auto scheduled dirty user message", turn_id: "0001" },
+      { role: "agent", text: "auto scheduled dirty agent message", turn_id: "0001" },
+    ];
+    extensionModule.markAgentPanelDirty(panel, ["THREAD"]);
+
+    assert.deepEqual(panel.pendingDirtySections, ["THREAD"]);
+    await waitFor(() =>
+      Array.isArray(panel.lastRenderedDirtySections)
+      && panel.lastRenderedDirtySections.includes("THREAD")
+      && panel.pendingDirtySections.length === 0,
+    );
+
+    assert.deepEqual(panel.pendingDirtySections, []);
+    assert.match(harness.textDump(), /auto scheduled dirty user message/);
+    assert.match(harness.textDump(), /auto scheduled dirty agent message/);
+    assert.doesNotMatch(harness.textDump(), /Try an example/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy thread and notice render from committed panel state sources", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const panel = extensionModule.ensureAgentPanel();
+    panel.state.chatMessages = [
+      { role: "user", text: "committed source user message", turn_id: "0001" },
+      { role: "agent", text: "committed source agent message", turn_id: "0001" },
+    ];
+    panel.state.routeStatus = {
+      kind: "ready",
+      requestedRoute: "auto",
+      model: null,
+    };
+    panel.state.statusSnapshot = {
+      ok: true,
+      ready: true,
+      provider_available: true,
+      route: "deepseek",
+      requested_route: "auto",
+      route_options: {
+        auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+        deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+      },
+    };
+
+    extensionModule.renderAgentPanel(panel, { dirtySections: ["THREAD", "NOTICE", "COMPOSER"] });
+
+    const text = harness.textDump();
+    assert.match(text, /committed source user message/);
+    assert.match(text, /committed source agent message/);
+    assert.doesNotMatch(text, /Try an example/);
+    assert.doesNotMatch(text, /Send unavailable/);
+    assert.doesNotMatch(text, /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
   } finally {
     await harness.dispose();
   }

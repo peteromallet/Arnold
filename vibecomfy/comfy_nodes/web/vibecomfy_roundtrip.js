@@ -2751,7 +2751,15 @@ function agentPanelPendingDirtySections(panel) {
   return panel.pendingDirtySections;
 }
 
-export function markAgentPanelDirty(panel, sections) {
+function isAgentPanelMountedInCurrentDocument(panel) {
+  return Boolean(
+    panel?.root
+    && typeof document !== "undefined"
+    && panel.root.ownerDocument === document,
+  );
+}
+
+export function markAgentPanelDirty(panel, sections, options = {}) {
   if (!panel) {
     return [];
   }
@@ -2766,6 +2774,9 @@ export function markAgentPanelDirty(panel, sections) {
       pending.push(section);
       seen.add(section);
     }
+  }
+  if (options.schedule !== false && isAgentPanelMountedInCurrentDocument(panel)) {
+    scheduleRenderAgentPanel("dirty-sections", panel, undefined, { dirtyOnly: true });
   }
   return pending;
 }
@@ -2803,14 +2814,19 @@ function rerenderAgentPanelIfMounted(panel = agentPanel) {
   renderDirtyAgentPanelSections(panel);
 }
 
-export function scheduleRenderAgentPanel(reason = "scheduled", panel = agentPanel, fallbackSections = undefined) {
+export function scheduleRenderAgentPanel(reason = "scheduled", panel = agentPanel, fallbackSections = undefined, options = {}) {
   if (!panel?.root || typeof document === "undefined" || panel.root.ownerDocument !== document) {
     return;
   }
   if (fallbackSections !== undefined) {
-    markAgentPanelDirty(panel, fallbackSections);
+    markAgentPanelDirty(panel, fallbackSections, { schedule: false });
   }
-  _scheduledAgentPanelRender = { panel, reason, fallbackSections };
+  _scheduledAgentPanelRender = {
+    panel,
+    reason,
+    fallbackSections,
+    dirtyOnly: Boolean(options.dirtyOnly),
+  };
   const flush = () => {
     const scheduled = _scheduledAgentPanelRender;
     _scheduledAgentPanelRender = null;
@@ -2819,6 +2835,13 @@ export function scheduleRenderAgentPanel(reason = "scheduled", panel = agentPane
       typeof document !== "undefined"
       && scheduled?.panel?.root?.ownerDocument === document
     ) {
+      if (
+        scheduled.dirtyOnly
+        && scheduled.fallbackSections === undefined
+        && !agentPanelPendingDirtySections(scheduled.panel).length
+      ) {
+        return;
+      }
       renderDirtyAgentPanelSections(scheduled.panel, {
         render: true,
         dirtySections: scheduled.fallbackSections,
