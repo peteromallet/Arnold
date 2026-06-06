@@ -99,6 +99,34 @@ _BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
 _UNROUTABLE_REWORK_ATTEMPTS_KEY = "unroutable_rework_attempts"
 _MAX_UNROUTABLE_REWORK_RERUNS = 2
 _ROUTABLE_REWORK_TARGET_KINDS = {"task", "bulk", "manifest"}
+_MODEL_SEAM_PROVIDER_PREFIXES = frozenset(
+    {
+        "anthropic",
+        "claude",
+        "copilot",
+        "copilot-acp",
+        "deep-seek",
+        "deepseek",
+        "fireworks",
+        "github",
+        "github-copilot",
+        "github-models",
+        "glm",
+        "google",
+        "kimi",
+        "kimi-coding",
+        "minimax",
+        "minimax-cn",
+        "moonshot",
+        "openai",
+        "openai-codex",
+        "openrouter",
+        "z-ai",
+        "z.ai",
+        "zai",
+        "zhipu",
+    }
+)
 
 
 def _batch_task_signature(batch_task_ids: Iterable[str], batch_complexity: int) -> str:
@@ -371,6 +399,21 @@ def _positive_int_or_default(value: Any, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def _normalize_model_for_execute_seam(model: str | None) -> str | None:
+    if model is None:
+        return None
+    normalized = model.strip()
+    if not normalized:
+        return None
+    for separator in (":", "/"):
+        if separator not in normalized:
+            continue
+        prefix, suffix = normalized.split(separator, 1)
+        if prefix.strip().lower() in _MODEL_SEAM_PROVIDER_PREFIXES and suffix.strip():
+            normalized = suffix.strip()
+    return normalized
+
+
 def _execute_model_metadata(
     *,
     agent: str,
@@ -378,11 +421,12 @@ def _execute_model_metadata(
     resolved_model: str | None,
 ) -> dict[str, Any]:
     selected_model = resolved_model if resolved_model is not None else model
+    normalized_model = _normalize_model_for_execute_seam(selected_model)
     return {
         "tier": ModelTier.NON_ENFORCED.value,
         "worker": agent,
         "model": selected_model,
-        "normalized_model": selected_model,
+        "normalized_model": normalized_model,
         "validation_step": "execute",
         "compatibility_validation_step": "execute",
     }

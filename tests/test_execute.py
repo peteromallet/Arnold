@@ -3609,6 +3609,35 @@ def test_handle_execute_one_batch_response_includes_tier_metadata(
     )
 
 
+def test_execute_model_metadata_normalizes_provider_prefixed_model_for_model_seam() -> None:
+    metadata = megaplan_execute_batch._execute_model_metadata(
+        agent="hermes",
+        model="deepseek:deepseek-v4-pro",
+        resolved_model="deepseek:deepseek-v4-pro",
+    )
+
+    assert metadata["model"] == "deepseek:deepseek-v4-pro"
+    assert metadata["normalized_model"] == "deepseek-v4-pro"
+
+
+def test_execute_prompt_render_uses_normalized_provider_model_for_budgeting(
+    plan_fixture: PlanFixture,
+) -> None:
+    state = load_state(plan_fixture.plan_dir)
+
+    rendered = megaplan_execute_batch._render_execute_prompt_for_dispatch(
+        agent="hermes",
+        state=state,
+        plan_dir=plan_fixture.plan_dir,
+        root=plan_fixture.root,
+        model="deepseek:deepseek-v4-pro",
+        resolved_model="deepseek:deepseek-v4-pro",
+        prompt_override="x" * 130_000,
+    )
+
+    assert rendered
+
+
 def test_handle_execute_one_batch_renders_and_captures_at_execute_boundary(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
