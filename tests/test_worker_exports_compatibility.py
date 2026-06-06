@@ -134,3 +134,66 @@ class TestWorkersAllIsNarrow:
             f"workers.__all__ is missing symbols that handlers import: "
             f"{sorted(missing)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# T1 characterization: _normalize_worker_payload must remain private and
+# validate_payload must remain reachable for long-tail handlers until m6.
+# ---------------------------------------------------------------------------
+
+
+class TestT1CallSiteInventory:
+    """Characterization tests pinning which worker-level symbols are
+    currently called by handlers and which are private."""
+
+    def test_normalize_worker_payload_is_private(self) -> None:
+        """_normalize_worker_payload must NOT be in workers.__all__ and
+        should not be directly importable through the public surface."""
+        import arnold.pipelines.megaplan.workers as _workers
+
+        assert "_normalize_worker_payload" not in getattr(_workers, "__all__", []), (
+            "_normalize_worker_payload must remain private"
+        )
+
+    def test_validate_payload_is_callable_and_still_needed_by_long_tail(self) -> None:
+        """validate_payload must remain importable and callable for long-tail
+        handlers (critique→revise) even after migrated sites stop using it."""
+        from arnold.pipelines.megaplan.workers import validate_payload
+
+        assert callable(validate_payload)
+
+        # Long-tail steps must still pass.
+        validate_payload(
+            "revise",
+            {
+                "plan": "x",
+                "changes_summary": "y",
+                "flags_addressed": [],
+                "assumptions": [],
+                "success_criteria": [],
+                "questions": [],
+            },
+        )
+        # execute batch-relaxed still passes for legacy callers outside review.
+        validate_payload(
+            "execute",
+            {
+                "task_updates": [{"task_id": "T1", "status": "done"}],
+                "sense_check_acknowledgments": [],
+            },
+        )
+
+    def test_recovery_helpers_remain_importable(self) -> None:
+        """Recovery helpers (_recover_codex_payload,
+        _recover_codex_payload_with_provenance) must stay importable
+        because recovery still owns both the legacy normalization path and the
+        migrated-step schema-audit path."""
+        from arnold.pipelines.megaplan.workers._impl import (
+            _normalize_worker_payload,
+            _recover_codex_payload,
+            _recover_codex_payload_with_provenance,
+        )
+
+        assert callable(_normalize_worker_payload)
+        assert callable(_recover_codex_payload)
+        assert callable(_recover_codex_payload_with_provenance)

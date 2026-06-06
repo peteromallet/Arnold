@@ -13,6 +13,7 @@ from arnold.pipelines.megaplan.execute.quality import _check_done_task_evidence
 from arnold.pipelines.megaplan.execute.batch import build_monitor_hint
 from arnold.pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
 from arnold.pipelines.megaplan.execute.merge import _validate_and_merge_batch
+from arnold.pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold.pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from arnold.pipelines.megaplan.profiles import apply_profile_expansion, normalize_robustness
 from arnold.pipelines.megaplan.types import (
@@ -29,10 +30,10 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_FINALIZED,
     STATE_REVIEWED,
 )
+from arnold.pipeline.step_io_contract import StepIOContractContext, StepIOOperation
 from arnold.pipelines.megaplan.store import write_plan_artifact_json
 from arnold.pipelines.megaplan.workers import (
     WorkerResult,
-    validate_payload,
     warn_if_work_dir_differs_from_project_dir,
 )
 from arnold.pipelines.megaplan._core import (
@@ -63,6 +64,7 @@ from .shared import (
     _agent_mode_parts,
     _emit_phase_notice,
     _emit_receipt,
+    _raise_step_validation_error,
     _run_worker,
     _supports_prompt_kwargs,
     attach_agent_fallback,
@@ -226,6 +228,116 @@ def _build_review_prompt_override(
     if agent_type == "hermes":
         return create_hermes_prompt("review", state, plan_dir, root=root, pre_check_flags=pre_check_flags)
     return create_codex_prompt("review", state, plan_dir, root=root, pre_check_flags=pre_check_flags)
+
+
+def _normalize_pre_check_flags(pre_check_flags: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for item in pre_check_flags or []:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                "id": str(item.get("id", "") or ""),
+                "check": str(item.get("check", "") or ""),
+                "detail": str(item.get("detail", "") or ""),
+                "severity": str(item.get("severity", "") or ""),
+                "evidence_file": str(item.get("evidence_file", "") or ""),
+            }
+        )
+    return normalized
+
+
+def _prepare_review_payload(
+    payload: dict[str, Any],
+    *,
+    pre_check_flags: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if payload.get("checks") is None:
+        payload["checks"] = []
+    else:
+        payload.setdefault("checks", [])
+    if pre_check_flags is None:
+        existing_pre_check_flags = payload.get("pre_check_flags")
+        payload["pre_check_flags"] = _normalize_pre_check_flags(
+            existing_pre_check_flags if isinstance(existing_pre_check_flags, list) else []
+        )
+    else:
+        payload["pre_check_flags"] = _normalize_pre_check_flags(pre_check_flags)
+    for key in ("verified_flag_ids", "disputed_flag_ids"):
+        if payload.get(key) is None:
+            payload[key] = []
+        else:
+            payload.setdefault(key, [])
+    return payload
+
+
+def _audit_review_payload_or_raise(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    payload: dict[str, Any],
+    raw_output: str | None,
+    duration_ms: int,
+) -> None:
+    try:
+        audit_step_payload("review", payload)
+    except ModelStructuralAuditError as error:
+        worker = WorkerResult(
+            payload=payload,
+            raw_output=raw_output,
+            duration_ms=duration_ms,
+            cost_usd=0.0,
+            session_id=None,
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+        )
+        _raise_step_validation_error(
+            plan_dir=plan_dir,
+            state=state,
+            step="review",
+            iteration=state["iteration"],
+            worker=worker,
+            code="invalid_review",
+            message=f"Review output failed schema audit: {error.details}",
+        )
+
+
+def _prepare_parallel_review_checks(
+    payload_checks: list[Any],
+    *,
+    check_specs: tuple[Any, ...],
+) -> list[Any]:
+    spec_by_id: dict[str, Any] = {}
+    for spec in check_specs:
+        check_id = spec.get("id") if isinstance(spec, dict) else getattr(spec, "id", None)
+        if isinstance(check_id, str):
+            spec_by_id[check_id] = spec
+
+    for check in payload_checks:
+        if not isinstance(check, dict):
+            continue
+        check_id = check.get("id")
+        spec = spec_by_id.get(check_id) if isinstance(check_id, str) else None
+        if check.get("concerned_task_ids") is None:
+            check["concerned_task_ids"] = []
+        else:
+            check.setdefault("concerned_task_ids", [])
+        if check.get("prior_findings") is None:
+            check["prior_findings"] = []
+        else:
+            check.setdefault("prior_findings", [])
+        if spec is not None and check.get("guidance") is None:
+            guidance = spec.get("guidance") if isinstance(spec, dict) else getattr(spec, "guidance", None)
+            if isinstance(guidance, str):
+                check["guidance"] = guidance
+        findings = check.get("findings")
+        if isinstance(findings, list):
+            for finding in findings:
+                if isinstance(finding, dict) and finding.get("evidence_file") is None:
+                    finding["evidence_file"] = ""
+    return payload_checks
+
 
 def _merge_review_verdicts(
     worker_payload: dict[str, Any],
@@ -714,7 +826,10 @@ def _finalize_review_outcome(
         "state": next_state,
         "next_step": next_step,
     }
-    write_plan_artifact_json(plan_dir, "review.json", worker.payload, contract_context=None)
+    write_plan_artifact_json(
+        plan_dir, "review.json", worker.payload,
+        contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+    )
     atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
     force_proceed_blocked = result == "blocked" and next_state == STATE_BLOCKED
     if force_proceed_blocked:
@@ -865,10 +980,27 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
             )
+            _audit_review_payload_or_raise(
+                plan_dir=plan_dir,
+                state=state,
+                payload=worker.payload,
+                raw_output=worker.raw_output,
+                duration_ms=worker.duration_ms,
+            )
+            _prepare_review_payload(worker.payload, pre_check_flags=pre_check_flags)
+            _audit_review_payload_or_raise(
+                plan_dir=plan_dir,
+                state=state,
+                payload=worker.payload,
+                raw_output=worker.raw_output,
+                duration_ms=worker.duration_ms,
+            )
             if robustness in {"full", "thorough"}:
-                worker.payload["pre_check_flags"] = pre_check_flags
                 _pkg.update_flags_after_review(plan_dir, worker.payload, iteration=state["iteration"])
-            write_plan_artifact_json(plan_dir, "review.json", worker.payload, contract_context=None)
+            write_plan_artifact_json(
+                plan_dir, "review.json", worker.payload,
+                contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+            )
         else:
             rev_resolved = _pkg.resolve_agent_mode("review", args)
             agent_type, mode, refreshed, model = _agent_mode_parts(rev_resolved)
@@ -881,7 +1013,25 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     root=root,
                     resolved=(agent_type, mode, refreshed, model),
                 )
-                write_plan_artifact_json(plan_dir, "review.json", worker.payload, contract_context=None)
+                _audit_review_payload_or_raise(
+                    plan_dir=plan_dir,
+                    state=state,
+                    payload=worker.payload,
+                    raw_output=worker.raw_output,
+                    duration_ms=worker.duration_ms,
+                )
+                _prepare_review_payload(worker.payload)
+                _audit_review_payload_or_raise(
+                    plan_dir=plan_dir,
+                    state=state,
+                    payload=worker.payload,
+                    raw_output=worker.raw_output,
+                    duration_ms=worker.duration_ms,
+                )
+                write_plan_artifact_json(
+                    plan_dir, "review.json", worker.payload,
+                    contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+                )
                 return _finalize_review_outcome(
                     root=root,
                     args=args,
@@ -912,10 +1062,13 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 if not isinstance(criteria_payload, dict):
                     raise CliError("worker_parse_error", "Parallel review did not return a criteria payload object")
                 merged_payload = dict(criteria_payload)
-                merged_payload["checks"] = list(parallel_result.payload.get("checks", []))
-                merged_payload["pre_check_flags"] = pre_check_flags
+                merged_payload["checks"] = _prepare_parallel_review_checks(
+                    list(parallel_result.payload.get("checks", [])),
+                    check_specs=checks,
+                )
                 merged_payload["verified_flag_ids"] = list(parallel_result.payload.get("verified_flag_ids", []))
                 merged_payload["disputed_flag_ids"] = list(parallel_result.payload.get("disputed_flag_ids", []))
+                _prepare_review_payload(merged_payload, pre_check_flags=pre_check_flags)
 
                 review_rework_items = _synthesize_review_rework_items(merged_payload["checks"])
                 merged_payload.setdefault("rework_items", [])
@@ -929,8 +1082,17 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                             existing_issues.add(item["issue"])
                     merged_payload["review_verdict"] = "needs_rework"
 
-                validate_payload("review", merged_payload)
-                write_plan_artifact_json(plan_dir, "review.json", merged_payload, contract_context=None)
+                _audit_review_payload_or_raise(
+                    plan_dir=plan_dir,
+                    state=state,
+                    payload=merged_payload,
+                    raw_output=parallel_result.raw_output,
+                    duration_ms=parallel_result.duration_ms,
+                )
+                write_plan_artifact_json(
+                    plan_dir, "review.json", merged_payload,
+                    contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+                )
                 _pkg.update_flags_after_review(plan_dir, merged_payload, iteration=state["iteration"])
                 worker = WorkerResult(
                     payload=merged_payload,

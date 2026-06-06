@@ -22,7 +22,9 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_FAILED,
     STATE_FINALIZED,
 )
+from arnold.pipeline.step_io_contract import StepIOContractContext, StepIOOperation
 from arnold.pipelines.megaplan.store import PlanRepository, write_plan_artifact_json
+from arnold.pipelines.megaplan.model_seam import audit_step_payload
 from arnold.pipelines.megaplan._core import (
     clear_active_step,
     configured_robustness,
@@ -36,7 +38,7 @@ from arnold.pipelines.megaplan._core import (
     workflow_includes_step,
 )
 from arnold.pipelines.megaplan._core.io import read_plan_state_cached
-from arnold.pipelines.megaplan.workers import validate_payload, warn_if_work_dir_differs_from_project_dir
+from arnold.pipelines.megaplan.workers import warn_if_work_dir_differs_from_project_dir
 
 from .shared import _agent_mode_parts, _emit_phase_notice, attach_agent_fallback, worker_module
 from arnold.pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
@@ -288,8 +290,11 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 "task_verdicts": [],
                 "sense_check_verdicts": [],
             }
-            validate_payload("review", stub_review)
-            write_plan_artifact_json(plan_dir, "review.json", stub_review, contract_context=None)
+            audit_step_payload("review", stub_review)
+            write_plan_artifact_json(
+                plan_dir, "review.json", stub_review,
+                contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+            )
             artifacts = response.get("artifacts")
             if isinstance(artifacts, list) and "review.json" not in artifacts:
                 artifacts.append("review.json")

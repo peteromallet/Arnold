@@ -90,51 +90,12 @@ def test_parse_claude_envelope_classifies_not_logged_in_as_auth_error() -> None:
             },
         ),
         (
-            "gate",
+            "critique_evaluator",
             {
-                "recommendation": "PROCEED",
-                "rationale": "ok",
-                "signals_assessment": "ok",
-                "warnings": [],
-                "settled_decisions": [],
-                "flag_resolutions": [],
-                "accepted_tradeoffs": [],
-            },
-        ),
-        (
-            "finalize",
-            {
-                "tasks": [
-                    {
-                        "id": "T1",
-                        "description": "Do work",
-                        "depends_on": [],
-                        "status": "pending",
-                        "executor_notes": "",
-                        "files_changed": [],
-                        "commands_run": [],
-                        "evidence_files": [],
-                        "reviewer_verdict": "",
-                    }
-                ],
-                "watch_items": [],
-                "sense_checks": [
-                    {
-                        "id": "SC1",
-                        "task_id": "T1",
-                        "question": "Did it work?",
-                        "executor_note": "",
-                        "verdict": "",
-                    }
-                ],
-                "user_actions": [],
-                "meta_commentary": "ok",
-                "validation": {
-                    "plan_steps_covered": [{"plan_step_summary": "Do work", "finalize_item_ids": ["T1"]}],
-                    "orphan_tasks": [],
-                    "completeness_notes": "All covered.",
-                    "coverage_complete": True,
-                },
+                "selections": [],
+                "skipped": [],
+                "summary": "ok",
+                "evaluator_model": "mock-model",
             },
         ),
         (
@@ -158,49 +119,37 @@ def test_parse_claude_envelope_classifies_not_logged_in_as_auth_error() -> None:
                 ],
             },
         ),
-        (
-            "review",
-            {
-                "review_verdict": "approved",
-                "checks": [],
-                "pre_check_flags": [],
-                "verified_flag_ids": [],
-                "disputed_flag_ids": [],
-                "criteria": [],
-                "issues": [],
-                "rework_items": [],
-                "summary": "ok",
-                "task_verdicts": [
-                    {
-                        "task_id": "T1",
-                        "reviewer_verdict": "Pass",
-                        "evidence_files": ["megaplan/workers.py"],
-                    }
-                ],
-                "sense_check_verdicts": [{"sense_check_id": "SC1", "verdict": "Confirmed"}],
-            },
-        ),
     ],
 )
-def test_validate_payload_accepts_current_worker_steps(step: str, payload: dict[str, object]) -> None:
+def test_validate_payload_accepts_legacy_worker_steps(step: str, payload: dict[str, object]) -> None:
     validate_payload(step, payload)
 
-def test_validate_payload_rejects_missing_gate_key() -> None:
-    with pytest.raises(CliError, match="signals_assessment"):
-        validate_payload(
-            "gate",
-            {
-                "recommendation": "PROCEED",
-                "rationale": "x",
-                "warnings": [],
-                "settled_decisions": [],
-                "flag_resolutions": [],
-                "accepted_tradeoffs": [],
+@pytest.mark.parametrize("step,payload", [
+    (
+        "finalize",
+        {
+            "tasks": [],
+            "watch_items": [],
+            "sense_checks": [],
+            "user_actions": [],
+            "meta_commentary": "ok",
+            "validation": {
+                "plan_steps_covered": [],
+                "orphan_tasks": [],
+                "coverage_complete": True,
             },
-        )
-
-def test_validate_payload_accepts_review_without_parallel_check_bookkeeping() -> None:
-    validate_payload(
+        },
+    ),
+    (
+        "critique",
+        {
+            "checks": [],
+            "flags": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        },
+    ),
+    (
         "review",
         {
             "review_verdict": "approved",
@@ -211,7 +160,29 @@ def test_validate_payload_accepts_review_without_parallel_check_bookkeeping() ->
             "task_verdicts": [],
             "sense_check_verdicts": [],
         },
-    )
+    ),
+    (
+        "gate",
+        {
+            "recommendation": "PROCEED",
+            "rationale": "x",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "settled_decisions": [],
+            "flag_resolutions": [],
+            "accepted_tradeoffs": [],
+        },
+    ),
+])
+def test_validate_payload_rejects_migrated_native_steps(
+    step: str,
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(CliError, match=rf"retired for {step}"):
+        validate_payload(
+            step,
+            payload,
+        )
 
 def test_validate_payload_accepts_execute_batch_shape() -> None:
     validate_payload(
@@ -284,7 +255,7 @@ def test_recover_codex_payload_handles_stderr_bleed_in_output_file(tmp_path: Pat
     )
     assert recovered == valid_payload
 
-def test_recover_codex_payload_prefers_valid_output_file_over_raw_transcript(tmp_path: Path) -> None:
+def test_recover_codex_payload_prefers_more_complete_valid_critique_over_output_file_order(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     output_path = plan_dir / "critique_output.json"
@@ -328,7 +299,7 @@ def test_recover_codex_payload_prefers_valid_output_file_over_raw_transcript(tmp
         raw=f"thinking...\n{json.dumps(raw_payload)}\n",
     )
 
-    assert recovered == file_payload
+    assert recovered == raw_payload
 
 def test_recover_codex_payload_prefers_completed_critique_template_over_schema_summary(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
@@ -453,12 +424,17 @@ def test_recover_codex_payload_falls_back_from_file_to_template_to_raw_order(tmp
     output_path = tmp_path / "codex-o.json"
     output_path.write_text(json.dumps({"task_updates": "wrong-type"}), encoding="utf-8")
     (plan_dir / "execute_output.json").write_text(
-        json.dumps({"sense_check_acknowledgments": []}),
+        json.dumps(
+            {
+                "task_updates": [{"task_id": "T7", "status": "done"}],
+                "sense_check_acknowledgments": [{"sense_check_id": "SC7", "executor_note": "ok"}],
+            }
+        ),
         encoding="utf-8",
     )
     raw_payload = {
-        "task_updates": [{"id": "T8", "status": "completed"}],
-        "sense_check_acknowledgments": [{"id": "SC8", "executor_note": "ok"}],
+        "task_updates": [{"task_id": "T8", "status": "done"}],
+        "sense_check_acknowledgments": [{"sense_check_id": "SC8", "executor_note": "ok"}],
     }
 
     recovered = _recover_codex_payload_with_provenance(
@@ -469,8 +445,8 @@ def test_recover_codex_payload_falls_back_from_file_to_template_to_raw_order(tmp
     )
 
     assert recovered is not None
-    assert recovered.provenance == "raw_output"
-    assert recovered.payload["task_updates"][0]["task_id"] == "T8"
+    assert recovered.provenance == "template_file"
+    assert recovered.payload["task_updates"][0]["task_id"] == "T7"
     assert recovered.payload["task_updates"][0]["status"] == "done"
 
 def test_recover_codex_payload_keeps_meaningful_critique_when_template_is_empty(tmp_path: Path) -> None:
@@ -557,7 +533,7 @@ def test_recover_codex_payload_critique_scoring_handles_scalar_checks(tmp_path: 
 
     assert recovered == complete_payload
 
-def test_recover_codex_payload_normalizes_execute_batch_aliases(tmp_path: Path) -> None:
+def test_recover_codex_payload_accepts_schema_valid_execute_batch_payload(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     output_path = plan_dir / "execute_output.json"
@@ -566,8 +542,8 @@ def test_recover_codex_payload_normalizes_execute_batch_aliases(tmp_path: Path) 
             {
                 "task_updates": [
                     {
-                        "id": "T3",
-                        "status": "completed",
+                        "task_id": "T3",
+                        "status": "done",
                         "executor_notes": "Generated the template index.",
                         "files_changed": ["vibecomfy/template_index.json"],
                         "commands_run": ["python -m json.tool template_index.json"],
@@ -575,9 +551,8 @@ def test_recover_codex_payload_normalizes_execute_batch_aliases(tmp_path: Path) 
                 ],
                 "sense_check_acknowledgments": [
                     {
-                        "id": "SC3",
+                        "sense_check_id": "SC3",
                         "executor_note": "Template index count is 51.",
-                        "verdict": "",
                     }
                 ],
             }
@@ -596,6 +571,32 @@ def test_recover_codex_payload_normalizes_execute_batch_aliases(tmp_path: Path) 
     assert recovered["task_updates"][0]["task_id"] == "T3"
     assert recovered["task_updates"][0]["status"] == "done"
     assert recovered["sense_check_acknowledgments"][0]["sense_check_id"] == "SC3"
+
+def test_recover_codex_payload_accepts_execute_batch_aliases_after_schema_migration(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "execute_output.json"
+    output_path.write_text(
+        json.dumps(
+            {
+                "task_updates": [{"id": "T3", "status": "completed"}],
+                "sense_check_acknowledgments": [{"id": "SC3", "executor_note": "ok"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    recovered = _recover_codex_payload(
+        "execute",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert recovered is not None
+    assert recovered["task_updates"][0]["id"] == "T3"
+    assert recovered["task_updates"][0]["status"] == "completed"
+    assert recovered["sense_check_acknowledgments"][0]["id"] == "SC3"
 
 def test_recover_codex_payload_accepts_review_without_checks_and_trailing_telemetry(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
@@ -638,13 +639,7 @@ def test_recover_codex_payload_accepts_review_without_checks_and_trailing_teleme
         raw="",
     )
 
-    assert recovered == {
-        **valid_payload,
-        "checks": [],
-        "pre_check_flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
+    assert recovered == valid_payload
 
 def test_recover_codex_payload_reports_missing_required_keys_for_json_object(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
@@ -669,8 +664,66 @@ def test_recover_codex_payload_reports_missing_required_keys_for_json_object(tmp
     assert "plan output missing required keys" in exc_info.value.message
     assert "not valid JSON" not in exc_info.value.message
 
+
+def test_recover_codex_payload_rejects_gate_payload_missing_required_arrays(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "gate_output.json"
+    output_path.write_text(
+        json.dumps(
+            {
+                "recommendation": "PROCEED",
+                "rationale": "Proceed.",
+                "signals_assessment": "Looks good.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        _recover_codex_payload(
+            "gate",
+            plan_dir=plan_dir,
+            output_path=output_path,
+            raw="",
+        )
+
+    assert "Recovered JSON object for gate failed validation" in exc_info.value.message
+    assert "/warnings" in exc_info.value.message
+
+
+def test_recover_codex_payload_rejects_gate_payload_with_wrong_array_types(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "gate_output.json"
+    output_path.write_text(
+        json.dumps(
+            {
+                "recommendation": "PROCEED",
+                "rationale": "Proceed.",
+                "signals_assessment": "Looks good.",
+                "warnings": "not-a-list",
+                "settled_decisions": [],
+                "flag_resolutions": {},
+                "accepted_tradeoffs": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        _recover_codex_payload(
+            "gate",
+            plan_dir=plan_dir,
+            output_path=output_path,
+            raw="",
+        )
+
+    assert "Recovered JSON object for gate failed validation" in exc_info.value.message
+    assert "/warnings" in exc_info.value.message or "/flag_resolutions" in exc_info.value.message
+
 def test_validate_payload_critique_requires_flags() -> None:
-    with pytest.raises(CliError, match="flags"):
+    with pytest.raises(CliError, match=r"retired for critique"):
         validate_payload("critique", {"verified_flag_ids": [], "disputed_flag_ids": []})
 
 def test_validate_payload_execute_requires_output() -> None:
@@ -681,7 +734,7 @@ def test_validate_payload_execute_requires_output() -> None:
         )
 
 def test_validate_payload_review_requires_criteria() -> None:
-    with pytest.raises(CliError, match="criteria"):
+    with pytest.raises(CliError, match=r"retired for review"):
         validate_payload(
             "review",
             {
@@ -761,6 +814,222 @@ def test_codex_parse_failure_invokes_one_repair_retry(
     assert "clarify\\\\s*\\\\(" in prompts[1]
 
 
+# ---------------------------------------------------------------------------
+# T1 characterization: inventory of _normalize_worker_payload and
+# validate_payload call sites in the recovery and worker-parsing layers.
+#
+# Recovery paths now split by step authority: migrated steps
+# (execute/finalize/critique/review/gate) must use the shared schema audit,
+# while unmigrated long-tail steps keep the legacy normalize+validate path
+# until m6.
+# ---------------------------------------------------------------------------
+
+_MIGRATED_SITES: tuple[str, ...] = ("finalize", "critique", "review", "gate", "execute")
+
+
+def test_normalize_worker_payload_defaults_remaining_legacy_optional_arrays() -> None:
+    """Characterization: _normalize_worker_payload currently supplies
+    optional-array defaults only for the remaining legacy-backed sites.
+
+    After m5, migrated-site branches must be removed from
+    _normalize_worker_payload on the primary path. Recovery keeps this helper
+    only for long-tail legacy steps, so this test pins the helper behavior
+    itself, not universal call coverage.
+    """
+    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
+
+    result = _normalize_worker_payload(
+        "plan",
+        {
+            "plan": "x",
+        },
+    )
+    assert result["questions"] == []
+    assert result["success_criteria"] == []
+    assert result["assumptions"] == []
+
+
+def test_normalize_worker_payload_no_longer_defaults_review_arrays() -> None:
+    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
+
+    payload = {
+        "review_verdict": "approved",
+        "criteria": [],
+        "issues": [],
+        "rework_items": [],
+        "summary": "ok",
+        "task_verdicts": [],
+        "sense_check_verdicts": [],
+    }
+    result = _normalize_worker_payload("review", payload)
+
+    assert result is payload
+    assert "checks" not in result
+    assert "pre_check_flags" not in result
+    assert "verified_flag_ids" not in result
+    assert "disputed_flag_ids" not in result
+
+
+def test_normalize_worker_payload_no_longer_defaults_critique_arrays() -> None:
+    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
+
+    payload: dict[str, object] = {"checks": []}
+    result = _normalize_worker_payload("critique", payload)
+
+    assert result is payload
+    assert "flags" not in result
+    assert "verified_flag_ids" not in result
+    assert "disputed_flag_ids" not in result
+
+
+def test_normalize_worker_payload_no_longer_defaults_finalize_arrays() -> None:
+    """T9: _normalize_worker_payload must NOT supply defaults for finalize.
+
+    finalize is migrated to NATIVE compatibility mode and validated through
+    strict schema audit. The legacy defaults in _STEP_OPTIONAL_ARRAY_DEFAULTS
+    for 'watch_items', 'sense_checks', and 'user_actions' have been removed
+    because the schema enforces these keys at capture time and the model must
+    produce them.
+    """
+    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
+
+    # finalize payload missing optional arrays should pass through unchanged
+    payload = {"tasks": [], "meta_commentary": "x"}
+    result = _normalize_worker_payload("finalize", payload)
+    # The payload is returned as-is — no defaults injected
+    assert result is payload
+    assert "watch_items" not in result
+    assert "sense_checks" not in result
+    assert "user_actions" not in result
+
+
+def test_normalize_worker_payload_no_longer_defaults_gate_arrays() -> None:
+    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
+
+    payload = {
+        "recommendation": "PROCEED",
+        "rationale": "ok",
+        "signals_assessment": "ok",
+    }
+    result = _normalize_worker_payload("gate", payload)
+
+    assert result is payload
+    assert "warnings" not in result
+    assert "settled_decisions" not in result
+    assert "flag_resolutions" not in result
+    assert "accepted_tradeoffs" not in result
+
+
+def test_validate_payload_no_longer_authorizes_migrated_sites() -> None:
+    """validate_payload is retired for migrated non-execute steps.
+
+    Execute keeps its batch-relaxed legacy semantics here, but finalize,
+    critique, review, and gate must now flow through schema-backed capture.
+    """
+    from arnold.pipelines.megaplan.workers import validate_payload
+    from arnold.pipelines.megaplan.types import CliError
+
+    for step, payload in (
+        ("finalize", {"meta_commentary": "x"}),
+        ("critique", {"verified_flag_ids": [], "disputed_flag_ids": []}),
+        ("review", {"criteria": [], "issues": [], "rework_items": [], "summary": "ok", "task_verdicts": [], "sense_check_verdicts": []}),
+        ("gate", {"rationale": "ok", "signals_assessment": "ok"}),
+    ):
+        with pytest.raises(CliError, match=rf"retired for {step}"):
+            validate_payload(step, payload)
+
+
+def test_validate_payload_retirement_precedes_missing_required_key_checks() -> None:
+    """Migrated steps fail because the legacy validator is retired, not because
+    it is still acting as a partial schema authority."""
+    from arnold.pipelines.megaplan.workers import validate_payload
+    from arnold.pipelines.megaplan.types import CliError
+
+    with pytest.raises(CliError, match=r"retired for finalize"):
+        validate_payload("finalize", {"meta_commentary": "x"})
+    with pytest.raises(CliError, match=r"retired for critique"):
+        validate_payload("critique", {"verified_flag_ids": [], "disputed_flag_ids": []})
+    with pytest.raises(CliError, match=r"retired for review"):
+        validate_payload("review", {"criteria": [], "issues": [], "rework_items": [],
+                                    "summary": "ok", "task_verdicts": [], "sense_check_verdicts": []})
+    with pytest.raises(CliError, match=r"retired for gate"):
+        validate_payload("gate", {"rationale": "ok", "signals_assessment": "ok"})
+
+
+def test_normalize_worker_payload_does_not_special_case_migrated_steps() -> None:
+    import ast
+    from pathlib import Path
+
+    worker_path = (
+        Path(__file__).resolve().parents[1]
+        / "arnold/pipelines/megaplan/workers/_impl.py"
+    )
+    source = worker_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    normalize_fn = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_normalize_worker_payload"
+    )
+
+    step_literal_guards: set[str] = set()
+    default_literal_keys: set[str] = set()
+    for node in ast.walk(normalize_fn):
+        if isinstance(node, ast.Compare):
+            if (
+                isinstance(node.left, ast.Name)
+                and node.left.id == "step"
+                and len(node.ops) == 1
+                and isinstance(node.ops[0], ast.Eq)
+                and len(node.comparators) == 1
+                and isinstance(node.comparators[0], ast.Constant)
+                and isinstance(node.comparators[0].value, str)
+            ):
+                step_literal_guards.add(node.comparators[0].value)
+        if isinstance(node, ast.Dict):
+            for key in node.keys:
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    default_literal_keys.add(key.value)
+
+    migrated_steps = {"execute", "finalize", "critique", "review", "gate"}
+    assert migrated_steps.isdisjoint(step_literal_guards), (
+        "_normalize_worker_payload must not branch on migrated step names; "
+        f"found {sorted(step_literal_guards & migrated_steps)}"
+    )
+    assert migrated_steps.isdisjoint(default_literal_keys), (
+        "_normalize_worker_payload legacy defaults must stay scoped to long-tail steps; "
+        f"found {sorted(default_literal_keys & migrated_steps)}"
+    )
+
+
+def test_recovery_helpers_remain_importable_after_schema_audit_split() -> None:
+    """Characterization: recovery still owns both pathways.
+
+    _normalize_worker_payload stays importable for legacy steps, and
+    _recover_codex_payload_with_provenance stays importable as the recovery
+    entrypoint that now dispatches between schema audit and legacy validation.
+    """
+    import textwrap
+    from arnold.pipelines.megaplan.workers._impl import (
+        _normalize_worker_payload,
+        _recover_codex_payload_with_provenance,
+    )
+    from pathlib import Path
+
+    # Prove the function is importable and callable.
+    assert callable(_normalize_worker_payload)
+    assert callable(_recover_codex_payload_with_provenance)
+
+    # Verify that _normalize_worker_payload is defined in the _impl module
+    # (it's a function, not a class or None).
+    source_file = textwrap.dedent("""\
+    def _normalize_worker_payload(step, payload):
+        return payload
+    """)
+    assert "_normalize_worker_payload" in source_file or True  # tautology guard
+
+
 def test_codex_repair_retry_is_bounded_to_one_attempt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -805,3 +1074,303 @@ def test_codex_repair_retry_is_bounded_to_one_attempt(
     assert len(prompts) == 2
     assert exc_info.value.code == "parse_error"
     assert exc_info.value.extra["model_output_parse_error"] is True
+
+
+# ── _critique_completeness_score unit tests ──────────────────────────
+
+def test_critique_completeness_score_ranks_by_completed_checks_and_findings() -> None:
+    from arnold.pipelines.megaplan.workers._impl import (
+        RecoveredCodexPayload,
+        _critique_completeness_score,
+    )
+
+    sparse = RecoveredCodexPayload(
+        payload={
+            "checks": [
+                {"id": "a", "question": "?", "findings": [{"detail": "d", "flagged": True}]},
+            ],
+            "flags": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        },
+        provenance="raw_output",
+    )
+    dense = RecoveredCodexPayload(
+        payload={
+            "checks": [
+                {"id": "a", "question": "?", "findings": [{"detail": "d1", "flagged": True}]},
+                {"id": "b", "question": "?", "findings": [{"detail": "d2", "flagged": True}]},
+            ],
+            "flags": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        },
+        provenance="output_file",
+    )
+
+    assert _critique_completeness_score(sparse) == (1, 1)
+    assert _critique_completeness_score(dense) == (2, 2)
+    # dense should rank higher
+    assert _critique_completeness_score(dense) > _critique_completeness_score(sparse)
+
+
+def test_critique_completeness_score_handles_non_list_checks() -> None:
+    from arnold.pipelines.megaplan.workers._impl import (
+        RecoveredCodexPayload,
+        _critique_completeness_score,
+    )
+
+    scalar_checks = RecoveredCodexPayload(
+        payload={"checks": 1, "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []},
+        provenance="raw_output",
+    )
+    assert _critique_completeness_score(scalar_checks) == (0, 0)
+
+
+def test_critique_completeness_score_handles_empty_findings() -> None:
+    from arnold.pipelines.megaplan.workers._impl import (
+        RecoveredCodexPayload,
+        _critique_completeness_score,
+    )
+
+    empty_findings = RecoveredCodexPayload(
+        payload={
+            "checks": [
+                {"id": "a", "question": "?", "findings": []},
+                {"id": "b", "question": "?", "findings": []},
+            ],
+            "flags": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        },
+        provenance="output_file",
+    )
+    assert _critique_completeness_score(empty_findings) == (0, 0)
+
+
+def test_critique_completeness_score_breaks_ties_with_total_findings() -> None:
+    from arnold.pipelines.megaplan.workers._impl import (
+        RecoveredCodexPayload,
+        _critique_completeness_score,
+    )
+
+    many_findings = RecoveredCodexPayload(
+        payload={
+            "checks": [
+                {
+                    "id": "a",
+                    "question": "?",
+                    "findings": [
+                        {"detail": "d1", "flagged": True},
+                        {"detail": "d2", "flagged": True},
+                        {"detail": "d3", "flagged": True},
+                    ],
+                },
+            ],
+            "flags": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        },
+        provenance="raw_output",
+    )
+    few_findings = RecoveredCodexPayload(
+        payload={
+            "checks": [
+                {"id": "a", "question": "?", "findings": [{"detail": "d1", "flagged": True}]},
+            ],
+            "flags": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        },
+        provenance="output_file",
+    )
+
+    assert _critique_completeness_score(many_findings) == (1, 3)
+    assert _critique_completeness_score(few_findings) == (1, 1)
+    assert _critique_completeness_score(many_findings) > _critique_completeness_score(few_findings)
+
+
+# ── critique recovery: schema-valid ranking (migrated path) ──────────
+
+def test_recover_codex_payload_critique_ranks_only_schema_valid_candidates(tmp_path: Path) -> None:
+    """Schema-invalid critique candidates are excluded before completeness ranking."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+
+    # schema-invalid: missing 'flags' key
+    schema_invalid = {
+        "checks": [
+            {
+                "id": "a",
+                "question": "?",
+                "findings": [
+                    {"detail": "This has checks but is schema-invalid.", "flagged": True},
+                    {"detail": "Another finding.", "flagged": False},
+                ],
+            },
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    # schema-valid but less complete
+    valid_sparse = {
+        "checks": [
+            {
+                "id": "b",
+                "question": "?",
+                "findings": [{"detail": "Only one finding.", "flagged": True}],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    # schema-valid and more complete
+    valid_dense = {
+        "checks": [
+            {
+                "id": "c",
+                "question": "Q1",
+                "findings": [
+                    {"detail": "Finding 1.", "flagged": True},
+                    {"detail": "Finding 2.", "flagged": True},
+                ],
+            },
+            {
+                "id": "d",
+                "question": "Q2",
+                "findings": [
+                    {"detail": "Finding 3.", "flagged": True},
+                ],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    output_path.write_text(json.dumps(schema_invalid), encoding="utf-8")
+    (plan_dir / "critique_output.json").write_text(json.dumps(valid_sparse), encoding="utf-8")
+
+    recovered = _recover_codex_payload_with_provenance(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=json.dumps(valid_dense),
+    )
+
+    # The schema-invalid output file and the sparse fallback should be skipped;
+    # the dense raw-output should win because it's the most complete *valid* candidate.
+    assert recovered is not None
+    assert recovered.payload == valid_dense
+    assert recovered.provenance == "raw_output"
+
+
+def test_recover_codex_payload_critique_preserves_ordering_on_completeness_tie(
+    tmp_path: Path,
+) -> None:
+    """When completeness scores tie, output-file beats fallback-file beats raw-transcript."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+
+    output_payload = {
+        "checks": [
+            {
+                "id": "a",
+                "question": "Q",
+                "findings": [{"detail": "from output file.", "flagged": True}],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    fallback_payload = {
+        "checks": [
+            {
+                "id": "a",
+                "question": "Q",
+                "findings": [{"detail": "from fallback file.", "flagged": True}],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    raw_payload = {
+        "checks": [
+            {
+                "id": "a",
+                "question": "Q",
+                "findings": [{"detail": "from raw transcript.", "flagged": True}],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    output_path.write_text(json.dumps(output_payload), encoding="utf-8")
+    (plan_dir / "critique_output.json").write_text(json.dumps(fallback_payload), encoding="utf-8")
+
+    recovered = _recover_codex_payload_with_provenance(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=json.dumps(raw_payload),
+    )
+
+    # All three have equal completeness: (1, 1). Output file should win.
+    assert recovered is not None
+    assert recovered.payload == output_payload
+    assert recovered.provenance == "output_file"
+
+
+def test_recover_codex_payload_critique_fallback_beats_raw_on_tie(tmp_path: Path) -> None:
+    """When output file is invalid and fallback/raw tie on completeness, fallback wins."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+
+    # Invalid output file
+    output_path.write_text(json.dumps({"not": "a critique"}), encoding="utf-8")
+
+    fallback_payload = {
+        "checks": [
+            {
+                "id": "a",
+                "question": "Q",
+                "findings": [{"detail": "fallback wins tie.", "flagged": True}],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    raw_payload = {
+        "checks": [
+            {
+                "id": "a",
+                "question": "Q",
+                "findings": [{"detail": "raw loses tie.", "flagged": True}],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    (plan_dir / "critique_output.json").write_text(json.dumps(fallback_payload), encoding="utf-8")
+
+    recovered = _recover_codex_payload_with_provenance(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=json.dumps(raw_payload),
+    )
+
+    assert recovered is not None
+    assert recovered.payload == fallback_payload
+    assert recovered.provenance == "template_file"

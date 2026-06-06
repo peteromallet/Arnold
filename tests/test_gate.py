@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.handlers.gate as gate_handler
 import arnold.pipelines.megaplan.orchestration.evaluation as megaplan_orchestration_evaluation
 import arnold.pipelines.megaplan.handlers as megaplan_handlers
 import arnold.pipelines.megaplan.workers as megaplan_workers
@@ -242,6 +243,117 @@ def test_gate_iterate_with_empty_accepted_tradeoffs_creates_no_debt(
     assert pr is not None, "phase_result.json must be written after gate"
     assert pr.exit_kind == "success"
     assert pr.phase == "gate"
+
+
+def test_gate_iterate_audits_raw_payload_before_building_summary(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    worker = make_gate_worker_result(
+        recommendation="ITERATE",
+        rationale="Another revision is required.",
+        signals_assessment="Open blockers remain.",
+        session_id="gate-raw-iterate",
+    )
+    events: list[tuple[str, set[str], bool]] = []
+    original_audit = gate_handler.audit_step_payload
+    original_build = gate_handler.build_gate_artifact
+
+    def spy_audit(step: str, payload: dict[str, object]) -> None:
+        assert step == "gate"
+        assert "passed" not in payload
+        assert "criteria_check" not in payload
+        events.append(("audit", set(payload.keys()), payload is worker.payload))
+        original_audit(step, payload)
+
+    def spy_build(signals, payload, **kwargs):
+        assert events == [("audit", set(worker.payload.keys()), True)]
+        assert "passed" not in payload
+        assert "criteria_check" not in payload
+        events.append(("build", set(payload.keys()), payload is worker.payload))
+        return original_build(signals, payload, **kwargs)
+
+    monkeypatch.setattr(gate_handler, "audit_step_payload", spy_audit)
+    monkeypatch.setattr(gate_handler, "build_gate_artifact", spy_build)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    gate = read_json(plan_fixture.plan_dir / "gate.json")
+
+    assert [event[0] for event in events] == ["audit", "build"]
+    assert response["recommendation"] == "ITERATE"
+    assert gate["recommendation"] == "ITERATE"
+    assert gate["passed"] is False
+    assert "criteria_check" in gate
+    assert "preflight_results" in gate
+    assert "signals" in gate
+    assert "accepted_tradeoffs" not in gate
+
+
+def test_gate_proceed_audits_raw_payload_before_building_summary(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flag = ensure_blocking_flags(plan_fixture.plan_dir, 1)[0]
+    worker = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="All blockers are explicitly resolved.",
+        signals_assessment="Proceeding with explicit coverage for the blocker.",
+        flag_resolutions=[
+            {
+                "flag_id": flag["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:1 already implements the required guard.",
+                "rationale": "",
+            }
+        ],
+        session_id="gate-raw-proceed",
+    )
+    events: list[tuple[str, set[str], bool]] = []
+    original_audit = gate_handler.audit_step_payload
+    original_build = gate_handler.build_gate_artifact
+
+    def spy_audit(step: str, payload: dict[str, object]) -> None:
+        assert step == "gate"
+        assert "passed" not in payload
+        assert "criteria_check" not in payload
+        events.append(("audit", set(payload.keys()), payload is worker.payload))
+        original_audit(step, payload)
+
+    def spy_build(signals, payload, **kwargs):
+        assert events == [("audit", set(worker.payload.keys()), True)]
+        assert "passed" not in payload
+        assert "criteria_check" not in payload
+        events.append(("build", set(payload.keys()), payload is worker.payload))
+        return original_build(signals, payload, **kwargs)
+
+    monkeypatch.setattr(gate_handler, "audit_step_payload", spy_audit)
+    monkeypatch.setattr(gate_handler, "build_gate_artifact", spy_build)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    gate = read_json(plan_fixture.plan_dir / "gate.json")
+
+    assert [event[0] for event in events] == ["audit", "build"]
+    assert response["recommendation"] == "PROCEED"
+    assert gate["recommendation"] == "PROCEED"
+    assert gate["passed"] is True
+    assert "criteria_check" in gate
+    assert "preflight_results" in gate
+    assert "signals" in gate
+    assert "accepted_tradeoffs" not in gate
 
 
 def test_gate_can_verify_addressed_flags_after_revise(
@@ -875,10 +987,9 @@ def test_carry_settled_decisions_are_dicts(plan_fixture: PlanFixture, monkeypatc
     ]
 
 
-def test_legacy_string_settled_decisions_auto_promoted(
+def test_gate_rejects_legacy_string_settled_decisions_in_raw_payload(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -903,14 +1014,12 @@ def test_legacy_string_settled_decisions_auto_promoted(
         lambda *args, **kwargs: (worker, "claude", "persistent", False),
     )
 
-    with caplog.at_level("WARNING", logger="megaplan"):
+    with pytest.raises(megaplan.CliError) as error:
         megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    carry = read_json(plan_fixture.plan_dir / "gate_carry.json")
 
-    assert carry["settled_decisions"] == [
-        {"id": "SD1", "decision": "Use ContextVar for sandbox cwd", "rationale": ""}
-    ]
-    assert "auto-promoted 1 legacy string settled_decisions entry" in caplog.text
+    assert error.value.code == "invalid_gate"
+    assert "settled_decisions" in str(error.value)
+    assert not (plan_fixture.plan_dir / "gate.json").exists()
 
 
 def test_carry_excludes_dispute_flags(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:

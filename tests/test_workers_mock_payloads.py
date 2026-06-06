@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from arnold.pipelines.megaplan.model_seam import audit_step_payload
 from arnold.pipelines.megaplan.orchestration.evaluation import validate_plan_structure
 from arnold.pipelines.megaplan.types import CliError
 from arnold.pipelines.megaplan.workers import _build_mock_payload, validate_payload
@@ -103,7 +104,7 @@ def test_mock_finalize_returns_valid_payload(tmp_path: Path) -> None:
     from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("finalize", state, plan_dir)
-    validate_payload("finalize", result.payload)
+    audit_step_payload("finalize", result.payload)
     assert "tasks" in result.payload
     assert "watch_items" in result.payload
     assert "sense_checks" in result.payload

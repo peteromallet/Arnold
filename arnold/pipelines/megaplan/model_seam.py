@@ -8,6 +8,7 @@ consumers off their legacy payload dictionaries yet.
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from math import ceil
@@ -55,6 +56,13 @@ class TerminalStatus(str, Enum):
     RENDERED = "rendered"
     CAPTURED = "captured"
     FAILED = "failed"
+
+
+class CompatibilityMode(str, Enum):
+    """Whether a step still relies on legacy compatibility repair."""
+
+    NATIVE = "native"
+    LEGACY = "legacy"
 
 
 class ModelFamily(str, Enum):
@@ -357,6 +365,66 @@ def render_prompt_for_dispatch(
     invocation_metadata = components.to_model_metadata()
     invocation_metadata.update(component_metadata)
     return render_step_message(StepInvocation(kind="model", metadata=invocation_metadata))
+
+
+def render_compact_review_prompt(
+    agent: str,
+    step: str,
+    state: Mapping[str, Any],
+    plan_dir: Path,
+    *,
+    root: Path | None = None,
+    worker: str | None = None,
+    model: str | None = None,
+    normalized_model: str | None = None,
+    tier: ModelTier | str = ModelTier.NON_ENFORCED,
+    schema: Mapping[str, Any] | None = None,
+    prompt_size_error: dict[str, Any] | None = None,
+    pre_check_flags: list[dict[str, Any]] | None = None,
+    projection_capabilities: Any | None = None,
+) -> RenderedStepMessage:
+    """Render a compacted review prompt through the model seam.
+
+    Delegates to :func:`compact_review_prompt` for the actual prompt
+    assembly while preserving the same structured ``RenderedStepMessage``
+    shape used by the normal ``render_prompt_for_dispatch`` path.
+
+    The compact prompt intentionally carries summaries instead of the
+    full patch so the reviewer must inspect the repository directly.
+    Every input required by the compaction contract — plan excerpt,
+    diff context, projected execution/finalize context, prior unmet
+    review block, and pre-check flags — is preserved because
+    ``compact_review_prompt`` computes all of them from the same
+    ``(state, plan_dir, root)`` triple plus the optional compaction
+    parameters.
+    """
+    from arnold.pipelines.megaplan.prompts.review import compact_review_prompt
+
+    compacted_text = compact_review_prompt(
+        state,  # type: ignore[arg-type]
+        plan_dir,
+        root,
+        prompt_size_error=prompt_size_error,
+        pre_check_flags=pre_check_flags,
+        projection_capabilities=projection_capabilities,
+    )
+    tier_value = tier.value if isinstance(tier, ModelTier) else str(tier)
+    return render_step_message(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "tier": tier_value,
+                "worker": worker or agent,
+                "model": normalized_model or model,
+                "normalized_model": normalized_model or model,
+                "validation_step": step,
+                "prompt": compacted_text,
+                "prompt_components": compacted_text,
+                "schema": dict(schema) if schema is not None else None,
+                "projection_capabilities": projection_capabilities,
+            },
+        )
+    )
 
 
 _PROVIDER_PREFIXES = (
@@ -897,11 +965,36 @@ def _compatibility_projection(invocation: StepInvocation, payload: dict[str, Any
     )
     if step is None:
         return payload
+    if _compatibility_mode_for_step(step) is CompatibilityMode.NATIVE:
+        return payload
     from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload, validate_payload
 
     normalized = _normalize_worker_payload(step, dict(payload))
     validate_payload(step, normalized)
     return normalized
+
+
+def schema_audits_step_payload(step: str | None) -> bool:
+    return _compatibility_mode_for_step(step) is CompatibilityMode.NATIVE
+
+
+def audit_step_payload(step: str, payload: Mapping[str, Any]) -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={"compatibility_validation_step": step},
+    )
+    contract = ContractResult(
+        payload={
+            "legacy_payload": dict(payload),
+            "telemetry": {},
+        },
+        authority_level="typed",
+        provenance=Provenance(
+            sources=("recovered_step_output",),
+            generator="arnold.pipelines.megaplan.model_seam",
+        ),
+    )
+    _audit_capture_payload(invocation, payload, contract)
 
 
 def _audit_capture_payload(
@@ -939,15 +1032,41 @@ def _capture_outcome_schema() -> dict[str, Any]:
     }
 
 
+_CAPTURE_SCHEMA_KEYS_BY_STEP: dict[str, str] = {
+    "execute": "execution_batch_relaxed.json",
+    "finalize": "finalize.json",
+    "critique": "critique.json",
+    "review": "review.json",
+    "gate": "gate.json",
+}
+
+_COMPATIBILITY_MODE_BY_STEP: dict[str, CompatibilityMode] = {
+    "execute": CompatibilityMode.NATIVE,
+    "finalize": CompatibilityMode.NATIVE,
+    "critique": CompatibilityMode.NATIVE,
+    "review": CompatibilityMode.NATIVE,
+    "gate": CompatibilityMode.NATIVE,
+}
+
+
+def _compatibility_mode_for_step(step: str | None) -> CompatibilityMode:
+    if step is None:
+        return CompatibilityMode.LEGACY
+    return _COMPATIBILITY_MODE_BY_STEP.get(step, CompatibilityMode.LEGACY)
+
+
 def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, Any] | None:
     step = _optional_str(
         invocation.metadata.get("compatibility_validation_step")
         or invocation.metadata.get("validation_step")
     )
-    if step == "execute":
-        schema = SCHEMAS.get("execution_batch_relaxed.json")
+    schema_key = _CAPTURE_SCHEMA_KEYS_BY_STEP.get(step or "")
+    if schema_key is not None:
+        schema = SCHEMAS.get(schema_key)
         if isinstance(schema, Mapping):
-            return schema
+            capture_schema = deepcopy(schema)
+            capture_schema.setdefault("additionalProperties", False)
+            return capture_schema
     return None
 
 
@@ -984,10 +1103,13 @@ __all__ = [
     "RenderedStepMessage",
     "TerminalStatus",
     "TierMetadata",
+    "audit_step_payload",
     "budget_model_input",
     "capture_step_output",
     "classify_model_family",
     "install_model_step_adapter",
+    "render_compact_review_prompt",
     "render_prompt_for_dispatch",
     "render_step_message",
+    "schema_audits_step_payload",
 ]

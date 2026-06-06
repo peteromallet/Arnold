@@ -8,8 +8,6 @@ from typing import Callable
 import pytest
 
 import arnold.pipelines.megaplan as megaplan
-import arnold.pipelines.megaplan.handlers as megaplan_handlers
-import arnold.pipelines.megaplan.review.checks as megaplan_review_checks
 from arnold.pipelines.megaplan._core import json_dump, load_plan, read_json, save_flag_registry, save_state
 from arnold.pipelines.megaplan.workers import WorkerResult, _build_mock_payload
 
@@ -118,6 +116,19 @@ def _adjacent_calls_review_checks(*, include_status: bool = True, status: str = 
     ]
 
 
+def _normalized_pre_check_flags(flags: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        {
+            "id": item["id"],
+            "check": item["check"],
+            "detail": item["detail"],
+            "severity": item["severity"],
+            "evidence_file": item.get("evidence_file", ""),
+        }
+        for item in flags
+    ]
+
+
 def test_handle_review_standard_branch_attaches_prechecks_and_updates_flags(
     tmp_path: Path,
     bootstrap_fixture: tuple[Path, Path],
@@ -182,7 +193,7 @@ def test_handle_review_standard_branch_attaches_prechecks_and_updates_flags(
     megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
     stored_review = read_json(fixture.plan_dir / "review.json")
 
-    assert stored_review["pre_check_flags"] == pre_check_flags
+    assert stored_review["pre_check_flags"] == _normalized_pre_check_flags(pre_check_flags)
     assert "flags" not in stored_review
     assert len(update_calls) == 1
     assert update_calls[0]["payload"] is worker.payload
@@ -241,6 +252,50 @@ def test_handle_review_light_branch_skips_prechecks_and_keeps_review_payload_una
     assert stored_review["review_verdict"] == golden["review_verdict"]
     assert stored_review["checks"] == golden["checks"]
     assert stored_review["pre_check_flags"] == golden["pre_check_flags"]
+
+
+def test_handle_review_standard_branch_rejects_schema_invalid_model_payload_before_flag_updates(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="standard")
+    _advance_to_executed(fixture)
+    _plan_dir, state = _load_executed_plan(fixture)
+    payload = _build_mock_payload("review", state, fixture.plan_dir, summary="Golden review payload.")
+    payload.pop("task_verdicts")
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="review",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="review-standard-invalid",
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+    )
+
+    update_call_count = 0
+
+    monkeypatch.setattr(megaplan.handlers, "run_pre_checks", lambda *args, **kwargs: [])
+
+    def _update_flags_after_review(*args: object, **kwargs: object) -> None:
+        nonlocal update_call_count
+        del args, kwargs
+        update_call_count += 1
+
+    monkeypatch.setattr(megaplan.handlers, "update_flags_after_review", _update_flags_after_review)
+    monkeypatch.setattr(
+        megaplan.handlers.worker_module,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "codex", "persistent", False),
+    )
+
+    with pytest.raises(megaplan.CliError, match="Review output failed schema audit"):
+        megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
+
+    assert update_call_count == 0
+    assert not (fixture.plan_dir / "review.json").exists()
 
 
 def test_resolve_review_outcome_uses_standard_and_robust_caps_separately(tmp_path: Path) -> None:
@@ -414,11 +469,155 @@ def test_handle_review_superrobust_path_merges_parallel_review_and_creates_revie
     assert response["next_step"] == "execute"
     assert stored_review["review_verdict"] == "needs_rework"
     assert stored_review["checks"][0]["id"] == "coverage"
-    assert stored_review["pre_check_flags"] == pre_check_flags
+    assert stored_review["pre_check_flags"] == _normalized_pre_check_flags(pre_check_flags)
     assert stored_review["verified_flag_ids"] == ["REVIEW-OLD-001"]
     assert stored_review["disputed_flag_ids"] == ["REVIEW-OLD-002"]
     assert any(item["task_id"] == "REVIEW-coverage" and item["source"] == "review_coverage" for item in stored_review["rework_items"])
     assert any(flag["id"] == "REVIEW-COVERAGE-001" for flag in faults["flags"])
+
+
+def test_handle_review_superrobust_parallel_branch_rejects_schema_invalid_before_write_and_flags(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="superrobust")
+    _advance_to_executed(fixture)
+    _plan_dir, state = load_plan(fixture.root, fixture.plan_name)
+    criteria_payload = _build_mock_payload("review", state, fixture.plan_dir, review_verdict="approved")
+    criteria_payload.pop("sense_check_verdicts")
+
+    parallel_result = WorkerResult(
+        payload={
+            "criteria_payload": criteria_payload,
+            "checks": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        },
+        raw_output="parallel-invalid",
+        duration_ms=9,
+        cost_usd=0.15,
+        session_id=None,
+        prompt_tokens=4,
+        completion_tokens=5,
+        total_tokens=9,
+    )
+
+    update_call_count = 0
+
+    monkeypatch.delenv(megaplan.MOCK_ENV_VAR, raising=False)
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda *args, **kwargs: ("hermes", "persistent", True, "mock-model"),
+    )
+    monkeypatch.setattr(megaplan.handlers, "run_pre_checks", lambda *args, **kwargs: [])
+    monkeypatch.setattr(megaplan.handlers, "run_parallel_review", lambda *args, **kwargs: parallel_result)
+
+    def _update_flags_after_review(*args: object, **kwargs: object) -> None:
+        nonlocal update_call_count
+        del args, kwargs
+        update_call_count += 1
+
+    monkeypatch.setattr(megaplan.handlers, "update_flags_after_review", _update_flags_after_review)
+    monkeypatch.setattr(
+        megaplan.handlers.worker_module,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("superrobust Hermes review should not use the legacy worker")
+        ),
+    )
+
+    with pytest.raises(megaplan.CliError, match="Review output failed schema audit"):
+        megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
+
+    assert update_call_count == 0
+    assert not (fixture.plan_dir / "review.json").exists()
+
+
+def test_handle_review_superrobust_parallel_branch_audits_merged_payload_before_write_and_flags(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="superrobust")
+    _advance_to_executed(fixture)
+    _plan_dir, state = load_plan(fixture.root, fixture.plan_name)
+
+    pre_check_flags = [
+        {
+            "id": "PRECHECK-SOURCE_TOUCH",
+            "check": "source_touch",
+            "detail": "The diff touches a non-test source file.",
+            "severity": "minor",
+        }
+    ]
+    criteria_payload = _build_mock_payload("review", state, fixture.plan_dir, review_verdict="approved")
+    parallel_result = WorkerResult(
+        payload={
+            "criteria_payload": criteria_payload,
+            "checks": [],
+            "verified_flag_ids": ["REVIEW-OLD-001"],
+            "disputed_flag_ids": ["REVIEW-OLD-002"],
+        },
+        raw_output="parallel-valid",
+        duration_ms=11,
+        cost_usd=0.2,
+        session_id=None,
+        prompt_tokens=6,
+        completion_tokens=7,
+        total_tokens=13,
+    )
+
+    call_order: list[str] = []
+    update_payloads: list[dict[str, object]] = []
+
+    monkeypatch.delenv(megaplan.MOCK_ENV_VAR, raising=False)
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda *args, **kwargs: ("hermes", "persistent", True, "mock-model"),
+    )
+    monkeypatch.setattr(megaplan.handlers, "run_pre_checks", lambda *args, **kwargs: pre_check_flags)
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "run_parallel_review",
+        lambda *args, **kwargs: (call_order.append("run_parallel_review") or parallel_result),
+    )
+
+    def _update_flags_after_review(
+        plan_dir: Path, review_payload: dict[str, object], *, iteration: int
+    ) -> dict[str, object]:
+        update_payloads.append(review_payload)
+        call_order.append("update_flags_after_review")
+        assert plan_dir == fixture.plan_dir
+        assert iteration == state["iteration"]
+        stored_review = read_json(plan_dir / "review.json")
+        assert stored_review == review_payload
+        return {"flags": []}
+
+    monkeypatch.setattr(megaplan.handlers, "update_flags_after_review", _update_flags_after_review)
+    monkeypatch.setattr(
+        megaplan.handlers.worker_module,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("superrobust Hermes review should not use the legacy worker")
+        ),
+    )
+
+    response = megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
+    stored_review = read_json(fixture.plan_dir / "review.json")
+
+    assert response["success"] is True
+    assert stored_review["review_verdict"] == criteria_payload["review_verdict"]
+    assert stored_review["task_verdicts"] == criteria_payload["task_verdicts"]
+    assert stored_review["sense_check_verdicts"] == criteria_payload["sense_check_verdicts"]
+    assert stored_review["pre_check_flags"] == _normalized_pre_check_flags(pre_check_flags)
+    assert stored_review["verified_flag_ids"] == ["REVIEW-OLD-001"]
+    assert stored_review["disputed_flag_ids"] == ["REVIEW-OLD-002"]
+    assert len(update_payloads) == 1
+    assert update_payloads[0] == stored_review
+    assert call_order == ["run_parallel_review", "update_flags_after_review"]
 
 
 def test_rework_item_synthesized_for_flagged_finding_with_empty_status() -> None:
@@ -605,3 +804,198 @@ def test_handle_review_superrobust_iteration_two_marks_verified_review_flags(
     assert response["state"] == megaplan.STATE_DONE
     assert coverage_flag["status"] == "verified"
     assert coverage_flag["verified_in"] == "review_v2.json"
+
+
+def test_handle_review_non_hermes_branch_rejects_schema_invalid_payload_before_finalize(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="superrobust")
+    _advance_to_executed(fixture)
+    _plan_dir, state = _load_executed_plan(fixture)
+    payload = _build_mock_payload("review", state, fixture.plan_dir, summary="Golden review payload.")
+    payload.pop("sense_check_verdicts")
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="review",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="review-non-hermes-invalid",
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+    )
+
+    monkeypatch.delenv(megaplan.MOCK_ENV_VAR, raising=False)
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda *args, **kwargs: ("codex", "persistent", False, "mock-model"),
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.worker_module,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "codex", "persistent", False),
+    )
+
+    with pytest.raises(megaplan.CliError, match="Review output failed schema audit"):
+        megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
+
+    state_after = read_json(fixture.plan_dir / "state.json")
+    assert state_after["current_state"] == megaplan.STATE_EXECUTED
+
+
+# ── T17: Thorough (robust → thorough) and non-Hermes valid path tests ──────
+
+def test_handle_review_thorough_branch_rejects_schema_invalid_before_write_and_flags(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prove that for thorough (robust→thorough) review, schema audit rejects
+    invalid model output before write_plan_artifact_json and flag updates."""
+    fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="robust")
+    _advance_to_executed(fixture)
+    _plan_dir, state = _load_executed_plan(fixture)
+    payload = _build_mock_payload("review", state, fixture.plan_dir, summary="Golden review payload.")
+    payload.pop("task_verdicts")
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="review",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="review-robust-invalid",
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+    )
+
+    update_call_count = 0
+
+    monkeypatch.setattr(megaplan.handlers, "run_pre_checks", lambda *args, **kwargs: [])
+
+    def _update_flags_after_review(*args: object, **kwargs: object) -> None:
+        nonlocal update_call_count
+        del args, kwargs
+        update_call_count += 1
+
+    monkeypatch.setattr(megaplan.handlers, "update_flags_after_review", _update_flags_after_review)
+    monkeypatch.setattr(
+        megaplan.handlers.worker_module,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "codex", "persistent", False),
+    )
+
+    with pytest.raises(megaplan.CliError, match="Review output failed schema audit"):
+        megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
+
+    assert update_call_count == 0
+    assert not (fixture.plan_dir / "review.json").exists()
+
+
+def test_handle_review_thorough_branch_valid_payload_audited_then_written_and_flags_updated(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prove that for thorough (robust→thorough) review with a valid payload,
+    schema audit passes, then write_plan_artifact_json and flag updates proceed."""
+    fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="robust")
+    _advance_to_executed(fixture)
+    _plan_dir, state = _load_executed_plan(fixture)
+    payload = _build_mock_payload("review", state, fixture.plan_dir, summary="Golden thorough payload.")
+    pre_check_flags = [
+        {
+            "id": "PRECHECK-ROBUST-001",
+            "check": "source_touch",
+            "detail": "The diff touches a source file.",
+            "severity": "minor",
+        }
+    ]
+    call_order: list[str] = []
+    update_calls: list[dict[str, object]] = []
+
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="review",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="review-robust-valid",
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+    )
+
+    monkeypatch.setattr(megaplan.handlers, "run_pre_checks", lambda *args, **kwargs: pre_check_flags)
+
+    def _update_flags_after_review(
+        plan_dir: Path, review_payload: dict[str, object], *, iteration: int
+    ) -> dict[str, object]:
+        update_calls.append({"plan_dir": plan_dir, "payload": review_payload, "iteration": iteration})
+        call_order.append("update_flags_after_review")
+        return {"flags": []}
+
+    monkeypatch.setattr(megaplan.handlers, "update_flags_after_review", _update_flags_after_review)
+    monkeypatch.setattr(
+        megaplan.handlers.worker_module,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (
+            call_order.append("run_step_with_worker") or (worker, "codex", "persistent", False)
+        ),
+    )
+
+    megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
+    stored_review = read_json(fixture.plan_dir / "review.json")
+
+    assert stored_review["review_verdict"] == payload["review_verdict"]
+    assert stored_review["task_verdicts"] == payload["task_verdicts"]
+    assert stored_review["sense_check_verdicts"] == payload["sense_check_verdicts"]
+    assert stored_review["pre_check_flags"] == _normalized_pre_check_flags(pre_check_flags)
+    assert len(update_calls) == 1
+    assert update_calls[0]["payload"] is worker.payload
+    assert "update_flags_after_review" in call_order
+
+
+def test_handle_review_non_hermes_branch_valid_payload_audited_then_written(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prove that for the non-Hermes path with a valid payload, schema audit
+    passes, then the payload is written to review.json before finalize."""
+    fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="superrobust")
+    _advance_to_executed(fixture)
+    _plan_dir, state = _load_executed_plan(fixture)
+    payload = _build_mock_payload("review", state, fixture.plan_dir, summary="Golden non-hermes payload.")
+
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="review",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="review-non-hermes-valid",
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+    )
+
+    monkeypatch.delenv(megaplan.MOCK_ENV_VAR, raising=False)
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda *args, **kwargs: ("codex", "persistent", False, "mock-model"),
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.worker_module,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "codex", "persistent", False),
+    )
+
+    response = megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
+
+    assert response["success"] is True
+    stored_review = read_json(fixture.plan_dir / "review.json")
+    assert stored_review["review_verdict"] == payload["review_verdict"]
+    assert stored_review["task_verdicts"] == payload["task_verdicts"]
+    assert stored_review["sense_check_verdicts"] == payload["sense_check_verdicts"]

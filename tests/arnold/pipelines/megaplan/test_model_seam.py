@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+import arnold.pipelines.megaplan.model_seam as model_seam
 from arnold.pipeline import (
     ContractResult,
     StepInvocation,
@@ -187,7 +190,7 @@ def test_capture_step_output_preserves_legacy_payload_and_typed_contract() -> No
     assert rehydrated.payload["legacy_payload"] == legacy_payload
 
 
-def test_capture_step_output_runs_enumerated_compatibility_projection_before_audit() -> None:
+def test_capture_step_output_skips_compatibility_projection_for_native_execute() -> None:
     invocation = StepInvocation(
         kind="model",
         metadata={
@@ -200,17 +203,40 @@ def test_capture_step_output_runs_enumerated_compatibility_projection_before_aud
     outcome = capture_step_output(
         invocation,
         {
-            "task_updates": [{"id": "T7", "status": "completed"}],
+            "task_updates": [{"id": "T7", "status": "done"}],
             "sense_check_acknowledgments": [],
         },
     )
 
     assert outcome.legacy_payload == {
-        "task_updates": [{"id": "T7", "task_id": "T7", "status": "done"}],
+        "task_updates": [{"id": "T7", "status": "done"}],
         "sense_check_acknowledgments": [],
     }
     assert outcome.telemetry.audit_result is AuditStatus.PASSED
     assert outcome.contract_result.payload["telemetry"]["audit_result"] == "passed"
+
+
+def test_capture_schema_for_invocation_maps_named_steps_to_approved_schemas() -> None:
+    expected = {
+        "execute": "execution_batch_relaxed.json",
+        "finalize": "finalize.json",
+        "critique": "critique.json",
+        "review": "review.json",
+        "gate": "gate.json",
+    }
+
+    for step, schema_key in expected.items():
+        invocation = StepInvocation(
+            kind="model",
+            metadata={"validation_step": step},
+        )
+
+        capture_schema = model_seam._capture_schema_for_invocation(invocation)
+
+        assert capture_schema is not None
+        assert capture_schema["properties"] == SCHEMAS[schema_key]["properties"]
+        assert capture_schema["required"] == SCHEMAS[schema_key]["required"]
+        assert capture_schema.get("additionalProperties") is False
 
 
 def test_execute_batch_relaxed_schema_preserves_batch_subset_without_duplicating_properties() -> None:
@@ -247,6 +273,120 @@ def test_capture_step_output_uses_execute_batch_relaxed_schema_for_present_field
         assert "type_mismatch" in str(exc)
     else:
         raise AssertionError("wrong-typed execute batch fields must fail structural audit")
+
+
+def test_capture_step_output_uses_finalize_schema_for_wrong_typed_named_payload() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "validation_step": "finalize",
+        },
+    )
+
+    try:
+        capture_step_output(
+            invocation,
+            {
+                "tasks": "not-a-list",
+                "watch_items": [],
+                "sense_checks": [],
+                "user_actions": [],
+                "meta_commentary": "",
+                "validation": {
+                    "plan_steps_covered": [],
+                    "orphan_tasks": [],
+                    "completeness_notes": "",
+                    "coverage_complete": True,
+                },
+            },
+        )
+    except ValueError as exc:
+        assert "type_mismatch" in str(exc)
+    else:
+        raise AssertionError("finalize capture must reject wrong-typed named payloads")
+
+
+def test_capture_step_output_uses_review_schema_to_reject_hallucinated_named_keys() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "validation_step": "review",
+        },
+    )
+
+    try:
+        capture_step_output(
+            invocation,
+            {
+                "review_verdict": "approved",
+                "criteria": [],
+                "issues": [],
+                "rework_items": [],
+                "summary": "Reviewed successfully.",
+                "task_verdicts": [],
+                "sense_check_verdicts": [],
+                "hallucinated_extra": True,
+            },
+        )
+    except ValueError as exc:
+        assert "additional_property" in str(exc)
+    else:
+        raise AssertionError("review capture must reject hallucinated named payload keys")
+
+
+def test_capture_step_output_uses_critique_schema_for_missing_required_fields() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "validation_step": "critique",
+        },
+    )
+
+    try:
+        capture_step_output(
+            invocation,
+            {
+                "checks": [],
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+        )
+    except ValueError as exc:
+        assert "flags" in str(exc)
+    else:
+        raise AssertionError("critique capture must reject missing required fields")
+
+
+def test_capture_step_output_uses_critique_schema_for_wrong_typed_named_payload() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "validation_step": "critique",
+        },
+    )
+
+    try:
+        capture_step_output(
+            invocation,
+            {
+                "checks": [],
+                "flags": "not-a-list",
+                "verified_flag_ids": [],
+                "disputed_flag_ids": [],
+            },
+        )
+    except ValueError as exc:
+        assert "type_mismatch" in str(exc)
+    else:
+        raise AssertionError("critique capture must reject wrong-typed named payloads")
 
 
 def test_capture_step_output_rejects_wrong_typed_payload_under_structural_audit() -> None:
@@ -652,6 +792,234 @@ def test_render_step_message_exposes_worker_facing_payload_fields() -> None:
     assert rendered.to_json()["prompt"] == "produce the final JSON"
 
 
+# ---------------------------------------------------------------------------
+# T1 characterization: inventory of _normalize_worker_payload and
+# validate_payload call sites that pass through the model-seam
+# _compatibility_projection() chokepoint.
+#
+# After m5 migration, _compatibility_projection() must skip
+# _normalize_worker_payload() and validate_payload() for schema-audited native
+# sites (finalize, critique, review, gate, execute) while preserving legacy
+# behavior for the long tail until m6.
+# ---------------------------------------------------------------------------
+
+_MIGRATED_SITES: tuple[str, ...] = ("finalize", "critique", "review", "gate", "execute")
+
+# Long-tail sites that are NOT migrated in m5 — the compatibility path
+# must keep working for them until m6.
+_LONG_TAIL_SITES: tuple[str, ...] = (
+    "plan", "revise", "prep", "loop_plan", "loop_execute",
+    "tiebreaker_challenger", "feedback",
+)
+
+
+def test_schema_audited_native_steps_explicitly_skip_legacy_compatibility_projection() -> None:
+    payload = {
+        "task_updates": [{"id": "T7", "status": "completed"}],
+        "sense_check_acknowledgments": [],
+    }
+
+    for step in _MIGRATED_SITES:
+        invocation = StepInvocation(
+            kind="model",
+            metadata={"compatibility_validation_step": step},
+        )
+
+        projected = model_seam._compatibility_projection(invocation, dict(payload))
+
+        assert model_seam._compatibility_mode_for_step(step) is model_seam.CompatibilityMode.NATIVE
+        assert model_seam._capture_schema_for_invocation(invocation) is not None
+        assert projected == payload
+
+
+def test_compatibility_projection_native_guard_precedes_legacy_normalize_import() -> None:
+    import ast
+    from pathlib import Path
+
+    seam_path = (
+        Path(__file__).resolve().parents[4]
+        / "arnold/pipelines/megaplan/model_seam.py"
+    )
+    source = seam_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    compatibility_fn = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_compatibility_projection"
+    )
+    native_guard_index = next(
+        index
+        for index, node in enumerate(compatibility_fn.body)
+        if (
+            isinstance(node, ast.If)
+            and ast.get_source_segment(source, node.test) == (
+                "_compatibility_mode_for_step(step) is CompatibilityMode.NATIVE"
+            )
+        )
+    )
+    import_index = next(
+        index
+        for index, node in enumerate(compatibility_fn.body)
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "arnold.pipelines.megaplan.workers._impl"
+        )
+    )
+
+    native_guard = compatibility_fn.body[native_guard_index]
+    assert isinstance(native_guard, ast.If)
+    assert len(native_guard.body) == 1
+    assert isinstance(native_guard.body[0], ast.Return)
+    assert isinstance(native_guard.body[0].value, ast.Name)
+    assert native_guard.body[0].value.id == "payload"
+    assert native_guard_index < import_index, (
+        "The native compatibility guard must return before the legacy "
+        "_normalize_worker_payload import is reached."
+    )
+
+
+def test_audit_step_payload_reuses_native_schema_authority() -> None:
+    payload = {
+        "task_updates": [{"task_id": "T7", "status": "done"}],
+        "sense_check_acknowledgments": [{"sense_check_id": "SC7", "executor_note": "ok"}],
+    }
+
+    model_seam.audit_step_payload("execute", payload)
+    assert model_seam.schema_audits_step_payload("execute") is True
+    assert model_seam.schema_audits_step_payload("plan") is False
+
+    model_seam.audit_step_payload(
+        "execute",
+        {
+            "task_updates": [{"id": "T7", "status": "completed"}],
+            "sense_check_acknowledgments": [],
+        },
+    )
+
+    with pytest.raises(model_seam.ModelStructuralAuditError, match="/task_updates/0/"):
+        model_seam.audit_step_payload(
+            "execute",
+            {
+                "task_updates": [{"id": "T7", "status": "finished"}],
+                "sense_check_acknowledgments": [],
+            },
+        )
+
+
+def test_compatibility_projection_calls_normalize_and_validate_for_long_tail_sites() -> None:
+    """Long-tail sites stay on legacy normalize+validate until m6."""
+    from arnold.pipelines.megaplan.workers._impl import (
+        _normalize_worker_payload,
+        validate_payload,
+    )
+
+    minimal_payloads: dict[str, dict[str, object]] = {
+        "plan": {"plan": "x", "questions": [], "success_criteria": [], "assumptions": []},
+        "revise": {
+            "plan": "x",
+            "changes_summary": "y",
+            "flags_addressed": [],
+            "assumptions": [],
+            "success_criteria": [],
+            "questions": [],
+        },
+        "prep": {
+            "skip": False,
+            "task_summary": "...",
+            "key_evidence": [],
+            "relevant_code": [],
+            "test_expectations": [],
+            "constraints": [],
+            "suggested_approach": "...",
+        },
+        "tiebreaker_challenger": {
+            "measurements_vs_assumptions": [],
+            "missing_options": [],
+            "hard_cases": [],
+            "reframings": [],
+            "aging_analysis": [],
+            "counter_recommendation": "...",
+        },
+        "feedback": {"overall": "...", "stages": []},
+    }
+
+    for step in _LONG_TAIL_SITES:
+        try:
+            minimal_payloads[step]
+        except KeyError:
+            continue
+        payload = dict(minimal_payloads[step])
+        invocation = StepInvocation(
+            kind="model",
+            metadata={"compatibility_validation_step": step},
+        )
+        assert model_seam._compatibility_mode_for_step(step) is model_seam.CompatibilityMode.LEGACY
+        assert model_seam._capture_schema_for_invocation(invocation) is None
+        normalized = _normalize_worker_payload(step, payload)
+        validate_payload(step, normalized)
+        assert model_seam._compatibility_projection(invocation, dict(payload)) == normalized
+
+
+def test_normalize_worker_payload_is_not_exported_from_workers_package() -> None:
+    """_normalize_worker_payload is a private implementation detail — handlers
+    must not call it directly.  Only recovery and the compatibility chokepoint
+    invoke it."""
+    import arnold.pipelines.megaplan.workers as _workers
+
+    assert not hasattr(_workers, "_normalize_worker_payload") or (
+        "_normalize_worker_payload" not in getattr(_workers, "__all__", [])
+    )
+
+
+def test_compatibility_projection_is_the_only_model_seam_caller() -> None:
+    """Characterization: within model_seam.py, only _compatibility_projection()
+    directly imports and calls _normalize_worker_payload + validate_payload.
+
+    After m5 migration, this function must gate on the step name and skip
+    migrated sites.  This test does NOT assert the gating exists yet — it only
+    pins the current single-caller layout so later tasks can prove the gating
+    was added.
+    """
+    import ast
+    from pathlib import Path
+
+    seam_path = (
+        Path(__file__).resolve().parents[4]
+        / "arnold/pipelines/megaplan/model_seam.py"
+    )
+    source = seam_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # Find every function that imports _normalize_worker_payload or validate_payload
+    # from workers._impl inside a function body (lazy import pattern).
+    func_callers: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func_name = node.name
+            for child in ast.walk(node):
+                if isinstance(child, ast.ImportFrom):
+                    if child.module == "arnold.pipelines.megaplan.workers._impl":
+                        for alias in child.names:
+                            if alias.name in (
+                                "_normalize_worker_payload",
+                                "validate_payload",
+                            ):
+                                func_callers.setdefault(func_name, set()).add(
+                                    alias.name
+                                )
+    # Currently only _compatibility_projection should do this import.
+    assert func_callers == {
+        "_compatibility_projection": {
+            "_normalize_worker_payload",
+            "validate_payload",
+        }
+    }, (
+        f"Unexpected callers of _normalize_worker_payload/validate_payload "
+        f"in model_seam.py: {func_callers}"
+    )
+
+
 def test_render_step_message_consumes_structured_prompt_components() -> None:
     components = PromptComponents(
         prompt="component prompt",
@@ -678,3 +1046,200 @@ def test_render_step_message_consumes_structured_prompt_components() -> None:
     assert rendered.messages[-1] == {"role": "user", "content": "component prompt"}
     assert rendered.schema == {"type": "object", "properties": {"output": {"type": "string"}}}
     assert rendered.template == {"output": "example"}
+
+
+# ──────────────────────────────────────────────────────────────────────
+# render_compact_review_prompt — seam-owned review compaction
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_render_compact_review_prompt_delegates_to_compact_review_prompt(
+    tmp_path,
+) -> None:
+    """Proves the seam helper delegates to compact_review_prompt under the hood."""
+    from unittest.mock import patch
+
+    state: dict[str, object] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+    plan_dir = tmp_path / "plans" / "test-plan"
+    plan_dir.mkdir(parents=True)
+
+    with patch(
+        "arnold.pipelines.megaplan.prompts.review.compact_review_prompt"
+    ) as mock_compact:
+        mock_compact.return_value = "compacted review text"
+
+        result = model_seam.render_compact_review_prompt(
+            "codex",
+            "review",
+            state,
+            plan_dir,
+            model="gpt-5.4",
+            schema={"type": "object"},
+            prompt_size_error={"message": "too large"},
+            pre_check_flags=[{"flag": "FC01"}],
+        )
+
+    mock_compact.assert_called_once()
+    call_args, call_kwargs = mock_compact.call_args
+    # state and plan_dir are positional
+    assert call_kwargs.get("prompt_size_error") == {"message": "too large"}
+    assert call_kwargs.get("pre_check_flags") == [{"flag": "FC01"}]
+    assert isinstance(result, model_seam.RenderedStepMessage)
+    assert result.prompt == "compacted review text"
+
+
+def test_render_compact_review_prompt_returns_rendered_step_message(
+    tmp_path,
+) -> None:
+    """The output is a properly formed RenderedStepMessage with expected metadata."""
+    from unittest.mock import patch
+
+    state: dict[str, object] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+    plan_dir = tmp_path / "plans" / "test-plan"
+    plan_dir.mkdir(parents=True)
+
+    with patch(
+        "arnold.pipelines.megaplan.prompts.review.compact_review_prompt"
+    ) as mock_compact:
+        mock_compact.return_value = "compacted prompt"
+
+        result = model_seam.render_compact_review_prompt(
+            "hermes",
+            "review",
+            state,
+            plan_dir,
+            worker="hermes",
+            model="deepseek-v4",
+            normalized_model="deepseek-v4",
+            schema={"type": "object", "properties": {"review_verdict": {"type": "string"}}},
+        )
+
+    assert result.prompt == "compacted prompt"
+    assert result.metadata["worker"] == "hermes"
+    assert result.metadata["model"] == "deepseek-v4"
+    assert result.metadata["validation_step"] == "review"
+    assert result.metadata["tier"] == "non_enforced"
+    assert result.schema == {"type": "object", "properties": {"review_verdict": {"type": "string"}}}
+    assert result.telemetry.terminal_status is model_seam.TerminalStatus.RENDERED
+
+
+def test_render_compact_review_prompt_preserves_pre_check_flags(
+    tmp_path,
+) -> None:
+    """Pre-check flags are forwarded to compact_review_prompt exactly as received."""
+    from unittest.mock import patch
+
+    state: dict[str, object] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+    plan_dir = tmp_path / "plans" / "test-plan"
+    plan_dir.mkdir(parents=True)
+
+    pre_check = [
+        {"flag_id": "FC01", "description": "missing evidence"},
+        {"flag_id": "FC02", "description": "stale plan"},
+    ]
+
+    with patch(
+        "arnold.pipelines.megaplan.prompts.review.compact_review_prompt"
+    ) as mock_compact:
+        mock_compact.return_value = "compacted"
+
+        model_seam.render_compact_review_prompt(
+            "codex",
+            "review",
+            state,
+            plan_dir,
+            pre_check_flags=pre_check,
+        )
+
+    assert mock_compact.call_args[1]["pre_check_flags"] == pre_check
+
+
+def test_render_compact_review_prompt_preserves_projection_capabilities(
+    tmp_path,
+) -> None:
+    """Projection capabilities are forwarded transparently."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan.prompts._projection import PromptProjectionCapabilities
+
+    state: dict[str, object] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+    plan_dir = tmp_path / "plans" / "test-plan"
+    plan_dir.mkdir(parents=True)
+
+    caps = PromptProjectionCapabilities.full()
+
+    with patch(
+        "arnold.pipelines.megaplan.prompts.review.compact_review_prompt"
+    ) as mock_compact:
+        mock_compact.return_value = "compacted"
+
+        model_seam.render_compact_review_prompt(
+            "codex",
+            "review",
+            state,
+            plan_dir,
+            projection_capabilities=caps,
+        )
+
+    assert mock_compact.call_args[1]["projection_capabilities"] is caps
+
+
+def test_render_compact_review_prompt_handles_none_prompt_size_error(
+    tmp_path,
+) -> None:
+    """None prompt_size_error is forwarded as-is (normal oversized-check fallback)."""
+    from unittest.mock import patch
+
+    state: dict[str, object] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+    plan_dir = tmp_path / "plans" / "test-plan"
+    plan_dir.mkdir(parents=True)
+
+    with patch(
+        "arnold.pipelines.megaplan.prompts.review.compact_review_prompt"
+    ) as mock_compact:
+        mock_compact.return_value = "compacted"
+
+        model_seam.render_compact_review_prompt(
+            "codex",
+            "review",
+            state,
+            plan_dir,
+            prompt_size_error=None,
+        )
+
+    assert mock_compact.call_args[1]["prompt_size_error"] is None
+
+
+def test_render_compact_review_prompt_enforced_tier_preserved(
+    tmp_path,
+) -> None:
+    """Enforced tier is carried through to the rendered metadata."""
+    from unittest.mock import patch
+
+    state: dict[str, object] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+    plan_dir = tmp_path / "plans" / "test-plan"
+    plan_dir.mkdir(parents=True)
+
+    with patch(
+        "arnold.pipelines.megaplan.prompts.review.compact_review_prompt"
+    ) as mock_compact:
+        mock_compact.return_value = "compacted"
+
+        result = model_seam.render_compact_review_prompt(
+            "codex",
+            "review",
+            state,
+            plan_dir,
+            tier=model_seam.ModelTier.ENFORCED,
+        )
+
+    assert result.metadata["tier"] == "enforced"
+
+
+def test_render_compact_review_prompt_exported_in_all(tmp_path) -> None:
+    """render_compact_review_prompt is in the module __all__ and is callable."""
+    assert "render_compact_review_prompt" in model_seam.__all__
+
+    from arnold.pipelines.megaplan.model_seam import render_compact_review_prompt
+
+    assert callable(render_compact_review_prompt)

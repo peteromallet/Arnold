@@ -33,6 +33,7 @@ from arnold.pipelines.megaplan._core import (
     sha256_file,
 )
 from arnold.pipelines.megaplan.observability.evaluand import read_evaluand_events
+from arnold.pipeline.step_io_contract import StepIOContractContext, StepIOOperation
 from arnold.pipelines.megaplan.orchestration.plan_contracts import normalize_contract_payload
 from arnold.pipelines.megaplan.store import write_plan_artifact_json
 
@@ -911,7 +912,10 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     _write_capability_claims_from_finalize(plan_dir, payload, state)
     _reconcile_validation_after_mutation(payload)
     atomic_write_json(plan_dir / "contract.json", contract_payload)
-    write_plan_artifact_json(plan_dir, "finalize.json", payload, contract_context=None)
+    write_plan_artifact_json(
+        plan_dir, "finalize.json", payload,
+        contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+    )
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)
     atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(payload))
     atomic_write_text(plan_dir / "final.md", render_final_md(payload))

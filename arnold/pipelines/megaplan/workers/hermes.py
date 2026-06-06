@@ -1088,22 +1088,20 @@ def run_hermes_step(
     # Build prompt — megaplan prompts embed the JSON schema, but some models
     # ignore formatting instructions buried in long prompts.  Append a clear
     # reminder so the final response is valid JSON, not markdown.
-    rendered_step = None
-    if prompt_override is None:
-        prompt_override = create_hermes_prompt(step, state, plan_dir, root=root)
-        rendered_step = render_prompt_for_dispatch(
-            "hermes",
-            step,
-            state,
-            plan_dir,
-            root=root,
-            model=resolved_model,
-            normalized_model=resolved_model,
-            tier=seam_tier,
-            schema=schema,
-            prompt_override=prompt_override,
-        )
-    prompt = prompt_override if prompt_override is not None else rendered_step.prompt
+    prompt_text = prompt_override or create_hermes_prompt(step, state, plan_dir, root=root)
+    rendered_step = render_prompt_for_dispatch(
+        "hermes",
+        step,
+        state,
+        plan_dir,
+        root=root,
+        model=resolved_model,
+        normalized_model=resolved_model,
+        tier=seam_tier,
+        schema=schema,
+        prompt_override=prompt_text,
+    )
+    prompt = rendered_step.prompt
     # Add web search guidance for phases that have it
     if step in ("plan", "critique", "revise"):
         prompt += (

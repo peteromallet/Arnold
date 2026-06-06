@@ -267,8 +267,9 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
     first_review = WorkerResult(
         payload={
             "review_verdict": "approved",
-            "criteria": [{"name": "criterion", "pass": True, "evidence": "checked"}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "pass", "evidence": "checked"}],
             "issues": [],
+            "rework_items": [],
             "summary": "Partial review.",
             "task_verdicts": [
                 {
@@ -294,8 +295,9 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
     second_review = WorkerResult(
         payload={
             "review_verdict": "approved",
-            "criteria": [{"name": "criterion", "pass": True, "evidence": "checked again"}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "pass", "evidence": "checked again"}],
             "issues": [],
+            "rework_items": [],
             "summary": "Complete review.",
             "task_verdicts": [
                 {
@@ -400,8 +402,9 @@ def test_review_blocks_empty_evidence_files_without_substantive_verdict(
     worker = WorkerResult(
         payload={
             "review_verdict": "approved",
-            "criteria": [{"name": "criterion", "pass": True, "evidence": "checked"}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "pass", "evidence": "checked"}],
             "issues": [],
+            "rework_items": [],
             "summary": "Review missing evidence files.",
             "task_verdicts": [
                 {
@@ -464,7 +467,7 @@ def test_review_softens_substantive_verdict_without_evidence_files_and_can_kick_
     worker = WorkerResult(
         payload={
             "review_verdict": "needs_rework",
-            "criteria": [{"name": "criterion", "pass": False, "evidence": "Task T1 still needs follow-up edits."}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "fail", "evidence": "Task T1 still needs follow-up edits."}],
             "issues": ["T1 implementation is incomplete and needs another execute pass."],
             "summary": "Needs rework: one task is still incomplete.",
             "rework_items": [
@@ -480,6 +483,7 @@ def test_review_softens_substantive_verdict_without_evidence_files_and_can_kick_
                         "command": "pytest tests/test_regression.py",
                         "baseline_status": "failed",
                         "post_status": "failed",
+                        "evidence_file": "review.json",
                     },
                 }
             ],
@@ -570,6 +574,7 @@ def test_review_demotes_ungrounded_prose_rework_when_declared_checks_pass(
                     "evidence_file": "review.json",
                     "flag_id": None,
                     "source": "review_prose",
+                    "deterministic_check": None,
                 }
             ],
             "task_verdicts": [
@@ -691,7 +696,7 @@ def test_review_force_proceed_records_outcome_matching_hashed_artifact(
         payload={
             "review_verdict": "needs_rework",
             "criteria": [
-                {"name": "copy polish", "priority": "should", "pass": False, "evidence": "Minor wording remains."}
+                {"name": "copy polish", "priority": "should", "pass": "fail", "evidence": "Minor wording remains."}
             ],
             "issues": ["Minor cosmetic wording remains."],
             "summary": "Needs cosmetic rework.",
@@ -709,6 +714,7 @@ def test_review_force_proceed_records_outcome_matching_hashed_artifact(
                         "command": "pytest tests/test_cosmetic.py",
                         "baseline_status": "failed",
                         "post_status": "failed",
+                        "evidence_file": "review.json",
                     },
                 }
             ],
@@ -768,7 +774,7 @@ def test_review_incomplete_rework_payload_stays_in_review(
     worker = WorkerResult(
         payload={
             "review_verdict": "needs_rework",
-            "criteria": [{"name": "criterion", "pass": False, "evidence": "review did not inspect repository"}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "pass", "evidence": "review did not inspect repository"}],
             "issues": ["No repository inspection was performed; review output is incomplete."],
             "summary": "Review infrastructure failed.",
             "rework_items": [
@@ -777,7 +783,10 @@ def test_review_incomplete_rework_payload_stays_in_review(
                     "issue": "No repository inspection was performed.",
                     "expected": "Review should inspect repository state before requesting implementation rework.",
                     "actual": "Placeholder review response.",
+                    "evidence_file": "review.json",
+                    "flag_id": None,
                     "source": "review_incomplete",
+                    "deterministic_check": None,
                 }
             ],
             "task_verdicts": [

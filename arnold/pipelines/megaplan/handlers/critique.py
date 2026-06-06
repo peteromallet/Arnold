@@ -19,6 +19,7 @@ from arnold.pipelines.megaplan.orchestration.critique_status import (
 )
 from arnold.pipelines.megaplan.orchestration.parallel_critique import run_parallel_critique
 from arnold.pipelines.megaplan.profiles import apply_profile_expansion
+from arnold.pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold.pipelines.megaplan.types import (
     CliError,
     FLAG_BLOCKING_STATUSES,
@@ -533,6 +534,38 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 resolved=resolved,
                 prompt_kwargs={"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None,
             )
+        try:
+            audit_step_payload("critique", worker.payload)
+        except ModelStructuralAuditError as error:
+            recovered_payload = _recover_valid_critique_output(plan_dir, expected_ids=expected_ids)
+            if recovered_payload is None:
+                _raise_step_validation_error(
+                    plan_dir=plan_dir,
+                    state=state,
+                    step="critique",
+                    iteration=iteration,
+                    worker=worker,
+                    code="invalid_critique",
+                    message=f"Critique output failed schema audit: {error.details}",
+                )
+            _append_to_meta(
+                state,
+                "critique_validation_warnings",
+                {"iteration": iteration, "schema_audit_warning": error.details},
+            )
+            worker = WorkerResult(
+                payload=recovered_payload,
+                raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json; original worker failed schema audit: " + error.details,
+                duration_ms=worker.duration_ms,
+                cost_usd=worker.cost_usd,
+                session_id=worker.session_id,
+                trace_output=worker.trace_output,
+                rendered_prompt=worker.rendered_prompt,
+                model_actual=worker.model_actual,
+                prompt_tokens=worker.prompt_tokens,
+                completion_tokens=worker.completion_tokens,
+                total_tokens=worker.total_tokens,
+            )
         invalid_checks = _critique_check_validator()(worker.payload, expected_ids=expected_ids)
         if invalid_checks:
             recovered_payload = _recover_valid_critique_output(plan_dir, expected_ids=expected_ids)
@@ -666,10 +699,13 @@ def _recover_valid_critique_output(plan_dir: Path, *, expected_ids: list[str]) -
     if not output_path.exists():
         return None
     payload = read_json(output_path)
+    try:
+        audit_step_payload("critique", payload)
+    except ModelStructuralAuditError:
+        return None
     invalid_checks = _critique_check_validator()(payload, expected_ids=expected_ids)
     if invalid_checks:
         return None
-    validate_payload("critique", payload)
     return payload
 
 
