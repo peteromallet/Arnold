@@ -12,6 +12,7 @@ from arnold.pipelines.megaplan.workers import (
     CommandResult,
     _extract_claude_usage,
     _recover_codex_payload,
+    _recover_codex_payload_with_provenance,
     extract_session_id,
     parse_claude_envelope,
     parse_json_file,
@@ -406,6 +407,71 @@ def test_recover_codex_payload_prefers_completed_critique_template_over_schema_s
     )
 
     assert recovered == completed_payload
+
+def test_recover_codex_payload_reports_template_provenance_without_legacy_authority(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+    output_path.write_text(
+        json.dumps({"checks": 1, "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []}),
+        encoding="utf-8",
+    )
+    template_payload = {
+        "checks": [
+            {
+                "id": "complete",
+                "question": "Did template recovery work?",
+                "findings": [{"detail": "Template should be selected.", "flagged": False}],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    raw_payload = {
+        "checks": [],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    (plan_dir / "critique_output.json").write_text(json.dumps(template_payload), encoding="utf-8")
+
+    recovered = _recover_codex_payload_with_provenance(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=json.dumps(raw_payload),
+    )
+
+    assert recovered is not None
+    assert recovered.payload == template_payload
+    assert recovered.provenance == "template_file"
+
+def test_recover_codex_payload_falls_back_from_file_to_template_to_raw_order(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+    output_path.write_text(json.dumps({"task_updates": "wrong-type"}), encoding="utf-8")
+    (plan_dir / "execute_output.json").write_text(
+        json.dumps({"sense_check_acknowledgments": []}),
+        encoding="utf-8",
+    )
+    raw_payload = {
+        "task_updates": [{"id": "T8", "status": "completed"}],
+        "sense_check_acknowledgments": [{"id": "SC8", "executor_note": "ok"}],
+    }
+
+    recovered = _recover_codex_payload_with_provenance(
+        "execute",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=json.dumps(raw_payload),
+    )
+
+    assert recovered is not None
+    assert recovered.provenance == "raw_output"
+    assert recovered.payload["task_updates"][0]["task_id"] == "T8"
+    assert recovered.payload["task_updates"][0]["status"] == "done"
 
 def test_recover_codex_payload_keeps_meaningful_critique_when_template_is_empty(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"

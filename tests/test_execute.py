@@ -4,6 +4,7 @@ import json
 import subprocess
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,6 +26,8 @@ from arnold.pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot_recursive,
     _check_done_task_evidence,
     _check_done_task_evidence_by_kind,
+    expand_projected_path_list,
+    project_advisory_path_sets,
 )
 from arnold.pipelines.megaplan.types import CliError
 from arnold.pipelines.megaplan.workers import WorkerResult
@@ -635,6 +638,108 @@ def test_auto_attribute_excludes_files_claimed_by_other_tasks(tmp_path: Path) ->
     assert result.records == [
         {"task_id": "T2", "files": ["b.py"], "ambiguous": False}
     ]
+
+
+def test_project_advisory_path_sets_bounds_persisted_list_with_artifact_ref(
+    tmp_path: Path,
+) -> None:
+    files = [f"src/file_{i}.py" for i in range(120)]
+    payload = {"files_changed": files}
+
+    projected = project_advisory_path_sets(
+        payload,
+        plan_dir=tmp_path,
+        artifact_prefix="execution_batch_13",
+        keys=("files_changed",),
+    )
+
+    files_changed = projected["files_changed"]
+    assert len(files_changed["items"]) == 40
+    assert files_changed["omitted_count"] == 80
+    ref = files_changed["full_set_artifact_ref"]
+    assert ref["name"] == "execution_batch_13_files_changed.json"
+    assert ref["role"] == "full_advisory_path_set"
+    full_set = read_json(tmp_path / ref["name"])
+    assert full_set["items"] == files
+    assert expand_projected_path_list(files_changed, plan_dir=tmp_path) == files
+
+
+def test_project_advisory_path_sets_summarizes_uniform_mechanical_path_sets(
+    tmp_path: Path,
+) -> None:
+    files = [f"src/generated/schema_{i}.py" for i in range(120)]
+    payload = {"files_changed": files}
+
+    projected = project_advisory_path_sets(
+        payload,
+        plan_dir=tmp_path,
+        artifact_prefix="execution_batch_14",
+        keys=("files_changed",),
+    )
+
+    files_changed = projected["files_changed"]
+    summary = files_changed["semantic_bulk_operation_summary"]
+    assert summary["kind"] == "semantic_bulk_operation_summary"
+    assert summary["operation"] == "uniform_path_set"
+    assert summary["path_count"] == 120
+    assert summary["common_directory"] == "src/generated"
+    assert summary["file_extension"] == ".py"
+    assert summary["sampled_deviations"] == []
+    assert "git status --short -- src/generated" in summary["live_tree_verification"]
+    ref = files_changed["full_set_artifact_ref"]
+    full_set = read_json(tmp_path / ref["name"])
+    assert full_set["items"] == files
+    assert full_set["semantic_bulk_operation_summary"] == summary
+
+
+def test_project_advisory_path_sets_does_not_summarize_mixed_path_sets(
+    tmp_path: Path,
+) -> None:
+    files = [
+        *(f"src/generated/schema_{i}.py" for i in range(60)),
+        *(f"docs/generated/schema_{i}.md" for i in range(60)),
+    ]
+    payload = {"files_changed": files}
+
+    projected = project_advisory_path_sets(
+        payload,
+        plan_dir=tmp_path,
+        artifact_prefix="execution_batch_14",
+        keys=("files_changed",),
+    )
+
+    files_changed = projected["files_changed"]
+    assert "semantic_bulk_operation_summary" not in files_changed
+    ref = files_changed["full_set_artifact_ref"]
+    full_set = read_json(tmp_path / ref["name"])
+    assert "semantic_bulk_operation_summary" not in full_set
+    assert full_set["items"] == files
+
+
+def test_aggregate_execution_payload_bounds_files_changed_and_keeps_full_artifact(
+    tmp_path: Path,
+) -> None:
+    batch_payloads = [
+        {"output": "one", "files_changed": [f"src/a_{i}.py" for i in range(80)]},
+        {"output": "two", "files_changed": [f"src/b_{i}.py" for i in range(80)]},
+    ]
+
+    aggregate = megaplan_execute_aggregation._build_aggregate_execution_payload(
+        batch_payloads,
+        completed_batches=2,
+        total_batches=2,
+        plan_dir=tmp_path,
+    )
+
+    files_changed = aggregate["files_changed"]
+    assert len(files_changed["items"]) == 40
+    assert files_changed["omitted_count"] == 120
+    ref = files_changed["full_set_artifact_ref"]
+    assert ref["name"] == "execution_aggregate_files_changed.json"
+    full_set = read_json(tmp_path / ref["name"])
+    assert len(full_set["items"]) == 160
+    assert full_set["items"][0] == "src/a_0.py"
+    assert full_set["items"][-1] == "src/b_79.py"
 
 
 def test_snapshot_recursive_expands_untracked_directory(tmp_path: Path) -> None:
@@ -2916,26 +3021,20 @@ def test_execute_unroutable_review_rework_reruns_review_then_blocks_recoverably(
         )
 
     first = rerun_execute_with_same_bad_review()
-    second = rerun_execute_with_same_bad_review()
-    third = rerun_execute_with_same_bad_review()
     state = load_state(plan_fixture.plan_dir)
 
-    assert first["state"] == megaplan.STATE_EXECUTED
-    assert first["next_step"] == "review"
-    assert first["success"] is True
-    assert second["state"] == megaplan.STATE_EXECUTED
-    assert second["next_step"] == "review"
-    assert third["state"] == megaplan.STATE_BLOCKED
-    assert third["next_step"] is None
-    assert third["unrunnable_rework_task_ids"] == ["REVIEW"]
+    assert first["state"] == megaplan.STATE_BLOCKED
+    assert first["next_step"] is None
+    assert first["success"] is False
+    assert first["unrunnable_rework_task_ids"] == ["REVIEW"]
     assert state["current_state"] == megaplan.STATE_BLOCKED
     assert state["resume_cursor"] == {
         "phase": "execute",
         "batch_index": None,
         "retry_strategy": "fresh_session",
     }
-    assert state["meta"]["unroutable_rework_attempts"] == 3
-    assert "review requested rework but no runnable finalize task IDs" in third["summary"]
+    assert state["meta"]["unroutable_rework_attempts"] == 1
+    assert "review requested rework but no runnable finalize task IDs" in first["summary"]
 
     from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
 
@@ -3051,12 +3150,6 @@ def test_execute_mixed_routable_unroutable_rework_escalates_recoverably_after_ca
             ),
         )
 
-    rerun_execute_with_same_mixed_review()
-    rerun_execute_with_same_mixed_review()
-    rerun_execute_with_same_mixed_review()
-    state_after_three = load_state(plan_fixture.plan_dir)
-    assert state_after_three["meta"]["unroutable_rework_attempts"] == 3
-
     fourth = rerun_execute_with_same_mixed_review()
     state = load_state(plan_fixture.plan_dir)
 
@@ -3071,6 +3164,43 @@ def test_execute_mixed_routable_unroutable_rework_escalates_recoverably_after_ca
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None
     assert pr.exit_kind == "blocked_by_quality"
+
+
+def test_review_rework_targets_route_task_bulk_and_manifest_findings() -> None:
+    finalize_data = {"tasks": [{"id": "T1"}, {"id": "T2"}, {"id": "T3"}]}
+    review_data = {
+        "rework_items": [
+            {"target": {"kind": "task", "task_id": "T1"}},
+            {"target": {"kind": "bulk", "id": "bulk-1", "task_ids": ["T2", "T3"]}},
+            {"target": {"kind": "manifest", "id": "manifest.json", "task_ids": ["T3"]}},
+        ]
+    }
+
+    runnable, unrunnable = megaplan_execute_batch._review_rework_task_ids(
+        review_data,
+        finalize_data,
+    )
+
+    assert runnable == ["T1", "T2", "T3"]
+    assert unrunnable == []
+
+
+def test_review_rework_global_and_legacy_review_targets_are_blockers() -> None:
+    finalize_data = {"tasks": [{"id": "T1"}]}
+    review_data = {
+        "rework_items": [
+            {"target": {"kind": "global", "id": "whole-run"}},
+            {"task_id": "REVIEW"},
+        ]
+    }
+
+    runnable, unrunnable = megaplan_execute_batch._review_rework_task_ids(
+        review_data,
+        finalize_data,
+    )
+
+    assert runnable == []
+    assert unrunnable == ["global:whole-run", "REVIEW"]
 
 
 def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
@@ -3477,6 +3607,259 @@ def test_handle_execute_one_batch_response_includes_tier_metadata(
     assert response["tier_model_spec"] == "codex:high", (
         "Complexity 5 maps to codex:high in the tier_map"
     )
+
+
+def test_handle_execute_one_batch_renders_and_captures_at_execute_boundary(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    render_calls: list[dict[str, object]] = []
+    capture_calls: list[dict[str, object]] = []
+
+    def fake_render(invocation):
+        metadata = dict(invocation.metadata)
+        render_calls.append(metadata)
+        return SimpleNamespace(prompt="[rendered execute]\n" + str(metadata["prompt"]))
+
+    def fake_capture(invocation, output):
+        capture_calls.append(
+            {
+                "metadata": dict(invocation.metadata),
+                "output": dict(output),
+            }
+        )
+        captured = dict(output)
+        captured["commands_run"] = ["pytest tests/test_execute.py"]
+        return SimpleNamespace(legacy_payload=captured)
+
+    def boundary_worker(
+        step: str,
+        state: dict,
+        plan_dir: Path,
+        args: Namespace,
+        *,
+        root: Path,
+        resolved=None,
+        prompt_override: str | None = None,
+    ):
+        assert step == "execute"
+        assert prompt_override is not None
+        assert prompt_override.startswith("[rendered execute]\n")
+        return (
+            WorkerResult(
+                payload={
+                    "output": "done",
+                    "files_changed": ["newpkg/file.py"],
+                    "commands_run": [],
+                    "deviations": [],
+                    "task_updates": [
+                        {
+                            "task_id": "T1",
+                            "status": "done",
+                            "executor_notes": "done",
+                            "files_changed": ["newpkg/file.py"],
+                            "commands_run": [],
+                        }
+                    ],
+                    "sense_check_acknowledgments": [
+                        {
+                            "sense_check_id": "SC1",
+                            "executor_note": "Confirmed execute boundary capture.",
+                        }
+                    ],
+                },
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="boundary-session",
+            ),
+            "codex",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.execute.batch, "render_step_message", fake_render)
+    monkeypatch.setattr(megaplan.execute.batch, "capture_step_output", fake_capture)
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", boundary_worker)
+    monkeypatch.setattr(
+        megaplan.execute.aggregation,
+        "_compute_execute_scope_drift",
+        lambda *_, **__: SimpleNamespace(
+            files_added=[],
+            files_missing=[],
+            loc_added=0,
+            loc_removed=0,
+            loc_added_outside_claimed=0,
+            severity="none",
+        ),
+    )
+
+    state = load_state(plan_fixture.plan_dir)
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        model="gpt-5.5",
+        resolved_model="gpt-5.5",
+    )
+
+    assert response["success"] is True
+    assert render_calls and render_calls[0]["validation_step"] == "execute"
+    assert capture_calls and capture_calls[0]["metadata"]["validation_step"] == "execute"
+    persisted = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
+    assert persisted["commands_run"] == ["pytest tests/test_execute.py"]
+
+
+def test_handle_execute_one_batch_vertical_model_seam_proof(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    dispatched_prompts: list[str | None] = []
+
+    def _reset_execute_state() -> dict:
+        finalize_path = plan_fixture.plan_dir / "finalize.json"
+        finalize_data = read_json(finalize_path)
+        finalize_data["tasks"][0].update(
+            {
+                "status": "pending",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+            }
+        )
+        finalize_data["sense_checks"][0]["executor_note"] = ""
+        finalize_path.write_text(json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8")
+        return load_state(plan_fixture.plan_dir)
+
+    def _stub_snapshots() -> None:
+        _stub_auto_attribute_git_snapshots(monkeypatch)
+
+    def _run_batch(
+        *,
+        batch_number: int,
+        payload: dict[str, object],
+        model: str = "gpt-5.5",
+    ):
+        _stub_snapshots()
+
+        def boundary_worker(
+            step: str,
+            state: dict,
+            plan_dir: Path,
+            args: Namespace,
+            *,
+            root: Path,
+            resolved=None,
+            prompt_override: str | None = None,
+        ):
+            assert step == "execute"
+            assert prompt_override is not None
+            assert "Implement the new package file." in prompt_override
+            dispatched_prompts.append(prompt_override)
+            return (
+                WorkerResult(
+                    payload=payload,
+                    raw_output=json.dumps(payload),
+                    duration_ms=1,
+                    cost_usd=0.0,
+                    session_id=f"vertical-session-{batch_number}",
+                ),
+                "codex",
+                "persistent",
+                False,
+            )
+
+        monkeypatch.setattr(megaplan.workers, "run_step_with_worker", boundary_worker)
+        monkeypatch.setattr(
+            megaplan.execute.aggregation,
+            "_compute_execute_scope_drift",
+            lambda *_, **__: SimpleNamespace(
+                files_added=[],
+                files_missing=[],
+                loc_added=0,
+                loc_removed=0,
+                loc_added_outside_claimed=0,
+                severity="none",
+            ),
+        )
+        return megaplan.execute.core.handle_execute_one_batch(
+            root=plan_fixture.root,
+            plan_dir=plan_fixture.plan_dir,
+            state=_reset_execute_state(),
+            args=plan_fixture.make_args(
+                plan=plan_fixture.plan_name,
+                confirm_destructive=True,
+                user_approved=True,
+                batch=batch_number,
+            ),
+            batch_number=batch_number,
+            auto_approve=False,
+            agent="codex",
+            mode="persistent",
+            refreshed=False,
+            model=model,
+            resolved_model=model,
+        )
+
+    valid_partial_payload = {
+        "task_updates": [
+            {
+                "task_id": "T1",
+                "status": "done",
+                "executor_notes": "partial batch payload accepted",
+                "files_changed": ["newpkg/file.py"],
+                "commands_run": ["pytest tests/test_execute.py"],
+            }
+        ],
+        "sense_check_acknowledgments": [
+            {
+                "sense_check_id": "SC1",
+                "executor_note": "Validated execute seam proof.",
+            }
+        ],
+    }
+
+    response = _run_batch(batch_number=1, payload=valid_partial_payload)
+
+    assert response["success"] is True
+    assert dispatched_prompts
+    persisted = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
+    assert persisted["task_updates"][0]["executor_notes"] == "partial batch payload accepted"
+    assert "output" not in persisted
+
+    wrong_type_payload = {
+        "task_updates": "this key is valid but the value type is wrong",
+        "sense_check_acknowledgments": [],
+    }
+
+    with pytest.raises(Exception, match="worker_structural_audit_failed"):
+        _run_batch(batch_number=1, payload=wrong_type_payload)
+
+    degraded_response = _run_batch(
+        batch_number=1,
+        payload=valid_partial_payload,
+        model="unknown-execute-model",
+    )
+
+    assert degraded_response["success"] is True
+    assert len(dispatched_prompts) == 3
+    degraded_persisted = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
+    assert degraded_persisted["task_updates"][0]["status"] == "done"
 
 
 def test_handle_execute_one_batch_uses_valid_calibration_suggestion(

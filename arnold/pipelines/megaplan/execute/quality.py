@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from arnold.pipelines.megaplan._core.io import atomic_write_json, sha256_file
 from arnold.pipelines.megaplan.loop.git import (
     _collect_git_status_paths_with_nested_repos,
     _parse_git_status_paths,
@@ -14,12 +15,160 @@ from arnold.pipelines.megaplan.audits.quality_gates import run_quality_checks
 
 
 AUTO_ATTRIBUTION_PATH_LIST_LIMIT = 8
+ADVISORY_PATH_PROJECTION_LIMIT = 40
+BULK_OPERATION_SAMPLE_LIMIT = 5
 
 
 @dataclass
 class AttributionResult:
     records: list[dict[str, Any]]
     recursive_snapshot: dict[str, str] | None
+
+
+def _artifact_ref_for_json_file(plan_dir: Path, name: str) -> dict[str, Any]:
+    path = plan_dir / name
+    return {
+        "plan_id": plan_dir.name,
+        "name": name,
+        "kind": "json",
+        "role": "full_advisory_path_set",
+        "size_bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
+
+
+def _semantic_bulk_operation_summary(values: list[str]) -> dict[str, Any] | None:
+    """Summarize only path sets that are mechanically uniform by inspection.
+
+    This deliberately does not infer intent from content. It collapses only the
+    narrow case where every changed path sits under one directory and shares one
+    file suffix, leaving mixed diffs as explicit path-list projections.
+    """
+    if len(values) <= ADVISORY_PATH_PROJECTION_LIMIT:
+        return None
+    normalized = [Path(value) for value in values if value.strip()]
+    if len(normalized) != len(values):
+        return None
+    suffixes = {path.suffix for path in normalized}
+    if len(suffixes) != 1:
+        return None
+    parents = {path.parent.as_posix() for path in normalized}
+    if len(parents) != 1:
+        return None
+    parent = next(iter(parents))
+    if parent in {"", "."}:
+        return None
+    suffix = next(iter(suffixes))
+    sample_paths = list(values[:BULK_OPERATION_SAMPLE_LIMIT])
+    return {
+        "kind": "semantic_bulk_operation_summary",
+        "operation": "uniform_path_set",
+        "confidence": "conservative_path_shape_only",
+        "path_count": len(values),
+        "common_directory": parent,
+        "file_extension": suffix,
+        "sample_paths": sample_paths,
+        "sampled_deviations": [],
+        "fallback": "mixed diffs are left as capped path projections plus full_set_artifact_ref",
+        "live_tree_verification": [
+            f"git status --short -- {parent}",
+            f"find {parent} -type f -name '*{suffix}' | sort | head -n 20",
+            "Inspect the full_set_artifact_ref JSON before relying on the summary.",
+        ],
+    }
+
+
+def _project_advisory_path_list(
+    values: list[str],
+    *,
+    plan_dir: Path,
+    artifact_name: str,
+    label: str,
+    item_limit: int = ADVISORY_PATH_PROJECTION_LIMIT,
+) -> dict[str, Any] | list[str]:
+    """Return a bounded inline path projection, preserving full data in a sidecar.
+
+    The returned shape is intentionally JSON-plain but ArtifactRef-compatible:
+    prompts and durable summaries get a fixed-size ``items`` list plus a
+    ``full_set_artifact_ref`` pointing at the complete path set.
+    """
+    if len(values) <= item_limit:
+        return list(values)
+    bulk_summary = _semantic_bulk_operation_summary(values)
+    payload = {
+        "label": label,
+        "count": len(values),
+        "items": list(values),
+    }
+    if bulk_summary is not None:
+        payload["semantic_bulk_operation_summary"] = bulk_summary
+    atomic_write_json(plan_dir / artifact_name, payload, _plan_dir=plan_dir)
+    projection: dict[str, Any] = {
+        "items": list(values[:item_limit]),
+        "omitted_count": len(values) - item_limit,
+        "full_set_artifact_ref": _artifact_ref_for_json_file(plan_dir, artifact_name),
+    }
+    if bulk_summary is not None:
+        projection["semantic_bulk_operation_summary"] = bulk_summary
+    return projection
+
+
+def project_advisory_path_sets(
+    payload: dict[str, Any],
+    *,
+    plan_dir: Path | None,
+    artifact_prefix: str,
+    keys: tuple[str, ...] = ("files_changed",),
+    item_limit: int = ADVISORY_PATH_PROJECTION_LIMIT,
+) -> dict[str, Any]:
+    """Bound large advisory path lists in persisted execute summaries.
+
+    Full lists remain available via plan-dir artifact sidecars. Small lists keep
+    the legacy list shape for compatibility.
+    """
+    if plan_dir is None:
+        return payload
+    for key in keys:
+        values = payload.get(key)
+        if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+            continue
+        projection = _project_advisory_path_list(
+            values,
+            plan_dir=plan_dir,
+            artifact_name=f"{artifact_prefix}_{key}.json",
+            label=key,
+            item_limit=item_limit,
+        )
+        payload[key] = projection
+    return payload
+
+
+def expand_projected_path_list(value: Any, *, plan_dir: Path | None) -> list[str]:
+    """Read the full set for a projected advisory path list when available."""
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    if not isinstance(value, dict):
+        return []
+    ref = value.get("full_set_artifact_ref")
+    if not isinstance(ref, dict) or plan_dir is None:
+        items = value.get("items", [])
+        return [item for item in items if isinstance(item, str)] if isinstance(items, list) else []
+    name = ref.get("name")
+    if not isinstance(name, str) or not name:
+        return []
+    try:
+        data = (plan_dir / name).read_text(encoding="utf-8")
+    except OSError:
+        items = value.get("items", [])
+        return [item for item in items if isinstance(item, str)] if isinstance(items, list) else []
+    import json
+
+    try:
+        payload = json.loads(data)
+    except ValueError:
+        return []
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    return [item for item in items if isinstance(item, str)] if isinstance(items, list) else []
 
 
 def _check_done_task_evidence(
@@ -447,7 +596,10 @@ def _observed_batch_paths(
 
 
 def _collect_execute_claimed_paths(
-    payload: dict[str, Any], project_dir: Path | None = None
+    payload: dict[str, Any],
+    project_dir: Path | None = None,
+    *,
+    plan_dir: Path | None = None,
 ) -> set[str]:
     """Collect top-level files_changed only for git observation comparison.
 
@@ -456,9 +608,12 @@ def _collect_execute_claimed_paths(
     phantom-claim deviations when compared against git status deltas.
     Per-task evidence is validated separately by the audit path.
     """
+    raw_files = payload.get("files_changed", [])
+    if isinstance(raw_files, dict):
+        raw_files = expand_projected_path_list(raw_files, plan_dir=plan_dir)
     return {
         _normalize_execute_claimed_path(path, project_dir)
-        for path in payload.get("files_changed", [])
+        for path in raw_files
         if isinstance(path, str) and path.strip()
     }
 

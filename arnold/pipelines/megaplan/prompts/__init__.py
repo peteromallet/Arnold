@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Mapping
 
 from arnold.pipelines.megaplan._core import creative_form_id, is_creative_mode
 from arnold.pipelines.megaplan.forms import get_form
@@ -66,6 +67,37 @@ from .review_joke import _review_joke_prompt
 from ._projection import PromptProjectionCapabilities
 
 _PromptBuilder = Callable[..., str]
+
+
+@dataclass(frozen=True)
+class PromptComponents:
+    """Structured prompt assembly that still degrades to the legacy string."""
+
+    prompt: str
+    system: str | None = None
+    messages: tuple[Mapping[str, Any], ...] = ()
+    schema: Mapping[str, Any] | None = None
+    template: Any | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def as_prompt_text(self) -> str:
+        return self.prompt
+
+    def to_model_metadata(self) -> dict[str, Any]:
+        payload = {
+            "prompt": self.prompt,
+            "prompt_components": self,
+            **dict(self.metadata),
+        }
+        if self.system is not None:
+            payload["system"] = self.system
+        if self.messages:
+            payload["messages"] = [dict(message) for message in self.messages]
+        if self.schema is not None:
+            payload["schema"] = dict(self.schema)
+        if self.template is not None:
+            payload["template"] = self.template
+        return payload
 
 # Shared builder map for all steps that are identical across agents.
 _COMMON_BUILDERS: dict[str, _PromptBuilder] = {
@@ -323,6 +355,32 @@ def create_prompt(
     return _prepend_harness_guard(builder(state, plan_dir))
 
 
+def create_prompt_components(
+    agent: str,
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    *,
+    system: str | None = None,
+    messages: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
+    schema: Mapping[str, Any] | None = None,
+    template: Any | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    **prompt_kwargs: object,
+) -> PromptComponents:
+    prompt = create_prompt(agent, step, state, plan_dir, root=root, **prompt_kwargs)
+    normalized_messages = tuple(dict(message) for message in (messages or ()))
+    return PromptComponents(
+        prompt=prompt,
+        system=system,
+        messages=normalized_messages,
+        schema=dict(schema) if schema is not None else None,
+        template=template,
+        metadata=dict(metadata or {}),
+    )
+
+
 def create_claude_prompt(
     step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
 ) -> str:
@@ -341,8 +399,27 @@ def create_hermes_prompt(
     return create_prompt("hermes", step, state, plan_dir, root=root, **prompt_kwargs)
 
 
+def create_claude_prompt_components(
+    step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
+) -> PromptComponents:
+    return create_prompt_components("claude", step, state, plan_dir, root=root, **prompt_kwargs)
+
+
+def create_codex_prompt_components(
+    step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
+) -> PromptComponents:
+    return create_prompt_components("codex", step, state, plan_dir, root=root, **prompt_kwargs)
+
+
+def create_hermes_prompt_components(
+    step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
+) -> PromptComponents:
+    return create_prompt_components("hermes", step, state, plan_dir, root=root, **prompt_kwargs)
+
+
 __all__ = [
     "PLAN_TEMPLATE",
+    "PromptComponents",
     "_CLAUDE_PROMPT_BUILDERS",
     "_CODEX_PROMPT_BUILDERS",
     "_HERMES_PROMPT_BUILDERS",
@@ -386,7 +463,11 @@ __all__ = [
     "_settled_decisions_instruction",
     "_write_review_template",
     "create_claude_prompt",
+    "create_claude_prompt_components",
     "create_codex_prompt",
+    "create_codex_prompt_components",
     "create_hermes_prompt",
+    "create_hermes_prompt_components",
     "create_prompt",
+    "create_prompt_components",
 ]

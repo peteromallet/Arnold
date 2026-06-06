@@ -55,6 +55,69 @@ def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
     assert result.completion_tokens == 250
     assert result.total_tokens == 5750
 
+
+def test_direct_shannon_claude_session_uses_non_enforced_capture_boundary(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    claude_output = json.dumps({
+        "structured_output": plan_payload,
+        "total_cost_usd": 0.05,
+        "session_id": "sess-abc",
+    })
+    fake_result = CommandResult(
+        command=["claude"],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=claude_output,
+        stderr="",
+        duration_ms=500,
+    )
+    capture_calls: list[dict] = []
+    real_capture = __import__(
+        "arnold.pipelines.megaplan.workers.shannon",
+        fromlist=["capture_step_output"],
+    ).capture_step_output
+
+    def _capture_spy(invocation, output):
+        capture_calls.append(dict(invocation.metadata))
+        outcome = real_capture(invocation, output)
+        return outcome.__class__(
+            contract_result=outcome.contract_result,
+            legacy_payload={**dict(outcome.legacy_payload), "plan": "# Captured"},
+            telemetry=outcome.telemetry,
+        )
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result),
+        patch("arnold.pipelines.megaplan.workers.shannon.capture_step_output", side_effect=_capture_spy),
+    ):
+        result = run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            session_agent="claude",
+            model="sonnet",
+        )
+
+    assert capture_calls[-1]["worker"] == "claude"
+    assert capture_calls[-1]["tier"] == "non_enforced"
+    assert capture_calls[-1]["normalized_model"] == "sonnet"
+    assert result.payload["plan"] == "# Captured"
+
 def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
     from arnold.pipelines.megaplan.workers import CommandResult, run_claude_step

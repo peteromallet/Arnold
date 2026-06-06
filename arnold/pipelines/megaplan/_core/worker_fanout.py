@@ -28,6 +28,8 @@ from typing import Any, Callable
 
 from .hermes_fanout import GenericScatterResult, scatter_gather_processes
 from arnold.pipelines.megaplan.agent_runtime import AgentRequest, AgentSpec, ResultProvenance
+from arnold.pipeline import StepInvocation
+from arnold.pipelines.megaplan.model_seam import render_step_message
 from arnold.pipelines.megaplan.types import AgentMode, PlanState
 
 
@@ -134,6 +136,21 @@ def _worker_unit_to_agent_request(
 ) -> AgentRequest:
     """Adapt a legacy :class:`WorkerUnit` into the runtime request contract."""
     resolved = unit.resolved
+    rendered = render_step_message(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "tier": "non_enforced",
+                "worker": resolved.agent,
+                "model": resolved.resolved_model or resolved.model,
+                "normalized_model": resolved.resolved_model or resolved.model,
+                "prompt": unit.prompt,
+                "validation_step": unit.step,
+                "output_path": str(unit.output_path),
+                "read_only": unit.read_only,
+            },
+        )
+    )
     spec = AgentSpec(
         agent=resolved.agent,
         model=resolved.model,
@@ -147,6 +164,7 @@ def _worker_unit_to_agent_request(
             "read_only": unit.read_only,
             "extra": dict(unit.extra),
         },
+        "model_seam": rendered.to_json(),
         "fanout": {
             "parse_result": parse_result,
             "on_unit_error": on_unit_error,
@@ -181,7 +199,7 @@ def _worker_unit_to_agent_request(
         effort=resolved.effort,
         spec=spec,
         read_only=unit.read_only,
-        prompt=unit.prompt,
+        prompt=rendered.prompt,
         metadata=metadata,
         timeout_seconds=timeout_seconds,
         provenance=provenance,
@@ -222,6 +240,21 @@ def scatter_worker_unit(
     worker_options = unit.extra.get("worker_options")
     if worker_options is not None and not isinstance(worker_options, dict):
         raise TypeError("WorkerUnit.extra['worker_options'] must be a dict when provided")
+    rendered = render_step_message(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "tier": "non_enforced",
+                "worker": unit.resolved.agent,
+                "model": unit.resolved.resolved_model or unit.resolved.model,
+                "normalized_model": unit.resolved.resolved_model or unit.resolved.model,
+                "prompt": unit.prompt,
+                "validation_step": unit.step,
+                "output_path": str(unit.output_path),
+                "read_only": unit.read_only,
+            },
+        )
+    )
 
     worker, _agent, _mode, _refreshed = run_step_with_worker(
         unit.step,
@@ -230,7 +263,7 @@ def scatter_worker_unit(
         args,
         root=root,
         resolved=unit.resolved,
-        prompt_override=unit.prompt,
+        prompt_override=rendered.prompt,
         read_only=unit.read_only,
         output_path=unit.output_path,
         worker_options=dict(worker_options) if worker_options is not None else None,

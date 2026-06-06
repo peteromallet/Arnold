@@ -1789,6 +1789,68 @@ def test_run_shannon_execute_repairs_truncated_envelope(
     assert "structured result" in repair_cmd[p_idx + 1]
 
 
+def test_run_shannon_execute_repairs_structural_audit_failure_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+
+    structurally_invalid = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps({"task_updates": "not-an-array"}),
+            "session_id": "sess-struct",
+            "total_cost_usd": 0.5,
+            "usage": {"input_tokens": 1000, "output_tokens": 64000},
+        }
+    ])
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    repaired = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "sess-struct",
+            "total_cost_usd": 0.1,
+            "usage": {"input_tokens": 1200, "output_tokens": 200},
+        }
+    ])
+    calls = []
+
+    def _fake_run_command(command, **kwargs):
+        calls.append(command)
+        raw = structurally_invalid if len(calls) == 1 else repaired
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=10)
+
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=_fake_run_command):
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="do the batch",
+        )
+
+    assert result.payload == payload
+    assert len(calls) == 2
+    assert calls[1].count("--resume") == 1
+    assert "sess-struct" in calls[1]
+
+
 def test_shannon_accepted_in_agent_choice_surfaces() -> None:
     """All --agent choice surfaces accept 'shannon'."""
     from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
@@ -2490,6 +2552,65 @@ def test_native_prompt_handoff_delivers_prompt_via_stdin_by_default(
     assert msg["type"] == "user"
     assert "DO THE REAL TASK" in msg["message"]["content"]
     assert captured["env"]["MEGAPLAN_SHANNON_PASTE_FIRST_TURN"] == "1"
+
+
+def test_shannon_prompt_override_is_budgeted_through_non_enforced_model_seam(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import render_step_message as real_render_step_message
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.delenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", raising=False)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# P",
+        "questions": [],
+        "success_criteria": [{"criterion": "c", "priority": "must"}],
+        "assumptions": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "s",
+            "total_cost_usd": 0.0,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    ])
+    rendered = []
+
+    def render_spy(invocation):
+        result = real_render_step_message(invocation)
+        rendered.append(result)
+        return result
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1)
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.render_step_message", side_effect=render_spy),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command),
+    ):
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="DO THE REAL TASK",
+            session_agent="shannon",
+        )
+
+    assert rendered
+    assert rendered[0].telemetry.tier.tier.value == "non_enforced"
+    assert rendered[0].budget is not None
+    assert rendered[0].budget.budget_result.value in {"within_budget", "degraded_fallback"}
 
 
 def test_native_prompt_handoff_can_be_disabled_for_legacy_launcher(

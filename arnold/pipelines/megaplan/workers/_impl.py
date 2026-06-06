@@ -64,6 +64,13 @@ from arnold.pipelines.megaplan.prompts import (
     create_hermes_prompt,
     _resolve_prompt_root,
 )
+from arnold.pipeline import StepInvocation
+from arnold.pipelines.megaplan.model_seam import (
+    ModelTier,
+    ModelStructuralAuditError,
+    capture_step_output,
+    render_prompt_for_dispatch,
+)
 from arnold.pipelines.megaplan.runtime.process import TmuxSession, kill_group, spawn
 
 
@@ -109,6 +116,12 @@ class CommandResult:
     stdout: str
     stderr: str
     duration_ms: int
+
+
+@dataclass(frozen=True)
+class RecoveredCodexPayload:
+    payload: dict[str, Any]
+    provenance: str
 
 
 # Inter-event idle bound for the shannon worker (Claude via the shannon CLI).
@@ -1723,15 +1736,36 @@ def _recover_codex_payload(
     raw: str,
     prefer_output_file: bool = True,
 ) -> dict[str, Any] | None:
+    recovered = _recover_codex_payload_with_provenance(
+        step,
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=raw,
+        prefer_output_file=prefer_output_file,
+    )
+    return recovered.payload if recovered is not None else None
+
+
+def _recover_codex_payload_with_provenance(
+    step: str,
+    *,
+    plan_dir: Path,
+    output_path: Path,
+    raw: str,
+    prefer_output_file: bool = True,
+) -> RecoveredCodexPayload | None:
     file_payload = None
     template_payload = None
-    file_recovered_candidates: list[dict[str, Any]] = []
+    candidate_payloads: list[RecoveredCodexPayload] = []
     try:
         file_payload = parse_json_file(output_path)
     except CliError:
         try:
             file_raw = output_path.read_text(encoding="utf-8", errors="replace")
-            file_recovered_candidates.extend(_extract_json_candidates_from_raw(file_raw))
+            candidate_payloads.extend(
+                RecoveredCodexPayload(payload=candidate, provenance="output_file_recovered")
+                for candidate in _extract_json_candidates_from_raw(file_raw)
+            )
         except OSError:
             pass
     fallback_names = {
@@ -1746,7 +1780,10 @@ def _recover_codex_payload(
         except CliError:
             try:
                 fallback_raw = fallback_path.read_text(encoding="utf-8", errors="replace")
-                file_recovered_candidates.extend(_extract_json_candidates_from_raw(fallback_raw))
+                candidate_payloads.extend(
+                    RecoveredCodexPayload(payload=candidate, provenance="template_file_recovered")
+                    for candidate in _extract_json_candidates_from_raw(fallback_raw)
+                )
             except OSError:
                 pass
     if file_payload is None and template_payload is not None:
@@ -1758,6 +1795,7 @@ def _recover_codex_payload(
         and output_path.name.startswith("critique_check_")
         and output_path.suffix == ".json"
     )
+    validation_errors: list[str] = []
     if (
         prefer_output_file
         and file_payload is not None
@@ -1768,32 +1806,43 @@ def _recover_codex_payload(
             validate_payload(step, normalized_file_payload)
         except CliError as error:
             if _looks_like_step_payload(step, normalized_file_payload):
-                raise CliError(
-                    "parse_error",
-                    f"Recovered JSON object for {step} failed validation: {error.message}",
-                    extra={"raw_output": raw},
-                ) from error
+                candidate_payloads.insert(
+                    0,
+                    RecoveredCodexPayload(payload=file_payload, provenance="output_file"),
+                )
+                validation_errors.append(error.message)
         else:
-            return normalized_file_payload
+            return RecoveredCodexPayload(
+                payload=normalized_file_payload,
+                provenance="output_file",
+            )
     raw_candidates = _extract_json_candidates_from_raw(raw)
-    candidate_payloads: list[dict[str, Any]] = []
     if file_payload is not None:
-        candidate_payloads.append(file_payload)
+        if not any(candidate.payload is file_payload for candidate in candidate_payloads):
+            candidate_payloads.insert(
+                0,
+                RecoveredCodexPayload(payload=file_payload, provenance="output_file"),
+            )
     if template_payload is not None:
-        candidate_payloads.append(template_payload)
-    candidate_payloads.extend(file_recovered_candidates)
-    candidate_payloads.extend(raw_candidates)
-    valid_payloads: list[dict[str, Any]] = []
-    validation_errors: list[str] = []
+        insert_at = 1 if file_payload is not None else 0
+        candidate_payloads.insert(
+            insert_at,
+            RecoveredCodexPayload(payload=template_payload, provenance="template_file"),
+        )
+    candidate_payloads.extend(
+        RecoveredCodexPayload(payload=candidate, provenance="raw_output")
+        for candidate in raw_candidates
+    )
+    valid_payloads: list[RecoveredCodexPayload] = []
     for candidate in candidate_payloads:
-        normalized = _normalize_worker_payload(step, candidate)
+        normalized = _normalize_worker_payload(step, candidate.payload)
         try:
             validate_payload(step, normalized)
         except CliError as error:
             if _looks_like_step_payload(step, normalized):
                 validation_errors.append(error.message)
             continue
-        valid_payloads.append(normalized)
+        valid_payloads.append(RecoveredCodexPayload(payload=normalized, provenance=candidate.provenance))
     if not valid_payloads:
         if validation_errors:
             unique_errors = list(dict.fromkeys(validation_errors))
@@ -1805,8 +1854,8 @@ def _recover_codex_payload(
             )
         return None
     if step == "critique" and len(valid_payloads) > 1:
-        def _critique_completeness_score(item: dict[str, Any]) -> tuple[int, int]:
-            checks = item.get("checks", [])
+        def _critique_completeness_score(item: RecoveredCodexPayload) -> tuple[int, int]:
+            checks = item.payload.get("checks", [])
             if not isinstance(checks, list):
                 return (0, 0)
             completed_checks = 0
@@ -1945,7 +1994,13 @@ def mock_worker_output(
             plan_dir / "review_output.json",
         )
         preexisting_paths = {path for path in side_effect_paths if path.exists()}
-        result.rendered_prompt = create_hermes_prompt(step, state, plan_dir, root=root)
+        result.rendered_prompt = render_prompt_for_dispatch(
+            "hermes",
+            step,
+            state,
+            plan_dir,
+            root=root,
+        ).prompt
         for path in side_effect_paths:
             if path.exists() and path not in preexisting_paths:
                 path.unlink()
@@ -2142,13 +2197,26 @@ def run_codex_step(
     else:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt = prompt_override if prompt_override is not None else create_codex_prompt(
-        step,
-        state,
-        plan_dir,
-        root=root,
-        **(prompt_kwargs or {}),
+    rendered_prompt = None
+    seam_tier = (
+        ModelTier.NON_ENFORCED
+        if persistent and session.get("id") and not fresh and not read_only
+        else ModelTier.ENFORCED
     )
+    if prompt_override is None:
+        rendered_prompt = render_prompt_for_dispatch(
+            "codex",
+            step,
+            state,
+            plan_dir,
+            root=root,
+            model=model,
+            normalized_model=model,
+            tier=seam_tier,
+            schema=read_json(schema_file),
+            **(prompt_kwargs or {}),
+        )
+    prompt = prompt_override if prompt_override is not None else rendered_prompt.prompt
     timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
     if read_only:
@@ -2535,12 +2603,32 @@ def run_codex_step(
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
         if error_code != "worker_error":
             raise CliError(error_code, error_message, extra={"raw_output": raw})
-    payload = _recover_codex_payload(
-        step,
-        plan_dir=plan_dir,
-        output_path=output_path,
-        raw=raw,
-    )
+    try:
+        capture_outcome = capture_step_output(
+            StepInvocation(
+                kind="model",
+                metadata={
+                    "tier": seam_tier.value,
+                    "worker": "codex",
+                    "model": model,
+                    "normalized_model": model,
+                    "validation_step": step,
+                    "compatibility_validation_step": step,
+                    "capture_recovery": {
+                        "step": step,
+                        "plan_dir": str(plan_dir),
+                        "output_path": str(output_path),
+                        "prefer_output_file": True,
+                    },
+                },
+            ),
+            raw,
+        )
+        payload = dict(capture_outcome.legacy_payload)
+    except json.JSONDecodeError:
+        payload = None
+    except ModelStructuralAuditError as error:
+        raise CliError("parse_error", str(error), extra={"raw_output": raw}) from error
     if payload is None:
         parse_error = _json_decode_error_for_raw(raw)
         try:
@@ -2664,13 +2752,21 @@ def run_codex_prep_step(
     out_handle.close()
     output_path = Path(out_handle.name)
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
-    prompt = prompt_override if prompt_override is not None else create_codex_prompt(
-        step,
-        state,
-        plan_dir,
-        root=root,
-        **(prompt_kwargs or {}),
-    )
+    rendered_prompt = None
+    if prompt_override is None:
+        rendered_prompt = render_prompt_for_dispatch(
+            "codex",
+            step,
+            state,
+            plan_dir,
+            root=root,
+            model=model,
+            normalized_model=model,
+            tier=ModelTier.ENFORCED,
+            schema=read_json(schema_file),
+            **(prompt_kwargs or {}),
+        )
+    prompt = prompt_override if prompt_override is not None else rendered_prompt.prompt
     command = [
         "codex",
         "exec",
@@ -2700,12 +2796,32 @@ def run_codex_prep_step(
     ):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
         raise CliError(error_code, error_message, extra={"raw_output": raw})
-    payload = _recover_codex_payload(
-        step,
-        plan_dir=plan_dir,
-        output_path=output_path,
-        raw=raw,
-    )
+    try:
+        capture_outcome = capture_step_output(
+            StepInvocation(
+                kind="model",
+                metadata={
+                    "tier": ModelTier.ENFORCED.value,
+                    "worker": "codex",
+                    "model": model,
+                    "normalized_model": model,
+                    "validation_step": step,
+                    "compatibility_validation_step": step,
+                    "capture_recovery": {
+                        "step": step,
+                        "plan_dir": str(plan_dir),
+                        "output_path": str(output_path),
+                        "prefer_output_file": True,
+                    },
+                },
+            ),
+            raw,
+        )
+        payload = dict(capture_outcome.legacy_payload)
+    except json.JSONDecodeError:
+        payload = None
+    except ModelStructuralAuditError as error:
+        raise CliError("parse_error", str(error), extra={"raw_output": raw}) from error
     if payload is None:
         raise CliError(
             "parse_error",

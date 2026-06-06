@@ -15,6 +15,7 @@ from arnold.pipelines.megaplan.workers._impl import (
     _is_session_too_large_for_compact,
     _merge_partial_output,
     _recover_codex_payload,
+    _recover_codex_payload_with_provenance,
     validate_payload,
     run_codex_prep_step,
     run_step_with_worker,
@@ -22,6 +23,7 @@ from arnold.pipelines.megaplan.workers._impl import (
     set_work_dir_override,
     session_key_for,
     update_session_state,
+    warn_if_work_dir_differs_from_project_dir,
     mock_worker_output,
     _check_mock_safe,
 )
@@ -42,6 +44,7 @@ __all__ = [
     "_is_session_too_large_for_compact",
     "_merge_partial_output",
     "_recover_codex_payload",
+    "_recover_codex_payload_with_provenance",
     "validate_payload",
     "run_codex_prep_step",
     "run_step_with_worker",
@@ -49,6 +52,7 @@ __all__ = [
     "set_work_dir_override",
     "session_key_for",
     "update_session_state",
+    "warn_if_work_dir_differs_from_project_dir",
     "mock_worker_output",
     "_check_mock_safe",
 ]

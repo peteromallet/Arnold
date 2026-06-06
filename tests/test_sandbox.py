@@ -485,15 +485,14 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
             # Snapshot ContextVar + handler identity at the moment the agent runs.
             observed["sandbox_cwd"] = str(get_sandbox_cwd()) if get_sandbox_cwd() else None
             observed["terminal_handler"] = fake_tools_registry._tools["terminal"].handler
-            # Return a payload the parser will accept.  For execute we
-            # need files_claimed + summary.
+            # Return a payload the current execute contract will accept.
             payload = {
-                "files_claimed": [],
-                "summary": "did nothing",
-                "tasks_completed": [],
-                "tests_run": [],
-                "issues": [],
-                "next_steps": [],
+                "output": "did nothing",
+                "files_changed": [],
+                "commands_run": [],
+                "deviations": [],
+                "task_updates": [],
+                "sense_check_acknowledgments": [],
             }
             return {
                 "final_response": json.dumps(payload),

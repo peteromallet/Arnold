@@ -60,10 +60,16 @@ from arnold.pipelines.megaplan.execute.quality import (
     _check_done_task_evidence_by_kind,
     _collect_quality_deviations,
     _observe_git_changes,
+    project_advisory_path_sets,
 )
 from arnold.pipelines.megaplan.execute.timeout import (
     _recover_execute_timeout,
     _resolve_execute_approval_mode,
+)
+from arnold.pipelines.megaplan.model_seam import (
+    ModelTier,
+    capture_step_output,
+    render_step_message,
 )
 from arnold.pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
@@ -79,6 +85,7 @@ from arnold.pipelines.megaplan.types import (
     PlanState,
     StepResponse,
 )
+from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan.planning.state import (
     STATE_BLOCKED,
     STATE_EXECUTED,
@@ -91,6 +98,7 @@ log = logging.getLogger(__name__)
 _BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
 _UNROUTABLE_REWORK_ATTEMPTS_KEY = "unroutable_rework_attempts"
 _MAX_UNROUTABLE_REWORK_RERUNS = 2
+_ROUTABLE_REWORK_TARGET_KINDS = {"task", "bulk", "manifest"}
 
 
 def _batch_task_signature(batch_task_ids: Iterable[str], batch_complexity: int) -> str:
@@ -363,6 +371,74 @@ def _positive_int_or_default(value: Any, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def _execute_model_metadata(
+    *,
+    agent: str,
+    model: str | None,
+    resolved_model: str | None,
+) -> dict[str, Any]:
+    selected_model = resolved_model if resolved_model is not None else model
+    return {
+        "tier": ModelTier.NON_ENFORCED.value,
+        "worker": agent,
+        "model": selected_model,
+        "normalized_model": selected_model,
+        "validation_step": "execute",
+        "compatibility_validation_step": "execute",
+    }
+
+
+def _render_execute_prompt_for_dispatch(
+    *,
+    agent: str,
+    state: PlanState,
+    plan_dir: Path,
+    root: Path,
+    model: str | None,
+    resolved_model: str | None,
+    prompt_override: str | None,
+) -> str | None:
+    if prompt_override is None:
+        return None
+    metadata = _execute_model_metadata(
+        agent=agent,
+        model=model,
+        resolved_model=resolved_model,
+    )
+    rendered = render_step_message(
+        StepInvocation(
+            kind="model",
+            metadata={
+                **metadata,
+                "prompt": prompt_override,
+                "prompt_components": prompt_override,
+            },
+        )
+    )
+    return rendered.prompt
+
+
+def _capture_execute_payload(
+    *,
+    agent: str,
+    model: str | None,
+    resolved_model: str | None,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    outcome = capture_step_output(
+        StepInvocation(
+            kind="model",
+            metadata=_execute_model_metadata(
+                agent=agent,
+                model=model,
+                resolved_model=resolved_model,
+            ),
+        ),
+        payload,
+    )
+    return dict(outcome.legacy_payload)
+
+
 def _default_max_tasks_per_batch() -> int:
     return _positive_int_or_default(
         get_effective("execution", "max_tasks_per_batch"),
@@ -537,6 +613,15 @@ def _run_and_merge_batch(
         effort=effort,
         resolved_model=resolved_model if resolved_model is not None else model,
     )
+    rendered_prompt_override = _render_execute_prompt_for_dispatch(
+        agent=agent,
+        state=state,
+        plan_dir=plan_dir,
+        root=root,
+        model=model,
+        resolved_model=resolved_model,
+        prompt_override=prompt_override,
+    )
     worker, agent, mode, refreshed = worker_module.run_step_with_worker(
         "execute",
         state,
@@ -544,9 +629,14 @@ def _run_and_merge_batch(
         args,
         root=root,
         resolved=am_for_worker,
-        prompt_override=prompt_override,
+        prompt_override=rendered_prompt_override,
     )
-    payload = dict(worker.payload)
+    payload = _capture_execute_payload(
+        agent=agent,
+        model=model,
+        resolved_model=resolved_model,
+        payload=dict(worker.payload),
+    )
     routing_degradations = _finalize_routing_record(
         routing_record,
         actual_agent=agent,
@@ -646,6 +736,13 @@ def _run_and_merge_batch(
     for finding in execution_audit["findings"]:
         deviations.append(f"Advisory audit finding: {finding}")
     payload["deviations"] = deviations
+    if not is_prose_mode(state):
+        project_advisory_path_sets(
+            payload,
+            plan_dir=plan_dir,
+            artifact_prefix=f"execution_batch_{batch_number}",
+            keys=("files_changed",),
+        )
     atomic_write_json(batch_artifact_path(plan_dir, batch_number), payload)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
@@ -1175,6 +1272,60 @@ def _review_requests_rework(review_data: dict[str, Any]) -> bool:
     )
 
 
+def _strings_from(value: Any) -> list[str]:
+    if isinstance(value, str) and value:
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str) and item]
+    return []
+
+
+def _rework_item_target_task_ids(item: dict[str, Any]) -> tuple[list[str], str | None]:
+    target = item.get("target")
+    if isinstance(target, dict):
+        raw_kind = target.get("kind") or target.get("type") or target.get("route")
+        kind = str(raw_kind).strip().lower() if isinstance(raw_kind, str) else "task"
+        target_id = target.get("id") or target.get("target_id")
+        label = (
+            f"{kind}:{target_id}"
+            if isinstance(target_id, str) and target_id
+            else kind
+        )
+        candidate_ids = []
+        if kind == "task":
+            candidate_ids.extend(_strings_from(target.get("task_id") or target.get("id")))
+        candidate_ids.extend(_strings_from(target.get("task_ids")))
+        candidate_ids.extend(_strings_from(target.get("concerned_task_ids")))
+        if kind not in _ROUTABLE_REWORK_TARGET_KINDS:
+            return [], label
+        if candidate_ids:
+            return candidate_ids, None
+        return [], label
+
+    target_kind = item.get("target_kind") or item.get("target_type") or item.get("route")
+    if isinstance(target_kind, str) and target_kind:
+        kind = target_kind.strip().lower()
+        label_id = item.get("target_id") or item.get("artifact_ref") or item.get("flag_id")
+        label = f"{kind}:{label_id}" if isinstance(label_id, str) and label_id else kind
+        candidate_ids = []
+        if kind == "task":
+            candidate_ids.extend(_strings_from(item.get("target_id")))
+        candidate_ids.extend(_strings_from(item.get("task_ids")))
+        candidate_ids.extend(_strings_from(item.get("concerned_task_ids")))
+        if kind not in _ROUTABLE_REWORK_TARGET_KINDS:
+            return [], label
+        if candidate_ids:
+            return candidate_ids, None
+        return [], label
+
+    task_id = item.get("task_id")
+    if not isinstance(task_id, str) or not task_id:
+        return [], str(task_id or "<missing>")
+    if task_id == "REVIEW":
+        return [], "REVIEW"
+    return [task_id], None
+
+
 def _review_rework_task_ids(
     review_data: dict[str, Any],
     finalize_data: dict[str, Any],
@@ -1191,20 +1342,21 @@ def _review_rework_task_ids(
         if not isinstance(item, dict):
             continue
         source = item.get("source")
-        task_id = item.get("task_id")
-        if not isinstance(task_id, str) or not task_id:
-            unrunnable.append(str(task_id or "<missing>"))
-            continue
+        candidate_task_ids, unrunnable_label = _rework_item_target_task_ids(item)
         if source == "review_incomplete":
-            unrunnable.append(task_id)
+            unrunnable.append(unrunnable_label or ",".join(candidate_task_ids) or "<missing>")
             continue
-        if task_id not in task_ids:
-            unrunnable.append(task_id)
+        if unrunnable_label and not candidate_task_ids:
+            unrunnable.append(unrunnable_label)
             continue
-        if task_id in seen:
-            continue
-        seen.add(task_id)
-        runnable.append(task_id)
+        for task_id in candidate_task_ids:
+            if task_id not in task_ids:
+                unrunnable.append(task_id)
+                continue
+            if task_id in seen:
+                continue
+            seen.add(task_id)
+            runnable.append(task_id)
     return runnable, unrunnable
 
 
@@ -1262,60 +1414,11 @@ def _handle_unroutable_review_rework(
     unmatched = ", ".join(sorted(set(unrunnable_task_ids))) or "<none>"
     reason = (
         "review requested rework but no runnable finalize task IDs could be derived. "
-        f"Unmatched rework task_id(s): {unmatched}. "
-        "Re-run review so rework_items reference concrete finalize task IDs."
+        f"Unmatched rework target(s): {unmatched}. "
+        "Use typed rework targets that route to concrete finalize task IDs, "
+        "or resolve the review blocker manually."
     )
     meta[_UNROUTABLE_REWORK_ATTEMPTS_KEY] = attempts
-
-    if attempts <= _MAX_UNROUTABLE_REWORK_RERUNS:
-        state["current_state"] = STATE_EXECUTED
-        summary = (
-            "Review requested rework with only unroutable task IDs "
-            f"({unmatched}); re-running review "
-            f"({attempts}/{_MAX_UNROUTABLE_REWORK_RERUNS}) instead of blocking execute."
-        )
-        append_history(
-            state,
-            make_history_entry(
-                "execute",
-                duration_ms=0,
-                cost_usd=0.0,
-                result="rerun_review",
-                message=summary,
-            ),
-        )
-        save_state_merge_meta(plan_dir, state)
-        from arnold.pipelines.megaplan.observability.events import EventKind, emit
-
-        emit(
-            EventKind.PHASE_RETRY,
-            plan_dir=plan_dir,
-            phase="review",
-            payload={
-                "reason": "unroutable_review_rework",
-                "attempt": attempts,
-                "max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS,
-                "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
-            },
-        )
-        response: StepResponse = {
-            "success": True,
-            "step": "execute",
-            "summary": summary,
-            "artifacts": ["review.json", "finalize.json", "final.md"],
-            "monitor_hint": build_monitor_hint(plan_dir),
-            "next_step": "review",
-            "state": STATE_EXECUTED,
-            "files_changed": [],
-            "deviations": [],
-            "warnings": [summary],
-            "auto_approve": auto_approve,
-            "user_approved_gate": bool(state["meta"].get("user_approved_gate", False)),
-            "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
-            "_phase_outcome": "success",
-        }
-        _attach_next_step_runtime(response)
-        return response
 
     from arnold.pipelines.megaplan.observability.events import EventKind, emit
 
@@ -1328,7 +1431,6 @@ def _handle_unroutable_review_rework(
             "from": STATE_FINALIZED,
             "to": STATE_BLOCKED,
             "attempt": attempts,
-            "max_attempts": _MAX_UNROUTABLE_REWORK_RERUNS,
             "unrunnable_rework_task_ids": sorted(set(unrunnable_task_ids)),
         },
     )
@@ -1336,11 +1438,7 @@ def _handle_unroutable_review_rework(
         plan_dir=plan_dir,
         state=state,
         auto_approve=auto_approve,
-        reason=(
-            f"{reason} Review re-run attempts exhausted "
-            f"({attempts - 1}/{_MAX_UNROUTABLE_REWORK_RERUNS}); "
-            "resolve the quality blocker or recover-blocked after operator review."
-        ),
+        reason=reason,
         unrunnable_task_ids=unrunnable_task_ids,
     )
     response["result"] = "blocked"
@@ -1499,14 +1597,13 @@ def handle_execute_auto_loop(
                         prior_attempts + 1 if isinstance(prior_attempts, int) else 1
                     )
                     meta[_UNROUTABLE_REWORK_ATTEMPTS_KEY] = attempts
-                    if attempts > _MAX_UNROUTABLE_REWORK_RERUNS:
-                        return _escalate_persistent_unroutable_rework(
-                            plan_dir=plan_dir,
-                            state=state,
-                            auto_approve=auto_approve,
-                            unrunnable_task_ids=unrunnable_rework_task_ids,
-                            runnable_task_ids=review_rework_task_ids,
-                        )
+                    return _escalate_persistent_unroutable_rework(
+                        plan_dir=plan_dir,
+                        state=state,
+                        auto_approve=auto_approve,
+                        unrunnable_task_ids=unrunnable_rework_task_ids,
+                        runnable_task_ids=review_rework_task_ids,
+                    )
                 else:
                     state.setdefault("meta", {}).pop(
                         _UNROUTABLE_REWORK_ATTEMPTS_KEY, None
@@ -1961,6 +2058,13 @@ def handle_execute_auto_loop(
             f"work is handled out-of-band; re-run those tasks once the blockage is resolved."
         )
     aggregate_payload["deviations"] = deviations
+    if not is_prose_mode(state):
+        project_advisory_path_sets(
+            aggregate_payload,
+            plan_dir=plan_dir,
+            artifact_prefix="execution",
+            keys=("files_changed",),
+        )
     write_plan_artifact_json(plan_dir, "execution.json", aggregate_payload, contract_context=None)
     drift = _compute_scope_drift_for_execute_surface(
         project_dir=project_dir,

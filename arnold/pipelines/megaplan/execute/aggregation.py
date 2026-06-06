@@ -16,6 +16,8 @@ from arnold.pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot_recursive,
     _collect_execute_claimed_paths,
     _normalize_execute_claimed_path,
+    expand_projected_path_list,
+    project_advisory_path_sets,
 )
 from arnold.pipelines.megaplan.forms.directors_notes import update_directors_notes_at_aggregate
 from arnold.pipelines.megaplan.forms.provocations import select_active_checks
@@ -62,7 +64,7 @@ def _build_aggregate_execution_payload(
             )
         else:
             files_changed.extend(
-                [path for path in payload.get("files_changed", []) if isinstance(path, str)]
+                expand_projected_path_list(payload.get("files_changed"), plan_dir=plan_dir)
             )
         commands_run.extend(
             [
@@ -100,6 +102,12 @@ def _build_aggregate_execution_payload(
         result["sections_written"] = _stable_unique_strings(sections_written)
     else:
         result["files_changed"] = _stable_unique_strings(files_changed)
+        project_advisory_path_sets(
+            result,
+            plan_dir=plan_dir,
+            artifact_prefix="execution_aggregate",
+            keys=("files_changed",),
+        )
     if state is not None and plan_dir is not None and is_creative_mode(state):
         checks = select_active_checks(state, configured_robustness(state), plan_dir=plan_dir)
         fired = [
@@ -149,7 +157,11 @@ def _collect_per_batch_claimed_paths(
         except (OSError, UnicodeDecodeError, ValueError):
             continue
         if isinstance(payload, dict):
-            claimed |= _collect_execute_claimed_paths(payload, project_dir)
+            claimed |= _collect_execute_claimed_paths(
+                payload,
+                project_dir,
+                plan_dir=plan_dir,
+            )
     return claimed
 
 
@@ -196,7 +208,11 @@ def _compute_execute_scope_drift(
     # This call's own claims drive the per-call ``files_missing`` (fabrication)
     # signal; the per-batch union below only widens ``files_claimed`` so prior
     # batches' writes aren't flagged as unclaimed additions.
-    per_call_claimed = _collect_execute_claimed_paths(aggregate_payload, project_dir)
+    per_call_claimed = _collect_execute_claimed_paths(
+        aggregate_payload,
+        project_dir,
+        plan_dir=plan_dir,
+    )
     files_claimed = set(per_call_claimed)
     # Union per-batch claims from disk so per-batch execute mode compares the
     # working-tree diff against every batch's claims, not just this call's.

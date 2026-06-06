@@ -46,6 +46,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from arnold.pipeline import StepInvocation
 # Absolute path to the megaplan-vendored Shannon fork. The runtime invokes
 # ``bun <VENDORED_SHANNON_PATH>`` instead of relying on an ``@dexh/shannon``
 # binary on PATH. ``_launch_command`` may wrap the argv in ``su -c <shell-join>``
@@ -59,7 +60,13 @@ from arnold.pipelines.megaplan.runtime.process import OrphanDetectedError, TmuxS
 from arnold.pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from arnold.pipelines.megaplan._core import creative_form_id, read_json, schemas_root
 from arnold.pipelines.megaplan.prompts import create_claude_prompt
-from arnold.pipelines.megaplan.prompts._projection import check_prompt_size
+from arnold.pipelines.megaplan.model_seam import (
+    ModelBudgetError,
+    ModelTier,
+    ModelStructuralAuditError,
+    capture_step_output,
+    render_step_message,
+)
 from arnold.pipelines.megaplan.prompts.review import compact_review_prompt
 from arnold.pipelines.megaplan.schemas import get_execution_schema_key
 from arnold.pipelines.megaplan.workers._impl import (
@@ -69,13 +76,11 @@ from arnold.pipelines.megaplan.workers._impl import (
     _check_mock_safe,
     _extract_claude_usage,
     _external_worker_env,
-    _normalize_worker_payload,
     _worker_stream_idle_timeout_seconds,
     mock_worker_output,
     resolve_work_dir,
     run_command,
     session_key_for,
-    validate_payload,
 )
 from arnold.pipelines.megaplan.workers._projection_caps import shannon_projection_capabilities
 
@@ -87,6 +92,25 @@ _SHANNON_VENDOR_SENTINEL = "MEGAPLAN_SHANNON_VENDORED v1"
 # Module-level cache so _assert_vendored_shannon_sentinel() runs at most once
 # per Python process even when called from every run_shannon_step invocation.
 _shannon_vendor_sentinel_ok = False
+
+
+def check_prompt_size(prompt_text: str, *, phase: str) -> None:
+    """Legacy guard surface backed by the model seam budget check."""
+
+    render_step_message(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "tier": ModelTier.NON_ENFORCED.value,
+                "worker": "shannon",
+                "model": "claude",
+                "normalized_model": "claude",
+                "validation_step": phase,
+                "prompt": prompt_text,
+                "prompt_components": prompt_text,
+            },
+        )
+    )
 
 
 def _assert_vendored_shannon_sentinel() -> None:
@@ -2047,10 +2071,34 @@ def run_shannon_step(
 
     # ── (c) build the real phase prompt (file + launcher pointer) ───────
     projection_capabilities = shannon_projection_capabilities(read_only=read_only)
-    base_prompt = (
-        prompt_override
-        if prompt_override is not None
-        else create_claude_prompt(
+    plan_mode = state["config"].get("mode", "code")
+    schema_name = (
+        get_execution_schema_key(plan_mode, form=creative_form_id(state))
+        if step == "execute"
+        else STEP_SCHEMA_FILENAMES[step]
+    )
+    schema = read_json(schemas_root(root) / schema_name)
+    schema_text = json.dumps(schema)
+    rendered_step = None
+    if prompt_override is not None:
+        rendered_step = render_step_message(
+            StepInvocation(
+                kind="model",
+                metadata={
+                    "tier": ModelTier.NON_ENFORCED.value,
+                    "worker": session_agent,
+                    "model": model,
+                    "normalized_model": model,
+                    "validation_step": step,
+                    "prompt": prompt_override,
+                    "prompt_components": prompt_override,
+                    "schema": schema,
+                    "projection_capabilities": projection_capabilities,
+                },
+            )
+        )
+    else:
+        built_prompt = create_claude_prompt(
             step,
             state,
             plan_dir,
@@ -2058,17 +2106,53 @@ def run_shannon_step(
             projection_capabilities=projection_capabilities,
             **(prompt_kwargs or {}),
         )
-    )
+        try:
+            rendered_step = render_step_message(
+                StepInvocation(
+                    kind="model",
+                    metadata={
+                        "tier": ModelTier.NON_ENFORCED.value,
+                        "worker": session_agent,
+                        "model": model,
+                        "normalized_model": model,
+                        "validation_step": step,
+                        "prompt": built_prompt,
+                        "prompt_components": built_prompt,
+                        "schema": schema,
+                        "projection_capabilities": projection_capabilities,
+                    },
+                )
+            )
+        except ModelBudgetError as error:
+            if step != "review":
+                raise
+            compacted_prompt = compact_review_prompt(
+                state,
+                plan_dir,
+                root,
+                prompt_size_error={"message": str(error)},
+                pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
+                projection_capabilities=projection_capabilities,
+            )
+            rendered_step = render_step_message(
+                StepInvocation(
+                    kind="model",
+                    metadata={
+                        "tier": ModelTier.NON_ENFORCED.value,
+                        "worker": session_agent,
+                        "model": model,
+                        "normalized_model": model,
+                        "validation_step": step,
+                        "prompt": compacted_prompt,
+                        "prompt_components": compacted_prompt,
+                        "schema": schema,
+                    },
+                )
+            )
+    base_prompt = rendered_step.prompt
     if output_path is not None:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-    plan_mode = state["config"].get("mode", "code")
-    schema_name = (
-        get_execution_schema_key(plan_mode, form=creative_form_id(state))
-        if step == "execute"
-        else STEP_SCHEMA_FILENAMES[step]
-    )
-    schema_text = json.dumps(read_json(schemas_root(root) / schema_name))
     prompt = _append_json_output_contract(base_prompt, step=step, schema_text=schema_text)
     try:
         check_prompt_size(prompt, phase=step)
@@ -2355,8 +2439,24 @@ def run_shannon_step(
     def _parse_and_validate(raw_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
         env_, pay_ = _parse_shannon_output(raw_text)
         pay_ = _apply_file_fallback(step, pay_, plan_dir, output_path=output_path)
-        pay_ = _normalize_worker_payload(step, pay_)
-        validate_payload(step, pay_)
+        try:
+            capture_outcome = capture_step_output(
+                StepInvocation(
+                    kind="model",
+                    metadata={
+                        "tier": ModelTier.NON_ENFORCED.value,
+                        "worker": session_agent,
+                        "model": model,
+                        "normalized_model": model,
+                        "validation_step": step,
+                        "compatibility_validation_step": step,
+                    },
+                ),
+                pay_,
+            )
+        except ModelStructuralAuditError as error:
+            raise CliError("schema_error", str(error), extra={"raw_output": raw_text}) from error
+        pay_ = dict(capture_outcome.legacy_payload)
         return env_, pay_
 
     try:

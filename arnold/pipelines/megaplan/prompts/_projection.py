@@ -5,9 +5,9 @@ prompt payloads so persistent JSON ledgers remain complete on disk while
 model prompts receive compact, worker-readable context plus provenance
 references.
 
-All projection happens at prompt-render time only.  Durable artifacts
-(``finalize.json``, ``execution.json``, ``review.json``,
-``execution_audit.json``) stay complete and are never truncated.
+Prompt projection happens at prompt-render time.  Execute summaries may also
+store bounded advisory path lists, but only with ArtifactRef-backed sidecars
+that preserve the complete set on disk.
 """
 
 from __future__ import annotations
@@ -32,6 +32,9 @@ MAX_EXECUTION_DEVIATION_CHARS = 700
 MAX_EXECUTION_COMMAND_CHARS = 300
 MAX_AUDIT_FINDINGS = 20
 MAX_AUDIT_FILES = 40
+MAX_FILE_LIST_ITEMS = 20
+MAX_BULK_SUMMARY_SAMPLES = 5
+MAX_BULK_SUMMARY_INSTRUCTIONS = 5
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +146,67 @@ def _project_list(
     return projected
 
 
+def _project_path_list(value: Any, *, item_limit: int = MAX_FILE_LIST_ITEMS) -> Any:
+    if isinstance(value, list):
+        return value[:item_limit]
+    if not isinstance(value, dict):
+        return value
+    items = value.get("items", [])
+    projected: dict[str, Any] = {}
+    if isinstance(items, list):
+        projected["items"] = items[:item_limit]
+        omitted = value.get("omitted_count")
+        if isinstance(omitted, int):
+            projected["omitted_count"] = omitted + max(0, len(items) - item_limit)
+        elif len(items) > item_limit:
+            projected["omitted_count"] = len(items) - item_limit
+    for key in ("full_set_artifact_ref", "artifact_ref"):
+        ref = value.get(key)
+        if isinstance(ref, dict):
+            projected[key] = ref
+    bulk_summary = value.get("semantic_bulk_operation_summary")
+    if isinstance(bulk_summary, dict):
+        projected["semantic_bulk_operation_summary"] = _project_bulk_operation_summary(
+            bulk_summary
+        )
+    return projected or value
+
+
+def _project_bulk_operation_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    projected: dict[str, Any] = {}
+    for key in (
+        "kind",
+        "operation",
+        "confidence",
+        "path_count",
+        "common_directory",
+        "file_extension",
+        "fallback",
+    ):
+        if key in summary:
+            projected[key] = summary[key]
+    sample_paths = summary.get("sample_paths")
+    if isinstance(sample_paths, list):
+        projected["sample_paths"] = [
+            item for item in sample_paths[:MAX_BULK_SUMMARY_SAMPLES] if isinstance(item, str)
+        ]
+    sampled_deviations = summary.get("sampled_deviations")
+    if isinstance(sampled_deviations, list):
+        projected["sampled_deviations"] = [
+            _brief_text(item, limit=MAX_EXECUTION_DEVIATION_CHARS)
+            for item in sampled_deviations[:MAX_BULK_SUMMARY_SAMPLES]
+            if isinstance(item, str)
+        ]
+    instructions = summary.get("live_tree_verification")
+    if isinstance(instructions, list):
+        projected["live_tree_verification"] = [
+            _brief_text(item, limit=MAX_EXECUTION_COMMAND_CHARS)
+            for item in instructions[:MAX_BULK_SUMMARY_INSTRUCTIONS]
+            if isinstance(item, str)
+        ]
+    return projected
+
+
 def _project_task(task: dict[str, Any]) -> dict[str, Any]:
     """Project a single task object for prompt rendering.
 
@@ -194,7 +258,12 @@ def _project_task(task: dict[str, Any]) -> dict[str, Any]:
         if key in task:
             val = task[key]
             if isinstance(val, list):
-                projected[key] = val[:20]  # cap at 20 entries
+                if key == "commands_run":
+                    projected[key] = val[:20]  # cap at 20 entries
+                else:
+                    projected[key] = _project_path_list(val)
+            elif key != "commands_run" and isinstance(val, dict):
+                projected[key] = _project_path_list(val)
             else:
                 projected[key] = val
 
@@ -361,8 +430,8 @@ def project_review_context(
             )
 
         files_changed = execution_data.get("files_changed")
-        if isinstance(files_changed, list):
-            projected["files_changed"] = files_changed[:20]
+        if isinstance(files_changed, (list, dict)):
+            projected["files_changed"] = _project_path_list(files_changed)
 
         commands_run = execution_data.get("commands_run")
         if isinstance(commands_run, list):

@@ -53,6 +53,98 @@ def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
     assert invoked_cmd[idx - 1] == "-c"
 
 
+def test_run_codex_step_fresh_uses_enforced_render_and_capture_legacy_payload(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    observed_tiers: list[str] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=10)
+
+    real_render = __import__(
+        "arnold.pipelines.megaplan.workers._impl",
+        fromlist=["render_prompt_for_dispatch"],
+    ).render_prompt_for_dispatch
+    real_capture = __import__(
+        "arnold.pipelines.megaplan.workers._impl",
+        fromlist=["capture_step_output"],
+    ).capture_step_output
+
+    def spy_render(*args, **kwargs):
+        observed_tiers.append(kwargs.get("tier").value)
+        return real_render(*args, **kwargs)
+
+    def spy_capture(invocation, output):
+        observed_tiers.append(invocation.metadata["tier"])
+        outcome = real_capture(invocation, output)
+        return outcome.__class__(
+            contract_result=outcome.contract_result,
+            legacy_payload={**dict(outcome.legacy_payload), "plan": "# Captured"},
+            telemetry=outcome.telemetry,
+        )
+
+    with (
+        patch("arnold.pipelines.megaplan.workers._impl.render_prompt_for_dispatch", side_effect=spy_render),
+        patch("arnold.pipelines.megaplan.workers._impl.capture_step_output", side_effect=spy_capture),
+        patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command),
+    ):
+        result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+
+    assert observed_tiers == ["enforced", "enforced"]
+    assert result.payload["plan"] == "# Captured"
+
+
+def test_run_codex_step_execute_resume_uses_non_enforced_render(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
+    state["sessions"]["codex_executor"] = {"id": "sess-keep"}
+    execute_payload = {"task_updates": [], "sense_check_acknowledgments": []}
+    observed_tiers: list[str] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(execute_payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=10)
+
+    real_render = __import__(
+        "arnold.pipelines.megaplan.workers._impl",
+        fromlist=["render_prompt_for_dispatch"],
+    ).render_prompt_for_dispatch
+
+    def spy_render(*args, **kwargs):
+        observed_tiers.append(kwargs.get("tier").value)
+        return real_render(*args, **kwargs)
+
+    with (
+        patch("arnold.pipelines.megaplan.workers._impl.render_prompt_for_dispatch", side_effect=spy_render),
+        patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command),
+    ):
+        result = run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=True, fresh=False)
+
+    assert observed_tiers == ["non_enforced"]
+    assert result.payload == execute_payload
+
+
 def test_run_codex_step_clamps_spec_layer_max_effort(tmp_path: Path) -> None:
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
     from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
