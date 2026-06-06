@@ -113,12 +113,27 @@ def test_compute_scope_drift_without_state_is_safe(
 
 
 def _write_batch_artifact(
-    plan_dir: Path, batch_number: int, files_changed: list[str]
+    plan_dir: Path,
+    batch_number: int,
+    files_changed: list[str],
+    *,
+    task_files_changed: list[str] | None = None,
 ) -> None:
     import json
 
+    payload: dict[str, Any] = {"files_changed": files_changed}
+    if task_files_changed is not None:
+        payload["task_updates"] = [
+            {
+                "task_id": f"T{batch_number}",
+                "status": "done",
+                "executor_notes": "done",
+                "files_changed": task_files_changed,
+                "commands_run": [],
+            }
+        ]
     (plan_dir / f"execution_batch_{batch_number}.json").write_text(
-        json.dumps({"files_changed": files_changed}), encoding="utf-8"
+        json.dumps(payload), encoding="utf-8"
     )
 
 
@@ -150,6 +165,37 @@ def test_per_batch_claims_unioned_from_disk(
     _write_batch_artifact(plan_dir, 2, ["src/c.py"])
     # Final batch is test-only: empty files_changed.
     _write_batch_artifact(plan_dir, 3, [])
+
+    state: dict[str, Any] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+
+    drift = execute_agg._compute_execute_scope_drift(
+        tmp_path,
+        _empty_payload(),
+        state,
+        plan_dir=plan_dir,
+    )
+
+    assert drift.files_added == []
+    assert drift.severity != "high"
+
+
+def test_per_batch_claims_include_task_update_files_changed(
+    tmp_path: Path,
+    patched_snapshot_multi: None,
+    patched_loc: None,
+) -> None:
+    """Retry aggregates must count durable per-task file evidence from earlier
+    batch artifacts, even when top-level ``files_changed`` is empty."""
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write_batch_artifact(
+        plan_dir,
+        1,
+        [],
+        task_files_changed=["src/a.py", "src/b.py"],
+    )
+    _write_batch_artifact(plan_dir, 2, [], task_files_changed=["src/c.py"])
 
     state: dict[str, Any] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
 

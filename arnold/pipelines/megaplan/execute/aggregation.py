@@ -139,14 +139,18 @@ def _collect_per_batch_claimed_paths(
     plan_dir: Path | None,
     project_dir: Path,
 ) -> set[str]:
-    """Union of top-level ``files_changed`` across every on-disk batch artifact.
+    """Union file claims across every on-disk batch artifact.
 
     In per-batch execute mode each ``--batch N`` invocation writes its claims to
     ``execution_batch_N.json``; the final aggregate transition only sees the
     current call's payload (empty for a test-only final batch or a plain
     post-batch ``execute``). Seeding the claim baseline from every on-disk
-    artifact makes the scope-drift gate compare the working-tree diff against the
-    UNION of all per-batch claims, not just the current call's.
+    artifact makes the scope-drift gate compare the working-tree diff against
+    the UNION of all per-batch claims, not just the current call's.
+
+    Unlike per-call phantom-claim checks, the aggregate drift baseline may use
+    per-task ``files_changed`` evidence: these artifacts are the durable record
+    of completed batch ownership.
     """
     if plan_dir is None:
         return set()
@@ -162,6 +166,20 @@ def _collect_per_batch_claimed_paths(
                 project_dir,
                 plan_dir=plan_dir,
             )
+            for update in payload.get("task_updates", []):
+                if not isinstance(update, dict):
+                    continue
+                raw_files = update.get("files_changed", [])
+                if isinstance(raw_files, dict):
+                    raw_files = expand_projected_path_list(
+                        raw_files,
+                        plan_dir=plan_dir,
+                    )
+                claimed |= {
+                    _normalize_execute_claimed_path(path, project_dir)
+                    for path in raw_files
+                    if isinstance(path, str) and path.strip()
+                }
     return claimed
 
 
