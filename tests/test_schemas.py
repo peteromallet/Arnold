@@ -552,6 +552,10 @@ def test_execution_schema_requires_task_updates() -> None:
     assert "files_changed" in item_schema["properties"]
     assert "commands_run" in item_schema["properties"]
     assert "auto_attributed_files" in item_schema["properties"]
+    assert item_schema["properties"]["auto_attributed_files"]["type"] == [
+        "boolean",
+        "null",
+    ]
     assert "auto_attributed_files" not in item_schema["required"]
 
 
