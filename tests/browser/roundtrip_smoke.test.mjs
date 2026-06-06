@@ -4889,6 +4889,78 @@ test("VibeComfy agent panel dispatches chat rehydration fetch with stored sessio
   }
 });
 
+test("VibeComfy status resolution after panel open enables Submit and renders rehydrated thread", async () => {
+  const SESSION_ID = "sess-status-thread-1";
+  const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+  let resolveStatus;
+  const statusPromise = new Promise((resolve) => {
+    resolveStatus = resolve;
+  });
+
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": async () => statusPromise,
+      [CHAT_URL]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: SESSION_ID,
+          messages: [
+            { role: "user", text: "rehydrated user prompt", turn_id: "0001" },
+            { role: "agent", text: "rehydrated agent answer", turn_id: "0001" },
+          ],
+          session_path: `out/editor_sessions/${SESSION_ID}/`,
+          detail_json_path: `out/editor_sessions/${SESSION_ID}/session.json`,
+        },
+      },
+    },
+  });
+
+  globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+
+    await waitFor(() =>
+      harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"),
+    );
+    const submit = harness.document.getElementById("vibecomfy-agent-panel-submit");
+    assert.equal(submit.disabled, true);
+    assert.match(harness.textDump(), /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+
+    resolveStatus({
+      status: 200,
+      body: {
+        ok: true,
+        ready: true,
+        provider_available: true,
+        route: "deepseek",
+        requested_route: "auto",
+        route_options: {
+          auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+        },
+      },
+    });
+
+    await waitFor(() => submit.disabled === false);
+    await waitFor(() => /rehydrated agent answer/.test(harness.textDump()));
+
+    const text = harness.textDump();
+    assert.doesNotMatch(text, /Try an example/);
+    assert.match(text, /rehydrated user prompt/);
+    assert.match(text, /rehydrated agent answer/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy stores render:false dirty sections on the panel and consumes them through the scheduled render gateway", async () => {
   const harness = await createBrowserHarness({
     responses: {
@@ -6285,6 +6357,58 @@ test("VibeComfy comfy_adapter installs preview overlay via direct interceptor wi
     report.cleanup();
   } finally {
     globalThis.setInterval = originalSetInterval;
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy comfy_adapter preview overlay survives external rechaining and reinstall without recursion", async () => {
+  const harness = await createBrowserHarness();
+
+  try {
+    const adapter = await harness.loadAdapter();
+    const drawEvents = [];
+    harness.app.canvas.onDrawForeground = function originalForeground() {
+      drawEvents.push("original");
+    };
+
+    const firstReport = adapter.installPreviewForegroundOverlay(
+      harness.app,
+      () => drawEvents.push("overlay-1"),
+      { windowObj: harness.window },
+    );
+    assert.equal(firstReport.strategy, "property-interceptor");
+
+    const previousForeground = harness.app.canvas.onDrawForeground;
+    harness.app.canvas.onDrawForeground = function comfyChainedForeground(ctx, ...args) {
+      drawEvents.push("chainer");
+      return previousForeground.call(this, ctx, ...args);
+    };
+
+    const secondReport = adapter.installPreviewForegroundOverlay(
+      harness.app,
+      () => drawEvents.push("overlay-2"),
+      { windowObj: harness.window },
+    );
+    assert.equal(secondReport.strategy, "property-interceptor");
+
+    harness.app.canvas.onDrawForeground.call(harness.app.canvas, {});
+    assert.deepEqual(drawEvents, ["chainer", "original", "overlay-2"]);
+    assert.equal(harness.consoleCapture.warn.length, 0);
+
+    const throwingError = new RangeError("same draw failure");
+    harness.app.canvas.onDrawForeground = function throwingForeground() {
+      throw throwingError;
+    };
+    harness.app.canvas.onDrawForeground.call(harness.app.canvas, {});
+    harness.app.canvas.onDrawForeground.call(harness.app.canvas, {});
+    assert.equal(
+      harness.consoleCapture.warn.filter((entry) => entry.includes("original onDrawForeground threw")).length,
+      1,
+      "delegate draw failures must be logged once per distinct error",
+    );
+
+    secondReport.cleanup();
+  } finally {
     await harness.dispose();
   }
 });

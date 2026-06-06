@@ -9,6 +9,7 @@
 
 // ── Supported frontend version ─────────────────────────────────────────────
 const SUPPORTED_FRONTEND = "1.39.x";
+let inOverlayDraw = false;
 
 // ── Capability shape ───────────────────────────────────────────────────────
 // Each capability is { available: bool, detail: string, path: string | null }
@@ -206,14 +207,6 @@ export function installPreviewForegroundOverlay(app, overlayDraw, options = {}) 
     throw new TypeError("overlayDraw must be a function");
   }
 
-  const existingInstall = app?.__vibecomfyPreviewForegroundInstall;
-  if (existingInstall?.overlayDraw === overlayDraw && typeof existingInstall.cleanup === "function") {
-    return existingInstall.report;
-  }
-  if (typeof existingInstall?.cleanup === "function") {
-    existingInstall.cleanup();
-  }
-
   const canvas = app?.canvas;
   const pollIntervalMs = Number.isFinite(options.pollIntervalMs) && options.pollIntervalMs > 0
     ? options.pollIntervalMs
@@ -221,9 +214,97 @@ export function installPreviewForegroundOverlay(app, overlayDraw, options = {}) 
   const win = options.windowObj || (typeof window !== "undefined" ? window : null);
   const protoFn = win?.LiteGraph?.LGraphCanvas?.prototype?.onDrawForeground;
   const initialDelegate = typeof canvas?.onDrawForeground === "function" ? canvas.onDrawForeground : null;
+  const loggedErrorKeys = new Set();
+
+  const errorKey = (scope, error) => {
+    const name = error?.name || "Error";
+    const message = error?.message || String(error);
+    return `${scope}:${name}:${message}`;
+  };
+
+  const warnOnce = (scope, label, error) => {
+    const key = errorKey(scope, error);
+    if (loggedErrorKeys.has(key)) {
+      return;
+    }
+    loggedErrorKeys.add(key);
+    console.warn(label, error);
+  };
+
+  const wrapperInChain = (fn) => {
+    const seen = new Set();
+    let cursor = typeof fn === "function" ? fn : null;
+    while (cursor && !seen.has(cursor)) {
+      if (cursor.__vibecomfyOverlayWrapper) {
+        return cursor;
+      }
+      seen.add(cursor);
+      cursor = typeof cursor.__vibecomfyOriginal === "function"
+        ? cursor.__vibecomfyOriginal
+        : null;
+    }
+    return null;
+  };
+
+  const existingInstall = app?.__vibecomfyPreviewForegroundInstall;
+  if (existingInstall?.canvas === canvas && typeof existingInstall.setOverlayDraw === "function") {
+    existingInstall.setOverlayDraw(overlayDraw);
+    return existingInstall.report;
+  }
+  if (existingInstall?.canvas !== canvas && typeof existingInstall?.cleanup === "function") {
+    existingInstall.cleanup();
+  }
+
+  const currentWrapper = wrapperInChain(initialDelegate);
+  if (currentWrapper) {
+    if (typeof currentWrapper.__vibecomfySetOverlayDraw === "function") {
+      currentWrapper.__vibecomfySetOverlayDraw(overlayDraw);
+    }
+    app.__vibecomfyPreviewForegroundDraw = overlayDraw;
+    const cleanup = () => {
+      if (app?.__vibecomfyPreviewForegroundInstall === installState) {
+        delete app.__vibecomfyPreviewForegroundInstall;
+      }
+    };
+    const report = {
+      capability,
+      strategy: "existing-wrapper",
+      polling: false,
+      detail: "Reused an existing VibeComfy onDrawForeground wrapper already present in the callback chain.",
+      cleanup,
+    };
+    const installState = {
+      canvas,
+      overlayDraw,
+      setOverlayDraw(nextOverlayDraw) {
+        this.overlayDraw = nextOverlayDraw;
+        if (typeof currentWrapper.__vibecomfySetOverlayDraw === "function") {
+          currentWrapper.__vibecomfySetOverlayDraw(nextOverlayDraw);
+        }
+        app.__vibecomfyPreviewForegroundDraw = nextOverlayDraw;
+      },
+      cleanup,
+      report,
+    };
+    app.__vibecomfyPreviewForegroundInstall = installState;
+    return report;
+  }
 
   let delegate = initialDelegate;
+  let reentrantDelegate = null;
+  let activeOverlayDraw = overlayDraw;
   const wrapper = function vibecomfyPreviewForegroundWrapper(ctx, ...args) {
+    if (inOverlayDraw) {
+      if (typeof reentrantDelegate === "function" && reentrantDelegate !== wrapper) {
+        try {
+          reentrantDelegate.call(this, ctx, ...args);
+        } catch (error) {
+          warnOnce("reentrant-delegate", "[vibecomfy] original onDrawForeground threw:", error);
+        }
+      }
+      return;
+    }
+    inOverlayDraw = true;
     try {
       if (typeof delegate === "function" && delegate !== wrapper) {
         delegate.call(this, ctx, ...args);
@@ -231,14 +312,46 @@ export function installPreviewForegroundOverlay(app, overlayDraw, options = {}) 
         protoFn.call(this, ctx, ...args);
       }
     } catch (error) {
-      console.warn("[vibecomfy] original onDrawForeground threw:", error);
+      warnOnce("delegate", "[vibecomfy] original onDrawForeground threw:", error);
     }
-    overlayDraw.call(this, ctx);
+    try {
+      activeOverlayDraw.call(this, ctx);
+    } catch (error) {
+      warnOnce("overlay", "[vibecomfy] preview overlay draw threw:", error);
+    } finally {
+      inOverlayDraw = false;
+    }
   };
   wrapper.__vibecomfyOverlayWrapper = true;
+  wrapper.__vibecomfyOriginal = delegate;
+  wrapper.__vibecomfySetOverlayDraw = (nextOverlayDraw) => {
+    activeOverlayDraw = nextOverlayDraw;
+    app.__vibecomfyPreviewForegroundDraw = nextOverlayDraw;
+  };
+  wrapper.__vibecomfySetOriginal = (nextDelegate) => {
+    if (typeof nextDelegate !== "function" || nextDelegate === wrapper) {
+      delegate = null;
+      reentrantDelegate = null;
+      wrapper.__vibecomfyOriginal = delegate;
+      wrapper.__vibecomfyReentrantOriginal = reentrantDelegate;
+      return;
+    }
+    const previousDelegate = delegate;
+    const previousReentrantDelegate = reentrantDelegate;
+    delegate = nextDelegate;
+    reentrantDelegate = previousReentrantDelegate || previousDelegate || null;
+    wrapper.__vibecomfyOriginal = delegate;
+    wrapper.__vibecomfyReentrantOriginal = reentrantDelegate;
+  };
+  app.__vibecomfyPreviewForegroundDraw = overlayDraw;
 
   const installState = {
+    canvas,
     overlayDraw,
+    setOverlayDraw(nextOverlayDraw) {
+      this.overlayDraw = nextOverlayDraw;
+      wrapper.__vibecomfySetOverlayDraw(nextOverlayDraw);
+    },
     cleanup() {},
     report: null,
   };
@@ -254,10 +367,10 @@ export function installPreviewForegroundOverlay(app, overlayDraw, options = {}) 
           return wrapper;
         },
         set(nextValue) {
-          delegate = typeof nextValue === "function" && nextValue !== wrapper ? nextValue : null;
+          wrapper.__vibecomfySetOriginal(nextValue);
         },
       });
-      delegate = initialDelegate;
+      wrapper.__vibecomfySetOriginal(initialDelegate);
       const cleanup = () => {
         if (ownDescriptor) {
           Object.defineProperty(canvas, "onDrawForeground", ownDescriptor);
@@ -290,10 +403,10 @@ export function installPreviewForegroundOverlay(app, overlayDraw, options = {}) 
       return;
     }
     const current = liveCanvas.onDrawForeground;
-    if (current && current.__vibecomfyOverlayWrapper) {
+    if (wrapperInChain(current)) {
       return;
     }
-    delegate = typeof current === "function" ? current : null;
+    wrapper.__vibecomfySetOriginal(current);
     liveCanvas.onDrawForeground = wrapper;
   };
   ensurePatched();

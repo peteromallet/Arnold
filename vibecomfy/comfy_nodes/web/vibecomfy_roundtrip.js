@@ -128,10 +128,12 @@ const APPLY_ELIGIBILITY_REASON = Object.freeze({
 
 const ALL_AGENT_PANEL_RENDER_SECTIONS = Object.freeze(Object.values(RENDER_SECTIONS));
 const SETTINGS_STATUS_RENDER_SECTIONS = Object.freeze([
+  RENDER_SECTIONS.THREAD,
   RENDER_SECTIONS.SETTINGS,
   RENDER_SECTIONS.COMPOSER,
   RENDER_SECTIONS.NOTICE,
 ]);
+const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
 
 const PANEL_IDS = Object.freeze({
   root: "vibecomfy-agent-panel-root",
@@ -1519,6 +1521,41 @@ function nextMacrotask() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function clearAgentStatusRetry(panel) {
+  const retry = panel?.state?.statusRetry;
+  if (retry?.timerId) {
+    clearTimeout(retry.timerId);
+  }
+  if (panel?.state) {
+    panel.state.statusRetry = null;
+  }
+}
+
+function scheduleAgentStatusRetry(panel, route, model, { quiet = true } = {}) {
+  if (!panel?.state) {
+    return;
+  }
+  const prior = panel.state.statusRetry;
+  const priorAttempts =
+    prior?.route === route && prior?.model === model && Number.isFinite(prior?.attempts)
+      ? prior.attempts
+      : 0;
+  const attempts = priorAttempts + 1;
+  if (attempts > AGENT_STATUS_RETRY_DELAYS_MS.length) {
+    panel.state.statusRetry = { route, model, attempts: priorAttempts, exhausted: true, timerId: null };
+    return;
+  }
+  const delayMs = AGENT_STATUS_RETRY_DELAYS_MS[attempts - 1];
+  const timerId = setTimeout(() => {
+    if (!panel?.state?.statusRetry || panel.state.statusRetry.timerId !== timerId) {
+      return;
+    }
+    panel.state.statusRetry.timerId = null;
+    refreshAgentStatus(panel, { quiet });
+  }, delayMs);
+  panel.state.statusRetry = { route, model, attempts, exhausted: false, timerId };
+}
+
 function populateRouteSelect(selectNode, routeOptions, {
   placeholderLabel = "Loading route/model status…",
   selectedRoute = selectNode.value,
@@ -1555,6 +1592,17 @@ function populateRouteSelect(selectNode, routeOptions, {
 async function refreshAgentStatus(panel, { quiet = false } = {}) {
   const route = normalizeRoutePreference(panel.fields.route.value);
   const model = normalizeModelPreference(panel.fields.model.value);
+  const priorRetry = panel.state.statusRetry;
+  const retryAttempts =
+    priorRetry?.route === route && priorRetry?.model === model && Number.isFinite(priorRetry?.attempts)
+      ? priorRetry.attempts
+      : 0;
+  if (priorRetry?.timerId) {
+    clearTimeout(priorRetry.timerId);
+  }
+  panel.state.statusRetry = retryAttempts > 0
+    ? { route, model, attempts: retryAttempts, exhausted: false, timerId: null }
+    : null;
   panel.state.routeStatus = {
     kind: ROUTE_STATUS_KIND.LOADING,
     requestedRoute: route,
@@ -1600,6 +1648,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
+    clearAgentStatusRetry(panel);
     panel.state.statusSnapshot = status;
     const requestedRoute = normalizeRoutePreference(status?.requested_route || route);
     const routeOptions = routeOptionsFromStatus(status);
@@ -1672,6 +1721,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
       selectedRoute: route,
     });
     panel.fields.route.value = route;
+    scheduleAgentStatusRetry(panel, route, model, { quiet: true });
   }
   if (typeof document === "undefined") {
     return;
@@ -2390,6 +2440,7 @@ function createAgentPanel() {
       undoStack: [],
       settingsMessage: null,
       statusSnapshot: null,
+      statusRetry: null,
       routeStatus: {
         kind: ROUTE_STATUS_KIND.LOADING,
         requestedRoute: "auto",
