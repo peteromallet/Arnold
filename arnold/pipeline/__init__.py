@@ -14,6 +14,7 @@ a pipeline without reference to Megaplan-specific semantics:
 * ``StateDelta``        — ordered multi-patch container.
 * ``apply_delta``       — apply StateDelta patches to a state value.
 * ``Port``              — typed content port.
+* ``PortCardinality``   — singleton / collection / reserved stream vocabulary.
 * ``PortRef``           — reference to a named port.
 * ``RoutingKey``        — content-type–qualified routing key.
 * ``ContentTypeRegistry`` — map content-type names → schema digests.
@@ -105,6 +106,12 @@ from arnold.pipeline.schema_registry import (
     normalize_schema_version,
     schema_version_for,
 )
+from arnold.pipeline.step_invocation import (
+    ModelAdapterNotImplementedError,
+    StepInvocation,
+    StepInvocationAdapter,
+    StepInvocationAdapterRegistry,
+)
 from arnold.pipeline.step_io_contract import (
     StepIOClassification,
     StepIOContractContext,
@@ -117,6 +124,7 @@ from arnold.pipeline.step_io_contract import (
     decide_step_io_write,
     is_step_io_envelope,
 )
+from arnold.pipeline.step_io_handoff import StepIOHandoffResult, evaluate_step_io_handoff
 from arnold.pipeline.step_io_policy import (
     STEP_IO_POLICY_ENV,
     STEP_IO_READ_LENIENT_ENV,
@@ -156,6 +164,7 @@ from arnold.pipeline.types import (
     Pipeline,
     PipelineVerdict,
     Port,
+    PortCardinality,
     PortRef,
     Provenance,
     ReduceResult,
@@ -200,6 +209,7 @@ __all__ = [
     "PipelineVerdict",
     "ProfileLoadError",
     "Port",
+    "PortCardinality",
     "PortRef",
     "PromoteFn",
     "Provenance",
@@ -214,8 +224,12 @@ __all__ = [
     "StepIOContractDecision",
     "StepIODiagnostic",
     "StepIOEnvelope",
+    "StepIOHandoffResult",
     "StepIOOperation",
     "StepIOPolicy",
+    "StepInvocation",
+    "StepInvocationAdapter",
+    "StepInvocationAdapterRegistry",
     "StepContext",
     "StepResult",
     "Suspension",
@@ -240,6 +254,7 @@ __all__ = [
     "is_legal_coercion",
     "is_step_io_envelope",
     "is_step_io_enforcement_eligible",
+    "evaluate_step_io_handoff",
     "has_step_io_self_validation_marker",
     "legal_coercions",
     "load_step_io_policy",
@@ -259,6 +274,7 @@ __all__ = [
     "read_manifest",
     "register_schema",
     "resolve_default_profile",
+    "ModelAdapterNotImplementedError",
     "resolve_step_io_policy",
     "record_step_io_self_validation_marker",
     "step_io_read_lenient_escape_on",

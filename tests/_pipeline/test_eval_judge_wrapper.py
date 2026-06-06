@@ -119,6 +119,30 @@ def test_eval_judge_wrapper_flag_on_writes_event_and_artifact(monkeypatch, tmp_p
     assert folded[tuple(payload["attribution_key"])].score == pytest.approx(
         result.verdict.score
     )
+    assert result.contract_result is None
+
+
+def test_eval_judge_wrapper_flag_on_preserves_legacy_contract_result(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("UNIFIED_EVALUAND", "1")
+    ctx = _ctx(tmp_path)
+    ctx.plan_dir.mkdir()
+
+    judge = EvaluandClarityJudge()
+    legacy_ctx = StepContext(
+        plan_dir=ctx.plan_dir,
+        state=ctx.state,
+        profile=ctx.profile,
+        mode=ctx.mode,
+        inputs={"doc": ctx.inputs["candidate"]},
+        budget=ctx.budget,
+    )
+    legacy_result = judge._legacy_judge.run(legacy_ctx)
+
+    result = judge.run(ctx)
+
+    assert result.contract_result == legacy_result.contract_result
 
 
 def test_eval_judge_wrapper_dual_green_smoke_through_pipeline_and_better(

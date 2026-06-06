@@ -13,7 +13,7 @@ primary key for downstream dispatch.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 
 from arnold.pipelines.megaplan._pipeline.types import ReduceResult  # TODO(M2): finalize ReduceResult shape
 
@@ -36,22 +36,13 @@ class RoutingKey:
     kind: RoutingKeyKind = "advance"
 
 
-# ── Port Protocol ──────────────────────────────────────────────────────
-# TODO(M2): M2 will ship the full typed Port; see
-# briefs/epic-pipeline-unification/m2-types-and-port.md:44-51.
+# ── Port (canonical) ───────────────────────────────────────────────────
+# M2: Port surface delegates to the canonical arnold.pipeline.types.Port
+# (frozen dataclass with name, content_type, taint).  The forward Protocol
+# with kind/schema/cardinality/version is retired to avoid two competing
+# Port vocabularies.  See briefs/epic-pipeline-unification/m2-types-and-port.md:44-51.
 
-PortKind = Literal["value", "artifact", "stream"]
-
-
-class Port(Protocol):
-    """TODO(M2): Protocol for the typed Port (kind × content-type × schema)."""
-
-    name: str
-    kind: PortKind
-    content_type: str
-    schema: Any
-    cardinality: int
-    version: int
+from arnold.pipeline.types import Port  # noqa: E402
 
 
 # ── Graph Protocol ─────────────────────────────────────────────────────
@@ -144,7 +135,6 @@ __all__ = [
     "RoutingKey",
     "RoutingKeyKind",
     "Port",
-    "PortKind",
     "Graph",
     "restore_and_diverge",
     "_bridge_recommendation_to_routing_key",

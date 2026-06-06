@@ -352,12 +352,19 @@ class TestConstructionSmoke:
         )
 
     def test_step_result_instantiation(self) -> None:
-        from arnold.pipeline import StepResult
+        from arnold.pipeline import CONTRACT_RESULT_SCHEMA_VERSION, ContractResult, StepResult
         sr = StepResult(outputs={"out": "/tmp/foo"}, next="continue")
         assert sr.outputs == {"out": "/tmp/foo"}
         assert sr.next == "continue"
         assert sr.verdict is None
         assert sr.state_patch == {}
+        assert sr.contract_result is None
+
+        contract = ContractResult(payload={"schema_version": "sha256:payload-v1"})
+        with_contract = StepResult(contract_result=contract)
+        assert with_contract.contract_result is contract
+        assert with_contract.contract_result.schema_version == CONTRACT_RESULT_SCHEMA_VERSION
+        assert with_contract.contract_result.payload["schema_version"] == "sha256:payload-v1"
 
     def test_stage_instantiation(self) -> None:
         from arnold.pipeline import Stage, Step

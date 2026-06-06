@@ -154,6 +154,7 @@ class EvaluandClarityJudge:
             next=legacy_result.next,
             state_patch=state_patch,
             envelope=legacy_result.envelope,
+            contract_result=legacy_result.contract_result,
         )
 
 

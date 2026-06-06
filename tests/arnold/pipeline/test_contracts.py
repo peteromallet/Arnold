@@ -9,13 +9,25 @@ from __future__ import annotations
 import pytest
 
 from arnold.pipeline.contracts import (
+    BindResult,
     ContractLedger,
+    PortBindError,
+    RepairGradient,
     _contract_hash,
+    bind,
     coerce,
     is_legal_coercion,
     legal_coercions,
 )
-from arnold.pipeline.types import Port
+from arnold.pipeline.schema_registry import AcceptedVersionRange
+from arnold.pipeline.types import (
+    Edge,
+    Port,
+    PortRef,
+    Stage,
+    StepContext,
+    StepResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +122,92 @@ class TestContractLedgerRegister:
             schema={}, cardinality="many",
         )
         assert h_one != h_many
+
+    def test_legacy_one_aliases_to_singleton_hash_and_port_metadata(self) -> None:
+        ledger = ContractLedger()
+        h_one = ledger.register(
+            name="p", kind="produce", content_type="text/plain",
+            schema={}, cardinality="one",
+        )
+        h_singleton = ledger.register(
+            name="p", kind="produce", content_type="text/plain",
+            schema={}, cardinality="singleton",
+        )
+
+        assert h_one == h_singleton
+        assert ledger.lookup(h_one).cardinality == "singleton"
+
+    def test_contract_hash_accepts_legacy_one_alias_directly(self) -> None:
+        legacy = _contract_hash(
+            "p", "produce", "application/json", {}, "one"
+        )
+        canonical = _contract_hash(
+            "p", "produce", "application/json", {}, "singleton"
+        )
+
+        assert legacy == canonical
+
+    def test_register_records_intentional_collection_cardinality(self) -> None:
+        ledger = ContractLedger()
+        digest = ledger.register(
+            name="items", kind="produce", content_type="application/json",
+            schema={}, cardinality="collection",
+        )
+
+        assert ledger.lookup(digest).cardinality == "collection"
+
+    def test_hash_includes_logical_type_and_accepted_version_range(self) -> None:
+        accepted_range = AcceptedVersionRange(
+            "review",
+            min_version="sha256:" + "0" * 64,
+            max_version="sha256:" + "f" * 64,
+        )
+
+        base = _contract_hash(
+            "p", "produce", "application/json", {}, "singleton",
+            logical_type="review",
+            accepted_version_range=accepted_range,
+        )
+        different_logical_type = _contract_hash(
+            "p", "produce", "application/json", {}, "singleton",
+            logical_type="summary",
+            accepted_version_range=accepted_range,
+        )
+        different_range = _contract_hash(
+            "p", "produce", "application/json", {}, "singleton",
+            logical_type="review",
+            accepted_version_range=AcceptedVersionRange(
+                "review",
+                min_version="sha256:" + "1" * 64,
+                max_version="sha256:" + "f" * 64,
+            ),
+        )
+
+        assert base != different_logical_type
+        assert base != different_range
+
+    def test_lookup_preserves_logical_metadata(self) -> None:
+        ledger = ContractLedger()
+        accepted_range = AcceptedVersionRange(
+            "review",
+            min_version="sha256:" + "0" * 64,
+            max_version="sha256:" + "f" * 64,
+        )
+
+        digest = ledger.register(
+            name="review",
+            kind="produce",
+            content_type="application/json",
+            schema={},
+            cardinality="singleton",
+            logical_type="review",
+            accepted_version_range=accepted_range,
+        )
+
+        port = ledger.lookup(digest)
+
+        assert port.logical_type == "review"
+        assert port.accepted_version_range is accepted_range
 
     def test_multiple_registrations_different_ports(self) -> None:
         ledger = ContractLedger()
@@ -225,3 +323,188 @@ class TestContractsBoundary:
     def test_coerce_importable_from_arnold(self) -> None:
         from arnold.pipeline.contracts import coerce as c
         assert c is coerce
+
+
+# ---------------------------------------------------------------------------
+# bind — enriched typed-port metadata
+# ---------------------------------------------------------------------------
+
+
+class _Source:
+    name = "src"
+    kind = "produce"
+    produces = ()
+    consumes = ()
+
+    def run(self, ctx: StepContext) -> StepResult:  # pragma: no cover
+        return StepResult()
+
+
+class _Sink:
+    name = "sink"
+    kind = "consume"
+    produces = ()
+
+    def __init__(self, consumes: tuple[PortRef, ...]) -> None:
+        self.consumes = consumes
+
+    def run(self, ctx: StepContext) -> StepResult:  # pragma: no cover
+        return StepResult()
+
+
+def _binding_stages(produces: tuple[Port, ...], consumes: tuple[PortRef, ...]):
+    src = Stage(
+        name="src",
+        step=_Source(),
+        edges=(Edge(label="ok", target="sink"),),
+        produces=produces,
+    )
+    sink = Stage(name="sink", step=_Sink(consumes), edges=())
+    return {"src": src, "sink": sink}
+
+
+class TestBindTypedPortMetadata:
+    def test_bind_matches_collection_cardinality_and_logical_metadata(self) -> None:
+        accepted_range = AcceptedVersionRange("review")
+        stages = _binding_stages(
+            (
+                Port(
+                    name="reviews",
+                    content_type="application/json",
+                    cardinality="collection",
+                    logical_type="review",
+                    accepted_version_range=accepted_range,
+                ),
+            ),
+            (
+                PortRef(
+                    port_name="reviews",
+                    content_type="application/json",
+                    cardinality="collection",
+                    logical_type="review",
+                    accepted_version_range=accepted_range,
+                ),
+            ),
+        )
+
+        result = bind(stages, {"src": ("sink",)})
+
+        assert isinstance(result, BindResult)
+        assert result.binding_map[("sink", "reviews")] == ("src", "reviews")
+
+    def test_bind_accepts_legacy_one_alias_against_singleton_consumes(self) -> None:
+        stages = _binding_stages(
+            (
+                Port(
+                    name="review",
+                    content_type="application/json",
+                    cardinality="one",
+                ),
+            ),
+            (
+                PortRef(
+                    port_name="review",
+                    content_type="application/json",
+                    cardinality="singleton",
+                ),
+            ),
+        )
+
+        result = bind(stages, {"src": ("sink",)})
+
+        assert isinstance(result, BindResult)
+        assert result.binding_map[("sink", "review")] == ("src", "review")
+
+    def test_bind_rejects_cardinality_mismatch_with_repair_gradient(self) -> None:
+        stages = _binding_stages(
+            (
+                Port(
+                    name="reviews",
+                    content_type="application/json",
+                    cardinality="collection",
+                ),
+            ),
+            (PortRef(port_name="reviews", content_type="application/json"),),
+        )
+
+        result = bind(stages, {"src": ("sink",)})
+
+        assert isinstance(result, RepairGradient)
+        assert result.error_kind == "cardinality_mismatch"
+
+    def test_bind_rejects_logical_metadata_mismatch_with_schema_gradient(self) -> None:
+        stages = _binding_stages(
+            (
+                Port(
+                    name="payload",
+                    content_type="application/json",
+                    logical_type="review",
+                ),
+            ),
+            (
+                PortRef(
+                    port_name="payload",
+                    content_type="application/json",
+                    logical_type="summary",
+                ),
+            ),
+        )
+
+        result = bind(stages, {"src": ("sink",)})
+
+        assert isinstance(result, RepairGradient)
+        assert result.error_kind == "schema_mismatch"
+
+    def test_bind_rejects_accepted_version_range_mismatch_with_schema_gradient(self) -> None:
+        stages = _binding_stages(
+            (
+                Port(
+                    name="payload",
+                    content_type="application/json",
+                    logical_type="review",
+                    accepted_version_range=AcceptedVersionRange(
+                        "review",
+                        min_version="sha256:" + "0" * 64,
+                        max_version="sha256:" + "2" * 64,
+                    ),
+                ),
+            ),
+            (
+                PortRef(
+                    port_name="payload",
+                    content_type="application/json",
+                    logical_type="review",
+                    accepted_version_range=AcceptedVersionRange(
+                        "review",
+                        min_version="sha256:" + "1" * 64,
+                        max_version="sha256:" + "2" * 64,
+                    ),
+                ),
+            ),
+        )
+
+        result = bind(stages, {"src": ("sink",)})
+
+        assert isinstance(result, RepairGradient)
+        assert result.error_kind == "schema_mismatch"
+
+    def test_bind_rejects_reserved_stream_cardinality_at_runtime(self) -> None:
+        stages = _binding_stages(
+            (
+                Port(
+                    name="events",
+                    content_type="application/json",
+                    cardinality="stream",
+                ),
+            ),
+            (
+                PortRef(
+                    port_name="events",
+                    content_type="application/json",
+                    cardinality="stream",
+                ),
+            ),
+        )
+
+        with pytest.raises(PortBindError, match="reserved stream cardinality"):
+            bind(stages, {"src": ("sink",)})

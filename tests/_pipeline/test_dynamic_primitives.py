@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 import pytest
 
+from arnold.pipeline import ContractResult
 import arnold.pipelines.megaplan._pipeline.patterns as patterns_module
 from arnold.pipelines.megaplan._pipeline.patterns import (
     dynamic_fanout,
@@ -105,11 +106,19 @@ class _AggregateStep:
     prompt_key: str | None = None
     slot: str | None = None
     recs_per_call: list[list[str]] = field(default_factory=list)
+    contract_results_per_call: list[ContractResult | None] = field(default_factory=list)
     call_count: int = 0
 
     def run(self, ctx: StepContext) -> StepResult:
         idx = min(self.call_count, max(0, len(self.recs_per_call) - 1))
         recs = self.recs_per_call[idx] if self.recs_per_call else []
+        contract_result = None
+        if self.contract_results_per_call:
+            contract_idx = min(
+                self.call_count,
+                max(0, len(self.contract_results_per_call) - 1),
+            )
+            contract_result = self.contract_results_per_call[contract_idx]
         self.call_count += 1
         # Aggregate verdict's recommendation is whichever is most-common
         # at the per-reviewer level (any tie-break is fine here — the
@@ -121,6 +130,7 @@ class _AggregateStep:
                 recommendation=top,
                 payload={"per_reviewer_recommendations": list(recs)},
             ),
+            contract_result=contract_result,
             next=top,
         )
 
@@ -140,6 +150,7 @@ class _AdvocateStep:
     prompt_key: str | None = None
     slot: str | None = None
     label: str = "arg"
+    contract_result: ContractResult | None = None
 
     def run(self, ctx: StepContext) -> StepResult:
         prior_seen: list[str] = []
@@ -152,7 +163,11 @@ class _AdvocateStep:
             log[self.name] = sorted(prior_seen)
         out = Path(ctx.plan_dir) / f"{self.name}.md"
         out.write_text(f"# argument from {self.name}\n")
-        return StepResult(outputs={self.label: out}, next="done")
+        return StepResult(
+            outputs={self.label: out},
+            contract_result=self.contract_result,
+            next="done",
+        )
 
 
 # ── (a) panel_from_artifact ────────────────────────────────────────────
@@ -452,6 +467,27 @@ class TestIterateUntilConsensus:
         assert result.next == "halt"
         assert panel.call_count == 1
 
+    def test_preserves_contract_result_from_deciding_iteration(
+        self, tmp_path: Path
+    ) -> None:
+        first = ContractResult(payload={"step": 1})
+        second = ContractResult(payload={"step": 2})
+        panel = _AggregateStep(
+            recs_per_call=[
+                ["proceed", "iterate"],
+                ["proceed", "proceed"],
+            ],
+            contract_results_per_call=[first, second],
+        )
+        primitive = iterate_until_consensus(
+            panel=panel, min_agreement=0.8, max_iters=3, name="contract_loop"
+        )
+        ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="t")
+
+        result = primitive.run(ctx)
+
+        assert result.contract_result is second
+
 
 # ── (e) paired_round ───────────────────────────────────────────────────
 
@@ -493,7 +529,8 @@ class TestPairedRound:
 
     def test_outputs_keyed_by_advocate_then_label(self, tmp_path: Path) -> None:
         alice = _AdvocateStep(name="alice", label="arg")
-        bob = _AdvocateStep(name="bob", label="arg")
+        bob_contract = ContractResult(payload={"winner": "bob"})
+        bob = _AdvocateStep(name="bob", label="arg", contract_result=bob_contract)
         stage = paired_round([alice, bob], sees_other=True, name="round")
 
         ctx = StepContext(
@@ -503,6 +540,7 @@ class TestPairedRound:
         # paired_round accumulates outputs under {advocate.name}.{label}.
         assert "alice.arg" in result.outputs
         assert "bob.arg" in result.outputs
+        assert result.contract_result is bob_contract
 
     def test_empty_advocates_raises(self) -> None:
         with pytest.raises(ValueError):
