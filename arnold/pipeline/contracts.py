@@ -2,9 +2,10 @@
 
 The :class:`ContractLedger` is a content-hashed registry mapping the
 canonical-JSON SHA-256 hash of ``(name, kind, content_type, schema,
-cardinality)`` to a :class:`~arnold.pipeline.types.Port`. Taint is
-deliberately **excluded** from the contract hash so a tainted variant
-of a port resolves to the same contract identity as its clean form.
+cardinality, logical_type, accepted_version_range)`` to a
+:class:`~arnold.pipeline.types.Port`. Taint is deliberately **excluded**
+from the contract hash so a tainted variant of a port resolves to the
+same contract identity as its clean form.
 
 :data:`legal_coercions` maps a ``(from_content_type, to_content_type)``
 pair to a callable performing the coercion. The identity coercion
@@ -20,10 +21,16 @@ flag read before delegating here.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Callable, Iterable, Mapping
 
 from arnold.pipeline.types import Port, _canonical_json_dumps
+
+
+_LEGACY_CARDINALITY_ALIASES = {
+    "one": "singleton",
+}
+_SUPPORTED_RUNTIME_CARDINALITIES = {"singleton", "collection"}
 
 
 def _contract_hash(
@@ -32,16 +39,78 @@ def _contract_hash(
     content_type: str,
     schema: Any,
     cardinality: str,
+    *,
+    logical_type: str | None = None,
+    accepted_version_range: Any = None,
 ) -> str:
+    canonical_cardinality = _canonical_cardinality(cardinality)
     payload = {
         "name": name,
         "kind": kind,
         "content_type": content_type,
         "schema": schema,
-        "cardinality": cardinality,
+        "cardinality": canonical_cardinality,
+        "logical_type": logical_type,
+        "accepted_version_range": _metadata_payload(accepted_version_range),
     }
     raw = _canonical_json_dumps(payload)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _canonical_cardinality(cardinality: str | None) -> str:
+    if cardinality is None:
+        return "singleton"
+    return _LEGACY_CARDINALITY_ALIASES.get(cardinality, cardinality)
+
+
+def _metadata_payload(value: Any) -> Any:
+    if value is None:
+        return None
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    if isinstance(value, Mapping):
+        return dict(value)
+    return value
+
+
+def _port_cardinality(port: Any) -> str:
+    return _canonical_cardinality(getattr(port, "cardinality", "singleton"))
+
+
+def _ensure_runtime_cardinality(port: Any, *, step_id: str, consume_name: str) -> None:
+    cardinality = _port_cardinality(port)
+    if cardinality == "stream":
+        port_name = getattr(port, "port_name", getattr(port, "name", consume_name))
+        raise PortBindError(
+            step_id,
+            consume_name,
+            detail=(
+                f"reserved stream cardinality is not supported at runtime "
+                f"for port {port_name!r}"
+            ),
+        )
+    if cardinality not in _SUPPORTED_RUNTIME_CARDINALITIES:
+        port_name = getattr(port, "port_name", getattr(port, "name", consume_name))
+        raise PortBindError(
+            step_id,
+            consume_name,
+            detail=f"unsupported port cardinality {cardinality!r} for port {port_name!r}",
+        )
+
+
+def _same_logical_metadata(producer: Any, consumer: Any) -> bool:
+    producer_logical_type = getattr(producer, "logical_type", None)
+    consumer_logical_type = getattr(consumer, "logical_type", None)
+    if (
+        consumer_logical_type is not None
+        and producer_logical_type != consumer_logical_type
+    ):
+        return False
+    producer_range = _metadata_payload(getattr(producer, "accepted_version_range", None))
+    consumer_range = _metadata_payload(getattr(consumer, "accepted_version_range", None))
+    if consumer_range is not None and producer_range != consumer_range:
+        return False
+    return True
 
 
 @dataclass
@@ -62,9 +131,26 @@ class ContractLedger:
         content_type: str,
         schema: Any,
         cardinality: str = "one",
+        logical_type: str | None = None,
+        accepted_version_range: Any = None,
     ) -> str:
-        digest = _contract_hash(name, kind, content_type, schema, cardinality)
-        port = Port(name=name, content_type=content_type)
+        canonical_cardinality = _canonical_cardinality(cardinality)
+        digest = _contract_hash(
+            name,
+            kind,
+            content_type,
+            schema,
+            canonical_cardinality,
+            logical_type=logical_type,
+            accepted_version_range=accepted_version_range,
+        )
+        port = Port(
+            name=name,
+            content_type=content_type,
+            cardinality=canonical_cardinality,
+            logical_type=logical_type,
+            accepted_version_range=accepted_version_range,
+        )
         self._by_hash.setdefault(digest, port)
         legal_coercions.setdefault(
             (content_type, content_type), _identity_coercion
@@ -276,6 +362,11 @@ def bind(
         for consume in consumes:
             wanted_name = getattr(consume, "port_name", getattr(consume, "name", ""))
             wanted_ct = getattr(consume, "content_type", "")
+            _ensure_runtime_cardinality(
+                consume,
+                step_id=step_id,
+                consume_name=wanted_name,
+            )
             upstream_candidates: list[tuple[str, Any]] = []
             for upstream_id, upstream_stage in steps.items():
                 if upstream_id == step_id:
@@ -283,6 +374,11 @@ def bind(
                 if rank.get(upstream_id, -1) >= rank.get(step_id, 0):
                     continue
                 for port in _stage_produces(upstream_stage):
+                    _ensure_runtime_cardinality(
+                        port,
+                        step_id=step_id,
+                        consume_name=wanted_name,
+                    )
                     upstream_candidates.append((upstream_id, port))
 
             name_matches = [
@@ -290,7 +386,9 @@ def bind(
                 if getattr(p, "name", "") == wanted_name
             ]
             if not name_matches:
-                visible_names = tuple(sorted({getattr(p, "name", "") for _, p in upstream_candidates}))
+                visible_names = tuple(
+                    sorted({getattr(p, "name", "") for _, p in upstream_candidates})
+                )
                 close = tuple(
                     n for n in visible_names if _levenshtein(n, wanted_name) <= 2
                 )
@@ -320,9 +418,36 @@ def bind(
                     candidates=tuple(name_matches),
                 )
 
+            cardinality_matches = [
+                (uid, p)
+                for uid, p in ct_matches
+                if _port_cardinality(p) == _port_cardinality(consume)
+            ]
+            if not cardinality_matches:
+                return RepairGradient(
+                    error_kind="cardinality_mismatch",
+                    wanted=consume,
+                    candidates=tuple(ct_matches),
+                )
+
+            metadata_matches = [
+                (uid, p)
+                for uid, p in cardinality_matches
+                if _same_logical_metadata(p, consume)
+            ]
+            if not metadata_matches:
+                return RepairGradient(
+                    error_kind="schema_mismatch",
+                    wanted=consume,
+                    candidates=tuple(cardinality_matches),
+                )
+
             # Prefer the nearest upstream (highest rank < current).
-            ct_matches.sort(key=lambda pair: rank.get(pair[0], -1), reverse=True)
-            chosen_id, chosen_port = ct_matches[0]
-            binding_map[(step_id, wanted_name)] = (chosen_id, getattr(chosen_port, "name", ""))
+            metadata_matches.sort(key=lambda pair: rank.get(pair[0], -1), reverse=True)
+            chosen_id, chosen_port = metadata_matches[0]
+            binding_map[(step_id, wanted_name)] = (
+                chosen_id,
+                getattr(chosen_port, "name", ""),
+            )
 
     return BindResult(binding_map=binding_map)

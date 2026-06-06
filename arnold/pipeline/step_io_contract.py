@@ -34,6 +34,7 @@ class StepIOClassification(str, Enum):
     TYPED_INVALID = "typed_invalid"
     LEGACY_UNKNOWN = "legacy_unknown"
     SCHEMA_UNAVAILABLE = "schema_unavailable"
+    BINDING_UNAVAILABLE = "binding_unavailable"
 
 
 @dataclass(frozen=True)

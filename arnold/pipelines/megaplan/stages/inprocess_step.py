@@ -20,6 +20,18 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult, PipelineVerdict
+from arnold.pipelines.megaplan.pipeline_contracts import (
+    LOGICAL_CRITIQUE_PAYLOAD,
+    LOGICAL_EXECUTE_PAYLOAD,
+    LOGICAL_FINALIZE_PAYLOAD,
+    LOGICAL_GATE_PAYLOAD,
+    LOGICAL_PLAN_PAYLOAD,
+    LOGICAL_PREP_PAYLOAD,
+    LOGICAL_REVISE_PAYLOAD,
+    LOGICAL_REVIEW_PAYLOAD,
+    LOGICAL_TIEBREAKER_PAYLOAD,
+    with_stage_payload_result,
+)
 
 
 @dataclass(frozen=True)
@@ -90,12 +102,16 @@ class InProcessHandlerStep:
                 state_patch[key] = after.get(key)
 
         outputs = _collect_outputs(ctx.plan_dir, before, after)
-        return StepResult(
+        result = StepResult(
             outputs=outputs,
             verdict=verdict,
             next=next_label,
             state_patch=state_patch,
         )
+        producer_port = _producer_port_for_step(self)
+        if producer_port is None:
+            return result
+        return with_stage_payload_result(result, producer_port=producer_port)
 
 
 def _resolve_root(ctx: StepContext) -> Path:
@@ -229,6 +245,30 @@ def _collect_outputs(
             if not before_present:
                 outputs[candidate] = path
     return outputs
+
+
+def _producer_port_for_step(step: InProcessHandlerStep):
+    if step.produces:
+        return step.produces[0]
+
+    from arnold.pipelines.megaplan.pipeline_contracts import production_planning_contracts
+
+    logical_type_by_step_name = {
+        "prep": LOGICAL_PREP_PAYLOAD,
+        "plan": LOGICAL_PLAN_PAYLOAD,
+        "critique": LOGICAL_CRITIQUE_PAYLOAD,
+        "gate": LOGICAL_GATE_PAYLOAD,
+        "revise": LOGICAL_REVISE_PAYLOAD,
+        "finalize": LOGICAL_FINALIZE_PAYLOAD,
+        "execute": LOGICAL_EXECUTE_PAYLOAD,
+        "review": LOGICAL_REVIEW_PAYLOAD,
+        "tiebreaker": LOGICAL_TIEBREAKER_PAYLOAD,
+    }
+    logical_type = logical_type_by_step_name.get(step.name)
+    if logical_type is None:
+        return None
+    contract = production_planning_contracts()[logical_type]
+    return contract.producer_port(f"{step.name}_payload")
 
 
 def build_inprocess_planning_steps() -> dict[str, InProcessHandlerStep]:

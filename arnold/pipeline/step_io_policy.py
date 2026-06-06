@@ -221,6 +221,7 @@ def decision_blocks_read(
     return decision.classification in {
         StepIOClassification.TYPED_INVALID,
         StepIOClassification.SCHEMA_UNAVAILABLE,
+        StepIOClassification.BINDING_UNAVAILABLE,
     }
 
 
@@ -237,6 +238,7 @@ def decision_blocks_write(
     return decision.classification in {
         StepIOClassification.TYPED_INVALID,
         StepIOClassification.SCHEMA_UNAVAILABLE,
+        StepIOClassification.BINDING_UNAVAILABLE,
     }
 
 

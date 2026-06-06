@@ -41,6 +41,18 @@ class TestArnoldPipelinePublicExports:
         from arnold.pipeline import run_pipeline
         assert run_pipeline is not None
 
+    def test_step_invocation_symbols_importable(self) -> None:
+        from arnold.pipeline import (
+            ModelAdapterNotImplementedError,
+            StepInvocation,
+            StepInvocationAdapter,
+            StepInvocationAdapterRegistry,
+        )
+        assert StepInvocation is not None
+        assert StepInvocationAdapter is not None
+        assert StepInvocationAdapterRegistry is not None
+        assert ModelAdapterNotImplementedError is not None
+
     def test_typed_port_symbols_importable(self) -> None:
         from arnold.pipeline import (
             CONTENT_TYPES,

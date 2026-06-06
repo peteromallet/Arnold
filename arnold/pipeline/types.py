@@ -49,7 +49,9 @@ import json
 import re as _re
 from dataclasses import dataclass, field, fields as _dc_fields
 from enum import Enum
-from typing import Any, Callable, Mapping, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Callable, Literal, Mapping, Protocol, TypeAlias, runtime_checkable
+
+from arnold.pipeline.schema_registry import AcceptedVersionRange
 
 
 # ---------------------------------------------------------------------------
@@ -139,12 +141,18 @@ class StepResult:
     steps.  ``next`` is matched against the enclosing stage's edges (with
     ``'halt'`` reserved as the terminal sentinel).  ``state_patch`` is a
     ``Mapping`` that the executor applies to working state.
+
+    ``contract_result`` carries typed seam payloads when a step emits an
+    evidence-first contract. Its ``schema_version`` is the structural
+    ``ContractResult`` envelope version, while any logical payload schema
+    version belongs inside ``contract_result.payload``.
     """
 
     outputs: Mapping[str, Any] = field(default_factory=dict)
     verdict: PipelineVerdict | None = None
     next: str = "halt"
     state_patch: Mapping[str, Any] = field(default_factory=dict)
+    contract_result: ContractResult | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +273,9 @@ class Pipeline:
 # ---------------------------------------------------------------------------
 
 
+PortCardinality: TypeAlias = Literal["singleton", "collection", "stream"]
+
+
 @dataclass(frozen=True)
 class Port:
     """A named typed port that declares its content type.
@@ -277,19 +288,40 @@ class Port:
     ``taint`` is a frozenset of security/trust labels (e.g.
     ``frozenset({"secret", "pii"})``) that are propagated through the
     dependency graph by the runtime's taint engine.
+
+    ``cardinality`` is the public M2 data-shape vocabulary:
+    ``"singleton"`` for exactly one value, ``"collection"`` for
+    fan-out/fan-in values, and reserved ``"stream"`` for future streaming
+    seams.  ``logical_type`` and ``accepted_version_range`` describe the
+    payload schema namespace for typed seam validation; they are optional
+    so legacy ``Port(name, content_type)`` declarations remain valid.
     """
 
     name: str
     content_type: str
     taint: frozenset[str] = field(default_factory=frozenset)
+    cardinality: PortCardinality = "singleton"
+    logical_type: str | None = None
+    accepted_version_range: AcceptedVersionRange | None = None
 
 
 @dataclass(frozen=True)
 class PortRef:
-    """A reference to a named port with its declared content type."""
+    """A reference to a named port with its declared content type.
+
+    ``cardinality`` mirrors :class:`Port` so consumers can declare whether
+    they expect a singleton, collection, or future stream input.  The
+    default remains singleton, preserving existing two-argument call sites.
+    ``logical_type`` and ``accepted_version_range`` are optional logical
+    payload schema metadata for consumers that validate retained contract
+    payload versions.
+    """
 
     port_name: str
     content_type: str
+    cardinality: PortCardinality = "singleton"
+    logical_type: str | None = None
+    accepted_version_range: AcceptedVersionRange | None = None
 
 
 @dataclass(frozen=True)

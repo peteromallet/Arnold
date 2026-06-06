@@ -23,6 +23,18 @@ from __future__ import annotations
 
 import dataclasses
 
+from arnold.pipelines.megaplan.pipeline_contracts import (
+    LOGICAL_CRITIQUE_PAYLOAD,
+    LOGICAL_EXECUTE_PAYLOAD,
+    LOGICAL_FINALIZE_PAYLOAD,
+    LOGICAL_GATE_PAYLOAD,
+    LOGICAL_PLAN_PAYLOAD,
+    LOGICAL_PREP_PAYLOAD,
+    LOGICAL_REVISE_PAYLOAD,
+    LOGICAL_REVIEW_PAYLOAD,
+    LOGICAL_TIEBREAKER_PAYLOAD,
+    production_planning_contracts,
+)
 from arnold.pipelines.megaplan._pipeline.patterns import (
     critique_revise_gate_loop,
     phase_zero_gate,
@@ -91,6 +103,17 @@ def build_pipeline() -> Pipeline:
                                   └─ escalate → (override edges)
     """
 
+    contracts = production_planning_contracts()
+    prep_contract = contracts[LOGICAL_PREP_PAYLOAD]
+    plan_contract = contracts[LOGICAL_PLAN_PAYLOAD]
+    critique_contract = contracts[LOGICAL_CRITIQUE_PAYLOAD]
+    gate_contract = contracts[LOGICAL_GATE_PAYLOAD]
+    revise_contract = contracts[LOGICAL_REVISE_PAYLOAD]
+    finalize_contract = contracts[LOGICAL_FINALIZE_PAYLOAD]
+    execute_contract = contracts[LOGICAL_EXECUTE_PAYLOAD]
+    review_contract = contracts[LOGICAL_REVIEW_PAYLOAD]
+    tiebreaker_contract = contracts[LOGICAL_TIEBREAKER_PAYLOAD]
+
     # Phase 0: prep gate via patterns.phase_zero_gate.
     prep_stage = phase_zero_gate(
         PrepStep(),
@@ -123,40 +146,78 @@ def build_pipeline() -> Pipeline:
         ),
         revise_target="critique",
     )
+    prep_stage = dataclasses.replace(
+        prep_stage,
+        produces=(prep_contract.producer_port("prep_payload"),),
+    )
+    cycle["critique"] = dataclasses.replace(
+        cycle["critique"],
+        consumes=(
+            plan_contract.consumer_port("plan_payload"),
+            revise_contract.consumer_port("revise_payload"),
+            tiebreaker_contract.consumer_port("tiebreaker_payload"),
+        ),
+        produces=(critique_contract.producer_port("critique_payload"),),
+    )
+    cycle["gate"] = dataclasses.replace(
+        cycle["gate"],
+        consumes=(critique_contract.consumer_port("critique_payload"),),
+        produces=(gate_contract.producer_port("gate_payload"),),
+    )
+    cycle["revise"] = dataclasses.replace(
+        cycle["revise"],
+        consumes=(gate_contract.consumer_port("gate_payload"),),
+        produces=(revise_contract.producer_port("revise_payload"),),
+    )
 
     stages: dict[str, Stage] = {
         "prep": prep_stage,
         "plan": Stage(
-            name="plan", step=PlanStep(),
+            name="plan",
+            step=PlanStep(),
             edges=(Edge(label="critique", target="critique"),),
+            consumes=(prep_contract.consumer_port("prep_payload"),),
+            produces=(plan_contract.producer_port("plan_payload"),),
         ),
         "critique": cycle["critique"],
         "gate": cycle["gate"],
         "revise": cycle["revise"],
         "finalize": Stage(
-            name="finalize", step=FinalizeStep(),
+            name="finalize",
+            step=FinalizeStep(),
             edges=(Edge(label="execute", target="execute"),),
+            consumes=(gate_contract.consumer_port("gate_payload"),),
+            produces=(finalize_contract.producer_port("finalize_payload"),),
         ),
         "execute": Stage(
-            name="execute", step=ExecuteStep(),
+            name="execute",
+            step=ExecuteStep(),
             edges=(Edge(label="review", target="review"),),
+            consumes=(finalize_contract.consumer_port("finalize_payload"),),
+            produces=(execute_contract.producer_port("execute_payload"),),
         ),
         "review": Stage(
-            name="review", step=ReviewStep(),
+            name="review",
+            step=ReviewStep(),
             edges=(Edge(label="review", target="halt"),
                    Edge(label="halt", target="halt")),
+            consumes=(execute_contract.consumer_port("execute_payload"),),
+            produces=(review_contract.producer_port("review_payload"),),
         ),
         # T11 LOAD-BEARING: TiebreakerStep is a SubloopStep that emits a
         # PipelineVerdict with a typed recommendation. The three decision edges
         # preserve the legacy "escalate folds into finalize" semantics via
         # escalate→finalize.
         "tiebreaker": Stage(
-            name="tiebreaker", step=TiebreakerStep(),
+            name="tiebreaker",
+            step=TiebreakerStep(),
             edges=tiebreaker_edges(
                 on_iterate="critique",
                 on_proceed="finalize",
                 on_escalate="finalize",
             ),
+            consumes=(gate_contract.consumer_port("gate_payload"),),
+            produces=(tiebreaker_contract.producer_port("tiebreaker_payload"),),
             decision_vocabulary=frozenset(
                 {PLAN_ITERATE, PLAN_PROCEED, PLAN_ESCALATE}
             ),

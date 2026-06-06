@@ -72,6 +72,16 @@ from arnold.pipelines.megaplan._pipeline.types import (
 )
 
 
+@dataclasses.dataclass(frozen=True)
+class _EnforcementBinding:
+    binding_map: Mapping[Any, Any] | None
+    diagnostics: Mapping[str, Any] | None = None
+
+    @property
+    def available(self) -> bool:
+        return self.binding_map is not None and self.diagnostics is None
+
+
 def _atomic_write_json(dest: Path, payload: Any) -> None:
     """Write ``payload`` to ``dest`` atomically via a sibling ``.tmp`` file.
 
@@ -168,6 +178,227 @@ def _record_error(
         stage_dir / "error.json",
         {"stage": stage_name, "error": repr(exc)},
     )
+
+
+def _edge_pairs(pipeline: Pipeline) -> tuple[tuple[str, str], ...]:
+    pairs: list[tuple[str, str]] = []
+    for stage_name, stage in pipeline.stages.items():
+        for edge in getattr(stage, "edges", ()) or ():
+            target = getattr(edge, "target", "")
+            if target and target != "halt":
+                pairs.append((stage_name, target))
+    return tuple(pairs)
+
+
+def _binding_diagnostics(result: Any) -> dict[str, Any]:
+    return {
+        "error_kind": getattr(result, "error_kind", type(result).__name__),
+        "wanted": repr(getattr(result, "wanted", "")),
+        "candidates": [repr(candidate) for candidate in getattr(result, "candidates", ())],
+        "suggested_moves": list(getattr(result, "suggested_moves", ())),
+    }
+
+
+def _emit_binding_unavailable_telemetry(
+    *,
+    artifact_root: Path,
+    diagnostics: Mapping[str, Any],
+) -> None:
+    try:
+        from arnold.pipeline.step_io_contract import (
+            StepIOClassification,
+            StepIOContractDecision,
+            StepIODiagnostic,
+        )
+        from arnold.pipeline.step_io_policy import resolve_step_io_policy
+        from arnold.pipeline.step_io_telemetry import (
+            TELEMETRY_FILENAME,
+            emit_decision_telemetry,
+        )
+
+        detail = str(diagnostics.get("error_kind", "binding unavailable"))
+        decision = StepIOContractDecision(
+            classification=StepIOClassification.BINDING_UNAVAILABLE,
+            allow_read=True,
+            allow_write=True,
+            value=None,
+            diagnostics=(
+                StepIODiagnostic(
+                    code="binding_unavailable",
+                    message=detail,
+                ),
+            ),
+            block_reason=detail,
+        )
+        emit_decision_telemetry(
+            decision=decision,
+            policy=resolve_step_io_policy(
+                configured_mode=None,
+                producer_typed=True,
+                consumer_typed=True,
+            ),
+            artifact="executor_binding",
+            operation="bind",
+            telemetry_path=artifact_root / TELEMETRY_FILENAME,
+            seam="executor_startup",
+        )
+    except Exception:
+        # Startup binding diagnostics are observational for legacy runs.
+        return
+
+
+def _prepare_enforcement_binding(
+    pipeline: Pipeline,
+    *,
+    artifact_root: Path,
+) -> _EnforcementBinding:
+    existing = getattr(pipeline, "binding_map", None)
+    if isinstance(existing, Mapping):
+        return _EnforcementBinding(binding_map=existing)
+
+    try:
+        from arnold.pipeline import contracts
+
+        result = contracts.bind(
+            pipeline.stages,
+            _edge_pairs(pipeline),
+            typed_ports=True,
+        )
+    except Exception as exc:
+        diagnostics = {
+            "error_kind": type(exc).__name__,
+            "detail": str(exc),
+        }
+        _emit_binding_unavailable_telemetry(
+            artifact_root=artifact_root,
+            diagnostics=diagnostics,
+        )
+        return _EnforcementBinding(binding_map=None, diagnostics=diagnostics)
+
+    binding_map = getattr(result, "binding_map", None)
+    if isinstance(binding_map, Mapping):
+        return _EnforcementBinding(binding_map=binding_map)
+
+    diagnostics = _binding_diagnostics(result)
+    _emit_binding_unavailable_telemetry(
+        artifact_root=artifact_root,
+        diagnostics=diagnostics,
+    )
+    return _EnforcementBinding(binding_map=None, diagnostics=diagnostics)
+
+
+def _port_name(port: Any) -> str:
+    return str(getattr(port, "port_name", None) or getattr(port, "name", ""))
+
+
+def _stage_produces(stage: Any) -> tuple[Any, ...]:
+    produces = getattr(stage, "produces", None)
+    if produces:
+        return tuple(produces)
+    step = getattr(stage, "step", None)
+    step_produces = getattr(step, "produces", None)
+    return tuple(step_produces) if step_produces else ()
+
+
+def _stage_consumes(stage: Any) -> tuple[Any, ...]:
+    consumes = getattr(stage, "consumes", None)
+    if consumes:
+        return tuple(consumes)
+    step = getattr(stage, "step", None)
+    step_consumes = getattr(step, "consumes", None)
+    return tuple(step_consumes) if step_consumes else ()
+
+
+def _find_port(ports: tuple[Any, ...], port_name: str) -> Any:
+    return next((port for port in ports if _port_name(port) == port_name), None)
+
+
+def _step_io_handoff_value(result: StepResult) -> Any | None:
+    contract_result = getattr(result, "contract_result", None)
+    if contract_result is None:
+        return None
+    payload = getattr(contract_result, "payload", None)
+    if isinstance(payload, Mapping):
+        return dict(payload)
+    return payload
+
+
+def _evaluate_cursor_handoff(
+    *,
+    pipeline: Pipeline,
+    binding: _EnforcementBinding,
+    producer_stage: Any,
+    consumer_stage: Any,
+    result: StepResult,
+    ctx: StepContext,
+    artifact_root: Path,
+) -> None:
+    value = _step_io_handoff_value(result)
+    if value is None:
+        return
+
+    consumer_ports = _stage_consumes(consumer_stage)
+    if not consumer_ports:
+        return
+
+    from arnold.pipeline.step_io_contract import StepIOContractContext, StepIOOperation
+    from arnold.pipeline.step_io_handoff import evaluate_step_io_handoff
+    from arnold.pipeline.step_io_seams import SeamResolution
+    from arnold.pipeline.step_io_telemetry import TELEMETRY_FILENAME
+
+    for consumer_port in consumer_ports:
+        consumer_port_name = _port_name(consumer_port)
+        producer_port_name = ""
+        producer_port = None
+        binding_map = binding.binding_map
+        if isinstance(binding_map, Mapping):
+            bound = binding_map.get((consumer_stage.name, consumer_port_name))
+            if isinstance(bound, tuple) and len(bound) == 2:
+                producer_stage_name, producer_port_name = bound
+                if producer_stage_name != producer_stage.name:
+                    continue
+                producer_port = _find_port(_stage_produces(producer_stage), producer_port_name)
+
+        if binding.diagnostics is not None:
+            reason = str(
+                binding.diagnostics.get("detail")
+                or binding.diagnostics.get("error_kind")
+                or "binding lookup unavailable"
+            )
+            seam = SeamResolution(
+                seam_id=None,
+                producer_typed=bool(_stage_produces(producer_stage)),
+                consumer_typed=True,
+                both_sides_typed=bool(_stage_produces(producer_stage)),
+                binding_found=False,
+                reason=reason,
+            )
+        else:
+            seam = None
+
+        handoff = evaluate_step_io_handoff(
+            value,
+            operation=StepIOOperation.WRITE,
+            context=StepIOContractContext(operation=StepIOOperation.WRITE),
+            pipeline=pipeline,
+            pipeline_id=getattr(pipeline, "name", "pipeline"),
+            consumer_step=consumer_stage.name,
+            consumer_port=consumer_port_name,
+            seam=seam,
+            producer_port=producer_port,
+            consumer_port_decl=consumer_port,
+            plan_dir=ctx.plan_dir,
+            state_config=state if isinstance((state := ctx.state), Mapping) else None,
+            artifact=f"{producer_stage.name}.contract_result",
+            telemetry_path=artifact_root / TELEMETRY_FILENAME,
+        )
+        if handoff.blocks_write:
+            reason = handoff.decision.block_reason or handoff.decision.classification.value
+            raise ValueError(
+                "Step IO handoff blocked "
+                f"{producer_stage.name!r} -> {consumer_stage.name!r} "
+                f"for port {consumer_port_name!r}: {reason}"
+            )
 
 
 def _is_safe_for_parallel(parallel_stage: ParallelStage) -> bool:
@@ -279,6 +510,10 @@ def run_pipeline(
 
     executor_owned_keys: set[str] = set()
     envelope: RunEnvelope = ctx.envelope if ctx.envelope is not None else EMPTY_ENVELOPE
+    _enforcement_binding = _prepare_enforcement_binding(
+        pipeline,
+        artifact_root=artifact_root,
+    )
 
     # M4 T2: under MEGAPLAN_UNIFIED_DISPATCH=1, install a tree-scoped Governor
     # for the duration of this pipeline run.  Strangler-pattern: bare path is
@@ -537,6 +772,15 @@ def run_pipeline(
             return {"state": state, "final_stage": node.name, "envelope": envelope}
         if edge.target == "halt":
             return {"state": state, "final_stage": node.name, "envelope": envelope}
+        _evaluate_cursor_handoff(
+            pipeline=pipeline,
+            binding=_enforcement_binding,
+            producer_stage=node,
+            consumer_stage=pipeline.stages[edge.target],
+            result=result,
+            ctx=ctx,
+            artifact_root=artifact_root,
+        )
         cursor = edge.target
 
 

@@ -13,7 +13,13 @@ from argparse import Namespace
 from pathlib import Path
 from typing import Any, Mapping
 
+from arnold.pipeline.schema_registry import ContractSchemaRegistry
 from arnold.pipelines.megaplan._core.state import write_plan_state
+from arnold.pipelines.megaplan.pipeline_contracts import (
+    LOGICAL_EXECUTE_PAYLOAD,
+    consume_payload_result,
+    register_production_planning_contracts,
+)
 from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 from arnold.pipelines.megaplan._pipeline.types import StepContext
 
@@ -68,3 +74,57 @@ def test_state_meta_roundtrips_through_inprocess_handler(tmp_path: Path) -> None
     assert versions.get("other_key") == 3
     # current_state was rewritten via executor-key-merge.
     assert after.get("current_state") == "planned"
+
+
+def _fake_execute_handler(root: Path, args: Namespace) -> Mapping[str, Any]:
+    plan_dir = root / ".megaplan" / "plans" / args.plan
+    execution_json = plan_dir / "execution.json"
+    execution_json.write_text('{"status":"ok"}', encoding="utf-8")
+    write_plan_state(
+        plan_dir,
+        mode="executor-key-merge",
+        state={"current_state": "executed"},
+        executor_owned_keys=["current_state"],
+    )
+    return {}
+
+
+def test_inprocess_handler_attaches_contract_result_and_preserves_legacy_fields(
+    tmp_path: Path,
+) -> None:
+    plan_name = "p2"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan_name, "current_state": "finalized"}),
+        encoding="utf-8",
+    )
+
+    step = InProcessHandlerStep(
+        name="execute",
+        kind="produce",
+        handler=_fake_execute_handler,
+    )
+    ctx = StepContext(
+        plan_dir=plan_dir,
+        state={"name": plan_name},
+        profile={"root": tmp_path, "project_dir": tmp_path},
+        mode="test",
+        inputs={},
+    )
+
+    result = step.run(ctx)
+
+    assert result.outputs == {"execution.json": plan_dir / "execution.json"}
+    assert result.state_patch == {"current_state": "executed"}
+    assert result.next == "review"
+    assert result.contract_result is not None
+    registry = ContractSchemaRegistry(tmp_path / "registry")
+    contracts = register_production_planning_contracts(registry)
+    contract = contracts[LOGICAL_EXECUTE_PAYLOAD]
+    payload, diagnostics = consume_payload_result(registry, contract, result.contract_result)
+    assert diagnostics == ()
+    assert payload is not None
+    assert payload["logical_type"] == LOGICAL_EXECUTE_PAYLOAD
+    assert payload["metadata"]["output_keys"] == ["execution.json"]
+    assert payload["metadata"]["state_patch_keys"] == ["current_state"]

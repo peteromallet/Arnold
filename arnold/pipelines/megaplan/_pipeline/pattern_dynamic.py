@@ -308,6 +308,7 @@ class _ConsensusStep(SubloopStep):
                         verdict=result.verdict,
                         next="halt",
                         state_patch=merged,
+                        contract_result=result.contract_result,
                     )
                 continue
             if last_ratio >= self.min_agreement:
@@ -323,6 +324,7 @@ class _ConsensusStep(SubloopStep):
                     verdict=result.verdict,
                     next="halt",
                     state_patch=merged,
+                    contract_result=result.contract_result,
                 )
 
         assert last_result is not None
@@ -338,6 +340,7 @@ class _ConsensusStep(SubloopStep):
             verdict=last_result.verdict,
             next="halt",
             state_patch=merged,
+            contract_result=last_result.contract_result,
         )
 
 
@@ -404,6 +407,7 @@ class _PairedRoundStep:
             verdict=last_result.verdict,
             next=last_result.next,
             state_patch=last_result.state_patch,
+            contract_result=last_result.contract_result,
         )
 
 

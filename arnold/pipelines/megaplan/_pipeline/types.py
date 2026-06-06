@@ -161,12 +161,18 @@ class StepResult:
     that. ``next`` is matched against the enclosing stage's edges (with
     ``'halt'`` reserved). ``state_patch`` is applied to working state via
     a defensive ``dict(...)`` copy.
+
+    ``contract_result`` carries typed seam payloads when a step emits an
+    evidence-first contract. Its ``schema_version`` is the structural
+    ``ContractResult`` envelope version, while any logical payload schema
+    version belongs inside ``contract_result.payload``.
     """
 
     outputs: Mapping[str, Path] = field(default_factory=dict)
     verdict: "PipelineVerdict | None" = None
     next: NextEdge = "halt"
     state_patch: Mapping[str, Any] = field(default_factory=dict)
+    contract_result: "ContractResult | None" = None
     envelope: RunEnvelope = field(default_factory=lambda: EMPTY_ENVELOPE)
 
 
@@ -545,8 +551,10 @@ def _phase_namespace(
 
 from arnold.pipeline.types import (  # noqa: E402  # M3a compatibility bridge; delete in M7
     CONTENT_TYPES,
+    ContractResult,
     ContentTypeRegistry,
     Port,
+    PortCardinality,
     PortRef,
     ReduceResult,
     RoutingKey,

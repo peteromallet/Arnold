@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import asdict
 from unittest.mock import patch, sentinel
 
 from arnold.pipelines.megaplan._pipeline import planning
+from arnold.pipelines.megaplan.pipeline import build_pipeline
 
 
 def test_discovered_planning_helper_is_inline_env_default_on(monkeypatch) -> None:
@@ -54,3 +56,28 @@ def test_compile_planning_pipeline_flag_on_uses_discovered_package(monkeypatch) 
     assert pipeline is sentinel.discovered_pipeline
     discovered_spy.assert_called_once_with()
     legacy_spy.assert_not_called()
+
+
+def test_legacy_compiler_delegates_to_canonical_builder() -> None:
+    with patch(
+        "arnold.pipelines.megaplan.pipeline.build_pipeline",
+        return_value=sentinel.canonical_pipeline,
+    ) as canonical_spy:
+        pipeline = planning._compile_legacy_planning_pipeline()
+
+    assert pipeline is sentinel.canonical_pipeline
+    canonical_spy.assert_called_once_with()
+
+
+def test_legacy_and_canonical_stage_declarations_are_identical() -> None:
+    legacy_pipeline = planning._compile_legacy_planning_pipeline()
+    canonical_pipeline = build_pipeline()
+
+    assert legacy_pipeline.entry == canonical_pipeline.entry == "prep"
+    assert tuple(legacy_pipeline.stages) == tuple(canonical_pipeline.stages)
+    assert len(canonical_pipeline.stages) == 9
+
+    for stage_name in canonical_pipeline.stages:
+        assert asdict(legacy_pipeline.stages[stage_name]) == asdict(
+            canonical_pipeline.stages[stage_name]
+        ), stage_name
