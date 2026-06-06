@@ -865,6 +865,143 @@ def handle_ticket(args: argparse.Namespace) -> int:
     return handler(args)
 
 
+def handle_contract(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Dispatch ``megaplan contract ...`` subcommands."""
+
+    from arnold.pipeline import (
+        TELEMETRY_FILENAME,
+        StepIOContractContext,
+        StepIOOperation,
+        has_step_io_self_validation_marker,
+        is_step_io_envelope,
+        load_step_io_policy,
+        record_step_io_self_validation_marker,
+        read_violation_records,
+        resolve_step_io_policy,
+        write_step_io_policy,
+    )
+    from arnold.pipelines.megaplan.store import PlanRepository
+
+    action = getattr(args, "contract_action", None)
+    if action == "mode":
+        mode_action = getattr(args, "mode_action", None)
+        if mode_action == "set":
+            plan_dir = resolve_plan_dir(root, args.plan)
+            if args.mode == "enforce" and not has_step_io_self_validation_marker(plan_dir):
+                raise CliError(
+                    "contract_self_validation_required",
+                    "contract mode enforce requires a successful contract self-validate marker",
+                )
+            policy = resolve_step_io_policy(
+                configured_mode=args.mode,
+                producer_typed=True,
+                consumer_typed=True,
+            )
+            path = write_step_io_policy(plan_dir, policy)
+            return {
+                "success": True,
+                "step": "contract",
+                "action": "mode-set",
+                "plan": args.plan,
+                "policy_path": str(path),
+                "policy": policy.to_json(),
+            }
+        if mode_action == "list":
+            repos = (
+                [PlanRepository.from_plan_dir(resolve_plan_dir(root, args.plan))]
+                if getattr(args, "plan", None)
+                else [PlanRepository.from_plan_dir(path) for path in active_plan_dirs(root)]
+            )
+            return {
+                "success": True,
+                "step": "contract",
+                "action": "mode-list",
+                "policies": [
+                    {
+                        "plan": repo.plan_name,
+                        "policy": load_step_io_policy(repo.plan_dir),
+                    }
+                    for repo in repos
+                ],
+            }
+    if action == "violations":
+        plan_dir = resolve_plan_dir(root, args.plan)
+        records = read_violation_records(plan_dir / TELEMETRY_FILENAME)
+        if getattr(args, "as_json", False):
+            return {
+                "success": True,
+                "step": "contract",
+                "action": "violations",
+                "plan": args.plan,
+                "violations": records,
+            }
+        for record in records:
+            print(
+                "\t".join(
+                    str(record.get(key, ""))
+                    for key in ("seam", "artifact", "operation", "classification", "block_reason")
+                )
+            )
+        return {
+            "success": True,
+            "step": "contract",
+            "action": "violations",
+            "plan": args.plan,
+            "count": len(records),
+        }
+    if action == "self-validate":
+        plan_dir = resolve_plan_dir(root, args.plan)
+        repo = PlanRepository.from_plan_dir(plan_dir)
+        typed_artifacts: list[str] = []
+        for artifact_name in repo.list_artifact_names():
+            if (
+                not artifact_name.endswith(".json")
+                or artifact_name.startswith(".contract_self_validate/")
+            ):
+                continue
+            raw = json.loads(repo.artifact_path(artifact_name).read_text(encoding="utf-8"))
+            if not is_step_io_envelope(raw):
+                continue
+            temp_name = f".contract_self_validate/{artifact_name}"
+            repo.write_artifact_json(
+                temp_name,
+                raw,
+                contract_context=StepIOContractContext(
+                    operation=StepIOOperation.WRITE,
+                    registry_root=plan_dir,
+                ),
+                contract_binding={"producer_typed": True, "consumer_typed": True},
+            )
+            repo.read_artifact_json(
+                temp_name,
+                contract_context=StepIOContractContext(
+                    operation=StepIOOperation.READ,
+                    registry_root=plan_dir,
+                ),
+                contract_binding={"producer_typed": True, "consumer_typed": True},
+            )
+            repo.delete_artifact(temp_name)
+            typed_artifacts.append(artifact_name)
+        if not typed_artifacts:
+            raise CliError(
+                "contract_self_validation_no_typed_artifacts",
+                "contract self-validate requires at least one typed artifact round trip",
+            )
+        marker_path = record_step_io_self_validation_marker(
+            plan_dir,
+            typed_artifacts=typed_artifacts,
+        )
+        return {
+            "success": True,
+            "step": "contract",
+            "action": "self-validate",
+            "plan": args.plan,
+            "marker_path": str(marker_path),
+            "typed_artifacts": typed_artifacts,
+        }
+    raise CliError("invalid_args", "unknown contract action")
+
+
 def handle_brief(root: Path, args: argparse.Namespace) -> StepResponse:
     """Dispatch ``megaplan brief ...`` subcommands."""
     from arnold.pipelines.megaplan.briefs import (
@@ -1524,6 +1661,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "debt": handle_debt,
     "user-action": handle_user_action,
     "brief": handle_brief,
+    "contract": handle_contract,
     "ticket": handle_ticket,
     "epic": handle_epic,
     "migrate-local-plans": handle_migrate_local_plans,

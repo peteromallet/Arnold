@@ -19,6 +19,7 @@ from arnold.pipelines.megaplan._core import (
     is_prose_mode,
     store_raw_worker_output,
 )
+from arnold.pipelines.megaplan.store import write_plan_artifact_json
 from arnold.pipelines.megaplan.execute.merge import (
     TERMINAL_TASK_STATUSES,
     _validate_and_merge_batch,
@@ -248,7 +249,7 @@ def _recover_execute_timeout(
     )
     execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
-    atomic_write_json(plan_dir / "finalize.json", finalize_data)
+    write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
     atomic_write_text(
         plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
     )

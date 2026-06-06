@@ -10,6 +10,7 @@ from typing import Any, Callable, Iterable
 
 import arnold.pipelines.megaplan.workers as worker_module
 from arnold.pipelines.megaplan._pipeline.flags import calibration_query_route_on
+from arnold.pipelines.megaplan.store import write_plan_artifact_json
 from arnold.pipelines.megaplan._core import (
     apply_session_update,
     append_history,
@@ -647,7 +648,7 @@ def _run_and_merge_batch(
     payload["deviations"] = deviations
     atomic_write_json(batch_artifact_path(plan_dir, batch_number), payload)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
-    atomic_write_json(plan_dir / "finalize.json", finalize_data)
+    write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
     atomic_write_text(
         plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
     )
@@ -935,7 +936,7 @@ def handle_execute_one_batch(
         )
         # _run_and_merge_batch already wrote execution_audit.json; this handler
         # only writes the aggregate execution.json after the batch returns.
-        atomic_write_json(plan_dir / "execution.json", aggregate_payload)
+        write_plan_artifact_json(plan_dir, "execution.json", aggregate_payload, contract_context=None)
         drift = _compute_scope_drift_for_execute_surface(
             project_dir=project_dir,
             aggregate_payload=aggregate_payload,
@@ -1424,7 +1425,7 @@ def handle_execute_auto_loop(
     if getattr(args, "retry_blocked_tasks", False):
         reset_ids = _reset_blocked_tasks_to_pending(finalize_data)
         if reset_ids:
-            atomic_write_json(plan_dir / "finalize.json", finalize_data)
+            write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
             log.info(
                 "retry-blocked-tasks: reset %d task(s) from blocked -> pending: %s",
                 len(reset_ids),
@@ -1553,7 +1554,7 @@ def handle_execute_auto_loop(
                     task["evidence_files"] = []
                     task["reviewer_verdict"] = ""
                     task.pop("recorded_invocation_id", None)
-            atomic_write_json(plan_dir / "finalize.json", finalize_data)
+            write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
             # Recompute blocked_task_ids after reset — should now be empty
             blocked_task_ids = {
                 task["id"]
@@ -1960,7 +1961,7 @@ def handle_execute_auto_loop(
             f"work is handled out-of-band; re-run those tasks once the blockage is resolved."
         )
     aggregate_payload["deviations"] = deviations
-    atomic_write_json(plan_dir / "execution.json", aggregate_payload)
+    write_plan_artifact_json(plan_dir, "execution.json", aggregate_payload, contract_context=None)
     drift = _compute_scope_drift_for_execute_surface(
         project_dir=project_dir,
         aggregate_payload=aggregate_payload,
@@ -1968,7 +1969,7 @@ def handle_execute_auto_loop(
         phase_context=f"execute auto-loop aggregate after {len(batch_payloads)}/{total_batches} completed batches",
     )
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
-    atomic_write_json(plan_dir / "finalize.json", finalize_data)
+    write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
     atomic_write_text(
         plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
     )

@@ -1908,6 +1908,255 @@
             }
           }
         },
+        "contract": {
+          "mutually_exclusive_groups": [],
+          "options": [
+            {
+              "action": "_HelpAction",
+              "choices": null,
+              "const": null,
+              "default": "<SUPPRESS>",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--help",
+                "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "positionals": [],
+          "subcommands": {
+            "mode": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {
+                "list": {
+                  "mutually_exclusive_groups": [],
+                  "options": [
+                    {
+                      "action": "_HelpAction",
+                      "choices": null,
+                      "const": null,
+                      "default": "<SUPPRESS>",
+                      "dest": "help",
+                      "help": "show this help message and exit",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--help",
+                        "-h"
+                      ],
+                      "required": false,
+                      "type": null
+                    },
+                    {
+                      "action": "_StoreAction",
+                      "choices": null,
+                      "const": null,
+                      "default": null,
+                      "dest": "plan",
+                      "help": null,
+                      "metavar": null,
+                      "nargs": null,
+                      "option_strings": [
+                        "--plan"
+                      ],
+                      "required": false,
+                      "type": null
+                    }
+                  ],
+                  "positionals": [],
+                  "subcommands": {}
+                },
+                "set": {
+                  "mutually_exclusive_groups": [],
+                  "options": [
+                    {
+                      "action": "_HelpAction",
+                      "choices": null,
+                      "const": null,
+                      "default": "<SUPPRESS>",
+                      "dest": "help",
+                      "help": "show this help message and exit",
+                      "metavar": null,
+                      "nargs": "0",
+                      "option_strings": [
+                        "--help",
+                        "-h"
+                      ],
+                      "required": false,
+                      "type": null
+                    },
+                    {
+                      "action": "_StoreAction",
+                      "choices": null,
+                      "const": null,
+                      "default": null,
+                      "dest": "plan",
+                      "help": null,
+                      "metavar": null,
+                      "nargs": null,
+                      "option_strings": [
+                        "--plan"
+                      ],
+                      "required": true,
+                      "type": null
+                    }
+                  ],
+                  "positionals": [
+                    {
+                      "action": "_StoreAction",
+                      "choices": [
+                        "off",
+                        "shadow",
+                        "warn",
+                        "enforce"
+                      ],
+                      "const": null,
+                      "default": null,
+                      "dest": "mode",
+                      "help": null,
+                      "metavar": null,
+                      "nargs": null,
+                      "option_strings": [],
+                      "required": true,
+                      "type": null
+                    }
+                  ],
+                  "subcommands": {}
+                }
+              }
+            },
+            "self-validate": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "plan",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--plan"
+                  ],
+                  "required": true,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "violations": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "plan",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--plan"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "as_json",
+                  "help": null,
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--json"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            }
+          }
+        },
         "cost": {
           "mutually_exclusive_groups": [],
           "options": [

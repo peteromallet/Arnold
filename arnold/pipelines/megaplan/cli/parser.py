@@ -370,6 +370,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     describe_parser.set_defaults(func=cli_mod.handle_describe)
 
+    contract_parser = subparsers.add_parser(
+        "contract", help="Inspect and configure step IO contract policy"
+    )
+    contract_parser.add_argument("--project-dir", default=None)
+    contract_sub = contract_parser.add_subparsers(dest="contract_action", required=True)
+    contract_mode_parser = contract_sub.add_parser("mode", help="Manage contract mode")
+    contract_mode_sub = contract_mode_parser.add_subparsers(dest="mode_action", required=True)
+    contract_mode_set = contract_mode_sub.add_parser("set", help="Persist a contract mode")
+    contract_mode_set.add_argument("mode", choices=["off", "shadow", "warn", "enforce"])
+    contract_mode_set.add_argument("--plan", required=True)
+    contract_mode_list = contract_mode_sub.add_parser("list", help="List contract modes")
+    contract_mode_list.add_argument("--plan", default=None)
+    contract_violations = contract_sub.add_parser("violations", help="List step IO violations")
+    contract_violations.add_argument("--plan", required=True)
+    contract_violations.add_argument("--json", action="store_true", dest="as_json")
+    contract_self_validate = contract_sub.add_parser(
+        "self-validate", help="Round-trip typed artifacts through repository checks"
+    )
+    contract_self_validate.add_argument("--plan", required=True)
+
     epic_parser = subparsers.add_parser("epic", help="Inspect or migrate Arnold epics")
     epic_parser.add_argument("--project-dir", default=None)
     epic_subparsers = epic_parser.add_subparsers(dest="epic_action", required=True)

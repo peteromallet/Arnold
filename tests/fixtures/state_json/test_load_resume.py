@@ -14,7 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipelines.megaplan._core.state import load_plan_from_dir
+from arnold.pipeline import step_io_policy_path
+from arnold.pipelines.megaplan._core.state import load_plan, load_plan_from_dir
 
 _FIXTURE_ROOT = Path(__file__).parent
 
@@ -45,3 +46,33 @@ def test_load_and_resume(fixture_dir: Path, tmp_path: Path) -> None:
     assert isinstance(state, dict)
     assert state.get("name"), "loaded state must have a non-empty name"
     assert "current_state" in state
+
+
+@pytest.mark.parametrize("fixture_dir", FIXTURE_DIRS)
+def test_load_paths_ignore_typed_artifact_validation_for_legacy_state_fixtures(
+    fixture_dir: Path, tmp_path: Path
+) -> None:
+    plan_root = tmp_path / ".megaplan" / "plans"
+    plan_root.mkdir(parents=True)
+    plan_dir = plan_root / fixture_dir.name
+    shutil.copytree(fixture_dir, plan_dir)
+    (plan_dir / "review.json").write_text(
+        '{"logical_type":"review","schema_version":"sha256:'
+        + ("1" * 64)
+        + '","payload":{"answer":"wrong"}}',
+        encoding="utf-8",
+    )
+    policy_path = step_io_policy_path(plan_dir)
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        '{"configured_mode":"enforce","effective_mode":"enforce"}',
+        encoding="utf-8",
+    )
+
+    direct_plan_dir, direct_state = load_plan_from_dir(plan_dir)
+    resolved_plan_dir, resolved_state = load_plan(tmp_path, fixture_dir.name)
+
+    assert direct_plan_dir == plan_dir
+    assert resolved_plan_dir == plan_dir
+    assert resolved_state == direct_state
+    assert direct_state.get("name")

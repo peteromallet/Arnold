@@ -22,9 +22,8 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_FAILED,
     STATE_FINALIZED,
 )
-from arnold.pipelines.megaplan.store import PlanRepository
+from arnold.pipelines.megaplan.store import PlanRepository, write_plan_artifact_json
 from arnold.pipelines.megaplan._core import (
-    atomic_write_json,
     clear_active_step,
     configured_robustness,
     is_prose_mode,
@@ -290,7 +289,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 "sense_check_verdicts": [],
             }
             validate_payload("review", stub_review)
-            atomic_write_json(plan_dir / "review.json", stub_review)
+            write_plan_artifact_json(plan_dir, "review.json", stub_review, contract_context=None)
             artifacts = response.get("artifacts")
             if isinstance(artifacts, list) and "review.json" not in artifacts:
                 artifacts.append("review.json")
