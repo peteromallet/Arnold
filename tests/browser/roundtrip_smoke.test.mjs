@@ -1093,6 +1093,84 @@ test("VibeComfy treats graph-unchanged no-candidate compatibility responses as n
   }
 });
 
+test("VibeComfy live submit no-op response shape settles in Ready without review", async () => {
+  const graph = {
+    nodes: [{ id: 1, type: "KSampler", properties: { vibecomfy_uid: "refiner-sampler" } }],
+    links: [],
+  };
+  const liveNoopResponse = {
+    ok: true,
+    session_id: "715b2b4ad80b447b8d5cb123d1c3e10e",
+    turn_id: "0002",
+    baseline_turn_id: "0001",
+    graph_unchanged: true,
+    apply_allowed: false,
+    canvas_apply_allowed: false,
+    queue_allowed: false,
+    outcome: {
+      kind: "noop",
+      reason: "The refiner sampler seed is already set to 999.",
+    },
+    message: "Nothing needed changing; the workflow already matches that.",
+  };
+  const harness = await createBrowserHarness({
+    graph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          },
+        },
+      },
+      "/vibecomfy/agent-edit": {
+        status: 200,
+        body: liveNoopResponse,
+      },
+    },
+  });
+
+  let submitPromise;
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "set the refiner sampler seed to 999";
+    submitPromise = harness.clickButton("Submit");
+    await submitPromise;
+
+    const panel = extensionModule.ensureAgentPanel();
+    assert.equal(harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-edit").length, 1);
+    assert.equal(panel.state.phase, "IDLE");
+    assert.equal(panel.state.candidateGraph, null);
+    assert.equal(panel.state.candidateGraphHash, null);
+    assert.equal(panel.state.applyAllowed, false);
+    assert.equal(panel.state.canvasApplyAllowed, false);
+    assert.equal(panel.state.queueAllowed, false);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-status")?.textContent, "Ready");
+    assert.match(harness.textDump(), /Nothing needed changing; the workflow already matches that\./);
+    assert.doesNotMatch(harness.textDump(), /Review Changes/);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled, true);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-reject")?.disabled, true);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled, false);
+    assert.equal(harness.loadGraphDataCalls.length, 0);
+  } finally {
+    await Promise.allSettled([submitPromise].filter(Boolean));
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy preserves Apply controls for edit+clarify candidates", async () => {
   const SESSION_ID = "session-edit-clarify";
   const initialGraph = {
