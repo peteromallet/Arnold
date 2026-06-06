@@ -5650,6 +5650,21 @@ def test_synthesize_message_diagnostic_only_turn() -> None:
     assert msg[-1] in ".!?"
 
 
+def test_synthesize_message_zero_ops_noop_hides_gate_jargon() -> None:
+    """Zero-op no-op summaries keep gate diagnostics out of the user-facing sentence."""
+    state = _make_state(
+        user_message="",
+        batch_exit_mode="noop",
+        batch_done_summary="No edits applied - identity verified; Gate B passed. Summary: No operations were applied.",
+    )
+    msg = _synthesize_batch_repl_message(state, outcome=TurnOutcome.noop())
+
+    assert msg == "Nothing needed changing; the workflow already matches that."
+    assert "Gate" not in msg
+    assert "identity" not in msg
+    assert "No operations" not in msg
+
+
 def test_synthesize_message_budget_exhaustion() -> None:
     """Budget exhaustion produces the expected budget message."""
     state = _make_state(
@@ -6064,7 +6079,7 @@ def test_humanized_edit_message_describes_removed_nodes_without_gate_dump() -> N
 
 def test_humanized_edit_message_describes_rewire_link_refs_without_raw_dicts() -> None:
     """Link FieldChange mapping values resolve to node labels instead of raw dict text."""
-    graph = {
+    original_graph = {
         "nodes": [
             {
                 "id": 8,
@@ -6076,8 +6091,6 @@ def test_humanized_edit_message_describes_rewire_link_refs_without_raw_dicts() -
             {
                 "id": 18,
                 "type": "ImageUpscaleWithModel",
-                "title": "Upscale Image (using Model)",
-                "properties": {"vibecomfy_uid": "upscale_image"},
                 "outputs": [{"name": "IMAGE"}],
             },
             {
@@ -6089,14 +6102,30 @@ def test_humanized_edit_message_describes_rewire_link_refs_without_raw_dicts() -
         ],
         "links": [[12, 18, 0, 19, 0, "IMAGE"]],
     }
+    candidate_graph = {
+        "nodes": [
+            original_graph["nodes"][0],
+            {
+                "id": 18,
+                "type": "ImageUpscaleWithModel",
+            },
+            {
+                "id": 19,
+                "type": "SaveImage",
+                "properties": {"vibecomfy_uid": "final_save"},
+                "inputs": [{"name": "images", "link": 13}],
+            },
+        ],
+        "links": [[13, 8, 0, 19, 0, "IMAGE"]],
+    }
     state = _make_state(
-        graph=graph,
-        ui_payload=graph,
+        graph=original_graph,
+        ui_payload=candidate_graph,
         batch_field_changes=(
             FieldChange(
                 uid="final_save",
                 field_path="images",
-                old={"scope_path": "", "uid": "upscale_image", "output_slot": 0},
+                old={"scope_path": "", "uid": 18, "output_slot": 0},
                 new={"scope_path": "", "uid": "vae_decode", "output_slot": 0},
             ),
         ),
@@ -6106,7 +6135,8 @@ def test_humanized_edit_message_describes_rewire_link_refs_without_raw_dicts() -
 
     assert "Rewired SaveImage images" in msg
     assert "VAE Decode" in msg
-    assert "Upscale Image (using Model)" in msg
+    assert "ImageUpscaleWithModel" in msg
+    assert "unknown source" not in msg
     assert "{" not in msg
     assert "scope_path" not in msg
     assert "uid" not in msg

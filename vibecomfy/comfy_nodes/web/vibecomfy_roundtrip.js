@@ -3203,6 +3203,16 @@ function candidateGraphFromResult(result) {
   if (!result || typeof result !== "object") {
     return null;
   }
+  if (
+    result.graph_unchanged === true
+    && (
+      result.candidate === null
+      || result.apply_eligibility?.reason === APPLY_ELIGIBILITY_REASON.NO_CANDIDATE
+      || result.apply_eligibility?.reason === "no_candidate"
+    )
+  ) {
+    return null;
+  }
   const typedGraph = result.candidate?.graph;
   if (typedGraph && typeof typedGraph === "object") {
     return typedGraph;
@@ -3270,6 +3280,21 @@ function outcomeFromResult(result) {
   }
   if (result.outcome && typeof result.outcome === "object") {
     return result.outcome;
+  }
+  if (
+    result.graph_unchanged === true
+    && (
+      result.candidate === null
+      || result.apply_eligibility?.reason === APPLY_ELIGIBILITY_REASON.NO_CANDIDATE
+      || result.apply_eligibility?.reason === "no_candidate"
+    )
+  ) {
+    return {
+      kind: "noop",
+      reason: typeof result.message === "string" && result.message.trim()
+        ? result.message.trim()
+        : null,
+    };
   }
   const clarificationQuestion =
     typeof result.clarification_message === "string" && result.clarification_message
@@ -5590,6 +5615,26 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
     for (const key of liveLinkKeys) {
       if (!candidateLinkKeys.has(key)) {
         removed_links.push(key);
+      }
+    }
+
+    const linkEditedUids = new Set();
+    const _linkTarget = (key) => {
+      const match = String(key || "").match(/^.+?::.+?->([^:]+)::(.+)$/);
+      return match ? { uid: match[1], port: match[2] } : null;
+    };
+    for (const key of [...added_links, ...removed_links]) {
+      const target = _linkTarget(key);
+      if (target && liveByUid.has(target.uid) && candidateByUid.has(target.uid)) {
+        linkEditedUids.add(target.uid);
+      }
+    }
+    const editedByUid = new Map(edited.map((entry) => [entry.uid, entry]));
+    for (const uid of linkEditedUids) {
+      if (!editedByUid.has(uid)) {
+        const entry = { uid, changedWidgetIndices: [] };
+        editedByUid.set(uid, entry);
+        edited.push(entry);
       }
     }
 

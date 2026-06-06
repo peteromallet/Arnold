@@ -1021,6 +1021,78 @@ test("VibeComfy renders no-op edit turns without entering review", async () => {
   }
 });
 
+test("VibeComfy treats graph-unchanged no-candidate compatibility responses as no-op turns", async () => {
+  const graph = {
+    nodes: [{ id: 1, type: "KSampler", properties: { vibecomfy_uid: "ksampler" } }],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          },
+        },
+      },
+      "/vibecomfy/agent-edit": {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: "session-noop-compat",
+          turn_id: "0001",
+          baseline_turn_id: null,
+          candidate: null,
+          graph,
+          graph_unchanged: true,
+          canvas_apply_allowed: false,
+          apply_allowed: false,
+          queue_allowed: false,
+          apply_eligibility: {
+            applyable: false,
+            reason: "no_candidate",
+            message: "No candidate is available to apply.",
+            warnings: [],
+          },
+          message: "Nothing needed changing; the workflow already matches that.",
+          report: { done_summary: "No change needed." },
+        },
+      },
+    },
+  });
+
+  let submitPromise;
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "make sure cfg is already right";
+    submitPromise = harness.clickButton("Submit");
+    await submitPromise;
+
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-status")?.textContent, "Ready");
+    assert.doesNotMatch(harness.textDump(), /Review Changes/);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled, true);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled, false);
+    assert.equal(harness.loadGraphDataCalls.length, 0);
+  } finally {
+    await Promise.allSettled([submitPromise].filter(Boolean));
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy preserves Apply controls for edit+clarify candidates", async () => {
   const SESSION_ID = "session-edit-clarify";
   const initialGraph = {
@@ -4996,6 +5068,99 @@ test("VibeComfy edited-node overlay box encloses the title bar (LiteGraph pos[1]
     assert.ok(ry + rh >= NODE_POS[1] + NODE_SIZE[1], "box must reach the body bottom");
     // Width tracks the node width.
     assert.ok(rw >= NODE_SIZE[0], "box width must cover the node width");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy link-rewired target nodes get the full edited-node overlay box", async () => {
+  const TITLE_H = 30;
+  const SAVE_POS = [420, 260];
+  const SAVE_SIZE = [240, 100];
+  const liveGraph = {
+    nodes: [
+      {
+        id: 8,
+        type: "VAEDecode",
+        pos: [80, 180],
+        size: [220, 90],
+        properties: { vibecomfy_uid: "vae_decode" },
+        outputs: [{ name: "IMAGE" }],
+        inputs: [],
+      },
+      {
+        id: 18,
+        type: "ImageUpscaleWithModel",
+        pos: [80, 340],
+        size: [220, 90],
+        properties: { vibecomfy_uid: "upscale_image" },
+        outputs: [{ name: "IMAGE" }],
+        inputs: [],
+      },
+      {
+        id: 19,
+        type: "SaveImage",
+        pos: [...SAVE_POS],
+        size: [...SAVE_SIZE],
+        properties: { vibecomfy_uid: "final_save" },
+        inputs: [{ name: "images" }],
+        outputs: [],
+      },
+    ],
+    links: [[18, 0, 19, 0, "IMAGE"]],
+  };
+  const candidateGraph = {
+    nodes: liveGraph.nodes.map((node) => ({ ...node })),
+    links: [[8, 0, 19, 0, "IMAGE"]],
+  };
+  const candidateReport = {
+    change: { content_edits: { preserved: ["vae_decode", "upscale_image"], edited: ["final_save"], removed_named: [] } },
+    recovery: [],
+  };
+
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const diff = extensionModule.computePreviewDiff(candidateGraph, candidateReport);
+    assert.ok(diff.added_links.some((key) => key === "vae_decode::IMAGE->final_save::images"));
+    assert.ok(diff.removed_links.some((key) => key === "upscale_image::IMAGE->final_save::images"));
+    assert.ok(
+      diff.edited.some((entry) => entry.uid === "final_save" && entry.changedWidgetIndices.length === 0),
+      "link-only rewire target must be promoted into diff.edited",
+    );
+
+    const drawOps = await harness.drawPreviewOverlay({ ...diff, _candidateGraph: candidateGraph });
+
+    let lastStroke = null;
+    let lastFill = null;
+    let editedFillRect = null;
+    let editedRect = null;
+    for (const op of drawOps) {
+      if (op.kind === "strokeStyle") lastStroke = op.args[0];
+      if (op.kind === "fillStyle") lastFill = op.args[0];
+      if (op.kind === "fillRect" && lastFill === "rgba(255,193,7,0.16)") {
+        editedFillRect = op.args;
+      }
+      if (op.kind === "strokeRect" && lastStroke === "#ffc107") {
+        editedRect = op.args;
+        break;
+      }
+    }
+
+    assert.ok(editedFillRect, "link-rewired target must fill the full edited box");
+    assert.ok(editedRect, "link-rewired target must stroke the full edited box");
+    assert.deepEqual(editedFillRect, editedRect);
+    const [_rx, ry, _rw, rh] = editedRect;
+    assert.ok(ry <= SAVE_POS[1] - TITLE_H, "rewired target box must include the title bar");
+    assert.ok(rh >= SAVE_SIZE[1] + TITLE_H, "rewired target box must include body plus title");
   } finally {
     await harness.dispose();
   }

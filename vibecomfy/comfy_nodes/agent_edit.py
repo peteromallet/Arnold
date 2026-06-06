@@ -340,15 +340,15 @@ def _link_endpoint_parts(value: Any) -> tuple[str, int | str] | None:
     if (
         isinstance(value, (list, tuple))
         and len(value) == 2
-        and isinstance(value[0], str)
+        and isinstance(value[0], (int, str))
         and isinstance(value[1], int)
     ):
-        return value[0], value[1]
+        return str(value[0]), value[1]
     if isinstance(value, Mapping):
         uid = value.get("uid")
         output_slot = value.get("output_slot")
-        if isinstance(uid, str) and isinstance(output_slot, (int, str)):
-            return uid, output_slot
+        if isinstance(uid, (int, str)) and isinstance(output_slot, (int, str)):
+            return str(uid), output_slot
     return None
 
 
@@ -378,6 +378,7 @@ def _resolve_endpoint_label(
     endpoint: Any,
     node_labels: Mapping[str, str],
     graph: Mapping[str, Any],
+    *fallback_graphs: Mapping[str, Any] | None,
 ) -> str:
     """Resolve a link endpoint ``[uid, slot]`` to a label like ``'VAE Decode IMAGE'``."""
     parts = _link_endpoint_parts(endpoint)
@@ -386,6 +387,12 @@ def _resolve_endpoint_label(
     uid, slot = parts
     node_label = node_labels.get(uid)
     slot_name = _resolve_output_slot_name(graph, uid, slot)
+    if slot_name is None:
+        for fallback_graph in fallback_graphs:
+            if isinstance(fallback_graph, Mapping):
+                slot_name = _resolve_output_slot_name(fallback_graph, uid, slot)
+                if slot_name is not None:
+                    break
     if node_label and slot_name:
         return f"{node_label} {slot_name}"
     if node_label:
@@ -541,20 +548,24 @@ def _human_change_phrase(
     labels: Mapping[str, str] | None = None,
     *,
     graph: Mapping[str, Any] | None = None,
+    old_graph: Mapping[str, Any] | None = None,
+    new_graph: Mapping[str, Any] | None = None,
 ) -> str:
     subject = _change_subject(change, labels)
     if graph is not None and labels is not None:
+        old_endpoint_graph = old_graph if isinstance(old_graph, Mapping) else graph
+        new_endpoint_graph = new_graph if isinstance(new_graph, Mapping) else graph
         old_link = _is_link_endpoint(change.old)
         new_link = _is_link_endpoint(change.new)
         if old_link and new_link:
-            old_label = _resolve_endpoint_label(change.old, labels, graph)
-            new_label = _resolve_endpoint_label(change.new, labels, graph)
+            old_label = _resolve_endpoint_label(change.old, labels, old_endpoint_graph, graph, new_graph)
+            new_label = _resolve_endpoint_label(change.new, labels, new_endpoint_graph, graph, old_graph)
             return f"rewired {subject} to come from {new_label} instead of {old_label}"
         if new_link and not old_link:
-            new_label = _resolve_endpoint_label(change.new, labels, graph)
+            new_label = _resolve_endpoint_label(change.new, labels, new_endpoint_graph, graph, old_graph)
             return f"connected {subject} to {new_label}"
         if old_link and not new_link:
-            old_label = _resolve_endpoint_label(change.old, labels, graph)
+            old_label = _resolve_endpoint_label(change.old, labels, old_endpoint_graph, graph, new_graph)
             return f"disconnected {subject} from {old_label}"
     if change.old is None or change.old is _ABSENT_FIELD_OLD:
         return f"set {subject} to {_display_value(change.new)}"
@@ -590,11 +601,26 @@ def _humanized_edit_message(state: AgentEditState) -> str:
     if len(changes) == 1:
         return _sentence_case(
             ensure_sentence_message(
-                _human_change_phrase(changes[0], labels, graph=state.graph),
+                _human_change_phrase(
+                    changes[0],
+                    labels,
+                    graph=state.graph,
+                    old_graph=state.graph,
+                    new_graph=state.ui_payload,
+                ),
                 fallback="Updated the workflow.",
             )
         )
-    phrases = [_human_change_phrase(change, labels, graph=state.graph) for change in changes[:3]]
+    phrases = [
+        _human_change_phrase(
+            change,
+            labels,
+            graph=state.graph,
+            old_graph=state.graph,
+            new_graph=state.ui_payload,
+        )
+        for change in changes[:3]
+    ]
     if len(changes) == 2:
         text = f"{phrases[0]} and {phrases[1]}"
     else:
@@ -619,10 +645,13 @@ def _humanized_noop_message(state: AgentEditState) -> str:
         )
     if len(changes) > 1:
         return "The requested fields already match the current graph; no change needed."
-    return ensure_sentence_message(
-        state.batch_done_summary,
-        fallback="No graph changes were needed.",
-    )
+    summary = (state.batch_done_summary or "").strip()
+    gate_jargon = bool(re.search(r"\bGate\s+[AB]\b|identity verified|No operations were applied", summary, re.I))
+    if summary and not gate_jargon:
+        return ensure_sentence_message(summary, fallback="No graph changes were needed.")
+    if gate_jargon:
+        return "Nothing needed changing; the workflow already matches that."
+    return "No graph changes were needed."
 
 
 def _operation_detail_payload(changes: tuple[FieldChange, ...]) -> list[dict[str, Any]]:
