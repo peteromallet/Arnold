@@ -135,6 +135,8 @@ const SETTINGS_STATUS_RENDER_SECTIONS = Object.freeze([
 ]);
 const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
 const AGENT_PANEL_RENDER_TIMEOUT_MS = 100;
+const AGENT_PANEL_SECTION_RENDER_ERROR_LIMIT = 20;
+const AGENT_PANEL_SECTION_RENDER_RETRY_LIMIT = 3;
 const AGENT_SIDEBAR_TAB_ID = "vibecomfy.agent-edit";
 const AGENT_PANEL_SINGLETON_KEY = "__vibecomfyAgentPanelSingleton";
 const AGENT_PANEL_MOUNT_MODE = Object.freeze({
@@ -2548,6 +2550,8 @@ function createAgentPanelShell() {
     },
     composerButtons,
     pendingDirtySections: [],
+    __renderErrors: [],
+    __renderFailureCounts: {},
     state: {
       // Lifecycle-owned fields (authority: agent_edit_lifecycle.js)
       ...createAgentEditState(),
@@ -4447,7 +4451,7 @@ function renderChatSessionLink(sessionRow, panel) {
     return;
   }
   const href = `/vibecomfy/agent-edit/session-json?session_id=${encodeURIComponent(panel.state.sessionId || "")}`;
-  let link = sessionRow.querySelectorAll((node) => node.tagName === "A")[0] || null;
+  let link = sessionRow.querySelectorAll("a")[0] || null;
   if (!link) {
     clearNode(sessionRow);
     link = el("a");
@@ -4796,8 +4800,15 @@ function renderChatThread(panel) {
 function buildAgentPanelDebugSnapshot(panel = currentAgentPanel()) {
   const routeStatus = routeStatusState(panel);
   const readinessState = submitReadinessState(panel);
-  const threadEntries = collectThreadMessageEntries(panel);
-  const { displayEntries } = computeThreadDisplayEntries(panel, threadEntries);
+  let threadEntries = [];
+  let displayEntries = [];
+  let debugError = null;
+  try {
+    threadEntries = collectThreadMessageEntries(panel);
+    ({ displayEntries } = computeThreadDisplayEntries(panel, threadEntries));
+  } catch (err) {
+    debugError = String(err);
+  }
   return {
     panelId: panel?.panelId || null,
     panelsCreated: panelsCreatedCount(),
@@ -4818,6 +4829,14 @@ function buildAgentPanelDebugSnapshot(panel = currentAgentPanel()) {
     messageCount: threadEntries.length,
     visibleMessageCount: displayEntries.length,
     dirtySections: Array.isArray(panel?.pendingDirtySections) ? panel.pendingDirtySections.slice() : [],
+    renderCounts: panel?.__renderCounts && typeof panel.__renderCounts === "object"
+      ? { ...panel.__renderCounts }
+      : {},
+    renderErrors: Array.isArray(panel?.__renderErrors) ? panel.__renderErrors.slice() : [],
+    renderFailureCounts: panel?.__renderFailureCounts && typeof panel.__renderFailureCounts === "object"
+      ? { ...panel.__renderFailureCounts }
+      : {},
+    debugError,
     mountMode: panel?.state?.mountMode || null,
     flushPending: hasPendingAgentPanelFlush(),
     flushCount: _agentPanelFlushCount,
@@ -7228,40 +7247,97 @@ function renderDeveloperSection(panel) {
   renderDeveloper(panel);
 }
 
-function renderAgentPanelSections(panel, dirtySections = ALL_AGENT_PANEL_RENDER_SECTIONS) {
-  if (!panel?.root) {
+function recordAgentPanelRenderError(panel, section, err) {
+  if (!panel || typeof section !== "string" || !section) {
+    return 0;
+  }
+  if (!Array.isArray(panel.__renderErrors)) {
+    panel.__renderErrors = [];
+  }
+  if (!panel.__renderFailureCounts || typeof panel.__renderFailureCounts !== "object") {
+    panel.__renderFailureCounts = {};
+  }
+  const nextCount = (panel.__renderFailureCounts[section] || 0) + 1;
+  panel.__renderFailureCounts[section] = nextCount;
+  panel.__renderErrors.push({
+    section,
+    error: String(err),
+    at: new Date().toISOString(),
+  });
+  if (panel.__renderErrors.length > AGENT_PANEL_SECTION_RENDER_ERROR_LIMIT) {
+    panel.__renderErrors.splice(0, panel.__renderErrors.length - AGENT_PANEL_SECTION_RENDER_ERROR_LIMIT);
+  }
+  if (nextCount <= AGENT_PANEL_SECTION_RENDER_RETRY_LIMIT && typeof console !== "undefined" && console?.error) {
+    console.error("[vibecomfy] section render failed", section, err);
+  }
+  return nextCount;
+}
+
+function recordAgentPanelRenderSuccess(panel, section) {
+  if (!panel?.__renderFailureCounts || typeof section !== "string" || !section) {
     return;
+  }
+  delete panel.__renderFailureCounts[section];
+}
+
+function runAgentPanelSectionRenderer(panel, section, renderer, result) {
+  try {
+    renderer(panel);
+    recordAgentPanelRenderSuccess(panel, section);
+    result.succeededSections.push(section);
+    return true;
+  } catch (err) {
+    const failureCount = recordAgentPanelRenderError(panel, section, err);
+    result.failedSections.push(section);
+    if (failureCount < AGENT_PANEL_SECTION_RENDER_RETRY_LIMIT) {
+      result.retrySections.push(section);
+    }
+    return false;
+  }
+}
+
+function renderAgentPanelSections(panel, dirtySections = ALL_AGENT_PANEL_RENDER_SECTIONS) {
+  const result = {
+    requestedSections: [],
+    succeededSections: [],
+    failedSections: [],
+    retrySections: [],
+  };
+  if (!panel?.root) {
+    return result;
   }
   if (!isAgentPanelRootConnected(panel)) {
-    return;
+    return result;
   }
   const requestedSections = Array.isArray(dirtySections)
-    ? new Set(dirtySections)
-    : new Set(ALL_AGENT_PANEL_RENDER_SECTIONS);
-  if (requestedSections.has(RENDER_SECTIONS.META)) {
-    renderPanelMetaAndStatus(panel);
-  }
-  if (requestedSections.has(RENDER_SECTIONS.THREAD)) {
-    renderThreadSection(panel);
-  }
-  if (requestedSections.has(RENDER_SECTIONS.COMPOSER)) {
-    renderComposerActions(panel);
-  }
-  if (requestedSections.has(RENDER_SECTIONS.NOTICE)) {
-    renderComposerNoticeSection(panel);
-  }
+    ? (normalizeDirtySectionList(dirtySections) || [])
+    : ALL_AGENT_PANEL_RENDER_SECTIONS.slice();
+  result.requestedSections = requestedSections.slice();
   if (!panel.__sectionsEverRendered) {
     panel.__sectionsEverRendered = {};
   }
-  if (requestedSections.has(RENDER_SECTIONS.SETTINGS)) {
-    renderSettingsSection(panel);
-    panel.__sectionsEverRendered.SETTINGS = true;
+  for (const section of requestedSections) {
+    if (section === RENDER_SECTIONS.META) {
+      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.META, renderPanelMetaAndStatus, result);
+    } else if (section === RENDER_SECTIONS.THREAD) {
+      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.THREAD, renderThreadSection, result);
+    } else if (section === RENDER_SECTIONS.COMPOSER) {
+      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.COMPOSER, renderComposerActions, result);
+    } else if (section === RENDER_SECTIONS.NOTICE) {
+      runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.NOTICE, renderComposerNoticeSection, result);
+    } else if (section === RENDER_SECTIONS.SETTINGS) {
+      if (runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.SETTINGS, renderSettingsSection, result)) {
+        panel.__sectionsEverRendered.SETTINGS = true;
+      }
+    } else if (section === RENDER_SECTIONS.DEVELOPER) {
+      if (runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.DEVELOPER, renderDeveloperSection, result)) {
+        panel.__sectionsEverRendered.DEVELOPER = true;
+      }
+    }
   }
-  if (requestedSections.has(RENDER_SECTIONS.DEVELOPER)) {
-    renderDeveloperSection(panel);
-    panel.__sectionsEverRendered.DEVELOPER = true;
-  }
-  panel.lastRenderedDirtySections = Array.isArray(dirtySections) ? dirtySections.slice() : [];
+  panel.lastRenderedDirtySections = result.succeededSections.slice();
+  panel.lastFailedDirtySections = result.failedSections.slice();
+  return result;
 }
 
 export function renderDirtyAgentPanelSections(panel, obligations = {}) {
@@ -7277,7 +7353,10 @@ export function renderDirtyAgentPanelSections(panel, obligations = {}) {
       ? normalized.dirtySections
       : ALL_AGENT_PANEL_RENDER_SECTIONS;
   const dirtySections = consumeAgentPanelDirtySections(panel, fallbackSections);
-  renderAgentPanelSections(panel, dirtySections);
+  const result = renderAgentPanelSections(panel, dirtySections);
+  if (Array.isArray(result?.retrySections) && result.retrySections.length) {
+    markAgentPanelDirty(panel, result.retrySections);
+  }
   return dirtySections;
 }
 

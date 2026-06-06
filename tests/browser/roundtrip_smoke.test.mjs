@@ -105,6 +105,19 @@ function agentPanelRegionIds(root) {
     .sort();
 }
 
+function makeElementRejectFunctionSelectors(node) {
+  const originalQuerySelectorAll = node.querySelectorAll.bind(node);
+  node.querySelectorAll = (selector) => {
+    if (typeof selector === "function") {
+      throw new TypeError("Failed to execute 'querySelectorAll': parameter 1 is not of type 'string'.");
+    }
+    return originalQuerySelectorAll(selector);
+  };
+  return () => {
+    node.querySelectorAll = originalQuerySelectorAll;
+  };
+}
+
 test("VibeComfy browser canonical hash helper sorts object keys while preserving array order", () => {
   for (const payload of CANONICAL_HASH_PAYLOADS) {
     assert.match(sha256HexUtf8(payload), /^[0-9a-f]{64}$/);
@@ -5761,6 +5774,235 @@ test("VibeComfy status and rehydrate commits schedule a second flush after an ea
     assert.match(text, /race ordering agent answer/);
     assert.doesNotMatch(text, /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
     assert.doesNotMatch(text, /Send unavailable/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+for (const mountMode of ["launcher", "sidebar"]) {
+  test(`VibeComfy post-commit chat render survives live DOM selector semantics in ${mountMode} mount`, async () => {
+    const SESSION_ID = `sess-live-dom-selector-${mountMode}`;
+    const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+    const candidateGraph = {
+      nodes: [
+        { id: 1, type: "Input", properties: { vibecomfy_uid: "uid-1" }, widgets_values: ["old prompt"] },
+        { id: 2, type: "SaveImage", properties: { vibecomfy_uid: "uid-2" }, widgets_values: ["old/path"] },
+      ],
+      links: [],
+    };
+    const restoredGraph = {
+      ...candidateGraph,
+      nodes: [
+        { ...candidateGraph.nodes[0], widgets_values: ["new prompt"] },
+        candidateGraph.nodes[1],
+      ],
+    };
+    let resolveStatus;
+    let resolveChat;
+    const statusPromise = new Promise((resolve) => {
+      resolveStatus = resolve;
+    });
+    const chatPromise = new Promise((resolve) => {
+      resolveChat = resolve;
+    });
+
+    const harness = await createBrowserHarness({
+      graph: candidateGraph,
+      responses: {
+        "/system_stats": {
+          status: 200,
+          body: { system: { comfyui_frontend_package: "1.39.19" } },
+        },
+        "/vibecomfy/agent/status?route=auto": async () => statusPromise,
+        [CHAT_URL]: async () => chatPromise,
+      },
+    });
+
+    globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+
+    try {
+      const extensionModule = await harness.loadExtension();
+      await harness.setup();
+
+      let sidebarTab = null;
+      let sidebarContainer = null;
+      if (mountMode === "sidebar") {
+        sidebarTab = harness.getSidebarTabs()[0][0];
+        sidebarContainer = harness.document.createElement("div");
+        sidebarContainer.id = "comfyui-sidebar-live-selector-regression";
+        harness.document.body.appendChild(sidebarContainer);
+        sidebarTab.render({ container: sidebarContainer });
+      } else {
+        const launcher = harness.document.getElementById("vibecomfy-agent-launcher");
+        assert.ok(launcher, "legacy launcher must be installed");
+        launcher.click();
+      }
+
+      await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/agent/status?route=auto"));
+      await waitFor(() => harness.requests.some((r) => r.url === CHAT_URL));
+
+      const panel = extensionModule.ensureAgentPanel();
+      const sessionRow = panel.sections.chat.children.find(
+        (node) => node.dataset?.vibecomfyChatSessionRow === "1",
+      );
+      assert.ok(sessionRow, "initial empty thread render must create the session row mount");
+      const restoreSessionRowSelector = makeElementRejectFunctionSelectors(sessionRow);
+
+      resolveStatus({
+        status: 200,
+        body: {
+          ok: true,
+          ready: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      });
+      resolveChat({
+        status: 200,
+        body: {
+          ok: true,
+          exists: true,
+          session_id: SESSION_ID,
+          session_path: `out/editor_sessions/${SESSION_ID}/`,
+          detail_json_path: `out/editor_sessions/${SESSION_ID}/session.json`,
+          messages: [
+            { role: "user", text: "live restore first prompt", turn_id: "0001" },
+            { role: "agent", text: "live restore first answer", turn_id: "0001" },
+            { role: "user", text: "live restore change prompt", turn_id: "0002" },
+            {
+              role: "agent",
+              text: "Updated the prompt and normalized field changes.",
+              turn_id: "0002",
+              outcome: {
+                kind: "edit",
+                changes: [
+                  { uid: "uid-1", field_path: "widgets_values.0", old: "old prompt", new: "new prompt" },
+                ],
+              },
+              batch_turns: [
+                {
+                  turn_id: "0002",
+                  field_changes: [
+                    { uid: "uid-2", field_path: "widgets_values.0", old: "old/path", new: "new/path" },
+                  ],
+                },
+              ],
+            },
+            { role: "agent", text: "Latest candidate restored for review.", turn_id: "0005" },
+          ],
+          latest_candidate: {
+            session_id: SESSION_ID,
+            turn_id: "0005",
+            graph: restoredGraph,
+            candidate_graph_hash: `restored-live-shape-${mountMode}`,
+            message: "Latest candidate restored for review.",
+            report: { change: { content_edits: { edited: ["uid-1"] } }, recovery: [] },
+            change_details: {
+              done_summary: "Updated one prompt field.",
+              operations: [{ field_path: "widgets_values.0", summary: "Prompt updated" }],
+            },
+            canvas_apply_allowed: true,
+            apply_allowed: true,
+            queue_allowed: false,
+            apply_eligibility: {
+              applyable: true,
+              reason: "queue_blocked_warning",
+              message: "Apply is allowed, but Queue remains blocked for this candidate.",
+              warnings: ["queue_blocked"],
+            },
+            field_changes: [
+              { uid: "uid-1", field_path: "widgets_values.0", old: "old prompt", new: "new prompt" },
+            ],
+          },
+        },
+      });
+
+      await waitFor(() => {
+        const debug = harness.window.__vibecomfyPanelDebug();
+        return debug.flushCount >= 1
+          && debug.flushPending === false
+          && debug.dirtySections.length === 0
+          && debug.lastThreadRender?.branch === "messages"
+          && debug.messageCount === 5
+          && debug.renderErrors.length === 0;
+      });
+
+      const debug = harness.window.__vibecomfyPanelDebug();
+      assert.equal(debug.mountMode, mountMode);
+      assert.equal(debug.sessionId, SESSION_ID);
+      assert.equal(debug.lastThreadRender?.messagesSeen, 5);
+      assert.equal(debug.renderCounts.THREAD >= 1, true);
+      assert.equal(debug.renderCounts.NOTICE >= 1, true);
+      assert.deepEqual(debug.renderErrors, []);
+      assert.match(harness.textDump(), /Latest candidate restored for review\./);
+
+      if (mountMode === "sidebar") {
+        const beforeReopenThreadCount = debug.renderCounts.THREAD;
+        sidebarTab.render({ container: sidebarContainer });
+        await waitFor(() =>
+          harness.window.__vibecomfyPanelDebug().renderCounts.THREAD > beforeReopenThreadCount,
+        );
+      }
+
+      restoreSessionRowSelector();
+    } finally {
+      await harness.dispose();
+    }
+  });
+}
+
+test("VibeComfy section render errors do not stop later sections and requeue failed dirty sections", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const panel = extensionModule.ensureAgentPanel();
+    extensionModule.renderAgentPanel(panel);
+    const originalChatMount = panel.sections.chat;
+    panel.sections.chat = null;
+    panel.__renderCounts = {};
+    panel.__renderErrors = [];
+    panel.__renderFailureCounts = {};
+
+    extensionModule.renderAgentPanel(panel, {
+      dirtySections: [
+        extensionModule.RENDER_SECTIONS.THREAD,
+        extensionModule.RENDER_SECTIONS.NOTICE,
+      ],
+    });
+
+    assert.deepEqual(panel.__renderCounts, { THREAD: 1, NOTICE: 1 });
+    assert.deepEqual(panel.lastRenderedDirtySections, ["NOTICE"]);
+    assert.deepEqual(panel.lastFailedDirtySections, ["THREAD"]);
+    assert.deepEqual(panel.pendingDirtySections, ["THREAD"]);
+    assert.equal(panel.__renderErrors.length, 1);
+    assert.equal(panel.__renderErrors[0].section, "THREAD");
+    assert.match(panel.__renderErrors[0].error, /TypeError/);
+    assert.match(harness.consoleCapture.error.join("\n"), /\[vibecomfy\] section render failed THREAD/);
+
+    const debug = harness.window.__vibecomfyPanelDebug();
+    assert.deepEqual(debug.dirtySections, ["THREAD"]);
+    assert.equal(debug.renderErrors.length, 1);
+    assert.equal(debug.renderCounts.NOTICE, 1);
+    assert.match(harness.textDump(), /Waiting for \/vibecomfy\/agent\/status before enabling Submit\./);
+
+    panel.sections.chat = originalChatMount;
+    await waitFor(() => panel.pendingDirtySections.length === 0);
+    assert.equal(panel.__renderFailureCounts.THREAD, undefined);
   } finally {
     await harness.dispose();
   }

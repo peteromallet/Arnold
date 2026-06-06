@@ -161,8 +161,37 @@ class FakeElement {
     return undefined;
   }
 
+  _matchesSelector(selector) {
+    if (typeof selector !== "string") {
+      return false;
+    }
+    const trimmed = selector.trim();
+    if (!trimmed) {
+      return false;
+    }
+    if (trimmed.startsWith("#")) {
+      return this.id === trimmed.slice(1);
+    }
+    if (trimmed.startsWith(".")) {
+      const className = String(this.attributes.class || this.className || "");
+      return className.split(/\s+/).includes(trimmed.slice(1));
+    }
+    const attrMatch = trimmed.match(/^\[([^=\]]+)(?:=(["']?)(.*?)\2)?\]$/);
+    if (attrMatch) {
+      const name = attrMatch[1];
+      const expected = attrMatch[3];
+      const actual = name.startsWith("data-")
+        ? this.dataset[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())]
+        : this.attributes[name];
+      return expected === undefined ? actual !== undefined : String(actual) === expected;
+    }
+    return this.tagName === trimmed.toUpperCase();
+  }
+
   querySelectorAll(predicate) {
-    const matcher = typeof predicate === "function" ? predicate : () => false;
+    const matcher = typeof predicate === "function"
+      ? predicate
+      : (node) => node?._matchesSelector?.(predicate);
     const matches = [];
     const visit = (node) => {
       if (matcher(node)) {
