@@ -609,6 +609,9 @@ def _schema_placeholder(schema_fragment: Any) -> Any:
     if not isinstance(schema_fragment, Mapping):
         return "..."
     schema_type = schema_fragment.get("type")
+    if isinstance(schema_type, list):
+        non_null_types = [item for item in schema_type if item != "null"]
+        schema_type = non_null_types[0] if non_null_types else "null"
     if schema_type == "array":
         return []
     if schema_type == "object":

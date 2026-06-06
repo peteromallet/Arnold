@@ -24,6 +24,7 @@ from arnold.pipelines.megaplan.model_seam import (
     capture_step_output,
     classify_model_family,
     install_model_step_adapter,
+    render_prompt_for_dispatch,
     render_step_message,
 )
 from arnold.pipelines.megaplan.schemas import SCHEMAS
@@ -131,6 +132,30 @@ def test_model_step_adapter_invokes_render_step_message() -> None:
 
     assert rendered.text == "hello"
     assert rendered.telemetry.terminal_status is TerminalStatus.RENDERED
+
+
+def test_render_prompt_for_dispatch_accepts_union_schema_types(tmp_path) -> None:
+    rendered = render_prompt_for_dispatch(
+        "codex",
+        "plan",
+        {"config": {"mode": "code"}},
+        tmp_path,
+        schema={
+            "type": "object",
+            "properties": {
+                "items": {"type": ["array", "null"]},
+                "name": {"type": ["null", "string"]},
+                "enabled": {"type": ["boolean", "null"]},
+            },
+        },
+        prompt_override="Return structured data.",
+    )
+
+    assert rendered.template == {
+        "items": [],
+        "name": "...",
+        "enabled": False,
+    }
 
 
 def test_capture_step_output_preserves_legacy_payload_and_typed_contract() -> None:
