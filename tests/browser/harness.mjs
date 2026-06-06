@@ -474,6 +474,10 @@ export async function createBrowserHarness({
   const originalFetch = globalThis.fetch;
   const originalConsole = globalThis.console;
   const originalURL = globalThis.URL;
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
   const originalApp = globalThis.__VIBECOMFY_BROWSER_APP__;
   const originalApi = globalThis.__VIBECOMFY_BROWSER_API__;
   const hadCrypto = "crypto" in globalThis;
@@ -669,6 +673,14 @@ export async function createBrowserHarness({
       else globalThis.fetch = originalFetch;
       if (originalURL === undefined) delete globalThis.URL;
       else globalThis.URL = originalURL;
+      if (originalRequestAnimationFrame === undefined) delete globalThis.requestAnimationFrame;
+      else globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      if (originalCancelAnimationFrame === undefined) delete globalThis.cancelAnimationFrame;
+      else globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+      if (originalSetTimeout === undefined) delete globalThis.setTimeout;
+      else globalThis.setTimeout = originalSetTimeout;
+      if (originalClearTimeout === undefined) delete globalThis.clearTimeout;
+      else globalThis.clearTimeout = originalClearTimeout;
       if (originalApp === undefined) delete globalThis.__VIBECOMFY_BROWSER_APP__;
       else globalThis.__VIBECOMFY_BROWSER_APP__ = originalApp;
       if (originalApi === undefined) delete globalThis.__VIBECOMFY_BROWSER_API__;

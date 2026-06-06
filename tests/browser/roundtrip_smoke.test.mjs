@@ -98,6 +98,13 @@ function expandAgentBubbleDetails(root) {
   return toggles.length;
 }
 
+function agentPanelRegionIds(root) {
+  return root
+    .querySelectorAll((node) => typeof node.id === "string" && node.id.startsWith("vibecomfy-agent-panel-region-"))
+    .map((node) => node.id)
+    .sort();
+}
+
 test("VibeComfy browser canonical hash helper sorts object keys while preserving array order", () => {
   for (const payload of CANONICAL_HASH_PAYLOADS) {
     assert.match(sha256HexUtf8(payload), /^[0-9a-f]{64}$/);
@@ -4182,8 +4189,8 @@ test("VibeComfy agent-edit turn progress: client_id submit body, batch_turns fal
     assert.match(text, /Turn 2/);
 
     // Collapsed view shows truncated messages and status color
-    const chatRegion = harness.document.getElementById("vibecomfy-agent-panel-region-chat");
-    const batchRows = chatRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-row");
+    const historyRegion = harness.document.getElementById("vibecomfy-agent-panel-region-history");
+    const batchRows = historyRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-row");
     assert.equal(batchRows.length, 2);
 
     // Status colors are set via borderLeft
@@ -4229,14 +4236,14 @@ test("VibeComfy agent-edit turn progress: client_id submit body, batch_turns fal
     assert.doesNotMatch(harness.textDump(), /foreign session event must be filtered/);
 
     // In-progress dot indicator is present on Turn 3 (in_progress status)
-    const progressDots = chatRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-progress-dot");
+    const progressDots = historyRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-progress-dot");
     assert(progressDots.length >= 1, "in_progress dot should be rendered");
 
     // ── Part 4: expand/collapse with statement diagnostics and landed count ──
     // Re-query batch rows fresh because the DOM was re-rendered by websocket dispatches.
     // Batch rows are sorted newest-first: Turn 4, Turn 3, Turn 2, Turn 1.
     // Turn 1 (turn_number=0) is the last row and has the statements + diagnostics.
-    let freshRows = chatRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-row");
+    let freshRows = historyRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-row");
     assert(freshRows.length >= 4, "should have at least 4 batch rows after live events");
     let turn1Row = freshRows[freshRows.length - 1];
     turn1Row.click();
@@ -4267,7 +4274,7 @@ test("VibeComfy agent-edit turn progress: client_id submit body, batch_turns fal
     // ── Part 5: absence of raw diff/source/audit paths in batch details ──
     // Also verify the collapsed Turn 2 row has the expected outcome when expanded.
     // Expand Turn 2 (freshRows[freshRows.length - 2]) to verify its footer and diagnostics
-    freshRows = chatRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-row");
+    freshRows = historyRegion.querySelectorAll((node) => node.className === "vibecomfy-batch-row");
     let turn2Row = freshRows[freshRows.length - 2];
     turn2Row.click();
     await waitFor(() => {
@@ -4291,7 +4298,7 @@ test("VibeComfy agent-edit turn progress: client_id submit body, batch_turns fal
     // Click currently expanded rows again to collapse. Activity rows repaint on
     // each toggle, so re-query instead of retaining stale row references.
     for (let guard = 0; guard < 4; guard += 1) {
-      const expandedRows = chatRegion.querySelectorAll(
+      const expandedRows = historyRegion.querySelectorAll(
         (node) =>
           node.className === "vibecomfy-batch-row"
           && node.querySelectorAll((child) => child.className === "vibecomfy-batch-expanded").length > 0,
@@ -4963,6 +4970,68 @@ test("VibeComfy status resolution after panel open enables Submit and renders re
   }
 });
 
+test("VibeComfy launcher and sidebar mounts expose the same agent panel region ids", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          ready: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+
+    const launcher = harness.document.getElementById("vibecomfy-agent-launcher");
+    assert.ok(launcher, "launcher must be installed");
+    launcher.click();
+    await waitFor(() => harness.getPanelRoots().length === 1);
+    const launcherRoot = harness.getPanelRoots()[0];
+    const launcherRegionIds = agentPanelRegionIds(launcherRoot);
+
+    const sidebarTab = harness.getSidebarTabs()[0][0];
+    const sidebarContainer = harness.document.createElement("div");
+    sidebarContainer.id = "comfyui-sidebar-vibecomfy-region-contract";
+    harness.document.body.appendChild(sidebarContainer);
+    sidebarTab.render({ container: sidebarContainer });
+    await waitFor(() => harness.getPanelRoots()[0]?.parentNode === sidebarContainer);
+    const sidebarRegionIds = agentPanelRegionIds(harness.getPanelRoots()[0]);
+
+    assert.deepEqual(sidebarRegionIds, launcherRegionIds);
+    assert.deepEqual(sidebarRegionIds, [
+      "vibecomfy-agent-panel-region-audit",
+      "vibecomfy-agent-panel-region-candidate",
+      "vibecomfy-agent-panel-region-chat",
+      "vibecomfy-agent-panel-region-debug",
+      "vibecomfy-agent-panel-region-developer",
+      "vibecomfy-agent-panel-region-failure",
+      "vibecomfy-agent-panel-region-history",
+      "vibecomfy-agent-panel-region-prompt",
+      "vibecomfy-agent-panel-region-queue",
+      "vibecomfy-agent-panel-region-settings",
+      "vibecomfy-agent-panel-region-thread",
+    ]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy launcher panel flushes delayed dirty commits without synthetic input", async () => {
   const SESSION_ID = "sess-launcher-delayed-dirty-flush";
   const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
@@ -5068,6 +5137,15 @@ test("VibeComfy launcher panel flushes delayed dirty commits without synthetic i
 
     await waitFor(() => submit.disabled === false);
     await waitFor(() => /launcher delayed agent answer/.test(harness.textDump()));
+
+    const threadRegion = harness.document.getElementById("vibecomfy-agent-panel-region-thread");
+    assert.ok(threadRegion, "launcher shell must include the canonical thread region");
+    const bubbles = threadRegion.querySelectorAll((node) => node.dataset?.vibecomfyMessageKey);
+    assert.equal(bubbles.length, 2);
+    assert.ok(
+      threadRegion.querySelectorAll((node) => /launcher delayed agent answer/.test(node.textContent)).length >= 1,
+      "rehydrated agent bubble text must render under the canonical thread region",
+    );
 
     const text = harness.textDump();
     assert.doesNotMatch(text, /Try an example/);
@@ -5585,6 +5663,48 @@ test("VibeComfy dirty section marking schedules a mounted panel flush without an
     assert.match(harness.textDump(), /auto scheduled dirty user message/);
     assert.match(harness.textDump(), /auto scheduled dirty agent message/);
     assert.doesNotMatch(harness.textDump(), /Try an example/);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy scheduled render flushes through timeout when requestAnimationFrame never fires", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  let rafCalls = 0;
+  globalThis.requestAnimationFrame = () => {
+    rafCalls += 1;
+    return rafCalls;
+  };
+  globalThis.window.requestAnimationFrame = globalThis.requestAnimationFrame;
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const panel = extensionModule.ensureAgentPanel();
+    extensionModule.renderAgentPanel(panel);
+    panel.state.chatMessages = [
+      { role: "user", text: "timeout fallback dirty user message", turn_id: "0001" },
+      { role: "agent", text: "timeout fallback dirty agent message", turn_id: "0001" },
+    ];
+
+    extensionModule.markAgentPanelDirty(panel, ["THREAD"]);
+    assert.equal(rafCalls, 1);
+    assert.deepEqual(panel.pendingDirtySections, ["THREAD"]);
+
+    await new Promise((resolve) => setTimeout(resolve, 140));
+
+    assert.deepEqual(panel.pendingDirtySections, []);
+    assert.ok(panel.lastRenderedDirtySections.includes("THREAD"));
+    assert.match(harness.textDump(), /timeout fallback dirty agent message/);
   } finally {
     await harness.dispose();
   }

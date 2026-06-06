@@ -134,6 +134,7 @@ const SETTINGS_STATUS_RENDER_SECTIONS = Object.freeze([
   RENDER_SECTIONS.NOTICE,
 ]);
 const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
+const AGENT_PANEL_RENDER_TIMEOUT_MS = 100;
 const AGENT_SIDEBAR_TAB_ID = "vibecomfy.agent-edit";
 const AGENT_PANEL_MOUNT_MODE = Object.freeze({
   LAUNCHER: "launcher",
@@ -158,8 +159,10 @@ const PANEL_IDS = Object.freeze({
   reject: "vibecomfy-agent-panel-reject",
   undo: "vibecomfy-agent-panel-undo",
   close: "vibecomfy-agent-panel-close",
+  threadRegion: "vibecomfy-agent-panel-region-thread",
   promptRegion: "vibecomfy-agent-panel-region-prompt",
   settingsRegion: "vibecomfy-agent-panel-region-settings",
+  chatRegion: "vibecomfy-agent-panel-region-chat",
   historyRegion: "vibecomfy-agent-panel-region-history",
   candidateRegion: "vibecomfy-agent-panel-region-candidate",
   failureRegion: "vibecomfy-agent-panel-region-failure",
@@ -2072,7 +2075,7 @@ async function buildCanvasSnapshot() {
   return { graph, graphJson, graphHash, structuralHash, liveCanvasToken };
 }
 
-function createAgentPanel() {
+function createAgentPanelShell() {
   const root = el("aside");
   root.id = PANEL_IDS.root;
   root.className = "vibecomfy-agent-panel-root";
@@ -2207,9 +2210,41 @@ function createAgentPanel() {
     gap: "10px",
   });
 
+  const threadRegion = panelSection(PANEL_IDS.threadRegion, "Thread");
+  threadRegion.section.style.border = "none";
+  threadRegion.section.style.background = "transparent";
+  threadRegion.section.style.padding = "0";
+  threadRegion.body.style.gap = "10px";
+
   // Chat section: persisted conversation bubbles (M3).
-  const chatRegion = panelSection("vibecomfy-agent-panel-region-chat", "Chat");
-  thread.appendChild(chatRegion.section);
+  const chatRegion = panelSection(PANEL_IDS.chatRegion, "Chat");
+  threadRegion.body.appendChild(chatRegion.section);
+
+  const historyRegion = panelSection(PANEL_IDS.historyRegion, "");
+  historyRegion.section.style.display = "none";
+  threadRegion.body.appendChild(historyRegion.section);
+
+  const candidateRegion = panelSection(PANEL_IDS.candidateRegion, "");
+  candidateRegion.section.style.display = "none";
+  threadRegion.body.appendChild(candidateRegion.section);
+
+  const failureRegion = panelSection(PANEL_IDS.failureRegion, "");
+  failureRegion.section.style.display = "none";
+  threadRegion.body.appendChild(failureRegion.section);
+
+  const queueRegion = panelSection(PANEL_IDS.queueRegion, "");
+  queueRegion.section.style.display = "none";
+  threadRegion.body.appendChild(queueRegion.section);
+
+  const auditRegion = panelSection(PANEL_IDS.auditRegion, "");
+  auditRegion.section.style.display = "none";
+  threadRegion.body.appendChild(auditRegion.section);
+
+  const debugRegion = panelSection(PANEL_IDS.debugRegion, "");
+  debugRegion.section.style.display = "none";
+  threadRegion.body.appendChild(debugRegion.section);
+
+  thread.appendChild(threadRegion.section);
 
   // ── Composer (bottom mount: prompt + action buttons) ────────────────────
   const composer = el("div");
@@ -2406,7 +2441,6 @@ function createAgentPanel() {
   shell.appendChild(composer);
   shell.appendChild(settingsPopover);
   root.appendChild(shell);
-  document.body.appendChild(root);
 
   return {
     root,
@@ -2433,13 +2467,14 @@ function createAgentPanel() {
       newConversation: newConvBtn,
     },
     sections: {
+      thread: threadRegion.body,
       chat: chatRegion.body,
-      history: null, // wired lazily by renderChatThread (T13)
-      candidate: chatRegion.body,
-      failure: chatRegion.body,
-      queue: chatRegion.body,
-      audit: chatRegion.body,
-      debug: chatRegion.body,
+      history: historyRegion.body,
+      candidate: candidateRegion.body,
+      failure: failureRegion.body,
+      queue: queueRegion.body,
+      audit: auditRegion.body,
+      debug: debugRegion.body,
       developer: developerRegion.body,
       composerNotice,
     },
@@ -2476,6 +2511,12 @@ function createAgentPanel() {
       mountContainer: null,
     },
   };
+}
+
+function createAgentPanel() {
+  const panel = createAgentPanelShell();
+  document.body.appendChild(panel.root);
+  return panel;
 }
 
 function getPanelElementById(panel, id) {
@@ -2864,16 +2905,31 @@ export function scheduleRenderAgentPanel(reason = "scheduled", panel = agentPane
     return;
   }
   _scheduledAgentPanelRenderQueued = true;
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(flush);
-  } else if (typeof queueMicrotask === "function") {
-    queueMicrotask(flush);
-  } else if (typeof Promise !== "undefined") {
-    Promise.resolve().then(flush);
-  } else if (typeof setTimeout !== "function") {
+  let flushed = false;
+  let timeoutId = null;
+  const flushOnce = () => {
+    if (flushed) {
+      return;
+    }
+    flushed = true;
+    if (timeoutId !== null && typeof clearTimeout === "function") {
+      clearTimeout(timeoutId);
+    }
     flush();
+  };
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(flushOnce);
+    if (typeof setTimeout === "function") {
+      timeoutId = setTimeout(flushOnce, AGENT_PANEL_RENDER_TIMEOUT_MS);
+    }
+  } else if (typeof queueMicrotask === "function") {
+    queueMicrotask(flushOnce);
+  } else if (typeof Promise !== "undefined") {
+    Promise.resolve().then(flushOnce);
+  } else if (typeof setTimeout === "function") {
+    timeoutId = setTimeout(flushOnce, 0);
   } else {
-    setTimeout(flush, 0);
+    flushOnce();
   }
 }
 
@@ -4567,9 +4623,10 @@ function computeThreadDisplayEntries(panel, threadEntries) {
 function renderChatThread(panel) {
   const body = panel.sections.chat;
   const { sessionRow, olderMount, messagesMount, emptyMount, activityMount } = ensureChatThreadMounts(body);
-  // Wire the shared activity mount for turn-progress rows (T13).
-  if (activityMount && panel.sections) {
-    panel.sections.history = activityMount;
+  // Keep the legacy internal activity mount empty when the canonical history
+  // region is present; renderActivityRows owns panel.sections.history.
+  if (activityMount) {
+    activityMount.style.display = "none";
   }
   renderChatSessionLink(sessionRow, panel);
 
@@ -4852,6 +4909,9 @@ function renderActivityRows(panel) {
   // empty to avoid consuming space in the thread area unnecessarily.
   const hasContent = mount.children.length > 0;
   mount.style.display = hasContent ? "" : "none";
+  if (mount.parentNode?.className === "vibecomfy-agent-panel-region") {
+    mount.parentNode.style.display = hasContent ? "" : "none";
+  }
 }
 
 function scrollChatThreadToBottom(panel) {
