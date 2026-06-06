@@ -29,6 +29,7 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_FINALIZED,
     STATE_REVIEWED,
 )
+from arnold.pipelines.megaplan.store import write_plan_artifact_json
 from arnold.pipelines.megaplan.workers import (
     WorkerResult,
     validate_payload,
@@ -713,7 +714,7 @@ def _finalize_review_outcome(
         "state": next_state,
         "next_step": next_step,
     }
-    atomic_write_json(plan_dir / "review.json", worker.payload)
+    write_plan_artifact_json(plan_dir, "review.json", worker.payload, contract_context=None)
     atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
     force_proceed_blocked = result == "blocked" and next_state == STATE_BLOCKED
     if force_proceed_blocked:
@@ -867,7 +868,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             if robustness in {"full", "thorough"}:
                 worker.payload["pre_check_flags"] = pre_check_flags
                 _pkg.update_flags_after_review(plan_dir, worker.payload, iteration=state["iteration"])
-            atomic_write_json(plan_dir / "review.json", worker.payload)
+            write_plan_artifact_json(plan_dir, "review.json", worker.payload, contract_context=None)
         else:
             rev_resolved = _pkg.resolve_agent_mode("review", args)
             agent_type, mode, refreshed, model = _agent_mode_parts(rev_resolved)
@@ -880,7 +881,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     root=root,
                     resolved=(agent_type, mode, refreshed, model),
                 )
-                atomic_write_json(plan_dir / "review.json", worker.payload)
+                write_plan_artifact_json(plan_dir, "review.json", worker.payload, contract_context=None)
                 return _finalize_review_outcome(
                     root=root,
                     args=args,
@@ -929,7 +930,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     merged_payload["review_verdict"] = "needs_rework"
 
                 validate_payload("review", merged_payload)
-                atomic_write_json(plan_dir / "review.json", merged_payload)
+                write_plan_artifact_json(plan_dir, "review.json", merged_payload, contract_context=None)
                 _pkg.update_flags_after_review(plan_dir, merged_payload, iteration=state["iteration"])
                 worker = WorkerResult(
                     payload=merged_payload,

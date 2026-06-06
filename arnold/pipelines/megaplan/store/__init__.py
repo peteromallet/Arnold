@@ -51,7 +51,7 @@ from .db import DBStore
 from .file import FileStore
 from .identity import require_actor_id, resolve_actor_id, validate_actor_exists
 from .multi import MultiStore
-from .plan_repository import PlanRepository
+from .plan_repository import PlanRepository, write_plan_artifact_json
 from .warrant import WarrantBuildResult, WarrantError, build_warrant, verify_warrant, warrant_signed_envelope
 
 __all__ = [
@@ -117,5 +117,6 @@ __all__ = [
     "WarrantBuildResult",
     "WarrantError",
     "warrant_signed_envelope",
+    "write_plan_artifact_json",
     "write_capsule",
 ]

@@ -4,13 +4,19 @@ import json
 
 import pytest
 
-from arnold.pipeline.contract_validation import validate_contract_result
+from arnold.pipeline.contract_validation import (
+    validate_contract_result,
+    validate_payload_against_schema,
+)
 from arnold.pipeline.schema_registry import (
     AcceptedVersionRange,
     ContractSchemaRegistry,
     SchemaRegistryError,
     accepts_version,
     canonical_schema_bytes,
+    create_contract_schema_registry,
+    derive_project_root_from_plan_dir,
+    resolve_contract_schema_project_root,
 )
 from arnold.pipeline.types import ContractResult
 
@@ -117,6 +123,38 @@ def test_contract_result_from_json_compatibility_is_m1_owned_manual_lookup_works
     assert validate_contract_result(contract, registry.get_schema(version)).ok
 
 
+def test_retained_schema_lookup_uses_typed_artifact_root_schema_version_not_latest(tmp_path) -> None:
+    registry = ContractSchemaRegistry(tmp_path)
+    v1_schema = {
+        "type": "object",
+        "required": ["answer"],
+        "properties": {"answer": {"type": "integer"}},
+        "additionalProperties": False,
+    }
+    v2_schema = {
+        "type": "object",
+        "required": ["answer", "source"],
+        "properties": {
+            "answer": {"type": "integer"},
+            "source": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
+    v1 = registry.register("review", v1_schema)
+    v2 = registry.register("review", v2_schema)
+    artifact = {
+        "logical_type": "review",
+        "schema_version": v1,
+        "payload": {"answer": 42},
+    }
+
+    assert validate_payload_against_schema(
+        artifact["payload"],
+        registry.get_schema(artifact["schema_version"]),
+    ).ok
+    assert not validate_payload_against_schema(artifact["payload"], registry.get_schema(v2)).ok
+
+
 def test_accepts_version_uses_inclusive_logical_type_history_bounds(tmp_path) -> None:
     registry = ContractSchemaRegistry(tmp_path)
     v1 = registry.register("demo", {"type": "object", "properties": {"v": {"const": 1}}})
@@ -166,3 +204,45 @@ def test_accepts_version_rejects_mismatched_range_logical_type(tmp_path) -> None
             AcceptedVersionRange("other"),
             registry=registry,
         )
+
+
+def test_schema_registry_root_resolution_prefers_explicit_context_root(tmp_path, monkeypatch) -> None:
+    explicit_root = tmp_path / "project"
+    explicit_root.mkdir()
+    env_root = tmp_path / "env-project"
+    env_root.mkdir()
+    monkeypatch.setenv("MEGAPLAN_CONTRACT_SCHEMA_ROOT", str(env_root))
+
+    resolved = resolve_contract_schema_project_root(explicit_root)
+    registry = create_contract_schema_registry(explicit_root)
+
+    assert resolved == explicit_root.resolve()
+    assert registry is not None
+    assert registry.root == explicit_root.resolve() / ".contract_schemas"
+
+
+def test_schema_registry_root_resolution_uses_env_override_when_context_missing(tmp_path, monkeypatch) -> None:
+    env_root = tmp_path / "env-project"
+    env_root.mkdir()
+    monkeypatch.setenv("MEGAPLAN_CONTRACT_SCHEMA_ROOT", str(env_root))
+
+    resolved = resolve_contract_schema_project_root()
+    registry = create_contract_schema_registry()
+
+    assert resolved == env_root.resolve()
+    assert registry is not None
+    assert registry.root == env_root.resolve() / ".contract_schemas"
+
+
+def test_schema_registry_root_resolution_derives_project_root_from_plan_directory(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("MEGAPLAN_CONTRACT_SCHEMA_ROOT", raising=False)
+    project_root = tmp_path / "project"
+    plan_dir = project_root / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+
+    derived = derive_project_root_from_plan_dir(plan_dir)
+    registry = create_contract_schema_registry(plan_dir)
+
+    assert derived == project_root.resolve()
+    assert registry is not None
+    assert registry.root == project_root.resolve() / ".contract_schemas"

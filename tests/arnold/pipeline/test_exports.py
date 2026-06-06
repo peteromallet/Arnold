@@ -49,11 +49,13 @@ class TestArnoldPipelinePublicExports:
             Port,
             PortRef,
             RoutingKey,
+            SeamId,
             register_schema,
         )
         assert Port is not None
         assert PortRef is not None
         assert RoutingKey is not None
+        assert SeamId is not None
         assert ContentTypeRegistry is not None
         assert ContentValidatorRegistry is not None
         assert CONTENT_TYPES is not None

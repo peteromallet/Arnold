@@ -8,6 +8,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from arnold.pipeline.step_io_contract import (
+    StepIOContractContext,
+    StepIOEnvelope,
+    StepIOOperation,
+    decide_step_io_read,
+    decide_step_io_write,
+    is_step_io_envelope,
+)
+from arnold.pipeline.step_io_policy import (
+    decision_blocks_read,
+    decision_blocks_write,
+    policy_for_envelope,
+)
+from arnold.pipeline.step_io_telemetry import TELEMETRY_FILENAME, emit_decision_telemetry
 from arnold.pipelines.megaplan._core.io import (
     atomic_write_bytes,
     atomic_write_json,
@@ -62,6 +76,20 @@ class PlanRepository:
             from arnold.pipelines.megaplan.observability.events_projection import ensure_events_projection
 
             ensure_events_projection(repo.plan_dir, store=store, plan_id=repo.plan_name)
+        return repo
+
+    @classmethod
+    def from_artifact_dir(
+        cls,
+        plan_dir: str | Path,
+        *,
+        store: Store | None = None,
+        home: str | Path | None = None,
+    ) -> PlanRepository:
+        """Bind directly to an artifact directory even if ``state.json`` is absent."""
+
+        repo = cls(plan_dir, store=store, home=home)
+        repo._plan_dir = Path(plan_dir)
         return repo
 
     @staticmethod
@@ -152,9 +180,41 @@ class PlanRepository:
         data = self.read_artifact_bytes(name)
         return data.decode("utf-8") if data is not None else None
 
-    def read_artifact_json(self, name: str | Path) -> dict[str, Any] | list[Any] | None:
+    def read_artifact_json(
+        self,
+        name: str | Path,
+        *,
+        contract_context: StepIOContractContext | None = None,
+        contract_binding: Any = None,
+    ) -> Any | None:
         path = self._resolve_artifact_path(name)
-        return read_json(path) if path.exists() else None
+        if not path.exists():
+            return None
+        value = read_json(path)
+        if not is_step_io_envelope(value):
+            return value
+        envelope = StepIOEnvelope.from_json(value)
+        policy = policy_for_envelope(envelope, plan_dir=self.plan_dir, binding=contract_binding)
+        if not policy.enabled:
+            return value
+        decision = decide_step_io_read(
+            value,
+            contract_context
+            or StepIOContractContext(
+                operation=StepIOOperation.READ,
+                registry_root=self.plan_dir,
+            ),
+        )
+        emit_decision_telemetry(
+            decision=decision,
+            policy=policy,
+            artifact=Path(name).as_posix(),
+            operation=StepIOOperation.READ.value,
+            telemetry_path=self.plan_dir / TELEMETRY_FILENAME,
+        )
+        if decision_blocks_read(decision, policy):
+            raise ValueError(f"typed artifact read blocked: {decision.block_reason}")
+        return decision.value
 
     def write_artifact_bytes(self, name: str | Path, data: bytes) -> Path:
         path = self._resolve_artifact_path(name)
@@ -166,8 +226,40 @@ class PlanRepository:
         atomic_write_text(path, data)
         return path
 
-    def write_artifact_json(self, name: str | Path, data: Any) -> Path:
+    def write_artifact_json(
+        self,
+        name: str | Path,
+        data: Any,
+        *,
+        contract_context: StepIOContractContext | None = None,
+        contract_binding: Any = None,
+    ) -> Path:
         path = self._resolve_artifact_path(name)
+        if contract_context is not None and not is_step_io_envelope(data):
+            raise ValueError("typed artifact write blocked: missing typed step-IO envelope")
+        if is_step_io_envelope(data):
+            envelope = StepIOEnvelope.from_json(data)
+            policy = policy_for_envelope(envelope, plan_dir=self.plan_dir, binding=contract_binding)
+            if not policy.enabled:
+                atomic_write_json(path, data)
+                return path
+            decision = decide_step_io_write(
+                data,
+                contract_context
+                or StepIOContractContext(
+                    operation=StepIOOperation.WRITE,
+                    registry_root=self.plan_dir,
+                ),
+            )
+            emit_decision_telemetry(
+                decision=decision,
+                policy=policy,
+                artifact=Path(name).as_posix(),
+                operation=StepIOOperation.WRITE.value,
+                telemetry_path=self.plan_dir / TELEMETRY_FILENAME,
+            )
+            if decision_blocks_write(decision, policy):
+                raise ValueError(f"typed artifact write blocked: {decision.block_reason}")
         atomic_write_json(path, data)
         return path
 
@@ -423,3 +515,19 @@ class PlanRepository:
                 idempotency_key=idempotency_key,
             )
         return failure
+
+
+def write_plan_artifact_json(
+    plan_dir: str | Path,
+    name: str | Path,
+    data: Any,
+    *,
+    contract_context: StepIOContractContext | None = None,
+) -> Path:
+    """Write a plan artifact without requiring a bound ``state.json``."""
+
+    return PlanRepository.from_artifact_dir(plan_dir).write_artifact_json(
+        name,
+        data,
+        contract_context=contract_context,
+    )

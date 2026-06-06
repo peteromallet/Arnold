@@ -13,6 +13,7 @@ from arnold.pipelines.megaplan._core import (
     read_json,
     render_final_md,
 )
+from arnold.pipelines.megaplan.store import write_plan_artifact_json
 from arnold.pipelines.megaplan.forms.stance import validate_stance
 from arnold.pipelines.megaplan.types import PlanState
 
@@ -520,7 +521,7 @@ def reconcile_latest_execution_batch(plan_dir: Path, state: PlanState) -> dict[s
         mode=state.get("config", {}).get("mode", "code"),
         state=state,
     )
-    atomic_write_json(plan_dir / "finalize.json", finalize_data)
+    write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
     final_md_error: str | None = None
     try:
         atomic_write_text(
