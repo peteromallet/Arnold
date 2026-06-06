@@ -321,6 +321,9 @@ let _lastAgentPanelFlushReason = "";
 let _agentPanelCreationCounter = 0;
 let _lastThreadRender = null;
 let _lastNoticeRender = null;
+let _statusCommitAt = null;
+let _rehydrateCommitAt = null;
+let _marksAfterCommit = 0;
 let _overlayDrawModelCache = null;
 
 function agentPanelSingletonHost() {
@@ -1712,7 +1715,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
       });
       panel.fields.route.value = route;
       if (typeof document !== "undefined") {
-        scheduleRenderAgentPanel("status", panel, SETTINGS_STATUS_RENDER_SECTIONS);
+        markAgentPanelDirtyAfterCommit(panel, SETTINGS_STATUS_RENDER_SECTIONS, "status");
       }
       return;
     }
@@ -1803,7 +1806,7 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
   if (typeof document === "undefined") {
     return;
   }
-  scheduleRenderAgentPanel("status", panel, SETTINGS_STATUS_RENDER_SECTIONS);
+  markAgentPanelDirtyAfterCommit(panel, SETTINGS_STATUS_RENDER_SECTIONS, "status");
 }
 
 function submitReadinessState(panel) {
@@ -2711,7 +2714,7 @@ async function _rehydrateChat(panel) {
   const savedId = _lsGet(LS_ACTIVE_SESSION_KEY);
   if (!savedId) {
     const noSessionObligations = transition(panel, "CHAT_REHYDRATE_NO_SESSION", { requestEpoch });
-    fulfillLifecycleTransitionObligations(panel, noSessionObligations);
+    fulfillAgentPanelCommitObligations(panel, noSessionObligations, "rehydrate");
     resetThreadRenderState(panel);
     return;
   }
@@ -2729,7 +2732,7 @@ async function _rehydrateChat(panel) {
           requestEpoch,
           sessionId: savedId,
         });
-        fulfillLifecycleTransitionObligations(panel, missingSessionObligations);
+        fulfillAgentPanelCommitObligations(panel, missingSessionObligations, "rehydrate");
         resetThreadRenderState(panel);
         return;
       }
@@ -2750,7 +2753,7 @@ async function _rehydrateChat(panel) {
       if (successObligations.stale) {
         return;
       }
-      fulfillLifecycleTransitionObligations(panel, successObligations);
+      fulfillAgentPanelCommitObligations(panel, successObligations, "rehydrate");
       resetThreadRenderState(panel);
       restoreLatestCandidateFromChat(panel, payload);
     } else {
@@ -2764,7 +2767,7 @@ async function _rehydrateChat(panel) {
     if (failureObligations.stale) {
       return;
     }
-    fulfillLifecycleTransitionObligations(panel, failureObligations);
+    fulfillAgentPanelCommitObligations(panel, failureObligations, "rehydrate");
     resetThreadRenderState(panel);
   }
 }
@@ -2813,7 +2816,7 @@ function restoreLatestCandidateFromChat(panel, payload) {
   if (!restoreObligations.restored) {
     return;
   }
-  fulfillLifecycleTransitionObligations(panel, restoreObligations);
+  fulfillAgentPanelCommitObligations(panel, restoreObligations, "rehydrate");
   reconcileResponseBatchTurns(panel, latest);
   rememberTurnDetailSnapshot(panel, {
     turn_id: panel.state.turnId,
@@ -2868,6 +2871,50 @@ function isAgentPanelRootConnected(panel) {
 
 function hasPendingAgentPanelFlush() {
   return Boolean(_scheduledAgentPanelRenderQueued || _scheduledAgentPanelRender);
+}
+
+function noteAgentPanelCommit(panel, commitKind) {
+  const at = new Date().toISOString();
+  if (commitKind === "status") {
+    _statusCommitAt = at;
+    if (panel?.state) {
+      panel.state.statusCommitAt = at;
+    }
+  } else if (commitKind === "rehydrate") {
+    _rehydrateCommitAt = at;
+    if (panel?.state) {
+      panel.state.rehydrateCommitAt = at;
+    }
+  }
+  return at;
+}
+
+function markAgentPanelDirtyAfterCommit(panel, sections, commitKind) {
+  if (!panel) {
+    return [];
+  }
+  noteAgentPanelCommit(panel, commitKind);
+  const normalized = normalizeDirtySectionList(sections);
+  if (Array.isArray(normalized) && normalized.length) {
+    _marksAfterCommit += 1;
+    if (panel.state) {
+      panel.state.marksAfterCommit = _marksAfterCommit;
+    }
+  }
+  return markAgentPanelDirty(panel, normalized);
+}
+
+function fulfillAgentPanelCommitObligations(panel, obligations = {}, commitKind) {
+  if (Array.isArray(obligations?.dirtySections) && obligations.dirtySections.length) {
+    markAgentPanelDirtyAfterCommit(panel, obligations.dirtySections, commitKind);
+    fulfillLifecycleTransitionObligations(panel, {
+      ...obligations,
+      dirtySections: [],
+    });
+    return;
+  }
+  noteAgentPanelCommit(panel, commitKind);
+  fulfillLifecycleTransitionObligations(panel, obligations);
 }
 
 function ensureScheduledAgentPanelDirtyFlush(panel, reason = "dirty-sections") {
@@ -4756,6 +4803,9 @@ function buildAgentPanelDebugSnapshot(panel = currentAgentPanel()) {
     panelsCreated: panelsCreatedCount(),
     lastThreadRender: _lastThreadRender,
     lastNoticeRender: _lastNoticeRender,
+    statusCommitAt: _statusCommitAt,
+    rehydrateCommitAt: _rehydrateCommitAt,
+    marksAfterCommit: _marksAfterCommit,
     phase: panel?.state?.phase || null,
     readiness: {
       kind: routeStatus.kind || null,
