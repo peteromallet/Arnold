@@ -105,6 +105,16 @@ function agentPanelRegionIds(root) {
     .sort();
 }
 
+function getChatMessagesMount(document) {
+  return document.body.querySelectorAll(
+    (node) => node.dataset?.vibecomfyChatMessages === "1",
+  )[0] || null;
+}
+
+function chatMessageKeys(messagesMount) {
+  return (messagesMount?.children || []).map((node) => node.dataset?.vibecomfyMessageKey || "");
+}
+
 function makeElementRejectFunctionSelectors(node) {
   const originalQuerySelectorAll = node.querySelectorAll.bind(node);
   node.querySelectorAll = (selector) => {
@@ -6846,6 +6856,196 @@ test("VibeComfy chat thread only auto-scrolls when near the bottom or after rehy
     await waitFor(() => /message 6/.test(harness.textDump()));
     assert.equal(thread.scrollTop, 550, "reopen/rehydrate should force the thread back to the bottom");
     assert.equal(thread.dataset.vibecomfyScrolledToBottom, "1");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+for (const mountMode of ["launcher", "sidebar"]) {
+  test(`VibeComfy chat bubbles do not duplicate after ${mountMode} close/reopen`, async () => {
+    const SESSION_ID = `session-thread-reopen-no-duplicates-${mountMode}`;
+    const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+    const messages = [
+      { role: "user", text: `${mountMode} message 1`, turn_id: "0001" },
+      { role: "agent", text: `${mountMode} message 2`, turn_id: "0001" },
+      { role: "user", text: `${mountMode} message 3`, turn_id: "0002" },
+      { role: "agent", text: `${mountMode} message 4`, turn_id: "0002" },
+      { role: "user", text: `${mountMode} message 5`, turn_id: "0003" },
+    ];
+
+    const harness = await createBrowserHarness({
+      responses: {
+        "/system_stats": {
+          status: 200,
+          body: { system: { comfyui_frontend_package: "1.39.19" } },
+        },
+        [CHAT_URL]: {
+          status: 200,
+          body: {
+            ok: true,
+            session_id: SESSION_ID,
+            session_path: `out/editor_sessions/${SESSION_ID}/`,
+            detail_json_path: `out/editor_sessions/${SESSION_ID}/session.json`,
+            messages,
+          },
+        },
+        "/vibecomfy/agent/status?route=auto": {
+          status: 200,
+          body: {
+            ok: true,
+            provider_available: true,
+            route: "deepseek",
+            requested_route: "auto",
+            route_options: {
+              auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+              deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+            },
+          },
+        },
+      },
+    });
+
+    try {
+      const extensionModule = await harness.loadExtension();
+      await harness.setup();
+      globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+
+      let sidebarTab = null;
+      let sidebarContainer = null;
+      if (mountMode === "sidebar") {
+        sidebarTab = harness.getSidebarTabs()[0][0];
+        sidebarContainer = harness.document.createElement("div");
+        sidebarContainer.id = "comfyui-sidebar-vibecomfy-reopen-no-duplicates";
+        harness.document.body.appendChild(sidebarContainer);
+        sidebarTab.render({ container: sidebarContainer });
+      } else {
+        const launcher = harness.document.getElementById("vibecomfy-agent-launcher");
+        assert.ok(launcher, "legacy launcher must be installed");
+        launcher.click();
+      }
+
+      await waitFor(() => harness.requests.some((entry) => entry.url === CHAT_URL));
+      await waitFor(() => getChatMessagesMount(harness.document)?.children.length === messages.length);
+
+      const panel = extensionModule.ensureAgentPanel();
+      const firstRenderCount = harness.window.__vibecomfyPanelDebug().renderCounts.THREAD;
+      let messagesMount = getChatMessagesMount(harness.document);
+      assert.ok(messagesMount, "messages mount must exist after first open");
+      assert.equal(messagesMount.children.length, messages.length);
+      assert.deepEqual(chatMessageKeys(messagesMount), [
+        "turn:0001:user",
+        "turn:0001:agent",
+        "turn:0002:user",
+        "turn:0002:agent",
+        "turn:0003:user",
+      ]);
+
+      const closeButton = harness.document.getElementById("vibecomfy-agent-panel-close");
+      assert.ok(closeButton, "agent panel close button must exist");
+      closeButton.click();
+      assert.equal(panel.root.dataset.open, "0");
+
+      if (mountMode === "sidebar") {
+        sidebarTab.render({ container: sidebarContainer });
+      } else {
+        const launcher = harness.document.getElementById("vibecomfy-agent-launcher");
+        launcher.click();
+      }
+
+      await waitFor(() => harness.requests.filter((entry) => entry.url === CHAT_URL).length >= 2);
+      await waitFor(() => harness.window.__vibecomfyPanelDebug().renderCounts.THREAD > firstRenderCount);
+
+      messagesMount = getChatMessagesMount(harness.document);
+      const keys = chatMessageKeys(messagesMount);
+      assert.equal(messagesMount.children.length, messages.length, "reopen must not duplicate chat bubbles");
+      assert.equal(new Set(keys).size, keys.length, "rendered message keys must stay unique after reopen");
+      assert.deepEqual(keys, [
+        "turn:0001:user",
+        "turn:0001:agent",
+        "turn:0002:user",
+        "turn:0002:agent",
+        "turn:0003:user",
+      ]);
+    } finally {
+      await harness.dispose();
+    }
+  });
+}
+
+test("VibeComfy chat bubble reconcile removes stray DOM children without rebuilding real bubbles", async () => {
+  const SESSION_ID = "session-thread-stray-dom-self-heal";
+  const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+  const messages = [
+    { role: "user", text: "self heal message 1", turn_id: "0001" },
+    { role: "agent", text: "self heal message 2", turn_id: "0001" },
+    { role: "user", text: "self heal message 3", turn_id: "0002" },
+  ];
+
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      [CHAT_URL]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: SESSION_ID,
+          messages,
+        },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => getChatMessagesMount(harness.document)?.children.length === messages.length);
+
+    const panel = extensionModule.ensureAgentPanel();
+    const messagesMount = getChatMessagesMount(harness.document);
+    const originalChildrenByKey = new Map(
+      messagesMount.children.map((node) => [node.dataset?.vibecomfyMessageKey, node]),
+    );
+
+    const stray = harness.document.createElement("div");
+    stray.dataset.vibecomfyMessageKey = "stray:manual";
+    stray.textContent = "stray duplicate bubble";
+    messagesMount.appendChild(stray);
+    assert.equal(messagesMount.children.length, messages.length + 1);
+
+    extensionModule.renderAgentPanel(panel, { dirtySections: ["THREAD"] });
+
+    assert.equal(stray.parentNode, null, "stray child must be removed during reconcile");
+    assert.equal(messagesMount.children.length, messages.length);
+    for (const [key, node] of originalChildrenByKey.entries()) {
+      assert.equal(
+        messagesMount.children.find((child) => child.dataset?.vibecomfyMessageKey === key),
+        node,
+        `real bubble ${key} should be preserved`,
+      );
+    }
+    assert.deepEqual(chatMessageKeys(messagesMount), [
+      "turn:0001:user",
+      "turn:0001:agent",
+      "turn:0002:user",
+    ]);
   } finally {
     await harness.dispose();
   }

@@ -4656,7 +4656,21 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
 
 function reconcileChatBubbles(panel, messagesMount, displayEntries) {
   const threadState = ensureThreadRenderState(panel);
-  const priorBubbleMap = threadState.bubbleMap || {};
+  const rawBubbleMap = threadState.bubbleMap || {};
+  const priorBubbleMap = {};
+  const knownMountedNodes = new Set();
+  for (const [key, bubbleEntry] of Object.entries(rawBubbleMap)) {
+    if (bubbleEntry?.node?.parentNode !== messagesMount) {
+      continue;
+    }
+    priorBubbleMap[key] = bubbleEntry;
+    knownMountedNodes.add(bubbleEntry.node);
+  }
+  for (const child of Array.from(messagesMount?.children || [])) {
+    if (!knownMountedNodes.has(child)) {
+      messagesMount.removeChild(child);
+    }
+  }
   const nextBubbleMap = {};
   const nextSignatures = {};
   const nextKeyOrder = [];
