@@ -978,19 +978,11 @@ test("VibeComfy renders no-op edit turns without entering review", async () => {
             kind: "noop",
             reason: "KSampler cfg is already 6.5; no change needed.",
           },
-          candidate: null,
           graph_unchanged: true,
           canvas_apply_allowed: false,
           apply_allowed: false,
           queue_allowed: false,
-          apply_eligibility: {
-            applyable: false,
-            reason: "no_candidate",
-            message: "No candidate is available to apply.",
-            warnings: [],
-          },
           message: "KSampler cfg is already 6.5; no change needed.",
-          graph,
           report: { done_summary: "No change needed." },
         },
       },
@@ -1021,7 +1013,7 @@ test("VibeComfy renders no-op edit turns without entering review", async () => {
   }
 });
 
-test("VibeComfy treats graph-unchanged no-candidate compatibility responses as no-op turns", async () => {
+test("VibeComfy treats graph-unchanged all-gates-false candidate responses as no-op turns", async () => {
   const graph = {
     nodes: [{ id: 1, type: "KSampler", properties: { vibecomfy_uid: "ksampler" } }],
     links: [],
@@ -1052,16 +1044,17 @@ test("VibeComfy treats graph-unchanged no-candidate compatibility responses as n
           session_id: "session-noop-compat",
           turn_id: "0001",
           baseline_turn_id: null,
-          candidate: null,
+          candidate: { graph },
           graph,
+          candidate_graph_hash: sha256HexUtf8(graph),
           graph_unchanged: true,
           canvas_apply_allowed: false,
           apply_allowed: false,
           queue_allowed: false,
           apply_eligibility: {
             applyable: false,
-            reason: "no_candidate",
-            message: "No candidate is available to apply.",
+            reason: "unchanged_candidate",
+            message: "The candidate is identical to the submitted graph.",
             warnings: [],
           },
           message: "Nothing needed changing; the workflow already matches that.",
@@ -1085,6 +1078,7 @@ test("VibeComfy treats graph-unchanged no-candidate compatibility responses as n
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-status")?.textContent, "Ready");
     assert.doesNotMatch(harness.textDump(), /Review Changes/);
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled, true);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-reject")?.disabled, true);
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled, false);
     assert.equal(harness.loadGraphDataCalls.length, 0);
   } finally {
@@ -1098,6 +1092,7 @@ test("VibeComfy live submit no-op response shape settles in Ready without review
     nodes: [{ id: 1, type: "KSampler", properties: { vibecomfy_uid: "refiner-sampler" } }],
     links: [],
   };
+  const candidateGraphHash = sha256HexUtf8(graph);
   const liveNoopResponse = {
     ok: true,
     session_id: "715b2b4ad80b447b8d5cb123d1c3e10e",
@@ -1110,6 +1105,33 @@ test("VibeComfy live submit no-op response shape settles in Ready without review
     outcome: {
       kind: "noop",
       reason: "The refiner sampler seed is already set to 999.",
+    },
+    candidate: {
+      graph,
+      report: { done_summary: "No edits applied." },
+    },
+    graph,
+    candidate_graph_hash: candidateGraphHash,
+    candidate_structural_graph_hash: "68495b9658c4c542d239723759c25969d339409e72f305971db42c835eb1b271",
+    apply_eligibility: {
+      applyable: false,
+      reason: "unchanged_candidate",
+      message: "The candidate is identical to the submitted graph.",
+      warnings: [],
+    },
+    gates: {
+      ir_validate_ok: true,
+      lower_ok: true,
+      python_load_ok: true,
+      queue_validate_ok: false,
+      state_match_ok: true,
+      ui_emit_ok: true,
+      ui_fidelity_ok: true,
+      ui_load_safe_ok: true,
+    },
+    report: {
+      done_summary: "No edits applied — identity verified; Gate B passed. Summary: No operations were applied.",
+      queue_blockers: [],
     },
     message: "Nothing needed changing; the workflow already matches that.",
   };

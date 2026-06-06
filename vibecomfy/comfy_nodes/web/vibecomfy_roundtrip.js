@@ -3199,34 +3199,24 @@ function pushTurnStatus(panel, status, extra = {}) {
 }
 
 // ── Typed response adapter (M2) ──────────────────────────────────────────────
-function resultHasCandidateGraphReference(result) {
-  if (!result || typeof result !== "object") {
-    return false;
-  }
-  if (result.candidate && typeof result.candidate === "object" && result.candidate.graph && typeof result.candidate.graph === "object") {
-    return true;
-  }
-  if (result.candidate_graph && typeof result.candidate_graph === "object") {
-    return true;
-  }
-  if (result.graph && typeof result.graph === "object") {
-    return true;
-  }
-  return typeof result.candidate_graph_hash === "string" && result.candidate_graph_hash.length > 0;
-}
-
 function resultHasNoCandidateEligibility(result) {
   return result?.candidate === null
     || result?.apply_eligibility?.reason === APPLY_ELIGIBILITY_REASON.NO_CANDIDATE
     || result?.apply_eligibility?.reason === "no_candidate";
 }
 
-function resultLooksLikeNoopWithoutCandidate(result) {
+function resultHasExplicitNoopOutcome(result) {
+  return result?.outcome && typeof result.outcome === "object" && result.outcome.kind === "noop";
+}
+
+function resultLooksLikeNoopResponse(result) {
   if (!result || typeof result !== "object") {
     return false;
   }
+  if (resultHasExplicitNoopOutcome(result)) {
+    return true;
+  }
   return result.graph_unchanged === true
-    && !resultHasCandidateGraphReference(result)
     && result.apply_allowed === false
     && result.canvas_apply_allowed === false
     && result.queue_allowed === false;
@@ -3238,8 +3228,11 @@ function candidateGraphFromResult(result) {
   }
   if (
     result.graph_unchanged === true
-    && (resultHasNoCandidateEligibility(result) || resultLooksLikeNoopWithoutCandidate(result))
+    && (resultHasNoCandidateEligibility(result) || resultLooksLikeNoopResponse(result))
   ) {
+    return null;
+  }
+  if (resultHasExplicitNoopOutcome(result)) {
     return null;
   }
   const typedGraph = result.candidate?.graph;
@@ -3316,7 +3309,7 @@ function outcomeFromResult(result) {
   }
   if (
     result.graph_unchanged === true
-    && (resultHasNoCandidateEligibility(result) || resultLooksLikeNoopWithoutCandidate(result))
+    && (resultHasNoCandidateEligibility(result) || resultLooksLikeNoopResponse(result))
   ) {
     return {
       kind: "noop",
