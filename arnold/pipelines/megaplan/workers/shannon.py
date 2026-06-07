@@ -68,6 +68,7 @@ from arnold.pipelines.megaplan.model_seam import (
     render_prompt_for_dispatch,
     render_step_message,
 )
+from arnold.pipelines.megaplan.prompts import create_claude_prompt
 from arnold.pipelines.megaplan.schemas import get_execution_schema_key
 from arnold.pipelines.megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,

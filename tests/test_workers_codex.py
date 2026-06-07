@@ -24,7 +24,7 @@ def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     captured: dict[str, list[str]] = {}
@@ -64,7 +64,7 @@ def test_run_codex_step_fresh_uses_enforced_render_and_capture_legacy_payload(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     observed_tiers: list[str] = []
@@ -118,7 +118,7 @@ def test_run_codex_step_execute_resume_uses_non_enforced_render(
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
     state["sessions"]["codex_executor"] = {"id": "sess-keep"}
-    execute_payload = {"task_updates": [], "sense_check_acknowledgments": []}
+    execute_payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
     observed_tiers: list[str] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
@@ -154,7 +154,7 @@ def test_run_codex_step_clamps_spec_layer_max_effort(tmp_path: Path) -> None:
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     captured: dict[str, list[str]] = {}
@@ -212,7 +212,7 @@ def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> 
 
     def fake_run_command(*args: object, **kwargs: object) -> CommandResult:
         output_path.write_text(
-            json.dumps({"plan": "# Plan", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must"}], "assumptions": []}),
+            json.dumps({"plan": "# Plan", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must", "requires": []}], "assumptions": []}),
             encoding="utf-8",
         )
         return CommandResult(
@@ -279,7 +279,7 @@ def test_run_step_with_worker_codex_backstops_resolved_model_from_4tuple(tmp_pat
     from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
-    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": []}
+    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}], "assumptions": []}
     fake_result = type(
         "Result",
         (),
@@ -358,7 +358,7 @@ def test_handlers_execute_resolves_codex_model_into_command(tmp_path: Path) -> N
         effort="medium",
         resolved_model="gpt-5.5",
     )
-    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": []}
+    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}], "assumptions": []}
     fake_result = type(
         "Result",
         (),
@@ -400,7 +400,7 @@ def test_run_codex_step_emits_model_and_effort_flags(tmp_path: Path) -> None:
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     captured: dict[str, list[str]] = {}
@@ -444,7 +444,7 @@ def test_run_codex_step_parses_output_file(tmp_path: Path) -> None:
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -508,7 +508,7 @@ def test_run_codex_step_reports_schema_validation_error_for_json_payload(tmp_pat
                 "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
             )
 
-    assert "plan output missing required keys" in exc_info.value.message
+    assert "missing_required at /plan" in exc_info.value.message
     assert "not valid JSON" not in exc_info.value.message
 
 def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Path) -> None:
@@ -522,7 +522,6 @@ def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Pa
             {
                 "id": "correctness",
                 "question": "Is the plan correct?",
-                "guidance": "",
                 "findings": [
                     {
                         "detail": "Checked the plan and found a concrete risk.",
@@ -573,7 +572,6 @@ def test_run_codex_step_trusted_container_bypasses_sandbox_for_critique(
             {
                 "id": "correctness",
                 "question": "Is the plan correct?",
-                "guidance": "",
                 "findings": [
                     {
                         "detail": "Checked the plan and found no issue in the trusted-container command path.",
@@ -620,7 +618,7 @@ def test_run_codex_step_grants_plan_dir_when_project_dir_differs(tmp_path: Path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -735,9 +733,10 @@ def test_run_codex_step_normalizes_revise_payload_missing_changes_summary(tmp_pa
     plan_dir, state = _mock_state(tmp_path)
     revise_payload = {
         "plan": "# Revised Plan\nDo it.",
+        "changes_summary": "No critique flags were raised; refined the plan for execution.",
         "flags_addressed": [],
         "assumptions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "questions": [],
     }
 
@@ -831,7 +830,6 @@ def test_run_codex_step_recovers_critique_payload_from_timeout_raw_output(tmp_pa
             {
                 "id": "correctness",
                 "question": "Is the plan correct?",
-                "guidance": "Check the real code.",
                 "findings": [
                     {
                         "detail": "Checked the repository path and found missing propagation for shot metadata.",
@@ -891,6 +889,9 @@ def test_run_codex_step_recovers_gate_payload_from_mixed_raw_output(tmp_path: Pa
             }
         ],
         "accepted_tradeoffs": [],
+        "tiebreaker_question": "",
+        "tiebreaker_flag_ids": [],
+        "tiebreaker_fuzzy_group_id": "",
     }
     raw_output = (
         json.dumps(gate_payload)
@@ -948,6 +949,7 @@ def test_run_codex_step_recovers_execute_payload_from_jsonl_agent_message(tmp_pa
                 "executor_notes": "Recovered from Codex JSONL agent message output.",
                 "files_changed": ["reigh-worker/source/task_handlers/queue/task_queue.py"],
                 "commands_run": ["pytest tests/test_workers.py -k jsonl_agent_message"],
+                "auto_attributed_files": False,
             }
         ],
         "sense_check_acknowledgments": [
@@ -1017,6 +1019,10 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
         "refreshed": False,
     }
     execute_payload = {
+        "output": "Recovered batch payload.",
+        "files_changed": ["reigh-worker/tests/test_preview_harness.py"],
+        "commands_run": ["pytest tests/test_preview_harness.py -v"],
+        "deviations": [],
         "task_updates": [
             {
                 "task_id": "T8",
@@ -1024,6 +1030,7 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
                 "executor_notes": "Recovered batch payload from Codex JSONL agent message output.",
                 "files_changed": ["reigh-worker/tests/test_preview_harness.py"],
                 "commands_run": ["pytest tests/test_preview_harness.py -v"],
+                "auto_attributed_files": False,
             }
         ],
         "sense_check_acknowledgments": [
@@ -1255,7 +1262,7 @@ def test_run_codex_step_uses_step_timeout_for_plan(tmp_path: Path) -> None:
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1327,7 +1334,7 @@ def test_run_step_with_worker_retries_non_execute_codex_timeout_once(tmp_path: P
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     timeout_error = CliError(
@@ -1422,7 +1429,7 @@ def test_run_codex_step_sanitizes_codex_child_env(tmp_path: Path, monkeypatch: p
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     monkeypatch.setenv("CODEX_THREAD_ID", "outer-thread")
@@ -1685,7 +1692,7 @@ def test_codex_step_extracts_token_usage_from_session_jsonl(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1732,7 +1739,7 @@ def test_codex_step_handles_missing_session_jsonl_gracefully(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1785,7 +1792,7 @@ def test_codex_step_incremental_cost_within_session(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1882,7 +1889,7 @@ def test_codex_fresh_step_accounts_against_new_session_not_stored_session(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1943,6 +1950,7 @@ def test_codex_execute_headroom_guard_forces_fresh_before_resume(
                 "executor_notes": "Done.",
                 "files_changed": ["src/example.py"],
                 "commands_run": ["pytest tests/test_workers.py"],
+                "auto_attributed_files": False,
             }
         ],
         "sense_check_acknowledgments": [],
@@ -2043,7 +2051,7 @@ def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 

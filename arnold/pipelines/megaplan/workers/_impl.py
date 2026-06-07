@@ -60,6 +60,7 @@ from arnold.pipelines.megaplan._core import (
 )
 from arnold.pipelines.megaplan.prompts import (
     _resolve_prompt_root,
+    create_codex_prompt,
 )
 from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan.model_seam import (
@@ -1755,7 +1756,8 @@ def mock_worker_output(
     result = _mock_step(step, state, plan_dir, prompt_override=prompt_override)
     try:
         root = _resolve_prompt_root(plan_dir, None)
-        schema = read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES[step])
+        schema_path = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
+        schema = read_json(schema_path) if schema_path.exists() else None
         side_effect_paths = (
             plan_dir / "critique_output.json",
             plan_dir / "review_output.json",

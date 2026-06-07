@@ -23,7 +23,7 @@ def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     claude_output = json.dumps({
@@ -68,7 +68,7 @@ def test_direct_shannon_claude_session_uses_non_enforced_capture_boundary(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     claude_output = json.dumps({
@@ -127,7 +127,7 @@ def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     claude_output = json.dumps({
@@ -168,7 +168,7 @@ def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) ->
         command=["claude"],
         cwd=tmp_path,
         returncode=0,
-        stdout=json.dumps({"structured_output": {"plan": "x", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must"}], "assumptions": []}}),
+        stdout=json.dumps({"structured_output": {"plan": "x", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must", "requires": []}], "assumptions": []}}),
         stderr="",
         duration_ms=10,
     )
@@ -212,7 +212,7 @@ def test_run_claude_step_raises_on_invalid_payload(tmp_path: Path) -> None:
         duration_ms=100,
     )
     with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result):
-        with pytest.raises(CliError, match="missing required keys"):
+        with pytest.raises(CliError, match="missing_required at /plan"):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
 
 def test_run_claude_step_attaches_session_id_on_timeout(tmp_path: Path) -> None:
@@ -251,7 +251,7 @@ def test_run_step_with_worker_falls_back_from_claude_auth_error_to_codex(tmp_pat
         payload={
             "plan": "# Plan\nDo it.",
             "questions": [],
-            "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+            "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
             "assumptions": [],
         },
         raw_output="",
@@ -370,7 +370,7 @@ def test_run_claude_step_normal_prompt_dispatches_after_guard_passes(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(

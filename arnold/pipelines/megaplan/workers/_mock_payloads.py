@@ -67,8 +67,8 @@ def _default_mock_plan_payload(state: PlanState, plan_dir: Path) -> dict[str, An
         ).strip(),
         "questions": ["Are there existing patterns in the repo that should be preserved?"],
         "success_criteria": [
-            {"criterion": "A concrete implementation path exists.", "priority": "must"},
-            {"criterion": "Verification is defined before execution.", "priority": "should"},
+            {"criterion": "A concrete implementation path exists.", "priority": "must", "requires": []},
+            {"criterion": "Verification is defined before execution.", "priority": "should", "requires": []},
         ],
         "assumptions": ["The project directory is writable."],
     }
@@ -246,8 +246,8 @@ def _default_mock_revise_payload(state: PlanState, plan_dir: Path) -> dict[str, 
         ],
         "assumptions": ["The repository contains enough context for implementation."],
         "success_criteria": [
-            {"criterion": "The plan identifies exact touch points before editing.", "priority": "must"},
-            {"criterion": "A concrete verification command is defined.", "priority": "should"},
+            {"criterion": "The plan identifies exact touch points before editing.", "priority": "must", "requires": []},
+            {"criterion": "A concrete verification command is defined.", "priority": "should", "requires": []},
         ],
         "questions": [],
     }
@@ -271,6 +271,9 @@ def _default_mock_gate_payload(state: PlanState, plan_dir: Path) -> dict[str, An
         "settled_decisions": [],
         "flag_resolutions": [],
         "accepted_tradeoffs": [],
+        "tiebreaker_question": "",
+        "tiebreaker_flag_ids": [],
+        "tiebreaker_fuzzy_group_id": "",
     }
 
 
@@ -365,6 +368,7 @@ def _default_mock_execute_payload(
                 "executor_notes": "Implemented via mock worker output and wrote IMPLEMENTED_BY_MEGAPLAN.txt.",
                 "files_changed": [relative_target],
                 "commands_run": ["mock-write IMPLEMENTED_BY_MEGAPLAN.txt"],
+                "auto_attributed_files": False,
             },
             {
                 "task_id": "T2",
@@ -372,6 +376,7 @@ def _default_mock_execute_payload(
                 "executor_notes": "Verified success criteria via mock worker output and command checks.",
                 "files_changed": [],
                 "commands_run": ["mock-verify success criteria"],
+                "auto_attributed_files": False,
             },
         ],
         "sense_check_acknowledgments": [

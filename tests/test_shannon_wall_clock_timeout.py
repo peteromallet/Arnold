@@ -55,7 +55,7 @@ def test_main_shannon_run_command_has_wall_clock_timeout(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(

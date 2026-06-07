@@ -14,12 +14,14 @@ from typing import TextIO
 import re
 
 from arnold.pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState
+from arnold.pipelines.megaplan.prompts import create_hermes_prompt
 from arnold.pipelines.megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _check_mock_safe,
     _json_decode_error_for_raw,
     _repair_worker_json_once,
+    validate_payload,
     mock_worker_output,
     session_key_for,
 )
@@ -1086,6 +1088,12 @@ def run_hermes_step(
     # Build prompt — megaplan prompts embed the JSON schema, but some models
     # ignore formatting instructions buried in long prompts.  Append a clear
     # reminder so the final response is valid JSON, not markdown.
+    prompt_text = prompt_override or create_hermes_prompt(
+        step,
+        state,
+        plan_dir,
+        root=root,
+    )
     rendered_step = render_prompt_for_dispatch(
         "hermes",
         step,
@@ -1096,7 +1104,7 @@ def run_hermes_step(
         normalized_model=resolved_model,
         tier=seam_tier,
         schema=schema,
-        prompt_override=prompt_override,
+        prompt_override=prompt_text,
     )
     prompt = rendered_step.prompt
     # Add web search guidance for phases that have it

@@ -88,7 +88,7 @@ def _scaffold(tmp_path: Path) -> tuple[Path, Path, PlanState]:
             "version": 1,
             "timestamp": "2026-04-01T00:00:00Z",
             "hash": "sha256:test",
-            "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+            "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
             "questions": [],
             "assumptions": [],
         },
