@@ -29,62 +29,6 @@ milestones:
     depth: high
     notes: "Vertical proof for execute->review->done: review-start evidence, evidence-backed review findings, TransitionDecision for review->done."
 
-  - label: m4-review-evidence-service
-    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m4-review-evidence-service.md
-    profile: partnered
-    robustness: full
-    depth: medium
-    notes: "Generalize review-time evidence across all review paths; migrate review payloads toward evidence refs."
-
-  - label: m5-objective-gates
-    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m5-objective-gates.md
-    profile: premium
-    robustness: thorough
-    depth: high
-    notes: "Machine-verifiable criteria -> engine-owned checks + command evidence. Run ASYNC at milestone-start (not per-phase-boundary); robustness-gate (light skips, full warn, thorough enforce)."
-
-  - label: m6-provenance-and-workspace-assertions
-    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m6-provenance-and-workspace-assertions.md
-    profile: directed
-    robustness: full
-    depth: medium
-    notes: "Artifact provenance + freshness helpers. PLUS cheap target HEAD + dirty-set + checked-SHA assertions at authority transitions only (execute-start, review-start, done/advance, reset) — replaces v1 m10's per-boundary tree hashing and supplies the TOCTOU checked-SHA."
-
-  - label: m7-transition-validator-routing
-    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m7-transition-validator-routing.md
-    profile: premium
-    robustness: thorough
-    depth: high
-    notes: "Full TransitionWriter over authority-increasing routes INCLUDING reset/reconcile + config-reroute. Chain/CI SHA-pinning, override waivers. Routing recomputed from pinned inputs (adjudicated tier/task id/policy/profile pinned; tier->model map recomputed), never frozen; emit routing_resolution_decision; carry the frozen-tier_models regression test. Concurrency/TOCTOU: lease/lock + compare-and-swap on inputs + stale-decision rejection."
-
-  - label: m8-capability-dispatch-gate
-    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m8-capability-dispatch-gate.md
-    profile: partnered
-    robustness: thorough
-    depth: high
-    notes: "Per-dispatch capability evidence; gate ACTUAL model vs ADJUDICATED tier (not resolved spec); availability AUTH-PROVEN (not env/binary proxy); batch-level task evidence. Closes the silent premium->DeepSeek degrade."
-
-  - label: m9-atomic-reset-reconcile
-    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m9-atomic-reset-reconcile.md
-    profile: partnered
-    robustness: full
-    depth: high
-    notes: "Atomic reset + reconcile as RECOVERY operations routed through m7's TransitionWriter; fenced under locks; archive never delete; refuse if head/worktree changed since preflight. The operational core of v1 m7, minus the projection."
-
-  - label: m10-rollout-enforcement
-    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m10-rollout-enforcement.md
-    profile: partnered
-    robustness: thorough
-    depth: medium
-    notes: "shadow->warn->enforce. PLUS mandatory unattended-context fallback: blocked gate with no human -> timeout -> auto-waive-and-record (warn) / fail-with-diagnostics (enforce); NEVER hang. Protect surface = all authority increases. Robustness-gated; legacy/prose/human-deferred defaults."
-
-  - label: m11-post-merge-rebaseline
-    idea: .megaplan/briefs/evidence-first-pipeline-semantics/m11-post-merge-rebaseline.md
-    profile: directed
-    robustness: full
-    depth: low
-    notes: "Rebuild the frozen driver engine from the merged result and re-run the motivating failure scenarios (silent degrade, contamination, phantom-dep, frozen-config) as regression proof. Validates the epic against its own failure class."
-
 on_failure:
   abort: stop_chain
 on_escalate:
