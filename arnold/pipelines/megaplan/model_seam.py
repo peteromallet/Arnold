@@ -1318,10 +1318,7 @@ def _normalize_prep_distill_capture_payload(payload: dict[str, Any]) -> dict[str
         ]
     if "primary_criterion" in normalized:
         primary_criterion = _optional_str(normalized.get("primary_criterion"))
-        if primary_criterion:
-            normalized["primary_criterion"] = primary_criterion
-        else:
-            normalized.pop("primary_criterion", None)
+        normalized["primary_criterion"] = primary_criterion or ""
     return normalized
 
 
@@ -1608,7 +1605,7 @@ _CAPTURE_SCHEMA_KEYS_BY_STEP: dict[str, str] = {
     "prep": "prep.json",
     "prep-triage": "prep_triage.json",
     "prep-distill": "prep.json",
-    "prep-research": "research.json",
+    "prep-research": "prep_research_finding.json",
     "feedback": "feedback.json",
     "critique_evaluator": "critique_evaluator.json",
     "revise": "revise.json",

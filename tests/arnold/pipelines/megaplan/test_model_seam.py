@@ -325,7 +325,7 @@ def test_capture_step_output_normalizes_prep_distill_loose_lists() -> None:
             "status": "pass_to_pass",
         },
     ]
-    assert "primary_criterion" not in outcome.legacy_payload
+    assert outcome.legacy_payload["primary_criterion"] == ""
     assert outcome.legacy_payload["open_questions"] == [
         {
             "severity": "assume_and_proceed",

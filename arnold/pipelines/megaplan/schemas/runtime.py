@@ -286,6 +286,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["findings"],
     },
+    "prep_research_finding.json": deepcopy(PREP_RESEARCH_FINDING_SCHEMA),
     "prep_metrics.json": {
         "type": "object",
         "properties": {

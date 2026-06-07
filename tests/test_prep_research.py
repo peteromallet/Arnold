@@ -83,7 +83,7 @@ def test_prep_research_worker_unit_is_picklable_with_representative_payload(tmp_
                 output_path=output_path,
                 read_only=True,
                 validation_step="prep-research",
-                schema=dict(prep_research.SCHEMAS[prep_research.STEP_SCHEMA_FILENAMES["prep-research"]]),
+                schema=dict(prep_research.PREP_RESEARCH_FINDING_SCHEMA),
                 model="deepseek:deepseek-v4-pro",
                 tier=ModelTier.ENFORCED,
                 extra={"area": {"id": "a", "area": "Area A", "brief": "inspect A"}},
