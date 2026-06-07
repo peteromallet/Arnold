@@ -30,6 +30,7 @@ import dataclasses
 from pathlib import Path
 from typing import Any, Callable, Mapping, cast
 
+from arnold.pipeline.step_invocation import StepInvocation
 from arnold.pipelines.megaplan._pipeline._forward_m2_m3 import restore_and_diverge  # TODO(M3): sentinel → RoutingKey
 from arnold.pipelines.megaplan._pipeline.pattern_types import PromoteFn
 from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
@@ -119,6 +120,10 @@ def panel_parallel(
     merge_strategy: str = "none",
     max_workers: int | None = None,
     next_label: str = "next",
+    reads: tuple[Any, ...] = (),
+    writes: tuple[Any, ...] = (),
+    invocation: StepInvocation | None = None,
+    required_capabilities: tuple[str, ...] = (),
 ) -> ParallelStage:
     """Pure :class:`ParallelStage` fan-out across *reviewers*.
 
@@ -160,6 +165,10 @@ def panel_parallel(
         join=_join,
         edges=edges,
         max_workers=max_workers,
+        reads=reads,
+        writes=writes,
+        invocation=invocation,
+        required_capabilities=required_capabilities,
     )
 
 
@@ -265,17 +274,17 @@ def mode_prompts(
                                 Step,
                                 dataclasses.replace(step_any, prompt_key=per_stage[stage_name]),
                             )
-                            new_stages[stage_name] = Stage(
-                                name=stage.name, step=new_step, edges=stage.edges
+                            new_stages[stage_name] = dataclasses.replace(
+                                stage,
+                                step=new_step,
                             )
                             continue
                         except TypeError:
                             pass
                 new_stages[stage_name] = stage
-            return Pipeline(
+            return dataclasses.replace(
+                pipeline,
                 stages=new_stages,
-                entry=pipeline.entry,
-                overlays=pipeline.overlays,
             )
 
         return Overlay(name=f"mode_prompts:{mode}", apply=_apply)
@@ -322,9 +331,8 @@ def iterate_until(
     # one place.  Existing legacy callers continue to see a plain callable.
     stored: Callable[[LoopState], bool] = node.should_halt
 
-    return Stage(
-        name=stage.name,
-        step=stage.step,
+    return dataclasses.replace(
+        stage,
         edges=stage.edges
         + (
             Edge(label=iterate_label, target=stage.name),

@@ -28,6 +28,10 @@ from arnold.pipeline.step_io_policy import (
     decision_blocks_write,
     resolve_step_io_policy,
 )
+from arnold.pipeline.runtime_contract_diagnostics import (
+    RuntimeContractDiagnostic,
+    diagnostic_from_step_io,
+)
 from arnold.pipeline.step_io_seams import SeamResolution, resolve_seam_from_binding_map
 from arnold.pipeline.step_io_telemetry import StepIOViolationRecord, emit_decision_telemetry
 
@@ -42,6 +46,7 @@ class StepIOHandoffResult:
     allow_read: bool
     allow_write: bool
     telemetry_record: StepIOViolationRecord | None = None
+    author_diagnostic: RuntimeContractDiagnostic | None = None
 
     @property
     def blocks_read(self) -> bool:
@@ -69,6 +74,7 @@ def evaluate_step_io_handoff(
     state_config: Mapping[str, Any] | None = None,
     artifact: str = "step_io",
     telemetry_path: str | Path | None = None,
+    producer_stage: str = "",
 ) -> StepIOHandoffResult:
     """Evaluate a typed artifact handoff without falling back to guessed ports.
 
@@ -126,6 +132,14 @@ def evaluate_step_io_handoff(
             seam=str(seam.seam_id) if seam.seam_id is not None else "step_io",
             envelope=envelope,
         )
+    author_diagnostic = diagnostic_from_step_io(
+        decision=decision,
+        producer_stage=producer_stage,
+        consumer_stage=consumer_step,
+        seam_id=str(seam.seam_id) if seam.seam_id is not None else None,
+        producer_port=producer_port,
+        consumer_port=consumer_port_decl,
+    )
     return StepIOHandoffResult(
         decision=decision,
         policy=policy,
@@ -133,6 +147,7 @@ def evaluate_step_io_handoff(
         allow_read=allow_read,
         allow_write=allow_write,
         telemetry_record=record,
+        author_diagnostic=author_diagnostic,
     )
 
 

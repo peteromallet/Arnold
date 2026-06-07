@@ -42,6 +42,69 @@ from tests.conftest import (
 )
 
 
+def test_execute_capture_payload_normalizes_receipt_shaped_batch_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeOutcome:
+        legacy_payload: dict[str, object]
+
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.legacy_payload = payload
+
+    def fake_capture_step_output(invocation: object, payload: dict[str, object]) -> FakeOutcome:
+        captured.update(payload)
+        return FakeOutcome(payload)
+
+    monkeypatch.setattr(megaplan_execute_batch, "capture_step_output", fake_capture_step_output)
+
+    payload = megaplan_execute_batch._capture_execute_payload(
+        agent="codex",
+        model="gpt-5.5",
+        resolved_model="gpt-5.5",
+        payload={
+            "output": "batch done",
+            "files_changed": [],
+            "commands_run": [],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "id": "ignored-receipt-id",
+                    "task_id": "T2",
+                    "status": "done",
+                    "executor_notes": "Implemented task.",
+                    "files_changed": ["x.py"],
+                    "commands_run": ["pytest tests/test_x.py"],
+                    "evidence_files": ["x.py"],
+                    "reviewer_verdict": "pass",
+                }
+            ],
+            "sense_check_acknowledgments": [
+                {
+                    "id": "SC2",
+                    "task_id": "T2",
+                    "verdict": "pass",
+                    "executor_note": "Checked.",
+                }
+            ],
+        },
+    )
+
+    assert payload == captured
+    assert payload["task_updates"] == [
+        {
+            "task_id": "T2",
+            "status": "done",
+            "executor_notes": "Implemented task.",
+            "files_changed": ["x.py"],
+            "commands_run": ["pytest tests/test_x.py"],
+            "auto_attributed_files": False,
+        }
+    ]
+    assert payload["sense_check_acknowledgments"] == [
+        {"sense_check_id": "SC2", "executor_note": "Checked."}
+    ]
+
+
 def _missing_code_task_evidence(tasks: list[dict[str, object]]) -> list[str]:
     issues: list[str] = []
     return _check_done_task_evidence(

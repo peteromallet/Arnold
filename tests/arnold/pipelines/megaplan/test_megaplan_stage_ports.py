@@ -6,7 +6,9 @@ from arnold.pipelines.megaplan._pipeline.pattern_topology import (
     critique_revise_gate_loop,
     phase_zero_gate,
 )
-from arnold.pipelines.megaplan._pipeline.types import Edge, Stage
+from arnold.pipelines.megaplan._pipeline.types import Edge, ParallelStage, Stage, StepResult
+from arnold.pipeline.step_invocation import StepInvocation
+from arnold.pipeline.types import Port, PortRef, ReadRef, WriteRef
 from arnold.pipelines.megaplan.pipeline import (
     _planning_loop_should_halt,
     build_pipeline,
@@ -51,6 +53,45 @@ EXPECTED_STAGE_ORDER = (
     "review",
     "tiebreaker",
 )
+
+
+def test_megaplan_stage_shapes_accept_authoring_fields_and_legacy_refs() -> None:
+    invocation = StepInvocation(kind="tool", metadata={"action": "write"})
+    read_ref = ReadRef(name="brief.md")
+    write_ref = WriteRef(name="draft.md")
+    produced_port = Port(name="draft", content_type="text/markdown")
+    consumed_port = PortRef(port_name="brief", content_type="text/markdown")
+
+    stage = Stage(
+        name="draft",
+        step=PrepStep(),
+        reads=(read_ref,),
+        writes=(write_ref,),
+        produces=(produced_port,),
+        consumes=(consumed_port,),
+        invocation=invocation,
+        required_capabilities=("fs.read", "fs.write"),
+    )
+    parallel_stage = ParallelStage(
+        name="panel",
+        steps=(CritiqueStep(), ReviewStep()),
+        join=lambda results, ctx: StepResult(next="halt"),
+        reads=(read_ref,),
+        writes=(write_ref,),
+        produces=(produced_port,),
+        consumes=(consumed_port,),
+        invocation=invocation,
+        required_capabilities=("fs.read", "fs.write"),
+    )
+
+    assert stage.reads == (read_ref,)
+    assert stage.writes == (write_ref,)
+    assert stage.invocation is invocation
+    assert stage.required_capabilities == ("fs.read", "fs.write")
+    assert parallel_stage.reads == (read_ref,)
+    assert parallel_stage.writes == (write_ref,)
+    assert parallel_stage.invocation is invocation
+    assert parallel_stage.required_capabilities == ("fs.read", "fs.write")
 
 
 def _canonical_stage_signatures() -> dict[str, inspect.Signature]:

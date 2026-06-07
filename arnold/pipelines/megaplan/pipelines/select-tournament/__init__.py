@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 
+from arnold.pipeline.declaration_lowering import bind_with_lowered_declarations
 from arnold.pipelines.megaplan._pipeline.contracts import BindResult, PortBindError, RepairGradient, bind
 from arnold.pipelines.megaplan._pipeline.flags import typed_ports_on
 
@@ -78,7 +79,9 @@ def _bind_or_raise(pipeline: Pipeline) -> Pipeline:
         )
         for stage_name, stage in pipeline.stages.items()
     }
-    result = bind(pipeline.stages, edges)
+    result = bind_with_lowered_declarations(pipeline.stages, edges)
+    if result is None:
+        result = bind(pipeline.stages, edges)
     if isinstance(result, RepairGradient):
         wanted = getattr(result.wanted, "port_name", result.wanted)
         raise PortBindError(

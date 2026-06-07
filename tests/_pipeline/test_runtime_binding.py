@@ -18,7 +18,10 @@ import pytest
 from arnold.pipeline import ContractResult
 from arnold.pipeline.step_io_policy import STEP_IO_POLICY_ENV
 from arnold.pipelines.megaplan._pipeline.contracts import PortBindError
-from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.executor import (
+    _prepare_enforcement_binding,
+    run_pipeline,
+)
 from arnold.pipelines.megaplan._pipeline.step_helpers import resolve_inputs
 from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
@@ -266,6 +269,39 @@ def test_executor_startup_builds_enforcement_binding_once_with_typed_ports_true(
     assert out["state"]["seen_path"] is None
 
 
+def test_prepare_enforcement_binding_lowers_authored_stage_reads_and_writes(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.delenv("MEGAPLAN_TYPED_PORTS", raising=False)
+
+    producer = _ProducerStep(name="prod")
+    consumer = _ConsumerStep(name="cons", consume_name="msg")
+    stages = {
+        producer.name: Stage(
+            name=producer.name,
+            step=producer,
+            edges=(Edge(label="next", target=consumer.name),),
+            writes=(Port(name="msg", content_type="text/markdown"),),
+        ),
+        consumer.name: Stage(
+            name=consumer.name,
+            step=consumer,
+            edges=(),
+            reads=(PortRef(port_name="msg", content_type="text/markdown"),),
+        ),
+    }
+    pipeline = Pipeline(stages=stages, entry=producer.name, binding_map=None)
+
+    binding = _prepare_enforcement_binding(
+        pipeline,
+        artifact_root=tmp_path,
+    )
+
+    assert binding.diagnostics is None
+    assert binding.binding_map == {("cons", "msg"): ("prod", "msg")}
+
+
 def test_executor_startup_reuses_existing_binding_map_without_rebinding(
     tmp_path,
     monkeypatch,
@@ -366,9 +402,15 @@ def test_executor_handoff_blocks_after_state_merge_and_before_cursor_dispatch(
         mode="test",
     )
 
-    with pytest.raises(ValueError, match="Step IO handoff blocked"):
+    with pytest.raises(ValueError, match="Step IO handoff blocked") as excinfo:
         run_pipeline(pipeline, ctx, artifact_root=tmp_path)
 
+    message = str(excinfo.value)
+    assert "producer_stage='prod'" in message
+    assert "consumer_stage='cons'" in message
+    assert "failure_code='schema_unavailable'" in message
+    assert "logical_type='review'" in message
+    assert "Suggested author action:" in message
     assert (tmp_path / "state.json").read_text(encoding="utf-8")
     assert read_violation_records(tmp_path / TELEMETRY_FILENAME)[0]["classification"] == "schema_unavailable"
 
@@ -402,9 +444,14 @@ def test_executor_binding_unavailable_transition_blocks_under_enforce(
         mode="test",
     )
 
-    with pytest.raises(ValueError, match="Step IO handoff blocked"):
+    with pytest.raises(ValueError, match="Step IO handoff blocked") as excinfo:
         run_pipeline(pipeline, ctx, artifact_root=tmp_path)
 
+    message = str(excinfo.value)
+    assert "producer_stage='prod'" in message
+    assert "consumer_stage='cons'" in message
+    assert "failure_code='binding_unavailable'" in message
+    assert "Suggested author action:" in message
     records = read_violation_records(tmp_path / TELEMETRY_FILENAME)
     transition_records = [record for record in records if record["operation"] == "write"]
     assert transition_records[0]["classification"] == "binding_unavailable"

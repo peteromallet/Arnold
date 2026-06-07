@@ -134,6 +134,12 @@ def run_pipeline(
         else:
             result = _run_serial_stage(stage, state, envelope)
 
+        if result.outputs:
+            if isinstance(state, dict):
+                state.update(result.outputs)
+            else:
+                state = dict(result.outputs)
+
         if result.state_patch:
             delta = StateDelta(patches=(dict(result.state_patch),))
             state = apply_delta(state, delta)
@@ -171,9 +177,11 @@ def _run_serial_stage(
     envelope: RuntimeEnvelope,
 ) -> StepResult:
     """Execute a single-step serial stage."""
+    state_dict = dict(state) if isinstance(state, dict) else state
     ctx = StepContext(
         artifact_root=envelope.artifact_root,
-        state=dict(state) if isinstance(state, dict) else state,
+        state=state_dict,
+        inputs=dict(state_dict) if isinstance(state_dict, dict) else {},
     )
     return stage.step.run(ctx)
 
@@ -212,8 +220,13 @@ def _run_parallel_stage(
 
     # Build isolated context snapshots (one per step).
     state_copy = dict(state) if isinstance(state, dict) else state
+    state_dict_copy = dict(state_copy) if isinstance(state_copy, dict) else {}
     contexts: list[StepContext] = [
-        StepContext(artifact_root=envelope.artifact_root, state=dict(state_copy))
+        StepContext(
+            artifact_root=envelope.artifact_root,
+            state=dict(state_copy),
+            inputs=dict(state_dict_copy),
+        )
         for _ in steps
     ]
 
@@ -245,5 +258,6 @@ def _run_parallel_stage(
     join_ctx = StepContext(
         artifact_root=envelope.artifact_root,
         state=dict(state_copy),
+        inputs=dict(state_dict_copy),
     )
     return stage.join(results, join_ctx)

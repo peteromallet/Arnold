@@ -210,6 +210,9 @@ def test_handoff_shadow_mode_emits_telemetry_without_blocking_invalid_typed_hand
     records = read_violation_records(telemetry_path)
     assert records[0]["mode"] == "shadow"
     assert records[0]["classification"] == "typed_invalid"
+    assert result.author_diagnostic is not None
+    assert result.author_diagnostic.failure_code == result.decision.diagnostics[0].code
+    assert "Suggested author action:" in result.author_diagnostic.message
 
 
 def test_handoff_unresolved_typed_envelope_is_binding_unavailable_without_fallback_validation(
@@ -270,6 +273,10 @@ def test_handoff_typed_but_unresolved_binding_caps_enforce_to_shadow_and_emits_u
     records = read_violation_records(telemetry_path)
     assert records[0]["logical_type"] == "mystery"
     assert records[0]["mode"] == "enforce"
+    assert result.author_diagnostic is not None
+    assert result.author_diagnostic.failure_code == "binding_unavailable"
+    assert result.author_diagnostic.logical_type == "mystery"
+    assert "Suggested author action:" in result.author_diagnostic.message
 
 
 def test_handoff_rejects_reserved_stream_on_resolved_typed_port_pair(tmp_path) -> None:

@@ -49,9 +49,12 @@ import json
 import re as _re
 from dataclasses import dataclass, field, fields as _dc_fields
 from enum import Enum
-from typing import Any, Callable, Literal, Mapping, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Protocol, TypeAlias, runtime_checkable
 
 from arnold.pipeline.schema_registry import AcceptedVersionRange
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from arnold.pipeline.step_invocation import StepInvocation
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +214,8 @@ class Stage:
     writes: tuple["WriteRef", ...] = field(default_factory=tuple)
     produces: tuple["Port", ...] = field(default_factory=tuple)
     consumes: tuple["PortRef", ...] = field(default_factory=tuple)
+    invocation: "StepInvocation | None" = None
+    required_capabilities: tuple[str, ...] = field(default_factory=tuple)
     loop_condition: Callable[[Any], bool] | None = None
 
 
@@ -240,6 +245,8 @@ class ParallelStage:
     writes: tuple["WriteRef", ...] = field(default_factory=tuple)
     produces: tuple["Port", ...] = field(default_factory=tuple)
     consumes: tuple["PortRef", ...] = field(default_factory=tuple)
+    invocation: "StepInvocation | None" = None
+    required_capabilities: tuple[str, ...] = field(default_factory=tuple)
     loop_condition: Callable[[Any], bool] | None = None
 
 

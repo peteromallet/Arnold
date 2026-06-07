@@ -12,10 +12,18 @@ Neutral equivalent: :class:`arnold.pipeline.steps.agent.AgentStep`.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Mapping
 
+from arnold.pipeline.runtime_contract_diagnostics import diagnostic_from_agent_capture
+from arnold.pipeline.step_invocation import StepInvocation
+from arnold.pipelines.megaplan.model_seam import (
+    ModelStructuralAuditError,
+    capture_step_output,
+    render_step_message,
+)
 from arnold.pipelines.megaplan._pipeline.flags import typed_ports_on
 from arnold.pipelines.megaplan._pipeline.step_helpers import (
     interpolate_inputs,
@@ -27,7 +35,7 @@ from arnold.pipelines.megaplan._pipeline.types import StepContext, StepResult
 
 
 # Worker function type
-WorkerFn = Callable[..., str]
+WorkerFn = Callable[..., Any]
 
 
 @dataclass
@@ -52,6 +60,8 @@ class AgentStep:
     _prompt_registry: Callable[[str], str] | None = None
     _panel_reviewer_order: dict[str, list[str]] = field(default_factory=dict)
     _mode: str = ""
+    _invocation: StepInvocation | None = None
+    _invocation_explicit: bool | None = None
 
     produces: tuple = field(default_factory=tuple)
     consumes: tuple = field(default_factory=tuple)
@@ -81,16 +91,43 @@ class AgentStep:
         output_dir.mkdir(parents=True, exist_ok=True)
         version = next_version(output_dir)
         output_path = output_dir / f"v{version}.md"
+        contract_result = None
 
         if self._worker is not None:
             worker_inputs = {k: str(v) for k, v in inputs.items()}
-            result_text = self._worker(
-                prompt=rendered,
-                step_name=self.name,
-                pipeline_name=self._pipeline_name,
-                inputs=worker_inputs,
-                mode=self._mode or ctx.mode,
+            invocation_explicit = (
+                self._invocation_explicit if self._invocation_explicit is not None else self._invocation is not None
             )
+            if invocation_explicit and self._invocation is not None and self._invocation.kind == "model":
+                worker_invocation = self._worker_facing_invocation(rendered)
+                rendered_message = render_step_message(worker_invocation)
+                worker_output = self._worker(
+                    prompt=rendered_message.prompt,
+                    step_name=self.name,
+                    pipeline_name=self._pipeline_name,
+                    inputs=worker_inputs,
+                    mode=self._mode or ctx.mode,
+                )
+                try:
+                    capture_outcome = capture_step_output(worker_invocation, worker_output)
+                except ModelStructuralAuditError as exc:
+                    diagnostic = diagnostic_from_agent_capture(
+                        stage_name=self.name,
+                        logical_type=self._primary_logical_type(),
+                        failure_code="worker_structural_audit_failed",
+                        detail=exc.details,
+                    )
+                    raise ValueError(diagnostic.message) from exc
+                result_text = self._legacy_markdown_text(worker_output)
+                contract_result = capture_outcome.contract_result
+            else:
+                result_text = self._worker(
+                    prompt=rendered,
+                    step_name=self.name,
+                    pipeline_name=self._pipeline_name,
+                    inputs=worker_inputs,
+                    mode=self._mode or ctx.mode,
+                )
         else:
             result_text = f"[AgentStep {self.name}] prompt: {self._prompt_ref}"
 
@@ -98,4 +135,32 @@ class AgentStep:
         return StepResult(
             outputs={self.name: output_path},
             next="done",
+            contract_result=contract_result,
         )
+
+    def _worker_facing_invocation(self, rendered_prompt: str) -> StepInvocation:
+        invocation = self._invocation
+        if invocation is None:
+            raise ValueError("worker-facing invocation requested without a declared invocation")
+        metadata = dict(invocation.metadata)
+        adapter_config = metadata.get("adapter_config")
+        worker_metadata = dict(adapter_config) if isinstance(adapter_config, Mapping) else {}
+        worker_metadata.update(metadata)
+        worker_metadata["prompt"] = rendered_prompt
+        worker_metadata["message"] = rendered_prompt
+        worker_metadata["prompt_components"] = rendered_prompt
+        return StepInvocation(kind=invocation.kind, metadata=worker_metadata)
+
+    @staticmethod
+    def _legacy_markdown_text(worker_output: Any) -> str:
+        if isinstance(worker_output, str):
+            return worker_output
+        if isinstance(worker_output, Mapping):
+            return json.dumps(worker_output, indent=2, sort_keys=True, default=str)
+        return str(worker_output)
+
+    def _primary_logical_type(self) -> str:
+        port = next((port for port in self.produces if getattr(port, "logical_type", None)), None)
+        if port is None:
+            return "unknown"
+        return str(getattr(port, "logical_type", None) or "unknown")

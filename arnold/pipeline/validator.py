@@ -25,8 +25,44 @@ so both Arnold and Megaplan shapes are accepted.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
+
+from arnold.pipeline.contracts import BindResult, RepairGradient, bind
+from arnold.pipeline.declaration_lowering import lower_stage_declarations
+from arnold.pipeline.model_resource_capabilities import prove_stage_required_capabilities
+from arnold.pipeline.step_invocation import StepInvocationAdapterRegistry
+from arnold.pipeline.types import Port, PortRef, ReadRef, WriteRef
+
+
+CONTRACT_ERROR_CODE_MAP: dict[str, str] = {
+    "no_match": "contract.no_match",
+    "typo_name": "contract.no_match",
+    "content_type_mismatch": "contract.content_type_mismatch",
+    "cardinality_mismatch": "contract.cardinality_mismatch",
+    "schema_mismatch": "contract.schema_mismatch",
+}
+DECLARATION_DRIFT_CODE = "contract.declaration_drift"
+MISSING_BINDING_CODE = "dataflow.missing_binding"
+UNKNOWN_ADAPTER_CODE = "invocation.unknown_adapter"
+UNSATISFIED_CAPABILITY_CODE = "capability.unsatisfied"
+
+
+def contract_diagnostic_code(error_kind: str) -> str:
+    """Map binder/contract failure kinds to stable validator diagnostic codes."""
+    return CONTRACT_ERROR_CODE_MAP.get(error_kind, f"contract.{error_kind}")
+
+
+@dataclass(frozen=True)
+class ValidationIssue:
+    """Structured validator issue with a stable machine-readable code."""
+
+    code: str
+    message: str
+    severity: str = "error"
+    stage: str | None = None
+    edge: dict[str, Any] | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -38,6 +74,51 @@ class Diagnostics:
     """
 
     defects: list[str] = field(default_factory=list)
+    issues: list[ValidationIssue] = field(default_factory=list)
+
+    def add_defect(
+        self,
+        message: str,
+        *,
+        code: str,
+        severity: str = "error",
+        stage: str | None = None,
+        edge: Any = None,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Append a legacy defect string and its structured companion issue."""
+        issue_edge: dict[str, Any] | None = None
+        if edge is not None:
+            issue_edge = {
+                "label": getattr(edge, "label", None),
+                "target": getattr(edge, "target", None),
+                "kind": getattr(edge, "kind", None),
+            }
+            recommendation = getattr(edge, "recommendation", None)
+            if recommendation is not None:
+                issue_edge["recommendation"] = recommendation
+        self.defects.append(message)
+        self.issues.append(
+            ValidationIssue(
+                code=code,
+                message=message,
+                severity=severity,
+                stage=stage,
+                edge=issue_edge,
+                details=dict(details or {}),
+            )
+        )
+
+    def extend(self, other: "Diagnostics") -> None:
+        """Merge diagnostics while preserving structured issues when present."""
+        self.defects.extend(other.defects)
+        if other.issues:
+            self.issues.extend(other.issues)
+
+    @property
+    def structured_defects(self) -> list[ValidationIssue]:
+        """Compatibility alias for callers that want defect-shaped issues."""
+        return self.issues
 
     @property
     def ok(self) -> bool:
@@ -128,8 +209,11 @@ def validate_control_flow(
 
     # ── entry check ──────────────────────────────────────────────────
     if entry not in stage_names:
-        diag.defects.append(
-            f"entry stage {entry!r} not present in pipeline.stages"
+        diag.add_defect(
+            f"entry stage {entry!r} not present in pipeline.stages",
+            code="entry_stage_missing",
+            stage=entry or None,
+            details={"entry": entry, "known_stages": sorted(stage_names)},
         )
 
     for stage_name, stage in stages.items():
@@ -145,14 +229,22 @@ def validate_control_flow(
             # 'halt' is a reserved target sentinel; flagged as a label
             # only when the edge does NOT also resolve to the terminal target.
             if label == "halt" and target != "halt":
-                diag.defects.append(
+                diag.add_defect(
                     f"stage {stage_name!r}: edge uses reserved label 'halt' "
-                    "(halt is a target sentinel, not an edge label)"
+                    "(halt is a target sentinel, not an edge label)",
+                    code="edge_reserved_halt_label",
+                    stage=stage_name,
+                    edge=edge,
+                    details={"reserved_label": "halt"},
                 )
             if target != "halt" and target not in stage_names:
-                diag.defects.append(
+                diag.add_defect(
                     f"stage {stage_name!r}: edge {label!r} targets "
-                    f"unknown stage {target!r}"
+                    f"unknown stage {target!r}",
+                    code="edge_target_unknown_stage",
+                    stage=stage_name,
+                    edge=edge,
+                    details={"known_stages": sorted(stage_names)},
                 )
 
         # ── decision vocabulary check ────────────────────────────────
@@ -167,24 +259,38 @@ def validate_control_flow(
                     # recommendation is checked for legacy kind='gate' edges.
                     key = label if kind == "decision" else getattr(edge, "recommendation", None)
                     if not key:
-                        diag.defects.append(
+                        diag.add_defect(
                             f"stage {stage_name!r}: decision edge {label!r} has "
-                            "no recommendation set (label/recommendation is None)"
+                            "no recommendation set (label/recommendation is None)",
+                            code="decision_edge_missing_key",
+                            stage=stage_name,
+                            edge=edge,
+                            details={"vocabulary": sorted(vocab)},
                         )
                     elif key not in vocab:
-                        diag.defects.append(
+                        diag.add_defect(
                             f"stage {stage_name!r}: decision edge {label!r} has "
                             f"decision key {key!r} not in "
-                            f"declared vocabulary {sorted(vocab)}"
+                            f"declared vocabulary {sorted(vocab)}",
+                            code="decision_key_outside_vocabulary",
+                            stage=stage_name,
+                            edge=edge,
+                            details={"decision_key": key, "vocabulary": sorted(vocab)},
                         )
                     else:
                         covered.add(key)
                 missing = vocab - covered
                 if missing:
-                    diag.defects.append(
+                    diag.add_defect(
                         f"stage {stage_name!r}: decision vocabulary "
                         f"{sorted(vocab)} declares {sorted(missing)} "
-                        f"but no decision edge covers them"
+                        f"but no decision edge covers them",
+                        code="decision_vocabulary_uncovered",
+                        stage=stage_name,
+                        details={
+                            "vocabulary": sorted(vocab),
+                            "missing_keys": sorted(missing),
+                        },
                     )
 
         # ── override vocabulary check ────────────────────────────────
@@ -196,26 +302,39 @@ def validate_control_flow(
                     label = getattr(edge, "label", "")
                     # label format is "override <action>"
                     if not label.startswith("override "):
-                        diag.defects.append(
+                        diag.add_defect(
                             f"stage {stage_name!r}: override edge {label!r} "
-                            "does not follow 'override <action>' label format"
+                            "does not follow 'override <action>' label format",
+                            code="override_edge_invalid_label",
+                            stage=stage_name,
+                            edge=edge,
                         )
                         continue
                     action = label[len("override "):]
                     if action not in vocab:
-                        diag.defects.append(
+                        diag.add_defect(
                             f"stage {stage_name!r}: override edge {label!r} has "
                             f"action {action!r} not in "
-                            f"declared override_vocabulary {sorted(vocab)}"
+                            f"declared override_vocabulary {sorted(vocab)}",
+                            code="override_action_outside_vocabulary",
+                            stage=stage_name,
+                            edge=edge,
+                            details={"action": action, "vocabulary": sorted(vocab)},
                         )
                     else:
                         covered.add(action)
                 missing = vocab - covered
                 if missing:
-                    diag.defects.append(
+                    diag.add_defect(
                         f"stage {stage_name!r}: override vocabulary "
                         f"{sorted(vocab)} declares {sorted(missing)} "
-                        f"but no override edge covers them"
+                        f"but no override edge covers them",
+                        code="override_vocabulary_uncovered",
+                        stage=stage_name,
+                        details={
+                            "vocabulary": sorted(vocab),
+                            "missing_actions": sorted(missing),
+                        },
                     )
 
     # ── Reachability from entry ──────────────────────────────────────
@@ -236,8 +355,11 @@ def validate_control_flow(
                     frontier.append(target)
         unreachable = stage_names - reachable
         for name in sorted(unreachable):
-            diag.defects.append(
-                f"stage {name!r} is unreachable from entry {entry!r}"
+            diag.add_defect(
+                f"stage {name!r} is unreachable from entry {entry!r}",
+                code="stage_unreachable",
+                stage=name,
+                details={"entry": entry},
             )
 
     # ── Unguarded cycle detection ────────────────────────────────────
@@ -262,14 +384,90 @@ def validate(
     # Merge dataflow defects — dataflow validation runs even when
     # control-flow defects exist so callers get the full picture.
     df_diag = validate_dataflow_paths(pipeline, options)
-    diag.defects.extend(df_diag.defects)
+    diag.extend(df_diag)
+    invocation_diag = validate_invocation_requirements(pipeline)
+    diag.extend(invocation_diag)
     # Merge prompt/resource defects
     res_diag = validate_resource_dependencies(pipeline, options)
-    diag.defects.extend(res_diag.defects)
+    diag.extend(res_diag)
     return diag
 
 
 # ── Dataflow validation ───────────────────────────────────────────────────
+
+
+def _capability_evidence_details(proof: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "capability": item.capability,
+            "source": item.source,
+            "details": dict(item.details),
+        }
+        for item in proof.evidence
+    ]
+
+
+def validate_invocation_requirements(pipeline: Any) -> Diagnostics:
+    """Validate invocation kinds and fail-closed required capabilities."""
+    diag = Diagnostics()
+    stages: Mapping[str, Any] = getattr(pipeline, "stages", {}) or {}
+    registry = StepInvocationAdapterRegistry()
+
+    for stage_name in sorted(stages):
+        stage = stages[stage_name]
+        invocation = getattr(stage, "invocation", None)
+        if invocation is not None:
+            try:
+                registry.resolve(invocation.kind)
+            except KeyError:
+                diag.add_defect(
+                    f"stage {stage_name!r}: invocation kind {invocation.kind!r} does not "
+                    "resolve to a registered adapter",
+                    code=UNKNOWN_ADAPTER_CODE,
+                    stage=stage_name,
+                    details={
+                        "invocation_kind": invocation.kind,
+                        "registered_kinds": list(registry.registered_kinds),
+                    },
+                )
+
+        required_capabilities = tuple(getattr(stage, "required_capabilities", ()) or ())
+        if not required_capabilities:
+            continue
+
+        proof = prove_stage_required_capabilities(stage, pipeline)
+        if proof.ok:
+            continue
+
+        message_parts: list[str] = []
+        if proof.unsatisfied_capabilities:
+            message_parts.append(
+                f"unproven capabilities {list(proof.unsatisfied_capabilities)!r}"
+            )
+        if proof.unknown_required_capabilities:
+            message_parts.append(
+                f"unknown required capabilities {list(proof.unknown_required_capabilities)!r}"
+            )
+        diag.add_defect(
+            f"stage {stage_name!r}: required capabilities are not satisfied "
+            f"({'; '.join(message_parts)})",
+            code=UNSATISFIED_CAPABILITY_CODE,
+            stage=stage_name,
+            details={
+                "required_capabilities": list(proof.required_capabilities),
+                "proven_capabilities": list(proof.proven_capabilities),
+                "unsatisfied_capabilities": list(proof.unsatisfied_capabilities),
+                "unknown_required_capabilities": list(
+                    proof.unknown_required_capabilities
+                ),
+                "unknown_provided_capabilities": list(
+                    proof.unknown_provided_capabilities
+                ),
+                "evidence": _capability_evidence_details(proof),
+            },
+        )
+
+    return diag
 
 
 def _normalize_dependency(
@@ -305,6 +503,190 @@ def _normalize_dependency(
         name = str(dep)
 
     return (name, optional, external, late_bound)
+
+
+def _is_typed_dependency(dep: Any) -> bool:
+    return isinstance(dep, (Port, PortRef))
+
+
+def _is_legacy_dependency(dep: Any) -> bool:
+    return isinstance(dep, (str, ReadRef, WriteRef)) or not _is_typed_dependency(dep)
+
+
+def _edge_targets_by_stage(stages: Mapping[str, Any]) -> dict[str, list[str]]:
+    edges_by_src: dict[str, list[str]] = {name: [] for name in stages}
+    for src_name, stage in stages.items():
+        for edge in _stage_edges(stage):
+            target = getattr(edge, "target", "")
+            if target != "halt" and target in stages:
+                edges_by_src[src_name].append(target)
+    return edges_by_src
+
+
+def _typed_binding_stage(stage: Any) -> Any:
+    lowered = lower_stage_declarations(stage)
+    typed_produces = tuple(
+        produce for produce in lowered.effective_produces if isinstance(produce, Port)
+    )
+    typed_consumes = tuple(
+        consume for consume in lowered.effective_consumes if isinstance(consume, PortRef)
+    )
+    return replace(
+        stage,
+        reads=lowered.legacy_reads,
+        writes=lowered.legacy_writes,
+        produces=typed_produces if lowered.clean_binding else (),
+        consumes=typed_consumes if lowered.clean_binding else (),
+    )
+
+
+def _typed_binding_stages(stages: Mapping[str, Any]) -> dict[str, Any]:
+    return {stage_name: _typed_binding_stage(stage) for stage_name, stage in stages.items()}
+
+
+def _find_stage_for_wanted_consume(
+    stages: Mapping[str, Any],
+    wanted: Any,
+) -> str | None:
+    for stage_name, stage in stages.items():
+        if wanted in tuple(getattr(stage, "consumes", ()) or ()):
+            return stage_name
+    return None
+
+
+def _candidate_contract_details(candidates: tuple[tuple[str, Any], ...]) -> list[dict[str, Any]]:
+    return [
+        {
+            "stage": stage_name,
+            "name": getattr(port, "name", getattr(port, "port_name", "")),
+            "content_type": getattr(port, "content_type", None),
+            "cardinality": getattr(port, "cardinality", None),
+            "logical_type": getattr(port, "logical_type", None),
+            "accepted_version_range": getattr(port, "accepted_version_range", None),
+        }
+        for stage_name, port in candidates
+    ]
+
+
+def _schema_mismatch_reason(
+    wanted: Any,
+    candidates: tuple[tuple[str, Any], ...],
+) -> tuple[str, str]:
+    wanted_logical_type = getattr(wanted, "logical_type", None)
+    candidate_logical_types = [
+        getattr(port, "logical_type", None) for _, port in candidates
+    ]
+    if wanted_logical_type is not None and any(
+        logical_type != wanted_logical_type for logical_type in candidate_logical_types
+    ):
+        return (
+            "logical_type_mismatch",
+            (
+                f"typed dependency {getattr(wanted, 'port_name', getattr(wanted, 'name', '?'))!r} "
+                f"declares logical_type {wanted_logical_type!r} but upstream producers expose "
+                f"{candidate_logical_types!r}"
+            ),
+        )
+
+    wanted_version = getattr(wanted, "accepted_version_range", None)
+    candidate_versions = [
+        getattr(port, "accepted_version_range", None) for _, port in candidates
+    ]
+    if wanted_version is not None and any(
+        version != wanted_version for version in candidate_versions
+    ):
+        return (
+            "accepted_version_range_mismatch",
+            (
+                f"typed dependency {getattr(wanted, 'port_name', getattr(wanted, 'name', '?'))!r} "
+                "declares an accepted_version_range that does not match any upstream producer"
+            ),
+        )
+
+    return (
+        "schema_mismatch",
+        (
+            f"typed dependency {getattr(wanted, 'port_name', getattr(wanted, 'name', '?'))!r} "
+            "does not match upstream producer schema metadata"
+        ),
+    )
+
+
+def _contract_failure_message_and_details(
+    gradient: RepairGradient,
+) -> tuple[str, dict[str, Any]]:
+    wanted_name = getattr(gradient.wanted, "port_name", getattr(gradient.wanted, "name", "?"))
+    details: dict[str, Any] = {
+        "dependency": wanted_name,
+        "error_kind": gradient.error_kind,
+        "wanted": {
+            "name": wanted_name,
+            "content_type": getattr(gradient.wanted, "content_type", None),
+            "cardinality": getattr(gradient.wanted, "cardinality", None),
+            "logical_type": getattr(gradient.wanted, "logical_type", None),
+            "accepted_version_range": getattr(
+                gradient.wanted, "accepted_version_range", None
+            ),
+        },
+        "candidates": _candidate_contract_details(gradient.candidates),
+    }
+
+    if gradient.error_kind in {"no_match", "typo_name"}:
+        if gradient.suggested_moves:
+            details["suggested_moves"] = list(gradient.suggested_moves)
+            return (
+                (
+                    f"typed dependency {wanted_name!r} does not match any upstream producer; "
+                    f"did you mean {list(gradient.suggested_moves)!r}?"
+                ),
+                details,
+            )
+        return (
+            f"typed dependency {wanted_name!r} does not match any upstream producer",
+            details,
+        )
+
+    if gradient.error_kind == "content_type_mismatch":
+        return (
+            (
+                f"typed dependency {wanted_name!r} expects content_type "
+                f"{getattr(gradient.wanted, 'content_type', None)!r} but upstream producers "
+                f"provide {[candidate['content_type'] for candidate in details['candidates']]}"
+            ),
+            details,
+        )
+
+    if gradient.error_kind == "cardinality_mismatch":
+        return (
+            (
+                f"typed dependency {wanted_name!r} expects cardinality "
+                f"{getattr(gradient.wanted, 'cardinality', None)!r} but upstream producers "
+                f"provide {[candidate['cardinality'] for candidate in details['candidates']]}"
+            ),
+            details,
+        )
+
+    if gradient.error_kind == "schema_mismatch":
+        reason, message = _schema_mismatch_reason(gradient.wanted, gradient.candidates)
+        details["mismatch_reason"] = reason
+        return message, details
+
+    return (
+        f"typed dependency {wanted_name!r} failed contract binding ({gradient.error_kind})",
+        details,
+    )
+
+
+def _remove_typed_consume(stages: Mapping[str, Any], stage_name: str, wanted: Any) -> dict[str, Any]:
+    updated = dict(stages)
+    stage = updated[stage_name]
+    updated[stage_name] = replace(
+        stage,
+        consumes=tuple(
+            consume for consume in tuple(getattr(stage, "consumes", ()) or ()) if consume != wanted
+        ),
+    )
+    return updated
 
 
 def validate_dataflow_paths(
@@ -345,42 +727,72 @@ def validate_dataflow_paths(
         return diag
 
     # ── Build predecessor map ────────────────────────────────────────────
+    edges_by_src = _edge_targets_by_stage(stages)
     predecessors: dict[str, list[str]] = {name: [] for name in stages}
-    for src_name, stage in stages.items():
-        for edge in _stage_edges(stage):
-            target = getattr(edge, "target", "")
-            if target != "halt" and target in stages:
-                predecessors[target].append(src_name)
+    for src_name, targets in edges_by_src.items():
+        for target in targets:
+            predecessors[target].append(src_name)
 
-    def _stage_produces(stage: Any) -> list[tuple[str, bool, bool, bool]]:
+    lowered_by_stage = {
+        stage_name: lower_stage_declarations(stage) for stage_name, stage in stages.items()
+    }
+    for stage_name in sorted(lowered_by_stage):
+        lowered = lowered_by_stage[stage_name]
+        for defect in lowered.drift_defects:
+            diag.add_defect(
+                defect.detail,
+                code=DECLARATION_DRIFT_CODE,
+                stage=stage_name,
+                details={"direction": defect.direction, "name": defect.name},
+            )
+
+    def _stage_produces(stage_name: str, stage: Any) -> list[tuple[str, bool, bool, bool]]:
         """Return the effective set of names that *stage* produces."""
         result: list[tuple[str, bool, bool, bool]] = []
+        lowered = lowered_by_stage[stage_name]
+        if lowered.clean_binding:
+            for produce in lowered.effective_produces:
+                if _is_typed_dependency(produce):
+                    result.append(_normalize_dependency(produce))
         for p in getattr(stage, "produces", ()) or ():
-            result.append(_normalize_dependency(p))
+            if _is_legacy_dependency(p):
+                result.append(_normalize_dependency(p))
         for w in getattr(stage, "writes", ()) or ():
-            result.append(_normalize_dependency(w))
+            if _is_legacy_dependency(w):
+                result.append(_normalize_dependency(w))
         return result
 
-    def _stage_consumes(stage: Any) -> list[tuple[str, bool, bool, bool]]:
+    def _stage_consumes(stage_name: str, stage: Any) -> list[tuple[str, bool, bool, bool]]:
         """Return the effective set of names that *stage* consumes."""
         result: list[tuple[str, bool, bool, bool]] = []
+        lowered = lowered_by_stage[stage_name]
+        if lowered.clean_binding:
+            for consume in lowered.effective_consumes:
+                if _is_typed_dependency(consume):
+                    result.append(_normalize_dependency(consume))
         for c in getattr(stage, "consumes", ()) or ():
-            result.append(_normalize_dependency(c))
+            if _is_legacy_dependency(c):
+                result.append(_normalize_dependency(c))
         for r in getattr(stage, "reads", ()) or ():
-            result.append(_normalize_dependency(r))
+            if _is_legacy_dependency(r):
+                result.append(_normalize_dependency(r))
         return result
 
     # Seed initial availability from binding_map and external/late_bound refs
     initial_available: set[str] = set()
     if isinstance(binding_map, dict):
-        initial_available.update(binding_map.keys())
+        for key in binding_map:
+            if isinstance(key, tuple) and len(key) >= 2:
+                initial_available.add(str(key[1]))
+            else:
+                initial_available.add(str(key))
 
     # ── Compute per-stage produces/consumes ───────────────────────────────
     produces: dict[str, set[str]] = {}
     consumes: dict[str, list[tuple[str, bool, bool, bool]]] = {}
     for name, stage in stages.items():
-        produces[name] = {n for n, *_ in _stage_produces(stage)}
-        consumes[name] = _stage_consumes(stage)
+        produces[name] = {n for n, *_ in _stage_produces(name, stage)}
+        consumes[name] = _stage_consumes(name, stage)
         # External/late-bound consumptions are always satisfied
         for c_name, c_opt, c_ext, c_late in consumes[name]:
             if c_ext or c_late:
@@ -424,6 +836,7 @@ def validate_dataflow_paths(
 
     # ── Check each stage's consumes against availability ─────────────────
     # Also track which predecessor route(s) fail for reporting
+    missing_binding_keys: set[tuple[str, str]] = set()
     for name in sorted(stages):
         incoming = available_at.get(name, set())
         for c_name, c_opt, c_ext, c_late in consumes.get(name, []):
@@ -447,10 +860,42 @@ def validate_dataflow_paths(
                         break
                 if not route_hint and preds:
                     route_hint = f" (available at all predecessors but not after join)"
-            diag.defects.append(
+            diag.add_defect(
                 f"stage {name!r}: dependency {c_name!r} is unsatisfied"
-                f"{route_hint}"
+                f"{route_hint}",
+                code=MISSING_BINDING_CODE,
+                stage=name,
+                details={
+                    "dependency": c_name,
+                    "route_hint": route_hint.strip() or None,
+                },
             )
+            missing_binding_keys.add((name, c_name))
+
+    typed_stages = _typed_binding_stages(stages)
+    while True:
+        typed_result = bind(typed_stages, edges_by_src, typed_ports=True)
+        if isinstance(typed_result, BindResult):
+            break
+        stage_name = _find_stage_for_wanted_consume(typed_stages, typed_result.wanted)
+        if stage_name is None:
+            break
+        wanted_name = getattr(
+            typed_result.wanted,
+            "port_name",
+            getattr(typed_result.wanted, "name", "?"),
+        )
+        if typed_result.error_kind == "no_match" and (stage_name, wanted_name) in missing_binding_keys:
+            typed_stages = _remove_typed_consume(typed_stages, stage_name, typed_result.wanted)
+            continue
+        message, details = _contract_failure_message_and_details(typed_result)
+        diag.add_defect(
+            f"stage {stage_name!r}: {message}",
+            code=contract_diagnostic_code(typed_result.error_kind),
+            stage=stage_name,
+            details=details,
+        )
+        typed_stages = _remove_typed_consume(typed_stages, stage_name, typed_result.wanted)
 
     return diag
 
@@ -578,18 +1023,27 @@ def validate_resource_dependencies(
                                 resolved = True
                                 break
                 if not resolved and known_bundle_names:
-                    diag.defects.append(
+                    diag.add_defect(
                         f"stage {stage_name!r}: prompt_key {prompt_key!r} references "
-                        f"no known resource bundle (available: {sorted(known_bundle_names)})"
+                        f"no known resource bundle (available: {sorted(known_bundle_names)})",
+                        code="prompt_key_unknown_resource_bundle",
+                        stage=stage_name,
+                        details={
+                            "prompt_key": prompt_key,
+                            "available_bundles": sorted(known_bundle_names),
+                        },
                     )
 
             # Also report bundle-scoped coverage: flag stages that have prompt_keys
             # but no bundles at all on the pipeline (soft defect — the pipeline
             # may rely on a separate prompt registry).
             if not bundles:
-                diag.defects.append(
+                diag.add_defect(
                     f"stage {stage_name!r}: declares prompt_key {prompt_key!r} "
-                    f"but pipeline has no resource_bundles"
+                    f"but pipeline has no resource_bundles",
+                    code="prompt_key_missing_resource_bundles",
+                    stage=stage_name,
+                    details={"prompt_key": prompt_key},
                 )
 
     return diag
@@ -634,9 +1088,12 @@ def _detect_unguarded_cycles(
                 cycle = _extract_cycle(node, neighbor, parent_edge)
                 if not _cycle_has_guard(cycle, stages):
                     cycle_str = " → ".join(cycle)
-                    diag.defects.append(
+                    diag.add_defect(
                         f"unguarded cycle detected: {cycle_str} "
-                        "(add a loop_condition to at least one stage in the cycle)"
+                        "(add a loop_condition to at least one stage in the cycle)",
+                        code="unguarded_cycle_detected",
+                        stage=neighbor,
+                        details={"cycle": cycle},
                     )
             elif color[neighbor] == WHITE:
                 parent_edge[neighbor] = (node, neighbor)

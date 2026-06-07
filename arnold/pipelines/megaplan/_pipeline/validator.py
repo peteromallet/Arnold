@@ -33,8 +33,15 @@ _FALLBACK_DECISION_VOCABULARY: frozenset[str] = frozenset(
 
 # ── Re-export the Arnold types for backward compatibility ──────────────
 from arnold.pipeline.validator import (  # noqa: F401  # re-export
+    CONTRACT_ERROR_CODE_MAP,
+    DECLARATION_DRIFT_CODE,
     Diagnostics,
+    MISSING_BINDING_CODE,
+    UNKNOWN_ADAPTER_CODE,
+    UNSATISFIED_CAPABILITY_CODE,
+    ValidationIssue,
     ValidationOptions,
+    contract_diagnostic_code,
     validate_control_flow as _arnold_validate_control_flow,
     validate as _arnold_validate,
 )
@@ -80,3 +87,18 @@ def validate_control_flow(
             decision_vocabulary_fallback=_FALLBACK_DECISION_VOCABULARY,
         )
     return _arnold_validate_control_flow(pipeline, options)
+
+
+__all__ = [
+    "CONTRACT_ERROR_CODE_MAP",
+    "DECLARATION_DRIFT_CODE",
+    "Diagnostics",
+    "MISSING_BINDING_CODE",
+    "UNKNOWN_ADAPTER_CODE",
+    "UNSATISFIED_CAPABILITY_CODE",
+    "ValidationIssue",
+    "ValidationOptions",
+    "contract_diagnostic_code",
+    "validate",
+    "validate_control_flow",
+]

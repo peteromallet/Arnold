@@ -45,12 +45,17 @@ from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     ParallelStage,
     Pipeline,
+    Port,
+    PortRef,
+    ReadRef,
     ReduceResult,
     Stage,
     StepContext,
     StepResult,
     PipelineVerdict,
+    WriteRef,
 )
+from arnold.pipeline.step_invocation import StepInvocation
 
 
 # ── Lightweight Step doubles ───────────────────────────────────────────
@@ -281,6 +286,23 @@ class TestPanelParallel:
         merged = stage.join([StepResult(outputs={})], ctx)
         assert merged.next == "merge"
 
+    def test_panel_parallel_preserves_authored_fields(self) -> None:
+        invocation = StepInvocation(kind="tool", metadata={"action": "fanout"})
+        stage = panel_parallel(
+            "panel_review",
+            reviewers=(("solo", _StubStep(name="panel.solo")),),
+            reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+            writes=(Port(name="review", content_type="text/markdown"),),
+            invocation=invocation,
+            required_capabilities=("model:text", "fs-write"),
+        )
+
+        assert isinstance(stage, ParallelStage)
+        assert stage.reads == (PortRef(port_name="draft", content_type="text/markdown"),)
+        assert stage.writes == (Port(name="review", content_type="text/markdown"),)
+        assert stage.invocation == invocation
+        assert stage.required_capabilities == ("model:text", "fs-write")
+
 
 # ── alternating_turns ──────────────────────────────────────────────────
 
@@ -413,6 +435,57 @@ class TestModePrompts:
         assert isinstance(ps_stage, Stage)
         assert ps_stage.step.prompt_key == "default"
 
+    def test_overlay_preserves_stage_and_pipeline_fields(self) -> None:
+        @dataclass
+        class _PromptStep:
+            name: str
+            kind: str = "produce"
+            prompt_key: str | None = None
+            slot: str | None = None
+
+            def run(self, ctx: StepContext) -> StepResult:  # pragma: no cover
+                return StepResult(next="done")
+
+        invocation = StepInvocation(kind="model", metadata={"prompt": "default"})
+        loop_condition = lambda state: False
+        pipeline = Pipeline(
+            stages={
+                "draft": Stage(
+                    name="draft",
+                    step=_PromptStep(name="draft", prompt_key="default"),
+                    reads=(ReadRef(name="brief.md"),),
+                    writes=(WriteRef(name="draft.md"),),
+                    produces=(Port(name="draft", content_type="text/markdown"),),
+                    consumes=(PortRef(port_name="brief", content_type="text/markdown"),),
+                    invocation=invocation,
+                    required_capabilities=("llm", "fs-write"),
+                    decision_vocabulary=frozenset({"proceed"}),
+                    override_vocabulary=frozenset({"stop"}),
+                    loop_condition=loop_condition,
+                ),
+            },
+            entry="draft",
+            binding_map={"draft": "binding"},
+            resource_bundles=("bundle",),
+        )
+
+        overlay = mode_prompts({"polish": {"draft": "polish_prompt"}})("polish")
+        out = overlay.apply(pipeline)
+        new_stage = out.stages["draft"]
+        assert isinstance(new_stage, Stage)
+        assert new_stage.step.prompt_key == "polish_prompt"
+        assert new_stage.reads == pipeline.stages["draft"].reads
+        assert new_stage.writes == pipeline.stages["draft"].writes
+        assert new_stage.produces == pipeline.stages["draft"].produces
+        assert new_stage.consumes == pipeline.stages["draft"].consumes
+        assert new_stage.invocation == invocation
+        assert new_stage.required_capabilities == ("llm", "fs-write")
+        assert new_stage.decision_vocabulary == frozenset({"proceed"})
+        assert new_stage.override_vocabulary == frozenset({"stop"})
+        assert new_stage.loop_condition is loop_condition
+        assert out.binding_map == pipeline.binding_map
+        assert out.resource_bundles == pipeline.resource_bundles
+
 
 # ── iterate_until ──────────────────────────────────────────────────────
 
@@ -430,6 +503,36 @@ class TestIterateUntil:
         assert ("next", "finalize") in labels
         assert ("iterate", "loop") in labels
         assert ("halt", "halt") in labels
+
+    def test_preserves_stage_fields_while_adding_loop_edges(self) -> None:
+        invocation = StepInvocation(kind="model", metadata={"prompt": "loop"})
+        prior_loop_condition = lambda state: False
+        base = Stage(
+            name="loop",
+            step=_StubStep(name="loop"),
+            edges=(Edge(label="next", target="finalize"),),
+            reads=(ReadRef(name="brief.md"),),
+            writes=(WriteRef(name="draft.md"),),
+            produces=(Port(name="draft", content_type="text/markdown"),),
+            consumes=(PortRef(port_name="brief", content_type="text/markdown"),),
+            invocation=invocation,
+            required_capabilities=("llm",),
+            decision_vocabulary=frozenset({"proceed"}),
+            override_vocabulary=frozenset({"stop"}),
+            loop_condition=prior_loop_condition,
+        )
+
+        wrapped = iterate_until(base, condition=lambda s: True, max_iterations=3)
+        assert wrapped.reads == base.reads
+        assert wrapped.writes == base.writes
+        assert wrapped.produces == base.produces
+        assert wrapped.consumes == base.consumes
+        assert wrapped.invocation == invocation
+        assert wrapped.required_capabilities == base.required_capabilities
+        assert wrapped.decision_vocabulary == base.decision_vocabulary
+        assert wrapped.override_vocabulary == base.override_vocabulary
+        assert wrapped.loop_condition is not None
+        assert wrapped.loop_condition is not prior_loop_condition
 
 
 # ── escalate_if ────────────────────────────────────────────────────────

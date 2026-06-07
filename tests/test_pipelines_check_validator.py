@@ -9,9 +9,9 @@ kind='gate' edges are legacy and validated alongside kind='decision'.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
-import os
 from argparse import Namespace
 
 from arnold.pipelines.megaplan._pipeline.judge_manifest import (
@@ -22,8 +22,25 @@ from arnold.pipelines.megaplan._pipeline.judge_manifest import (
 )
 from arnold.pipelines.megaplan._pipeline.judge_manifest_discovery import validate_judge_manifest
 from arnold.pipelines.megaplan._pipeline.registry import get_pipeline
-from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
-from arnold.pipelines.megaplan._pipeline.validator import Diagnostics, validate
+from arnold.pipelines.megaplan._pipeline.types import (
+    Edge,
+    Pipeline,
+    Port,
+    PortRef,
+    ReadRef,
+    Stage,
+    WriteRef,
+)
+from arnold.pipeline.step_invocation import StepInvocation
+from arnold.pipelines.megaplan._pipeline.validator import (
+    Diagnostics,
+    MISSING_BINDING_CODE,
+    UNKNOWN_ADAPTER_CODE,
+    UNSATISFIED_CAPABILITY_CODE,
+    ValidationIssue,
+    contract_diagnostic_code,
+    validate,
+)
 
 
 class _NoopStep:
@@ -48,9 +65,191 @@ def _stage(name: str, *edges: Edge) -> Stage:
     return Stage(name=name, step=_NoopStep(), edges=tuple(edges))
 
 
-def test_planning_passes_validate() -> None:
+def _assert_issue(
+    diag: Diagnostics,
+    *,
+    code: str,
+    stage: str,
+    detail_items: dict[str, object] | None = None,
+    edge_items: dict[str, object] | None = None,
+    message_contains: str | None = None,
+) -> None:
+    matches = [
+        issue
+        for issue in diag.issues
+        if issue.code == code
+        and issue.stage == stage
+        and (
+            detail_items is None
+            or all(issue.details.get(key) == value for key, value in detail_items.items())
+        )
+    ]
+    assert matches, diag.issues
+    issue = matches[0]
+    assert issue.message in diag.defects
+    if message_contains is not None:
+        assert message_contains in issue.message
+    if edge_items is not None:
+        assert issue.edge is not None
+        for key, value in edge_items.items():
+            assert issue.edge.get(key) == value
+
+
+def test_planning_reports_structured_missing_binding_diagnostics() -> None:
     diag = validate(get_pipeline("planning"))
-    assert diag.ok, diag.defects
+    assert not diag.ok
+    assert [issue.code for issue in diag.issues] == [
+        MISSING_BINDING_CODE,
+        MISSING_BINDING_CODE,
+        MISSING_BINDING_CODE,
+    ]
+    _assert_issue(
+        diag,
+        code="dataflow.missing_binding",
+        stage="critique",
+        detail_items={
+            "dependency": "plan_payload",
+            "route_hint": "(missing from predecessor 'revise')",
+        },
+        message_contains="unsatisfied",
+    )
+    _assert_issue(
+        diag,
+        code="dataflow.missing_binding",
+        stage="critique",
+        detail_items={
+            "dependency": "revise_payload",
+            "route_hint": "(missing from predecessor 'plan')",
+        },
+        message_contains="unsatisfied",
+    )
+    _assert_issue(
+        diag,
+        code="dataflow.missing_binding",
+        stage="critique",
+        detail_items={
+            "dependency": "tiebreaker_payload",
+            "route_hint": "(missing from predecessor 'plan')",
+        },
+        message_contains="unsatisfied",
+    )
+
+
+def test_megaplan_validator_shim_reexports_neutral_diagnostic_types_and_codes() -> None:
+    issue = ValidationIssue(code=MISSING_BINDING_CODE, message="x")
+    assert issue.code == "dataflow.missing_binding"
+    assert contract_diagnostic_code("no_match") == "contract.no_match"
+
+
+def test_megaplan_validator_shim_distinguishes_contract_mismatches_from_missing_binding() -> None:
+    pipeline = Pipeline(
+        stages={
+            "start": Stage(
+                name="start",
+                step=_NoopStep(),
+                writes=(Port(name="draft", content_type="text/plain"),),
+                edges=(
+                    Edge(label="to-contract", target="needs-contract"),
+                    Edge(label="to-missing", target="needs-missing"),
+                ),
+            ),
+            "needs-contract": Stage(
+                name="needs-contract",
+                step=_NoopStep(),
+                reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+                edges=(Edge(label="halt", target="halt"),),
+            ),
+            "needs-missing": Stage(
+                name="needs-missing",
+                step=_NoopStep(),
+                reads=(ReadRef(name="missing.md"),),
+                edges=(Edge(label="halt", target="halt"),),
+            ),
+        },
+        entry="start",
+    )
+
+    diag = validate(pipeline)
+
+    _assert_issue(
+        diag,
+        code="contract.content_type_mismatch",
+        stage="needs-contract",
+        detail_items={"dependency": "draft", "error_kind": "content_type_mismatch"},
+        message_contains="expects content_type 'text/markdown'",
+    )
+    _assert_issue(
+        diag,
+        code=MISSING_BINDING_CODE,
+        stage="needs-missing",
+        detail_items={
+            "dependency": "missing.md",
+            "route_hint": "(missing from predecessor 'start')",
+        },
+        message_contains="dependency 'missing.md' is unsatisfied",
+    )
+
+
+def test_megaplan_validator_shim_preserves_legacy_untyped_passthrough() -> None:
+    pipeline = Pipeline(
+        stages={
+            "start": Stage(
+                name="start",
+                step=_NoopStep(),
+                writes=(WriteRef(name="draft.md"),),
+                edges=(Edge(label="next", target="end"),),
+            ),
+            "end": Stage(
+                name="end",
+                step=_NoopStep(),
+                reads=(ReadRef(name="draft.md"),),
+                edges=(Edge(label="halt", target="halt"),),
+            ),
+        },
+        entry="start",
+    )
+
+    diag = validate(pipeline)
+
+    assert diag.ok, diag.issues
+
+
+def test_megaplan_validator_shim_surfaces_invocation_and_capability_codes() -> None:
+    pipeline = Pipeline(
+        stages={
+            "review": Stage(
+                name="review",
+                step=_NoopStep(),
+                invocation=StepInvocation(kind="custom-collector-v2"),
+                required_capabilities=("model:vision",),
+                edges=(Edge(label="halt", target="halt"),),
+            ),
+        },
+        entry="review",
+    )
+
+    diag = validate(pipeline)
+
+    _assert_issue(
+        diag,
+        code=UNKNOWN_ADAPTER_CODE,
+        stage="review",
+        detail_items={
+            "invocation_kind": "custom-collector-v2",
+            "registered_kinds": ["model"],
+        },
+        message_contains="registered adapter",
+    )
+    _assert_issue(
+        diag,
+        code=UNSATISFIED_CAPABILITY_CODE,
+        stage="review",
+        detail_items={
+            "required_capabilities": ["model:vision"],
+            "unsatisfied_capabilities": ["model:vision"],
+        },
+        message_contains="required capabilities are not satisfied",
+    )
 
 
 def test_edge_to_nonexistent_stage_is_flagged() -> None:
@@ -62,7 +261,14 @@ def test_edge_to_nonexistent_stage_is_flagged() -> None:
     )
     diag = validate(pipeline)
     assert not diag.ok
-    assert any("missing" in d for d in diag.defects)
+    _assert_issue(
+        diag,
+        code="edge_target_unknown_stage",
+        stage="start",
+        detail_items={"known_stages": ["start"]},
+        edge_items={"label": "go", "target": "missing", "kind": "normal"},
+        message_contains="missing",
+    )
 
 
 def test_gate_verdict_with_no_edge_is_flagged() -> None:
@@ -78,7 +284,14 @@ def test_gate_verdict_with_no_edge_is_flagged() -> None:
     )
     diag = validate(pipeline)
     assert not diag.ok
-    assert any("no recommendation" in d for d in diag.defects)
+    _assert_issue(
+        diag,
+        code="decision_edge_missing_key",
+        stage="start",
+        detail_items={"vocabulary": ["escalate", "iterate", "proceed", "tiebreaker"]},
+        edge_items={"label": "g", "target": "halt", "kind": "gate"},
+        message_contains="no recommendation",
+    )
 
 
 def test_unreachable_stage_is_flagged() -> None:
@@ -91,7 +304,13 @@ def test_unreachable_stage_is_flagged() -> None:
     )
     diag = validate(pipeline)
     assert not diag.ok
-    assert any("'orphan'" in d and "unreachable" in d for d in diag.defects)
+    _assert_issue(
+        diag,
+        code="stage_unreachable",
+        stage="orphan",
+        detail_items={"entry": "start"},
+        message_contains="unreachable",
+    )
 
 
 def test_halt_label_is_ok_when_target_is_halt() -> None:
@@ -116,7 +335,14 @@ def test_halt_label_with_non_halt_target_is_flagged() -> None:
     )
     diag = validate(pipeline)
     assert not diag.ok
-    assert any("reserved label 'halt'" in d for d in diag.defects)
+    _assert_issue(
+        diag,
+        code="edge_reserved_halt_label",
+        stage="start",
+        detail_items={"reserved_label": "halt"},
+        edge_items={"label": "halt", "target": "end", "kind": "normal"},
+        message_contains="reserved label 'halt'",
+    )
 
 
 def test_diagnostics_ok_property() -> None:
@@ -133,10 +359,12 @@ def _run_cli(*argv: str, env: dict[str, str] | None = None) -> subprocess.Comple
     )
 
 
-def test_cli_pipelines_check_planning_exits_zero() -> None:
+def test_cli_pipelines_check_planning_reports_human_readable_defects() -> None:
     result = _run_cli("pipelines", "check", "planning")
-    assert result.returncode == 0, result.stderr
-    assert "planning" in result.stdout
+    assert result.returncode == 1
+    assert "pipelines check: 'planning' has 3 defect(s):" in result.stderr
+    assert "[dataflow.missing_binding]" in result.stderr
+    assert "stage 'critique': dependency 'plan_payload' is unsatisfied" in result.stderr
 
 
 def test_cli_pipelines_check_no_name_exits_zero() -> None:
@@ -176,8 +404,179 @@ def test_cli_pipelines_check_judge_manifest_does_not_import_implementation(
 
 def test_cli_pipelines_check_falls_back_to_pipeline_registry() -> None:
     result = _run_cli("pipelines", "check", "planning")
-    assert result.returncode == 0, result.stderr
-    assert "planning" in result.stdout
+    assert result.returncode == 1
+    assert "tiebreaker_payload" in result.stderr
+
+
+def test_cli_pipelines_check_distinguishes_contract_mismatch_from_missing_binding(
+    monkeypatch,
+    capsys,
+) -> None:
+    from arnold.pipelines.megaplan import cli as cli_mod
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
+
+    pipeline = Pipeline(
+        stages={
+            "start": Stage(
+                name="start",
+                step=_NoopStep(),
+                writes=(Port(name="draft", content_type="text/plain"),),
+                edges=(
+                    Edge(label="to-contract", target="needs-contract"),
+                    Edge(label="to-missing", target="needs-missing"),
+                ),
+            ),
+            "needs-contract": Stage(
+                name="needs-contract",
+                step=_NoopStep(),
+                reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+                edges=(Edge(label="halt", target="halt"),),
+            ),
+            "needs-missing": Stage(
+                name="needs-missing",
+                step=_NoopStep(),
+                reads=(ReadRef(name="missing.md"),),
+                edges=(Edge(label="halt", target="halt"),),
+            ),
+        },
+        entry="start",
+    )
+
+    monkeypatch.setattr(registry_mod, "scan_python_pipelines", lambda: [])
+    monkeypatch.setattr(registry_mod, "get_pipeline", lambda name: pipeline)
+
+    rc = cli_mod._handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="check", pipeline_name="typed-diagnostics"),
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "pipelines check: 'typed-diagnostics' has 2 defect(s):" in captured.err
+    assert "[contract.content_type_mismatch]" in captured.err
+    assert "[dataflow.missing_binding]" in captured.err
+    assert "typed dependency 'draft' expects content_type 'text/markdown'" in captured.err
+    assert "dependency 'missing.md' is unsatisfied" in captured.err
+
+
+def test_cli_pipelines_check_reports_declaration_drift_with_stable_code(
+    monkeypatch,
+    capsys,
+) -> None:
+    from arnold.pipelines.megaplan import cli as cli_mod
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
+
+    pipeline = Pipeline(
+        stages={
+            "start": Stage(
+                name="start",
+                step=_NoopStep(),
+                writes=(Port(name="draft", content_type="text/plain"),),
+                produces=(Port(name="draft", content_type="text/markdown"),),
+                edges=(Edge(label="halt", target="halt"),),
+            ),
+        },
+        entry="start",
+    )
+
+    monkeypatch.setattr(registry_mod, "scan_python_pipelines", lambda: [])
+    monkeypatch.setattr(registry_mod, "get_pipeline", lambda name: pipeline)
+
+    rc = cli_mod._handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="check", pipeline_name="drifted-authoring"),
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "[contract.declaration_drift]" in captured.err
+    assert "conflicting explicit and typed produces declarations" in captured.err
+
+
+def test_cli_pipelines_check_preserves_existing_graph_validation_codes(
+    monkeypatch,
+    capsys,
+) -> None:
+    from arnold.pipelines.megaplan import cli as cli_mod
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
+
+    pipeline = Pipeline(
+        stages={
+            "start": _stage("start", Edge(label="go", target="missing")),
+        },
+        entry="start",
+    )
+
+    monkeypatch.setattr(registry_mod, "scan_python_pipelines", lambda: [])
+    monkeypatch.setattr(registry_mod, "get_pipeline", lambda name: pipeline)
+
+    rc = cli_mod._handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="check", pipeline_name="broken-graph"),
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "[edge_target_unknown_stage]" in captured.err
+    assert "edge 'go' targets unknown stage 'missing'" in captured.err
+
+
+def test_cli_pipelines_check_non_model_invocation_is_authorable_but_fail_closed(
+    monkeypatch,
+    capsys,
+) -> None:
+    from arnold.pipelines.megaplan import cli as cli_mod
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
+
+    run_attempted = False
+
+    class _ExplodingStep:
+        name = "exploding"
+        kind = "produce"
+        prompt_key = None
+        slot = None
+
+        @property
+        def produces(self) -> tuple:
+            return ()
+
+        @property
+        def consumes(self) -> tuple:
+            return ()
+
+        def run(self, ctx):
+            nonlocal run_attempted
+            run_attempted = True
+            raise AssertionError("pipelines check must not execute authored steps")
+
+    pipeline = Pipeline(
+        stages={
+            "review": Stage(
+                name="review",
+                step=_ExplodingStep(),
+                invocation=StepInvocation.with_adapter_config(
+                    kind="tool",
+                    adapter_config={"action": "approve"},
+                ),
+                edges=(Edge(label="halt", target="halt"),),
+            ),
+        },
+        entry="review",
+    )
+
+    monkeypatch.setattr(registry_mod, "scan_python_pipelines", lambda: [])
+    monkeypatch.setattr(registry_mod, "get_pipeline", lambda name: pipeline)
+
+    rc = cli_mod._handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="check", pipeline_name="tool-review"),
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "[invocation.unknown_adapter]" in captured.err
+    assert "invocation kind 'tool' does not resolve to a registered adapter" in captured.err
+    assert run_attempted is False
 
 
 def test_m5_judge_manifest_shape_validates() -> None:

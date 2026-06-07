@@ -476,6 +476,58 @@ def test_capture_step_output_uses_execute_batch_relaxed_schema_for_present_field
         raise AssertionError("wrong-typed execute batch fields must fail structural audit")
 
 
+def test_capture_step_output_normalizes_receipt_shaped_execute_batch_fields() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "compatibility_validation_step": "execute",
+        },
+    )
+
+    outcome = capture_step_output(
+        invocation,
+        {
+            "task_updates": [
+                {
+                    "id": "receipt-1",
+                    "task_id": "T2",
+                    "status": "done",
+                    "executor_notes": "Implemented task.",
+                    "files_changed": ["x.py"],
+                    "commands_run": ["pytest tests/test_x.py"],
+                    "evidence_files": ["x.py"],
+                    "reviewer_verdict": "pass",
+                }
+            ],
+            "sense_check_acknowledgments": [
+                {
+                    "id": "SC2",
+                    "task_id": "T2",
+                    "verdict": "pass",
+                    "executor_note": "Checked.",
+                }
+            ],
+        },
+    )
+
+    assert outcome.telemetry.audit_result is AuditStatus.PASSED
+    assert outcome.legacy_payload["task_updates"] == [
+        {
+            "task_id": "T2",
+            "status": "done",
+            "executor_notes": "Implemented task.",
+            "files_changed": ["x.py"],
+            "commands_run": ["pytest tests/test_x.py"],
+            "auto_attributed_files": False,
+        }
+    ]
+    assert outcome.legacy_payload["sense_check_acknowledgments"] == [
+        {"sense_check_id": "SC2", "executor_note": "Checked."}
+    ]
+
+
 def test_capture_step_output_uses_finalize_schema_for_wrong_typed_named_payload() -> None:
     invocation = StepInvocation(
         kind="model",

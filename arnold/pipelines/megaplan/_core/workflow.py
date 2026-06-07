@@ -16,11 +16,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from arnold.pipelines.megaplan.profiles.policy import ROBUSTNESS_LEVELS, normalize_robustness
+from arnold.pipeline.declaration_lowering import bind_with_lowered_declarations
+from arnold.pipelines.megaplan.profiles.policy import normalize_robustness
 from arnold.pipelines.megaplan.types import CliError, PlanState
 from arnold.pipelines.megaplan.planning.state import (
-    STATE_ABORTED,
-    STATE_AWAITING_HUMAN_VERIFY,
     STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -28,10 +27,7 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_GATED,
     STATE_INITIALIZED,
     STATE_PLANNED,
-    STATE_PREPPED,
     STATE_REVIEWED,
-    STATE_TIEBREAKER_PENDING,
-    STATE_TIEBREAKER_READY,
 )
 from arnold.pipelines.megaplan.store import ProgressEventInput, RevisionConflict, Store
 from .modes import is_creative_mode
@@ -235,17 +231,31 @@ def build_with_binding(
             if edge.target != "halt":
                 edges.append((src, edge.target))
 
-    result = contracts.bind(list(stages.values()) and dict(stages), edges)
-    # contracts.bind expects a Mapping; pass the stages mapping directly.
-    result = contracts.bind(dict(stages), edges)
-    if isinstance(result, contracts.RepairGradient):
-        raise BuildBindingError(result)
+    lowered_result = bind_with_lowered_declarations(dict(stages), edges)
+    if isinstance(lowered_result, contracts.RepairGradient):
+        raise BuildBindingError(lowered_result)
+
+    if lowered_result is not None:
+        existing_binding_map = getattr(pipeline, "binding_map", None)
+        if existing_binding_map is not None:
+            derived_binding_map = dict(existing_binding_map)
+            derived_binding_map.update(lowered_result.binding_map)
+        else:
+            derived_binding_map = lowered_result.binding_map
+    else:
+        derived_binding_map = None
+    if derived_binding_map is None:
+        # contracts.bind expects a Mapping; pass the stages mapping directly.
+        result = contracts.bind(dict(stages), edges)
+        if isinstance(result, contracts.RepairGradient):
+            raise BuildBindingError(result)
+        derived_binding_map = result.binding_map
 
     if isinstance(pipeline, Pipeline):
-        return dataclasses.replace(pipeline, binding_map=result.binding_map)
+        return dataclasses.replace(pipeline, binding_map=derived_binding_map)
     # Fallback: best-effort attribute set for non-Pipeline objects.
     try:
-        object.__setattr__(pipeline, "binding_map", result.binding_map)
+        object.__setattr__(pipeline, "binding_map", derived_binding_map)
     except Exception:
         pass
     return pipeline
