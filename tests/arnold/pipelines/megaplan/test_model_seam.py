@@ -272,6 +272,7 @@ def test_capture_step_output_normalizes_prep_distill_loose_lists() -> None:
                 {"name": "perf gate", "expectation": "benchmark thresholds are enforced"},
             ],
             "constraints": ["Do not weaken structural audit."],
+            "primary_criterion": None,
             "suggested_approach": "Keep the schema strict and normalize legacy aliases.",
             "open_questions": [
                 {
@@ -324,6 +325,7 @@ def test_capture_step_output_normalizes_prep_distill_loose_lists() -> None:
             "status": "pass_to_pass",
         },
     ]
+    assert "primary_criterion" not in outcome.legacy_payload
     assert outcome.legacy_payload["open_questions"] == [
         {
             "severity": "assume_and_proceed",

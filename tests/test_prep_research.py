@@ -732,7 +732,7 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
         ]
         assert all(unit.read_only is True for unit in units)
         assert all(unit.validation_step == "prep-research" for unit in units)
-        assert all(unit.schema == dict(prep_research.SCHEMAS[prep_research.STEP_SCHEMA_FILENAMES["prep-research"]]) for unit in units)
+        assert all(unit.schema == dict(prep_research.PREP_RESEARCH_FINDING_SCHEMA) for unit in units)
         assert all(unit.model == (expected_resolved.resolved_model or expected_resolved.model) for unit in units)
         ordered_results: list[dict[str, Any]] = []
         total_cost = 0.0
