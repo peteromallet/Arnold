@@ -240,6 +240,95 @@ def test_capture_step_output_skips_compatibility_projection_for_native_execute()
     assert outcome.contract_result.payload["telemetry"]["audit_result"] == "passed"
 
 
+def test_capture_step_output_normalizes_prep_distill_loose_lists() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "hermes",
+            "compatibility_validation_step": "prep-distill",
+        },
+    )
+
+    outcome = capture_step_output(
+        invocation,
+        {
+            "skip": False,
+            "task_summary": "Gate the Step-IO epic.",
+            "key_evidence": [
+                "capture_step_output is the output chokepoint.",
+                {"finding": "Schemas are strict.", "file_path": "schemas/runtime.py"},
+            ],
+            "relevant_code": [
+                "arnold/pipelines/megaplan/model_seam.py",
+                {
+                    "path": "arnold/pipelines/megaplan/schemas/runtime.py",
+                    "reason": "Declares prep.json.",
+                    "symbols": ["SCHEMAS"],
+                },
+            ],
+            "test_expectations": [
+                "M8 acceptance gate runs regressions.",
+                {"name": "perf gate", "expectation": "benchmark thresholds are enforced"},
+            ],
+            "constraints": ["Do not weaken structural audit."],
+            "suggested_approach": "Keep the schema strict and normalize legacy aliases.",
+            "open_questions": [
+                {
+                    "classification": "assumption",
+                    "question": "Where should the seam matrix live?",
+                    "assumption": "Publish it with the acceptance artifact.",
+                }
+            ],
+        },
+    )
+
+    assert outcome.telemetry.audit_result is AuditStatus.PASSED
+    assert outcome.legacy_payload["key_evidence"] == [
+        {
+            "point": "capture_step_output is the output chokepoint.",
+            "source": "prep-distill",
+            "relevance": "medium",
+        },
+        {
+            "point": "Schemas are strict.",
+            "source": "schemas/runtime.py",
+            "relevance": "medium",
+        },
+    ]
+    assert outcome.legacy_payload["relevant_code"] == [
+        {
+            "file_path": "arnold/pipelines/megaplan/model_seam.py",
+            "why": "Referenced by prep-distill.",
+            "functions": [],
+        },
+        {
+            "file_path": "arnold/pipelines/megaplan/schemas/runtime.py",
+            "why": "Declares prep.json.",
+            "functions": ["SCHEMAS"],
+        },
+    ]
+    assert outcome.legacy_payload["test_expectations"] == [
+        {
+            "test_id": "prep-distill-1",
+            "what_it_checks": "M8 acceptance gate runs regressions.",
+            "status": "pass_to_pass",
+        },
+        {
+            "test_id": "perf gate",
+            "what_it_checks": "benchmark thresholds are enforced",
+            "status": "pass_to_pass",
+        },
+    ]
+    assert outcome.legacy_payload["open_questions"] == [
+        {
+            "severity": "assume_and_proceed",
+            "question": "Where should the seam matrix live?",
+            "assumption": "Publish it with the acceptance artifact.",
+        }
+    ]
+
+
 def test_capture_schema_for_invocation_maps_named_steps_to_approved_schemas() -> None:
     expected = {
         "execute": "execution_batch_relaxed.json",

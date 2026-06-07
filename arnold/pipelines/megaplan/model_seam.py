@@ -1234,6 +1234,8 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
         return _normalize_critique_capture_payload(payload)
     if step == "critique_evaluator":
         return _normalize_critique_evaluator_capture_payload(payload)
+    if step == "prep-distill":
+        return _normalize_prep_distill_capture_payload(payload)
     if step != "finalize":
         return payload
     if _finalize_schema_requires_nullable_task_optionals(invocation):
@@ -1247,6 +1249,137 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
         for task in tasks
     ]
     return normalized
+
+
+def _normalize_prep_distill_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    normalized["key_evidence"] = [
+        _normalize_prep_key_evidence(item)
+        for item in _as_sequence(normalized.get("key_evidence"))
+    ]
+    normalized["relevant_code"] = [
+        _normalize_prep_relevant_code(item)
+        for item in _as_sequence(normalized.get("relevant_code"))
+    ]
+    normalized["test_expectations"] = [
+        _normalize_prep_test_expectation(index, item)
+        for index, item in enumerate(_as_sequence(normalized.get("test_expectations")), start=1)
+    ]
+    if "open_questions" in normalized:
+        normalized["open_questions"] = [
+            _normalize_prep_open_question(item)
+            for item in _as_sequence(normalized.get("open_questions"))
+        ]
+    return normalized
+
+
+def _normalize_prep_key_evidence(item: Any) -> Any:
+    if isinstance(item, str):
+        return {"point": item, "source": "prep-distill", "relevance": "medium"}
+    if not isinstance(item, Mapping):
+        return item
+    normalized = dict(item)
+    if "point" not in normalized:
+        normalized["point"] = _optional_str(
+            normalized.get("finding")
+            or normalized.get("summary")
+            or normalized.get("text")
+            or normalized.get("claim")
+        ) or ""
+    if "source" not in normalized:
+        normalized["source"] = _optional_str(
+            normalized.get("file")
+            or normalized.get("file_path")
+            or normalized.get("code_ref")
+        ) or "prep-distill"
+    normalized["relevance"] = _normalize_prep_relevance(normalized.get("relevance"))
+    return {key: normalized[key] for key in ("point", "source", "relevance")}
+
+
+def _normalize_prep_relevant_code(item: Any) -> Any:
+    if isinstance(item, str):
+        return {"file_path": item, "why": "Referenced by prep-distill.", "functions": []}
+    if not isinstance(item, Mapping):
+        return item
+    normalized = dict(item)
+    file_path = _optional_str(
+        normalized.get("file_path")
+        or normalized.get("path")
+        or normalized.get("file")
+        or normalized.get("code_ref")
+    ) or ""
+    why = _optional_str(
+        normalized.get("why")
+        or normalized.get("reason")
+        or normalized.get("summary")
+        or normalized.get("note")
+    ) or "Referenced by prep-distill."
+    functions = normalized.get("functions")
+    if functions is None:
+        functions = normalized.get("symbols")
+    return {
+        "file_path": file_path,
+        "why": why,
+        "functions": [_optional_str(item) or "" for item in _as_sequence(functions)],
+    }
+
+
+def _normalize_prep_test_expectation(index: int, item: Any) -> Any:
+    if isinstance(item, str):
+        return {
+            "test_id": f"prep-distill-{index}",
+            "what_it_checks": item,
+            "status": "pass_to_pass",
+        }
+    if not isinstance(item, Mapping):
+        return item
+    normalized = dict(item)
+    test_id = _optional_str(
+        normalized.get("test_id")
+        or normalized.get("id")
+        or normalized.get("name")
+    ) or f"prep-distill-{index}"
+    what_it_checks = _optional_str(
+        normalized.get("what_it_checks")
+        or normalized.get("checks")
+        or normalized.get("expectation")
+        or normalized.get("description")
+    ) or ""
+    status = normalized.get("status")
+    if status not in {"fail_to_pass", "pass_to_pass"}:
+        status = "pass_to_pass"
+    return {"test_id": test_id, "what_it_checks": what_it_checks, "status": status}
+
+
+def _normalize_prep_open_question(item: Any) -> Any:
+    if isinstance(item, str):
+        return {"severity": "assume_and_proceed", "question": item}
+    if not isinstance(item, Mapping):
+        return item
+    normalized = dict(item)
+    classification = _optional_str(normalized.pop("classification", None))
+    if normalized.get("severity") not in {"blocking", "assume_and_proceed"}:
+        if classification == "blocking":
+            normalized["severity"] = "blocking"
+        else:
+            normalized["severity"] = "assume_and_proceed"
+    normalized["question"] = _optional_str(
+        normalized.get("question")
+        or normalized.get("gap")
+        or normalized.get("issue")
+        or normalized.get("text")
+    ) or ""
+    return {
+        key: normalized[key]
+        for key in ("severity", "question", "assumption")
+        if key in normalized
+    }
+
+
+def _normalize_prep_relevance(value: Any) -> str:
+    if value in {"high", "medium", "low"}:
+        return str(value)
+    return "medium"
 
 
 def _finalize_schema_requires_nullable_task_optionals(invocation: StepInvocation) -> bool:
