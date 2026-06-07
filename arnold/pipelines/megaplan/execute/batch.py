@@ -216,10 +216,12 @@ def _calibration_tier_spec(
 def _resolve_tier_spec(
     args: argparse.Namespace,
     tier_spec: str,
+    *,
+    phase: str = "execute",
 ) -> tuple[str, str, str | None]:
     """Resolve a tier spec string to (agent, mode, model) without mutating *args*.
 
-    Copies *args*, sets ``phase_model=["execute=<tier_spec>"]`` on the
+    Copies *args*, sets ``phase_model=["<phase>=<tier_spec>"]`` on the
     copy, and calls ``resolve_agent_mode``.  Does not prepend ahead of a
     user CLI override — the override guard in ``apply_profile_expansion``
     already strips ``tier_models.execute`` when ``--phase-model execute=…``
@@ -228,9 +230,9 @@ def _resolve_tier_spec(
     import copy
 
     tier_args = copy.copy(args)
-    tier_args.phase_model = [f"execute={tier_spec}"]
+    tier_args.phase_model = [f"{phase}={tier_spec}"]
     agent, _mode, _refreshed, model = worker_module.resolve_agent_mode(
-        "execute", tier_args
+        phase, tier_args
     )
     return agent, _mode, model
 
