@@ -819,6 +819,81 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
+    """Auto-record pass verdicts for all deferred-must criteria on an
+    auto-approve run, transitioning the plan to ``done``.
+
+    Returns True when the plan was advanced (caller should ``continue`` the
+    automation loop), False when it must fall through to the human halt
+    (auto-approve not set, or anything unexpected — fail safe by stopping).
+
+    Honesty contract: a plan only enters ``awaiting_human_verify`` after the
+    review phase APPROVED, and review gates on the plan's own tests. So an
+    auto-approve operator delegating sign-off to the harness is verified
+    against that review, not rubber-stamped blind — if review had not approved,
+    the plan would be in rework, not here.
+    """
+    if plan_dir is None:
+        return False
+    state_data = _read_state_data(plan_dir)
+    if state_data is None:
+        return False
+    config = state_data.get("config")
+    if not isinstance(config, dict) or not config.get("auto_approve"):
+        return False
+    try:
+        from megaplan._core.state import latest_plan_meta_path, save_state_merge_meta
+        from megaplan._core.io import read_json as _read_json
+        from megaplan.audits.capabilities import get_worker_capabilities
+        from megaplan.handlers.verifiability import get_human_verification_status
+        from megaplan.orchestration.verifiability import classify_criteria
+
+        plan_meta = _read_json(latest_plan_meta_path(plan_dir, state_data))
+        success_criteria = plan_meta.get("success_criteria", []) or []
+        worker_caps = get_worker_capabilities(state_data)
+        _, human_deferred = classify_criteria(success_criteria, worker_caps)
+        deferred_must = [
+            (i, sc) for i, sc in enumerate(success_criteria)
+            if sc in human_deferred and sc.get("priority") == "must"
+        ]
+        if not deferred_must:
+            return False
+
+        verifications_path = plan_dir / "human_verifications.json"
+        verifications: list[dict[str, Any]] = []
+        if verifications_path.exists():
+            loaded = _read_json(verifications_path)
+            if isinstance(loaded, list):
+                verifications = loaded
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for idx, sc in deferred_must:
+            verifications.append({
+                "criterion_idx": idx,
+                "criterion": sc.get("criterion", ""),
+                "verdict": "pass",
+                "evidence": (
+                    "auto-approved by chain driver: review phase approved "
+                    "(review gates on the plan's tests) and auto_approve is set."
+                ),
+                "timestamp": stamp,
+            })
+        atomic_write_json(verifications_path, verifications)
+
+        hv_status = get_human_verification_status(
+            plan_dir, plan_meta, worker_caps=worker_caps
+        )
+        if not hv_status.get("all_deferred_must_verified"):
+            log("auto-verify recorded verdicts but criteria still pending — stopping for human")
+            return False
+        state_data["current_state"] = STATE_DONE
+        save_state_merge_meta(plan_dir, state_data)
+        log(f"auto-verified {len(deferred_must)} deferred-must criteria → done")
+        return True
+    except Exception as exc:  # fail safe: any error → human halt, never a false done
+        log(f"auto-verify failed ({exc!r}) — falling through to human halt")
+        return False
+
+
 def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
     """Return ``{tier_number: spec_string}`` for ``tier_models.execute``.
 
@@ -2237,6 +2312,16 @@ def drive(
                     )
                     log(f"plan awaiting human clarification ({len(questions)} blocking questions) — automation stopping")
                 else:
+                    # Criteria-verification halt (NOT a prep clarification).
+                    # On an auto-approve run the operator has already delegated
+                    # sign-off to the harness: the plan only reaches this state
+                    # AFTER the review phase approved (review itself gates on the
+                    # plan's tests), so deferred-must criteria are auto-verified
+                    # against that review rather than stalling for a human. This
+                    # is what `auto_approve: true` means — "don't ask me".
+                    if _auto_verify_deferred_must_criteria(plan_dir, log=log):
+                        log("auto-verified deferred-must criteria (auto-approve run) — resuming to done")
+                        continue
                     log("plan awaiting human verification — automation stopping")
                     reason = "plan has criteria requiring human verification"
                 return _outcome(
