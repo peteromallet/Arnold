@@ -414,7 +414,7 @@ def test_run_hermes_step_does_not_set_response_format_when_tools_enabled(
         return {
             "plan": "# P",
             "questions": [],
-            "success_criteria": [{"criterion": "c", "priority": "must"}],
+            "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}],
             "assumptions": [],
         }, result.get("final_response", "")
 

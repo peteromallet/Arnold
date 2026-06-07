@@ -457,7 +457,7 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
             "version": 1,
             "timestamp": "2026-05-01T00:00:00Z",
             "hash": "sha256:test",
-            "success_criteria": [{"criterion": "do x", "priority": "must"}],
+            "success_criteria": [{"criterion": "do x", "priority": "must", "requires": []}],
             "questions": [],
             "assumptions": [],
         },

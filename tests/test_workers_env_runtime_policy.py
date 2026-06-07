@@ -135,7 +135,7 @@ def test_run_claude_step_uses_cwd_for_add_dir_when_worktree_differs(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -184,7 +184,7 @@ def test_run_claude_step_honors_explicit_work_dir_override(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -229,7 +229,7 @@ def test_run_codex_step_uses_work_dir_for_dash_c_not_project_dir(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 

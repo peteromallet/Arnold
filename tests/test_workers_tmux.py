@@ -188,7 +188,7 @@ def test_reconcile_reaps_residual_same_name_session_and_proceeds(
     plan_payload = {
         "plan": "Execute the plan.",
         "questions": [],
-        "success_criteria": [{"criterion": "It works", "priority": "must"}],
+        "success_criteria": [{"criterion": "It works", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -290,7 +290,7 @@ def test_different_plan_name_session_not_touched_no_backstop(
     plan_payload = {
         "plan": "Execute the plan.",
         "questions": [],
-        "success_criteria": [{"criterion": "It works", "priority": "must"}],
+        "success_criteria": [{"criterion": "It works", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -389,7 +389,7 @@ def test_both_run_command_sites_receive_tmux_session(
     plan_payload = {
         "plan": "Execute the plan.",
         "questions": [],
-        "success_criteria": [{"criterion": "It works", "priority": "must"}],
+        "success_criteria": [{"criterion": "It works", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
