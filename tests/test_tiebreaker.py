@@ -9,6 +9,7 @@ import pytest
 from jsonschema import validate, ValidationError
 
 from arnold.pipelines.megaplan.schemas import SCHEMAS
+from arnold.pipelines.megaplan.prompts import tiebreaker_orchestrator
 from arnold.pipelines.megaplan.prompts.tiebreaker_researcher import researcher_prompt
 from arnold.pipelines.megaplan.prompts.tiebreaker_challenger import challenger_prompt
 from arnold.pipelines.megaplan.prompts.tiebreaker_synthesis import render_synthesis
@@ -94,6 +95,27 @@ def _minimal_challenger_payload() -> dict:
             "agrees_with_researcher": False,
         },
     }
+
+
+def test_tiebreaker_render_prompt_threads_schema_metadata(tmp_path: Path) -> None:
+    state = _make_state(tmp_path)
+    plan_dir = tmp_path / "plan"
+    repo_root = Path(__file__).resolve().parents[1]
+
+    rendered = tiebreaker_orchestrator._render_tiebreaker_prompt(
+        step="tiebreaker_researcher",
+        prompt="research prompt",
+        resolved=("codex", "ephemeral", True, "gpt-5.4"),
+        state=state,
+        plan_dir=plan_dir,
+        root=repo_root,
+    )
+
+    assert rendered.prompt == "research prompt"
+    assert rendered.metadata["validation_step"] == "tiebreaker_researcher"
+    assert rendered.metadata["schema"]["required"] == SCHEMAS["tiebreaker_researcher.json"]["required"]
+    assert rendered.metadata["schema"]["additionalProperties"] is False
+    assert rendered.metadata["model"] == "gpt-5.4"
 
 
 # ---------------------------------------------------------------------------

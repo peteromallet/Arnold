@@ -15,14 +15,17 @@ from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
 from arnold.pipelines.megaplan._core import (
     atomic_write_json,
     atomic_write_text,
+    read_json,
     resolve_plan_dir,
+    schemas_root,
 )
 from arnold.pipelines.megaplan._core.io import read_plan_state_cached
+from arnold.pipelines.megaplan.model_seam import ModelTier, render_prompt_for_dispatch
 from arnold.pipelines.megaplan.prompts.tiebreaker_challenger import challenger_prompt
 from arnold.pipelines.megaplan.prompts.tiebreaker_researcher import researcher_prompt
 from arnold.pipelines.megaplan.prompts.tiebreaker_synthesis import render_synthesis
 from arnold.pipelines.megaplan.types import CliError, PlanState
-from arnold.pipelines.megaplan.workers import run_step_with_worker
+from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES, run_step_with_worker
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +66,14 @@ def _run_tiebreaker(
     # -- Researcher pass --
     r_prompt = researcher_prompt(question, state, plan_dir, root=root)
     resolved = _build_resolved(args, "tiebreaker_researcher")
+    rendered_researcher = _render_tiebreaker_prompt(
+        step="tiebreaker_researcher",
+        prompt=r_prompt,
+        resolved=resolved,
+        state=state,
+        plan_dir=plan_dir,
+        root=root,
+    )
 
     researcher_result, r_agent, _, _ = run_step_with_worker(
         "tiebreaker_researcher",
@@ -71,7 +82,7 @@ def _run_tiebreaker(
         args,
         root=root,
         resolved=resolved,
-        prompt_override=r_prompt,
+        prompt_override=rendered_researcher.prompt,
     )
     researcher_data = researcher_result.payload or {}
     atomic_write_json(plan_dir / researcher_file, researcher_data)
@@ -82,6 +93,14 @@ def _run_tiebreaker(
         question, researcher_data, state, plan_dir, root=root
     )
     resolved_c = _build_resolved(args, "tiebreaker_challenger")
+    rendered_challenger = _render_tiebreaker_prompt(
+        step="tiebreaker_challenger",
+        prompt=c_prompt,
+        resolved=resolved_c,
+        state=state,
+        plan_dir=plan_dir,
+        root=root,
+    )
 
     challenger_result, c_agent, _, _ = run_step_with_worker(
         "tiebreaker_challenger",
@@ -90,7 +109,7 @@ def _run_tiebreaker(
         args,
         root=root,
         resolved=resolved_c,
-        prompt_override=c_prompt,
+        prompt_override=rendered_challenger.prompt,
     )
     challenger_data = challenger_result.payload or {}
     atomic_write_json(plan_dir / challenger_file, challenger_data)
@@ -130,6 +149,32 @@ def _build_resolved(
 
     am = resolve_agent_mode(step, args)
     return (am.agent, "ephemeral", True, am.model)
+
+
+def _render_tiebreaker_prompt(
+    *,
+    step: str,
+    prompt: str,
+    resolved: tuple[str, str, bool, str | None],
+    state: PlanState,
+    plan_dir: Path,
+    root: Path,
+):
+    schema = read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES[step])
+    tier = ModelTier.ENFORCED if resolved[0] in {"codex", "hermes"} else ModelTier.NON_ENFORCED
+    return render_prompt_for_dispatch(
+        resolved[0],
+        step,
+        state,
+        plan_dir,
+        root=root,
+        worker=resolved[0],
+        model=resolved[3],
+        normalized_model=resolved[3],
+        tier=tier,
+        schema=schema,
+        prompt_override=prompt,
+    )
 
 
 def _resolve_question(args: argparse.Namespace) -> str:

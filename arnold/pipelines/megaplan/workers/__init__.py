@@ -14,10 +14,6 @@ from arnold.pipelines.megaplan.workers._impl import (
     _is_poisoned_environmental_failure,
     _is_session_too_large_for_compact,
     _merge_partial_output,
-    _critique_completeness_score,
-    _recover_codex_payload,
-    _recover_codex_payload_with_provenance,
-    validate_payload,
     run_codex_prep_step,
     run_step_with_worker,
     resolve_agent_mode,
@@ -44,10 +40,6 @@ __all__ = [
     "_is_poisoned_environmental_failure",
     "_is_session_too_large_for_compact",
     "_merge_partial_output",
-    "_critique_completeness_score",
-    "_recover_codex_payload",
-    "_recover_codex_payload_with_provenance",
-    "validate_payload",
     "run_codex_prep_step",
     "run_step_with_worker",
     "resolve_agent_mode",
@@ -58,3 +50,8 @@ __all__ = [
     "mock_worker_output",
     "_check_mock_safe",
 ]
+
+try:
+    del validate_payload
+except NameError:
+    pass

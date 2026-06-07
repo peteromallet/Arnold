@@ -24,6 +24,7 @@ from arnold.pipelines.megaplan.profiles import (
 )
 from arnold.pipelines.megaplan.prompts import _prep_distill_prompt, _prep_research_prompt, _prep_triage_prompt
 from arnold.pipelines.megaplan.schemas import SCHEMAS
+from arnold.pipelines.megaplan.model_seam import ModelTier
 from arnold.pipelines.megaplan.types import (
     AgentMode,
     AgentSpec,
@@ -32,7 +33,7 @@ from arnold.pipelines.megaplan.types import (
     format_agent_spec,
     parse_agent_spec,
 )
-from arnold.pipelines.megaplan.workers import WorkerResult, run_step_with_worker, update_session_state
+from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult, run_step_with_worker, update_session_state
 
 _PREP_RESEARCH_STATUSES = {"complete", "partial", "timed_out", "error", "not_needed"}
 _PREP_RESEARCH_CONFIDENCE = {"high", "medium", "low"}
@@ -901,6 +902,8 @@ def run_research_fanout(
     max_concurrent: int | None = None,
 ) -> GenericScatterResult:
     model = resolve_prep_stage_model(state, "fanout")
+    schema = dict(SCHEMAS[STEP_SCHEMA_FILENAMES["prep-research"]])
+    seam_tier = ModelTier.ENFORCED if model.agent in {"codex", "hermes"} else ModelTier.NON_ENFORCED
     units = []
     for index, area in enumerate(areas):
         output_path = plan_dir / ".hermes_state" / f"prep_research_{index}.json"
@@ -917,6 +920,10 @@ def run_research_fanout(
                 ),
                 output_path=output_path,
                 read_only=True,
+                validation_step="prep-research",
+                schema=schema,
+                model=model.resolved_model or model.model,
+                tier=seam_tier,
                 extra={
                     "index": index,
                     "area": dict(area),

@@ -153,6 +153,29 @@ def test_resident_runtime_emit_sites_are_bound_to_emit_protocol(tmp_path: Path) 
     assert callable(getattr(emitter, "append_progress_event"))
 
 
+def test_resident_runtime_model_seam_metadata_carries_structured_dispatch_fields(tmp_path: Path) -> None:
+    runtime = ResidentRuntime(
+        config=ResidentConfig(model_name="deepseek:deepseek-v3"),
+        authorizer=ResidentAuthorizer(ResidentConfig()),
+        store=FileStore(tmp_path / "store"),
+        profile=MegaplanResidentProfile(),
+        runner=FakeAgentRunner([FakeAgentStep.final("done")]),
+        outbound=MemoryOutbound(),
+    )
+
+    metadata = runtime._model_seam_metadata(
+        conversation_id="conversation-1",
+        messages=({"role": "user", "content": "hello"},),
+        system_prompt="system",
+        hot_context={"prompt_version": "v1"},
+    )
+
+    assert metadata["validation_step"] == "resident"
+    assert metadata["tier"] == "non_enforced"
+    assert metadata["model"] == "deepseek-v3"
+    assert metadata["normalized_model"] == "deepseek-v3"
+
+
 def test_discord_adapter_normalizes_guild_thread_and_dm_targets() -> None:
     guild_message = SimpleNamespace(
         id=101,

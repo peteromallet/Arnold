@@ -499,23 +499,10 @@ def test_finalize_snapshot_matches_finalize_json(
     assert finalized == snapshot
 
 
-def test_finalize_no_longer_in_normalize_defaults() -> None:
-    """T9: finalize must NOT appear in _STEP_OPTIONAL_ARRAY_DEFAULTS.
+def test_finalize_worker_normalization_helper_is_deleted() -> None:
+    import arnold.pipelines.megaplan.workers._impl as workers_impl
 
-    Since finalize is migrated to NATIVE compatibility mode, the legacy
-    _normalize_worker_payload() must no longer supply default empty arrays
-    for watch_items, sense_checks, or user_actions.
-    """
-    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
-
-    payload = {"tasks": [], "meta_commentary": "test"}
-    result = _normalize_worker_payload("finalize", payload)
-    # Since finalize is no longer in _STEP_OPTIONAL_ARRAY_DEFAULTS,
-    # the function returns the input payload directly (line 1747: return payload)
-    assert result is payload
-    assert "watch_items" not in result
-    assert "sense_checks" not in result
-    assert "user_actions" not in result
+    assert not hasattr(workers_impl, "_normalize_worker_payload")
 
 
 def test_finalize_schema_audit_is_validation_authority() -> None:
@@ -526,7 +513,7 @@ def test_finalize_schema_audit_is_validation_authority() -> None:
     validate_payload only checks key presence, not types. Schema audit
     rejects wrong types. This proves the migration is complete.
     """
-    from arnold.pipelines.megaplan.workers import validate_payload
+    from arnold.pipelines.megaplan.workers._impl import validate_payload
 
     with pytest.raises(CliError, match="Legacy validate_payload\\(\\) is retired for finalize"):
         validate_payload(

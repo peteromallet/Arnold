@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold.pipelines.megaplan._core import WorkerUnit, WorkerUnitResult, load_flag_registry, read_json, schemas_root, scatter_worker_units
+from arnold.pipelines.megaplan.model_seam import ModelTier
 from arnold.pipelines.megaplan.prompts.review import (
     _filtered_prior_flags,
     _write_criteria_verdict_review_template,
@@ -165,6 +166,7 @@ def run_parallel_review(
     prior_flags = load_flag_registry(plan_dir).get("flags", [])
     resolved_model, _agent_kwargs = _resolve_model(model)
     resolved = _review_agent_mode(model, resolved_model)
+    schema = read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES["review"])
 
     units: list[WorkerUnit] = []
     for index, check in enumerate(checks):
@@ -186,6 +188,10 @@ def run_parallel_review(
                 prompt=prompt,
                 output_path=output_path,
                 read_only=True,
+                validation_step="review",
+                schema=schema,
+                model=resolved_model,
+                tier=ModelTier.ENFORCED,
                 extra={
                     "index": index,
                     "check_id": check_id,
@@ -206,6 +212,10 @@ def run_parallel_review(
         prompt=parallel_criteria_review_prompt(state, plan_dir, root, criteria_output_path),
         output_path=criteria_output_path,
         read_only=True,
+        validation_step="review",
+        schema=schema,
+        model=resolved_model,
+        tier=ModelTier.ENFORCED,
         extra={
             "ledger_step_label": "criteria_verdict",
             "worker_options": _review_worker_options(

@@ -484,11 +484,8 @@ def test_prepare_review_payload_handles_none_bookkeeping_keys() -> None:
     assert result["disputed_flag_ids"] == []
 
 
-def test_prepare_review_payload_is_not_powered_by_normalize_worker_payload() -> None:
-    """Prove _normalize_worker_payload does not inject review bookkeeping
-    arrays — the handler-level _prepare_review_payload is the sole source."""
-    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
-
+def test_prepare_review_payload_is_handler_owned_not_worker_normalized() -> None:
+    """Review bookkeeping arrays come from the handler helper, not workers."""
     payload: dict[str, object] = {
         "review_verdict": "approved",
         "criteria": [],
@@ -498,13 +495,6 @@ def test_prepare_review_payload_is_not_powered_by_normalize_worker_payload() -> 
         "task_verdicts": [],
         "sense_check_verdicts": [],
     }
-    # _normalize_worker_payload must NOT add bookkeeping arrays for review
-    normalized = _normalize_worker_payload("review", dict(payload))
-    assert "checks" not in normalized
-    assert "pre_check_flags" not in normalized
-    assert "verified_flag_ids" not in normalized
-    assert "disputed_flag_ids" not in normalized
-    # But _prepare_review_payload must add them
     prepared = _prepare_review_payload(dict(payload))
     assert prepared["checks"] == []
     assert prepared["pre_check_flags"] == []

@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from arnold.pipelines.megaplan._core import WorkerUnit, WorkerUnitResult
+from arnold.pipelines.megaplan.model_seam import ModelTier
 from arnold.pipelines.megaplan.orchestration import prep_research
 from arnold.pipelines.megaplan.types import CliError, PlanState
 from arnold.pipelines.megaplan.workers import WorkerResult
@@ -81,6 +82,10 @@ def test_prep_research_worker_unit_is_picklable_with_representative_payload(tmp_
                 prompt="research prompt",
                 output_path=output_path,
                 read_only=True,
+                validation_step="prep-research",
+                schema=dict(prep_research.SCHEMAS[prep_research.STEP_SCHEMA_FILENAMES["prep-research"]]),
+                model="deepseek:deepseek-v4-pro",
+                tier=ModelTier.ENFORCED,
                 extra={"area": {"id": "a", "area": "Area A", "brief": "inspect A"}},
             )
         )
@@ -89,6 +94,9 @@ def test_prep_research_worker_unit_is_picklable_with_representative_payload(tmp_
     assert isinstance(decoded_unit, WorkerUnit)
     assert decoded_unit.step == "prep-research"
     assert decoded_unit.read_only is True
+    assert decoded_unit.validation_step == "prep-research"
+    assert decoded_unit.model == (decoded_unit.resolved.resolved_model or decoded_unit.resolved.model)
+    assert decoded_unit.tier in {ModelTier.ENFORCED, ModelTier.NON_ENFORCED}
     assert decoded_unit.output_path == output_path
     assert decoded_unit.extra["area"]["id"] == "a"
 
@@ -723,6 +731,9 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
             "prep_research_2.json",
         ]
         assert all(unit.read_only is True for unit in units)
+        assert all(unit.validation_step == "prep-research" for unit in units)
+        assert all(unit.schema == dict(prep_research.SCHEMAS[prep_research.STEP_SCHEMA_FILENAMES["prep-research"]]) for unit in units)
+        assert all(unit.model == (expected_resolved.resolved_model or expected_resolved.model) for unit in units)
         ordered_results: list[dict[str, Any]] = []
         total_cost = 0.0
         total_prompt_tokens = 0

@@ -28,6 +28,7 @@ from arnold.pipelines.megaplan.orchestration.critique_status import (
     annotate_unverifiable_checks,
     unverifiable_detail,
 )
+from arnold.pipelines.megaplan.model_seam import ModelTier
 from arnold.pipelines.megaplan.prompts.critique import single_check_critique_prompt, write_single_check_template
 from arnold.pipelines.megaplan.pipelines.creative.prompts.critique_joke import single_check_critique_joke_prompt
 from arnold.pipelines.megaplan.types import CliError, PlanState
@@ -268,6 +269,7 @@ def run_parallel_critique(
         if _mode == "joke"
         else single_check_critique_prompt
     )
+    _schema = read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES["critique"])
 
     # ------------------------------------------------------------------
     # Build one WorkerUnit per check
@@ -286,6 +288,9 @@ def run_parallel_critique(
             plan_dir, state, _check, f"critique_check_{_check['id']}.json",
         )
         _prompt = _prompt_builder(state, plan_dir, root, _check, _output_path)
+        _seam_tier = (
+            ModelTier.ENFORCED if _resolved.agent in {"codex", "hermes"} else ModelTier.NON_ENFORCED
+        )
 
         units.append(
             WorkerUnit(
@@ -294,6 +299,10 @@ def run_parallel_critique(
                 prompt=_prompt,
                 output_path=_output_path,
                 read_only=True,
+                validation_step="critique",
+                schema=_schema,
+                model=_resolved.resolved_model or _resolved.model,
+                tier=_seam_tier,
                 extra={
                     "check_id": _check["id"],
                     "question": _check.get("question", ""),
@@ -385,6 +394,10 @@ def run_parallel_critique(
             prompt=f"{_CRITIQUE_REPAIR_INSTRUCTION}\n\n{unit.prompt}",
             output_path=unit.output_path,
             read_only=unit.read_only,
+            validation_step=unit.validation_step,
+            schema=unit.schema,
+            model=unit.model,
+            tier=unit.tier,
             extra=dict(unit.extra),
         )
 

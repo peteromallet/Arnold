@@ -24,13 +24,13 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .hermes_fanout import GenericScatterResult, scatter_gather_processes
 from arnold.pipelines.megaplan.agent_runtime import AgentRequest, AgentSpec, ResultProvenance
 from arnold.pipeline import StepInvocation
-from arnold.pipelines.megaplan.model_seam import render_step_message
-from arnold.pipelines.megaplan.types import AgentMode, PlanState
+from arnold.pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
+from arnold.pipelines.megaplan.types import AgentMode, PlanState, resolved_default_model_for_agent
 
 
 @dataclass
@@ -59,6 +59,18 @@ class WorkerUnit:
 
     read_only: bool = True
     """When *True* the worker cannot mutate the repository."""
+
+    validation_step: str | None = None
+    """Explicit schema-audit step name when it differs from ``step``."""
+
+    schema: Mapping[str, Any] | None = None
+    """Optional structured output schema to carry through dispatch metadata."""
+
+    model: str | None = None
+    """Optional normalized model label for dispatch/capture metadata."""
+
+    tier: ModelTier | str | None = None
+    """Optional seam tier override for dispatch/capture metadata."""
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Opaque caller metadata forwarded to parse/reduce hooks."""
@@ -136,20 +148,23 @@ def _worker_unit_to_agent_request(
 ) -> AgentRequest:
     """Adapt a legacy :class:`WorkerUnit` into the runtime request contract."""
     resolved = unit.resolved
-    rendered = render_step_message(
-        StepInvocation(
-            kind="model",
-            metadata={
-                "tier": "non_enforced",
-                "worker": resolved.agent,
-                "model": resolved.resolved_model or resolved.model,
-                "normalized_model": resolved.resolved_model or resolved.model,
-                "prompt": unit.prompt,
-                "validation_step": unit.step,
-                "output_path": str(unit.output_path),
-                "read_only": unit.read_only,
-            },
-        )
+    validation_step = unit.validation_step or unit.step
+    worker_options = unit.extra.get("worker_options")
+    worker_options_model = worker_options.get("resolved_model") if isinstance(worker_options, dict) else None
+    model_name = (
+        unit.model
+        or resolved.resolved_model
+        or worker_options_model
+        or resolved.model
+        or _fallback_model_for_worker_unit(unit)
+    )
+    tier = unit.tier or _default_worker_unit_tier(unit)
+    rendered = _render_unit_prompt(
+        unit,
+        worker=resolved.agent,
+        model_name=model_name,
+        validation_step=validation_step,
+        tier=tier,
     )
     spec = AgentSpec(
         agent=resolved.agent,
@@ -160,11 +175,14 @@ def _worker_unit_to_agent_request(
         "worker_unit": {
             "index": index,
             "step": unit.step,
+            "validation_step": validation_step,
             "output_path": str(unit.output_path),
             "read_only": unit.read_only,
+            "schema": dict(unit.schema) if unit.schema is not None else None,
+            "model": model_name,
+            "tier": tier.value if isinstance(tier, ModelTier) else str(tier),
             "extra": dict(unit.extra),
         },
-        "model_seam": rendered.to_json(),
         "fanout": {
             "parse_result": parse_result,
             "on_unit_error": on_unit_error,
@@ -179,6 +197,8 @@ def _worker_unit_to_agent_request(
         "state": state,
         "args": args,
     }
+    if rendered is not None:
+        metadata["model_seam"] = rendered.to_json()
     provenance = ResultProvenance(
         agent=resolved.agent,
         mode=resolved.mode,
@@ -187,8 +207,11 @@ def _worker_unit_to_agent_request(
         effort=resolved.effort,
         metadata={
             "worker_step": unit.step,
+            "validation_step": validation_step,
             "output_path": str(unit.output_path),
             "read_only": unit.read_only,
+            "model": model_name,
+            "tier": tier.value if isinstance(tier, ModelTier) else str(tier),
         },
     )
     return AgentRequest(
@@ -199,7 +222,7 @@ def _worker_unit_to_agent_request(
         effort=resolved.effort,
         spec=spec,
         read_only=unit.read_only,
-        prompt=rendered.prompt,
+        prompt=rendered.prompt if rendered is not None else unit.prompt,
         metadata=metadata,
         timeout_seconds=timeout_seconds,
         provenance=provenance,
@@ -240,20 +263,22 @@ def scatter_worker_unit(
     worker_options = unit.extra.get("worker_options")
     if worker_options is not None and not isinstance(worker_options, dict):
         raise TypeError("WorkerUnit.extra['worker_options'] must be a dict when provided")
-    rendered = render_step_message(
-        StepInvocation(
-            kind="model",
-            metadata={
-                "tier": "non_enforced",
-                "worker": unit.resolved.agent,
-                "model": unit.resolved.resolved_model or unit.resolved.model,
-                "normalized_model": unit.resolved.resolved_model or unit.resolved.model,
-                "prompt": unit.prompt,
-                "validation_step": unit.step,
-                "output_path": str(unit.output_path),
-                "read_only": unit.read_only,
-            },
-        )
+    validation_step = unit.validation_step or unit.step
+    worker_options_model = worker_options.get("resolved_model") if isinstance(worker_options, dict) else None
+    model_name = (
+        unit.model
+        or unit.resolved.resolved_model
+        or worker_options_model
+        or unit.resolved.model
+        or _fallback_model_for_worker_unit(unit)
+    )
+    tier = unit.tier or _default_worker_unit_tier(unit)
+    rendered = _render_unit_prompt(
+        unit,
+        worker=unit.resolved.agent,
+        model_name=model_name,
+        validation_step=validation_step,
+        tier=tier,
     )
 
     worker, _agent, _mode, _refreshed = run_step_with_worker(
@@ -263,7 +288,7 @@ def scatter_worker_unit(
         args,
         root=root,
         resolved=unit.resolved,
-        prompt_override=rendered.prompt,
+        prompt_override=rendered.prompt if rendered is not None else unit.prompt,
         read_only=unit.read_only,
         output_path=unit.output_path,
         worker_options=dict(worker_options) if worker_options is not None else None,
@@ -304,6 +329,10 @@ def _scatter_worker_unit_from_packed(
         prompt=packed["prompt"],
         output_path=Path(packed["output_path"]),
         read_only=packed.get("read_only", True),
+        validation_step=packed.get("validation_step"),
+        schema=packed.get("schema"),
+        model=packed.get("model"),
+        tier=packed.get("tier"),
         extra=packed.get("extra", {}),
     )
     return scatter_worker_unit(
@@ -411,6 +440,10 @@ def scatter_worker_units(
                 "prompt": u.prompt,
                 "output_path": str(u.output_path),
                 "read_only": u.read_only,
+                "validation_step": u.validation_step,
+                "schema": dict(u.schema) if u.schema is not None else None,
+                "model": u.model,
+                "tier": u.tier.value if isinstance(u.tier, ModelTier) else u.tier,
                 "extra": u.extra,
                 "state": state,
                 "plan_dir": str(plan_dir),
@@ -432,7 +465,11 @@ def scatter_worker_units(
             }
         return {
             "step": packed.get("step"),
+            "validation_step": packed.get("validation_step"),
             "read_only": packed.get("read_only"),
+            "schema": packed.get("schema"),
+            "model_seam_model": packed.get("model"),
+            "tier": packed.get("tier"),
             "extra": packed.get("extra"),
             "mode_labels": mode_labels,
             "role": packed.get("role"),
@@ -488,3 +525,48 @@ def scatter_worker_units(
         total_tokens=raw.total_tokens,
         side_results=side_results,
     )
+
+
+def _default_worker_unit_tier(unit: WorkerUnit) -> ModelTier:
+    agent = unit.resolved.agent
+    if agent in {"codex", "hermes"}:
+        return ModelTier.ENFORCED
+    return ModelTier.NON_ENFORCED
+
+
+def _fallback_model_for_worker_unit(unit: WorkerUnit) -> str | None:
+    agent = unit.resolved.agent
+    if agent == "shannon":
+        return resolved_default_model_for_agent("claude")
+    return resolved_default_model_for_agent(agent)
+
+
+def _render_unit_prompt(
+    unit: WorkerUnit,
+    *,
+    worker: str,
+    model_name: str | None,
+    validation_step: str,
+    tier: ModelTier | str,
+):
+    if model_name is None:
+        return None
+    try:
+        return render_step_message(
+            StepInvocation(
+                kind="model",
+                metadata={
+                    "tier": tier.value if isinstance(tier, ModelTier) else str(tier),
+                    "worker": worker,
+                    "model": model_name,
+                    "normalized_model": model_name,
+                    "prompt": unit.prompt,
+                    "validation_step": validation_step,
+                    "schema": dict(unit.schema) if unit.schema is not None else None,
+                    "output_path": str(unit.output_path),
+                    "read_only": unit.read_only,
+                },
+            )
+        )
+    except ModelBudgetError:
+        return None

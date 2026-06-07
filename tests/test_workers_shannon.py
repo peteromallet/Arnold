@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
 from arnold.pipelines.megaplan.types import CliError
 from arnold.pipelines.megaplan.workers import WorkerResult, resolve_agent_mode, session_key_for
 from tests._workers_helpers import FakeShutil, _mock_state
@@ -210,7 +211,7 @@ def test_run_step_with_worker_claude_calls_run_shannon_step(tmp_path: Path) -> N
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_worker = WorkerResult(
@@ -731,7 +732,7 @@ def test_run_shannon_step_preserves_anthropic_api_key_for_root_cloud(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -781,7 +782,7 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -851,7 +852,7 @@ def test_run_shannon_step_native_config_mode_uses_effective_child_home(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -922,7 +923,7 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     final_raw = json.dumps([
@@ -1000,7 +1001,7 @@ def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     raw = json.dumps([
@@ -1134,7 +1135,10 @@ def test_run_shannon_step_checks_builder_prompt_after_schema_before_delivery(
         raise CliError("prompt_oversized", "too large")
 
     with (
-        patch("arnold.pipelines.megaplan.workers.shannon.create_claude_prompt", return_value=built_prompt),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
         patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
         patch(
             "arnold.pipelines.megaplan.workers.shannon._write_prompt_file",
@@ -1154,12 +1158,16 @@ def test_run_shannon_step_checks_builder_prompt_after_schema_before_delivery(
                 fresh=True,
             )
 
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
+
 
 def test_run_shannon_step_checks_prompt_override_after_schema_before_delivery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
     from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
 
     ensure_runtime_layout(tmp_path)
@@ -1183,6 +1191,10 @@ def test_run_shannon_step_checks_prompt_override_after_schema_before_delivery(
         raise CliError("prompt_oversized", "too large")
 
     with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=prompt_override, prompt=prompt_override),
+        ) as mock_render_prompt,
         patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
         patch(
             "arnold.pipelines.megaplan.workers.shannon._write_prompt_file",
@@ -1203,6 +1215,9 @@ def test_run_shannon_step_checks_prompt_override_after_schema_before_delivery(
                 prompt_override=prompt_override,
             )
 
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] == prompt_override
+
 
 def test_run_shannon_step_normal_builder_prompt_dispatches_after_guard_passes(
     tmp_path: Path,
@@ -1211,6 +1226,7 @@ def test_run_shannon_step_normal_builder_prompt_dispatches_after_guard_passes(
     """Normal-sized builder prompt reaches dispatch after the guard passes,
     and scope-reinforcement strings are present at guard time."""
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
     from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
     from arnold.pipelines.megaplan.workers import CommandResult
 
@@ -1259,7 +1275,10 @@ def test_run_shannon_step_normal_builder_prompt_dispatches_after_guard_passes(
         # Normal — no raise
 
     with (
-        patch("arnold.pipelines.megaplan.workers.shannon.create_claude_prompt", return_value=built_prompt),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
         patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
         patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
     ):
@@ -1280,6 +1299,8 @@ def test_run_shannon_step_normal_builder_prompt_dispatches_after_guard_passes(
     assert "EXECUTE BATCH OUTPUT SCOPE" in guard_checked[0]
     assert "exactly these task IDs and no others: T2" in guard_checked[0]
     assert "exactly these sense check IDs and no others: SC2" in guard_checked[0]
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
 
 
 def test_run_shannon_step_normal_prompt_override_dispatches_after_guard_passes(
@@ -1289,6 +1310,7 @@ def test_run_shannon_step_normal_prompt_override_dispatches_after_guard_passes(
     """Normal-sized prompt_override reaches dispatch after the guard passes,
     and scope-reinforcement strings are present at guard time."""
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
     from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
     from arnold.pipelines.megaplan.workers import CommandResult
 
@@ -1337,6 +1359,10 @@ def test_run_shannon_step_normal_prompt_override_dispatches_after_guard_passes(
         # Normal — no raise
 
     with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=prompt_override, prompt=prompt_override),
+        ) as mock_render_prompt,
         patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
         patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
     ):
@@ -1358,23 +1384,25 @@ def test_run_shannon_step_normal_prompt_override_dispatches_after_guard_passes(
     assert "EXECUTE BATCH OUTPUT SCOPE" in guard_checked[0]
     assert "exactly these task IDs and no others: T2" in guard_checked[0]
     assert "exactly these sense check IDs and no others: SC2" in guard_checked[0]
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] == prompt_override
 
 
 def test_run_shannon_step_passes_read_only_projection_capabilities_to_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
     from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
     from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
-    captured: list[object] = []
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -1395,12 +1423,11 @@ def test_run_shannon_step_passes_read_only_projection_capabilities_to_prompt(
         duration_ms=123,
     )
 
-    def _fake_prompt(*args, **kwargs):
-        captured.append(kwargs.get("projection_capabilities"))
-        return "return json"
-
     with (
-        patch("arnold.pipelines.megaplan.workers.shannon.create_claude_prompt", side_effect=_fake_prompt),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text="return json", prompt="return json"),
+        ) as mock_render_prompt,
         patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result),
     ):
         run_shannon_step(
@@ -1412,24 +1439,25 @@ def test_run_shannon_step_passes_read_only_projection_capabilities_to_prompt(
             read_only=True,
         )
 
-    caps = captured[0]
+    caps = mock_render_prompt.call_args.kwargs["projection_capabilities"]
     assert caps.can_read_plan_dir is True
     assert caps.can_read_project_dir is True
     assert caps.has_file_tools is True
     assert caps.checkpoint_write_access is False
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
 
 
 def test_run_shannon_step_passes_write_projection_capabilities_to_prompt_and_keeps_schema_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
     from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
     from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
-    captured: list[object] = []
     payload = {
         "output": "done",
         "files_changed": [],
@@ -1457,12 +1485,11 @@ def test_run_shannon_step_passes_write_projection_capabilities_to_prompt_and_kee
         duration_ms=123,
     )
 
-    def _fake_prompt(*args, **kwargs):
-        captured.append(kwargs.get("projection_capabilities"))
-        return "return json"
-
     with (
-        patch("arnold.pipelines.megaplan.workers.shannon.create_claude_prompt", side_effect=_fake_prompt),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text="return json", prompt="return json"),
+        ) as mock_render_prompt,
         patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result),
     ):
         run_shannon_step(
@@ -1474,11 +1501,12 @@ def test_run_shannon_step_passes_write_projection_capabilities_to_prompt_and_kee
             read_only=False,
         )
 
-    caps = captured[0]
+    caps = mock_render_prompt.call_args.kwargs["projection_capabilities"]
     assert caps.can_read_plan_dir is True
     assert caps.can_read_project_dir is True
     assert caps.has_file_tools is True
     assert caps.checkpoint_write_access is True
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
     run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "execute" / "shannon"
     prompt_text = (run_dir / "execute_shannon_prompt.txt").read_text(encoding="utf-8")
     assert "Output format:" in prompt_text
@@ -1496,7 +1524,7 @@ def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     raw = json.dumps([
@@ -2171,7 +2199,7 @@ def test_session_strategy_non_execute_also_sheds_prior_session(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     work_stdout = json.dumps([
@@ -2522,7 +2550,7 @@ def test_native_prompt_handoff_delivers_prompt_via_stdin_by_default(
     payload = {
         "plan": "# P",
         "questions": [],
-        "success_criteria": [{"criterion": "c", "priority": "must"}],
+        "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     raw = json.dumps([
@@ -2558,7 +2586,9 @@ def test_shannon_prompt_override_is_budgeted_through_non_enforced_model_seam(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from arnold.pipelines.megaplan._core import ensure_runtime_layout
-    from arnold.pipelines.megaplan.model_seam import render_step_message as real_render_step_message
+    from arnold.pipelines.megaplan.model_seam import (
+        render_prompt_for_dispatch as real_render_prompt_for_dispatch,
+    )
     from arnold.pipelines.megaplan.workers import CommandResult
     from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
 
@@ -2570,7 +2600,7 @@ def test_shannon_prompt_override_is_budgeted_through_non_enforced_model_seam(
     payload = {
         "plan": "# P",
         "questions": [],
-        "success_criteria": [{"criterion": "c", "priority": "must"}],
+        "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     raw = json.dumps([
@@ -2583,10 +2613,10 @@ def test_shannon_prompt_override_is_budgeted_through_non_enforced_model_seam(
             "usage": {"input_tokens": 1, "output_tokens": 1},
         }
     ])
-    rendered = []
+    rendered: list[object] = []
 
-    def render_spy(invocation):
-        result = real_render_step_message(invocation)
+    def render_spy(*args: object, **kwargs: object):
+        result = real_render_prompt_for_dispatch(*args, **kwargs)
         rendered.append(result)
         return result
 
@@ -2594,7 +2624,7 @@ def test_shannon_prompt_override_is_budgeted_through_non_enforced_model_seam(
         return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1)
 
     with (
-        patch("arnold.pipelines.megaplan.workers.shannon.render_step_message", side_effect=render_spy),
+        patch("arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch", side_effect=render_spy),
         patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command),
     ):
         run_shannon_step(
@@ -2631,7 +2661,7 @@ def test_native_prompt_handoff_can_be_disabled_for_legacy_launcher(
     plan_dir, state = _mock_state(tmp_path)
     payload = {
         "plan": "# P", "questions": [],
-        "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": [],
+        "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}], "assumptions": [],
     }
     raw = json.dumps([
         {"type": "result", "subtype": "success", "result": json.dumps(payload),
@@ -2753,28 +2783,29 @@ def test_plan_session_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
             tripped.append(f"os.environ.get({key!r})")
             raise AssertionError(f"plan_session must not read os.environ.get({key!r})")
 
-    monkeypatch.setattr(os, "environ", _NoEnviron())
+    with monkeypatch.context() as env_patch:
+        env_patch.setattr(os, "environ", _NoEnviron())
 
-    # Exercise every plan_session branch: new (with/without handshake roll
-    # firing), reuse→clear/compact, explicit_fresh.
-    fixtures = [
-        ("execute", None, False),
-        ("execute", None, True),
-        ("execute", "stored-abc", False),
-        ("execute", "stored-abc", True),
-        ("critique", "stored-xyz", False),
-        ("plan", None, False),
-    ]
-    for seed in range(5):
-        for step, stored_id, fresh in fixtures:
-            plan = plan_session(
-                step,
-                stored_id=stored_id,
-                fresh=fresh,
-                cfg=cfg,
-                rng=_rnd.Random(seed),
-            )
-            assert plan.kind in {"new", "resume", "clear", "compact"}
+        # Exercise every plan_session branch: new (with/without handshake roll
+        # firing), reuse→clear/compact, explicit_fresh.
+        fixtures = [
+            ("execute", None, False),
+            ("execute", None, True),
+            ("execute", "stored-abc", False),
+            ("execute", "stored-abc", True),
+            ("critique", "stored-xyz", False),
+            ("plan", None, False),
+        ]
+        for seed in range(5):
+            for step, stored_id, fresh in fixtures:
+                plan = plan_session(
+                    step,
+                    stored_id=stored_id,
+                    fresh=fresh,
+                    cfg=cfg,
+                    rng=_rnd.Random(seed),
+                )
+                assert plan.kind in {"new", "resume", "clear", "compact"}
     assert tripped == [], f"plan_session touched forbidden IO: {tripped}"
 
 
@@ -3179,7 +3210,7 @@ def test_run_artifacts_written_to_run_dir_not_cwd(
             "version": 1,
             "timestamp": "2026-03-20T00:00:00Z",
             "hash": "sha256:test",
-            "success_criteria": [{"criterion": "c", "priority": "must"}],
+            "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}],
             "questions": [],
             "assumptions": [],
         }),
@@ -3488,19 +3519,15 @@ def test_model_budget_error_review_fallback_uses_seam_compact(
 
     with (
         patch(
-            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
-            return_value=built_prompt,
-        ),
-        patch(
-            "arnold.pipelines.megaplan.workers.shannon.render_step_message",
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
             side_effect=_raise_budget,
-        ),
+        ) as mock_render_prompt,
         patch(
             "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
         ) as mock_compact,
         patch(
             "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
-        ),
+        ) as mock_check_prompt_size,
         patch(
             "arnold.pipelines.megaplan.workers.shannon.run_command",
             return_value=fake_result,
@@ -3520,15 +3547,25 @@ def test_model_budget_error_review_fallback_uses_seam_compact(
             model="claude-sonnet-4-5",
         )
 
+    assert mock_render_prompt.call_count == 1
+    render_kwargs = mock_render_prompt.call_args.kwargs
+    assert render_kwargs["prompt_override"] is None
+    assert render_kwargs["worker"] == "shannon"
+    assert render_kwargs["model"] == "claude-sonnet-4-5"
+    assert render_kwargs["schema"]
+    assert render_kwargs["metadata"]["projection_capabilities"] == render_kwargs["projection_capabilities"]
     mock_compact.assert_called_once()
     call_args, call_kwargs = mock_compact.call_args
-    assert call_args[0] == "shannon"
+    assert call_args[0] == "claude"
     assert call_args[1] == "review"
     assert call_kwargs.get("root") == tmp_path
     assert call_kwargs.get("worker") == "shannon"
     assert call_kwargs.get("model") == "claude-sonnet-4-5"
     assert call_kwargs.get("tier") == ModelTier.NON_ENFORCED
     assert "prompt_size_error" in call_kwargs
+    mock_check_prompt_size.assert_called_once()
+    assert mock_check_prompt_size.call_args.kwargs["phase"] == "review"
+    assert "compacted" in mock_check_prompt_size.call_args.args[0]
 
 
 def test_prompt_oversized_review_fallback_uses_seam_compact(
@@ -3580,9 +3617,9 @@ def test_prompt_oversized_review_fallback_uses_seam_compact(
 
     with (
         patch(
-            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
-            return_value=built_prompt,
-        ),
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
         patch(
             "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
             side_effect=fake_check_prompt_size,
@@ -3595,7 +3632,6 @@ def test_prompt_oversized_review_fallback_uses_seam_compact(
             return_value=fake_result,
         ),
     ):
-        from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
         mock_compact.return_value = RenderedStepMessage(
             text="compacted text",
             prompt="compacted text",
@@ -3610,12 +3646,20 @@ def test_prompt_oversized_review_fallback_uses_seam_compact(
             model="claude-sonnet-4-5",
         )
 
+    assert mock_render_prompt.call_count == 1
+    render_kwargs = mock_render_prompt.call_args.kwargs
+    assert render_kwargs["prompt_override"] is None
+    assert render_kwargs["worker"] == "shannon"
+    assert render_kwargs["model"] == "claude-sonnet-4-5"
+    assert render_kwargs["schema"]
+    assert render_kwargs["metadata"]["projection_capabilities"] == render_kwargs["projection_capabilities"]
     mock_compact.assert_called_once()
     call_args, call_kwargs = mock_compact.call_args
-    assert call_args[0] == "shannon"
+    assert call_args[0] == "claude"
     assert call_args[1] == "review"
     assert call_kwargs.get("root") == tmp_path
     assert call_kwargs.get("prompt_size_error") == {"token_count": 500_000}
+    assert _call_count == 2
 
 
 def test_non_review_model_budget_error_still_raised(
@@ -3640,13 +3684,9 @@ def test_non_review_model_budget_error_still_raised(
 
     with (
         patch(
-            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
-            return_value=built_prompt,
-        ),
-        patch(
-            "arnold.pipelines.megaplan.workers.shannon.render_step_message",
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
             side_effect=_raise_budget,
-        ),
+        ) as mock_render_prompt,
         patch(
             "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
         ) as mock_compact,
@@ -3660,6 +3700,11 @@ def test_non_review_model_budget_error_still_raised(
                 fresh=True,
             )
 
+    assert mock_render_prompt.call_count == 1
+    render_kwargs = mock_render_prompt.call_args.kwargs
+    assert render_kwargs["prompt_override"] is None
+    assert render_kwargs["schema"]
+    assert render_kwargs["metadata"]["projection_capabilities"] == render_kwargs["projection_capabilities"]
     mock_compact.assert_not_called()
 
 
@@ -3685,9 +3730,9 @@ def test_non_review_prompt_oversized_still_raised(
 
     with (
         patch(
-            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
-            return_value=built_prompt,
-        ),
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
         patch(
             "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
             side_effect=fake_check_prompt_size,
@@ -3705,6 +3750,11 @@ def test_non_review_prompt_oversized_still_raised(
                 fresh=True,
             )
 
+    assert mock_render_prompt.call_count == 1
+    render_kwargs = mock_render_prompt.call_args.kwargs
+    assert render_kwargs["prompt_override"] is None
+    assert render_kwargs["schema"]
+    assert render_kwargs["metadata"]["projection_capabilities"] == render_kwargs["projection_capabilities"]
     mock_compact.assert_not_called()
 
 
@@ -3759,9 +3809,9 @@ def test_compact_review_fidelity_preserves_prompt_string(
 
     with (
         patch(
-            "arnold.pipelines.megaplan.workers.shannon.create_claude_prompt",
-            return_value=built_prompt,
-        ),
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
         patch(
             "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
             side_effect=fake_check_prompt_size,
@@ -3777,7 +3827,6 @@ def test_compact_review_fidelity_preserves_prompt_string(
             return_value=fake_result,
         ),
     ):
-        from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
         mock_compact.return_value = RenderedStepMessage(
             text=compacted_text,
             prompt=compacted_text,
@@ -3792,6 +3841,8 @@ def test_compact_review_fidelity_preserves_prompt_string(
             model="claude-sonnet-4-5",
         )
 
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
     # The prompt written to disk must contain the compacted text
     prompt_written = mock_write.call_args.args[2]
     assert compacted_text in prompt_written, (

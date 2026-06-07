@@ -300,6 +300,9 @@ class ResidentRuntime:
         )
         return {
             "conversation_id": conversation_id,
+            "validation_step": "resident",
+            "tier": "non_enforced",
+            "model": normalized_model,
             "normalized_model": normalized_model,
             "agent_kwargs": agent_kwargs,
             "rendered": rendered.to_json(),

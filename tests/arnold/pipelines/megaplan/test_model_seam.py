@@ -161,6 +161,30 @@ def test_render_prompt_for_dispatch_accepts_union_schema_types(tmp_path) -> None
     }
 
 
+def test_render_prompt_for_dispatch_preserves_override_schema_and_validation_step(tmp_path) -> None:
+    rendered = render_prompt_for_dispatch(
+        "claude",
+        "tiebreaker_researcher",
+        {"config": {"mode": "code"}},
+        tmp_path,
+        worker="shannon",
+        model="claude-sonnet",
+        normalized_model="claude-sonnet",
+        schema={"type": "object", "properties": {"question": {"type": "string"}}},
+        prompt_override="Use the provided evidence and answer in JSON.",
+        metadata={"projection_capabilities": {"read_only": False}},
+    )
+
+    assert rendered.prompt == "Use the provided evidence and answer in JSON."
+    assert rendered.metadata["worker"] == "shannon"
+    assert rendered.metadata["validation_step"] == "tiebreaker_researcher"
+    assert rendered.metadata["projection_capabilities"] == {"read_only": False}
+    assert rendered.schema == {
+        "type": "object",
+        "properties": {"question": {"type": "string"}},
+    }
+
+
 def test_capture_step_output_preserves_legacy_payload_and_typed_contract() -> None:
     invocation = StepInvocation(
         kind="model",
@@ -388,6 +412,35 @@ def test_capture_step_output_uses_review_schema_to_reject_hallucinated_named_key
         raise AssertionError("review capture must reject hallucinated named payload keys")
 
 
+def test_capture_step_output_normalizes_review_null_checks_and_completion_status() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "validation_step": "review",
+        },
+    )
+
+    outcome = capture_step_output(
+        invocation,
+        {
+            "review_verdict": "approved",
+            "checks": None,
+            "review_completion_status": "complete",
+            "criteria": [],
+            "issues": [],
+            "rework_items": [],
+            "summary": "Reviewed successfully.",
+            "task_verdicts": [],
+            "sense_check_verdicts": [],
+        },
+    )
+
+    assert outcome.legacy_payload["checks"] == []
+    assert "review_completion_status" not in outcome.legacy_payload
+
+
 def test_capture_step_output_uses_critique_schema_for_missing_required_fields() -> None:
     invocation = StepInvocation(
         kind="model",
@@ -580,6 +633,151 @@ def test_non_enforced_capture_repair_is_bounded_before_terminal_failure() -> Non
         raise AssertionError("non-enforced repair must stop after one re-ask")
 
     assert attempts == 1
+
+
+_REPRESENTATIVE_LONG_TAIL_CAPTURE_CASES = (
+    pytest.param(
+        "plan",
+        {
+            "plan": "Ship the cleanup in ordered steps.",
+            "questions": [],
+            "success_criteria": [{"criterion": "Tests pass", "priority": "must"}],
+            "assumptions": [],
+        },
+        {"plan": "missing sibling fields"},
+        id="plan",
+    ),
+    pytest.param(
+        "revise",
+        {
+            "plan": "Revised execution plan.",
+            "changes_summary": "Tightened the capture contract.",
+            "flags_addressed": [],
+            "assumptions": [],
+            "success_criteria": [{"criterion": "Reject malformed outputs", "priority": "must"}],
+            "questions": [],
+        },
+        {"plan": "missing revise fields"},
+        id="revise",
+    ),
+    pytest.param(
+        "loop_execute",
+        {
+            "diagnosis": "The loop stalled on a stale patch.",
+            "fix_description": "Refresh the patch and rerun validation.",
+            "files_to_change": ["arnold/pipelines/megaplan/model_seam.py"],
+            "confidence": "high",
+            "outcome": "ready_to_apply",
+            "should_pause": False,
+        },
+        {"diagnosis": "missing loop execute fields"},
+        id="loop_execute",
+    ),
+    pytest.param(
+        "tiebreaker_challenger",
+        {
+            "measurements_vs_assumptions": "Option B holds up better under the observed constraints.",
+            "missing_options": [],
+            "hard_cases": [],
+            "reframings": [],
+            "aging_analysis": "The current preference degrades under future requirement growth.",
+            "counter_recommendation": {
+                "option_name": "Option B",
+                "rationale": "It is safer under the measured edge cases.",
+                "agrees_with_researcher": False,
+            },
+        },
+        {"measurements_vs_assumptions": "missing challenger fields"},
+        id="tiebreaker_challenger",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("step", "repaired_payload", "malformed_payload"),
+    _REPRESENTATIVE_LONG_TAIL_CAPTURE_CASES,
+)
+def test_non_enforced_capture_repair_preserves_telemetry_for_representative_long_tail_seams(
+    step: str,
+    repaired_payload: dict[str, object],
+    malformed_payload: dict[str, object],
+) -> None:
+    repair_calls: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    def repair(payload, contract):
+        repair_calls.append((dict(payload), dict(contract.payload["telemetry"])))
+        return repaired_payload
+
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "validation_step": step,
+            "tier": "non_enforced",
+            "worker": "codex",
+            "model": "gpt-5.4",
+            "envelope_repair_callback": repair,
+        },
+    )
+
+    outcome = capture_step_output(invocation, malformed_payload)
+
+    assert outcome.legacy_payload == repaired_payload
+    assert outcome.telemetry.repair_attempt == 1
+    assert outcome.contract_result.payload["telemetry"]["tier"]["tier"] == "non_enforced"
+    assert outcome.contract_result.payload["telemetry"]["audit_result"] == "passed"
+    assert repair_calls == [
+        (
+            malformed_payload,
+            {
+                "tier": {
+                    "tier": "non_enforced",
+                    "enforced": False,
+                    "worker": "codex",
+                    "model": "gpt-5.4",
+                    "provider": None,
+                },
+                "degraded_reason": None,
+                "tokenizer_source": None,
+                "budget_result": "not_evaluated",
+                "audit_result": "not_evaluated",
+                "repair_attempt": 0,
+                "terminal_status": "captured",
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("step", "_repaired_payload", "malformed_payload"),
+    _REPRESENTATIVE_LONG_TAIL_CAPTURE_CASES,
+)
+def test_enforced_capture_rejects_representative_long_tail_seams_without_repair(
+    step: str,
+    _repaired_payload: dict[str, object],
+    malformed_payload: dict[str, object],
+) -> None:
+    repair_attempts = 0
+
+    def repair(_payload, _contract):
+        nonlocal repair_attempts
+        repair_attempts += 1
+        return {}
+
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "validation_step": step,
+            "tier": "enforced",
+            "worker": "codex",
+            "model": "gpt-5.4",
+            "envelope_repair_callback": repair,
+        },
+    )
+
+    with pytest.raises(model_seam.ModelStructuralAuditError):
+        capture_step_output(invocation, malformed_payload)
+
+    assert repair_attempts == 0
 
 
 def test_m0b_structural_validator_subset_limits_are_documented_by_behavior() -> None:
@@ -843,24 +1041,22 @@ def test_render_step_message_exposes_worker_facing_payload_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# T1 characterization: inventory of _normalize_worker_payload and
-# validate_payload call sites that pass through the model-seam
-# _compatibility_projection() chokepoint.
+# T1 characterization: inventory of native-only compatibility projection
+# behavior at the model-seam chokepoint.
 #
-# After m5 migration, _compatibility_projection() must skip
-# _normalize_worker_payload() and validate_payload() for schema-audited native
-# sites (finalize, critique, review, gate, execute) while preserving legacy
-# behavior for the long tail until m6.
+# After the all-NATIVE guard passes, _compatibility_projection() must accept
+# native payloads unchanged and fail clearly if a non-native mode somehow
+# reaches the deleted legacy path.
 # ---------------------------------------------------------------------------
 
-_MIGRATED_SITES: tuple[str, ...] = ("finalize", "critique", "review", "gate", "execute")
-
-# Long-tail sites that are NOT migrated in m5 — the compatibility path
-# must keep working for them until m6.
-_LONG_TAIL_SITES: tuple[str, ...] = (
-    "plan", "revise", "prep", "loop_plan", "loop_execute",
-    "tiebreaker_challenger", "feedback",
+_MIGRATED_SITES: tuple[str, ...] = (
+    "finalize", "critique", "review", "gate", "execute",
+    "plan", "prep", "prep-triage", "prep-distill", "prep-research",
+    "feedback", "critique_evaluator", "revise",
+    "loop_plan", "loop_execute", "tiebreaker_researcher", "tiebreaker_challenger",
 )
+
+_LONG_TAIL_SITES: tuple[str, ...] = ()
 
 
 def test_schema_audited_native_steps_explicitly_skip_legacy_compatibility_projection() -> None:
@@ -882,7 +1078,7 @@ def test_schema_audited_native_steps_explicitly_skip_legacy_compatibility_projec
         assert projected == payload
 
 
-def test_compatibility_projection_native_guard_precedes_legacy_normalize_import() -> None:
+def test_compatibility_projection_native_guard_precedes_impossible_mode_failure() -> None:
     import ast
     from pathlib import Path
 
@@ -903,17 +1099,17 @@ def test_compatibility_projection_native_guard_precedes_legacy_normalize_import(
         for index, node in enumerate(compatibility_fn.body)
         if (
             isinstance(node, ast.If)
-            and ast.get_source_segment(source, node.test) == (
-                "_compatibility_mode_for_step(step) is CompatibilityMode.NATIVE"
-            )
+            and ast.get_source_segment(source, node.test) == "mode is CompatibilityMode.NATIVE"
         )
     )
-    import_index = next(
+    raise_index = next(
         index
         for index, node in enumerate(compatibility_fn.body)
         if (
-            isinstance(node, ast.ImportFrom)
-            and node.module == "arnold.pipelines.megaplan.workers._impl"
+            isinstance(node, ast.Raise)
+            and isinstance(node.exc, ast.Call)
+            and isinstance(node.exc.func, ast.Name)
+            and node.exc.func.id == "AssertionError"
         )
     )
 
@@ -923,9 +1119,9 @@ def test_compatibility_projection_native_guard_precedes_legacy_normalize_import(
     assert isinstance(native_guard.body[0], ast.Return)
     assert isinstance(native_guard.body[0].value, ast.Name)
     assert native_guard.body[0].value.id == "payload"
-    assert native_guard_index < import_index, (
+    assert native_guard_index < raise_index, (
         "The native compatibility guard must return before the legacy "
-        "_normalize_worker_payload import is reached."
+        "impossible-mode failure is reached."
     )
 
 
@@ -937,7 +1133,11 @@ def test_audit_step_payload_reuses_native_schema_authority() -> None:
 
     model_seam.audit_step_payload("execute", payload)
     assert model_seam.schema_audits_step_payload("execute") is True
-    assert model_seam.schema_audits_step_payload("plan") is False
+    assert model_seam.schema_audits_step_payload("revise") is True
+    assert model_seam.schema_audits_step_payload("loop_plan") is True
+    assert model_seam.schema_audits_step_payload("loop_execute") is True
+    assert model_seam.schema_audits_step_payload("tiebreaker_researcher") is True
+    assert model_seam.schema_audits_step_payload("tiebreaker_challenger") is True
 
     model_seam.audit_step_payload(
         "execute",
@@ -957,80 +1157,45 @@ def test_audit_step_payload_reuses_native_schema_authority() -> None:
         )
 
 
-def test_compatibility_projection_calls_normalize_and_validate_for_long_tail_sites() -> None:
-    """Long-tail sites stay on legacy normalize+validate until m6."""
-    from arnold.pipelines.megaplan.workers._impl import (
-        _normalize_worker_payload,
-        validate_payload,
+def test_capture_migration_has_no_remaining_long_tail_sites() -> None:
+    assert _LONG_TAIL_SITES == ()
+
+
+def test_all_native_compatibility_guard_passes_when_no_legacy_steps_remain() -> None:
+    model_seam.assert_all_compatibility_modes_native()
+
+
+def test_all_native_compatibility_guard_lists_remaining_legacy_steps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        model_seam,
+        "_COMPATIBILITY_MODE_BY_STEP",
+        {
+            "plan": model_seam.CompatibilityMode.NATIVE,
+            "review": model_seam.CompatibilityMode.LEGACY,
+            "prep": model_seam.CompatibilityMode.LEGACY,
+        },
     )
 
-    minimal_payloads: dict[str, dict[str, object]] = {
-        "plan": {"plan": "x", "questions": [], "success_criteria": [], "assumptions": []},
-        "revise": {
-            "plan": "x",
-            "changes_summary": "y",
-            "flags_addressed": [],
-            "assumptions": [],
-            "success_criteria": [],
-            "questions": [],
-        },
-        "prep": {
-            "skip": False,
-            "task_summary": "...",
-            "key_evidence": [],
-            "relevant_code": [],
-            "test_expectations": [],
-            "constraints": [],
-            "suggested_approach": "...",
-        },
-        "tiebreaker_challenger": {
-            "measurements_vs_assumptions": [],
-            "missing_options": [],
-            "hard_cases": [],
-            "reframings": [],
-            "aging_analysis": [],
-            "counter_recommendation": "...",
-        },
-        "feedback": {"overall": "...", "stages": []},
-    }
+    with pytest.raises(AssertionError) as excinfo:
+        model_seam.assert_all_compatibility_modes_native()
 
-    for step in _LONG_TAIL_SITES:
-        try:
-            minimal_payloads[step]
-        except KeyError:
-            continue
-        payload = dict(minimal_payloads[step])
-        invocation = StepInvocation(
-            kind="model",
-            metadata={"compatibility_validation_step": step},
-        )
-        assert model_seam._compatibility_mode_for_step(step) is model_seam.CompatibilityMode.LEGACY
-        assert model_seam._capture_schema_for_invocation(invocation) is None
-        normalized = _normalize_worker_payload(step, payload)
-        validate_payload(step, normalized)
-        assert model_seam._compatibility_projection(invocation, dict(payload)) == normalized
+    assert str(excinfo.value) == (
+        "Phase 5 deletion guard blocked: legacy compatibility steps remain in "
+        '_COMPATIBILITY_MODE_BY_STEP: "prep", "review". Migrate these steps to '
+        "CompatibilityMode.NATIVE before deleting shared legacy helpers."
+    )
 
 
-def test_normalize_worker_payload_is_not_exported_from_workers_package() -> None:
-    """_normalize_worker_payload is a private implementation detail — handlers
-    must not call it directly.  Only recovery and the compatibility chokepoint
-    invoke it."""
+def test_deleted_normalize_worker_payload_is_not_exported_from_workers_package() -> None:
+    """The retired legacy normalizer must not be reachable from workers."""
     import arnold.pipelines.megaplan.workers as _workers
 
-    assert not hasattr(_workers, "_normalize_worker_payload") or (
-        "_normalize_worker_payload" not in getattr(_workers, "__all__", [])
-    )
+    assert not hasattr(_workers, "_normalize_worker_payload")
+    assert "_normalize_worker_payload" not in getattr(_workers, "__all__", [])
 
 
-def test_compatibility_projection_is_the_only_model_seam_caller() -> None:
-    """Characterization: within model_seam.py, only _compatibility_projection()
-    directly imports and calls _normalize_worker_payload + validate_payload.
-
-    After m5 migration, this function must gate on the step name and skip
-    migrated sites.  This test does NOT assert the gating exists yet — it only
-    pins the current single-caller layout so later tasks can prove the gating
-    was added.
-    """
+def test_model_seam_no_longer_imports_deleted_legacy_projection_helpers() -> None:
+    """The shared compatibility chokepoint no longer reaches back into workers."""
     import ast
     from pathlib import Path
 
@@ -1041,33 +1206,29 @@ def test_compatibility_projection_is_the_only_model_seam_caller() -> None:
     source = seam_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
-    # Find every function that imports _normalize_worker_payload or validate_payload
-    # from workers._impl inside a function body (lazy import pattern).
-    func_callers: dict[str, set[str]] = {}
+    imported_symbols: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            func_name = node.name
-            for child in ast.walk(node):
-                if isinstance(child, ast.ImportFrom):
-                    if child.module == "arnold.pipelines.megaplan.workers._impl":
-                        for alias in child.names:
-                            if alias.name in (
-                                "_normalize_worker_payload",
-                                "validate_payload",
-                            ):
-                                func_callers.setdefault(func_name, set()).add(
-                                    alias.name
-                                )
-    # Currently only _compatibility_projection should do this import.
-    assert func_callers == {
-        "_compatibility_projection": {
-            "_normalize_worker_payload",
-            "validate_payload",
-        }
-    }, (
-        f"Unexpected callers of _normalize_worker_payload/validate_payload "
-        f"in model_seam.py: {func_callers}"
+        if isinstance(node, ast.ImportFrom) and node.module == "arnold.pipelines.megaplan.workers._impl":
+            imported_symbols.update(alias.name for alias in node.names)
+    assert "_normalize_worker_payload" not in imported_symbols
+    assert "validate_payload" not in imported_symbols
+
+
+def test_compatibility_projection_raises_clearly_for_impossible_non_native_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={"compatibility_validation_step": "review"},
     )
+    monkeypatch.setattr(
+        model_seam,
+        "_COMPATIBILITY_MODE_BY_STEP",
+        {"review": model_seam.CompatibilityMode.LEGACY},
+    )
+
+    with pytest.raises(AssertionError, match="Phase 5 deletion invariant violated"):
+        model_seam._compatibility_projection(invocation, {"summary": "x"})
 
 
 def test_render_step_message_consumes_structured_prompt_components() -> None:

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan._core import (
     apply_session_update,
     append_history,
@@ -23,6 +24,11 @@ from arnold.pipelines.megaplan.store import write_plan_artifact_json
 from arnold.pipelines.megaplan.execute.merge import (
     TERMINAL_TASK_STATUSES,
     _validate_and_merge_batch,
+)
+from arnold.pipelines.megaplan.model_seam import (
+    ModelStructuralAuditError,
+    ModelTier,
+    capture_step_output,
 )
 from arnold.pipelines.megaplan.execute.quality import (
     _check_done_task_evidence,
@@ -134,6 +140,33 @@ def _timeout_checkpoint_path(plan_dir: Path, *, batch_number: int | None) -> Pat
     return batch_artifact_path(plan_dir, batch_number)
 
 
+def _capture_execute_checkpoint_payload(
+    *,
+    plan_dir: Path,
+    checkpoint_path: Path,
+) -> dict[str, Any]:
+    raw = checkpoint_path.read_text(encoding="utf-8", errors="replace")
+    outcome = capture_step_output(
+        StepInvocation(
+            kind="model",
+            metadata={
+                "tier": ModelTier.NON_ENFORCED.value,
+                "worker": "execute-timeout-recovery",
+                "validation_step": "execute",
+                "compatibility_validation_step": "execute",
+                "capture_recovery": {
+                    "step": "execute",
+                    "plan_dir": str(plan_dir),
+                    "output_path": str(checkpoint_path),
+                    "prefer_output_file": True,
+                },
+            },
+        ),
+        raw,
+    )
+    return dict(outcome.legacy_payload)
+
+
 def _merge_timeout_checkpoint(
     *,
     finalize_data: dict[str, Any],
@@ -209,7 +242,10 @@ def _recover_execute_timeout(
     plan_mode = state["config"].get("mode", "code")
     checkpoint_path = _timeout_checkpoint_path(plan_dir, batch_number=batch_number)
     try:
-        checkpoint_data = read_json(checkpoint_path)
+        checkpoint_data = _capture_execute_checkpoint_payload(
+            plan_dir=plan_dir,
+            checkpoint_path=checkpoint_path,
+        )
     except FileNotFoundError:
         deviations.append(
             f"Advisory: timeout checkpoint {checkpoint_path.name} was not found."
@@ -217,6 +253,11 @@ def _recover_execute_timeout(
     except json.JSONDecodeError as exc:
         deviations.append(
             f"Advisory: timeout checkpoint {checkpoint_path.name} was not valid JSON: {exc}"
+        )
+    except (CliError, ModelStructuralAuditError) as exc:
+        message = exc.message if isinstance(exc, CliError) else str(exc)
+        deviations.append(
+            f"Advisory: timeout checkpoint {checkpoint_path.name} failed execute capture recovery: {message}"
         )
     else:
         if isinstance(checkpoint_data, dict):

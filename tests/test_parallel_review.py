@@ -172,11 +172,17 @@ def test_run_parallel_review_merges_check_results_in_original_order(
         assert kwargs["args"].phase_model == []
         assert all(unit.step == "review" for unit in units)
         assert all(unit.resolved.agent == "hermes" for unit in units)
+        assert all(unit.validation_step == "review" for unit in units)
+        assert all(unit.schema is not None for unit in units)
+        assert all(unit.model == "qwen/qwen3-32b" for unit in units)
         assert [unit.extra["check_id"] for unit in units] == [check.id for check in checks]
         assert [unit.output_path.name for unit in units] == [f"review_check_{check.id}.json" for check in checks]
         assert all(unit.extra["worker_options"]["template_path"] == str(unit.output_path) for unit in units)
         assert all(unit.extra["worker_options"]["session_db_path"].endswith(f"state_review_{unit.extra['check_id']}.db") for unit in units)
         assert side_units[0].output_path.name == "review_criteria_verdict.json"
+        assert side_units[0].validation_step == "review"
+        assert side_units[0].schema is not None
+        assert side_units[0].model == "qwen/qwen3-32b"
         assert side_units[0].extra["worker_options"]["session_db_path"].endswith("state_review_criteria_verdict.db")
 
         ordered_results = []

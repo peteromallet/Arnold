@@ -15,28 +15,21 @@ class TestHandlerImportCompatibility:
     """Every symbol that handler modules import from workers."""
 
     def test_handler_execute_imports(self) -> None:
-        from arnold.pipelines.megaplan.workers import (
-            validate_payload,
-            warn_if_work_dir_differs_from_project_dir,
-        )
+        from arnold.pipelines.megaplan.workers import warn_if_work_dir_differs_from_project_dir
 
-        assert callable(validate_payload)
         assert callable(warn_if_work_dir_differs_from_project_dir)
 
     def test_handler_critique_imports(self) -> None:
-        from arnold.pipelines.megaplan.workers import WorkerResult, validate_payload
+        from arnold.pipelines.megaplan.workers import WorkerResult
 
         assert WorkerResult is not None
-        assert callable(validate_payload)
 
     def test_handler_review_imports(self) -> None:
         from arnold.pipelines.megaplan.workers import (
             WorkerResult,
-            validate_payload,
             warn_if_work_dir_differs_from_project_dir,
         )
         assert WorkerResult is not None
-        assert callable(validate_payload)
         assert callable(warn_if_work_dir_differs_from_project_dir)
 
     def test_handler_gate_imports(self) -> None:
@@ -64,10 +57,17 @@ class TestSeamAccessCompatibility:
     """Validation wrappers and seam helpers that handlers rely on
     must remain reachable through the workers export surface."""
 
-    def test_validate_payload_is_directly_importable(self) -> None:
-        from arnold.pipelines.megaplan.workers import validate_payload
+    def test_validate_payload_is_not_importable_from_workers(self) -> None:
+        with pytest.raises(ImportError):
+            exec(
+                "from arnold.pipelines.megaplan.workers import validate_payload",
+                {},
+            )
 
-        assert callable(validate_payload)
+    def test_validate_phase_result_is_directly_importable(self) -> None:
+        from arnold.pipelines.megaplan.orchestration.phase_result import validate_phase_result
+
+        assert callable(validate_phase_result)
 
     def test_worker_result_type_available(self) -> None:
         from arnold.pipelines.megaplan.workers import WorkerResult
@@ -124,7 +124,6 @@ class TestWorkersAllIsNarrow:
 
         required = {
             "WorkerResult",
-            "validate_payload",
             "warn_if_work_dir_differs_from_project_dir",
             "resolve_agent_mode",
         }
@@ -137,8 +136,8 @@ class TestWorkersAllIsNarrow:
 
 
 # ---------------------------------------------------------------------------
-# T1 characterization: _normalize_worker_payload must remain private and
-# validate_payload must remain reachable for long-tail handlers until m6.
+# T1 characterization: the deleted legacy normalizer must stay gone and
+# recovery exports must remain reachable.
 # ---------------------------------------------------------------------------
 
 
@@ -146,54 +145,56 @@ class TestT1CallSiteInventory:
     """Characterization tests pinning which worker-level symbols are
     currently called by handlers and which are private."""
 
-    def test_normalize_worker_payload_is_private(self) -> None:
-        """_normalize_worker_payload must NOT be in workers.__all__ and
-        should not be directly importable through the public surface."""
+    def test_normalize_worker_payload_is_deleted(self) -> None:
+        """_normalize_worker_payload must no longer be importable."""
         import arnold.pipelines.megaplan.workers as _workers
 
-        assert "_normalize_worker_payload" not in getattr(_workers, "__all__", []), (
-            "_normalize_worker_payload must remain private"
-        )
+        assert not hasattr(_workers, "_normalize_worker_payload")
+        assert "_normalize_worker_payload" not in getattr(_workers, "__all__", [])
 
-    def test_validate_payload_is_callable_and_still_needed_by_long_tail(self) -> None:
-        """validate_payload must remain importable and callable for long-tail
-        handlers (critique→revise) even after migrated sites stop using it."""
-        from arnold.pipelines.megaplan.workers import validate_payload
+    def test_normalize_worker_payload_cannot_be_imported_from_workers(self) -> None:
+        with pytest.raises(ImportError):
+            exec(
+                "from arnold.pipelines.megaplan.workers import "
+                "_normalize_worker_payload",
+                {},
+            )
+
+    def test_validate_payload_remains_internal_only(self) -> None:
+        """Legacy helper stays internal while exported worker validation is retired."""
+        from arnold.pipelines.megaplan.workers._impl import validate_payload
+        from arnold.pipelines.megaplan.types import CliError
 
         assert callable(validate_payload)
 
-        # Long-tail steps must still pass.
-        validate_payload(
-            "revise",
-            {
-                "plan": "x",
-                "changes_summary": "y",
-                "flags_addressed": [],
-                "assumptions": [],
-                "success_criteria": [],
-                "questions": [],
-            },
-        )
-        # execute batch-relaxed still passes for legacy callers outside review.
-        validate_payload(
-            "execute",
-            {
-                "task_updates": [{"task_id": "T1", "status": "done"}],
-                "sense_check_acknowledgments": [],
-            },
-        )
+        for step, payload in (
+            (
+                "revise",
+                {
+                    "plan": "x",
+                    "changes_summary": "y",
+                    "flags_addressed": [],
+                    "assumptions": [],
+                    "success_criteria": [],
+                    "questions": [],
+                },
+            ),
+            (
+                "execute",
+                {
+                    "task_updates": [{"task_id": "T1", "status": "done"}],
+                    "sense_check_acknowledgments": [],
+                },
+            ),
+        ):
+            with pytest.raises(CliError, match=rf"retired for {step}"):
+                validate_payload(step, payload)
 
-    def test_recovery_helpers_remain_importable(self) -> None:
-        """Recovery helpers (_recover_codex_payload,
-        _recover_codex_payload_with_provenance) must stay importable
-        because recovery still owns both the legacy normalization path and the
-        migrated-step schema-audit path."""
-        from arnold.pipelines.megaplan.workers._impl import (
-            _normalize_worker_payload,
-            _recover_codex_payload,
-            _recover_codex_payload_with_provenance,
-        )
+    def test_worker_recovery_helpers_are_deleted(self) -> None:
+        """Codex recovery now lives behind model_seam capture only."""
+        import arnold.pipelines.megaplan.workers._impl as workers_impl
+        from arnold.pipelines.megaplan.model_seam import _recover_payload_with_provenance
 
-        assert callable(_normalize_worker_payload)
-        assert callable(_recover_codex_payload)
-        assert callable(_recover_codex_payload_with_provenance)
+        assert not hasattr(workers_impl, "_recover_codex_payload")
+        assert not hasattr(workers_impl, "_recover_codex_payload_with_provenance")
+        assert callable(_recover_payload_with_provenance)

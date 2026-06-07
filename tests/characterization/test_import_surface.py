@@ -115,8 +115,6 @@ WORKERS_ALL = [
     "_is_poisoned_environmental_failure",
     "_is_session_too_large_for_compact",
     "_merge_partial_output",
-    "_recover_codex_payload",
-    "validate_payload",
     "run_step_with_worker",
     "resolve_agent_mode",
     "set_work_dir_override",

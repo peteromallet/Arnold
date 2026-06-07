@@ -239,6 +239,15 @@ def _normalize_scalar(value: Any, replacements: list[str]) -> Any:
     return value
 
 
+def _normalize_flags_addressed(items: list[Any]) -> list[Any]:
+    return [
+        item.get("id", item)
+        if isinstance(item, dict)
+        else item
+        for item in items
+    ]
+
+
 def _snapshot_state(raw_state: dict[str, Any]) -> dict[str, Any]:
     config = raw_state.get("config", {})
     meta = raw_state.get("meta", {})
@@ -271,7 +280,11 @@ def _snapshot_state(raw_state: dict[str, Any]) -> dict[str, Any]:
         ],
         "history": [
             {
-                key: entry[key]
+                key: (
+                    _normalize_flags_addressed(entry[key])
+                    if key == "flags_addressed"
+                    else entry[key]
+                )
                 for key in (
                     "step",
                     "result",
@@ -469,7 +482,7 @@ def _summarize_plan_meta(payload: dict[str, Any]) -> dict[str, Any]:
     if "changes_summary" in payload:
         summary["changes_summary"] = payload.get("changes_summary")
     if "flags_addressed" in payload:
-        summary["flags_addressed"] = payload.get("flags_addressed", [])
+        summary["flags_addressed"] = _normalize_flags_addressed(payload.get("flags_addressed", []))
     return summary
 
 
