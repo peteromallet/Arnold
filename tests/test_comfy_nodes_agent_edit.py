@@ -38,7 +38,9 @@ from vibecomfy.comfy_nodes.agent_contracts import (
     AGENT_EDIT_TURN_CONTRACT_VERSION,
     FailureEnvelope,
     FailureKind,
+    PUBLIC_OUTCOME_KINDS,
     StageResult,
+    TURN_OUTCOME_KINDS,
     TurnContext,
     TurnOutcome,
     failure_envelope,
@@ -335,9 +337,10 @@ def _assert_product_failure_contract(
     assert result["contract_version"] == AGENT_EDIT_TURN_CONTRACT_VERSION
     assert isinstance(result["message"], str)
     assert result["message"].strip()
-    assert result["outcome"]["kind"] == "failure"
+    assert result["outcome"]["kind"] == "error"
     assert result["outcome"]["failure_kind"] == failure_kind
     assert result["outcome"]["stage"] == stage
+    assert result["internal_outcome"]["kind"] == "failure"
     assert "candidate" in result
     assert "eligibility" in result
     assert result["eligibility"] == result["apply_eligibility"]
@@ -828,7 +831,14 @@ def test_handle_agent_edit_batch_repl_uses_product_response_builder_only(
         builder_calls.append("batch")
         assert state.user_message == "product path"
         assert context.turn_id
-        return {"ok": True, "builder": "batch", "message": state.user_message}
+        return {
+            "ok": True,
+            "builder": "batch",
+            "message": state.user_message,
+            "outcome": {"kind": "candidate"},
+            "candidate": {"state": "candidate", "graph_hash": "batch"},
+            "eligibility": {"applyable": False, "reason": "no_candidate", "message": "none"},
+        }
 
     monkeypatch.setattr(agent_edit_module, "_run_batch_repl_product_path", _fake_runner)
     monkeypatch.setattr(agent_edit_module, "_build_batch_repl_response", _batch_builder)
@@ -870,7 +880,14 @@ def test_handle_agent_edit_dev_delta_uses_dev_success_builder_only(
         builder_calls.append(contract)
         assert state.user_message == "dev success"
         assert context.turn_id
-        return {"ok": True, "builder": contract, "message": state.user_message}
+        return {
+            "ok": True,
+            "builder": contract,
+            "message": state.user_message,
+            "outcome": {"kind": "candidate"},
+            "candidate": {"state": "candidate", "graph_hash": contract},
+            "eligibility": {"applyable": True, "reason": "applyable", "message": "ok"},
+        }
 
     monkeypatch.setattr(agent_edit_module, "_run_delta_dev_path", _fake_runner)
     monkeypatch.setattr(agent_edit_module, "_build_dev_success_response", _dev_builder)
@@ -932,6 +949,15 @@ def test_handle_agent_edit_dev_delta_uses_dev_failure_builder_only(
             "ok": False,
             "builder": "dev-failure",
             "message": "dev runner blocked",
+            "outcome": {
+                "kind": "error",
+                "failure_kind": FailureKind.MODEL_MISTAKE.value,
+                "stage": "agent_delta",
+                "retryable": True,
+                "next_action": "retry",
+                "graph_unchanged": True,
+            },
+            "eligibility": {"applyable": False, "reason": "server_blocked", "message": "blocked"},
         },
     )
 
@@ -945,11 +971,10 @@ def test_handle_agent_edit_dev_delta_uses_dev_failure_builder_only(
         session_root=tmp_path,
     )
 
-    assert result == {
-        "ok": False,
-        "builder": "dev-failure",
-        "message": "dev runner blocked",
-    }
+    assert result["ok"] is False
+    assert result["builder"] == "dev-failure"
+    assert result["message"] == "dev runner blocked"
+    assert result["outcome"]["kind"] == "error"
 
 
 def test_handle_agent_edit_round_trips_deepseek_python(
@@ -1330,8 +1355,9 @@ def test_handle_agent_edit_dev_delta_classifies_malformed_delta_as_closed_failur
     dumped = json.dumps(result, sort_keys=True)
     assert "EditOpParseError" not in dumped
     assert "ValueError" not in dumped
-    assert "contract_version" not in result
-    assert "outcome" not in result
+    assert result["contract_version"] == AGENT_EDIT_TURN_CONTRACT_VERSION
+    assert result["outcome"]["kind"] == "error"
+    assert result["internal_outcome"]["kind"] == "failure"
     assert "Unsupported edit op 'bogus'." == result["agent_failure_context"]["explanation"]
 
 
@@ -1980,7 +2006,10 @@ def test_handle_agent_edit_batch_repl_returns_successful_non_commit_clarificatio
 
     assert result["ok"] is True
     assert result["contract_version"] == AGENT_EDIT_TURN_CONTRACT_VERSION
-    assert result["outcome"] == {
+    assert result["outcome"]["kind"] == "clarify"
+    assert result["outcome"]["question"] == "before or after the face restoration?"
+    assert result["outcome"]["clarification"]["message"] == "before or after the face restoration?"
+    assert result["internal_outcome"] == {
         "kind": "clarify",
         "question": "before or after the face restoration?",
     }
@@ -2107,7 +2136,7 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     ]
     assert result["report"]["done_summary"] == result["done_summary"]
     assert result["outcome"] == {
-        "kind": "edit",
+        "kind": "candidate",
         "changes": [
             {
                 "uid": "2",
@@ -2117,6 +2146,7 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
             }
         ],
     }
+    assert result["internal_outcome"]["kind"] == "edit"
     assert len(result["batch_turns"]) == 2
     assert result["batch_turns"][0]["turn_number"] == 0
     assert result["batch_turns"][0]["batch_ok"] is True
@@ -2240,18 +2270,18 @@ def test_handle_agent_edit_batch_repl_clarify_after_edit_returns_edit_and_clarif
     assert result["apply_eligibility"]["reason"] == "queue_blocked_warning"
     assert result["candidate_graph_hash"] == payload_hash(result["graph"])
     assert result["message"] == "Applied 1 edit. Should I also rename the file stem?"
-    assert result["outcome"] == {
-        "kind": "edit+clarify",
-        "changes": [
-            {
-                "uid": "2",
-                "field_path": "filename_prefix",
-                "old": "before",
-                "new": "after",
-            }
-        ],
-        "question": "Should I also rename the file stem?",
-    }
+    assert result["outcome"]["kind"] == "candidate"
+    assert result["outcome"]["changes"] == [
+        {
+            "uid": "2",
+            "field_path": "filename_prefix",
+            "old": "before",
+            "new": "after",
+        }
+    ]
+    assert result["outcome"]["question"] == "Should I also rename the file stem?"
+    assert result["outcome"]["clarification"]["message"] == "Should I also rename the file stem?"
+    assert result["internal_outcome"]["kind"] == "edit+clarify"
     assert result["batch_turns"][0]["field_changes"] == [
         {
             "uid": "2",
@@ -2292,18 +2322,18 @@ def test_handle_agent_edit_batch_repl_inline_edit_then_clarify_applies_edit_and_
     assert result["apply_allowed"] is True
     assert result["candidate_graph_hash"] == payload_hash(result["graph"])
     assert result["message"] == "Applied 1 edit. Should I also rename the file stem?"
-    assert result["outcome"] == {
-        "kind": "edit+clarify",
-        "changes": [
-            {
-                "uid": "2",
-                "field_path": "filename_prefix",
-                "old": "before",
-                "new": "after",
-            }
-        ],
-        "question": "Should I also rename the file stem?",
-    }
+    assert result["outcome"]["kind"] == "candidate"
+    assert result["outcome"]["changes"] == [
+        {
+            "uid": "2",
+            "field_path": "filename_prefix",
+            "old": "before",
+            "new": "after",
+        }
+    ]
+    assert result["outcome"]["question"] == "Should I also rename the file stem?"
+    assert result["outcome"]["clarification"]["message"] == "Should I also rename the file stem?"
+    assert result["internal_outcome"]["kind"] == "edit+clarify"
     assert len(result["batch_turns"]) == 1
     assert result["batch_turns"][0]["landed_op_count"] == 1
     assert result["batch_turns"][0]["clarification_required"] is True
@@ -2353,7 +2383,7 @@ def test_handle_agent_edit_batch_repl_ignores_clarify_inside_comments_and_string
 
     assert result["ok"] is True
     assert result["outcome"] == {
-        "kind": "edit",
+        "kind": "candidate",
         "changes": [
             {
                 "uid": "2",
@@ -2363,6 +2393,7 @@ def test_handle_agent_edit_batch_repl_ignores_clarify_inside_comments_and_string
             }
         ],
     }
+    assert result["internal_outcome"]["kind"] == "edit"
     assert not result.get("clarification_required", False)
     assert result["batch_turns"][0]["batch"] == batch
     assert "clarification_required" not in result["batch_turns"][0]
@@ -2432,6 +2463,7 @@ def test_handle_agent_edit_batch_repl_rejects_malformed_or_non_terminal_clarify_
     )
     assert not result.get("clarification_required", False)
     assert "question" not in result["outcome"]
+    assert result["internal_outcome"]["kind"] == "failure"
 
     audit = json.loads(Path(result["audit_ref"]["path"]).read_text(encoding="utf-8"))
     assert audit["metadata"]["batch_repl"]["exit_mode"] == "budget"
@@ -2580,7 +2612,7 @@ def test_handle_agent_edit_batch_repl_applies_assignment_add_and_rewire(
     assert result["apply_allowed"] is True
     assert result["done_summary"].startswith("Gate A passed:")
     assert result["outcome"] == {
-        "kind": "edit",
+        "kind": "candidate",
         "changes": [
             {
                 "uid": "2",
@@ -2590,6 +2622,7 @@ def test_handle_agent_edit_batch_repl_applies_assignment_add_and_rewire(
             }
         ],
     }
+    assert result["internal_outcome"]["kind"] == "edit"
 
     nodes = result["graph"]["nodes"]
     scale_node = next(node for node in nodes if node["type"] == "ImageScaleBy")
@@ -2723,7 +2756,7 @@ def test_handle_agent_edit_batch_repl_scripted_transcript_commits_structurally_c
     assert "Rewired saveimage.images" in result["done_summary"]
     assert "saveimage.filename_prefix" in result["done_summary"]
     assert result["outcome"] == {
-        "kind": "edit",
+        "kind": "candidate",
         "changes": [
             {
                 "uid": "3",
@@ -2739,6 +2772,7 @@ def test_handle_agent_edit_batch_repl_scripted_transcript_commits_structurally_c
             }
         ],
     }
+    assert result["internal_outcome"]["kind"] == "edit"
     assert len(captured_messages) == 4
     assert "Node variable index:" in captured_messages[1][1]["content"]
     assert "loadimage = LoadImage" in captured_messages[1][1]["content"]
@@ -4727,6 +4761,7 @@ def test_agent_edit_action_routes_accept_reject_idempotency_and_audit(
     assert replayed == accepted
     assert accepted["ok"] is True
     assert accepted["action"] == "accept"
+    assert accepted["outcome"]["kind"] == "noop"
     assert accepted["canvas_apply_allowed"] is False
     assert accepted["apply_allowed"] is False
     assert accepted["queue_allowed"] is False
@@ -4751,6 +4786,7 @@ def test_agent_edit_action_routes_accept_reject_idempotency_and_audit(
     )
     assert conflicting_reject["ok"] is False
     assert conflicting_reject["kind"] == FailureKind.EDITOR_AHEAD_CONFLICT.value
+    assert conflicting_reject["outcome"]["kind"] == "error"
 
     downloaded = _handle_agent_edit_audit(
         {"session_id": "s1", "turn_id": turn_id, "action": "accept"},
@@ -4816,6 +4852,10 @@ def test_agent_edit_accept_matches_browser_client_graph_hash(tmp_path: Path) -> 
     )
     assert stale["ok"] is False
     assert stale["kind"] == FailureKind.STALE_STATE_MISMATCH.value
+    assert stale["rebaseline_recovery"]["action"] == "rebaseline"
+    issues = stale["agent_failure_context"]["issues"]
+    assert issues[0]["rebaseline_recovery"] == stale["rebaseline_recovery"]
+    assert stale["outcome"]["rebaseline_recovery"] == stale["rebaseline_recovery"]
 
     accepted = _handle_agent_edit_accept(
         {
@@ -4828,6 +4868,7 @@ def test_agent_edit_accept_matches_browser_client_graph_hash(tmp_path: Path) -> 
     )
     assert accepted["ok"] is True, accepted
     assert accepted["action"] == "accept"
+    assert accepted["outcome"]["kind"] == "noop"
 
 
 def test_agent_edit_v2_accept_requires_server_hash_candidate_hash_and_live_token(
@@ -4922,6 +4963,7 @@ def test_agent_edit_v2_accept_requires_server_hash_candidate_hash_and_live_token
     )
     assert accepted["ok"] is True, accepted
     assert accepted["baseline_graph_hash"] == structural_graph_hash(candidate_graph)
+    assert accepted["outcome"]["kind"] == "noop"
     assert accepted["diagnostics"][0]["code"] == "client_live_canvas_token_mismatch"
     assert (
         accepted["diagnostics"][0]["detail"]["client_live_canvas_token"]
@@ -4950,6 +4992,7 @@ def test_agent_edit_rebaseline_route_returns_no_candidate_apply_eligibility(
 
     assert result["ok"] is True, result
     assert result["action"] == "rebaseline"
+    assert result["outcome"]["kind"] == "noop"
     assert result["canvas_apply_allowed"] is False
     assert result["apply_allowed"] is False
     assert result["queue_allowed"] is False
@@ -4980,6 +5023,7 @@ def test_agent_edit_action_routes_reject_candidates_without_baseline_update(
     assert replayed == rejected
     assert rejected["ok"] is True
     assert rejected["action"] == "reject"
+    assert rejected["outcome"]["kind"] == "noop"
     assert rejected["canvas_apply_allowed"] is False
     assert rejected["apply_allowed"] is False
     assert rejected["queue_allowed"] is False
@@ -5097,17 +5141,22 @@ def test_agent_edit_action_routes_cover_replay_conflict_state_mismatch_and_audit
     )
 
     assert accepted["ok"] is True
+    assert accepted["outcome"]["kind"] == "noop"
     assert accepted["baseline_turn_id"] == accepted_turn_id
     assert accepted["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert repeated_accept["ok"] is False
     assert repeated_accept["kind"] == FailureKind.STALE_STATE_MISMATCH.value
+    assert repeated_accept["outcome"]["kind"] == "error"
     assert repeated_accept["agent_failure_context"]["reason"] == "structural_baseline_cas_mismatch"
     assert accept_key_conflict["ok"] is False
     assert accept_key_conflict["kind"] == FailureKind.EDITOR_AHEAD_CONFLICT.value
+    assert accept_key_conflict["outcome"]["kind"] == "error"
     assert rejecting_accepted["ok"] is False
     assert rejecting_accepted["kind"] == FailureKind.EDITOR_AHEAD_CONFLICT.value
+    assert rejecting_accepted["outcome"]["kind"] == "error"
 
     assert rejected["ok"] is True
+    assert rejected["outcome"]["kind"] == "noop"
     assert rejected["baseline_turn_id"] == accepted_turn_id
     assert rejected["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert repeated_reject["ok"] is True
@@ -5115,11 +5164,14 @@ def test_agent_edit_action_routes_cover_replay_conflict_state_mismatch_and_audit
     assert repeated_reject["baseline_graph_hash"] == accepted["candidate_structural_graph_hash"]
     assert accepting_rejected["ok"] is False
     assert accepting_rejected["kind"] == FailureKind.EDITOR_AHEAD_CONFLICT.value
+    assert accepting_rejected["outcome"]["kind"] == "error"
 
     assert missing_session["ok"] is False
     assert missing_session["kind"] == FailureKind.STALE_STATE_MISMATCH.value
+    assert missing_session["outcome"]["kind"] == "error"
     assert missing_turn["ok"] is False
     assert missing_turn["kind"] == FailureKind.STALE_STATE_MISMATCH.value
+    assert missing_turn["outcome"]["kind"] == "error"
 
     state = read_state(tmp_path / "s3")
     assert state["baseline_turn_id"] == accepted_turn_id
@@ -6752,9 +6804,11 @@ def test_agent_edit_chat_endpoint_defaults_to_bounded_fifty_message_window(
     )
 
     assert default_result["ok"] is True
+    assert default_result["outcome"]["kind"] == "noop"
     assert len(default_result["messages"]) == 50
     assert default_result["messages"][0]["turn_id"] == "0005"
     assert oversized_result["ok"] is True
+    assert oversized_result["outcome"]["kind"] == "noop"
     assert len(oversized_result["messages"]) == 50
 
 
@@ -6886,6 +6940,7 @@ def test_read_session_chat_returns_latest_open_candidate_state(tmp_path: Path) -
             "message": "Apply is allowed, but Queue remains blocked for this candidate.",
             "warnings": ["queue_blocked"],
         },
+        "outcome": {"kind": "edit", "changes": []},
         "report": {"change": {"content_edits": {"edited": ["2"]}}},
     }
     (turn_dir / "request.json").write_text(json.dumps({"task": "edit"}), encoding="utf-8")
@@ -6989,4 +7044,367 @@ def test_read_session_json_sanitized_session(tmp_path: Path) -> None:
     assert result["ok"] is True
     assert result["session_id"] == safe_id
     assert len(result["turns"]) == 1
-    assert len(result["messages"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# T1: Focused chat contract tests — /chat payload shape including
+# latest_candidate and agent-message outcomes, no user-message outcomes
+# ---------------------------------------------------------------------------
+
+
+def _write_chat_artifact_with_outcome(
+    turn_dir: Path, session_id: str, turn_id: str,
+    user_text: str, agent_text: str, outcome: dict[str, Any] | None,
+) -> None:
+    """Write a chat.json with an optional outcome on the agent message."""
+    turn_dir.mkdir(parents=True, exist_ok=True)
+    agent_msg: dict[str, Any] = {
+        "role": "agent",
+        "text": agent_text,
+        "turn_id": turn_id,
+    }
+    if outcome is not None:
+        agent_msg["outcome"] = outcome
+    record = {
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "messages": [
+            {"role": "user", "text": user_text, "turn_id": turn_id},
+            agent_msg,
+        ],
+    }
+    (turn_dir / "chat.json").write_text(
+        json.dumps(record, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def test_chat_agent_message_carries_outcome_when_present_in_chat_json(
+    tmp_path: Path,
+) -> None:
+    """When chat.json includes an outcome on the agent message,
+    read_session_chat preserves it."""
+    session_id = "chat-outcome-test"
+    turns_dir = session_dir_for(tmp_path, session_id) / "turns"
+    _write_chat_artifact_with_outcome(
+        turns_dir / "0000", session_id, "0000",
+        "user request", "agent response",
+        {"kind": "candidate", "changes": []},
+    )
+
+    result = read_session_chat(tmp_path, session_id, max_messages=5)
+    assert result["ok"] is True
+    messages = result["messages"]
+    assert len(messages) == 2
+    agent_msg = next(m for m in messages if m["role"] == "agent")
+    assert "outcome" in agent_msg
+    assert agent_msg["outcome"]["kind"] == "candidate"
+
+
+def test_chat_agent_message_outcome_kinds_are_public_union_members(
+    tmp_path: Path,
+) -> None:
+    """Agent message outcomes in chat.json use the closed public union:
+    candidate, noop, clarify, error."""
+    session_id = "chat-outcome-kinds"
+    turns_dir = session_dir_for(tmp_path, session_id) / "turns"
+
+    for index, kind in enumerate(PUBLIC_OUTCOME_KINDS):
+        outcome: dict[str, Any] = {"kind": kind}
+        if kind == "candidate":
+            outcome["changes"] = [{"uid": f"n{index}", "field_path": "x", "old": 0, "new": 1}]
+        elif kind == "noop":
+            outcome["reason"] = f"reason-{index}"
+        elif kind == "clarify":
+            outcome["question"] = f"question-{index}"
+        elif kind == "error":
+            outcome["failure_kind"] = "TimeoutError"
+            outcome["stage"] = "agent_response"
+        _write_chat_artifact_with_outcome(
+            turns_dir / f"{index:04d}", session_id, f"{index:04d}",
+            f"user-{index}", f"agent-{index}", outcome,
+        )
+
+    result = read_session_chat(tmp_path, session_id, max_messages=20)
+    agent_msgs = [m for m in result["messages"] if m["role"] == "agent"]
+    assert len(agent_msgs) == len(PUBLIC_OUTCOME_KINDS)
+    for msg in agent_msgs:
+        assert "outcome" in msg, f"agent message missing outcome: {msg}"
+        kind = msg["outcome"]["kind"]
+        assert kind in PUBLIC_OUTCOME_KINDS, f"unexpected outcome kind {kind!r}"
+
+
+def test_chat_user_messages_never_carry_outcome(
+    tmp_path: Path,
+) -> None:
+    """User messages in chat.json never carry outcome metadata."""
+    session_id = "chat-no-user-outcome"
+    turns_dir = session_dir_for(tmp_path, session_id) / "turns"
+    # Write chat with outcome on agent only
+    _write_chat_artifact_with_outcome(
+        turns_dir / "0000", session_id, "0000",
+        "user says hi", "agent responds",
+        {"kind": "candidate", "changes": []},
+    )
+    # Also write a basic chat without outcome
+    _write_chat_artifact(
+        turns_dir / "0001", session_id, "0001",
+        "another user message", "another agent message",
+    )
+
+    result = read_session_chat(tmp_path, session_id, max_messages=10)
+    user_msgs = [m for m in result["messages"] if m["role"] == "user"]
+    assert len(user_msgs) >= 1
+    for msg in user_msgs:
+        assert "outcome" not in msg, f"user message should not carry outcome: {msg}"
+
+
+def test_chat_fallback_agent_message_derives_outcome_from_turn_response(
+    tmp_path: Path,
+) -> None:
+    """When read_session_chat falls back to request.json + response.json
+    (no chat.json), the agent message derives a normalized public outcome
+    from response.json."""
+    session_id = "chat-fallback-no-outcome"
+    turns_dir = session_dir_for(tmp_path, session_id) / "turns"
+    turn_dir = turns_dir / "0000"
+    _write_request_response_fallback(
+        turn_dir, "do something", "Did something."
+    )
+    response_path = turn_dir / "response.json"
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    response["outcome"] = {"kind": "edit", "changes": []}
+    response_path.write_text(json.dumps(response), encoding="utf-8")
+
+    result = read_session_chat(tmp_path, session_id, max_messages=5)
+    agent_msgs = [m for m in result["messages"] if m["role"] == "agent"]
+    assert len(agent_msgs) == 1
+    assert agent_msgs[0]["outcome"]["kind"] == "candidate"
+
+
+def test_chat_agent_message_derives_outcome_from_turn_response_when_chat_json_omits_it(
+    tmp_path: Path,
+) -> None:
+    session_id = "chat-derive-from-response"
+    turn_dir = session_dir_for(tmp_path, session_id) / "turns" / "0000"
+    _write_chat_artifact(turn_dir, session_id, "0000", "user request", "agent response")
+    (turn_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "turn_id": "0000",
+                "message": "Candidate ready.",
+                "graph": {"nodes": [{"id": 1, "type": "SaveImage"}], "links": []},
+                "outcome": {"kind": "edit+clarify", "changes": [], "question": "before or after?"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = read_session_chat(tmp_path, session_id, max_messages=5)
+    agent_msg = next(m for m in result["messages"] if m["role"] == "agent")
+    assert agent_msg["outcome"] == {
+        "kind": "candidate",
+        "changes": [],
+        "question": "before or after?",
+        "clarification": {"message": "before or after?"},
+    }
+
+
+def test_latest_candidate_in_chat_response_includes_outcome(
+    tmp_path: Path,
+) -> None:
+    """The /chat response's latest_candidate payload should include an
+    outcome when the underlying response.json has one."""
+    session_id = "latest-candidate-outcome"
+    session_dir = session_dir_for(tmp_path, session_id)
+    turn_dir = session_dir / "turns" / "0000"
+    turn_dir.mkdir(parents=True)
+    graph = {"nodes": [{"id": 1, "type": "SaveImage"}], "links": []}
+    response = {
+        "ok": True,
+        "session_id": session_id,
+        "turn_id": "0000",
+        "message": "Candidate with outcome.",
+        "graph": graph,
+        "candidate_graph_hash": "hash-abc",
+        "canvas_apply_allowed": True,
+        "apply_allowed": True,
+        "queue_allowed": False,
+        "apply_eligibility": {
+            "applyable": True,
+            "reason": "queue_blocked_warning",
+            "message": "Apply allowed, Queue blocked.",
+            "warnings": ["queue_blocked"],
+        },
+        "outcome": {"kind": "candidate", "changes": [
+            {"uid": "1", "field_path": "widgets_values.0", "old": "before", "new": "after"}
+        ]},
+    }
+    (turn_dir / "request.json").write_text(
+        json.dumps({"task": "edit"}), encoding="utf-8"
+    )
+    (turn_dir / "response.json").write_text(
+        json.dumps(response), encoding="utf-8"
+    )
+    (turn_dir / "candidate.ui.json").write_text(
+        json.dumps(graph), encoding="utf-8"
+    )
+    (session_dir / "session_state.json").write_text(
+        json.dumps({
+            "turns": {
+                "0000": {
+                    "state": "candidate",
+                    "candidate_graph_hash": "hash-abc",
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    result = read_session_chat(tmp_path, session_id, max_messages=5)
+    latest = result["latest_candidate"]
+    assert latest is not None, "latest_candidate should be present"
+    assert "outcome" in latest, (
+        "latest_candidate should include outcome from response.json"
+    )
+    assert latest["outcome"]["kind"] == "candidate"
+    assert len(latest["outcome"]["changes"]) == 1
+    assert latest["outcome"]["changes"][0]["uid"] == "1"
+
+
+def test_latest_candidate_excludes_noop_turns_and_still_has_outcome(
+    tmp_path: Path,
+) -> None:
+    """latest_candidate skips noop turns when searching for the latest
+    candidate. When a candidate-turn is found, its outcome is included."""
+    session_id = "latest-outcome-noop-skip"
+    session_dir = session_dir_for(tmp_path, session_id)
+    graph = {"nodes": [{"id": 7, "type": "KSampler"}], "links": []}
+
+    # Turn 0000: noop (should be skipped)
+    td0 = session_dir / "turns" / "0000"
+    td0.mkdir(parents=True)
+    (td0 / "request.json").write_text(
+        json.dumps({"task": "noop task"}), encoding="utf-8"
+    )
+    (td0 / "response.json").write_text(
+        json.dumps({
+            "ok": True,
+            "outcome": {"kind": "noop", "reason": "nothing to change"},
+            "graph_unchanged": True,
+            "apply_allowed": False,
+        }),
+        encoding="utf-8",
+    )
+
+    # Turn 0001: candidate (should be the latest)
+    td1 = session_dir / "turns" / "0001"
+    td1.mkdir(parents=True)
+    (td1 / "request.json").write_text(
+        json.dumps({"task": "real edit"}), encoding="utf-8"
+    )
+    (td1 / "response.json").write_text(
+        json.dumps({
+            "ok": True,
+            "turn_id": "0001",
+            "message": "Real candidate.",
+            "graph": graph,
+            "canvas_apply_allowed": True,
+            "apply_allowed": True,
+            "queue_allowed": True,
+            "apply_eligibility": {
+                "applyable": True,
+                "reason": "applyable",
+                "message": "Apply allowed.",
+            },
+            "outcome": {
+                "kind": "candidate",
+                "changes": [
+                    {"uid": "7", "field_path": "widgets.seed", "old": 0, "new": 42}
+                ],
+            },
+        }),
+        encoding="utf-8",
+    )
+    (td1 / "candidate.ui.json").write_text(
+        json.dumps(graph), encoding="utf-8"
+    )
+
+    (session_dir / "session_state.json").write_text(
+        json.dumps({
+            "turns": {
+                "0000": {"state": "rejected"},
+                "0001": {"state": "candidate"},
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    result = read_session_chat(tmp_path, session_id, max_messages=5)
+    latest = result["latest_candidate"]
+    assert latest is not None
+    assert latest["turn_id"] == "0001", "should skip noop turn 0000"
+    assert "outcome" in latest, (
+        "latest_candidate should include outcome"
+    )
+    assert latest["outcome"]["kind"] == "candidate"
+
+
+def test_chat_endpoint_response_has_public_outcome_kind(
+    tmp_path: Path,
+) -> None:
+    """The chat endpoint response (via _handle_agent_edit_chat) carries an
+    outcome with a valid public kind."""
+    routes = importlib.import_module("vibecomfy.comfy_nodes.routes")
+    session_id = "chat-endpoint-outcome"
+    result = routes._handle_agent_edit_chat(
+        {"session_id": session_id},
+        session_root=tmp_path,
+    )
+    # Even for a non-existent session, the chat endpoint returns ok=True
+    # with a noop outcome.
+    assert result["ok"] is True
+    assert "outcome" in result
+    assert result["outcome"]["kind"] in PUBLIC_OUTCOME_KINDS
+
+
+def test_chat_agent_message_outcome_derivable_from_turn_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When handle_agent_edit completes successfully, the written chat.json
+    agent message carries the response outcome (stamped by
+    _write_turn_chat_artifact)."""
+    _use_dev_full(monkeypatch)
+    provider = _batch_repl_provider()
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "rename the save prefix",
+            "session_id": "chat-derivable-outcome",
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_deepseek_replace(
+            '"before"', '"after"',
+            "Renamed the save prefix.",
+        ),
+        session_root=tmp_path,
+    )
+
+    assert result.get("ok") is True
+    turn_id = result["turn_id"]
+    turn_dir = tmp_path / "chat-derivable-outcome" / "turns" / turn_id
+    chat_path = turn_dir / "chat.json"
+    assert chat_path.is_file(), "chat.json should be written for successful turn"
+
+    chat = json.loads(chat_path.read_text(encoding="utf-8"))
+    agent_msgs = [m for m in chat["messages"] if m["role"] == "agent"]
+    assert len(agent_msgs) == 1
+    agent_msg = agent_msgs[0]
+    assert "outcome" in agent_msg, (
+        "agent message in chat.json should carry outcome from response"
+    )
+    assert agent_msg["outcome"]["kind"] in PUBLIC_OUTCOME_KINDS, (
+        f"outcome kind in chat should be a public kind, got {agent_msg['outcome']['kind']!r}"
+    )
