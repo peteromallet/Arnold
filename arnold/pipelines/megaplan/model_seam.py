@@ -1230,6 +1230,8 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
     )
     if step == "review":
         return _normalize_review_capture_payload(payload)
+    if step == "critique":
+        return _normalize_critique_capture_payload(payload)
     if step == "critique_evaluator":
         return _normalize_critique_evaluator_capture_payload(payload)
     if step != "finalize":
@@ -1250,6 +1252,29 @@ def _normalize_review_capture_payload(payload: dict[str, Any]) -> dict[str, Any]
     if normalized.get("checks") is None:
         normalized["checks"] = []
     normalized.pop("review_completion_status", None)
+    return normalized
+
+
+def _normalize_critique_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    flags = normalized.get("flags")
+    if isinstance(flags, list):
+        normalized["flags"] = [
+            _normalize_critique_flag(flag) if isinstance(flag, Mapping) else flag
+            for flag in flags
+        ]
+    return normalized
+
+
+def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(flag)
+    severity_hint = normalized.get("severity_hint")
+    if severity_hint in {"high", "significant", "major", "critical"}:
+        normalized["severity_hint"] = "likely-significant"
+    elif severity_hint in {"low", "minor", "trivial", "cosmetic"}:
+        normalized["severity_hint"] = "likely-minor"
+    elif severity_hint in {"medium", "moderate", "unknown", None, ""}:
+        normalized["severity_hint"] = "uncertain"
     return normalized
 
 
