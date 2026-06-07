@@ -4445,7 +4445,10 @@ function _renderDurableTurnRow(body, panel, entry, index) {
 // ── Chat thread rendering (M4b — newest-at-bottom bubble list) ────────────
 
 const THREAD_WINDOW_SIZE = 30;
-const THREAD_NEAR_BOTTOM_TOLERANCE_PX = 8;
+// How close to the bottom (px) the user must be for new content to keep
+// auto-following. 8px was effectively "exactly at the bottom" — any expanded
+// details or late-appended row left the thread permanently un-followed.
+const THREAD_NEAR_BOTTOM_TOLERANCE_PX = 120;
 
 function ensureThreadRenderState(panel) {
   if (!panel?.threadState || typeof panel.threadState !== "object") {
@@ -7482,9 +7485,19 @@ function renderPanelMetaAndStatus(panel) {
 
 function renderThreadSection(panel) {
   recordAgentPanelRenderCount(panel, RENDER_SECTIONS.THREAD);
+  // Capture the auto-scroll decision BEFORE any DOM mutation: renderHistory
+  // scrolls internally, but renderActivityRows appends progress rows AFTER
+  // that scroll, leaving the viewport above the new content. Re-scroll at the
+  // end of the full section render when the user was following the bottom.
+  const threadState = ensureThreadRenderState(panel);
+  const shouldAutoScroll =
+    Boolean(threadState.forceScrollOnNextRender) || isChatThreadNearBottom(panel);
   renderHistory(panel);
   // Shared live turn-progress rows rendered once per panel thread render (T13).
   renderActivityRows(panel);
+  if (shouldAutoScroll) {
+    scrollChatThreadToBottom(panel);
+  }
 }
 
 function renderComposerActions(panel) {
@@ -7922,6 +7935,9 @@ async function submitAgentEdit(panel) {
     }
 
     const pendingMessage = `Submitting: ${task.slice(0, 80)}${task.length > 80 ? "..." : ""}`;
+    // The user just sent a message — always jump the thread to the newest
+    // content regardless of where they had scrolled.
+    ensureThreadRenderState(panel).forceScrollOnNextRender = true;
     const startObligations = transition(panel, "SUBMIT_START", {
       lastSubmit: null,
       debugPayload: {

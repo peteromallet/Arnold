@@ -7531,8 +7531,10 @@ test("VibeComfy chat thread only auto-scrolls when near the bottom or after rehy
     assert.equal(thread?.dataset?.vibecomfyScrolledToBottom, "1");
     assert.ok(thread.scrollTop > 0, "initial render should snap to the bottom");
 
+    // Deliberately scrolled up: more than THREAD_NEAR_BOTTOM_TOLERANCE_PX
+    // (120) from the bottom (600 - 100 - 120 = 380px away).
     thread.clientHeight = 100;
-    thread.scrollHeight = 300;
+    thread.scrollHeight = 600;
     thread.scrollTop = 120;
     panel.state.chatMessages = [
       ...panel.state.chatMessages,
