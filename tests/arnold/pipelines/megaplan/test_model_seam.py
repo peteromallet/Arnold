@@ -278,6 +278,10 @@ def test_capture_step_output_normalizes_prep_distill_loose_lists() -> None:
                     "classification": "assumption",
                     "question": "Where should the seam matrix live?",
                     "assumption": "Publish it with the acceptance artifact.",
+                },
+                {
+                    "question": "What if the model includes an empty assumption?",
+                    "assumption": None,
                 }
             ],
         },
@@ -325,7 +329,12 @@ def test_capture_step_output_normalizes_prep_distill_loose_lists() -> None:
             "severity": "assume_and_proceed",
             "question": "Where should the seam matrix live?",
             "assumption": "Publish it with the acceptance artifact.",
-        }
+        },
+        {
+            "severity": "assume_and_proceed",
+            "question": "What if the model includes an empty assumption?",
+            "assumption": "",
+        },
     ]
 
 

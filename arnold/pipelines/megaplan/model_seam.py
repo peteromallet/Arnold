@@ -1370,9 +1370,9 @@ def _normalize_prep_open_question(item: Any) -> Any:
         or normalized.get("text")
     ) or ""
     return {
-        key: normalized[key]
-        for key in ("severity", "question", "assumption")
-        if key in normalized
+        "severity": normalized["severity"],
+        "question": normalized["question"],
+        "assumption": _optional_str(normalized.get("assumption")) or "",
     }
 
 
