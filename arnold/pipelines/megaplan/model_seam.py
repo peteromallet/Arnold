@@ -1230,6 +1230,8 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
     )
     if step == "review":
         return _normalize_review_capture_payload(payload)
+    if step == "critique_evaluator":
+        return _normalize_critique_evaluator_capture_payload(payload)
     if step != "finalize":
         return payload
     tasks = payload.get("tasks")
@@ -1248,6 +1250,34 @@ def _normalize_review_capture_payload(payload: dict[str, Any]) -> dict[str, Any]
     if normalized.get("checks") is None:
         normalized["checks"] = []
     normalized.pop("review_completion_status", None)
+    return normalized
+
+
+def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    if normalized.get("flag_verifications") is None:
+        normalized["flag_verifications"] = []
+    selections = normalized.get("selections")
+    if isinstance(selections, list):
+        normalized["selections"] = [
+            _normalize_critique_evaluator_selection(selection)
+            if isinstance(selection, Mapping)
+            else selection
+            for selection in selections
+        ]
+    return normalized
+
+
+def _normalize_critique_evaluator_selection(selection: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(selection)
+    if normalized.get("area") is None:
+        normalized["area"] = ""
+    if normalized.get("check_id") != "other":
+        # The prompt historically allowed catalog selections to include an
+        # optional rationale, but the live schema routes catalog lenses by
+        # complexity only. Drop it before structural audit so strict-mode model
+        # verbosity does not wedge adaptive critique.
+        normalized.pop("why", None)
     return normalized
 
 
