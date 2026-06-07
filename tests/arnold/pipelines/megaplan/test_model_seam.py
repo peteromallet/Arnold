@@ -466,6 +466,55 @@ def test_capture_step_output_uses_critique_schema_for_missing_required_fields() 
         raise AssertionError("critique capture must reject missing required fields")
 
 
+def test_capture_step_output_normalizes_critique_severity_hint_aliases() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "validation_step": "critique",
+        },
+    )
+
+    outcome = capture_step_output(
+        invocation,
+        {
+            "checks": [],
+            "flags": [
+                {
+                    "id": "FLAG-001",
+                    "concern": "major concern",
+                    "category": "correctness",
+                    "severity_hint": "high",
+                    "evidence": "e1",
+                },
+                {
+                    "id": "FLAG-002",
+                    "concern": "moderate concern",
+                    "category": "correctness",
+                    "severity_hint": "medium",
+                    "evidence": "e2",
+                },
+                {
+                    "id": "FLAG-003",
+                    "concern": "small concern",
+                    "category": "correctness",
+                    "severity_hint": "low",
+                    "evidence": "e3",
+                },
+            ],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        },
+    )
+
+    assert [flag["severity_hint"] for flag in outcome.legacy_payload["flags"]] == [
+        "likely-significant",
+        "uncertain",
+        "likely-minor",
+    ]
+
+
 def test_capture_step_output_uses_critique_schema_for_wrong_typed_named_payload() -> None:
     invocation = StepInvocation(
         kind="model",
