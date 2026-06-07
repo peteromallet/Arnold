@@ -1016,6 +1016,7 @@ function _handleAcceptRejected(panel, payload) {
   const authoritativeBackendReject = Boolean(payload?.authoritativeBackendReject);
   panel.state.phase = PANEL_STATE.ERROR;
   panel.state.failure = failure;
+  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || null;
   if (authoritativeBackendReject) {
     panel.state.applyEligibility = payload?.disabledApplyEligibility || null;
     panel.state.applyAllowed = false;
@@ -1023,26 +1024,28 @@ function _handleAcceptRejected(panel, payload) {
     panel.state.queueAllowed = false;
   }
   _handleSyncBaseline(panel, failure || {});
+  _syncRebaselineRecovery(panel, payload);
   panel.state.auditRef = failure?.audit_ref || panel.state.auditRef;
   panel.state.debugPayload = payload?.debugPayload || {
     ...(failure || {}),
     accept_request: payload?.acceptBody || null,
   };
-  return {
+  return _obligations({
     render: true,
     queueGuardClear: authoritativeBackendReject,
     refreshQueueGuard: authoritativeBackendReject,
-  };
+  });
 }
 
 function _handleStaleCanvasApply(panel, payload) {
   panel.state.phase = PANEL_STATE.ERROR;
   panel.state.failure = payload?.failure || null;
+  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || null;
+  _syncRebaselineRecovery(panel, payload);
   _handleInvalidateCandidate(panel, { repaint: false });
   panel.state.debugPayload = payload?.debugPayload || panel.state.failure || null;
   return _obligations({
     render: true,
-    dirtySections: STATUS_DIRTY_SECTIONS,
     invalidateCandidate: true,
     clearCandidatePreview: true,
   });
@@ -1052,13 +1055,16 @@ function _handleCanvasApplyFailure(panel, payload) {
   const failure = payload?.failure || null;
   panel.state.phase = PANEL_STATE.ERROR;
   panel.state.failure = failure;
+  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || null;
   panel.state.auditRef = failure?.audit_ref || panel.state.auditRef;
   panel.state.debugPayload = payload?.debugPayload || {
     ...(failure || {}),
     accepted: payload?.accepted || null,
     undo_stack_depth: Number.isFinite(payload?.undoStackDepth) ? payload.undoStackDepth : null,
   };
-  return { render: true };
+  return _obligations({
+    render: true,
+  });
 }
 
 function _handleApplySuccess(panel, payload) {

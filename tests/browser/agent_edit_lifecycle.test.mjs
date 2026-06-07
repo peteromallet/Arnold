@@ -1155,7 +1155,6 @@ test("STALE_CANVAS_APPLY and CANVAS_APPLY_FAILURE record distinct apply failures
     render: true,
     invalidateCandidate: true,
     clearCandidatePreview: true,
-    dirtySections: [RENDER_SECTIONS.META, RENDER_SECTIONS.COMPOSER, RENDER_SECTIONS.NOTICE],
   });
   assert.equal(stalePanel.state.phase, PANEL_STATE.ERROR);
   assert.deepEqual(stalePanel.state.failure, staleFailure);

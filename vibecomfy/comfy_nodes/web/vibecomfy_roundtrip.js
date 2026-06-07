@@ -2016,6 +2016,49 @@ function extractRebaselineRecovery(payload) {
   return null;
 }
 
+function synthesizeStaleRebaselineRecovery(payload, panel = null, actionBody = null) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if (String(payload.kind || "") !== "StaleStateMismatch") {
+    return null;
+  }
+  const stage = String(payload.stage || "");
+  if (stage && !["accept", "frontend", "ingest"].includes(stage)) {
+    return null;
+  }
+  const lastSubmit = panel?.state?.lastSubmit || {};
+  return {
+    action: "rebaseline",
+    endpoint: "/vibecomfy/agent-edit/rebaseline",
+    reason: "stale_state_recovery",
+    last_known_baseline_graph_hash:
+      typeof payload.baseline_graph_hash === "string" ? payload.baseline_graph_hash
+        : typeof payload.expected_baseline_graph_hash === "string" ? payload.expected_baseline_graph_hash
+          : typeof panel?.state?.baselineGraphHash === "string" ? panel.state.baselineGraphHash
+            : typeof lastSubmit.client_structural_graph_hash === "string" ? lastSubmit.client_structural_graph_hash
+              : null,
+    submit_graph_hash:
+      typeof actionBody?.submit_graph_hash === "string" ? actionBody.submit_graph_hash
+        : typeof panel?.state?.serverSubmitGraphHash === "string" ? panel.state.serverSubmitGraphHash
+          : null,
+    submit_structural_graph_hash:
+      typeof lastSubmit.client_structural_graph_hash === "string" ? lastSubmit.client_structural_graph_hash : null,
+    client_graph_hash:
+      typeof actionBody?.client_graph_hash === "string" ? actionBody.client_graph_hash
+        : typeof lastSubmit.client_graph_hash === "string" ? lastSubmit.client_graph_hash
+          : null,
+    client_structural_graph_hash:
+      typeof payload.client_structural_graph_hash === "string" ? payload.client_structural_graph_hash
+        : typeof lastSubmit.client_structural_graph_hash === "string" ? lastSubmit.client_structural_graph_hash
+          : null,
+  };
+}
+
+function recoveryForFailure(payload, panel = null, actionBody = null) {
+  return extractRebaselineRecovery(payload) || synthesizeStaleRebaselineRecovery(payload, panel, actionBody);
+}
+
 function applyEligibility(panel, liveCanvasSnapshot = null) {
   if (!panel?.state?.candidateGraph) {
     return noCandidateApplyEligibility();
@@ -3684,7 +3727,10 @@ function rememberTurnDetailSnapshot(panel, detail = {}) {
 }
 
 function detailSnapshotForMessage(panel, message) {
-  const turnId = typeof message?.turn_id === "string" && message.turn_id ? message.turn_id : null;
+  const turnId =
+    typeof message?.turn_id === "string" && message.turn_id
+      ? message.turn_id
+      : (typeof message?.detail_turn_id === "string" && message.detail_turn_id ? message.detail_turn_id : null);
   if (!turnId) {
     return null;
   }
@@ -3772,7 +3818,21 @@ function buildSyntheticAgentMessage(panel) {
     return null;
   }
   if (panel.state.syntheticAgentMessage && typeof panel.state.syntheticAgentMessage === "object") {
-    return panel.state.syntheticAgentMessage;
+    const synthetic = panel.state.syntheticAgentMessage;
+    const text = typeof synthetic.text === "string" ? synthetic.text : "";
+    const turnId =
+      typeof synthetic.turn_id === "string" && synthetic.turn_id
+        ? synthetic.turn_id
+        : (typeof synthetic.detail_turn_id === "string" && synthetic.detail_turn_id ? synthetic.detail_turn_id : null);
+    const alreadyInThread = Array.isArray(panel.state.chatMessages)
+      ? panel.state.chatMessages.some((msg) => (
+          msg?.role === "agent"
+          && typeof msg.text === "string"
+          && msg.text === text
+          && (!turnId || msg.turn_id === turnId)
+        ))
+      : false;
+    return alreadyInThread ? null : synthetic;
   }
   const turnId = typeof panel.state.turnId === "string" && panel.state.turnId ? panel.state.turnId : null;
   if (!turnId) {
@@ -3800,6 +3860,32 @@ function buildSyntheticAgentMessage(panel) {
     turn_id: turnId,
     session_id: panel.state.sessionId || null,
     synthetic: true,
+  };
+}
+
+function syntheticFailureAgentMessage(panel, failure, fallbackStage = "frontend") {
+  if (!failure || typeof failure !== "object") {
+    return null;
+  }
+  const text = failure.user_facing_message || failure.message || failure.error || null;
+  if (!text) {
+    return null;
+  }
+  const detailTurnId =
+    typeof failure.turn_id === "string" && failure.turn_id
+      ? failure.turn_id
+      : (typeof panel?.state?.turnId === "string" && panel.state.turnId ? panel.state.turnId : null);
+  const stage = failure.stage || fallbackStage || "frontend";
+  const kind = failure.kind || "Error";
+  return {
+    role: "agent",
+    text,
+    detail_turn_id: detailTurnId,
+    session_id: failure.session_id || panel?.state?.sessionId || null,
+    synthetic: true,
+    failure_kind: kind,
+    failure_stage: stage,
+    local_id: `failure:${detailTurnId || "local"}:${kind}:${stage}`,
   };
 }
 
@@ -4677,7 +4763,9 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
   const detailTurnKey =
     typeof msg.turn_id === "string" && msg.turn_id
       ? `turn:${msg.turn_id}`
-      : `agent:${messageKey || messageIndex}:${String(msg.text || "").slice(0, 24)}`;
+      : (typeof msg.detail_turn_id === "string" && msg.detail_turn_id
+        ? `turn:${msg.detail_turn_id}:failure:${messageKey || messageIndex}`
+        : `agent:${messageKey || messageIndex}:${String(msg.text || "").slice(0, 24)}`);
   const detailSnapshot = detailSnapshotForMessage(panel, msg);
   const detailRow = el("div");
   Object.assign(detailRow.style, {
@@ -4727,6 +4815,7 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
     Array.isArray(detailSnapshot?.fieldChanges) ? String(detailSnapshot.fieldChanges.length) : "",
     Array.isArray(msg?.field_changes) ? String(msg.field_changes.length) : "",
     msg?.turn_id || "",
+    msg?.detail_turn_id || "",
     String(msg?.text || "").slice(0, 80),
   ];
   const detailSignature = detailSigParts.join("|");
@@ -7095,6 +7184,9 @@ function turnIdForBubbleDetail(message = null, snapshot = null) {
   if (typeof message?.turn_id === "string" && message.turn_id) {
     return message.turn_id;
   }
+  if (typeof message?.detail_turn_id === "string" && message.detail_turn_id) {
+    return message.detail_turn_id;
+  }
   if (typeof snapshot?.turn_id === "string" && snapshot.turn_id) {
     return snapshot.turn_id;
   }
@@ -8658,10 +8750,13 @@ async function applyAgentCandidate(panel) {
       const authoritativeBackendReject =
         e?.ok === false
         && !["MalformedResponse", "AcceptError", "NetworkError"].includes(String(e?.kind || ""));
+      const recovery = recoveryForFailure(failure, panel, acceptBody);
       const obligations = transition(panel, "ACCEPT_REJECTED", {
         failure,
         acceptBody,
         authoritativeBackendReject,
+        ...(recovery ? { rebaselineRecovery: recovery } : {}),
+        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "accept"),
         disabledApplyEligibility: authoritativeBackendReject
           ? disabledApplyEligibility(
               APPLY_ELIGIBILITY_REASON.SUPERSEDED,
@@ -8701,7 +8796,7 @@ async function applyAgentCandidate(panel) {
       const failure = agentPanelFailure("StaleStateMismatch", "The canvas changed while Apply was waiting for backend acceptance. Candidate loading is blocked.", {
         retryable: true,
         graph_unchanged: true,
-        next_action: "Submit a new edit from the current canvas.",
+        next_action: "Rebaseline and retry from the current canvas.",
         client_graph_hash: currentBeforeLoad.graphHash,
         client_structural_graph_hash: currentBeforeLoad.structuralHash,
         expected_graph_hash: stateCheckGraphHash,
@@ -8711,6 +8806,8 @@ async function applyAgentCandidate(panel) {
       });
       const obligations = transition(panel, "STALE_CANVAS_APPLY", {
         failure,
+        rebaselineRecovery: recoveryForFailure(failure, panel, acceptBody),
+        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
         debugPayload: failure,
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
@@ -8760,6 +8857,7 @@ async function applyAgentCandidate(panel) {
       const obligations = transition(panel, "CANVAS_APPLY_FAILURE", {
         failure,
         accepted,
+        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "canvas_apply"),
         undoStackDepth: panel.state.undoStack.length,
         debugPayload: {
           ...failure,
