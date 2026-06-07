@@ -13,10 +13,13 @@ and step constructors.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, cast
 
+from arnold.pipeline.declaration_lowering import derive_binding_map
 from arnold.pipeline.builder import PipelineBuilder as _BasePipelineBuilder
+from arnold.pipeline.step_invocation import StepInvocation
 
 from arnold.pipelines.megaplan._pipeline.patterns import (
     PromoteFn,
@@ -42,6 +45,23 @@ from arnold.pipelines.megaplan._pipeline.types import (
 WorkerFn = Callable[..., str]
 PromptRegistryFn = Callable[[str], str]
 ReviewerSpec = tuple[str, str]  # (reviewer_id, prompt_ref)
+ReadDecl = Any
+WriteDecl = Any
+
+
+def _legacy_model_invocation(
+    *,
+    prompt_ref: str,
+    input_refs: Sequence[str],
+    prompt_key: str | None = None,
+) -> StepInvocation:
+    """Derive the legacy authored model invocation shape when unambiguous."""
+    metadata: dict[str, Any] = {"prompt": prompt_ref}
+    if input_refs:
+        metadata["input_refs"] = list(input_refs)
+    if prompt_key is not None:
+        metadata["prompt_key"] = prompt_key
+    return StepInvocation(kind="model", metadata=metadata)
 
 
 class PipelineBuilder(_BasePipelineBuilder):
@@ -106,7 +126,16 @@ class PipelineBuilder(_BasePipelineBuilder):
         prompt: str,
         inputs: Sequence[str] = (),
         prompt_key: str | None = None,
+        reads: Sequence[ReadDecl] = (),
+        writes: Sequence[WriteDecl] = (),
+        invocation: StepInvocation | None = None,
+        required_capabilities: Sequence[str] = (),
     ) -> "PipelineBuilder":
+        stage_invocation = invocation or _legacy_model_invocation(
+            prompt_ref=prompt,
+            input_refs=inputs,
+            prompt_key=prompt_key,
+        )
         step = AgentStep(
             name=stage_name,
             kind="produce",
@@ -121,8 +150,18 @@ class PipelineBuilder(_BasePipelineBuilder):
             _prompt_registry=self._prompt_registry,
             _panel_reviewer_order={k: list(v) for k, v in self._panel_reviewer_order.items()},
             _mode="",
+            _invocation=stage_invocation,
+            _invocation_explicit=invocation is not None,
         )
-        stage = Stage(name=stage_name, step=cast(Step, step), edges=())
+        stage = Stage(
+            name=stage_name,
+            step=cast(Step, step),
+            edges=(),
+            reads=tuple(reads),
+            writes=tuple(writes),
+            invocation=stage_invocation,
+            required_capabilities=tuple(required_capabilities),
+        )
         self.add_stage(stage, emit_label="done")
         return self
 
@@ -134,6 +173,10 @@ class PipelineBuilder(_BasePipelineBuilder):
         inputs: Sequence[str] = (),
         merge: str = "none",
         max_workers: int | None = None,
+        reads: Sequence[ReadDecl] = (),
+        writes: Sequence[WriteDecl] = (),
+        invocation: StepInvocation | None = None,
+        required_capabilities: Sequence[str] = (),
     ) -> "PipelineBuilder":
         reviewer_pairs: list[tuple[str, Step]] = []
         ids: list[str] = []
@@ -170,6 +213,10 @@ class PipelineBuilder(_BasePipelineBuilder):
             merge_strategy=merge,
             max_workers=max_workers,
             next_label="next",
+            reads=tuple(reads),
+            writes=tuple(writes),
+            invocation=invocation,
+            required_capabilities=tuple(required_capabilities),
         )
         self.add_parallel_stage(parallel, emit_label="next")
         return self
@@ -184,6 +231,10 @@ class PipelineBuilder(_BasePipelineBuilder):
         on_tiebreaker: str,
         on_escalate: str,
         extra_edges: tuple[Edge, ...] = (),
+        reads: Sequence[ReadDecl] = (),
+        writes: Sequence[WriteDecl] = (),
+        invocation: StepInvocation | None = None,
+        required_capabilities: Sequence[str] = (),
     ) -> "PipelineBuilder":
         """Add a gate stage with the four ``kind='decision'``
         edges plus any caller-supplied ``extra_edges`` in order. Gate
@@ -201,7 +252,15 @@ class PipelineBuilder(_BasePipelineBuilder):
             on_escalate=on_escalate,
             gate_extra_edges=extra_edges,
         )
-        stage = Stage(name=stage_name, step=step, edges=gate_edges)
+        stage = Stage(
+            name=stage_name,
+            step=step,
+            edges=gate_edges,
+            reads=tuple(reads),
+            writes=tuple(writes),
+            invocation=invocation,
+            required_capabilities=tuple(required_capabilities),
+        )
         self.add_stage(stage, emit_label=None)
         return self
 
@@ -212,6 +271,10 @@ class PipelineBuilder(_BasePipelineBuilder):
         artifact: str,
         options: Sequence[str],
         edges: Mapping[str, str],
+        reads: Sequence[ReadDecl] = (),
+        writes: Sequence[WriteDecl] = (),
+        invocation: StepInvocation | None = None,
+        required_capabilities: Sequence[str] = (),
     ) -> "PipelineBuilder":
         """Add a human-pause gate. ``artifact`` names the stage whose
         latest versioned output the human reviews; ``options`` are the
@@ -235,7 +298,15 @@ class PipelineBuilder(_BasePipelineBuilder):
         stage_edges: tuple[Edge, ...] = tuple(
             Edge(label=option, target=edges[option]) for option in options
         )
-        stage = Stage(name=stage_name, step=cast(Step, step), edges=stage_edges)
+        stage = Stage(
+            name=stage_name,
+            step=cast(Step, step),
+            edges=stage_edges,
+            reads=tuple(reads),
+            writes=tuple(writes),
+            invocation=invocation,
+            required_capabilities=tuple(required_capabilities),
+        )
         self.add_stage(stage, emit_label=None)
         return self
 
@@ -247,6 +318,10 @@ class PipelineBuilder(_BasePipelineBuilder):
         promote: PromoteFn,
         when: Callable[[Mapping[str, Any]], bool] | None = None,
         artifact_subdir: str | None = None,
+        reads: Sequence[ReadDecl] = (),
+        writes: Sequence[WriteDecl] = (),
+        invocation: StepInvocation | None = None,
+        required_capabilities: Sequence[str] = (),
     ) -> "PipelineBuilder":
         """Add a :class:`SubloopStep` running *child* as a nested
         pipeline. *when* is documentation-only (consumed by an upstream
@@ -258,7 +333,15 @@ class PipelineBuilder(_BasePipelineBuilder):
             promote=promote,
             artifact_subdir=artifact_subdir,
         )
-        stage = Stage(name=name, step=cast(Step, step), edges=())
+        stage = Stage(
+            name=name,
+            step=cast(Step, step),
+            edges=(),
+            reads=tuple(reads),
+            writes=tuple(writes),
+            invocation=invocation,
+            required_capabilities=tuple(required_capabilities),
+        )
         # SubloopStep emits next=<recommendation>; default promote yields
         # "proceed", so use that as the natural emit label for auto-link.
         self.add_stage(stage, emit_label="proceed")
@@ -271,6 +354,10 @@ class PipelineBuilder(_BasePipelineBuilder):
         on_iterate: str = "critique",
         on_proceed: str = "finalize",
         on_escalate: str = "finalize",
+        reads: Sequence[ReadDecl] = (),
+        writes: Sequence[WriteDecl] = (),
+        invocation: StepInvocation | None = None,
+        required_capabilities: Sequence[str] = (),
     ) -> "PipelineBuilder":
         """Plug in the canonical :class:`TiebreakerStep` with the
         LOAD-BEARING decision-kind edge tuple from T11. The legacy
@@ -290,7 +377,15 @@ class PipelineBuilder(_BasePipelineBuilder):
             on_proceed=on_proceed,
             on_escalate=on_escalate,
         )
-        stage = Stage(name=name, step=cast(Step, step), edges=tb_edges)
+        stage = Stage(
+            name=name,
+            step=cast(Step, step),
+            edges=tb_edges,
+            reads=tuple(reads),
+            writes=tuple(writes),
+            invocation=invocation,
+            required_capabilities=tuple(required_capabilities),
+        )
         self.add_stage(stage, emit_label=None)
         return self
 
@@ -337,19 +432,10 @@ class PipelineBuilder(_BasePipelineBuilder):
         prev = self._stages[self._last_stage]
 
         escalation_step, escape_edge = _escalate_if(condition, handler)
-        new_edges = prev.edges + (escape_edge,)
-        if isinstance(prev, ParallelStage):
-            self._stages[self._last_stage] = ParallelStage(
-                name=prev.name,
-                steps=prev.steps,
-                join=prev.join,
-                edges=new_edges,
-                max_workers=prev.max_workers,
-            )
-        else:
-            self._stages[self._last_stage] = Stage(
-                name=prev.name, step=prev.step, edges=new_edges
-            )
+        self._stages[self._last_stage] = replace(
+            prev,
+            edges=prev.edges + (escape_edge,),
+        )
 
         # Register the escalation handler as a terminal Stage on the
         # graph; the caller is responsible for further routing.
@@ -385,10 +471,17 @@ class PipelineBuilder(_BasePipelineBuilder):
             raise ValueError(
                 f"PipelineBuilder({self.name!r}).build(): no stages added"
             )
+        edges = [
+            (src_name, edge.target)
+            for src_name, stage in self._stages.items()
+            for edge in getattr(stage, "edges", ())
+            if edge.target != "halt"
+        ]
         return Pipeline(
             stages=dict(self._stages),
             entry=self._entry,
             overlays=tuple(self._overlays),
+            binding_map=derive_binding_map(dict(self._stages), edges),
         )
 
     # ── internals (override — uses Megaplan Edge/Stage types) ─────────
@@ -406,20 +499,10 @@ class PipelineBuilder(_BasePipelineBuilder):
                 e.label == new_edge.label and e.target == new_edge.target
                 for e in prev.edges
             ):
-                if isinstance(prev, ParallelStage):
-                    self._stages[self._last_stage] = ParallelStage(
-                        name=prev.name,
-                        steps=prev.steps,
-                        join=prev.join,
-                        edges=prev.edges + (new_edge,),
-                        max_workers=prev.max_workers,
-                    )
-                else:
-                    self._stages[self._last_stage] = Stage(
-                        name=prev.name,
-                        step=prev.step,
-                        edges=prev.edges + (new_edge,),
-                    )
+                self._stages[self._last_stage] = replace(
+                    prev,
+                    edges=prev.edges + (new_edge,),
+                )
 
 
 __all__ = ["PipelineBuilder"]

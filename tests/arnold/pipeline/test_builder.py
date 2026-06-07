@@ -9,11 +9,16 @@ from arnold.pipeline.types import (
     Edge,
     ParallelStage,
     Pipeline,
+    Port,
+    PortRef,
+    ReadRef,
     Stage,
     Step,
     StepContext,
     StepResult,
+    WriteRef,
 )
+from arnold.pipeline.step_invocation import StepInvocation
 
 
 class _TrivialStep:
@@ -91,6 +96,133 @@ class TestNeutralBuilder:
         a_stage = p.stages["a"]
         targets = {e.target for e in a_stage.edges}
         assert targets == {"b", "c"}
+        assert p.binding_map is None
+
+    def test_build_derives_binding_map_from_clean_typed_declarations(self):
+        b = PipelineBuilder("test", "typed authoring pipeline")
+        b.add_stage(
+            Stage(
+                name="src",
+                step=_TrivialStep("src"),
+                edges=(Edge(label="done", target="sink"),),
+                writes=(Port(name="draft", content_type="text/markdown"),),
+            )
+        )
+        b.add_stage(
+            Stage(
+                name="sink",
+                step=_TrivialStep("sink"),
+                edges=(),
+                reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+            )
+        )
+
+        p = b.build()
+
+        assert p.binding_map == {("sink", "draft"): ("src", "draft")}
+
+    def test_build_skips_binding_map_when_declarations_drift(self):
+        b = PipelineBuilder("test", "drifted authoring pipeline")
+        b.add_stage(
+            Stage(
+                name="src",
+                step=_TrivialStep("src"),
+                edges=(Edge(label="done", target="sink"),),
+                writes=(Port(name="draft", content_type="text/markdown"),),
+                produces=(Port(name="other", content_type="text/markdown"),),
+            )
+        )
+        b.add_stage(
+            Stage(
+                name="sink",
+                step=_TrivialStep("sink"),
+                edges=(),
+                reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+            )
+        )
+
+        p = b.build()
+
+        assert p.binding_map is None
+        src = p.stages["src"]
+        sink = p.stages["sink"]
+        assert src.writes == (
+            Port(name="draft", content_type="text/markdown"),
+        )
+        assert src.produces == (
+            Port(name="other", content_type="text/markdown"),
+        )
+        assert sink.reads == (
+            PortRef(port_name="draft", content_type="text/markdown"),
+        )
+
+    def test_add_caller_supplied_edges_preserves_unrelated_stage_fields(self):
+        b = PipelineBuilder("test", "field preservation pipeline")
+        invocation = StepInvocation(kind="model", metadata={"prompt": "hi"})
+        loop_condition = lambda state: False
+        stage = Stage(
+            name="a",
+            step=_TrivialStep("a"),
+            edges=(),
+            reads=(ReadRef(name="brief.md"),),
+            writes=(WriteRef(name="draft.md"),),
+            produces=(Port(name="draft", content_type="text/markdown"),),
+            consumes=(PortRef(port_name="brief", content_type="text/markdown"),),
+            invocation=invocation,
+            required_capabilities=("llm", "fs-read"),
+            decision_vocabulary=frozenset({"proceed"}),
+            override_vocabulary=frozenset({"abort"}),
+            loop_condition=loop_condition,
+        )
+        b.add_stage(stage)
+        b.add_caller_supplied_edges({"a": ["b"]})
+        updated = b.build().stages["a"]
+
+        assert updated.edges == (Edge(label="b", target="b"),)
+        assert updated.reads == stage.reads
+        assert updated.writes == stage.writes
+        assert updated.produces == stage.produces
+        assert updated.consumes == stage.consumes
+        assert updated.invocation == invocation
+        assert updated.required_capabilities == stage.required_capabilities
+        assert updated.decision_vocabulary == stage.decision_vocabulary
+        assert updated.override_vocabulary == stage.override_vocabulary
+        assert updated.loop_condition is loop_condition
+
+    def test_auto_link_preserves_unrelated_parallel_stage_fields(self):
+        b = PipelineBuilder("test", "parallel field preservation pipeline")
+        invocation = StepInvocation(kind="tool", metadata={"action": "fanout"})
+        join_fn = lambda results, ctx: StepResult(next="halt")
+        loop_condition = lambda state: True
+        fanout = ParallelStage(
+            name="fanout",
+            steps=(_TrivialStep("a"), _TrivialStep("b")),
+            join=join_fn,
+            edges=(),
+            reads=(ReadRef(name="brief.md"),),
+            writes=(WriteRef(name="draft.md"),),
+            produces=(Port(name="draft", content_type="text/markdown"),),
+            consumes=(PortRef(port_name="brief", content_type="text/markdown"),),
+            invocation=invocation,
+            required_capabilities=("llm", "fs-write"),
+            decision_vocabulary=frozenset({"continue"}),
+            override_vocabulary=frozenset({"stop"}),
+            loop_condition=loop_condition,
+        )
+        b.add_parallel_stage(fanout, emit_label="done")
+        b.add_stage(Stage(name="after", step=_TrivialStep("after"), edges=()))
+        updated = b.build().stages["fanout"]
+
+        assert updated.edges == (Edge(label="done", target="after"),)
+        assert updated.reads == fanout.reads
+        assert updated.writes == fanout.writes
+        assert updated.produces == fanout.produces
+        assert updated.consumes == fanout.consumes
+        assert updated.invocation == invocation
+        assert updated.required_capabilities == fanout.required_capabilities
+        assert updated.decision_vocabulary == fanout.decision_vocabulary
+        assert updated.override_vocabulary == fanout.override_vocabulary
+        assert updated.loop_condition is loop_condition
 
     def test_attach_resource_bundles(self):
         b = PipelineBuilder("test", "resources pipeline")

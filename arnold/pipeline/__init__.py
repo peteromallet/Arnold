@@ -75,6 +75,13 @@ from arnold.pipeline.executor import (
     ParallelSafePredicate,
     run_pipeline,
 )
+from arnold.pipeline.model_resource_capabilities import (
+    MODEL_RESOURCE_CAPABILITIES,
+    CapabilityEvidence,
+    CapabilityProof,
+    prove_invocation_capabilities,
+    prove_stage_required_capabilities,
+)
 from arnold.pipeline.pattern_joins import majority_vote, weighted_vote
 from arnold.pipeline.pattern_select import select, threshold, top_1, top_k
 from arnold.pipeline.pattern_stops import LoopState, max_iters, no_improvement, plateau, threshold_reached
@@ -83,6 +90,7 @@ from arnold.pipeline.pipeline_id_registry import (
     PipelineIdRegistry,
     PipelineIdRegistryError,
     load_pipeline_id_registry,
+    load_pipeline_id_registries,
 )
 from arnold.pipeline.profiles import (
     AgentSpecShape,
@@ -200,6 +208,7 @@ __all__ = [
     "LoopState",
     "Manifest",
     "ManifestError",
+    "MODEL_RESOURCE_CAPABILITIES",
     "ParallelSafePredicate",
     "ParallelStage",
     "Pipeline",
@@ -239,6 +248,8 @@ __all__ = [
     "SeamId",
     "SeamResolution",
     "TrustTier",
+    "CapabilityEvidence",
+    "CapabilityProof",
     "ValidationDiagnostic",
     "ValidationResult",
     "apply_delta",
@@ -263,6 +274,7 @@ __all__ = [
     "load_profile_metadata",
     "load_profile_sources",
     "load_pipeline_id_registry",
+    "load_pipeline_id_registries",
     "load_profiles",
     "majority_vote",
     "max_iters",
@@ -273,6 +285,8 @@ __all__ = [
     "parse_agent_spec_shape",
     "parse_profiles_doc",
     "plateau",
+    "prove_invocation_capabilities",
+    "prove_stage_required_capabilities",
     "read_manifest",
     "reduce_contract_results",
     "register_schema",

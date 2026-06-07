@@ -24,6 +24,7 @@ import hashlib
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Callable, Iterable, Mapping
 
+from arnold.pipeline.declaration_lowering import lower_stage_declarations
 from arnold.pipeline.types import Port, _canonical_json_dumps
 
 
@@ -266,9 +267,9 @@ def _levenshtein(a: str, b: str) -> int:
 
 def _stage_produces(stage: Any) -> tuple:
     """Duck-typed: return produces from stage or its step."""
-    produces = getattr(stage, "produces", None)
-    if produces:
-        return tuple(produces)
+    lowered = lower_stage_declarations(stage)
+    if lowered.effective_produces:
+        return lowered.effective_produces
     # ParallelStage has no step attribute; bail.
     step = getattr(stage, "step", None)
     if step is None:
@@ -281,9 +282,9 @@ def _stage_produces(stage: Any) -> tuple:
 
 def _stage_consumes(stage: Any) -> tuple:
     """Duck-typed: return consumes from stage or its step."""
-    consumes = getattr(stage, "consumes", None)
-    if consumes:
-        return tuple(consumes)
+    lowered = lower_stage_declarations(stage)
+    if lowered.effective_consumes:
+        return lowered.effective_consumes
     step = getattr(stage, "step", None)
     if step is None:
         return ()

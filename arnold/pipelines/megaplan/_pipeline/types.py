@@ -73,6 +73,7 @@ from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnve
 if TYPE_CHECKING:  # pragma: no cover - typing-only aliases
     BudgetRef = Any
     Profile = Any
+    from arnold.pipeline.step_invocation import StepInvocation
 
 
 NextEdge = str
@@ -247,8 +248,12 @@ class Stage:
     name: str
     step: Step
     edges: tuple[Edge, ...] = ()
+    reads: tuple["ReadRef", ...] = field(default_factory=tuple)
+    writes: tuple["WriteRef", ...] = field(default_factory=tuple)
     produces: tuple["Port", ...] = field(default_factory=tuple)
     consumes: tuple["PortRef", ...] = field(default_factory=tuple)
+    invocation: "StepInvocation | None" = None
+    required_capabilities: tuple[str, ...] = field(default_factory=tuple)
     loop_condition: Callable[[Any], bool] | None = None
     decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
     override_vocabulary: frozenset[str] = field(default_factory=frozenset)
@@ -281,8 +286,12 @@ class ParallelStage:
     join: Callable[[list[StepResult], StepContext], StepResult]
     edges: tuple[Edge, ...] = ()
     max_workers: int | None = None
+    reads: tuple["ReadRef", ...] = field(default_factory=tuple)
+    writes: tuple["WriteRef", ...] = field(default_factory=tuple)
     produces: tuple["Port", ...] = field(default_factory=tuple)
     consumes: tuple["PortRef", ...] = field(default_factory=tuple)
+    invocation: "StepInvocation | None" = None
+    required_capabilities: tuple[str, ...] = field(default_factory=tuple)
     decision_vocabulary: frozenset[str] = field(default_factory=frozenset)
     override_vocabulary: frozenset[str] = field(default_factory=frozenset)
 
@@ -556,9 +565,11 @@ from arnold.pipeline.types import (  # noqa: E402  # M3a compatibility bridge; d
     Port,
     PortCardinality,
     PortRef,
+    ReadRef,
     ReduceResult,
     RoutingKey,
     SelectionResult,
+    WriteRef,
     _canonical_json_dumps,
     register_schema,
 )

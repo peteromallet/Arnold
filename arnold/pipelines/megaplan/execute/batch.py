@@ -480,6 +480,7 @@ def _capture_execute_payload(
     resolved_model: str | None,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
+    payload = _normalize_execute_capture_payload(payload)
     outcome = capture_step_output(
         StepInvocation(
             kind="model",
@@ -492,6 +493,55 @@ def _capture_execute_payload(
         payload,
     )
     return dict(outcome.legacy_payload)
+
+
+def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize receipt-shaped execute output before structural capture."""
+
+    normalized = dict(payload)
+    task_updates: list[Any] = []
+    for item in normalized.get("task_updates") or []:
+        if not isinstance(item, dict):
+            task_updates.append(item)
+            continue
+        update = {
+            key: item[key]
+            for key in (
+                "task_id",
+                "status",
+                "executor_notes",
+                "files_changed",
+                "commands_run",
+                "auto_attributed_files",
+            )
+            if key in item
+        }
+        if "task_id" not in update and isinstance(item.get("id"), str):
+            update["task_id"] = item["id"]
+        update.setdefault("files_changed", [])
+        update.setdefault("commands_run", [])
+        update.setdefault("auto_attributed_files", False)
+        task_updates.append(update)
+    normalized["task_updates"] = task_updates
+
+    acknowledgments: list[Any] = []
+    for item in normalized.get("sense_check_acknowledgments") or []:
+        if not isinstance(item, dict):
+            acknowledgments.append(item)
+            continue
+        acknowledgment = {
+            key: item[key]
+            for key in (
+                "sense_check_id",
+                "executor_note",
+            )
+            if key in item
+        }
+        if "sense_check_id" not in acknowledgment and isinstance(item.get("id"), str):
+            acknowledgment["sense_check_id"] = item["id"]
+        acknowledgments.append(acknowledgment)
+    normalized["sense_check_acknowledgments"] = acknowledgments
+    return normalized
 
 
 def _default_max_tasks_per_batch() -> int:

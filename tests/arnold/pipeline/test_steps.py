@@ -13,12 +13,14 @@ Proves:
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from arnold.pipeline import ContractResult
 from arnold.pipeline.resources import PipelineResourceBundle
 from arnold.pipeline.steps.agent import AgentStep
 from arnold.pipeline.steps.panel import PanelReviewerStep
@@ -337,6 +339,104 @@ class TestMegaplanBridgeSteps:
         assert str(ctx.plan_dir) in str(output_path)
         assert output_path.exists()
 
+    def test_megaplan_agent_model_invocation_runs_render_and_capture_once(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Declared model invocations render/capture once and keep markdown output."""
+        import arnold.pipelines.megaplan._pipeline.steps.agent as mega_agent_module
+        from arnold.pipeline.step_invocation import StepInvocation
+        from arnold.pipelines.megaplan.model_seam import (
+            CaptureOutcome,
+            ModelSeamTelemetry,
+            ModelTier,
+            RenderedStepMessage,
+            TierMetadata,
+        )
+        from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep as MegaAgentStep
+        from arnold.pipelines.megaplan._pipeline.types import StepContext as MegaStepContext
+
+        pipeline_dir = tmp_path / "pipeline"
+        pipeline_dir.mkdir(parents=True, exist_ok=True)
+        (pipeline_dir / "write_a_plan.md").write_text("Write a plan for {topic}.")
+
+        step = MegaAgentStep(
+            name="draft",
+            _prompt_ref="write_a_plan.md",
+            _pipeline_dir=pipeline_dir,
+            _pipeline_name="writer",
+            _input_refs=["topic"],
+            _worker=lambda **kwargs: json.dumps({"output": kwargs["prompt"]}),
+            _invocation=StepInvocation.model(
+                adapter_config={
+                    "schema": {
+                        "type": "object",
+                        "properties": {"output": {"type": "string"}},
+                    },
+                    "system": "follow the schema",
+                },
+                metadata={"worker": "codex", "validation_step": "draft"},
+            ),
+        )
+        ctx = MegaStepContext(
+            plan_dir=tmp_path / "plan_dir",
+            state={},
+            profile=None,
+            mode="default",
+            inputs={"topic": tmp_path / "topic.md"},
+        )
+        ctx.plan_dir.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "topic.md").write_text("testing")
+
+        render_calls: list[StepInvocation] = []
+        capture_calls: list[tuple[StepInvocation, Any]] = []
+
+        def _fake_render(invocation: StepInvocation) -> RenderedStepMessage:
+            render_calls.append(invocation)
+            assert invocation.metadata["worker"] == "codex"
+            assert invocation.metadata["system"] == "follow the schema"
+            assert invocation.metadata["schema"] == {
+                "type": "object",
+                "properties": {"output": {"type": "string"}},
+            }
+            assert invocation.metadata["prompt"] == "Write a plan for testing."
+            assert invocation.metadata["message"] == "Write a plan for testing."
+            return RenderedStepMessage(
+                text="rendered for worker",
+                prompt="rendered for worker",
+                metadata=invocation.metadata,
+                telemetry=ModelSeamTelemetry(
+                    tier=TierMetadata(tier=ModelTier.ENFORCED, enforced=True, worker="codex"),
+                ),
+            )
+
+        expected_contract = ContractResult(payload={"captured": True})
+
+        def _fake_capture(invocation: StepInvocation, output: Any) -> CaptureOutcome:
+            capture_calls.append((invocation, output))
+            return CaptureOutcome(
+                contract_result=expected_contract,
+                legacy_payload={"output": "rendered for worker"},
+                telemetry=ModelSeamTelemetry(
+                    tier=TierMetadata(tier=ModelTier.ENFORCED, enforced=True, worker="codex"),
+                ),
+            )
+
+        monkeypatch.setattr(mega_agent_module, "render_step_message", _fake_render)
+        monkeypatch.setattr(mega_agent_module, "capture_step_output", _fake_capture)
+
+        result = step.run(ctx)
+
+        assert len(render_calls) == 1
+        assert len(capture_calls) == 1
+        assert capture_calls[0][0] == render_calls[0]
+        assert capture_calls[0][1] == json.dumps({"output": "rendered for worker"})
+        assert result.contract_result is expected_contract
+        output_path = result.outputs["draft"]
+        assert output_path.read_text(encoding="utf-8") == json.dumps({"output": "rendered for worker"})
+        assert output_path.name == "v1.md"
+
     def test_megaplan_panel_step_uses_plan_dir(self, tmp_path: Path) -> None:
         """Legacy PanelReviewerStep writes under ctx.plan_dir with reviewer_id."""
         from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep as MegaPanelStep
@@ -369,6 +469,77 @@ class TestMegaplanBridgeSteps:
         # Expected: <plan_dir>/panel_review/pessimist/v1.md
         expected_dir = ctx.plan_dir / "panel_review" / "pessimist"
         assert output_path.parent == expected_dir
+
+    def test_megaplan_agent_step_wraps_structural_audit_failure_with_author_diagnostic(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import arnold.pipelines.megaplan._pipeline.steps.agent as mega_agent_module
+        from arnold.pipeline import Port
+        from arnold.pipeline.step_invocation import StepInvocation
+        from arnold.pipelines.megaplan.model_seam import (
+            CaptureOutcome,
+            ModelSeamTelemetry,
+            ModelStructuralAuditError,
+            ModelTier,
+            RenderedStepMessage,
+            TierMetadata,
+        )
+        from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep as MegaAgentStep
+        from arnold.pipelines.megaplan._pipeline.types import StepContext as MegaStepContext
+
+        pipeline_dir = tmp_path / "pipeline"
+        pipeline_dir.mkdir(parents=True, exist_ok=True)
+        (pipeline_dir / "write_a_plan.md").write_text("Write a plan for {topic}.")
+
+        step = MegaAgentStep(
+            name="draft",
+            _prompt_ref="write_a_plan.md",
+            _pipeline_dir=pipeline_dir,
+            _pipeline_name="writer",
+            _input_refs=["topic"],
+            _worker=lambda **kwargs: json.dumps({"output": kwargs["prompt"]}),
+            _invocation=StepInvocation.model(adapter_config={"schema": {"type": "object"}}),
+            produces=(Port(name="result", content_type="application/json", logical_type="review"),),
+        )
+        ctx = MegaStepContext(
+            plan_dir=tmp_path / "plan_dir",
+            state={},
+            profile=None,
+            mode="default",
+            inputs={"topic": tmp_path / "topic.md"},
+        )
+        ctx.plan_dir.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "topic.md").write_text("testing")
+
+        monkeypatch.setattr(
+            mega_agent_module,
+            "render_step_message",
+            lambda invocation: RenderedStepMessage(
+                text="rendered",
+                prompt="rendered",
+                metadata=invocation.metadata,
+                telemetry=ModelSeamTelemetry(
+                    tier=TierMetadata(tier=ModelTier.ENFORCED, enforced=True, worker="codex"),
+                ),
+            ),
+        )
+
+        def _boom(invocation: StepInvocation, output: Any) -> CaptureOutcome:
+            raise ModelStructuralAuditError("schema_mismatch at /output: expected string")
+
+        monkeypatch.setattr(mega_agent_module, "capture_step_output", _boom)
+
+        with pytest.raises(ValueError, match="Typed contract violation") as excinfo:
+            step.run(ctx)
+
+        message = str(excinfo.value)
+        assert "producer_stage='draft'" in message
+        assert "consumer_stage='model_capture'" in message
+        assert "logical_type='review'" in message
+        assert "failure_code='worker_structural_audit_failed'" in message
+        assert "Suggested author action:" in message
 
 
 # ── Import path smoke tests ────────────────────────────────────────────────

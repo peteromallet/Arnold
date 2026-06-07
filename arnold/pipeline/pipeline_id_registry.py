@@ -24,32 +24,72 @@ class PipelineIdRegistryError(ValueError):
 def load_pipeline_id_registry(path: str | Path) -> PipelineIdRegistry:
     """Load and validate a pipeline ID registry JSON file."""
 
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return _load_pipeline_id_registry_set((path,))
+
+
+def load_pipeline_id_registries(paths: Iterable[str | Path]) -> PipelineIdRegistry:
+    """Load and validate multiple registry files as one aggregate set."""
+
+    return _load_pipeline_id_registry_set(paths)
+
+
+def _load_pipeline_id_registry_set(paths: Iterable[str | Path]) -> PipelineIdRegistry:
+    path_list = [Path(path) for path in paths]
+    aggregate = len(path_list) > 1
+    pipelines: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    for path in path_list:
+        data, load_errors = _load_registry_json(path)
+        errors.extend(load_errors)
+        if data is None:
+            continue
+        raw_pipelines = data.get("pipelines")
+        assert isinstance(raw_pipelines, list)
+        for index, raw in enumerate(raw_pipelines):
+            if not isinstance(raw, Mapping):
+                errors.append(_format_error(path, f"pipelines[{index}] must be an object", aggregate=aggregate))
+                continue
+            pipelines.append({"__registry_path__": str(path), **dict(raw)})
+
+    if errors:
+        raise PipelineIdRegistryError("; ".join(errors))
+    return _validate_registry_items(pipelines, aggregate=aggregate)
+
+
+def _load_registry_json(path: Path) -> tuple[Mapping[str, Any] | None, list[str]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, Mapping):
-        raise PipelineIdRegistryError("pipeline ID registry must be a JSON object")
+        return None, [f"pipeline ID registry at {path} must be a JSON object"]
     raw_pipelines = data.get("pipelines")
     if not isinstance(raw_pipelines, list):
-        raise PipelineIdRegistryError("pipeline ID registry requires a pipelines list")
+        return None, [f"pipeline ID registry at {path} requires a pipelines list"]
+    return data, []
 
+
+def _validate_registry_items(
+    items: list[dict[str, Any]],
+    *,
+    aggregate: bool,
+) -> PipelineIdRegistry:
     pipelines: list[dict[str, Any]] = []
-    seen_names: set[str] = set()
+    seen_names: dict[str, str] = {}
     seen_stable_ids: dict[str, str] = {}
     seen_seam_ids: dict[str, str] = {}
     seen_previous_stable_ids: dict[str, str] = {}
     errors: list[str] = []
 
-    for index, raw in enumerate(raw_pipelines):
-        if not isinstance(raw, Mapping):
-            errors.append(f"pipelines[{index}] must be an object")
-            continue
-        item = dict(raw)
+    for item in items:
+        registry_path = str(item.pop("__registry_path__", ""))
         name = item.get("name")
         if not isinstance(name, str) or not name:
-            errors.append(f"pipelines[{index}] missing name")
+            errors.append(_format_error(registry_path, "pipeline entry missing name", aggregate=aggregate))
             continue
-        if name in seen_names:
-            errors.append(f"duplicate pipeline name {name!r}")
-        seen_names.add(name)
+        previous_name = seen_names.get(name)
+        if previous_name is not None:
+            errors.append(f"duplicate pipeline name {name!r} on {previous_name!r} and {name!r}")
+        else:
+            seen_names[name] = name
 
         stable_id = item.get("stable_id")
         contract_capable = bool(item.get("typed_contract_capable"))
@@ -60,6 +100,11 @@ def load_pipeline_id_registry(path: str | Path) -> PipelineIdRegistry:
             if previous is not None:
                 errors.append(f"duplicate stable_id {stable_id!r} on {previous!r} and {name!r}")
             else:
+                colliding_previous = seen_previous_stable_ids.get(stable_id)
+                if colliding_previous is not None:
+                    errors.append(
+                        f"active stable_id {stable_id!r} on {name!r} collides with previous_stable_id on {colliding_previous!r}"
+                    )
                 seen_stable_ids[stable_id] = name
         for previous_stable_id in _iter_previous_stable_ids(item.get("previous_stable_ids")):
             if previous_stable_id == stable_id:
@@ -92,6 +137,12 @@ def load_pipeline_id_registry(path: str | Path) -> PipelineIdRegistry:
     if errors:
         raise PipelineIdRegistryError("; ".join(errors))
     return PipelineIdRegistry(pipelines=tuple(pipelines))
+
+
+def _format_error(path: str | Path, message: str, *, aggregate: bool = False) -> str:
+    if aggregate:
+        return f"{path}: {message}"
+    return message
 
 
 def _iter_seam_ids(value: Any) -> Iterable[str]:

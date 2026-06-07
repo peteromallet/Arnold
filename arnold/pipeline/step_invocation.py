@@ -26,6 +26,51 @@ class StepInvocation:
     kind: str
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
+    @classmethod
+    def model(
+        cls,
+        *,
+        adapter_config: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> "StepInvocation":
+        """Construct a ``model`` invocation with canonical adapter metadata."""
+        return cls.with_adapter_config(
+            kind="model",
+            adapter_config=adapter_config,
+            metadata=metadata,
+        )
+
+    @classmethod
+    def with_adapter_config(
+        cls,
+        *,
+        kind: str,
+        adapter_config: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> "StepInvocation":
+        """Construct an invocation whose adapter config lives under ``metadata``."""
+        canonical_metadata = _metadata_with_adapter_config(
+            metadata=metadata,
+            adapter_config=adapter_config,
+        )
+        return cls(kind=kind, metadata=canonical_metadata)
+
+
+def _metadata_with_adapter_config(
+    *,
+    metadata: Mapping[str, Any] | None,
+    adapter_config: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    canonical_metadata = dict(metadata or {})
+    if adapter_config is None:
+        return canonical_metadata
+    canonical_adapter_config = dict(adapter_config)
+    existing_adapter_config = canonical_metadata.get("adapter_config")
+    if existing_adapter_config is not None and existing_adapter_config != canonical_adapter_config:
+        raise ValueError("conflicting adapter_config supplied via metadata and factory")
+    canonical_metadata["adapter_config"] = canonical_adapter_config
+    return canonical_metadata
+
 
 @runtime_checkable
 class StepInvocationAdapter(Protocol):

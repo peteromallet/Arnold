@@ -9,8 +9,10 @@ subclass at :mod:`megaplan._pipeline.builder`.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
+from arnold.pipeline.declaration_lowering import derive_binding_map
 from arnold.pipeline.types import Edge, ParallelStage, Pipeline, Stage
 
 
@@ -97,34 +99,7 @@ class PipelineBuilder:
                 Edge(label=tgt, target=tgt)
                 for tgt in targets
             )
-            if isinstance(stage, ParallelStage):
-                self._stages[src_name] = ParallelStage(
-                    name=stage.name,
-                    steps=stage.steps,
-                    join=stage.join,
-                    edges=stage.edges + new_edges,
-                    max_workers=stage.max_workers,
-                    decision_vocabulary=stage.decision_vocabulary,
-                    override_vocabulary=stage.override_vocabulary,
-                    reads=stage.reads,
-                    writes=stage.writes,
-                    produces=stage.produces,
-                    consumes=stage.consumes,
-                    loop_condition=stage.loop_condition,
-                )
-            else:
-                self._stages[src_name] = Stage(
-                    name=stage.name,
-                    step=stage.step,
-                    edges=stage.edges + new_edges,
-                    decision_vocabulary=stage.decision_vocabulary,
-                    override_vocabulary=stage.override_vocabulary,
-                    reads=stage.reads,
-                    writes=stage.writes,
-                    produces=stage.produces,
-                    consumes=stage.consumes,
-                    loop_condition=stage.loop_condition,
-                )
+            self._stages[src_name] = replace(stage, edges=stage.edges + new_edges)
         return self
 
     # ── resource bundles ──────────────────────────────────────────────
@@ -150,10 +125,16 @@ class PipelineBuilder:
             raise ValueError(
                 f"PipelineBuilder({self.name!r}).build(): no stages added"
             )
+        edges = [
+            (src_name, edge.target)
+            for src_name, stage in self._stages.items()
+            for edge in getattr(stage, "edges", ())
+            if edge.target != "halt"
+        ]
         return Pipeline(
             stages=dict(self._stages),
             entry=self._entry,
-            binding_map=None,
+            binding_map=derive_binding_map(dict(self._stages), edges),
             resource_bundles=tuple(self.resource_bundles),
         )
 
@@ -172,34 +153,10 @@ class PipelineBuilder:
                 e.label == new_edge.label and e.target == new_edge.target
                 for e in prev.edges
             ):
-                if isinstance(prev, ParallelStage):
-                    self._stages[self._last_stage] = ParallelStage(
-                        name=prev.name,
-                        steps=prev.steps,
-                        join=prev.join,
-                        edges=prev.edges + (new_edge,),
-                        max_workers=prev.max_workers,
-                        decision_vocabulary=prev.decision_vocabulary,
-                        override_vocabulary=prev.override_vocabulary,
-                        reads=prev.reads,
-                        writes=prev.writes,
-                        produces=prev.produces,
-                        consumes=prev.consumes,
-                        loop_condition=prev.loop_condition,
-                    )
-                else:
-                    self._stages[self._last_stage] = Stage(
-                        name=prev.name,
-                        step=prev.step,
-                        edges=prev.edges + (new_edge,),
-                        decision_vocabulary=prev.decision_vocabulary,
-                        override_vocabulary=prev.override_vocabulary,
-                        reads=prev.reads,
-                        writes=prev.writes,
-                        produces=prev.produces,
-                        consumes=prev.consumes,
-                        loop_condition=prev.loop_condition,
-                    )
+                self._stages[self._last_stage] = replace(
+                    prev,
+                    edges=prev.edges + (new_edge,),
+                )
 
     def _set_entry_and_last(
         self, stage_name: str, emit_label: str | None

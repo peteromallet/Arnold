@@ -14,7 +14,7 @@ from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
 from arnold.pipelines.megaplan._pipeline import registry
 from arnold.pipelines.megaplan._pipeline.discovery.manifest import Manifest, read_manifest
 from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
-from arnold.pipelines.megaplan._pipeline.types import ParallelStage, PortRef, Stage, StepContext
+from arnold.pipelines.megaplan._pipeline.types import Pipeline, ParallelStage, PortRef, Stage, StepContext
 
 
 PIPELINE_INIT = (
@@ -81,6 +81,82 @@ def test_select_tournament_declares_ports_for_every_cross_stage_boundary(
         assert all(isinstance(port_ref, PortRef) for port_ref in stage.consumes)
         for port_ref in stage.consumes:
             assert (stage_name, port_ref.port_name) in pipeline.binding_map
+
+
+def test_select_tournament_private_bind_uses_lowered_authored_declarations(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
+    import importlib
+
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
+
+    class _Step:
+        produces = ()
+        consumes = ()
+
+        def run(self, ctx):  # pragma: no cover
+            raise NotImplementedError
+
+    pipeline = Pipeline(
+        stages={
+            "src": Stage(
+                name="src",
+                step=_Step(),
+                edges=(module.Edge(label="sink", target="sink"),),
+                writes=(module.Port(name="alpha", content_type="text/markdown"),),
+            ),
+            "sink": Stage(
+                name="sink",
+                step=_Step(),
+                edges=(),
+                reads=(module.PortRef(port_name="alpha", content_type="text/markdown"),),
+            ),
+        },
+        entry="src",
+    )
+
+    bound = module._bind_or_raise(pipeline)
+
+    assert bound.binding_map == {("sink", "alpha"): ("src", "alpha")}
+
+
+def test_select_tournament_private_bind_rejects_drifted_authored_declarations(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
+    import importlib
+
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select-tournament")
+
+    class _Step:
+        produces = ()
+        consumes = ()
+
+        def run(self, ctx):  # pragma: no cover
+            raise NotImplementedError
+
+    pipeline = Pipeline(
+        stages={
+            "src": Stage(
+                name="src",
+                step=_Step(),
+                edges=(module.Edge(label="sink", target="sink"),),
+                writes=(module.Port(name="alpha", content_type="text/markdown"),),
+                produces=(module.Port(name="other", content_type="text/markdown"),),
+            ),
+            "sink": Stage(
+                name="sink",
+                step=_Step(),
+                edges=(),
+                reads=(module.PortRef(port_name="alpha", content_type="text/markdown"),),
+            ),
+        },
+        entry="src",
+    )
+
+    with pytest.raises(module.PortBindError, match="bind failed: no_match"):
+        module._bind_or_raise(pipeline)
 
 
 def test_select_tournament_runs_through_declared_ports(monkeypatch, tmp_path) -> None:

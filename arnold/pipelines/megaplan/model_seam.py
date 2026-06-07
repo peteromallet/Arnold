@@ -1230,6 +1230,8 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
     )
     if step == "review":
         return _normalize_review_capture_payload(payload)
+    if step == "execute":
+        return _normalize_execute_capture_payload(payload)
     if step == "critique":
         return _normalize_critique_capture_payload(payload)
     if step == "critique_evaluator":
@@ -1248,6 +1250,50 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
         _strip_null_finalize_task_optionals(task) if isinstance(task, Mapping) else task
         for task in tasks
     ]
+    return normalized
+
+
+def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    task_updates: list[Any] = []
+    for item in normalized.get("task_updates") or []:
+        if not isinstance(item, Mapping):
+            task_updates.append(item)
+            continue
+        update = {
+            key: item[key]
+            for key in (
+                "task_id",
+                "status",
+                "executor_notes",
+                "files_changed",
+                "commands_run",
+                "auto_attributed_files",
+            )
+            if key in item
+        }
+        if "task_id" not in update and isinstance(item.get("id"), str):
+            update["task_id"] = item["id"]
+        update.setdefault("files_changed", [])
+        update.setdefault("commands_run", [])
+        update.setdefault("auto_attributed_files", False)
+        task_updates.append(update)
+    normalized["task_updates"] = task_updates
+
+    acknowledgments: list[Any] = []
+    for item in normalized.get("sense_check_acknowledgments") or []:
+        if not isinstance(item, Mapping):
+            acknowledgments.append(item)
+            continue
+        acknowledgment = {
+            key: item[key]
+            for key in ("sense_check_id", "executor_note")
+            if key in item
+        }
+        if "sense_check_id" not in acknowledgment and isinstance(item.get("id"), str):
+            acknowledgment["sense_check_id"] = item["id"]
+        acknowledgments.append(acknowledgment)
+    normalized["sense_check_acknowledgments"] = acknowledgments
     return normalized
 
 

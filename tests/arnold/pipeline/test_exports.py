@@ -7,6 +7,17 @@ continue to work.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+
+@dataclass
+class _NeutralStep:
+    name: str = "neutral"
+    kind: str = "tool"
+
+    def run(self, ctx) -> object:  # pragma: no cover - construction-only helper
+        return object()
+
 
 class TestArnoldPipelinePublicExports:
     """Every symbol in arnold.pipeline.__all__ must be importable."""
@@ -182,6 +193,47 @@ class TestBridgeImports:
         assert is_dataclass(Port)
         assert is_dataclass(RoutingKey)
         assert is_dataclass(PortRef)
+
+    def test_neutral_stage_shapes_accept_authoring_fields_and_legacy_refs(self) -> None:
+        from arnold.pipeline.step_invocation import StepInvocation
+        from arnold.pipeline.types import ParallelStage, Port, PortRef, ReadRef, Stage, WriteRef
+
+        invocation = StepInvocation(kind="tool", metadata={"action": "read"})
+        read_ref = ReadRef(name="plan.md")
+        write_ref = WriteRef(name="review.md")
+        produced_port = Port(name="review", content_type="text/markdown")
+        consumed_port = PortRef(port_name="plan", content_type="text/markdown")
+
+        stage = Stage(
+            name="author",
+            step=_NeutralStep(),
+            reads=(read_ref,),
+            writes=(write_ref,),
+            produces=(produced_port,),
+            consumes=(consumed_port,),
+            invocation=invocation,
+            required_capabilities=("fs.read", "fs.write"),
+        )
+        parallel_stage = ParallelStage(
+            name="author-panel",
+            steps=(_NeutralStep(name="a"), _NeutralStep(name="b")),
+            join=lambda results, ctx: object(),
+            reads=(read_ref,),
+            writes=(write_ref,),
+            produces=(produced_port,),
+            consumes=(consumed_port,),
+            invocation=invocation,
+            required_capabilities=("fs.read", "fs.write"),
+        )
+
+        assert stage.reads == (read_ref,)
+        assert stage.writes == (write_ref,)
+        assert stage.invocation is invocation
+        assert stage.required_capabilities == ("fs.read", "fs.write")
+        assert parallel_stage.reads == (read_ref,)
+        assert parallel_stage.writes == (write_ref,)
+        assert parallel_stage.invocation is invocation
+        assert parallel_stage.required_capabilities == ("fs.read", "fs.write")
 
 
 class TestDiscoveryStepsStubs:

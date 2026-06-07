@@ -1432,6 +1432,17 @@ def _handle_record_tag(root: Path, args: argparse.Namespace) -> int:
 
 def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
     """W7 — pipelines command group: check + doctor subcommands."""
+
+    def _emit_validator_defects(diag: object) -> None:
+        defects = list(getattr(diag, "defects", ()) or ())
+        issues = list(getattr(diag, "issues", ()) or ())
+        if issues and len(issues) == len(defects):
+            for issue in issues:
+                print(f"  - [{issue.code}] {issue.message}", file=sys.stderr)
+            return
+        for defect in defects:
+            print(f"  - {defect}", file=sys.stderr)
+
     action = getattr(args, "pipelines_action", None)
     if action == "check":
         name = getattr(args, "pipeline_name", None)
@@ -1464,8 +1475,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
                 f"{len(diag.defects)} defect(s):",
                 file=sys.stderr,
             )
-            for defect in diag.defects:
-                print(f"  - {defect}", file=sys.stderr)
+            _emit_validator_defects(diag)
             return 1
 
         from arnold.pipelines.megaplan._pipeline.registry import (
@@ -1505,8 +1515,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             print(name)
             return 0
         print(f"pipelines check: {name!r} has {len(diag.defects)} defect(s):", file=sys.stderr)
-        for defect in diag.defects:
-            print(f"  - {defect}", file=sys.stderr)
+        _emit_validator_defects(diag)
         return 1
     if action == "doctor":
         from arnold.pipelines.megaplan._pipeline.registry import scan_python_pipelines

@@ -41,6 +41,26 @@ def _two_stage_pipeline() -> Pipeline:
     )
 
 
+def _two_stage_pipeline_with_authored_declarations() -> Pipeline:
+    return Pipeline(
+        stages={
+            "p": Stage(
+                name="p",
+                step=_ProdStep(),
+                edges=(Edge("done", "c"),),
+                writes=(Port(name="alpha", content_type="text/markdown"),),
+            ),
+            "c": Stage(
+                name="c",
+                step=_ConsStep(),
+                edges=(Edge("done", "halt"),),
+                reads=(PortRef(port_name="alpha", content_type="text/markdown"),),
+            ),
+        },
+        entry="p",
+    )
+
+
 @pytest.mark.parametrize("robustness", ["light", "thorough", "extreme"])
 def test_build_with_binding_flag_on(monkeypatch, robustness):
     monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
@@ -49,6 +69,56 @@ def test_build_with_binding_flag_on(monkeypatch, robustness):
     assert isinstance(out, Pipeline)
     assert out.binding_map is not None
     assert ("c", "alpha") in out.binding_map
+
+
+def test_build_with_binding_uses_lowered_authored_declarations(monkeypatch):
+    monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
+    pipeline = _two_stage_pipeline_with_authored_declarations()
+
+    out = build_with_binding(pipeline)
+
+    assert isinstance(out, Pipeline)
+    assert out.binding_map == {("c", "alpha"): ("p", "alpha")}
+
+
+def test_build_with_binding_rejects_drifted_authored_declarations(monkeypatch):
+    monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
+
+    class _AuthoredOnlyStep:
+        name = "authored-only"
+        kind = "produce"
+        prompt_key = None
+        slot = None
+        produces = ()
+        consumes = ()
+
+        def run(self, ctx):  # pragma: no cover
+            raise NotImplementedError
+
+    pipeline = Pipeline(
+        stages={
+            "p": Stage(
+                name="p",
+                step=_AuthoredOnlyStep(),
+                edges=(Edge("done", "c"),),
+                writes=(Port(name="alpha", content_type="text/markdown"),),
+                produces=(Port(name="other", content_type="text/markdown"),),
+            ),
+            "c": Stage(
+                name="c",
+                step=_AuthoredOnlyStep(),
+                edges=(Edge("done", "halt"),),
+                reads=(PortRef(port_name="alpha", content_type="text/markdown"),),
+            ),
+        },
+        entry="p",
+    )
+
+    with pytest.raises(BuildBindingError) as ei:
+        build_with_binding(pipeline)
+
+    assert ei.value.gradient.error_kind == "no_match"
+    assert ei.value.gradient.wanted.port_name == "alpha"
 
 
 def test_build_with_binding_unbindable_raises(monkeypatch):

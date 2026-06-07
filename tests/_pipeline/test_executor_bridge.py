@@ -10,9 +10,11 @@ from typing import Any
 import pytest
 
 from arnold.pipeline import ContractResult, ContractStatus, Suspension
+from arnold.pipeline.step_invocation import StepInvocation
 from arnold.pipelines.megaplan._pipeline.envelope import RunEnvelope
 from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
 from arnold.pipelines.megaplan._pipeline.runtime import RuntimePolicy, StallDetector
+from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
 from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     ParallelStage,
@@ -151,6 +153,113 @@ def test_suspended_contract_takes_precedence_over_next_proceed_and_skips_routing
     assert result["final_stage"] == "gate"
     assert result["halt_reason"] == "suspended"
     assert downstream.calls == 0
+
+
+def test_agent_stage_invocation_is_materialized_on_runtime_step(tmp_path: Path) -> None:
+    invocation = StepInvocation(kind="model", metadata={"message": "hello"})
+    seen: list[StepInvocation | None] = []
+
+    @dataclass
+    class _InvocationAwareAgentStep(AgentStep):
+        def run(self, ctx: StepContext) -> StepResult:
+            seen.append(self._invocation)
+            return StepResult(next="halt")
+
+    step = _InvocationAwareAgentStep(name="draft")
+    pipeline = Pipeline(
+        stages={
+            "draft": Stage(name="draft", step=step, invocation=invocation),
+        },
+        entry="draft",
+    )
+
+    result = run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path)
+
+    assert result["final_stage"] == "draft"
+    assert seen == [invocation]
+    assert step._invocation is None
+
+
+def test_agent_model_invocation_surfaces_captured_contract_result(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pipeline"
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+    (pipeline_dir / "draft.md").write_text("Write the draft.", encoding="utf-8")
+
+    class _HaltingAgentStep(AgentStep):
+        def run(self, ctx: StepContext) -> StepResult:
+            result = super().run(ctx)
+            return StepResult(
+                outputs=result.outputs,
+                verdict=result.verdict,
+                next="halt",
+                state_patch=result.state_patch,
+                contract_result=result.contract_result,
+                envelope=result.envelope,
+            )
+
+    step = _HaltingAgentStep(
+        name="draft",
+        _prompt_ref="draft.md",
+        _pipeline_dir=pipeline_dir,
+        _pipeline_name="writer",
+        _worker=lambda **kwargs: json.dumps({"output": kwargs["prompt"]}),
+    )
+    pipeline = Pipeline(
+        stages={
+            "draft": Stage(
+                name="draft",
+                step=step,
+                invocation=StepInvocation.model(metadata={"worker": "codex"}),
+            ),
+        },
+        entry="draft",
+    )
+
+    result = run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path)
+
+    assert result["final_stage"] == "draft"
+    assert result["contract_result"] is not None
+    payload = result["contract_result"]["payload"]
+    assert payload["legacy_payload"] == {"output": "Write the draft."}
+    assert payload["telemetry"]["terminal_status"] == "captured"
+    assert (tmp_path / "draft" / "v1.md").read_text(encoding="utf-8") == json.dumps(
+        {"output": "Write the draft."}
+    )
+
+
+def test_builder_derived_legacy_model_invocation_keeps_plain_worker_path(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pipeline"
+    pipeline_dir.mkdir(parents=True, exist_ok=True)
+    (pipeline_dir / "draft.md").write_text("Write the draft.", encoding="utf-8")
+
+    built = (
+        Pipeline.builder("writer", pipeline_dir=pipeline_dir, worker=lambda **kwargs: "plain text output")
+        .agent("draft", prompt="draft.md")
+        .build()
+    )
+    draft = built.stages["draft"]
+    assert isinstance(draft, Stage)
+    pipeline = Pipeline(
+        stages={
+            "draft": Stage(
+                name=draft.name,
+                step=draft.step,
+                edges=(Edge(label="done", target="finish"),),
+                reads=draft.reads,
+                writes=draft.writes,
+                invocation=draft.invocation,
+                required_capabilities=draft.required_capabilities,
+            ),
+            "finish": Stage(name="finish", step=_StaticStep(name="finish", result=StepResult(next="halt"))),
+        },
+        entry="draft",
+    )
+
+    result = run_pipeline(pipeline, _ctx(tmp_path), artifact_root=tmp_path)
+
+    assert result["final_stage"] == "finish"
+    assert result.get("contract_result") is None
+    assert (tmp_path / "draft" / "v1.md").read_text(encoding="utf-8") == "plain text output"
 
 
 @pytest.mark.parametrize(

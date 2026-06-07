@@ -60,6 +60,8 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from arnold.pipeline.declaration_lowering import bind_with_lowered_declarations
+from arnold.pipeline.runtime_contract_diagnostics import diagnostic_from_binding_failure
 from arnold.pipelines.megaplan._core.state import write_plan_state
 from arnold.pipelines.megaplan.types import CliError
 from arnold.pipelines.megaplan._pipeline.envelope import EMPTY_ENVELOPE, EnvelopeDroppedError, RunEnvelope
@@ -431,11 +433,14 @@ def _prepare_enforcement_binding(
     try:
         from arnold.pipeline import contracts
 
-        result = contracts.bind(
-            pipeline.stages,
-            _edge_pairs(pipeline),
-            typed_ports=True,
-        )
+        edges = _edge_pairs(pipeline)
+        result = bind_with_lowered_declarations(pipeline.stages, edges)
+        if result is None:
+            result = contracts.bind(
+                pipeline.stages,
+                edges,
+                typed_ports=True,
+            )
     except Exception as exc:
         diagnostics = {
             "error_kind": type(exc).__name__,
@@ -563,8 +568,23 @@ def _evaluate_cursor_handoff(
             state_config=state if isinstance((state := ctx.state), Mapping) else None,
             artifact=f"{producer_stage.name}.contract_result",
             telemetry_path=artifact_root / TELEMETRY_FILENAME,
+            producer_stage=producer_stage.name,
         )
         if handoff.blocks_write:
+            if handoff.author_diagnostic is not None:
+                raise ValueError(f"Step IO handoff blocked: {handoff.author_diagnostic.message}")
+            if binding.diagnostics is not None:
+                envelope = getattr(handoff.decision, "envelope", None)
+                logical_type = str(getattr(envelope, "logical_type", None) or "unknown")
+                schema_version = str(getattr(envelope, "schema_version", None) or "unknown")
+                diagnostic = diagnostic_from_binding_failure(
+                    diagnostics=binding.diagnostics,
+                    producer_stage=producer_stage.name,
+                    consumer_stage=consumer_stage.name,
+                    logical_type=logical_type,
+                    schema_version=schema_version,
+                )
+                raise ValueError(f"Step IO handoff blocked: {diagnostic.message}")
             reason = handoff.decision.block_reason or handoff.decision.classification.value
             raise ValueError(
                 "Step IO handoff blocked "
@@ -684,6 +704,21 @@ def _run_parallel_stage(node: ParallelStage, ctx: StepContext) -> StepResult:
         if isinstance(_exc, _BE):
             raise
     return joined
+
+
+def _materialize_stage_step(node: Stage):
+    """Inject stage-level invocation metadata into runtime AgentStep instances."""
+    if node.invocation is None:
+        return node.step
+
+    from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
+
+    step = node.step
+    if not isinstance(step, AgentStep):
+        return step
+    if step._invocation == node.invocation:
+        return step
+    return dataclasses.replace(step, _invocation=node.invocation, _invocation_explicit=True)
 
 
 def run_pipeline(
@@ -869,7 +904,7 @@ def run_pipeline(
                 result = _run_parallel_stage(node, ctx)
             else:
                 assert isinstance(node, Stage)
-                result = node.step.run(ctx)
+                result = _materialize_stage_step(node).run(ctx)
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
