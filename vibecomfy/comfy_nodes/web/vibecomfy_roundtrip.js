@@ -2282,6 +2282,10 @@ function createAgentPanelShell() {
   threadRegion.section.style.border = "none";
   threadRegion.section.style.background = "transparent";
   threadRegion.section.style.padding = "0";
+  // The section is a flex child of the scrollable `thread` wrapper. Without
+  // flexShrink:0 it shrinks to the wrapper's height and (overflow:hidden from
+  // panelSection) CLIPS the conversation instead of letting the wrapper scroll.
+  threadRegion.section.style.flexShrink = "0";
   threadRegion.body.style.gap = "10px";
 
   // Chat section: persisted conversation bubbles (M3).
