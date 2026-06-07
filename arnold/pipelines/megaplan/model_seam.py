@@ -1236,6 +1236,8 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
         return _normalize_critique_evaluator_capture_payload(payload)
     if step != "finalize":
         return payload
+    if _finalize_schema_requires_nullable_task_optionals(invocation):
+        return payload
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):
         return payload
@@ -1245,6 +1247,44 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
         for task in tasks
     ]
     return normalized
+
+
+def _finalize_schema_requires_nullable_task_optionals(invocation: StepInvocation) -> bool:
+    """Return true when the active finalize schema uses OpenAI strict nullables.
+
+    OpenAI structured outputs require every property key to appear in
+    ``required``. For optional finalize task objects, runtime schema generation
+    therefore emits ``stance``/``stop_signal`` as required-but-nullable. In that
+    case we must keep explicit ``null`` values until after structural audit;
+    the finalize handler strips them before writing artifacts.
+    """
+    schema = invocation.metadata.get("capture_schema") or invocation.metadata.get("output_schema")
+    if not isinstance(schema, Mapping):
+        schema = invocation.metadata.get("schema")
+    if not isinstance(schema, Mapping):
+        return False
+    try:
+        task_schema = schema["properties"]["tasks"]["items"]
+        required = set(task_schema.get("required", []))
+        properties = task_schema.get("properties", {})
+    except (KeyError, TypeError, AttributeError):
+        return False
+    for field in ("stance", "stop_signal"):
+        if field not in required:
+            return False
+        field_schema = properties.get(field)
+        if not isinstance(field_schema, Mapping):
+            return False
+        field_type = field_schema.get("type")
+        if isinstance(field_type, str):
+            if field_type != "null":
+                return False
+        elif isinstance(field_type, list):
+            if "null" not in field_type:
+                return False
+        else:
+            return False
+    return True
 
 
 def _normalize_review_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:

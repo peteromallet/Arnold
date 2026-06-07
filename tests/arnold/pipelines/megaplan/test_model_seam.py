@@ -263,6 +263,85 @@ def test_capture_schema_for_invocation_maps_named_steps_to_approved_schemas() ->
         assert capture_schema.get("additionalProperties") is False
 
 
+def _minimal_finalize_payload() -> dict:
+    return {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Do the work.",
+                "depends_on": [],
+                "status": "pending",
+                "kind": "code",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "auto_attributed_files": None,
+                "evidence_files": [],
+                "reviewer_verdict": "",
+                "complexity": 1,
+                "complexity_justification": "Small focused task.",
+                "stance": None,
+                "stop_signal": None,
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+        "user_actions": [],
+        "meta_commentary": "",
+        "validation": {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "",
+            "coverage_complete": True,
+        },
+    }
+
+
+def test_capture_step_output_preserves_finalize_null_optionals_for_strict_nullable_schema() -> None:
+    schema = json.loads(json.dumps(SCHEMAS["finalize.json"]))
+    task_schema = schema["properties"]["tasks"]["items"]
+    task_schema["required"] = list(task_schema["properties"].keys())
+    for field in ("stance", "stop_signal"):
+        task_schema["properties"][field] = {
+            **task_schema["properties"][field],
+            "type": ["object", "null"],
+        }
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "validation_step": "finalize",
+            "compatibility_validation_step": "finalize",
+            "schema": schema,
+        },
+    )
+
+    outcome = capture_step_output(invocation, _minimal_finalize_payload())
+
+    assert outcome.telemetry.audit_result is AuditStatus.PASSED
+    assert outcome.legacy_payload["tasks"][0]["stance"] is None
+    assert outcome.legacy_payload["tasks"][0]["stop_signal"] is None
+
+
+def test_capture_step_output_strips_finalize_null_optionals_for_base_schema() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "codex",
+            "validation_step": "finalize",
+            "compatibility_validation_step": "finalize",
+        },
+    )
+
+    outcome = capture_step_output(invocation, _minimal_finalize_payload())
+
+    assert outcome.telemetry.audit_result is AuditStatus.PASSED
+    assert "stance" not in outcome.legacy_payload["tasks"][0]
+    assert "stop_signal" not in outcome.legacy_payload["tasks"][0]
+
+
 def test_execute_batch_relaxed_schema_preserves_batch_subset_without_duplicating_properties() -> None:
     relaxed = SCHEMAS["execution_batch_relaxed.json"]
     full = SCHEMAS["execution.json"]
