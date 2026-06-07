@@ -2673,14 +2673,35 @@ function applyAgentPanelMount(panel, { mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, c
   panel.root.dataset.mountMode = panel.state.mountMode;
 
   if (sidebarContainer) {
+    // The ComfyUI sidebar content container is often height:auto, so
+    // height:100% resolves to auto and the panel grows with the conversation
+    // instead of scrolling internally (the outer sidebar then scrolls the
+    // WHOLE panel, composer included). Pin the panel to the visible viewport
+    // below the container's top edge so the thread wrapper scrolls.
+    let boundedHeight = "100%";
+    try {
+      const rect = typeof sidebarContainer.getBoundingClientRect === "function"
+        ? sidebarContainer.getBoundingClientRect()
+        : null;
+      const viewportH = typeof window !== "undefined" && Number.isFinite(window.innerHeight)
+        ? window.innerHeight
+        : 0;
+      if (rect && viewportH > 0 && Number.isFinite(rect.top) && viewportH - rect.top >= 240) {
+        boundedHeight = `${Math.round(viewportH - rect.top)}px`;
+      }
+    } catch (_e) {
+      // keep 100%
+    }
     Object.assign(panel.root.style, {
       position: "relative",
       inset: "auto",
       top: "auto",
       right: "auto",
       width: "100%",
-      height: "100%",
+      height: boundedHeight,
+      maxHeight: boundedHeight,
       minHeight: "0",
+      overflow: "hidden",
       zIndex: "auto",
       pointerEvents: "auto",
       transform: "none",
