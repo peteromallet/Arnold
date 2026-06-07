@@ -979,6 +979,7 @@ function buildAuditEnvelope(turnEntry) {
           failure_stage: turnEntry.failure_stage || null,
           message: turnEntry.message || null,
           audit_ref: turnEntry.audit_ref || null,
+          parent_turn_id: turnEntry.parent_turn_id || null,
         }
       : null,
   };
@@ -1002,6 +1003,19 @@ function downloadTurnAudit(panel, turnIndex) {
     type: "application/json",
   });
   const turnId = turnEntry.turn_id || `turn-${turnIndex}`;
+  const status = turnEntry.status || "unknown";
+  downloadBlob(blob, `vibecomfy-audit-${status}-${turnId}.json`);
+}
+
+function downloadTurnAuditEntry(turnEntry, turnIndex = 0) {
+  if (!turnEntry) {
+    return;
+  }
+  const envelope = buildAuditEnvelope(turnEntry);
+  const blob = new Blob([JSON.stringify(envelope, null, 2)], {
+    type: "application/json",
+  });
+  const turnId = turnEntry.turn_id || turnEntry.parent_turn_id || `turn-${turnIndex}`;
   const status = turnEntry.status || "unknown";
   downloadBlob(blob, `vibecomfy-audit-${status}-${turnId}.json`);
 }
@@ -3225,6 +3239,11 @@ function pushTurnStatus(panel, status, extra = {}) {
     raw_payload: extra.raw_payload || null,
   };
   entry.turn_key = durableTurnKey(entry);
+  if (status !== "pending") {
+    panel.state.turns = Array.isArray(panel.state.turns)
+      ? panel.state.turns.filter((existing) => !(existing?.entry_type === "durable" && existing.status === "pending"))
+      : [];
+  }
   panel.state.turns.unshift(entry);
   panel.state.turns = sortPanelTurns(panel.state.turns);
   markAgentPanelDirty(panel, [RENDER_SECTIONS.THREAD]);
@@ -3505,7 +3524,7 @@ function changeDetailsForMessage(panel, message, snapshot = null) {
   return panel?.state?.changeDetails || null;
 }
 
-function normalizeBatchTurn(payload, { source = "response", sessionId = null, status = null } = {}) {
+function normalizeBatchTurn(payload, { source = "response", sessionId = null, status = null, parentTurnId = null } = {}) {
   if (!payload || typeof payload !== "object") {
     return null;
   }
@@ -3534,6 +3553,10 @@ function normalizeBatchTurn(payload, { source = "response", sessionId = null, st
     turn_key: batchTurnKey(resolvedSessionId, turnNumber),
     session_id: resolvedSessionId,
     turn_id: typeof payload.turn_id === "string" && payload.turn_id ? payload.turn_id : null,
+    parent_turn_id:
+      typeof payload.parent_turn_id === "string" && payload.parent_turn_id
+        ? payload.parent_turn_id
+        : (typeof parentTurnId === "string" && parentTurnId ? parentTurnId : null),
     turn_number: turnNumber,
     status: normalizedStatus,
     message: typeof payload.message === "string" ? payload.message : null,
@@ -3839,11 +3862,10 @@ function reconcileResponseBatchTurns(panel, result) {
     if (outcomeRequiresClarification(turnOutcome)) {
       status = "clarify";
     } else if (
-      index === finalIndex
-      && (
-        (typeof result?.done_summary === "string" && result.done_summary)
-        || (result?.ok === true && resultHasCandidate)
-      )
+      result?.ok === true
+      || resultHasCandidate
+      || (typeof result?.done_summary === "string" && result.done_summary)
+      || index === finalIndex
     ) {
       status = "done";
     } else {
@@ -3853,6 +3875,7 @@ function reconcileResponseBatchTurns(panel, result) {
       source: "response",
       sessionId: responseSessionId,
       status,
+      parentTurnId: typeof result?.turn_id === "string" && result.turn_id ? result.turn_id : null,
     });
   }
   restoreExpandedTurnKeys(panel, previousExpanded);
@@ -3988,6 +4011,31 @@ const DURABLE_STATUS_COLORS = Object.freeze({
 
 function _statusColor(status) {
   return DURABLE_STATUS_COLORS[status] || BATCH_STATUS_COLORS[status] || VC_COLORS.muted;
+}
+
+const ACTIVITY_TERMINAL_STATUSES = new Set([
+  "applied",
+  "budget_exhausted",
+  "cancelled",
+  "candidate",
+  "clarify",
+  "done",
+  "error",
+  "failed",
+  "noop",
+  "rejected",
+  "undone",
+]);
+
+function isLiveActivityTurn(entry) {
+  if (!entry || typeof entry !== "object") {
+    return false;
+  }
+  const status = typeof entry.status === "string" && entry.status ? entry.status : null;
+  if (!status || ACTIVITY_TERMINAL_STATUSES.has(status)) {
+    return false;
+  }
+  return entry.entry_type === "batch" || entry.entry_type === "durable";
 }
 
 function _truncateMessage(text, maxLen = 80) {
@@ -5015,7 +5063,7 @@ function populateAgentBubbleDetail(target, panel, message, snapshot = null) {
   }
 
   const auditSection = createBubbleDetailSection("Audit");
-  appendAuditDetail(auditSection.body, panel, snapshot);
+  appendAuditDetail(auditSection.body, panel, message, snapshot);
   if (auditSection.body.children.length) {
     target.appendChild(auditSection.section);
   }
@@ -5133,7 +5181,7 @@ function populateActivityRows(body, panel, { sessionId = null } = {}) {
       if (sessionId && entry.session_id && entry.session_id !== sessionId) {
         return false;
       }
-      return true;
+      return isLiveActivityTurn(entry);
     })
     : [];
 
@@ -5146,16 +5194,8 @@ function populateActivityRows(body, panel, { sessionId = null } = {}) {
     }
   }
 
-  if (!relevantTurns.length) {
-    for (const hEntry of Array.isArray(panel?.state?.history) ? panel.state.history : []) {
-      const line = el("div");
-      line.style.borderLeft = "2px solid #3d8bfd";
-      line.style.paddingLeft = "8px";
-      appendTextLine(line, `${hEntry.kind} \u2014 ${hEntry.message}`, "#edf2f7");
-      appendTextLine(line, hEntry.at, "#8d93a1");
-      body.appendChild(line);
-    }
-  }
+  // Terminal durable turns and completed batch rows intentionally do not fall
+  // back to the old persistent history cards. They live in bubble details.
 }
 
 function renderActivityRows(panel) {
@@ -6891,27 +6931,139 @@ function renderQueue(panel) {
   appendQueueDetail(body, panel);
 }
 
-function appendAuditDetail(body, panel, snapshot = null) {
-  const auditRef = snapshot?.auditRef || panel.state.auditRef;
-  if (auditRef?.path) {
-    appendCodeLine(body, auditRef.path, "#edf2f7");
-    if (auditRef.sha256) {
-      appendCodeLine(body, `sha256: ${auditRef.sha256}`, "#8d93a1");
+function turnIdForBubbleDetail(message = null, snapshot = null) {
+  if (typeof message?.turn_id === "string" && message.turn_id) {
+    return message.turn_id;
+  }
+  if (typeof snapshot?.turn_id === "string" && snapshot.turn_id) {
+    return snapshot.turn_id;
+  }
+  return null;
+}
+
+function turnEntriesForBubbleDetail(panel, message = null, snapshot = null) {
+  const turnId = turnIdForBubbleDetail(message, snapshot);
+  if (!turnId || !Array.isArray(panel?.state?.turns)) {
+    return [];
+  }
+  return panel.state.turns
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => (
+      entry
+      && (
+        entry.turn_id === turnId
+        || entry.parent_turn_id === turnId
+        || entry.raw_payload?.turn_id === turnId
+      )
+    ));
+}
+
+function appendAuditRefLines(body, auditRef) {
+  if (!auditRef?.path) {
+    return false;
+  }
+  appendCodeLine(body, auditRef.path, "#edf2f7");
+  if (auditRef.sha256) {
+    appendCodeLine(body, `sha256: ${auditRef.sha256}`, "#8d93a1");
+  }
+  return true;
+}
+
+function appendBatchTurnBreakdown(body, entry) {
+  const summary = _safeSummaryText(entry);
+  if (summary) {
+    appendTextLine(body, summary, "#9ed0ff");
+  }
+  const stmts = Array.isArray(entry.statements) ? entry.statements : [];
+  const showStmts = stmts.slice(0, BATCH_STATEMENT_CAP);
+  if (showStmts.length) {
+    const header = el("div", "Statements:");
+    header.style.fontSize = "10px";
+    header.style.color = "#9da1ac";
+    body.appendChild(header);
+    for (let s = 0; s < showStmts.length; s += 1) {
+      body.appendChild(_statementBullet(showStmts[s], s));
     }
-  } else if (Array.isArray(panel.state.turns) && panel.state.turns.length) {
-    const latest = panel.state.turns[0];
-    if (latest?.audit_ref?.path) {
-      appendCodeLine(body, latest.audit_ref.path, "#edf2f7");
-      if (latest.audit_ref.sha256) {
-        appendCodeLine(body, `sha256: ${latest.audit_ref.sha256}`, "#8d93a1");
+    const moreCount = stmts.length - BATCH_STATEMENT_CAP;
+    if (moreCount > 0) {
+      appendTextLine(body, `+${moreCount} more statement${moreCount !== 1 ? "s" : ""}...`, "#8d93a1");
+    }
+  } else if (Number.isFinite(entry.statement_count) && entry.statement_count > 0) {
+    appendTextLine(body, `${entry.statement_count} statement${entry.statement_count !== 1 ? "s" : ""} (details unavailable)`, "#8d93a1");
+  }
+
+  const footer = _renderOutcomeFooter(entry);
+  if (footer) {
+    body.appendChild(footer);
+  }
+
+  if (Array.isArray(entry.diagnostics) && entry.diagnostics.length) {
+    const maxDiags = Math.min(entry.diagnostics.length, 5);
+    for (let d = 0; d < maxDiags; d += 1) {
+      const diag = entry.diagnostics[d];
+      const code = typeof diag?.code === "string" ? diag.code : "";
+      const msg = typeof diag?.message === "string" ? diag.message : "";
+      const text = code && msg ? `${code}: ${msg}` : (code || msg);
+      if (text) {
+        appendTextLine(body, text, "#8d93a1");
       }
-    } else {
-      body.appendChild(muted("No audit artifact linked yet."));
     }
-  } else {
+  }
+}
+
+function appendTurnAuditEntry(body, panel, entry, index) {
+  const box = el("div");
+  Object.assign(box.style, {
+    borderLeft: `2px solid ${_statusColor(entry.status)}`,
+    paddingLeft: "8px",
+    display: "grid",
+    gap: "3px",
+  });
+
+  const label =
+    entry.entry_type === "batch"
+      ? (Number.isFinite(entry.turn_number) ? `batch turn ${entry.turn_number + 1}` : "batch turn")
+      : (entry.status || "turn");
+  appendTextLine(box, `${label}${entry.status ? ` · ${entry.status}` : ""}`, _statusColor(entry.status));
+  const effectiveTurnId = entry.turn_id || entry.parent_turn_id;
+  if (effectiveTurnId) {
+    appendTextLine(box, `turn ${effectiveTurnId}`, "#8d93a1");
+  }
+  if (entry.message) {
+    appendTextLine(box, entry.message, "#c4ccd6");
+  }
+  appendAuditRefLines(box, entry.audit_ref);
+  if (entry.entry_type === "batch") {
+    appendBatchTurnBreakdown(box, entry);
+  }
+  if (entry.timestamp) {
+    appendTextLine(box, entry.timestamp, "#6b7080");
+  }
+
+  const auditBtn = button("Audit \u2193", () => downloadTurnAuditEntry(entry, index));
+  auditBtn.style.fontSize = "10px";
+  auditBtn.style.padding = "3px 6px";
+  auditBtn.style.justifySelf = "start";
+  box.appendChild(auditBtn);
+  body.appendChild(box);
+}
+
+function appendAuditDetail(body, panel, message = null, snapshot = null) {
+  const matchedTurns = turnEntriesForBubbleDetail(panel, message, snapshot);
+  if (matchedTurns.length) {
+    for (const { entry, index } of matchedTurns) {
+      appendTurnAuditEntry(body, panel, entry, index);
+    }
+    return;
+  }
+
+  const auditRef =
+    (message?.audit_ref && typeof message.audit_ref === "object" ? message.audit_ref : null)
+    || snapshot?.auditRef
+    || panel.state.auditRef;
+  if (!appendAuditRefLines(body, auditRef)) {
     body.appendChild(muted("No audit artifact linked yet."));
   }
-  // Download button for current audit envelope
   const dlBtn = button("Download Audit Envelope", () => downloadCurrentAudit(panel));
   dlBtn.style.fontSize = "11px";
   dlBtn.style.padding = "4px 8px";
