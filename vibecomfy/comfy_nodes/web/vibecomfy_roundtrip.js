@@ -6215,10 +6215,23 @@ export function drawPreviewOverlay(ctx, diff) {
       return false;
     };
 
-    var _drawWidgetValueOverlay = function (bounds, valueText) {
+    var _drawWidgetValueOverlay = function (bounds, valueText, labelText) {
       var padX = 7;
       var rightPad = 8;
-      var overlayW = Math.max(48, Math.min(bounds.w - 12, bounds.w * 0.58));
+      // Cover the WHOLE value area (everything right of the field label) so a
+      // long old value (e.g. a 15-digit seed) cannot peek out beside the panel.
+      var labelReserve = 56; // "◀ " arrow + minimum label room
+      try {
+        ctx.font = "11px Arial, sans-serif";
+        if (typeof labelText === "string" && labelText && typeof ctx.measureText === "function") {
+          var lm = ctx.measureText(labelText);
+          if (lm && Number.isFinite(lm.width)) {
+            labelReserve = Math.max(labelReserve, lm.width + 34);
+          }
+        }
+      } catch (_e) { /* keep default reserve */ }
+      var overlayW = Math.max(48, bounds.w - rightPad - labelReserve);
+      overlayW = Math.min(overlayW, bounds.w - 12);
       if (!Number.isFinite(overlayW) || overlayW <= 0) return;
       var overlayX = bounds.x + bounds.w - rightPad - overlayW;
       var overlayY = bounds.y + 2;
@@ -6325,7 +6338,12 @@ export function drawPreviewOverlay(ctx, diff) {
         if (resolvedWidgetIndex != null && Number.isFinite(resolvedWidgetIndex) && resolvedWidgetIndex >= 0) {
           if (!drawnWidgetFieldIndexes.has(resolvedWidgetIndex)) {
             drawnWidgetFieldIndexes.add(resolvedWidgetIndex);
-            _drawWidgetValueOverlay(_rowBoundsForWidgetIndex(resolvedWidgetIndex), _fieldNewValueLabel(ef));
+            var _overlayWidget = widgets[resolvedWidgetIndex];
+            _drawWidgetValueOverlay(
+              _rowBoundsForWidgetIndex(resolvedWidgetIndex),
+              _fieldNewValueLabel(ef),
+              _overlayWidget && typeof _overlayWidget.name === "string" ? _overlayWidget.name : null,
+            );
           }
         } else {
           nonWidgetFields.push(ef);
