@@ -24,6 +24,7 @@ from arnold.pipelines.megaplan.profiles import (
 )
 from arnold.pipelines.megaplan.prompts import _prep_distill_prompt, _prep_research_prompt, _prep_triage_prompt
 from arnold.pipelines.megaplan.schemas import SCHEMAS
+from arnold.pipelines.megaplan.schemas.runtime import PREP_RESEARCH_FINDING_SCHEMA
 from arnold.pipelines.megaplan.model_seam import ModelTier
 from arnold.pipelines.megaplan.types import (
     AgentMode,
@@ -902,7 +903,7 @@ def run_research_fanout(
     max_concurrent: int | None = None,
 ) -> GenericScatterResult:
     model = resolve_prep_stage_model(state, "fanout")
-    schema = dict(SCHEMAS[STEP_SCHEMA_FILENAMES["prep-research"]])
+    schema = dict(PREP_RESEARCH_FINDING_SCHEMA)
     seam_tier = ModelTier.ENFORCED if model.agent in {"codex", "hermes"} else ModelTier.NON_ENFORCED
     units = []
     for index, area in enumerate(areas):

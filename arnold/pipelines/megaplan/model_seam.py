@@ -1316,6 +1316,12 @@ def _normalize_prep_distill_capture_payload(payload: dict[str, Any]) -> dict[str
             _normalize_prep_open_question(item)
             for item in _as_sequence(normalized.get("open_questions"))
         ]
+    if "primary_criterion" in normalized:
+        primary_criterion = _optional_str(normalized.get("primary_criterion"))
+        if primary_criterion:
+            normalized["primary_criterion"] = primary_criterion
+        else:
+            normalized.pop("primary_criterion", None)
     return normalized
 
 
