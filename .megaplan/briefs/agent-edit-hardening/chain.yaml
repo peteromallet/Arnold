@@ -38,6 +38,7 @@ on_escalate:
 
 driver:
   robustness: full
+  phase_timeout: 10800
   auto_approve: true
   on_escalate: abort
   max_iterations: 60
