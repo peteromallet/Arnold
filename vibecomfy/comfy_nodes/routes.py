@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .agent_contracts import (
     FailureKind,
@@ -11,6 +11,7 @@ from .agent_contracts import (
     apply_eligibility_payload,
     classify_failure,
     derive_apply_eligibility,
+    ensure_agent_edit_response_contract,
     failure_envelope,
 )
 from .agent_edit import (
@@ -90,6 +91,106 @@ def _root(path: Any = None) -> Path:
     return Path(path) if path is not None else _SESSION_ROOT
 
 
+def _validated_failure_response(
+    stage: str,
+    failure: Any,
+) -> dict[str, Any]:
+    response = failure.to_dict() if hasattr(failure, "to_dict") else dict(failure)
+    if stage == "accept":
+        _promote_accept_rebaseline_recovery(response)
+    recovery = _extract_failure_recovery(response)
+    if recovery is not None:
+        response.setdefault("rebaseline_recovery", recovery)
+        outcome = response.get("outcome")
+        if isinstance(outcome, Mapping) and outcome.get("kind") == "error":
+            response["outcome"] = {
+                **dict(outcome),
+                "rebaseline_recovery": dict(outcome.get("rebaseline_recovery"))
+                if isinstance(outcome.get("rebaseline_recovery"), Mapping)
+                else recovery,
+            }
+    return ensure_agent_edit_response_contract(response, stage=stage)
+
+
+def _promote_accept_rebaseline_recovery(response: dict[str, Any]) -> None:
+    if response.get("kind") != FailureKind.STALE_STATE_MISMATCH.value:
+        return
+    context = response.get("agent_failure_context")
+    if not isinstance(context, Mapping):
+        return
+    issues = context.get("issues")
+    if isinstance(issues, list):
+        for issue in issues:
+            if isinstance(issue, Mapping) and isinstance(issue.get("rebaseline_recovery"), Mapping):
+                return
+    reason = context.get("reason")
+    recovery = {
+        "action": "rebaseline",
+        "endpoint": "/vibecomfy/agent-edit/rebaseline",
+        "reason": reason if isinstance(reason, str) and reason else "stale_state_recovery",
+    }
+    issue = {
+        "code": "stale_state_mismatch",
+        "detail": context.get("explanation")
+        if isinstance(context.get("explanation"), str)
+        else "Accept request no longer matches the authoritative baseline.",
+        "rebaseline_recovery": recovery,
+    }
+    response.setdefault("rebaseline_recovery", recovery)
+    response["agent_failure_context"] = {
+        **dict(context),
+        "issues": [*issues, issue] if isinstance(issues, list) else [issue],
+    }
+
+
+def _extract_failure_recovery(response: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(response, Mapping):
+        return None
+    top_level = response.get("rebaseline_recovery")
+    if isinstance(top_level, Mapping):
+        return dict(top_level)
+    contexts: list[Any] = [response.get("agent_failure_context")]
+    outcome = response.get("outcome")
+    if isinstance(outcome, Mapping):
+        outcome_recovery = outcome.get("rebaseline_recovery")
+        if isinstance(outcome_recovery, Mapping):
+            return dict(outcome_recovery)
+        contexts.append(outcome.get("agent_failure_context"))
+    debug = response.get("debug")
+    if isinstance(debug, Mapping):
+        failure_debug = debug.get("failure")
+        if isinstance(failure_debug, Mapping):
+            contexts.append(failure_debug.get("agent_failure_context"))
+    for context in contexts:
+        if not isinstance(context, Mapping):
+            continue
+        issues = context.get("issues")
+        if not isinstance(issues, list):
+            continue
+        for issue in issues:
+            if not isinstance(issue, Mapping):
+                continue
+            recovery = issue.get("rebaseline_recovery")
+            if isinstance(recovery, Mapping):
+                return dict(recovery)
+    return None
+
+
+def _validated_success_response(
+    response: dict[str, Any],
+    *,
+    stage: str,
+    action: str | None = None,
+) -> dict[str, Any]:
+    payload = dict(response)
+    if "outcome" not in payload:
+        reason = None
+        if action in {"accept", "reject", "rebaseline", "chat"}:
+            reason = action
+        payload["outcome"] = {"kind": "noop", "reason": reason} if reason else {"kind": "noop"}
+    return ensure_agent_edit_response_contract(payload, stage=stage)
+
+
 def _handle_agent_edit_action(
     payload: Any,
     *,
@@ -97,25 +198,34 @@ def _handle_agent_edit_action(
     session_root: Any = None,
 ) -> dict[str, Any]:
     if not isinstance(payload, dict):
-        return failure_envelope(
+        return _validated_failure_response(
+            action,
+            failure_envelope(
             FailureKind.MISSING_REQUIRED_FIELD,
             action,
             agent_failure_context={"explanation": "Request body must be a JSON object."},
-        ).to_dict()
+            ),
+        )
     session_id_raw = payload.get("session_id")
     turn_id = payload.get("turn_id")
     if not isinstance(session_id_raw, str) or not session_id_raw.strip():
-        return failure_envelope(
+        return _validated_failure_response(
+            action,
+            failure_envelope(
             FailureKind.MISSING_REQUIRED_FIELD,
             action,
             agent_failure_context={"explanation": "`session_id` is required."},
-        ).to_dict()
+            ),
+        )
     if not isinstance(turn_id, str) or not turn_id.strip():
-        return failure_envelope(
+        return _validated_failure_response(
+            action,
+            failure_envelope(
             FailureKind.MISSING_REQUIRED_FIELD,
             action,
             agent_failure_context={"explanation": "`turn_id` is required."},
-        ).to_dict()
+            ),
+        )
     session_id = _safe_session_id(session_id_raw)
     root = _root(session_root)
     mutator = accept_turn if action == "accept" else reject_turn
@@ -138,7 +248,7 @@ def _handle_agent_edit_action(
         response_writer=_write_action_response,
     )
     if not isinstance(result, dict):
-        return result.to_dict()
+        return _validated_failure_response(action, result)
     terminal_state = result.get("accepted_state") if isinstance(result.get("accepted_state"), str) else None
     eligibility = derive_apply_eligibility(
         TurnContext(
@@ -183,8 +293,8 @@ def _handle_agent_edit_action(
         result = {**result, "audit_ref": audit_ref.to_dict()}
     except Exception as exc:
         failure = classify_failure("audit", exc)
-        return failure.to_dict()
-    return result
+        return _validated_failure_response("audit", failure)
+    return _validated_success_response(result, stage=action, action=action)
 
 
 def _handle_agent_edit_accept(payload: Any, *, session_root: Any = None) -> dict[str, Any]:
@@ -197,18 +307,24 @@ def _handle_agent_edit_reject(payload: Any, *, session_root: Any = None) -> dict
 
 def _handle_agent_edit_rebaseline(payload: Any, *, session_root: Any = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
-        return failure_envelope(
+        return _validated_failure_response(
+            "rebaseline",
+            failure_envelope(
             FailureKind.MISSING_REQUIRED_FIELD,
             "rebaseline",
             agent_failure_context={"explanation": "Request body must be a JSON object."},
-        ).to_dict()
+            ),
+        )
     session_id_raw = payload.get("session_id")
     if not isinstance(session_id_raw, str) or not session_id_raw.strip():
-        return failure_envelope(
+        return _validated_failure_response(
+            "rebaseline",
+            failure_envelope(
             FailureKind.MISSING_REQUIRED_FIELD,
             "rebaseline",
             agent_failure_context={"explanation": "`session_id` is required."},
-        ).to_dict()
+            ),
+        )
     session_id = _safe_session_id(session_id_raw)
     root = _root(session_root)
 
@@ -219,7 +335,7 @@ def _handle_agent_edit_rebaseline(payload: Any, *, session_root: Any = None) -> 
         idempotency_key=_idempotency_key(payload),
     )
     if not isinstance(result, dict):
-        return result.to_dict()
+        return _validated_failure_response("rebaseline", result)
     eligibility = derive_apply_eligibility(
         TurnContext(
             session_id=session_id,
@@ -268,8 +384,8 @@ def _handle_agent_edit_rebaseline(payload: Any, *, session_root: Any = None) -> 
         result = {**result, "audit_ref": audit_ref.to_dict()}
     except Exception as exc:
         failure = classify_failure("audit", exc)
-        return failure.to_dict()
-    return result
+        return _validated_failure_response("audit", failure)
+    return _validated_success_response(result, stage="rebaseline", action="rebaseline")
 
 
 def _handle_agent_edit_audit(
@@ -281,11 +397,14 @@ def _handle_agent_edit_audit(
     turn_id = params.get("turn_id")
     action = params.get("action")
     if not isinstance(session_id_raw, str) or not isinstance(turn_id, str):
-        return failure_envelope(
+        return _validated_failure_response(
+            "audit",
+            failure_envelope(
             FailureKind.MISSING_REQUIRED_FIELD,
             "audit",
             agent_failure_context={"explanation": "`session_id` and `turn_id` are required."},
-        ).to_dict()
+            ),
+        )
     session_id = _safe_session_id(session_id_raw)
     audit_dir = "audit"
     if action in {"accept", "reject", "unknown"}:
@@ -298,7 +417,7 @@ def _handle_agent_edit_audit(
             raise ValueError("Audit path escaped the session directory.")
         body = resolved.read_bytes()
     except Exception as exc:
-        return classify_failure("audit", exc).to_dict()
+        return _validated_failure_response("audit", classify_failure("audit", exc))
     return {
         "ok": True,
         "body": body,
@@ -336,11 +455,14 @@ def _handle_agent_edit_chat(
     """Rehydrate the last N conversation messages for a session."""
     session_id_raw = params.get("session_id")
     if not isinstance(session_id_raw, str) or not session_id_raw.strip():
-        return failure_envelope(
+        return _validated_failure_response(
+            "chat",
+            failure_envelope(
             FailureKind.MISSING_REQUIRED_FIELD,
             "chat",
             agent_failure_context={"explanation": "`session_id` is required."},
-        ).to_dict()
+            ),
+        )
 
     root = _root(session_root)
     max_messages = DEFAULT_CHAT_DISPLAY_MESSAGES
@@ -353,9 +475,13 @@ def _handle_agent_edit_chat(
         max_messages = min(parsed_max_messages, DEFAULT_CHAT_DISPLAY_MESSAGES)
 
     try:
-        return read_session_chat(root, session_id_raw, max_messages=max_messages)
+        return _validated_success_response(
+            read_session_chat(root, session_id_raw, max_messages=max_messages),
+            stage="chat",
+            action="chat",
+        )
     except Exception as exc:
-        return classify_failure("chat", exc).to_dict()
+        return _validated_failure_response("chat", classify_failure("chat", exc))
 
 
 def _handle_agent_edit_session_json(
@@ -414,22 +540,26 @@ def _handle_agent_edit(
     client_id: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(payload, dict):
-        return failure_envelope(
-            FailureKind.MISSING_REQUIRED_FIELD,
+        return _validated_failure_response(
             "ingest",
-            agent_failure_context={"explanation": "Request body must be a JSON object."},
-        ).to_dict()
+            failure_envelope(
+                FailureKind.MISSING_REQUIRED_FIELD,
+                "ingest",
+                agent_failure_context={"explanation": "Request body must be a JSON object."},
+            ),
+        )
     try:
-        return handle_agent_edit(
+        result = handle_agent_edit(
             payload,
             schema_provider=schema_provider,
             deepseek_client=deepseek_client,
             session_root=session_root,
             client_id=client_id,
         )
+        return ensure_agent_edit_response_contract(result, stage="submit")
     except Exception as exc:
         stage = "ingest" if isinstance(exc, ValueError) else "route"
-        return classify_failure(stage, exc).to_dict()
+        return _validated_failure_response(stage, classify_failure(stage, exc))
 
 
 try:
@@ -455,13 +585,16 @@ try:
             payload = await request.json()
         except Exception as exc:
             return _web.json_response(
-                failure_envelope(
-                    FailureKind.MISSING_REQUIRED_FIELD,
+                _validated_failure_response(
                     "ingest",
-                    agent_failure_context={
-                        "explanation": f"Request body must be valid JSON: {exc}"
-                    },
-                ).to_dict(),
+                    failure_envelope(
+                        FailureKind.MISSING_REQUIRED_FIELD,
+                        "ingest",
+                        agent_failure_context={
+                            "explanation": f"Request body must be valid JSON: {exc}"
+                        },
+                    ),
+                ),
                 status=400,
             )
         client_id = payload.get("client_id") if isinstance(payload.get("client_id"), str) and payload.get("client_id").strip() else None
@@ -477,13 +610,16 @@ try:
             payload = await request.json()
         except Exception as exc:
             return _web.json_response(
-                failure_envelope(
-                    FailureKind.MISSING_REQUIRED_FIELD,
+                _validated_failure_response(
                     "accept",
-                    agent_failure_context={
-                        "explanation": f"Request body must be valid JSON: {exc}"
-                    },
-                ).to_dict(),
+                    failure_envelope(
+                        FailureKind.MISSING_REQUIRED_FIELD,
+                        "accept",
+                        agent_failure_context={
+                            "explanation": f"Request body must be valid JSON: {exc}"
+                        },
+                    ),
+                ),
                 status=400,
             )
         result = _handle_agent_edit_accept(payload)
@@ -495,13 +631,16 @@ try:
             payload = await request.json()
         except Exception as exc:
             return _web.json_response(
-                failure_envelope(
-                    FailureKind.MISSING_REQUIRED_FIELD,
+                _validated_failure_response(
                     "reject",
-                    agent_failure_context={
-                        "explanation": f"Request body must be valid JSON: {exc}"
-                    },
-                ).to_dict(),
+                    failure_envelope(
+                        FailureKind.MISSING_REQUIRED_FIELD,
+                        "reject",
+                        agent_failure_context={
+                            "explanation": f"Request body must be valid JSON: {exc}"
+                        },
+                    ),
+                ),
                 status=400,
             )
         result = _handle_agent_edit_reject(payload)
@@ -513,13 +652,16 @@ try:
             payload = await request.json()
         except Exception as exc:
             return _web.json_response(
-                failure_envelope(
-                    FailureKind.MISSING_REQUIRED_FIELD,
+                _validated_failure_response(
                     "rebaseline",
-                    agent_failure_context={
-                        "explanation": f"Request body must be valid JSON: {exc}"
-                    },
-                ).to_dict(),
+                    failure_envelope(
+                        FailureKind.MISSING_REQUIRED_FIELD,
+                        "rebaseline",
+                        agent_failure_context={
+                            "explanation": f"Request body must be valid JSON: {exc}"
+                        },
+                    ),
+                ),
                 status=400,
             )
         result = _handle_agent_edit_rebaseline(payload)

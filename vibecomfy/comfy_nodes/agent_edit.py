@@ -30,8 +30,10 @@ from .agent_contracts import (
     apply_eligibility_payload,
     classify_failure,
     derive_apply_eligibility,
+    ensure_agent_edit_response_contract,
     failure_envelope,
     product_failure_envelope_fields,
+    public_outcome_from_turn_outcome,
     success_envelope,
     turn_envelope,
 )
@@ -1392,6 +1394,48 @@ def _write_turn_chat_artifact(
         )
 
 
+def _stamped_turn_response_outcome(
+    response: Mapping[str, Any] | None,
+    *,
+    stage: str = "submit",
+) -> dict[str, Any] | None:
+    if not isinstance(response, Mapping):
+        return None
+    try:
+        stamped = ensure_agent_edit_response_contract(dict(response), stage=stage)
+    except Exception:
+        return None
+    outcome = stamped.get("outcome")
+    return dict(outcome) if isinstance(outcome, Mapping) else None
+
+
+def _stamped_message_outcome(
+    outcome: Mapping[str, Any] | None,
+    *,
+    stage: str = "chat",
+) -> dict[str, Any] | None:
+    if not isinstance(outcome, Mapping):
+        return None
+    try:
+        stamped = ensure_agent_edit_response_contract(
+            {"ok": True, "outcome": dict(outcome)},
+            stage=stage,
+        )
+    except Exception:
+        return None
+    public_outcome = stamped.get("outcome")
+    return dict(public_outcome) if isinstance(public_outcome, Mapping) else None
+
+
+def _read_turn_response_payload(turn_dir: Path) -> dict[str, Any]:
+    response_path = turn_dir / "response.json"
+    try:
+        response = json.loads(response_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return dict(response) if isinstance(response, Mapping) else {}
+
+
 def _latest_session_candidate_payload(session_dir: Path, turn_ids: list[str]) -> dict[str, Any] | None:
     try:
         state = read_state(session_dir)
@@ -1405,19 +1449,9 @@ def _latest_session_candidate_payload(session_dir: Path, turn_ids: list[str]) ->
         if not isinstance(turn_state, Mapping) or turn_state.get("state") != "candidate":
             continue
         turn_dir = session_dir / "turns" / turn_id
-        response_path = turn_dir / "response.json"
-        try:
-            response = json.loads(response_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            response = {}
-        if not isinstance(response, Mapping):
-            response = {}
-        # No-op turns have nothing to restore/apply — never surface them as the
-        # session's latest candidate (they would drag the panel back into review).
-        outcome = response.get("outcome")
-        if isinstance(outcome, Mapping) and outcome.get("kind") == "noop":
-            continue
-        if response.get("graph_unchanged") is True and response.get("apply_allowed") is False:
+        response = _read_turn_response_payload(turn_dir)
+        outcome = _stamped_turn_response_outcome(response, stage="submit")
+        if outcome is None or outcome.get("kind") != "candidate":
             continue
         candidate_path = turn_dir / "candidate.ui.json"
         graph = response.get("graph")
@@ -1430,7 +1464,7 @@ def _latest_session_candidate_payload(session_dir: Path, turn_ids: list[str]) ->
             continue
         candidate = response.get("candidate")
         eligibility = response.get("apply_eligibility") or response.get("eligibility")
-        return {
+        latest_candidate = {
             "turn_id": turn_id,
             "session_id": session_dir.name,
             "baseline_turn_id": response.get("baseline_turn_id"),
@@ -1452,7 +1486,9 @@ def _latest_session_candidate_payload(session_dir: Path, turn_ids: list[str]) ->
             "audit_ref": _json_safe(response.get("audit_ref")) if isinstance(response.get("audit_ref"), Mapping) else None,
             "change_details": _json_safe(response.get("change_details")) if isinstance(response.get("change_details"), Mapping) else None,
             "batch_turns": _json_safe(response.get("batch_turns")) if isinstance(response.get("batch_turns"), list) else [],
+            "outcome": outcome,
         }
+        return latest_candidate
     return None
 
 
@@ -1505,6 +1541,8 @@ def read_session_chat(
         turn_dir = turns_dir / turn_id
         chat_path = turn_dir / "chat.json"
         chat_record: dict[str, Any] | None = None
+        response = _read_turn_response_payload(turn_dir)
+        fallback_agent_outcome = _stamped_turn_response_outcome(response, stage="submit")
 
         # Try chat.json first.
         if chat_path.is_file():
@@ -1547,6 +1585,8 @@ def read_session_chat(
                         },
                     ],
                 }
+                if fallback_agent_outcome is not None:
+                    chat_record["messages"][1]["outcome"] = fallback_agent_outcome
 
         if chat_record is None:
             continue
@@ -1556,11 +1596,17 @@ def read_session_chat(
         if isinstance(messages, list):
             for msg in messages:
                 if isinstance(msg, dict) and msg.get("role") in ("user", "agent"):
-                    all_messages.append({
+                    display_msg = {
                         "role": msg["role"],
                         "text": msg.get("text", ""),
                         "turn_id": msg.get("turn_id", turn_id),
-                    })
+                    }
+                    stamped_outcome = _stamped_message_outcome(msg.get("outcome"))
+                    if msg["role"] == "agent" and stamped_outcome is None:
+                        stamped_outcome = fallback_agent_outcome
+                    if msg["role"] == "agent" and stamped_outcome is not None:
+                        display_msg["outcome"] = stamped_outcome
+                    all_messages.append(display_msg)
         latest_turn_id = turn_id
 
     # Take the last N messages for display.
@@ -3068,6 +3114,29 @@ def _failure_response(
     return _build_batch_repl_failure_response(state, context, failure=failure)
 
 
+def _validated_agent_edit_response(
+    response: Mapping[str, Any],
+    *,
+    stage: str,
+) -> dict[str, Any]:
+    try:
+        return ensure_agent_edit_response_contract(response, stage=stage)
+    except Exception as exc:
+        fallback = _product_failure_response(
+            failure_envelope(
+                FailureKind.VALIDATION_ERROR,
+                stage,
+                agent_failure_context={
+                    "explanation": (
+                        "Agent edit response contract validation failed before return: "
+                        f"{exc}"
+                    )
+                },
+            )
+        )
+        return ensure_agent_edit_response_contract(fallback, stage=stage)
+
+
 def _product_failure_response(failure: FailureEnvelope) -> dict[str, Any]:
     response = failure.to_dict()
     response.update(product_failure_envelope_fields(failure))
@@ -3145,6 +3214,7 @@ def _legacy_failure_response(
             queue_allowed=context.queue_allowed,
         )
     )
+    response.update(product_failure_envelope_fields(failure))
     failure_context = response.get("agent_failure_context")
     issues = failure_context.get("issues") if isinstance(failure_context, Mapping) else None
     if isinstance(issues, list):
@@ -3155,6 +3225,7 @@ def _legacy_failure_response(
             if isinstance(recovery, Mapping):
                 response["rebaseline_recovery"] = dict(recovery)
                 break
+    response["internal_outcome"] = TurnOutcome.from_failure(failure).to_dict()
     return response
 
 
@@ -3216,31 +3287,38 @@ def _build_batch_repl_response(
         canvas_apply_allowed=context.canvas_apply_allowed if has_candidate else False,
         queue_allowed=context.queue_allowed if has_candidate else False,
     )
+    candidate_payload = _build_candidate_payload(
+        state,
+        compatibility_fields=compatibility_fields,
+        has_candidate=has_candidate,
+    )
     if state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY:
-        outcome = TurnOutcome.clarify(question=state.user_message or None)
+        internal_outcome = TurnOutcome.clarify(question=state.user_message or None)
     elif state.batch_exit_mode == _BATCH_EXIT_EDIT_CLARIFY:
         question = state.user_message or None
-        outcome = TurnOutcome.edit_and_clarify(
+        internal_outcome = TurnOutcome.edit_and_clarify(
             changes=_real_field_changes(state.batch_field_changes),
             question=question,
         )
     elif state.batch_exit_mode == _BATCH_EXIT_DONE:
-        outcome = TurnOutcome.edit(changes=_real_field_changes(state.batch_field_changes))
+        internal_outcome = TurnOutcome.edit(changes=_real_field_changes(state.batch_field_changes))
     elif state.batch_exit_mode == _BATCH_EXIT_BUDGET:
-        outcome = TurnOutcome.budget(reason=state.batch_final_summary or None)
+        internal_outcome = TurnOutcome.budget(reason=state.batch_final_summary or None)
     else:
-        outcome = TurnOutcome.noop(reason=state.batch_done_summary or state.user_message or None)
-    message = _synthesize_batch_repl_message(state, outcome=outcome)
+        internal_outcome = TurnOutcome.noop(
+            reason=state.batch_done_summary or state.user_message or None
+        )
+    public_outcome = public_outcome_from_turn_outcome(
+        internal_outcome,
+        response={"candidate": candidate_payload},
+    )
+    message = _synthesize_batch_repl_message(state, outcome=internal_outcome)
     change_details = _change_details_payload(state, context)
     response.update(
         turn_envelope(
             message=message,
-            outcome=outcome,
-            candidate=_build_candidate_payload(
-                state,
-                compatibility_fields=compatibility_fields,
-                has_candidate=has_candidate,
-            ),
+            outcome=public_outcome,
+            candidate=candidate_payload,
             eligibility=response_apply_eligibility,
             audit_ref=None,
             debug={
@@ -3256,6 +3334,7 @@ def _build_batch_repl_response(
             },
         )
     )
+    response["internal_outcome"] = internal_outcome.to_dict()
     response["change_details"] = change_details
     response.update(compatibility_fields)
     if state.batch_exit_mode in {_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY}:
@@ -3277,21 +3356,46 @@ def _build_dev_success_response(
     *,
     contract: str,
 ) -> dict[str, Any]:
+    compatibility_fields = _build_compatibility_response_fields(state)
+    eligibility = derive_apply_eligibility(
+        context,
+        has_candidate=True,
+        candidate_state="candidate",
+    )
     response = success_envelope(
         context,
         message=state.user_message,
         graph=state.ui_payload,
         report=state.report,
         artifacts=state.artifacts,
-        apply_eligibility=derive_apply_eligibility(
-            context,
-            has_candidate=True,
-            candidate_state="candidate",
-        ),
+        apply_eligibility=eligibility,
         canvas_apply_allowed=context.canvas_apply_allowed,
         queue_allowed=context.queue_allowed,
     )
-    response.update(_build_compatibility_response_fields(state))
+    response.update(compatibility_fields)
+    internal_outcome = TurnOutcome.edit()
+    response.update(
+        turn_envelope(
+            message=state.user_message,
+            outcome=public_outcome_from_turn_outcome(
+                internal_outcome,
+                response={"candidate": {"graph_hash": compatibility_fields["candidate_graph_hash"]}},
+            ),
+            candidate=_build_candidate_payload(
+                state,
+                compatibility_fields=compatibility_fields,
+                has_candidate=True,
+            ),
+            eligibility=eligibility,
+            audit_ref=None,
+            debug={
+                "gates": context.gate_snapshot(),
+                "hashes": dict(compatibility_fields),
+                "contract": contract,
+            },
+        )
+    )
+    response["internal_outcome"] = internal_outcome.to_dict()
     if contract == "delta":
         from vibecomfy.porting.edit_ops import op_to_dict
 
@@ -3533,7 +3637,7 @@ def handle_agent_edit(
             "ingest",
             agent_failure_context={"explanation": "Request body must be a JSON object."},
         )
-        return _product_failure_response(failure)
+        return _validated_agent_edit_response(_product_failure_response(failure), stage="ingest")
 
     task = payload.get("task")
     graph = payload.get("graph")
@@ -3543,7 +3647,7 @@ def handle_agent_edit(
             "ingest",
             agent_failure_context={"explanation": "`task` is required."},
         )
-        return _product_failure_response(failure)
+        return _validated_agent_edit_response(_product_failure_response(failure), stage="ingest")
     if not isinstance(graph, dict):
         failure = failure_envelope(
             FailureKind.MISSING_REQUIRED_FIELD,
@@ -3552,7 +3656,7 @@ def handle_agent_edit(
                 "explanation": "`graph` must be a ComfyUI UI JSON object."
             },
         )
-        return _product_failure_response(failure)
+        return _validated_agent_edit_response(_product_failure_response(failure), stage="ingest")
 
     if schema_provider is None:
         schema_provider = _default_runtime_schema_provider()
@@ -3567,7 +3671,7 @@ def handle_agent_edit(
         else None,
     )
     if allocation.replay is not None:
-        return allocation.replay.response
+        return _validated_agent_edit_response(allocation.replay.response, stage="replay")
     if allocation.conflict is not None:
         try:
             audit_ref = write_allocation_failure_audit(
@@ -3579,7 +3683,10 @@ def handle_agent_edit(
             failure = dataclasses.replace(allocation.conflict.failure, audit_ref=audit_ref)
         except Exception:
             failure = allocation.conflict.failure
-        return _product_failure_response(failure)
+        return _validated_agent_edit_response(
+            _product_failure_response(failure),
+            stage="allocation",
+        )
 
     context = allocation.context
     context.client_graph_hash = payload.get("client_graph_hash") if isinstance(payload.get("client_graph_hash"), str) else None
@@ -3697,11 +3804,20 @@ def handle_agent_edit(
                 model=model,
             )
     except _StageBlocked as blocked:
-        response = _failure_response(
-            state,
-            context,
-            contract=contract,
-            failure=blocked.failure or classify_failure(blocked.result.stage, blocked, context),
+        stage_name = (
+            blocked.failure.stage
+            if blocked.failure is not None
+            else blocked.result.stage
+        )
+        response = _validated_agent_edit_response(
+            _failure_response(
+                state,
+                context,
+                contract=contract,
+                failure=blocked.failure
+                or classify_failure(blocked.result.stage, blocked, context),
+            ),
+            stage=stage_name,
         )
         _write_turn_chat_artifact(state, context, response, contract)
         record_idempotent_response(
@@ -3718,11 +3834,20 @@ def handle_agent_edit(
         return response
 
     if contract == "delta":
-        response = _build_dev_success_response(state, context, contract=contract)
+        response = _validated_agent_edit_response(
+            _build_dev_success_response(state, context, contract=contract),
+            stage="submit",
+        )
     elif contract == "batch_repl":
-        response = _build_batch_repl_response(state, context)
+        response = _validated_agent_edit_response(
+            _build_batch_repl_response(state, context),
+            stage="submit",
+        )
     else:
-        response = _build_dev_success_response(state, context, contract=contract)
+        response = _validated_agent_edit_response(
+            _build_dev_success_response(state, context, contract=contract),
+            stage="submit",
+        )
     try:
         if contract == "delta":
             _record(
@@ -3754,7 +3879,8 @@ def handle_agent_edit(
             agent_failure_context={"explanation": str(exc)},
             audit_error=str(exc),
         )
-        return _product_failure_response(failure)
+        return _validated_agent_edit_response(_product_failure_response(failure), stage="audit")
+    response = _validated_agent_edit_response(response, stage="submit")
     _write_turn_chat_artifact(state, context, response, contract)
     record_idempotent_response(
         session_root=root,
