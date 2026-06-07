@@ -103,19 +103,20 @@ def test_parse_json_file_non_object(tmp_path: Path) -> None:
         parse_json_file(path)
 
 
-def test_validate_payload_valid_pass() -> None:
-    from arnold.pipelines.megaplan.workers import validate_payload
-    validate_payload("plan", {"plan": "x", "questions": [], "success_criteria": [], "assumptions": []})
+def test_validate_payload_plan_is_retired() -> None:
+    from arnold.pipelines.megaplan.workers._impl import validate_payload
+    with pytest.raises(megaplan.CliError, match="retired for plan"):
+        validate_payload("plan", {"plan": "x", "questions": [], "success_criteria": [], "assumptions": []})
 
 
-def test_validate_payload_missing_keys_raise() -> None:
-    from arnold.pipelines.megaplan.workers import validate_payload
-    with pytest.raises(megaplan.CliError, match="missing required"):
+def test_validate_payload_plan_retirement_precedes_missing_keys_checks() -> None:
+    from arnold.pipelines.megaplan.workers._impl import validate_payload
+    with pytest.raises(megaplan.CliError, match="retired for plan"):
         validate_payload("plan", {"plan": "x"})
 
 
 def test_validate_payload_unknown_step_noop() -> None:
-    from arnold.pipelines.megaplan.workers import validate_payload
+    from arnold.pipelines.megaplan.workers._impl import validate_payload
     # Unknown step should not raise
     validate_payload("nonexistent_step", {})
 

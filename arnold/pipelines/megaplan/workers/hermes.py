@@ -22,7 +22,6 @@ from arnold.pipelines.megaplan.workers._impl import (
     _repair_worker_json_once,
     mock_worker_output,
     session_key_for,
-    validate_payload,
 )
 from arnold.pipelines.megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
 from arnold.pipelines.megaplan.forms.provocations import select_active_checks
@@ -32,7 +31,6 @@ from arnold.pipelines.megaplan.model_seam import (
     capture_step_output,
     render_prompt_for_dispatch,
 )
-from arnold.pipelines.megaplan.prompts import create_hermes_prompt
 
 
 def _sanitize_db_name(identifier: str) -> str:
@@ -1088,7 +1086,6 @@ def run_hermes_step(
     # Build prompt — megaplan prompts embed the JSON schema, but some models
     # ignore formatting instructions buried in long prompts.  Append a clear
     # reminder so the final response is valid JSON, not markdown.
-    prompt_text = prompt_override or create_hermes_prompt(step, state, plan_dir, root=root)
     rendered_step = render_prompt_for_dispatch(
         "hermes",
         step,
@@ -1099,7 +1096,7 @@ def run_hermes_step(
         normalized_model=resolved_model,
         tier=seam_tier,
         schema=schema,
-        prompt_override=prompt_text,
+        prompt_override=prompt_override,
     )
     prompt = rendered_step.prompt
     # Add web search guidance for phases that have it
@@ -1479,6 +1476,7 @@ def run_hermes_step(
                             "normalized_model": effective_resolved_model or resolved_model,
                             "validation_step": step,
                             "compatibility_validation_step": step,
+                            "schema": schema,
                         },
                     ),
                     current_payload,
@@ -1495,15 +1493,16 @@ def run_hermes_step(
                                     kind="model",
                                     metadata={
                                         "tier": seam_tier.value,
-                                        "worker": "hermes",
-                                        "model": effective_resolved_model or resolved_model,
-                                        "normalized_model": effective_resolved_model or resolved_model,
-                                        "validation_step": step,
-                                        "compatibility_validation_step": step,
-                                    },
-                                ),
-                                reconstructed,
-                            )
+                                    "worker": "hermes",
+                                    "model": effective_resolved_model or resolved_model,
+                                    "normalized_model": effective_resolved_model or resolved_model,
+                                    "validation_step": step,
+                                    "compatibility_validation_step": step,
+                                    "schema": schema,
+                                },
+                            ),
+                            reconstructed,
+                        )
                             current_payload = dict(capture_outcome.legacy_payload)
                             print(
                                 "[hermes-worker] Using reconstructed payload (original failed validation)",

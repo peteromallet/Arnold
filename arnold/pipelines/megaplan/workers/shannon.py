@@ -59,13 +59,13 @@ VENDORED_SHANNON_PATH = (
 from arnold.pipelines.megaplan.runtime.process import OrphanDetectedError, TmuxSession, pane_pids
 from arnold.pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from arnold.pipelines.megaplan._core import creative_form_id, read_json, schemas_root
-from arnold.pipelines.megaplan.prompts import create_claude_prompt
 from arnold.pipelines.megaplan.model_seam import (
     ModelBudgetError,
     ModelTier,
     ModelStructuralAuditError,
     capture_step_output,
     render_compact_review_prompt,
+    render_prompt_for_dispatch,
     render_step_message,
 )
 from arnold.pipelines.megaplan.schemas import get_execution_schema_key
@@ -2079,68 +2079,41 @@ def run_shannon_step(
     )
     schema = read_json(schemas_root(root) / schema_name)
     schema_text = json.dumps(schema)
-    rendered_step = None
-    if prompt_override is not None:
-        rendered_step = render_step_message(
-            StepInvocation(
-                kind="model",
-                metadata={
-                    "tier": ModelTier.NON_ENFORCED.value,
-                    "worker": session_agent,
-                    "model": model,
-                    "normalized_model": model,
-                    "validation_step": step,
-                    "prompt": prompt_override,
-                    "prompt_components": prompt_override,
-                    "schema": schema,
-                    "projection_capabilities": projection_capabilities,
-                },
-            )
-        )
-    else:
-        built_prompt = create_claude_prompt(
+    try:
+        rendered_step = render_prompt_for_dispatch(
+            "claude",
             step,
             state,
             plan_dir,
             root=root,
+            worker=session_agent,
+            model=model,
+            normalized_model=model,
+            tier=ModelTier.NON_ENFORCED,
+            schema=schema,
+            prompt_override=prompt_override,
+            metadata={"projection_capabilities": projection_capabilities},
             projection_capabilities=projection_capabilities,
             **(prompt_kwargs or {}),
         )
-        try:
-            rendered_step = render_step_message(
-                StepInvocation(
-                    kind="model",
-                    metadata={
-                        "tier": ModelTier.NON_ENFORCED.value,
-                        "worker": session_agent,
-                        "model": model,
-                        "normalized_model": model,
-                        "validation_step": step,
-                        "prompt": built_prompt,
-                        "prompt_components": built_prompt,
-                        "schema": schema,
-                        "projection_capabilities": projection_capabilities,
-                    },
-                )
-            )
-        except ModelBudgetError as error:
-            if step != "review":
-                raise
-            rendered_step = render_compact_review_prompt(
-                session_agent,
-                step,
-                state,
-                plan_dir,
-                root=root,
-                worker=session_agent,
-                model=model,
-                normalized_model=model,
-                tier=ModelTier.NON_ENFORCED,
-                schema=schema,
-                prompt_size_error={"message": str(error)},
-                pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
-                projection_capabilities=projection_capabilities,
-            )
+    except ModelBudgetError as error:
+        if step != "review":
+            raise
+        rendered_step = render_compact_review_prompt(
+            "claude",
+            step,
+            state,
+            plan_dir,
+            root=root,
+            worker=session_agent,
+            model=model,
+            normalized_model=model,
+            tier=ModelTier.NON_ENFORCED,
+            schema=schema,
+            prompt_size_error={"message": str(error)},
+            pre_check_flags=(prompt_kwargs or {}).get("pre_check_flags"),
+            projection_capabilities=projection_capabilities,
+        )
     base_prompt = rendered_step.prompt
     if output_path is not None:
         output_path = Path(output_path)
@@ -2152,7 +2125,7 @@ def run_shannon_step(
         if step != "review" or error.code != "prompt_oversized":
             raise
         compacted = render_compact_review_prompt(
-            session_agent,
+            "claude",
             step,
             state,
             plan_dir,
@@ -2443,17 +2416,18 @@ def run_shannon_step(
             capture_outcome = capture_step_output(
                 StepInvocation(
                     kind="model",
-                    metadata={
-                        "tier": ModelTier.NON_ENFORCED.value,
-                        "worker": session_agent,
-                        "model": model,
-                        "normalized_model": model,
-                        "validation_step": step,
-                        "compatibility_validation_step": step,
-                    },
-                ),
-                pay_,
-            )
+                metadata={
+                    "tier": ModelTier.NON_ENFORCED.value,
+                    "worker": session_agent,
+                    "model": model,
+                    "normalized_model": model,
+                    "validation_step": step,
+                    "compatibility_validation_step": step,
+                    "schema": schema,
+                },
+            ),
+            pay_,
+        )
         except ModelStructuralAuditError as error:
             raise CliError("schema_error", str(error), extra={"raw_output": raw_text}) from error
         pay_ = dict(capture_outcome.legacy_payload)

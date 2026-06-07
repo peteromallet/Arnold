@@ -8,6 +8,7 @@ consumers off their legacy payload dictionaries yet.
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -249,6 +250,12 @@ class ModelStructuralAuditError(ValueError):
     def __init__(self, details: str) -> None:
         super().__init__(f"worker_structural_audit_failed: model output structural audit failed: {details}")
         self.details = details
+
+
+@dataclass(frozen=True)
+class _RecoveredPayload:
+    payload: dict[str, Any]
+    provenance: str
 
 
 class ModelStepInvocationAdapter:
@@ -922,6 +929,247 @@ def _capture_payload(
     return dict(parsed), ("model_step_output",)
 
 
+def _parse_recovery_json_file(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(path.name) from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Output file {path.name} was not valid JSON: {exc}") from exc
+    if not isinstance(payload, Mapping):
+        raise TypeError(f"Output file {path.name} did not contain a JSON object")
+    return dict(payload)
+
+
+def _iter_recovery_json_dicts(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, Mapping):
+        payload = dict(value)
+        candidates = [payload]
+        if "structured_output" in value:
+            candidates.extend(_iter_recovery_json_dicts(value.get("structured_output")))
+        for nested in value.values():
+            candidates.extend(_iter_recovery_json_dicts(nested))
+        return candidates
+    if isinstance(value, list):
+        candidates: list[dict[str, Any]] = []
+        for item in value:
+            candidates.extend(_iter_recovery_json_dicts(item))
+        return candidates
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("{") or text.startswith("["):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return []
+            return _iter_recovery_json_dicts(parsed)
+        embedded: list[dict[str, Any]] = []
+        decoder = json.JSONDecoder()
+        cursor = 0
+        while True:
+            brace = text.find("{", cursor)
+            if brace < 0:
+                break
+            try:
+                parsed, _end = decoder.raw_decode(text[brace:])
+            except json.JSONDecodeError:
+                cursor = brace + 1
+                continue
+            embedded.extend(_iter_recovery_json_dicts(parsed))
+            cursor = brace + 1
+        return embedded
+    return []
+
+
+def _extract_recovery_json_candidates(raw: str) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+
+    fenced = re.findall(r"```json\s*\n(.*?)```", raw, re.DOTALL)
+    for block in fenced:
+        try:
+            obj = json.loads(block.strip())
+        except json.JSONDecodeError:
+            continue
+        candidates.extend(_iter_recovery_json_dicts(obj))
+
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        candidates.extend(_iter_recovery_json_dicts(obj))
+
+    decoder = json.JSONDecoder()
+    search_start = 0
+    while True:
+        brace_start = raw.find("{", search_start)
+        if brace_start < 0:
+            break
+        try:
+            obj, _end = decoder.raw_decode(raw[brace_start:])
+        except json.JSONDecodeError:
+            search_start = brace_start + 1
+            continue
+        candidates.extend(_iter_recovery_json_dicts(obj))
+        search_start = brace_start + 1
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            marker = json.dumps(candidate, sort_keys=True)
+        except TypeError:
+            marker = repr(candidate)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append(candidate)
+    return deduped
+
+
+def _recovery_payload_looks_like_step(step: str, payload: Mapping[str, Any]) -> bool:
+    schema_key = _CAPTURE_SCHEMA_KEYS_BY_STEP.get(step)
+    required = set()
+    if schema_key is not None:
+        schema = SCHEMAS.get(schema_key)
+        if isinstance(schema, Mapping):
+            required = set(schema.get("required", ()))
+    if required.intersection(payload):
+        return True
+    if step == "execute" and {"task_updates", "sense_check_acknowledgments"}.intersection(payload):
+        return True
+    return False
+
+
+def _recovery_critique_completeness_score(item: _RecoveredPayload) -> tuple[int, int]:
+    checks = item.payload.get("checks", [])
+    if not isinstance(checks, list):
+        return (0, 0)
+    completed_checks = 0
+    total_findings = 0
+    for check in checks:
+        if not isinstance(check, Mapping):
+            continue
+        findings = check.get("findings", [])
+        if not isinstance(findings, list) or not findings:
+            continue
+        completed_checks += 1
+        total_findings += len(findings)
+    return (completed_checks, total_findings)
+
+
+def _recover_payload_with_provenance(
+    step: str,
+    *,
+    plan_dir: Path,
+    output_path: Path,
+    raw: str,
+    prefer_output_file: bool = True,
+) -> _RecoveredPayload | None:
+    file_payload = None
+    template_payload = None
+    candidate_payloads: list[_RecoveredPayload] = []
+    try:
+        file_payload = _parse_recovery_json_file(output_path)
+    except (FileNotFoundError, TypeError, ValueError):
+        try:
+            file_raw = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+        else:
+            candidate_payloads.extend(
+                _RecoveredPayload(payload=candidate, provenance="output_file_recovered")
+                for candidate in _extract_recovery_json_candidates(file_raw)
+            )
+    fallback_names = {
+        "critique": "critique_output.json",
+        "review": "review_output.json",
+    }
+    fallback_name = fallback_names.get(step, f"{step}_output.json")
+    fallback_path = plan_dir / fallback_name
+    if fallback_path != output_path and fallback_path.exists():
+        try:
+            template_payload = _parse_recovery_json_file(fallback_path)
+        except (FileNotFoundError, TypeError, ValueError):
+            try:
+                fallback_raw = fallback_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+            else:
+                candidate_payloads.extend(
+                    _RecoveredPayload(payload=candidate, provenance="template_file_recovered")
+                    for candidate in _extract_recovery_json_candidates(fallback_raw)
+                )
+    if file_payload is None and template_payload is not None:
+        file_payload = template_payload
+        template_payload = None
+    output_is_template_file = output_path == fallback_path
+    output_is_single_critique_check = (
+        step == "critique"
+        and output_path.name.startswith("critique_check_")
+        and output_path.suffix == ".json"
+    )
+    validation_errors: list[str] = []
+    if (
+        prefer_output_file
+        and file_payload is not None
+        and (step != "critique" or output_is_template_file or output_is_single_critique_check)
+    ):
+        preferred_payload = dict(file_payload)
+        try:
+            audit_step_payload(step, preferred_payload)
+        except ModelStructuralAuditError as error:
+            if _recovery_payload_looks_like_step(step, preferred_payload):
+                candidate_payloads.insert(
+                    0,
+                    _RecoveredPayload(payload=file_payload, provenance="output_file"),
+                )
+                validation_errors.append(error.details)
+        else:
+            return _RecoveredPayload(payload=preferred_payload, provenance="output_file")
+    raw_candidates = _extract_recovery_json_candidates(raw)
+    if file_payload is not None:
+        if not any(candidate.payload is file_payload for candidate in candidate_payloads):
+            candidate_payloads.insert(
+                0,
+                _RecoveredPayload(payload=file_payload, provenance="output_file"),
+            )
+    if template_payload is not None:
+        insert_at = 1 if file_payload is not None else 0
+        candidate_payloads.insert(
+            insert_at,
+            _RecoveredPayload(payload=template_payload, provenance="template_file"),
+        )
+    candidate_payloads.extend(
+        _RecoveredPayload(payload=candidate, provenance="raw_output")
+        for candidate in raw_candidates
+    )
+    valid_payloads: list[_RecoveredPayload] = []
+    for candidate in candidate_payloads:
+        payload = dict(candidate.payload)
+        try:
+            audit_step_payload(step, payload)
+        except ModelStructuralAuditError as error:
+            if _recovery_payload_looks_like_step(step, payload):
+                validation_errors.append(error.details)
+            continue
+        valid_payloads.append(_RecoveredPayload(payload=payload, provenance=candidate.provenance))
+    if not valid_payloads:
+        if validation_errors:
+            unique_errors = list(dict.fromkeys(validation_errors))
+            raise ModelStructuralAuditError(
+                f"Recovered JSON object for {step} failed validation: "
+                + " | ".join(unique_errors),
+            )
+        return None
+    if step == "critique" and len(valid_payloads) > 1:
+        return max(valid_payloads, key=_recovery_critique_completeness_score)
+    return valid_payloads[0]
+
+
 def _recover_payload_for_invocation(invocation: StepInvocation, raw: str) -> tuple[dict[str, Any], tuple[str, ...]] | None:
     recovery = invocation.metadata.get("capture_recovery")
     if not isinstance(recovery, Mapping):
@@ -931,9 +1179,7 @@ def _recover_payload_for_invocation(invocation: StepInvocation, raw: str) -> tup
     output_path = recovery.get("output_path")
     if step is None or plan_dir is None or output_path is None:
         return None
-    from arnold.pipelines.megaplan.workers._impl import _recover_codex_payload_with_provenance
-
-    recovered = _recover_codex_payload_with_provenance(
+    recovered = _recover_payload_with_provenance(
         step,
         plan_dir=Path(plan_dir),
         output_path=Path(output_path),
@@ -966,13 +1212,15 @@ def _compatibility_projection(invocation: StepInvocation, payload: dict[str, Any
     )
     if step is None:
         return payload
-    if _compatibility_mode_for_step(step) is CompatibilityMode.NATIVE:
+    mode = _compatibility_mode_for_step(step)
+    if mode is CompatibilityMode.NATIVE:
         return payload
-    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload, validate_payload
-
-    normalized = _normalize_worker_payload(step, dict(payload))
-    validate_payload(step, normalized)
-    return normalized
+    raise AssertionError(
+        "Phase 5 deletion invariant violated: "
+        f"_compatibility_projection received non-native step {step!r} "
+        f"with mode {mode.value!r}. Run assert_all_compatibility_modes_native() "
+        "before deleting shared legacy helpers."
+    )
 
 
 def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[str, Any]) -> dict[str, Any]:
@@ -980,6 +1228,8 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
         invocation.metadata.get("compatibility_validation_step")
         or invocation.metadata.get("validation_step")
     )
+    if step == "review":
+        return _normalize_review_capture_payload(payload)
     if step != "finalize":
         return payload
     tasks = payload.get("tasks")
@@ -990,6 +1240,14 @@ def _normalize_native_capture_payload(invocation: StepInvocation, payload: dict[
         _strip_null_finalize_task_optionals(task) if isinstance(task, Mapping) else task
         for task in tasks
     ]
+    return normalized
+
+
+def _normalize_review_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    if normalized.get("checks") is None:
+        normalized["checks"] = []
+    normalized.pop("review_completion_status", None)
     return normalized
 
 
@@ -1066,6 +1324,18 @@ _CAPTURE_SCHEMA_KEYS_BY_STEP: dict[str, str] = {
     "critique": "critique.json",
     "review": "review.json",
     "gate": "gate.json",
+    "plan": "plan.json",
+    "prep": "prep.json",
+    "prep-triage": "prep_triage.json",
+    "prep-distill": "prep.json",
+    "prep-research": "research.json",
+    "feedback": "feedback.json",
+    "critique_evaluator": "critique_evaluator.json",
+    "revise": "revise.json",
+    "loop_plan": "loop_plan.json",
+    "loop_execute": "loop_execute.json",
+    "tiebreaker_researcher": "tiebreaker_researcher.json",
+    "tiebreaker_challenger": "tiebreaker_challenger.json",
 }
 
 _COMPATIBILITY_MODE_BY_STEP: dict[str, CompatibilityMode] = {
@@ -1074,7 +1344,41 @@ _COMPATIBILITY_MODE_BY_STEP: dict[str, CompatibilityMode] = {
     "critique": CompatibilityMode.NATIVE,
     "review": CompatibilityMode.NATIVE,
     "gate": CompatibilityMode.NATIVE,
+    "plan": CompatibilityMode.NATIVE,
+    "prep": CompatibilityMode.NATIVE,
+    "prep-triage": CompatibilityMode.NATIVE,
+    "prep-distill": CompatibilityMode.NATIVE,
+    "prep-research": CompatibilityMode.NATIVE,
+    "feedback": CompatibilityMode.NATIVE,
+    "critique_evaluator": CompatibilityMode.NATIVE,
+    "revise": CompatibilityMode.NATIVE,
+    "loop_plan": CompatibilityMode.NATIVE,
+    "loop_execute": CompatibilityMode.NATIVE,
+    "tiebreaker_researcher": CompatibilityMode.NATIVE,
+    "tiebreaker_challenger": CompatibilityMode.NATIVE,
 }
+
+
+def _remaining_legacy_compatibility_steps() -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            step
+            for step, mode in _COMPATIBILITY_MODE_BY_STEP.items()
+            if mode is CompatibilityMode.LEGACY
+        )
+    )
+
+
+def assert_all_compatibility_modes_native() -> None:
+    remaining = _remaining_legacy_compatibility_steps()
+    if not remaining:
+        return
+    quoted_steps = ", ".join(f'"{step}"' for step in remaining)
+    raise AssertionError(
+        "Phase 5 deletion guard blocked: legacy compatibility steps remain in "
+        f"_COMPATIBILITY_MODE_BY_STEP: {quoted_steps}. Migrate these steps to "
+        "CompatibilityMode.NATIVE before deleting shared legacy helpers."
+    )
 
 
 def _compatibility_mode_for_step(step: str | None) -> CompatibilityMode:
@@ -1135,6 +1439,7 @@ __all__ = [
     "budget_model_input",
     "capture_step_output",
     "classify_model_family",
+    "assert_all_compatibility_modes_native",
     "install_model_step_adapter",
     "render_compact_review_prompt",
     "render_prompt_for_dispatch",

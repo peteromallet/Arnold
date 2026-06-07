@@ -2,6 +2,7 @@
   "scan_files": [
     "arnold/pipelines/megaplan/prompts/__init__.py",
     "arnold/pipelines/megaplan/execute/batch.py",
+    "arnold/pipelines/megaplan/model_seam.py",
     "arnold/pipelines/megaplan/workers/_impl.py",
     "arnold/pipelines/megaplan/workers/shannon.py",
     "arnold/pipelines/megaplan/workers/hermes.py",
@@ -58,23 +59,28 @@
       ]
     },
     {
-      "path": "arnold/pipelines/megaplan/workers/_impl.py",
-      "anchor": "def _recover_codex_payload(",
+      "path": "arnold/pipelines/megaplan/model_seam.py",
+      "anchor": "def _recover_payload_with_provenance(",
       "classification": "owned_dispatch"
     },
     {
-      "path": "arnold/pipelines/megaplan/workers/_impl.py",
-      "anchor": "validate_payload(step, normalized)",
+      "path": "arnold/pipelines/megaplan/model_seam.py",
+      "anchor": "audit_step_payload(step, preferred_payload)",
       "classification": "owned_dispatch"
     },
     {
-      "path": "arnold/pipelines/megaplan/workers/_impl.py",
-      "anchor": "validate_payload(step, normalized_file_payload)",
+      "path": "arnold/pipelines/megaplan/model_seam.py",
+      "anchor": "audit_step_payload(step, payload)",
       "classification": "owned_dispatch"
     },
     {
       "path": "arnold/pipelines/megaplan/workers/_impl.py",
       "anchor": "def validate_payload(step: str, payload: dict[str, Any]) -> None:",
+      "classification": "owned_dispatch"
+    },
+    {
+      "path": "arnold/pipelines/megaplan/workers/_impl.py",
+      "anchor": "Legacy validate_payload() is retired for {step}; use schema-backed capture/audit instead.",
       "classification": "owned_dispatch"
     },
     {
@@ -93,13 +99,13 @@
       "classification": "owned_dispatch"
     },
     {
-      "path": "arnold/pipelines/megaplan/workers/_impl.py",
-      "anchor": "recovered_payload = _recover_codex_payload(",
+      "path": "arnold/pipelines/megaplan/model_seam.py",
+      "anchor": "recovered = _recover_payload_with_provenance(",
       "classification": "owned_dispatch"
     },
     {
-      "path": "arnold/pipelines/megaplan/workers/_impl.py",
-      "anchor": "payload = _recover_codex_payload(",
+      "path": "arnold/pipelines/megaplan/model_seam.py",
+      "anchor": "return dict(recovered.payload), (\"model_step_output\", f\"codex_recovery:{recovered.provenance}\")",
       "classification": "owned_dispatch"
     },
     {
@@ -118,12 +124,7 @@
     },
     {
       "path": "arnold/pipelines/megaplan/workers/shannon.py",
-      "anchor": "built_prompt = create_claude_prompt(",
-      "classification": "owned_dispatch"
-    },
-    {
-      "path": "arnold/pipelines/megaplan/workers/shannon.py",
-      "anchor": "rendered_step = render_step_message(",
+      "anchor": "render_step_message(",
       "classification": "owned_dispatch"
     },
     {
@@ -135,15 +136,6 @@
       "path": "arnold/pipelines/megaplan/workers/hermes.py",
       "anchor": "repair_result = agent.run_conversation(",
       "classification": "owned_dispatch"
-    },
-    {
-      "path": "arnold/pipelines/megaplan/workers/hermes.py",
-      "anchor": "prompt_override = create_hermes_prompt(step, state, plan_dir, root=root)",
-      "classification": "owned_dispatch",
-      "required_guards": [
-        "rendered_step = render_prompt_for_dispatch(",
-        "prompt_override=prompt_override,"
-      ]
     },
     {
       "path": "arnold/pipelines/megaplan/workers/hermes.py",
@@ -177,22 +169,38 @@
     {
       "path": "arnold/pipelines/megaplan/prompts/tiebreaker_orchestrator.py",
       "anchor": "researcher_result, r_agent, _, _ = run_step_with_worker(",
-      "classification": "owned_dispatch"
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "return render_prompt_for_dispatch(",
+        "prompt_override=prompt,"
+      ]
     },
     {
       "path": "arnold/pipelines/megaplan/prompts/tiebreaker_orchestrator.py",
       "anchor": "challenger_result, c_agent, _, _ = run_step_with_worker(",
-      "classification": "owned_dispatch"
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "return render_prompt_for_dispatch(",
+        "prompt_override=prompt,"
+      ]
     },
     {
       "path": "arnold/pipelines/megaplan/orchestration/tiebreaker.py",
       "anchor": "researcher_result, r_agent, _, _ = run_step_with_worker(",
-      "classification": "owned_dispatch"
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "return render_prompt_for_dispatch(",
+        "prompt_override=prompt,"
+      ]
     },
     {
       "path": "arnold/pipelines/megaplan/orchestration/tiebreaker.py",
       "anchor": "challenger_result, c_agent, _, _ = run_step_with_worker(",
-      "classification": "owned_dispatch"
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "return render_prompt_for_dispatch(",
+        "prompt_override=prompt,"
+      ]
     },
     {
       "path": "arnold/pipelines/megaplan/_core/worker_fanout.py",
@@ -202,7 +210,11 @@
     {
       "path": "arnold/pipelines/megaplan/_core/worker_fanout.py",
       "anchor": "worker, _agent, _mode, _refreshed = run_step_with_worker(",
-      "classification": "owned_dispatch"
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "validation_step = unit.validation_step or unit.step",
+        "prompt_override=rendered.prompt if rendered is not None else unit.prompt,"
+      ]
     },
     {
       "path": "arnold/pipelines/megaplan/_core/worker_fanout.py",
@@ -222,12 +234,20 @@
     {
       "path": "arnold/pipelines/megaplan/review/parallel.py",
       "anchor": "units.append(",
-      "classification": "owned_dispatch"
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "validation_step=\"review\"",
+        "schema=schema,"
+      ]
     },
     {
       "path": "arnold/pipelines/megaplan/review/parallel.py",
       "anchor": "criteria_unit = WorkerUnit(",
-      "classification": "owned_dispatch"
+      "classification": "owned_dispatch",
+      "required_guards": [
+        "validation_step=\"review\"",
+        "schema=schema,"
+      ]
     },
     {
       "path": "arnold/pipelines/megaplan/agent_runtime/contracts.py",
@@ -241,7 +261,7 @@
     },
     {
       "path": "arnold/pipelines/megaplan/workers/_impl.py",
-      "anchor": "# codex exec resume does not support --output-schema; we rely on",
+      "anchor": "# codex exec resume does not support --output-schema; capture_step_output",
       "classification": "dont_touch"
     },
     {

@@ -32,7 +32,7 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
 )
-from arnold.pipelines.megaplan.workers import WorkerResult, validate_payload
+from arnold.pipelines.megaplan.workers import WorkerResult
 from arnold.pipelines.megaplan._core import (
     adaptive_critique_enabled,
     atomic_write_json,
@@ -760,7 +760,7 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             )
             raise error
         payload = worker.payload
-        validate_payload("revise", payload)
+        audit_step_payload("revise", payload)
         payload["success_criteria"] = _merge_imported_decision_criteria(
             state,
             payload.get("success_criteria", []),

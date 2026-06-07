@@ -230,7 +230,20 @@ def _default_mock_revise_payload(state: PlanState, plan_dir: Path) -> dict[str, 
             """
         ).strip(),
         "changes_summary": "Added explicit repo-scoping and verification steps.",
-        "flags_addressed": ["FLAG-001", "FLAG-002"],
+        "flags_addressed": [
+            {
+                "id": "FLAG-001",
+                "resolution": "addressed",
+                "reason": "The revised plan now identifies exact touch points before editing.",
+                "where": "Step 1",
+            },
+            {
+                "id": "FLAG-002",
+                "resolution": "addressed",
+                "reason": "The revised plan now names a concrete verification command.",
+                "where": "Step 3",
+            },
+        ],
         "assumptions": ["The repository contains enough context for implementation."],
         "success_criteria": [
             {"criterion": "The plan identifies exact touch points before editing.", "priority": "must"},

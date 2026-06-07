@@ -7,18 +7,64 @@ from pathlib import Path
 
 import pytest
 
+from arnold.pipeline import StepInvocation
+from arnold.pipelines.megaplan.model_seam import (
+    ModelStructuralAuditError,
+    _RecoveredPayload,
+    _recovery_critique_completeness_score,
+    capture_step_output,
+)
 from arnold.pipelines.megaplan.types import CliError
 from arnold.pipelines.megaplan.workers import (
     CommandResult,
     _extract_claude_usage,
-    _recover_codex_payload,
-    _recover_codex_payload_with_provenance,
     extract_session_id,
     parse_claude_envelope,
     parse_json_file,
     run_codex_step,
-    validate_payload,
 )
+from arnold.pipelines.megaplan.workers._impl import validate_payload
+
+
+def _capture_recovered_output(
+    step: str,
+    *,
+    plan_dir: Path,
+    output_path: Path,
+    raw: str,
+    prefer_output_file: bool = True,
+) -> object:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "validation_step": step,
+            "capture_recovery": {
+                "step": step,
+                "plan_dir": str(plan_dir),
+                "output_path": str(output_path),
+                "prefer_output_file": prefer_output_file,
+            },
+        },
+    )
+    return capture_step_output(invocation, raw)
+
+
+def _recover_payload(
+    step: str,
+    *,
+    plan_dir: Path,
+    output_path: Path,
+    raw: str,
+    prefer_output_file: bool = True,
+) -> dict[str, object]:
+    outcome = _capture_recovered_output(
+        step,
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=raw,
+        prefer_output_file=prefer_output_file,
+    )
+    return outcome.legacy_payload
 
 
 def test_parse_claude_envelope_prefers_structured_output() -> None:
@@ -65,39 +111,6 @@ def test_parse_claude_envelope_classifies_not_logged_in_as_auth_error() -> None:
 @pytest.mark.parametrize(
     ("step", "payload"),
     [
-        ("plan", {"plan": "x", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must"}], "assumptions": []}),
-        (
-            "prep",
-            {
-                "skip": False,
-                "task_summary": "Prepare context before planning.",
-                "key_evidence": [],
-                "relevant_code": [],
-                "test_expectations": [],
-                "constraints": [],
-                "suggested_approach": "Use the brief as primary context.",
-            },
-        ),
-        (
-            "revise",
-            {
-                "plan": "x",
-                "changes_summary": "y",
-                "flags_addressed": [],
-                "assumptions": [],
-                "success_criteria": [],
-                "questions": [],
-            },
-        ),
-        (
-            "critique_evaluator",
-            {
-                "selections": [],
-                "skipped": [],
-                "summary": "ok",
-                "evaluator_model": "mock-model",
-            },
-        ),
         (
             "execute",
             {
@@ -121,8 +134,9 @@ def test_parse_claude_envelope_classifies_not_logged_in_as_auth_error() -> None:
         ),
     ],
 )
-def test_validate_payload_accepts_legacy_worker_steps(step: str, payload: dict[str, object]) -> None:
-    validate_payload(step, payload)
+def test_validate_payload_retired_for_execute(step: str, payload: dict[str, object]) -> None:
+    with pytest.raises(CliError, match="retired for execute"):
+        validate_payload(step, payload)
 
 @pytest.mark.parametrize("step,payload", [
     (
@@ -173,6 +187,67 @@ def test_validate_payload_accepts_legacy_worker_steps(step: str, payload: dict[s
             "accepted_tradeoffs": [],
         },
     ),
+    ("plan", {"plan": "x", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must"}], "assumptions": []}),
+    (
+        "prep",
+        {
+            "skip": False,
+            "task_summary": "Prepare context before planning.",
+            "key_evidence": [],
+            "relevant_code": [],
+            "test_expectations": [],
+            "constraints": [],
+            "suggested_approach": "Use the brief as primary context.",
+        },
+    ),
+    ("prep-triage", {"triage_framing": "Research needed.", "areas": []}),
+    ("prep-research", {"findings": []}),
+    ("prep-distill", {"skip": False, "task_summary": "Distilled findings.", "key_evidence": [], "relevant_code": [], "test_expectations": [], "constraints": [], "suggested_approach": "Use the brief."}),
+    (
+        "critique_evaluator",
+        {
+            "selections": [],
+            "skipped": [],
+            "evaluator_model": "mock-model",
+        },
+    ),
+    (
+        "feedback",
+        {
+            "overall": {"rating": 8, "comment": "Good work."},
+            "stages": {},
+        },
+    ),
+    ("loop_plan", {"spec_updates": {}, "next_action": "continue", "reasoning": "ok"}),
+    ("loop_execute", {"diagnosis": "x", "fix_description": "y", "files_to_change": [], "confidence": "low", "outcome": "continue", "should_pause": False}),
+    (
+        "tiebreaker_researcher",
+        {
+            "question": "Which option?",
+            "evidence": [],
+            "options": [],
+            "preliminary_pick": {
+                "option_name": "A",
+                "rationale": "ok",
+                "what_im_least_sure_about": "tradeoffs",
+            },
+        },
+    ),
+    (
+        "tiebreaker_challenger",
+        {
+            "measurements_vs_assumptions": "ok",
+            "missing_options": [],
+            "hard_cases": [],
+            "reframings": [],
+            "aging_analysis": "ok",
+            "counter_recommendation": {
+                "option_name": "A",
+                "rationale": "ok",
+                "agrees_with_researcher": True,
+            },
+        },
+    ),
 ])
 def test_validate_payload_rejects_migrated_native_steps(
     step: str,
@@ -184,27 +259,28 @@ def test_validate_payload_rejects_migrated_native_steps(
             payload,
         )
 
-def test_validate_payload_accepts_execute_batch_shape() -> None:
-    validate_payload(
-        "execute",
-        {
-            "task_updates": [
-                {
-                    "task_id": "T8",
-                    "status": "done",
-                    "executor_notes": "Implemented batch task.",
-                    "files_changed": ["reigh-worker/tests/test_preview_harness.py"],
-                    "commands_run": ["pytest tests/test_preview_harness.py -v"],
-                }
-            ],
-            "sense_check_acknowledgments": [
-                {
-                    "sense_check_id": "SC8",
-                    "executor_note": "Confirmed batch verification.",
-                }
-            ],
-        },
-    )
+def test_validate_payload_execute_batch_shape_is_retired() -> None:
+    with pytest.raises(CliError, match="retired for execute"):
+        validate_payload(
+            "execute",
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T8",
+                        "status": "done",
+                        "executor_notes": "Implemented batch task.",
+                        "files_changed": ["reigh-worker/tests/test_preview_harness.py"],
+                        "commands_run": ["pytest tests/test_preview_harness.py -v"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {
+                        "sense_check_id": "SC8",
+                        "executor_note": "Confirmed batch verification.",
+                    }
+                ],
+            },
+        )
 
 def test_extract_session_id_supports_jsonl() -> None:
     raw = '{"type":"thread.started","thread_id":"abc-123"}\n'
@@ -247,7 +323,7 @@ def test_recover_codex_payload_handles_stderr_bleed_in_output_file(tmp_path: Pat
     )
     output_path.write_text(polluted, encoding="utf-8")
 
-    recovered = _recover_codex_payload(
+    recovered = _recover_payload(
         "critique",
         plan_dir=plan_dir,
         output_path=output_path,
@@ -292,7 +368,7 @@ def test_recover_codex_payload_prefers_more_complete_valid_critique_over_output_
     }
     output_path.write_text(json.dumps(file_payload), encoding="utf-8")
 
-    recovered = _recover_codex_payload(
+    recovered = _recover_payload(
         "critique",
         plan_dir=plan_dir,
         output_path=output_path,
@@ -370,7 +446,7 @@ def test_recover_codex_payload_prefers_completed_critique_template_over_schema_s
     output_path.write_text(json.dumps(summary_payload), encoding="utf-8")
     (plan_dir / "critique_output.json").write_text(json.dumps(completed_payload), encoding="utf-8")
 
-    recovered = _recover_codex_payload(
+    recovered = _recover_payload(
         "critique",
         plan_dir=plan_dir,
         output_path=output_path,
@@ -407,16 +483,18 @@ def test_recover_codex_payload_reports_template_provenance_without_legacy_author
     }
     (plan_dir / "critique_output.json").write_text(json.dumps(template_payload), encoding="utf-8")
 
-    recovered = _recover_codex_payload_with_provenance(
+    outcome = _capture_recovered_output(
         "critique",
         plan_dir=plan_dir,
         output_path=output_path,
         raw=json.dumps(raw_payload),
     )
 
-    assert recovered is not None
-    assert recovered.payload == template_payload
-    assert recovered.provenance == "template_file"
+    assert outcome.legacy_payload == template_payload
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:template_file",
+    )
 
 def test_recover_codex_payload_falls_back_from_file_to_template_to_raw_order(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
@@ -437,17 +515,19 @@ def test_recover_codex_payload_falls_back_from_file_to_template_to_raw_order(tmp
         "sense_check_acknowledgments": [{"sense_check_id": "SC8", "executor_note": "ok"}],
     }
 
-    recovered = _recover_codex_payload_with_provenance(
+    outcome = _capture_recovered_output(
         "execute",
         plan_dir=plan_dir,
         output_path=output_path,
         raw=json.dumps(raw_payload),
     )
 
-    assert recovered is not None
-    assert recovered.provenance == "template_file"
-    assert recovered.payload["task_updates"][0]["task_id"] == "T7"
-    assert recovered.payload["task_updates"][0]["status"] == "done"
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:template_file",
+    )
+    assert outcome.legacy_payload["task_updates"][0]["task_id"] == "T7"
+    assert outcome.legacy_payload["task_updates"][0]["status"] == "done"
 
 def test_recover_codex_payload_keeps_meaningful_critique_when_template_is_empty(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
@@ -485,7 +565,7 @@ def test_recover_codex_payload_keeps_meaningful_critique_when_template_is_empty(
     output_path.write_text(json.dumps(meaningful_payload), encoding="utf-8")
     (plan_dir / "critique_output.json").write_text(json.dumps(empty_template), encoding="utf-8")
 
-    recovered = _recover_codex_payload(
+    recovered = _recover_payload(
         "critique",
         plan_dir=plan_dir,
         output_path=output_path,
@@ -524,7 +604,7 @@ def test_recover_codex_payload_critique_scoring_handles_scalar_checks(tmp_path: 
     output_path.write_text(json.dumps(malformed_payload), encoding="utf-8")
     (plan_dir / "critique_output.json").write_text(json.dumps(complete_payload), encoding="utf-8")
 
-    recovered = _recover_codex_payload(
+    recovered = _recover_payload(
         "critique",
         plan_dir=plan_dir,
         output_path=output_path,
@@ -560,7 +640,7 @@ def test_recover_codex_payload_accepts_schema_valid_execute_batch_payload(tmp_pa
         encoding="utf-8",
     )
 
-    recovered = _recover_codex_payload(
+    recovered = _recover_payload(
         "execute",
         plan_dir=plan_dir,
         output_path=output_path,
@@ -586,7 +666,7 @@ def test_recover_codex_payload_accepts_execute_batch_aliases_after_schema_migrat
         encoding="utf-8",
     )
 
-    recovered = _recover_codex_payload(
+    recovered = _recover_payload(
         "execute",
         plan_dir=plan_dir,
         output_path=output_path,
@@ -632,37 +712,37 @@ def test_recover_codex_payload_accepts_review_without_checks_and_trailing_teleme
         encoding="utf-8",
     )
 
-    recovered = _recover_codex_payload(
+    recovered = _recover_payload(
         "review",
         plan_dir=plan_dir,
         output_path=output_path,
         raw="",
     )
 
-    assert recovered == valid_payload
+    assert recovered == {**valid_payload, "checks": []}
 
 def test_recover_codex_payload_reports_missing_required_keys_for_json_object(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
-    output_path = plan_dir / "plan_output.json"
-    # Optional array keys present so the payload "looks like" a plan, but the
+    output_path = plan_dir / "revise_output.json"
+    # Optional array keys present so the payload \"looks like\" a revise, but the
     # required string `plan` key is missing — the defensive-defaults block
     # only fills array keys, so validation still surfaces the gap.
     output_path.write_text(
-        json.dumps({"questions": ["?"], "success_criteria": ["ok"], "assumptions": ["x"]}),
+        json.dumps({"changes_summary": "y", "flags_addressed": [], "assumptions": [], "success_criteria": [], "questions": []}),
         encoding="utf-8",
     )
 
-    with pytest.raises(CliError) as exc_info:
-        _recover_codex_payload(
-            "plan",
+    with pytest.raises(ModelStructuralAuditError) as exc_info:
+        _capture_recovered_output(
+            "revise",
             plan_dir=plan_dir,
             output_path=output_path,
             raw="",
         )
 
-    assert "plan output missing required keys" in exc_info.value.message
-    assert "not valid JSON" not in exc_info.value.message
+    assert "Recovered JSON object for revise failed validation" in str(exc_info.value)
+    assert "not valid JSON" not in str(exc_info.value)
 
 
 def test_recover_codex_payload_rejects_gate_payload_missing_required_arrays(tmp_path: Path) -> None:
@@ -680,16 +760,16 @@ def test_recover_codex_payload_rejects_gate_payload_missing_required_arrays(tmp_
         encoding="utf-8",
     )
 
-    with pytest.raises(CliError) as exc_info:
-        _recover_codex_payload(
+    with pytest.raises(ModelStructuralAuditError) as exc_info:
+        _capture_recovered_output(
             "gate",
             plan_dir=plan_dir,
             output_path=output_path,
             raw="",
         )
 
-    assert "Recovered JSON object for gate failed validation" in exc_info.value.message
-    assert "/warnings" in exc_info.value.message
+    assert "Recovered JSON object for gate failed validation" in str(exc_info.value)
+    assert "/warnings" in str(exc_info.value)
 
 
 def test_recover_codex_payload_rejects_gate_payload_with_wrong_array_types(tmp_path: Path) -> None:
@@ -711,23 +791,23 @@ def test_recover_codex_payload_rejects_gate_payload_with_wrong_array_types(tmp_p
         encoding="utf-8",
     )
 
-    with pytest.raises(CliError) as exc_info:
-        _recover_codex_payload(
+    with pytest.raises(ModelStructuralAuditError) as exc_info:
+        _capture_recovered_output(
             "gate",
             plan_dir=plan_dir,
             output_path=output_path,
             raw="",
         )
 
-    assert "Recovered JSON object for gate failed validation" in exc_info.value.message
-    assert "/warnings" in exc_info.value.message or "/flag_resolutions" in exc_info.value.message
+    assert "Recovered JSON object for gate failed validation" in str(exc_info.value)
+    assert "/warnings" in str(exc_info.value) or "/flag_resolutions" in str(exc_info.value)
 
 def test_validate_payload_critique_requires_flags() -> None:
     with pytest.raises(CliError, match=r"retired for critique"):
         validate_payload("critique", {"verified_flag_ids": [], "disputed_flag_ids": []})
 
-def test_validate_payload_execute_requires_output() -> None:
-    with pytest.raises(CliError, match="output"):
+def test_validate_payload_execute_is_retired() -> None:
+    with pytest.raises(CliError, match="retired for execute"):
         validate_payload(
             "execute",
             {"files_changed": [], "commands_run": [], "deviations": [], "sense_check_acknowledgments": []},
@@ -815,109 +895,20 @@ def test_codex_parse_failure_invokes_one_repair_retry(
 
 
 # ---------------------------------------------------------------------------
-# T1 characterization: inventory of _normalize_worker_payload and
-# validate_payload call sites in the recovery and worker-parsing layers.
+# T1 characterization: inventory of native-only recovery and validation paths
+# in the worker parsing layer.
 #
-# Recovery paths now split by step authority: migrated steps
-# (execute/finalize/critique/review/gate) must use the shared schema audit,
-# while unmigrated long-tail steps keep the legacy normalize+validate path
-# until m6.
+# After the all-NATIVE guard passes, recovery paths no longer branch through
+# _normalize_worker_payload; all capture recovery is schema-audited.
 # ---------------------------------------------------------------------------
 
 _MIGRATED_SITES: tuple[str, ...] = ("finalize", "critique", "review", "gate", "execute")
 
 
-def test_normalize_worker_payload_defaults_remaining_legacy_optional_arrays() -> None:
-    """Characterization: _normalize_worker_payload currently supplies
-    optional-array defaults only for the remaining legacy-backed sites.
+def test_normalize_worker_payload_is_deleted() -> None:
+    import arnold.pipelines.megaplan.workers._impl as workers_impl
 
-    After m5, migrated-site branches must be removed from
-    _normalize_worker_payload on the primary path. Recovery keeps this helper
-    only for long-tail legacy steps, so this test pins the helper behavior
-    itself, not universal call coverage.
-    """
-    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
-
-    result = _normalize_worker_payload(
-        "plan",
-        {
-            "plan": "x",
-        },
-    )
-    assert result["questions"] == []
-    assert result["success_criteria"] == []
-    assert result["assumptions"] == []
-
-
-def test_normalize_worker_payload_no_longer_defaults_review_arrays() -> None:
-    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
-
-    payload = {
-        "review_verdict": "approved",
-        "criteria": [],
-        "issues": [],
-        "rework_items": [],
-        "summary": "ok",
-        "task_verdicts": [],
-        "sense_check_verdicts": [],
-    }
-    result = _normalize_worker_payload("review", payload)
-
-    assert result is payload
-    assert "checks" not in result
-    assert "pre_check_flags" not in result
-    assert "verified_flag_ids" not in result
-    assert "disputed_flag_ids" not in result
-
-
-def test_normalize_worker_payload_no_longer_defaults_critique_arrays() -> None:
-    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
-
-    payload: dict[str, object] = {"checks": []}
-    result = _normalize_worker_payload("critique", payload)
-
-    assert result is payload
-    assert "flags" not in result
-    assert "verified_flag_ids" not in result
-    assert "disputed_flag_ids" not in result
-
-
-def test_normalize_worker_payload_no_longer_defaults_finalize_arrays() -> None:
-    """T9: _normalize_worker_payload must NOT supply defaults for finalize.
-
-    finalize is migrated to NATIVE compatibility mode and validated through
-    strict schema audit. The legacy defaults in _STEP_OPTIONAL_ARRAY_DEFAULTS
-    for 'watch_items', 'sense_checks', and 'user_actions' have been removed
-    because the schema enforces these keys at capture time and the model must
-    produce them.
-    """
-    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
-
-    # finalize payload missing optional arrays should pass through unchanged
-    payload = {"tasks": [], "meta_commentary": "x"}
-    result = _normalize_worker_payload("finalize", payload)
-    # The payload is returned as-is — no defaults injected
-    assert result is payload
-    assert "watch_items" not in result
-    assert "sense_checks" not in result
-    assert "user_actions" not in result
-
-
-def test_normalize_worker_payload_no_longer_defaults_gate_arrays() -> None:
-    from arnold.pipelines.megaplan.workers._impl import _normalize_worker_payload
-
-    payload = {
-        "recommendation": "PROCEED",
-        "rationale": "ok",
-        "signals_assessment": "ok",
-    }
-    result = _normalize_worker_payload("gate", payload)
-
-    assert result is payload
-    assert "warnings" not in result
-    assert "settled_decisions" not in result
-    assert "flag_resolutions" not in result
-    assert "accepted_tradeoffs" not in result
+    assert not hasattr(workers_impl, "_normalize_worker_payload")
 
 
 def test_validate_payload_no_longer_authorizes_migrated_sites() -> None:
@@ -926,7 +917,6 @@ def test_validate_payload_no_longer_authorizes_migrated_sites() -> None:
     Execute keeps its batch-relaxed legacy semantics here, but finalize,
     critique, review, and gate must now flow through schema-backed capture.
     """
-    from arnold.pipelines.megaplan.workers import validate_payload
     from arnold.pipelines.megaplan.types import CliError
 
     for step, payload in (
@@ -942,7 +932,6 @@ def test_validate_payload_no_longer_authorizes_migrated_sites() -> None:
 def test_validate_payload_retirement_precedes_missing_required_key_checks() -> None:
     """Migrated steps fail because the legacy validator is retired, not because
     it is still acting as a partial schema authority."""
-    from arnold.pipelines.megaplan.workers import validate_payload
     from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match=r"retired for finalize"):
@@ -956,7 +945,7 @@ def test_validate_payload_retirement_precedes_missing_required_key_checks() -> N
         validate_payload("gate", {"rationale": "ok", "signals_assessment": "ok"})
 
 
-def test_normalize_worker_payload_does_not_special_case_migrated_steps() -> None:
+def test_workers_impl_has_no_normalize_worker_payload_definition() -> None:
     import ast
     from pathlib import Path
 
@@ -967,67 +956,49 @@ def test_normalize_worker_payload_does_not_special_case_migrated_steps() -> None
     source = worker_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
-    normalize_fn = next(
-        node
+    normalize_defs = [
+        node.name
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "_normalize_worker_payload"
-    )
-
-    step_literal_guards: set[str] = set()
-    default_literal_keys: set[str] = set()
-    for node in ast.walk(normalize_fn):
-        if isinstance(node, ast.Compare):
-            if (
-                isinstance(node.left, ast.Name)
-                and node.left.id == "step"
-                and len(node.ops) == 1
-                and isinstance(node.ops[0], ast.Eq)
-                and len(node.comparators) == 1
-                and isinstance(node.comparators[0], ast.Constant)
-                and isinstance(node.comparators[0].value, str)
-            ):
-                step_literal_guards.add(node.comparators[0].value)
-        if isinstance(node, ast.Dict):
-            for key in node.keys:
-                if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                    default_literal_keys.add(key.value)
-
-    migrated_steps = {"execute", "finalize", "critique", "review", "gate"}
-    assert migrated_steps.isdisjoint(step_literal_guards), (
-        "_normalize_worker_payload must not branch on migrated step names; "
-        f"found {sorted(step_literal_guards & migrated_steps)}"
-    )
-    assert migrated_steps.isdisjoint(default_literal_keys), (
-        "_normalize_worker_payload legacy defaults must stay scoped to long-tail steps; "
-        f"found {sorted(default_literal_keys & migrated_steps)}"
-    )
+    ]
+    assert normalize_defs == []
 
 
-def test_recovery_helpers_remain_importable_after_schema_audit_split() -> None:
-    """Characterization: recovery still owns both pathways.
+def test_megaplan_production_code_has_no_normalize_worker_payload_imports_or_calls() -> None:
+    import ast
 
-    _normalize_worker_payload stays importable for legacy steps, and
-    _recover_codex_payload_with_provenance stays importable as the recovery
-    entrypoint that now dispatches between schema audit and legacy validation.
-    """
-    import textwrap
-    from arnold.pipelines.megaplan.workers._impl import (
-        _normalize_worker_payload,
-        _recover_codex_payload_with_provenance,
-    )
-    from pathlib import Path
+    package_root = Path(__file__).resolve().parents[1] / "arnold/pipelines/megaplan"
+    violations: list[str] = []
 
-    # Prove the function is importable and callable.
-    assert callable(_normalize_worker_payload)
-    assert callable(_recover_codex_payload_with_provenance)
+    for path in sorted(package_root.rglob("*.py")):
+        if "agent" in path.parts:
+            continue
+        if path.name == "__init__.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "_normalize_worker_payload":
+                        violations.append(f"{path}:from-import")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.endswith("._normalize_worker_payload"):
+                        violations.append(f"{path}:import")
+            elif isinstance(node, ast.Name) and node.id == "_normalize_worker_payload":
+                violations.append(f"{path}:name")
+            elif isinstance(node, ast.Attribute) and node.attr == "_normalize_worker_payload":
+                violations.append(f"{path}:attribute")
 
-    # Verify that _normalize_worker_payload is defined in the _impl module
-    # (it's a function, not a class or None).
-    source_file = textwrap.dedent("""\
-    def _normalize_worker_payload(step, payload):
-        return payload
-    """)
-    assert "_normalize_worker_payload" in source_file or True  # tautology guard
+    assert violations == []
+
+
+def test_worker_recovery_helpers_are_deleted_after_model_seam_takeover() -> None:
+    import arnold.pipelines.megaplan.workers._impl as workers_impl
+
+    assert not hasattr(workers_impl, "_recover_codex_payload")
+    assert not hasattr(workers_impl, "_recover_codex_payload_with_provenance")
+    assert callable(capture_step_output)
 
 
 def test_codex_repair_retry_is_bounded_to_one_attempt(
@@ -1076,15 +1047,10 @@ def test_codex_repair_retry_is_bounded_to_one_attempt(
     assert exc_info.value.extra["model_output_parse_error"] is True
 
 
-# ── _critique_completeness_score unit tests ──────────────────────────
+# ── _recovery_critique_completeness_score unit tests ──────────────────────────
 
-def test_critique_completeness_score_ranks_by_completed_checks_and_findings() -> None:
-    from arnold.pipelines.megaplan.workers._impl import (
-        RecoveredCodexPayload,
-        _critique_completeness_score,
-    )
-
-    sparse = RecoveredCodexPayload(
+def test_recovery_critique_completeness_score_ranks_by_completed_checks_and_findings() -> None:
+    sparse = _RecoveredPayload(
         payload={
             "checks": [
                 {"id": "a", "question": "?", "findings": [{"detail": "d", "flagged": True}]},
@@ -1095,7 +1061,7 @@ def test_critique_completeness_score_ranks_by_completed_checks_and_findings() ->
         },
         provenance="raw_output",
     )
-    dense = RecoveredCodexPayload(
+    dense = _RecoveredPayload(
         payload={
             "checks": [
                 {"id": "a", "question": "?", "findings": [{"detail": "d1", "flagged": True}]},
@@ -1108,32 +1074,22 @@ def test_critique_completeness_score_ranks_by_completed_checks_and_findings() ->
         provenance="output_file",
     )
 
-    assert _critique_completeness_score(sparse) == (1, 1)
-    assert _critique_completeness_score(dense) == (2, 2)
+    assert _recovery_critique_completeness_score(sparse) == (1, 1)
+    assert _recovery_critique_completeness_score(dense) == (2, 2)
     # dense should rank higher
-    assert _critique_completeness_score(dense) > _critique_completeness_score(sparse)
+    assert _recovery_critique_completeness_score(dense) > _recovery_critique_completeness_score(sparse)
 
 
-def test_critique_completeness_score_handles_non_list_checks() -> None:
-    from arnold.pipelines.megaplan.workers._impl import (
-        RecoveredCodexPayload,
-        _critique_completeness_score,
-    )
-
-    scalar_checks = RecoveredCodexPayload(
+def test_recovery_critique_completeness_score_handles_non_list_checks() -> None:
+    scalar_checks = _RecoveredPayload(
         payload={"checks": 1, "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []},
         provenance="raw_output",
     )
-    assert _critique_completeness_score(scalar_checks) == (0, 0)
+    assert _recovery_critique_completeness_score(scalar_checks) == (0, 0)
 
 
-def test_critique_completeness_score_handles_empty_findings() -> None:
-    from arnold.pipelines.megaplan.workers._impl import (
-        RecoveredCodexPayload,
-        _critique_completeness_score,
-    )
-
-    empty_findings = RecoveredCodexPayload(
+def test_recovery_critique_completeness_score_handles_empty_findings() -> None:
+    empty_findings = _RecoveredPayload(
         payload={
             "checks": [
                 {"id": "a", "question": "?", "findings": []},
@@ -1145,16 +1101,11 @@ def test_critique_completeness_score_handles_empty_findings() -> None:
         },
         provenance="output_file",
     )
-    assert _critique_completeness_score(empty_findings) == (0, 0)
+    assert _recovery_critique_completeness_score(empty_findings) == (0, 0)
 
 
-def test_critique_completeness_score_breaks_ties_with_total_findings() -> None:
-    from arnold.pipelines.megaplan.workers._impl import (
-        RecoveredCodexPayload,
-        _critique_completeness_score,
-    )
-
-    many_findings = RecoveredCodexPayload(
+def test_recovery_critique_completeness_score_breaks_ties_with_total_findings() -> None:
+    many_findings = _RecoveredPayload(
         payload={
             "checks": [
                 {
@@ -1173,7 +1124,7 @@ def test_critique_completeness_score_breaks_ties_with_total_findings() -> None:
         },
         provenance="raw_output",
     )
-    few_findings = RecoveredCodexPayload(
+    few_findings = _RecoveredPayload(
         payload={
             "checks": [
                 {"id": "a", "question": "?", "findings": [{"detail": "d1", "flagged": True}]},
@@ -1185,9 +1136,9 @@ def test_critique_completeness_score_breaks_ties_with_total_findings() -> None:
         provenance="output_file",
     )
 
-    assert _critique_completeness_score(many_findings) == (1, 3)
-    assert _critique_completeness_score(few_findings) == (1, 1)
-    assert _critique_completeness_score(many_findings) > _critique_completeness_score(few_findings)
+    assert _recovery_critique_completeness_score(many_findings) == (1, 3)
+    assert _recovery_critique_completeness_score(few_findings) == (1, 1)
+    assert _recovery_critique_completeness_score(many_findings) > _recovery_critique_completeness_score(few_findings)
 
 
 # ── critique recovery: schema-valid ranking (migrated path) ──────────
@@ -1253,7 +1204,7 @@ def test_recover_codex_payload_critique_ranks_only_schema_valid_candidates(tmp_p
     output_path.write_text(json.dumps(schema_invalid), encoding="utf-8")
     (plan_dir / "critique_output.json").write_text(json.dumps(valid_sparse), encoding="utf-8")
 
-    recovered = _recover_codex_payload_with_provenance(
+    outcome = _capture_recovered_output(
         "critique",
         plan_dir=plan_dir,
         output_path=output_path,
@@ -1262,9 +1213,11 @@ def test_recover_codex_payload_critique_ranks_only_schema_valid_candidates(tmp_p
 
     # The schema-invalid output file and the sparse fallback should be skipped;
     # the dense raw-output should win because it's the most complete *valid* candidate.
-    assert recovered is not None
-    assert recovered.payload == valid_dense
-    assert recovered.provenance == "raw_output"
+    assert outcome.legacy_payload == valid_dense
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:raw_output",
+    )
 
 
 def test_recover_codex_payload_critique_preserves_ordering_on_completeness_tie(
@@ -1315,7 +1268,7 @@ def test_recover_codex_payload_critique_preserves_ordering_on_completeness_tie(
     output_path.write_text(json.dumps(output_payload), encoding="utf-8")
     (plan_dir / "critique_output.json").write_text(json.dumps(fallback_payload), encoding="utf-8")
 
-    recovered = _recover_codex_payload_with_provenance(
+    outcome = _capture_recovered_output(
         "critique",
         plan_dir=plan_dir,
         output_path=output_path,
@@ -1323,9 +1276,11 @@ def test_recover_codex_payload_critique_preserves_ordering_on_completeness_tie(
     )
 
     # All three have equal completeness: (1, 1). Output file should win.
-    assert recovered is not None
-    assert recovered.payload == output_payload
-    assert recovered.provenance == "output_file"
+    assert outcome.legacy_payload == output_payload
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:output_file",
+    )
 
 
 def test_recover_codex_payload_critique_fallback_beats_raw_on_tie(tmp_path: Path) -> None:
@@ -1364,13 +1319,261 @@ def test_recover_codex_payload_critique_fallback_beats_raw_on_tie(tmp_path: Path
 
     (plan_dir / "critique_output.json").write_text(json.dumps(fallback_payload), encoding="utf-8")
 
-    recovered = _recover_codex_payload_with_provenance(
+    outcome = _capture_recovered_output(
         "critique",
         plan_dir=plan_dir,
         output_path=output_path,
         raw=json.dumps(raw_payload),
     )
 
-    assert recovered is not None
-    assert recovered.payload == fallback_payload
-    assert recovered.provenance == "template_file"
+    assert outcome.legacy_payload == fallback_payload
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:template_file",
+    )
+
+
+# ---------------------------------------------------------------------------
+# T2/T24: Recovery ranking schema-audit guards.
+# ---------------------------------------------------------------------------
+
+
+def test_recovery_ranking_only_considers_schema_valid_candidates_for_migrated_steps() -> None:
+    """Recovery ranking for migrated steps must filter through schema audit.
+
+    The seam-owned recovery helper must route migrated
+    steps through schema validation and exclude schema-invalid candidates
+    before completeness ranking.  This test proves the function exists and
+    can be called — actual ranking behavior is asserted by the schema-valid
+    ranking tests above.
+    """
+    import ast
+    from pathlib import Path
+
+    seam_path = (
+        Path(__file__).resolve().parents[1]
+        / "arnold/pipelines/megaplan/model_seam.py"
+    )
+    source = seam_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    migrated = {"finalize", "critique", "review", "gate", "execute"}
+
+    # Find the seam-owned recovery helper.
+    for node in tree.body:
+        if (
+            isinstance(node, ast.FunctionDef)
+            and node.name == "_recover_payload_with_provenance"
+        ):
+            for subnode in ast.walk(node):
+                if isinstance(subnode, ast.Call):
+                    if (
+                        isinstance(subnode.func, ast.Name)
+                        and subnode.func.id == "validate_payload"
+                    ):
+                        if subnode.args and isinstance(subnode.args[0], ast.Constant):
+                            step_name = subnode.args[0].value
+                            assert step_name not in migrated, (
+                                f"_recover_payload_with_provenance must not "
+                                f"call validate_payload('{step_name}', ...) — "
+                                f"migrated steps use schema audit"
+                            )
+            break
+    else:
+        raise AssertionError("model_seam must define _recover_payload_with_provenance")
+
+
+def test_recovery_critique_ranking_excludes_schema_invalid_candidates_for_migrated_step(
+    tmp_path: Path,
+) -> None:
+    """Schema-invalid critique recovery candidates must be excluded before ranking.
+
+    This tests that the recovery path for a migrated step (critique) does not
+    return a schema-invalid payload, even when it has more "checks" than a
+    valid one.  Schema validity is the first filter; completeness ranking
+    only applies among valid candidates.
+    """
+    import json
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+
+    # Schema-invalid: has many checks but missing required 'flags' key
+    schema_invalid_dense = {
+        "checks": [
+            {
+                "id": "a", "question": "Q1?",
+                "findings": [
+                    {"detail": "Finding A1.", "flagged": True},
+                    {"detail": "Finding A2.", "flagged": True},
+                    {"detail": "Finding A3.", "flagged": True},
+                ],
+            },
+            {
+                "id": "b", "question": "Q2?",
+                "findings": [
+                    {"detail": "Finding B1.", "flagged": True},
+                    {"detail": "Finding B2.", "flagged": True},
+                ],
+            },
+            {
+                "id": "c", "question": "Q3?",
+                "findings": [
+                    {"detail": "Finding C1.", "flagged": True},
+                ],
+            },
+        ],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+        # NOTE: missing 'flags' key — schema-invalid for critique
+    }
+
+    # Schema-valid but sparse: fewer checks but has all required keys
+    schema_valid_sparse = {
+        "checks": [
+            {
+                "id": "a", "question": "Q1?",
+                "findings": [{"detail": "Only finding.", "flagged": True}],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    output_path.write_text(json.dumps(schema_invalid_dense), encoding="utf-8")
+    (plan_dir / "critique_output.json").write_text(
+        json.dumps(schema_valid_sparse), encoding="utf-8"
+    )
+
+    outcome = _capture_recovered_output(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    # The schema-invalid dense candidate should be excluded;
+    # the schema-valid sparse candidate should win.
+    assert outcome.legacy_payload == schema_valid_sparse
+
+
+def test_recover_codex_payload_revise_uses_model_seam_schema_audit_path(
+    tmp_path: Path,
+) -> None:
+    """Recovered revise payloads now flow through capture_step_output."""
+    import json
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "revise_output.json"
+
+    revise_payload = {
+        "plan": "Revised plan text.",
+        "changes_summary": "Summary of changes.",
+        "flags_addressed": [],
+        "assumptions": [],
+        "success_criteria": [],
+        "questions": [],
+    }
+
+    output_path.write_text(json.dumps(revise_payload), encoding="utf-8")
+
+    outcome = _capture_recovered_output(
+        "revise",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert outcome.legacy_payload == revise_payload
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:output_file",
+    )
+
+
+def test_recover_codex_payload_tiebreaker_challenger_uses_model_seam_schema_audit_path(
+    tmp_path: Path,
+) -> None:
+    """A low-traffic long-tail seam still recovers through schema-audited capture."""
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = plan_dir / "tiebreaker_challenger_output.json"
+
+    challenger_payload = {
+        "measurements_vs_assumptions": "Observed constraints favor the alternate path.",
+        "missing_options": [],
+        "hard_cases": [],
+        "reframings": [],
+        "aging_analysis": "The incumbent choice degrades under future scale assumptions.",
+        "counter_recommendation": {
+            "option_name": "alternate-path",
+            "rationale": "It holds up better under the measured hard cases.",
+            "agrees_with_researcher": False,
+        },
+    }
+
+    output_path.write_text(json.dumps(challenger_payload), encoding="utf-8")
+
+    outcome = _capture_recovered_output(
+        "tiebreaker_challenger",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert outcome.legacy_payload == challenger_payload
+    assert outcome.contract_result.payload["telemetry"]["audit_result"] == "passed"
+    assert outcome.contract_result.provenance.sources == (
+        "model_step_output",
+        "codex_recovery:output_file",
+    )
+
+
+# ---------------------------------------------------------------------------
+# T2: Long-tail allowlist cross-reference.
+# ---------------------------------------------------------------------------
+
+
+def test_long_tail_allowlist_matches_remaining_legacy_validate_payload_steps() -> None:
+    """The T2 allowlist from test_contract_non_wiring must match the set of
+    steps that validate_payload still accepts (non-migrated).
+
+    All capture steps including execute are now retired from validate_payload
+    and use schema-backed capture/audit instead.
+    """
+    from arnold.pipelines.megaplan.workers._impl import (
+        _RETIRED_VALIDATE_PAYLOAD_STEPS,
+        _STEP_REQUIRED_KEYS,
+    )
+
+    expected_retired = {
+        "finalize", "critique", "review", "gate",
+        "plan", "prep", "prep-triage", "prep-research", "prep-distill",
+        "feedback", "critique_evaluator", "revise",
+        "loop_plan", "loop_execute", "tiebreaker_researcher", "tiebreaker_challenger",
+        "execute",
+    }
+    assert set(_RETIRED_VALIDATE_PAYLOAD_STEPS) == expected_retired, (
+        f"validate_payload retires unexpected steps:\n"
+        f"  Expected retired: {sorted(expected_retired)}\n"
+        f"  Actually retired: {sorted(set(_RETIRED_VALIDATE_PAYLOAD_STEPS))}"
+    )
+
+    # All capture steps are now retired — validate_payload should accept no
+    # known step names. The allowlist should be empty.
+    known_legacy_accepts = set(_STEP_REQUIRED_KEYS.keys()) - set(_RETIRED_VALIDATE_PAYLOAD_STEPS)
+    known_legacy_accepts.discard("execute")
+
+    # Import the allowlist from test_contract_non_wiring
+    from tests.test_contract_non_wiring import _M6_LONG_TAIL_ALLOWLIST
+
+    assert known_legacy_accepts == set(_M6_LONG_TAIL_ALLOWLIST), (
+        f"validate_payload legacy accept steps mismatch with allowlist:\n"
+        f"  Legacy accepts:      {sorted(known_legacy_accepts)}\n"
+        f"  Allowlist:           {sorted(set(_M6_LONG_TAIL_ALLOWLIST))}\n"
+        f"  Extra in accepts:    {sorted(known_legacy_accepts - set(_M6_LONG_TAIL_ALLOWLIST))}\n"
+        f"  Extra in allowlist:  {sorted(set(_M6_LONG_TAIL_ALLOWLIST) - known_legacy_accepts)}"
+    )

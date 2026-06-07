@@ -14,6 +14,7 @@ import arnold.pipelines.megaplan._core
 import arnold.pipelines.megaplan.execute.aggregation as megaplan_execute_aggregation
 import arnold.pipelines.megaplan.execute.batch as megaplan_execute_batch
 import arnold.pipelines.megaplan.execute.core as megaplan_execute_core
+import arnold.pipelines.megaplan.execute.timeout as megaplan_execute_timeout
 import arnold.pipelines.megaplan.handlers as megaplan_handlers
 import arnold.pipelines.megaplan.handlers.critique as critique_handler
 import arnold.pipelines.megaplan.handlers.execute as execute_handler
@@ -1584,6 +1585,70 @@ def test_execute_timeout_reads_execution_checkpoint_json(
     )
 
 
+def test_execute_timeout_checkpoint_uses_model_seam_capture_recovery(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    checkpoint_payload = {
+        "task_updates": [
+            {
+                "task_id": "T1",
+                "status": "done",
+                "executor_notes": "Recovered from execution checkpoint.",
+                "files_changed": ["IMPLEMENTED_BY_MEGAPLAN.txt"],
+                "commands_run": ["mock-write IMPLEMENTED_BY_MEGAPLAN.txt"],
+            }
+        ],
+        "sense_check_acknowledgments": [
+            {"sense_check_id": "SC1", "executor_note": "Recovered checkpoint sense check."}
+        ],
+    }
+    checkpoint_path = plan_fixture.plan_dir / "execution_checkpoint.json"
+    checkpoint_raw = json.dumps(checkpoint_payload, indent=2) + "\n"
+    checkpoint_path.write_text(checkpoint_raw, encoding="utf-8")
+
+    captured: dict[str, object] = {}
+    real_capture = megaplan_execute_timeout.capture_step_output
+
+    def spying_capture(invocation, output):
+        captured["metadata"] = dict(invocation.metadata)
+        captured["output"] = output
+        return real_capture(invocation, output)
+
+    monkeypatch.setattr(megaplan_execute_timeout, "capture_step_output", spying_capture)
+
+    def timing_out_worker(*args, **kwargs):
+        raise megaplan.CliError("worker_timeout", "execute timed out", extra={"session_id": "checkpoint-session", "raw_output": ""})
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", timing_out_worker)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+
+    assert response["success"] is False
+    assert captured["output"] == checkpoint_raw
+    metadata = captured["metadata"]
+    assert metadata["validation_step"] == "execute"
+    assert metadata["compatibility_validation_step"] == "execute"
+    assert metadata["capture_recovery"] == {
+        "step": "execute",
+        "plan_dir": str(plan_fixture.plan_dir),
+        "output_path": str(checkpoint_path),
+        "prefer_output_file": True,
+    }
+
+
 def test_execute_timeout_resets_done_tasks_without_any_evidence(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -2544,6 +2609,66 @@ def test_batch_timeout_reads_execution_batch_n_json(
         "Recovered timeout checkpoint from execution_batch_1.json" in deviation
         for deviation in response["deviations"]
     )
+
+
+def test_batch_timeout_checkpoint_uses_model_seam_capture_recovery(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
+
+    checkpoint_payload = {
+        "task_updates": [
+            {
+                "task_id": "T1",
+                "status": "done",
+                "executor_notes": "Recovered from batch checkpoint.",
+                "files_changed": ["batch1.py"],
+                "commands_run": ["pytest -k batch1"],
+            }
+        ],
+        "sense_check_acknowledgments": [
+            {"sense_check_id": "SC1", "executor_note": "Recovered batch checkpoint sense check."}
+        ],
+    }
+    checkpoint_path = plan_fixture.plan_dir / "execution_batch_1.json"
+    checkpoint_raw = json.dumps(checkpoint_payload, indent=2) + "\n"
+    checkpoint_path.write_text(checkpoint_raw, encoding="utf-8")
+
+    captured: dict[str, object] = {}
+    real_capture = megaplan_execute_timeout.capture_step_output
+
+    def spying_capture(invocation, output):
+        captured["metadata"] = dict(invocation.metadata)
+        captured["output"] = output
+        return real_capture(invocation, output)
+
+    monkeypatch.setattr(megaplan_execute_timeout, "capture_step_output", spying_capture)
+
+    def timing_out_batch_worker(*args, **kwargs):
+        raise megaplan.CliError("worker_timeout", "execute timed out", extra={"session_id": "batch-timeout", "raw_output": ""})
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", timing_out_batch_worker)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True, batch=1),
+    )
+
+    assert response["success"] is False
+    assert captured["output"] == checkpoint_raw
+    metadata = captured["metadata"]
+    assert metadata["validation_step"] == "execute"
+    assert metadata["compatibility_validation_step"] == "execute"
+    assert metadata["capture_recovery"] == {
+        "step": "execute",
+        "plan_dir": str(plan_fixture.plan_dir),
+        "output_path": str(checkpoint_path),
+        "prefer_output_file": True,
+    }
+
 
 def test_batch_2_after_batch_1_transitions_to_executed(
     plan_fixture: PlanFixture,
@@ -4152,10 +4277,15 @@ def test_string_keyed_execute_tier_map_routes_by_integer_complexity(
         json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
     )
     _stub_auto_attribute_git_snapshots(monkeypatch)
-    seen_models: list[str | None] = []
+    seen_models: list[tuple[str | None, str | None]] = []
 
     def worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
-        seen_models.append(getattr(resolved, "model", None))
+        seen_models.append(
+            (
+                getattr(resolved, "model", None),
+                getattr(resolved, "resolved_model", None),
+            )
+        )
         base = _hermes_style_worker(plan_fixture.project_dir)(
             step, state, plan_dir, args, root=root, resolved=resolved, prompt_override=prompt_override
         )
@@ -4194,9 +4324,15 @@ def test_string_keyed_execute_tier_map_routes_by_integer_complexity(
     batch = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
     assert response["tier_model_spec"] == "codex:premium-model"
     assert response["batch_complexity"] == 4
-    assert seen_models == ["premium-model"]
+    assert seen_models == [("premium-model", "premium-model")]
     assert batch["routing"]["resolved_model"] == "premium-model"
     assert batch["routing"]["actual_model"] == "premium-model"
+
+
+def test_execute_routing_model_match_accepts_codex_gpt5_family_upgrade() -> None:
+    assert megaplan_execute_batch._models_match("gpt-5.4", "gpt-5.5")
+    assert megaplan_execute_batch._models_match("codex:gpt-5.4", "gpt-5.5")
+    assert not megaplan_execute_batch._models_match("deepseek-v4-pro", "gpt-5.5")
 
 
 def test_routing_actual_model_mismatch_blocks_recoverably(

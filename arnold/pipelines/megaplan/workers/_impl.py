@@ -59,9 +59,6 @@ from arnold.pipelines.megaplan._core import (
     touch_active_step,
 )
 from arnold.pipelines.megaplan.prompts import (
-    create_claude_prompt,
-    create_codex_prompt,
-    create_hermes_prompt,
     _resolve_prompt_root,
 )
 from arnold.pipeline import StepInvocation
@@ -108,7 +105,13 @@ _STEP_REQUIRED_KEYS: dict[str, list[str]] = {
     step: SCHEMAS.get(filename, {}).get("required", [])
     for step, filename in STEP_SCHEMA_FILENAMES.items()
 }
-_RETIRED_VALIDATE_PAYLOAD_STEPS = frozenset({"finalize", "critique", "review", "gate"})
+_RETIRED_VALIDATE_PAYLOAD_STEPS = frozenset({
+    "finalize", "critique", "review", "gate",
+    "plan", "prep", "prep-triage", "prep-research", "prep-distill",
+    "feedback", "critique_evaluator", "revise",
+    "loop_plan", "loop_execute", "tiebreaker_researcher", "tiebreaker_challenger",
+    "execute",
+})
 
 
 @dataclass
@@ -119,13 +122,6 @@ class CommandResult:
     stdout: str
     stderr: str
     duration_ms: int
-
-
-@dataclass(frozen=True)
-class RecoveredCodexPayload:
-    payload: dict[str, Any]
-    provenance: str
-
 
 # Inter-event idle bound for the shannon worker (Claude via the shannon CLI).
 #
@@ -1576,34 +1572,6 @@ def _build_json_repair_prompt(error: json.JSONDecodeError, raw: str) -> str:
     return prompt
 
 
-def _critique_completeness_score(item: RecoveredCodexPayload) -> tuple[int, int]:
-    """Rank a recovered critique candidate by completed checks and total findings.
-
-    This helper is independent of fuzzy normalization and only ranks
-    schema-valid candidates.  The caller is responsible for filtering
-    to schema-valid payloads before ranking.
-
-    Returns a (completed_checks, total_findings) tuple so that ties on
-    completed_checks are broken by total_findings, and ties on both
-    preserve the insertion order that the recovery functions maintain
-    (output-file, fallback-file, raw-transcript).
-    """
-    checks = item.payload.get("checks", [])
-    if not isinstance(checks, list):
-        return (0, 0)
-    completed_checks = 0
-    total_findings = 0
-    for check in checks:
-        if not isinstance(check, dict):
-            continue
-        findings = check.get("findings", [])
-        if not isinstance(findings, list) or not findings:
-            continue
-        completed_checks += 1
-        total_findings += len(findings)
-    return (completed_checks, total_findings)
-
-
 def _recover_payload_from_candidates(
     step: str,
     candidates: list[dict[str, Any]],
@@ -1612,27 +1580,17 @@ def _recover_payload_from_candidates(
     validate: bool,
 ) -> dict[str, Any] | None:
     validation_errors: list[str] = []
-    schema_audited = schema_audits_step_payload(step)
     for candidate in candidates:
         if not validate:
-            return dict(candidate) if schema_audited else _normalize_worker_payload(step, candidate)
-        if schema_audited:
-            payload = dict(candidate)
-            try:
-                audit_step_payload(step, payload)
-            except ModelStructuralAuditError as error:
-                if _looks_like_step_payload(step, payload):
-                    validation_errors.append(error.details)
-                continue
-            return payload
-        normalized = _normalize_worker_payload(step, candidate)
+            return dict(candidate)
+        payload = dict(candidate)
         try:
-            validate_payload(step, normalized)
-        except CliError as error:
-            if _looks_like_step_payload(step, normalized):
-                validation_errors.append(error.message)
+            audit_step_payload(step, payload)
+        except ModelStructuralAuditError as error:
+            if _looks_like_step_payload(step, payload):
+                validation_errors.append(error.details)
             continue
-        return normalized
+        return payload
     if validation_errors:
         unique_errors = list(dict.fromkeys(validation_errors))
         raise CliError(
@@ -1678,36 +1636,6 @@ def _repair_worker_json_once(
     return payload, repaired_raw
 
 
-def _normalize_worker_payload(step: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if step == "revise" and "changes_summary" not in payload:
-        normalized = dict(payload)
-        flags_addressed = normalized.get("flags_addressed", [])
-        if isinstance(flags_addressed, list) and flags_addressed:
-            normalized["changes_summary"] = "Updated the plan to address the critique and gate feedback."
-        else:
-            normalized["changes_summary"] = "No critique flags were raised; refined the plan for execution."
-        return normalized
-    # Legacy-only defaults: remaining long-tail steps still rely on key-presence
-    # validation until m6, so missing optional arrays are scoped here instead of
-    # leaking fuzzy repair back into migrated native-capture steps.
-    _STEP_OPTIONAL_ARRAY_DEFAULTS: dict[str, tuple[str, ...]] = {
-        "plan": ("questions", "success_criteria", "assumptions"),
-        "revise": ("flags_addressed", "assumptions", "success_criteria", "questions"),
-        "prep": ("relevant_code", "test_expectations", "constraints"),
-        "loop_plan": ("spec_updates",),
-        "loop_execute": ("files_to_change",),
-        "tiebreaker_challenger": ("missing_options", "hard_cases", "reframings"),
-        "feedback": ("stages",),
-    }
-    if step in _STEP_OPTIONAL_ARRAY_DEFAULTS:
-        normalized = dict(payload)
-        for key in _STEP_OPTIONAL_ARRAY_DEFAULTS[step]:
-            if key not in normalized or normalized.get(key) is None:
-                normalized[key] = []
-        return normalized
-    return payload
-
-
 def _looks_like_step_payload(step: str, payload: dict[str, Any]) -> bool:
     required = set(_STEP_REQUIRED_KEYS.get(step, []))
     if required.intersection(payload):
@@ -1729,174 +1657,11 @@ def parse_json_file(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _recover_codex_payload(
-    step: str,
-    *,
-    plan_dir: Path,
-    output_path: Path,
-    raw: str,
-    prefer_output_file: bool = True,
-) -> dict[str, Any] | None:
-    recovered = _recover_codex_payload_with_provenance(
-        step,
-        plan_dir=plan_dir,
-        output_path=output_path,
-        raw=raw,
-        prefer_output_file=prefer_output_file,
-    )
-    return recovered.payload if recovered is not None else None
-
-
-def _recover_codex_payload_with_provenance(
-    step: str,
-    *,
-    plan_dir: Path,
-    output_path: Path,
-    raw: str,
-    prefer_output_file: bool = True,
-) -> RecoveredCodexPayload | None:
-    schema_audited = schema_audits_step_payload(step)
-    file_payload = None
-    template_payload = None
-    candidate_payloads: list[RecoveredCodexPayload] = []
-    try:
-        file_payload = parse_json_file(output_path)
-    except CliError:
-        try:
-            file_raw = output_path.read_text(encoding="utf-8", errors="replace")
-            candidate_payloads.extend(
-                RecoveredCodexPayload(payload=candidate, provenance="output_file_recovered")
-                for candidate in _extract_json_candidates_from_raw(file_raw)
-            )
-        except OSError:
-            pass
-    fallback_names = {
-        "critique": "critique_output.json",
-        "review": "review_output.json",
-    }
-    fallback_name = fallback_names.get(step, f"{step}_output.json")
-    fallback_path = plan_dir / fallback_name
-    if fallback_path != output_path and fallback_path.exists():
-        try:
-            template_payload = parse_json_file(fallback_path)
-        except CliError:
-            try:
-                fallback_raw = fallback_path.read_text(encoding="utf-8", errors="replace")
-                candidate_payloads.extend(
-                    RecoveredCodexPayload(payload=candidate, provenance="template_file_recovered")
-                    for candidate in _extract_json_candidates_from_raw(fallback_raw)
-                )
-            except OSError:
-                pass
-    if file_payload is None and template_payload is not None:
-        file_payload = template_payload
-        template_payload = None
-    output_is_template_file = output_path == fallback_path
-    output_is_single_critique_check = (
-        step == "critique"
-        and output_path.name.startswith("critique_check_")
-        and output_path.suffix == ".json"
-    )
-    validation_errors: list[str] = []
-    if (
-        prefer_output_file
-        and file_payload is not None
-        and (step != "critique" or output_is_template_file or output_is_single_critique_check)
-    ):
-        preferred_payload = dict(file_payload) if schema_audited else _normalize_worker_payload(step, file_payload)
-        try:
-            if schema_audited:
-                audit_step_payload(step, preferred_payload)
-            else:
-                validate_payload(step, preferred_payload)
-        except (CliError, ModelStructuralAuditError) as error:
-            if _looks_like_step_payload(step, preferred_payload):
-                candidate_payloads.insert(
-                    0,
-                    RecoveredCodexPayload(payload=file_payload, provenance="output_file"),
-                )
-                validation_errors.append(
-                    error.details if isinstance(error, ModelStructuralAuditError) else error.message
-                )
-        else:
-            return RecoveredCodexPayload(
-                payload=preferred_payload,
-                provenance="output_file",
-            )
-    raw_candidates = _extract_json_candidates_from_raw(raw)
-    if file_payload is not None:
-        if not any(candidate.payload is file_payload for candidate in candidate_payloads):
-            candidate_payloads.insert(
-                0,
-                RecoveredCodexPayload(payload=file_payload, provenance="output_file"),
-            )
-    if template_payload is not None:
-        insert_at = 1 if file_payload is not None else 0
-        candidate_payloads.insert(
-            insert_at,
-            RecoveredCodexPayload(payload=template_payload, provenance="template_file"),
-        )
-    candidate_payloads.extend(
-        RecoveredCodexPayload(payload=candidate, provenance="raw_output")
-        for candidate in raw_candidates
-    )
-    valid_payloads: list[RecoveredCodexPayload] = []
-    for candidate in candidate_payloads:
-        payload = dict(candidate.payload) if schema_audited else _normalize_worker_payload(step, candidate.payload)
-        try:
-            if schema_audited:
-                audit_step_payload(step, payload)
-            else:
-                validate_payload(step, payload)
-        except (CliError, ModelStructuralAuditError) as error:
-            if _looks_like_step_payload(step, payload):
-                validation_errors.append(
-                    error.details if isinstance(error, ModelStructuralAuditError) else error.message
-                )
-            continue
-        valid_payloads.append(RecoveredCodexPayload(payload=payload, provenance=candidate.provenance))
-    if not valid_payloads:
-        if validation_errors:
-            unique_errors = list(dict.fromkeys(validation_errors))
-            raise CliError(
-                "parse_error",
-                f"Recovered JSON object for {step} failed validation: "
-                + " | ".join(unique_errors),
-                extra={"raw_output": raw},
-            )
-        return None
-    if step == "critique" and len(valid_payloads) > 1:
-        return max(valid_payloads, key=_critique_completeness_score)
-    return valid_payloads[0]
-
-
 def validate_payload(step: str, payload: dict[str, Any]) -> None:
-    if step == "phase_result":
-        from arnold.pipelines.megaplan.orchestration.phase_result import validate_phase_result
-        validate_phase_result(payload)
-        return
     if step in _RETIRED_VALIDATE_PAYLOAD_STEPS:
         raise CliError(
             "parse_error",
             f"Legacy validate_payload() is retired for {step}; use schema-backed capture/audit instead.",
-        )
-    if step == "execute":
-        full_required = _STEP_REQUIRED_KEYS.get(step, [])
-        missing_full = [key for key in full_required if key not in payload]
-        if not missing_full:
-            return
-        batch_required = ["task_updates", "sense_check_acknowledgments"]
-        missing_batch = [key for key in batch_required if key not in payload]
-        if not missing_batch:
-            return
-        raise CliError(
-            "parse_error",
-            (
-                "execute output missing required keys: "
-                + ", ".join(missing_full)
-                + ". Batch execute payloads may omit aggregate fields, "
-                + "but must include task_updates and sense_check_acknowledgments."
-            ),
         )
     required = _STEP_REQUIRED_KEYS.get(step)
     if required is None:
@@ -1990,6 +1755,7 @@ def mock_worker_output(
     result = _mock_step(step, state, plan_dir, prompt_override=prompt_override)
     try:
         root = _resolve_prompt_root(plan_dir, None)
+        schema = read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES[step])
         side_effect_paths = (
             plan_dir / "critique_output.json",
             plan_dir / "review_output.json",
@@ -2001,6 +1767,8 @@ def mock_worker_output(
             state,
             plan_dir,
             root=root,
+            schema=schema,
+            prompt_override=prompt_override,
         ).prompt
         for path in side_effect_paths:
             if path.exists() and path not in preexisting_paths:
@@ -2203,6 +1971,7 @@ def run_codex_step(
         if persistent and session.get("id") and not fresh and not read_only
         else ModelTier.ENFORCED
     )
+    schema = read_json(schema_file)
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -2212,7 +1981,7 @@ def run_codex_step(
         model=model,
         normalized_model=model,
         tier=seam_tier,
-        schema=read_json(schema_file),
+        schema=schema,
         prompt_override=prompt_override,
         **(prompt_kwargs or {}),
     )
@@ -2235,8 +2004,8 @@ def run_codex_step(
             command.extend(["-c", f"model_reasoning_effort={effort}"])
         command.extend(["--output-schema", str(schema_file), "-"])
     elif persistent and session.get("id") and not fresh:
-        # codex exec resume does not support --output-schema; we rely on
-        # validate_payload() after parsing the output file instead. It also
+        # codex exec resume does not support --output-schema; capture_step_output
+        # handles the output file validation after parsing instead. It also
         # does not accept --add-dir; resumed sessions keep the workspace that
         # was granted when the session was created.
         command = ["codex", "exec", "resume"]
@@ -2459,13 +2228,31 @@ def run_codex_step(
                 read_only=read_only,
             )
         if error.code == "worker_timeout":
-            recovered_payload = _recover_codex_payload(
-                step,
-                plan_dir=plan_dir,
-                output_path=output_path,
-                raw=str(error.extra.get("raw_output", "")),
-                prefer_output_file=False,
-            )
+            try:
+                capture_outcome = capture_step_output(
+                    StepInvocation(
+                        kind="model",
+                        metadata={
+                            "tier": seam_tier.value,
+                            "worker": "codex",
+                            "model": model,
+                            "normalized_model": model,
+                            "validation_step": step,
+                            "compatibility_validation_step": step,
+                            "schema": schema,
+                            "capture_recovery": {
+                                "step": step,
+                                "plan_dir": str(plan_dir),
+                                "output_path": str(output_path),
+                                "prefer_output_file": False,
+                            },
+                        },
+                    ),
+                    str(error.extra.get("raw_output", "")),
+                )
+                recovered_payload = dict(capture_outcome.legacy_payload)
+            except (json.JSONDecodeError, ModelStructuralAuditError):
+                recovered_payload = None
             if recovered_payload is not None:
                 timeout_session_id = session.get("id") if persistent else None
                 if timeout_session_id is None:
@@ -2614,6 +2401,7 @@ def run_codex_step(
                     "normalized_model": model,
                     "validation_step": step,
                     "compatibility_validation_step": step,
+                    "schema": schema,
                     "capture_recovery": {
                         "step": step,
                         "plan_dir": str(plan_dir),
@@ -2752,6 +2540,7 @@ def run_codex_prep_step(
     out_handle.close()
     output_path = Path(out_handle.name)
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
+    schema = read_json(schema_file)
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -2761,7 +2550,7 @@ def run_codex_prep_step(
         model=model,
         normalized_model=model,
         tier=ModelTier.ENFORCED,
-        schema=read_json(schema_file),
+        schema=schema,
         prompt_override=prompt_override,
         **(prompt_kwargs or {}),
     )
@@ -2806,6 +2595,7 @@ def run_codex_prep_step(
                     "normalized_model": model,
                     "validation_step": step,
                     "compatibility_validation_step": step,
+                    "schema": schema,
                     "capture_recovery": {
                         "step": step,
                         "plan_dir": str(plan_dir),

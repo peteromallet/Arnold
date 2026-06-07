@@ -9,7 +9,7 @@ import pytest
 from arnold.pipelines.megaplan.model_seam import audit_step_payload
 from arnold.pipelines.megaplan.orchestration.evaluation import validate_plan_structure
 from arnold.pipelines.megaplan.types import CliError
-from arnold.pipelines.megaplan.workers import _build_mock_payload, validate_payload
+from arnold.pipelines.megaplan.workers import _build_mock_payload
 from tests._workers_helpers import _mock_state
 
 
@@ -79,6 +79,7 @@ def test_mock_revise_returns_valid_payload(tmp_path: Path) -> None:
     from arnold.pipelines.megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
     result = mock_worker_output("revise", state, plan_dir)
+    audit_step_payload("revise", result.payload)
     assert "plan" in result.payload
     assert "changes_summary" in result.payload
     assert "flags_addressed" in result.payload

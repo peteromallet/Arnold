@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from arnold.pipelines.megaplan.model_seam import assert_all_compatibility_modes_native
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +17,26 @@ _CLASSIFICATIONS = {
     "future_no_dispatch",
     "test_fake",
 }
+_SEAM_IMPORT_NAMES = {
+    "render_step_message",
+    "render_prompt_for_dispatch",
+    "capture_step_output",
+}
+_APPROVED_SEAM_IMPORTS = {
+    "arnold/pipelines/megaplan/_core/worker_fanout.py": {"render_step_message"},
+    "arnold/pipelines/megaplan/execute/batch.py": {"render_step_message", "capture_step_output"},
+    "arnold/pipelines/megaplan/execute/timeout.py": {"capture_step_output"},
+    "arnold/pipelines/megaplan/orchestration/tiebreaker.py": {"render_prompt_for_dispatch"},
+    "arnold/pipelines/megaplan/prompts/tiebreaker_orchestrator.py": {"render_prompt_for_dispatch"},
+    "arnold/pipelines/megaplan/resident/runtime.py": {"render_step_message"},
+    "arnold/pipelines/megaplan/workers/_impl.py": {"render_prompt_for_dispatch", "capture_step_output"},
+    "arnold/pipelines/megaplan/workers/hermes.py": {"render_prompt_for_dispatch", "capture_step_output"},
+    "arnold/pipelines/megaplan/workers/shannon.py": {
+        "render_step_message",
+        "render_prompt_for_dispatch",
+        "capture_step_output",
+    },
+}
 
 _PATTERNS = (
     re.compile(r"\bcreate_(?:claude|codex|hermes)_prompt\("),
@@ -22,8 +45,8 @@ _PATTERNS = (
     re.compile(r"\b(?:self\.)?runner\.run\("),
     re.compile(r"\bset_response_format\("),
     re.compile(r"--output-schema"),
-    re.compile(r"\bdef _recover_codex_payload\("),
-    re.compile(r"\b_recover_codex_payload\("),
+    re.compile(r"\bdef _recover_payload_with_provenance\("),
+    re.compile(r"\b_recover_payload_with_provenance\("),
     re.compile(r"\bdef validate_payload\("),
     re.compile(r"\bvalidate_payload\("),
 )
@@ -87,6 +110,35 @@ def _assert_entry_guards(entry: dict[str, object]) -> None:
         assert guard in text, f"missing guard for {entry['path']}: {guard}"
 
 
+def _collect_model_seam_imports(root: Path) -> dict[str, set[str]]:
+    imports: dict[str, set[str]] = {}
+    megaplan_root = root / "arnold/pipelines/megaplan"
+    for path in megaplan_root.rglob("*.py"):
+        rel_path = path.relative_to(root).as_posix()
+        if "/agent/" in rel_path:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            if node.module != "arnold.pipelines.megaplan.model_seam":
+                continue
+            names = {alias.name for alias in node.names if alias.name in _SEAM_IMPORT_NAMES}
+            if names:
+                imports.setdefault(rel_path, set()).update(names)
+    return imports
+
+
+def _collect_model_seam_calls(root: Path, rel_path: str) -> set[str]:
+    tree = ast.parse((root / rel_path).read_text(encoding="utf-8"))
+    calls: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in _SEAM_IMPORT_NAMES:
+                calls.add(node.func.id)
+    return calls
+
+
 def test_model_dispatch_inventory_entries_exist() -> None:
     fixture = _load_fixture()
     entries = fixture["inventory"]
@@ -147,3 +199,21 @@ def test_execute_and_resident_dispatch_sites_require_render_or_model_metadata_gu
     assert guarded, "expected explicit guarded dispatch inventory entries"
     for entry in guarded:
         _assert_entry_guards(entry)
+
+
+def test_phase_5_requires_all_compatibility_modes_native_before_deletion() -> None:
+    assert_all_compatibility_modes_native()
+
+
+def test_only_approved_production_files_import_model_seam_dispatch_helpers() -> None:
+    assert _collect_model_seam_imports(REPO_ROOT) == _APPROVED_SEAM_IMPORTS
+
+
+def test_production_model_seam_dispatch_imports_are_exercised() -> None:
+    for rel_path, expected_imports in _APPROVED_SEAM_IMPORTS.items():
+        used = _collect_model_seam_calls(REPO_ROOT, rel_path)
+        assert expected_imports <= used, (
+            f"{rel_path} imports model_seam dispatch helpers that are not exercised:\n"
+            f"  imported: {sorted(expected_imports)}\n"
+            f"  used:     {sorted(used)}"
+        )

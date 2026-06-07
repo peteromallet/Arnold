@@ -305,7 +305,16 @@ def _strip_provider_prefix(model: str | None) -> str | None:
 def _models_match(selected: str | None, actual: str | None) -> bool:
     if not selected or not actual:
         return True
-    return selected == actual or _strip_provider_prefix(selected) == _strip_provider_prefix(actual)
+    if selected == actual or _strip_provider_prefix(selected) == _strip_provider_prefix(actual):
+        return True
+    selected_bare = _strip_provider_prefix(selected)
+    actual_bare = _strip_provider_prefix(actual)
+    return bool(
+        isinstance(selected_bare, str)
+        and isinstance(actual_bare, str)
+        and selected_bare.lower().startswith("gpt-5")
+        and actual_bare.lower().startswith("gpt-5")
+    )
 
 
 def _build_routing_record(
@@ -986,7 +995,7 @@ def handle_execute_one_batch(
             refreshed=refreshed,
             model=model,
             effort=effort,
-            resolved_model=resolved_model,
+            resolved_model=selected_resolved_model,
             prompt_override=batch_prompt,
             batch_task_ids=batch_task_ids,
             batch_sense_check_ids=batch_sense_check_ids,
