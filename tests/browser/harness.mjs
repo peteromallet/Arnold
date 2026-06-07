@@ -57,10 +57,13 @@ export function createMockCanvasContext() {
     setLineDash(arr) { _lineDash = Array.isArray(arr) ? [...arr] : []; _op("setLineDash", _lineDash); },
 
     beginPath() { _op("beginPath"); },
+    rect(x, y, w, h) { _op("rect", Number(x) || 0, Number(y) || 0, Number(w) || 0, Number(h) || 0); },
+    roundRect(x, y, w, h, r) { _op("roundRect", Number(x) || 0, Number(y) || 0, Number(w) || 0, Number(h) || 0, Number(r) || 0); },
     moveTo(x, y) { _op("moveTo", Number(x) || 0, Number(y) || 0); },
     bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y) {
       _op("bezierCurveTo", Number(cp1x) || 0, Number(cp1y) || 0, Number(cp2x) || 0, Number(cp2y) || 0, Number(x) || 0, Number(y) || 0);
     },
+    clip() { _op("clip"); },
     stroke() { _op("stroke"); },
     fill() { _op("fill"); },
     fillText(text, x, y) { _op("fillText", String(text || ""), Number(x) || 0, Number(y) || 0); },

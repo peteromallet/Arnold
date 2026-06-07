@@ -6091,11 +6091,163 @@ export function drawPreviewOverlay(ctx, diff) {
       ctx.setLineDash([]);
     };
 
+    var _drawRoundedPanel = function (x, y, w, h, radius, fillStyle, strokeStyle) {
+      ctx.fillStyle = fillStyle;
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = 1;
+      if (typeof ctx.roundRect === "function") {
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, radius);
+        ctx.fill();
+        ctx.stroke();
+        return;
+      }
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+    };
+
     // ── Truncation helper (Unicode ellipsis, SD3) ────────────────────────
     var _trunc = function (text, maxChars) {
       text = String(text || "").trim();
       if (!text) return "";
       return text.length > maxChars ? text.slice(0, maxChars - 1) + "\u2026" : text;
+    };
+
+    var _fitTextToWidth = function (text, maxWidth) {
+      text = String(text == null ? "" : text);
+      if (!text || maxWidth <= 0) return "";
+      if (ctx.measureText(text).width <= maxWidth) return text;
+      var ellipsis = "\u2026";
+      var lo = 0;
+      var hi = text.length;
+      while (lo < hi) {
+        var mid = Math.ceil((lo + hi) / 2);
+        if (ctx.measureText(text.slice(0, mid) + ellipsis).width <= maxWidth) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return lo > 0 ? text.slice(0, lo) + ellipsis : ellipsis;
+    };
+
+    var _widgetIndexFromFieldPath = function (fieldPath) {
+      var path = String(fieldPath || "");
+      var direct = /(?:^|\.)(?:widgets_values|widgets)\.(\d+)(?:\.|$)/.exec(path);
+      if (direct) return Number(direct[1]);
+      var widgetKey = /^widget_(\d+)$/.exec(path);
+      if (widgetKey) return Number(widgetKey[1]);
+      return null;
+    };
+
+    var _fieldNameCandidates = function (fieldPath) {
+      var path = String(fieldPath || "");
+      if (!path) return [];
+      var normalized = path.replace(/\[(\d+)\]/g, ".$1");
+      var parts = normalized.split(".").filter(Boolean);
+      var last = parts.length ? parts[parts.length - 1] : normalized;
+      return [normalized, last];
+    };
+
+    var _resolveWidgetFieldIndex = function (field, node) {
+      var directIndex = _widgetIndexFromFieldPath(field && field.field_path);
+      if (directIndex != null && Number.isFinite(directIndex)) {
+        return directIndex;
+      }
+      var widgetsForNode = Array.isArray(node && node.widgets) ? node.widgets : [];
+      if (widgetsForNode.length === 0) {
+        return null;
+      }
+      var candidates = _fieldNameCandidates(field && field.field_path);
+      for (var ci = 0; ci < candidates.length; ci += 1) {
+        var candidateName = candidates[ci];
+        for (var wi = 0; wi < widgetsForNode.length; wi += 1) {
+          var widget = widgetsForNode[wi];
+          var widgetNames = [widget && widget.name, widget && widget.label].filter(Boolean);
+          for (var ni = 0; ni < widgetNames.length; ni += 1) {
+            if (String(widgetNames[ni]) === candidateName) {
+              return wi;
+            }
+          }
+        }
+      }
+      return null;
+    };
+
+    var _formatFieldLabel = function (field) {
+      var label = field && field.field_path ? String(field.field_path) : "field";
+      if (field && field.new_value !== null && field.new_value !== undefined) {
+        label += ": " + field.new_value;
+      }
+      return _trunc(label, 48);
+    };
+
+    var _fieldNewValueLabel = function (field) {
+      if (!field || field.new_value === null || field.new_value === undefined) {
+        return "";
+      }
+      return String(field.new_value);
+    };
+
+    var editedFieldsByUid = new Map();
+    if (diff.edited_fields && diff.edited_fields.length > 0) {
+      for (var _efg = 0; _efg < diff.edited_fields.length; _efg += 1) {
+        var groupedField = diff.edited_fields[_efg];
+        if (!groupedField || !groupedField.uid) continue;
+        if (!editedFieldsByUid.has(groupedField.uid)) {
+          editedFieldsByUid.set(groupedField.uid, []);
+        }
+        editedFieldsByUid.get(groupedField.uid).push(groupedField);
+      }
+    }
+
+    var _hasEditedLinkTarget = function (uid) {
+      if (!uid) return false;
+      var needle = "->" + uid + "::";
+      var addedLinks = Array.isArray(diff.added_links) ? diff.added_links : [];
+      var removedLinks = Array.isArray(diff.removed_links) ? diff.removed_links : [];
+      for (var ai = 0; ai < addedLinks.length; ai += 1) {
+        if (String(addedLinks[ai]).indexOf(needle) !== -1) return true;
+      }
+      for (var ri = 0; ri < removedLinks.length; ri += 1) {
+        if (String(removedLinks[ri]).indexOf(needle) !== -1) return true;
+      }
+      return false;
+    };
+
+    var _drawWidgetValueOverlay = function (bounds, valueText) {
+      var padX = 7;
+      var rightPad = 8;
+      var overlayW = Math.max(48, Math.min(bounds.w - 12, bounds.w * 0.58));
+      if (!Number.isFinite(overlayW) || overlayW <= 0) return;
+      var overlayX = bounds.x + bounds.w - rightPad - overlayW;
+      var overlayY = bounds.y + 2;
+      var overlayH = Math.max(bounds.h - 4, 12);
+      _drawRoundedPanel(
+        overlayX,
+        overlayY,
+        overlayW,
+        overlayH,
+        5,
+        "rgba(20,18,8,0.92)",
+        hexToRgba(VC_COLORS.edited, 0.95),
+      );
+      ctx.save();
+      try {
+        if (typeof ctx.rect === "function" && typeof ctx.clip === "function") {
+          ctx.beginPath();
+          ctx.rect(overlayX, overlayY, overlayW, overlayH);
+          ctx.clip();
+        }
+        ctx.font = "11px Arial, sans-serif";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "right";
+        ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.98);
+        var fitted = _fitTextToWidth(valueText, Math.max(overlayW - padX * 2, 4));
+        ctx.fillText(fitted, overlayX + overlayW - padX, overlayY + overlayH / 2);
+      } finally {
+        ctx.restore();
+      }
     };
 
     // ── Edited nodes (amber outline) ────────────────────────────────────
@@ -6131,9 +6283,11 @@ export function drawPreviewOverlay(ctx, diff) {
       var outCount = Array.isArray(enode.outputs) ? enode.outputs.length : 0;
       var slotRows = Math.max(inCount, outCount);
       var computedRowsTop = ey + slotRows * SLOT_H;
-      ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.22);
-      for (var _wi = 0; _wi < (eitem.changedWidgetIndices || []).length; _wi += 1) {
-        var widx = eitem.changedWidgetIndices[_wi];
+      var widgetRowBounds = new Map();
+      var _rowBoundsForWidgetIndex = function (widx) {
+        if (widgetRowBounds.has(widx)) {
+          return widgetRowBounds.get(widx);
+        }
         var w = widgets[widx];
         var rowTop;
         var rowH = WIDGET_H;
@@ -6151,53 +6305,38 @@ export function drawPreviewOverlay(ctx, diff) {
         } else {
           rowTop = computedRowsTop + widx * WIDGET_H;
         }
-        ctx.fillRect(ex, rowTop, ew, Math.max(rowH - 2, 4));
+        var bounds = { x: ex, y: rowTop, w: ew, h: rowH };
+        widgetRowBounds.set(widx, bounds);
+        return bounds;
+      };
+      ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.22);
+      for (var _wi = 0; _wi < (eitem.changedWidgetIndices || []).length; _wi += 1) {
+        var widx = eitem.changedWidgetIndices[_wi];
+        var rowBounds = _rowBoundsForWidgetIndex(widx);
+        ctx.fillRect(rowBounds.x, rowBounds.y, rowBounds.w, Math.max(rowBounds.h - 2, 4));
       }
-    }
 
-    // ── Edited field labels (from FieldChange data, T10) ─────────────────
-    // Renders field_path + new_value text labels on nodes that have
-    // normalized FieldChange entries keyed by uid and field_path.
-    if (diff.edited_fields && diff.edited_fields.length > 0) {
-      for (var _efi = 0; _efi < diff.edited_fields.length; _efi += 1) {
-        var ef = diff.edited_fields[_efi];
-        var efn = liveByUid.get(ef.uid);
-        if (!efn || !efn.pos) continue;
-        var efCollapsed = !!(efn.flags && efn.flags.collapsed);
-        if (efCollapsed) continue;
-        var efpos = readNodePos(efn);
-        var efx = efpos.x;
-        var efy = efpos.y;
-        var efsize = readNodeSize(efn);
-        var efh = efsize.h;
-
-        ctx.save();
-        ctx.font = "11px Arial, sans-serif";
-        ctx.textBaseline = "bottom";
-        ctx.textAlign = "left";
-
-        // Build display label: field_path plus new value
-        var efLabel = ef.field_path;
-        if (ef.new_value !== null && ef.new_value !== undefined) {
-          efLabel += ": " + ef.new_value;
+      var fieldsForNode = editedFieldsByUid.get(eitem.uid) || [];
+      var nonWidgetFields = [];
+      var drawnWidgetFieldIndexes = new Set();
+      for (var _efi = 0; _efi < fieldsForNode.length; _efi += 1) {
+        var ef = fieldsForNode[_efi];
+        var resolvedWidgetIndex = _resolveWidgetFieldIndex(ef, enode);
+        if (resolvedWidgetIndex != null && Number.isFinite(resolvedWidgetIndex) && resolvedWidgetIndex >= 0) {
+          if (!drawnWidgetFieldIndexes.has(resolvedWidgetIndex)) {
+            drawnWidgetFieldIndexes.add(resolvedWidgetIndex);
+            _drawWidgetValueOverlay(_rowBoundsForWidgetIndex(resolvedWidgetIndex), _fieldNewValueLabel(ef));
+          }
+        } else {
+          nonWidgetFields.push(ef);
         }
-        efLabel = _trunc(efLabel, 48);
+      }
 
-        var efTextW = ctx.measureText(efLabel).width + 10;
-        var efTextH = 19;
-        // Place at the bottom of the node body, left-aligned
-        var efTextX = efx + 4;
-        var efTextY = efy + efh - 4;
-
-        // Semi-transparent background for readability
-        ctx.fillStyle = "rgba(0,0,0,0.72)";
-        ctx.fillRect(efTextX, efTextY - efTextH, efTextW, efTextH);
-
-        // Text in edited amber
-        ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.95);
-        ctx.fillText(efLabel, efTextX + 5, efTextY - 2);
-
-        ctx.restore();
+      if (nonWidgetFields.length > 0 || _hasEditedLinkTarget(eitem.uid)) {
+        var chipLabel = nonWidgetFields.length > 0
+          ? _formatFieldLabel(nonWidgetFields[0])
+          : "inputs changed";
+        _drawBadge(ex + 4, ey + eh - 2, chipLabel, editedColor);
       }
     }
 

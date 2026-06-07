@@ -5163,6 +5163,100 @@ test("VibeComfy edited-node overlay box encloses the title bar (LiteGraph pos[1]
   }
 });
 
+test("VibeComfy edited widget field values render on their widget rows instead of stacked corner chips", async () => {
+  const NODE_POS = [120, 240];
+  const NODE_SIZE = [260, 150];
+  const liveGraph = {
+    nodes: [
+      {
+        id: 7,
+        type: "KSampler",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-widget-values" },
+        inputs: [{ name: "model" }],
+        outputs: [{ name: "LATENT" }],
+        widgets_values: [1, 20, 7.5],
+      },
+    ],
+    links: [],
+  };
+  const candidateGraph = {
+    nodes: [
+      {
+        id: 7,
+        type: "KSampler",
+        pos: [...NODE_POS],
+        size: [...NODE_SIZE],
+        properties: { vibecomfy_uid: "uid-widget-values" },
+        inputs: [{ name: "model" }],
+        outputs: [{ name: "LATENT" }],
+        widgets_values: [5, 24, 7.5],
+      },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph: liveGraph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    const liveNode = harness.getLiveNodes()[0];
+    liveNode.widgets = [
+      { name: "seed", value: 1, last_y: 48, computeSize: () => [NODE_SIZE[0], 20] },
+      { name: "steps", value: 20, last_y: 72, computeSize: () => [NODE_SIZE[0], 22] },
+      { name: "cfg", value: 7.5, last_y: 96, computeSize: () => [NODE_SIZE[0], 20] },
+    ];
+    const panel = extensionModule.ensureAgentPanel();
+    panel.state.lastSubmitFieldChanges = {
+      outcomeChanges: [
+        { uid: "uid-widget-values", field_path: "seed", old: 1, new: 5 },
+        { uid: "uid-widget-values", field_path: "steps", old: 20, new: 24 },
+      ],
+      batchTurnChanges: [],
+    };
+
+    const diff = extensionModule.computePreviewDiff(candidateGraph, {
+      change: { content_edits: { preserved: [], edited: ["uid-widget-values"], removed_named: [] } },
+      recovery: [],
+    });
+    assert.deepEqual(diff.edited[0].changedWidgetIndices, [0, 1]);
+
+    const drawOps = await harness.drawPreviewOverlay({ ...diff, _candidateGraph: candidateGraph });
+    const amberValuePanels = [];
+    let lastFill = null;
+    for (const op of drawOps) {
+      if (op.kind === "fillStyle") lastFill = op.args[0];
+      if (op.kind === "roundRect" && lastFill === "rgba(20,18,8,0.92)") {
+        amberValuePanels.push(op.args);
+      }
+    }
+    assert.equal(amberValuePanels.length, 2, "each changed widget gets one row value backdrop");
+    assert.equal(amberValuePanels[0][1], NODE_POS[1] + 48 + 2, "seed value overlay must sit on widget row 0");
+    assert.equal(amberValuePanels[1][1], NODE_POS[1] + 72 + 2, "steps value overlay must sit on widget row 1");
+
+    const newValueTexts = drawOps.filter((op) => op.kind === "fillText" && (op.args[0] === "5" || op.args[0] === "24"));
+    assert.equal(newValueTexts.length, 2, "new widget values must be drawn as row text");
+    assert.deepEqual(
+      newValueTexts.map((op) => op.args[2]),
+      [NODE_POS[1] + 48 + 10, NODE_POS[1] + 72 + 11],
+      "new value text y must track each widget row center",
+    );
+    const oldCornerChipTexts = drawOps
+      .filter((op) => op.kind === "fillText")
+      .map((op) => op.args[0])
+      .filter((text) => text === "seed: 5" || text === "steps: 24");
+    assert.deepEqual(oldCornerChipTexts, [], "widget fields must not render stacked corner chips");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy link-rewired target nodes get the full edited-node overlay box", async () => {
   const TITLE_H = 30;
   const SAVE_POS = [420, 260];
@@ -5251,6 +5345,11 @@ test("VibeComfy link-rewired target nodes get the full edited-node overlay box",
     const [_rx, ry, _rw, rh] = editedRect;
     assert.ok(ry <= SAVE_POS[1] - TITLE_H, "rewired target box must include the title bar");
     assert.ok(rh >= SAVE_SIZE[1] + TITLE_H, "rewired target box must include body plus title");
+    assert.equal(
+      drawOps.filter((op) => op.kind === "fillText" && op.args[0] === "inputs changed").length,
+      1,
+      "link-only changes must render exactly one edited-node corner chip",
+    );
   } finally {
     await harness.dispose();
   }
