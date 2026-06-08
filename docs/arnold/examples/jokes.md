@@ -12,10 +12,10 @@ The final stage writes the durable artifact path into state as `joke_artifact`.
 
 | item | value |
 | --- | --- |
-| Package | megaplan/pipelines/jokes |
-| Manifest and builder | megaplan/pipelines/jokes/__init__.py |
-| Steps | megaplan/pipelines/jokes/steps.py |
-| Skill | megaplan/pipelines/jokes/SKILL.md |
+| Package | arnold/pipelines/megaplan/pipelines/jokes |
+| Manifest and builder | arnold/pipelines/megaplan/pipelines/jokes/__init__.py |
+| Steps | arnold/pipelines/megaplan/pipelines/jokes/steps.py |
+| Skill | arnold/pipelines/megaplan/pipelines/jokes/SKILL.md |
 | Validation | `megaplan pipelines check jokes` |
 
 ## Builder Surface
@@ -62,7 +62,11 @@ def build_pipeline(topic: str = "software release notes") -> Pipeline:
             ),
             edges=edges,
         )
-    return Pipeline(stages=stages, entry="draft")
+    return Pipeline(
+        stages=stages,
+        entry="draft",
+        resource_bundles=tuple(prompt_key for _stage, prompt_key, _next in STAGE_SPECS),
+    )
 ```
 
 ## Step Surface
@@ -88,7 +92,7 @@ class JokeStep:
             previous=state["_joke_artifacts"],
         )
 
-        out_dir = Path(ctx.plan_dir) / self.name
+        out_dir = Path(ctx.artifact_root) / self.name
         out_dir.mkdir(parents=True, exist_ok=True)
         version = next_version(out_dir)
         prompt_path = out_dir / f"prompt_v{version}.md"
