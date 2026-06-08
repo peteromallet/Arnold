@@ -200,6 +200,7 @@ def _recover_execute_timeout(
     finalize_data = read_json(plan_dir / "finalize.json")
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
+    base_ref = state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha")
     checkpoint_path = _timeout_checkpoint_path(plan_dir, batch_number=batch_number)
     try:
         checkpoint_data = read_json(checkpoint_path)
@@ -225,7 +226,7 @@ def _recover_execute_timeout(
                 f"Advisory: timeout checkpoint {checkpoint_path.name} did not contain an object."
             )
 
-    initial_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
+    initial_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state, base_ref=base_ref)
 
     if initial_audit["skipped"]:
         deviations.append(
@@ -240,7 +241,7 @@ def _recover_execute_timeout(
         issues=deviations,
         mode=plan_mode,
     )
-    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
+    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state, base_ref=base_ref)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     atomic_write_json(plan_dir / "finalize.json", finalize_data)
     atomic_write_text(

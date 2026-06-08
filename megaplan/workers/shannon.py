@@ -1904,6 +1904,14 @@ def _ensure_workspace_trusted(
             data["hasCompletedOnboarding"] = True
             data.setdefault("theme", "dark")
             changed = True
+        # Fresh isolated Claude config dirs also show the one-time
+        # bypass-permissions responsibility dialog before Shannon can paste the
+        # prompt. Pre-accept it for unattended Megaplan workers; the caller has
+        # already opted into bypass mode by selecting Shannon's write-capable
+        # execution path.
+        if not data.get("bypassPermissionsModeAccepted"):
+            data["bypassPermissionsModeAccepted"] = True
+            changed = True
         for path in candidates:
             entry = projects.get(path)
             if not isinstance(entry, dict):

@@ -1191,6 +1191,46 @@ def test_chain_state_from_dict_defaults_reground_decisions_for_old_json() -> Non
     assert state.retry_counts == {"m1": 2}
 
 
+def test_chain_state_roundtrips_divergence_fingerprints_and_carry_forward_manifests() -> None:
+    """divergence_fingerprints and carry_forward_manifests survive to_dict/from_dict."""
+    state = ChainState(
+        current_milestone_index=2,
+        divergence_fingerprints={
+            "m1": {
+                "fingerprint": "deadbeef",
+                "first_seen_at": "2026-06-01T12:00:00Z",
+                "consecutive_count": 2,
+            }
+        },
+        carry_forward_manifests={
+            "m1": {
+                "base_sha": "abc123",
+                "head_sha": "def456",
+                "changed_files": ["src/a.py"],
+                "divergences": ["unexpected file src/b.py"],
+                "source": "declared",
+                "captured_at": "2026-06-01T12:01:00Z",
+                "milestone_label": "m1",
+            }
+        },
+    )
+
+    raw = state.to_dict()
+    assert raw["divergence_fingerprints"] == state.divergence_fingerprints
+    assert raw["carry_forward_manifests"] == state.carry_forward_manifests
+
+    reloaded = ChainState.from_dict(raw)
+    assert reloaded.divergence_fingerprints == state.divergence_fingerprints
+    assert reloaded.carry_forward_manifests == state.carry_forward_manifests
+
+
+def test_chain_state_from_dict_defaults_new_fields_for_old_json() -> None:
+    """Old state JSON (no divergence_fingerprints / carry_forward_manifests) loads cleanly."""
+    state = ChainState.from_dict({"current_milestone_index": 1})
+    assert state.divergence_fingerprints == {}
+    assert state.carry_forward_manifests == {}
+
+
 def test_chain_state_roundtrips_reground_decisions() -> None:
     state = ChainState(
         current_milestone_index=1,

@@ -1648,12 +1648,14 @@ def test_vendored_shannon_current_launch_and_paste_contracts() -> None:
     assert '"send-keys", "-t", tmuxSession, "-l", prompt' in src
 
     # Transcript discovery has a single config-root-aware project-folder helper
-    # chain. It prefers CLAUDE_CONFIG_DIR/projects and falls back to the
-    # effective child HOME's ~/.claude/projects only when CLAUDE_CONFIG_DIR is
-    # unset.
+    # chain. Claude Code v2.1.x scopes only the config file (.claude.json) to
+    # CLAUDE_CONFIG_DIR; transcripts/projects ALWAYS land under the child HOME's
+    # ~/.claude/projects (verified live), so the helper intentionally ignores
+    # claudeConfigDir rather than polling a <configDir>/projects folder Claude
+    # never writes.
     assert "export function claudeProjectsRoot(" in src
     assert "claudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR" in src
-    assert 'if (claudeConfigDir) return join(claudeConfigDir, "projects");' in src
+    assert "void claudeConfigDir;" in src
     assert 'return join(home, ".claude", "projects");' in src
     assert "return join(claudeProjectsRoot(claudeConfigDir, home), projectKeyForCwd(cwd));" in src
     assert "export function claudeProjectFolder(" in src
@@ -2266,6 +2268,23 @@ def test_vendored_shannon_launches_native_claude_and_sends_after_ready() -> None
     assert "type: \"shannon_session\"" in src  # still available when explicitly opted in
 
 
+def test_vendored_shannon_auto_accepts_bypass_permissions_prompt_once() -> None:
+    """Fresh isolated Claude configs should not wedge on bypass mode consent."""
+    from megaplan.workers.shannon import VENDORED_SHANNON_PATH
+
+    src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
+    assert 'kind: "approval" | "auth" | "trust" | "onboarding" | "permission"' in src
+    assert "async function acceptBypassPermissionsPrompt(tmuxSession: string)" in src
+    assert "async function confirmBypassPermissionsPrompt(tmuxSession: string)" in src
+    assert '["tmux", "send-keys", "-t", tmuxSession, "Down"]' in src
+    assert '["tmux", "send-keys", "-t", tmuxSession, "C-m"]' in src
+    assert "let bypassPermissionsPromptAcceptAttempts = 0;" in src
+    assert 'if (blocker.kind === "permission" && bypassPermissionsPromptAcceptAttempts < 5)' in src
+    assert "await acceptBypassPermissionsPrompt(tmuxSession);" in src
+    assert "await confirmBypassPermissionsPrompt(tmuxSession);" in src
+    assert "bypassPermissionsPromptAcceptAttempts += 1;" in src
+
+
 def test_vendored_shannon_readiness_classifier_handles_blockers() -> None:
     """The TypeScript pane classifier must not treat blocker screens as ready."""
     from megaplan.workers.shannon import VENDORED_SHANNON_PATH
@@ -2282,6 +2301,7 @@ def test_vendored_shannon_readiness_classifier_handles_blockers() -> None:
         ["auth", "Not logged in. Run /login first. >"],
         ["approval", "Do you want to proceed? Yes, and don't ask again >"],
         ["onboarding", "Press Enter to continue >"],
+        ["permission", "You accept all responsibility. ❯ 1. No, exit 2. Yes, I accept"],
       ];
       for (const [kind, pane] of cases) {{
         const blocker = classifyClaudeStartupBlocker(pane);
@@ -3029,6 +3049,24 @@ def test_inner_env_scrubbed_via_vendored_patch() -> None:
     assert env_filter.match("CLAUDE_CODE_MAX_OUTPUT_TOKENS") is None
     assert env_filter.match("TMUX") is None
     assert env_filter.match("SHELL") is None
+
+
+def test_ensure_workspace_trusted_accepts_isolated_bypass_permissions_prompt(tmp_path: Path) -> None:
+    from megaplan.workers.shannon import _ensure_workspace_trusted
+
+    work_dir = tmp_path / "workspace"
+    work_dir.mkdir()
+    claude_config_dir = tmp_path / "claude_config"
+    claude_config_dir.mkdir()
+
+    _ensure_workspace_trusted(work_dir, claude_config_dir=str(claude_config_dir))
+
+    data = json.loads((claude_config_dir / ".claude.json").read_text(encoding="utf-8"))
+    assert data["hasCompletedOnboarding"] is True
+    assert data["bypassPermissionsModeAccepted"] is True
+    entry = data["projects"][str(work_dir.resolve())]
+    assert entry["hasTrustDialogAccepted"] is True
+    assert entry["hasCompletedProjectOnboarding"] is True
 
 
 def test_run_artifacts_written_to_run_dir_not_cwd(

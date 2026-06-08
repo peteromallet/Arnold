@@ -581,6 +581,22 @@ def _run_and_merge_batch(
     deviations = list(payload.get("deviations", []))
     deviations.extend(routing_degradations)
     batch_task_id_set = set(batch_task_ids)
+    # Resolve milestone evidence-window context (chain policy → base SHA and
+    # carry-forward manifest) BEFORE the first use below. Quality-deviation,
+    # unclaimed-path attribution, and git-observation all judge against this
+    # window; computing it here keeps every consumer on the same base_ref.
+    _chain_policy: dict[str, Any] = {}
+    if state is not None:
+        _cp = (state.get("meta") or {}).get("chain_policy")
+        if isinstance(_cp, dict):
+            _chain_policy = _cp
+    _cf_manifest = _chain_policy.get("carry_forward_manifest")
+    _carry_forward_paths: set[str] | None = None
+    if isinstance(_cf_manifest, dict) and _cf_manifest:
+        _carry_forward_paths = set(_cf_manifest.keys())
+    elif isinstance(_cf_manifest, list) and _cf_manifest:
+        _carry_forward_paths = {str(p) for p in _cf_manifest if isinstance(p, str)} or None
+    _milestone_base_sha: str | None = _chain_policy.get("milestone_base_sha")
     if not is_prose_mode(state):
         deviations.extend(
             _collect_quality_deviations(
@@ -589,6 +605,7 @@ def _run_and_merge_batch(
                 before_line_counts=before_line_counts,
                 quality_config=quality_config,
                 capture_git_status_snapshot_fn=capture_git_status_snapshot_fn,
+                base_ref=_milestone_base_sha,
             )
         )
     merged_count, total_batch_tasks, acknowledged_count, total_batch_checks = (
@@ -611,6 +628,8 @@ def _run_and_merge_batch(
             batch_task_ids=batch_task_ids,
             issues=deviations,
             capture_recursive_snapshot_fn=_capture_git_status_snapshot_recursive,
+            carry_forward_paths=_carry_forward_paths,
+            base_ref=_milestone_base_sha,
         )
         observation_snapshot_fn = capture_git_status_snapshot_fn
         if (
@@ -628,6 +647,8 @@ def _run_and_merge_batch(
                 batch_number=batch_number,
                 batches_total=batches_total,
                 capture_git_status_snapshot_fn=observation_snapshot_fn,
+                base_ref=_milestone_base_sha,
+                carry_forward_paths=_carry_forward_paths,
             )
         )
     if is_prose_mode(state):
@@ -646,7 +667,10 @@ def _run_and_merge_batch(
             issues=deviations,
             should_classify=lambda task: task.get("id") in batch_task_id_set,
         )
-    execution_audit = validate_execution_evidence(finalize_data, project_dir, mode=plan_mode, state=state)
+    execution_audit = validate_execution_evidence(
+        finalize_data, project_dir, mode=plan_mode, state=state,
+        base_ref=state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha"),
+    )
     if attribution_result.records:
         execution_audit["auto_attribution"] = list(attribution_result.records)
     if execution_audit["skipped"]:
@@ -1948,6 +1972,7 @@ def handle_execute_auto_loop(
             project_dir,
             mode=plan_mode,
             state=state,
+            base_ref=state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha"),
         )
         atomic_write_json(plan_dir / "execution.json", aggregate_payload)
         atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
@@ -2352,6 +2377,7 @@ def handle_execute_auto_loop(
         project_dir,
         mode=state["config"].get("mode", "code"),
         state=state,
+        base_ref=state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha"),
     )
     deviations = list(aggregate_payload.get("deviations", []))
     if timeout_recovery is not None:

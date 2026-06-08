@@ -507,6 +507,57 @@ def build_introspect_payload(plan_dir: Path) -> dict:
         "editable_install": editable_loc,
     }
 
+    # ── Evidence window / milestone attribution ─────────────────────────
+    chain_policy = (state or {}).get("meta", {}).get("chain_policy", {}) if isinstance(state, dict) else {}
+    milestone_base_sha: str | None = chain_policy.get("milestone_base_sha")
+    head_sha: str | None = git_info.get("head")
+    evidence_window: dict = {
+        "base_sha": milestone_base_sha,
+        "head_sha": head_sha,
+        "source": "declared" if milestone_base_sha else "heuristic_merge_base",
+    }
+
+    # Count changed files between base and head when both are available
+    changed_file_count: int | None = None
+    if milestone_base_sha and head_sha:
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", f"{milestone_base_sha}..{head_sha}"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                changed_file_count = len(
+                    [f for f in result.stdout.strip().split("\n") if f]
+                )
+        except Exception:
+            pass
+
+    # Derive divergence_count from the chain-policy fingerprint payload
+    divergence_count: int | None = None
+    rdf = chain_policy.get("repeated_divergence_fingerprint")
+    if isinstance(rdf, dict):
+        divergence_count = rdf.get("divergence_count")
+    elif isinstance(rdf, str):
+        divergence_count = None  # fingerprint is just a hash string
+
+    repeated_divergence_fingerprint = chain_policy.get("repeated_divergence_fingerprint")
+
+    carry_manifest = chain_policy.get("carry_forward_manifest")
+    carry_forward_declared: bool = False
+    if isinstance(carry_manifest, dict) and carry_manifest.get("milestone_label"):
+        carry_forward_declared = True
+
+    evidence: dict = {
+        "window": evidence_window,
+        "changed_file_count": changed_file_count,
+        "divergence_count": divergence_count,
+        "repeated_divergence_fingerprint": repeated_divergence_fingerprint,
+        "carry_forward_declared": carry_forward_declared,
+    }
+
     # ── Event stats ─────────────────────────────────────────────────────
     event_kinds_seen = sorted(set(e.get("kind") for e in events))
     event_stats: dict = {
@@ -570,6 +621,7 @@ def build_introspect_payload(plan_dir: Path) -> dict:
         "iteration": iteration,
         "plan_dir": str(plan_dir),
         "binary_git": binary_git,
+        "evidence": evidence,
         "rubric_doc": rubric_doc,
         "active_phase": active_phase,
         "block_details": block_details,

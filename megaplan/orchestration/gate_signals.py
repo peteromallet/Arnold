@@ -222,6 +222,7 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
                 }
                 for subsystem in sorted(overlapping_escalated_subsystems)
             ],
+            "repeated_divergence_fingerprint": state.get("meta", {}).get("chain_policy", {}).get("repeated_divergence_fingerprint"),
         },
         "warnings": [],
     }
