@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import fields
 
-import megaplan.agent_runtime as runtime
+import arnold.pipelines.megaplan.agent_runtime as runtime
 
 
 class RecordingDispatcher:

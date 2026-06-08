@@ -5,13 +5,13 @@ import json
 import subprocess
 from pathlib import Path
 
-from megaplan.cloud.cli import (
+from arnold.pipelines.megaplan.cloud.cli import (
     _marker_dir,
     _persistent_deploy_dir,
     build_cloud_parser,
     run_cloud_cli,
 )
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     LocalSpec,
@@ -95,8 +95,8 @@ def test_local_build_reuses_persistent_materialized_dir_and_destroy_preserves_ma
             provider_calls.append(("destroy", None))
             return 0
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _local_spec())
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: DummyProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _local_spec())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: DummyProvider())
 
     build_args = parser.parse_args(["cloud", "build", "--cloud-yaml", str(cloud_yaml_path)])
     exec_args = parser.parse_args(["cloud", "exec", "--cloud-yaml", str(cloud_yaml_path), "pwd"])

@@ -6,8 +6,17 @@ from pathlib import Path
 import pytest
 import yaml
 
-from megaplan.cloud.spec import DriverSpec, LocalSpec, MegaplanSpec, RailwaySpec, SshSpec, ToolchainSpec, load_spec
-from megaplan.types import CliError, DEFAULT_AGENT_ROUTING
+from arnold.pipelines.megaplan.cloud.spec import (
+    DriverSpec,
+    LocalSpec,
+    MegaplanSpec,
+    RailwaySpec,
+    SshSpec,
+    ToolchainSpec,
+    load_spec,
+)
+from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _base_spec(*, mode: str = "idle") -> dict[str, object]:
@@ -350,7 +359,7 @@ def test_v0190_specs_still_load_with_same_existing_fields(tmp_path: Path) -> Non
 
 def test_cloud_spec_accepts_shannon_agent() -> None:
     """Cloud specs accept 'shannon' as a valid agent."""
-    from megaplan.types import KNOWN_AGENTS
+    from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
 
 

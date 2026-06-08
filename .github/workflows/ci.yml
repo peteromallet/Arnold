@@ -17,6 +17,14 @@ jobs:
         run: |
           python -m pip install -U pip
           python -m pip install -e '.[agent]' pytest
+      - name: Check generated Arnold docs
+        run: python scripts/generate_arnold_docs.py --check
+      - name: Validate Arnold generated examples
+        run: MEGAPLAN_MOCK_WORKERS=1 pytest tests/test_generate_arnold_docs.py tests/docs/test_arnold_external_builder.py -q
+      - name: Validate M7 default-off and export regressions
+        run: |
+          unset MEGAPLAN_M7_SINKS
+          MEGAPLAN_MOCK_WORKERS=1 pytest tests/test_epic_cli.py tests/store/test_capsule_storage.py tests/store/test_warrant_sources.py tests/test_warrant_signing.py -q
       - name: Test
         run: python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_cloud_template.py tests/test_cloud_spec.py -q
 

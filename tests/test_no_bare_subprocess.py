@@ -28,54 +28,54 @@ import pytest
 
 FROZEN_LEDGER: dict[str, str] = {
     # ── anti-scoped / design-decision deferrals ──────────────────────────
-    "megaplan/loop/engine.py": (
+    "arnold/pipelines/megaplan/loop/engine.py": (
         "anti-scoped shell=True @ L254, commit 1ec7caab; "
         "_run_monitored_command uses shell=True + subprocess.Popen for "
         "the legacy observation loop — intentionally not migrated"
     ),
-    "megaplan/agent/environments/patches.py": (
+    "arnold/pipelines/megaplan/agent/environments/patches.py": (
         "swerex RexCommand shell=True (T14 verdict); command strings "
         "may contain pipes/redirects/globs that require shell interpretation"
     ),
-    "megaplan/agent/tools/process_registry.py": (
+    "arnold/pipelines/megaplan/agent/tools/process_registry.py": (
         "remote/PTY os.kill @ ~569 only — no local Popen handle exists; "
         "its os.killpg + spawn paths ARE already migrated"
     ),
-    "megaplan/agent/tools/browser_tool.py": (
+    "arnold/pipelines/megaplan/agent/tools/browser_tool.py": (
         "~1695 bare-PID daemon kill via os.kill (SD3) — daemon_pid is a "
         "raw int from a pidfile, no Popen handle; kill_group infeasible"
     ),
     # ── pending migration (in-scope but not yet landed) ──────────────────
-    "megaplan/agent/tools/code_execution_tool.py": (
+    "arnold/pipelines/megaplan/agent/tools/code_execution_tool.py": (
         "pending spawn migration @ L449 — preexec_fn=os.setsid; "
         "deferred from T5 scope, planned for later batch"
     ),
     # ── long-tail deferrals (not in current migration scope) ─────────────
-    "megaplan/agent/tools/voice_mode.py": (
+    "arnold/pipelines/megaplan/agent/tools/voice_mode.py": (
         "long-tail: voice playback subprocess.Popen, deferred migration"
     ),
-    "megaplan/agent/tools/environments/docker.py": (
+    "arnold/pipelines/megaplan/agent/tools/environments/docker.py": (
         "long-tail: Docker container subprocess management, deferred"
     ),
-    "megaplan/agent/tools/environments/singularity.py": (
+    "arnold/pipelines/megaplan/agent/tools/environments/singularity.py": (
         "long-tail: Singularity container subprocess management, deferred"
     ),
-    "megaplan/agent/tools/environments/ssh.py": (
+    "arnold/pipelines/megaplan/agent/tools/environments/ssh.py": (
         "long-tail: SSH remote subprocess management, deferred"
     ),
-    "megaplan/agent/gateway/run.py": (
+    "arnold/pipelines/megaplan/agent/gateway/run.py": (
         "long-tail: gateway subprocess spawns, deferred"
     ),
-    "megaplan/bakeoff/handlers.py": (
+    "arnold/pipelines/megaplan/bakeoff/handlers.py": (
         "long-tail: bakeoff asyncio subprocess management, deferred"
     ),
-    "megaplan/bakeoff/orchestrator.py": (
+    "arnold/pipelines/megaplan/bakeoff/orchestrator.py": (
         "long-tail: bakeoff orchestration subprocesses, deferred"
     ),
-    "megaplan/bakeoff/judge.py": (
+    "arnold/pipelines/megaplan/bakeoff/judge.py": (
         "long-tail: asyncio subprocess for judge agent calls, deferred"
     ),
-    "megaplan/cloud/providers/base.py": (
+    "arnold/pipelines/megaplan/cloud/providers/base.py": (
         "long-tail: cloud provider subprocess execution, deferred"
     ),
 }
@@ -176,11 +176,11 @@ def _find_violations(filepath: Path) -> list[tuple[int, str]]:
 def test_no_bare_subprocess_outside_runtime() -> None:
     """Walk megaplan/**/*.py and ensure every violation is in the frozen ledger."""
     repo_root = Path(__file__).resolve().parents[1]
-    megaplan_dir = repo_root / "megaplan"
+    megaplan_dir = repo_root / "arnold" / "pipelines" / "megaplan"
     runtime_module = megaplan_dir / "runtime" / "process.py"
 
     if not megaplan_dir.is_dir():
-        pytest.skip("megaplan/ directory not found")
+        pytest.skip("arnold/pipelines/megaplan/ directory not found")
 
     # ── Collect all violations keyed by relpath ──────────────────────────
     violations_by_file: dict[str, list[tuple[int, str]]] = {}

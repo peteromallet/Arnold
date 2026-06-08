@@ -5,6 +5,19 @@ __pycache__/
 .codex/
 .claude/
 .megaplan/
+!.megaplan/
+!.megaplan/briefs/
+!.megaplan/briefs/**
+.megaplan/briefs/**/.megaplan/
+.megaplan/.state-locks/
+.megaplan/cloud-chain.log
+.megaplan/debt.json
+.megaplan/epics/
+.megaplan/profiles.toml
+.megaplan/schemas/
+.megaplan/telemetry/
+.megaplan/verification/
+.megaplan/plans/
 chain_state.json
 .desloppify/
 .desloppify.bak-*
@@ -22,6 +35,7 @@ megaplan/cloud/_reference/
 # Local/generated planning inputs and cloud runner specs.
 cloud.yaml
 chain.yaml
+!.megaplan/briefs/**/chain.yaml
 plan.md
 /plan_v*.md
 /.plan_v*.md

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
-import megaplan
-import megaplan.workers
-from megaplan.handlers.finalize import _write_finalize_artifacts
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan.calibration import ModelIdentity, RouteSuggestion, read_capability_claims, route
+from arnold.pipelines.megaplan.handlers.finalize import _task_execute_claim_context, _write_finalize_artifacts
+from arnold.pipelines.megaplan.observability.evaluand import EvaluandRecord, write_evaluand_event
+from arnold.pipelines.megaplan.observability.events import EventKind, read_events
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests.conftest import PlanFixture, load_state, read_json
 
 
@@ -170,6 +175,413 @@ def test_handle_finalize_rejects_unadjudicated_complexity(
         megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
 
 
+def test_handle_finalize_attaches_calibration_route_report_without_mutating_complexity(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    monkeypatch.setenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", "1")
+
+    payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Ship the change",
+                "depends_on": [],
+                "status": "pending",
+                "complexity": 3,
+                "complexity_justification": "Touches runtime wiring and tests.",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+                "reviewer_verdict": "",
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+    }
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="valid finalize payload",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="finalize-calibration",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.finalize,
+        "query_route_if_enabled",
+        lambda *args, **kwargs: RouteSuggestion(tier_spec="codex:medium", confidence=0.7),
+    )
+
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    finalized = read_json(plan_fixture.plan_dir / "finalize.json")
+    task = finalized["tasks"][0]
+    assert task["complexity"] == 3
+    assert task["complexity_justification"] == "Touches runtime wiring and tests."
+    assert task["metadata"]["calibration_route_report"]["authoritative_complexity"] == 3
+    assert task["metadata"]["calibration_route_report"]["suggestion"]["tier_spec"] == "codex:medium"
+
+
+@pytest.mark.parametrize("flag_enabled", [False, True])
+def test_handle_finalize_calibration_flag_characterization(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    flag_enabled: bool,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    if flag_enabled:
+        monkeypatch.setenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", "1")
+    else:
+        monkeypatch.delenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", raising=False)
+
+    payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Ship the change",
+                "depends_on": [],
+                "status": "pending",
+                "complexity": 2,
+                "complexity_justification": "Localized change.",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+                "reviewer_verdict": "",
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+    }
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="valid finalize payload",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="finalize-no-calibration",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+    if flag_enabled:
+        monkeypatch.setattr(
+            megaplan.handlers.finalize,
+            "query_route_if_enabled",
+            lambda *args, **kwargs: RouteSuggestion(tier_spec="codex:medium", confidence=0.7),
+        )
+    else:
+        def _should_not_run(*args, **kwargs):
+            raise AssertionError("calibration query should stay disabled when flag is off")
+
+        monkeypatch.setattr(
+            megaplan.handlers.finalize,
+            "query_route_if_enabled",
+            _should_not_run,
+        )
+
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    finalized = read_json(plan_fixture.plan_dir / "finalize.json")
+    task = finalized["tasks"][0]
+    assert task["complexity"] == 2
+    assert task["complexity_justification"] == "Localized change."
+    report = task.get("metadata", {}).get("calibration_route_report")
+    if flag_enabled:
+        assert report is not None
+        assert report["authoritative_complexity"] == 2
+        assert report["suggestion"]["tier_spec"] == "codex:medium"
+    else:
+        assert report is None
+
+
+def test_handle_finalize_writes_capability_claim_from_adjudicated_finalize_path(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    monkeypatch.setenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", "1")
+
+    record = EvaluandRecord(
+        judge_version="judge-v1",
+        rubric_version="rubric-v1",
+        input_set_hash="input-hash-v1",
+        score=0.91,
+        piece_version="piece-v1",
+        provenance={"verifier_identity": "judge-mi"},
+        taint=(),
+    )
+    write_evaluand_event("eval-run-1", record, plan_dir=plan_fixture.plan_dir, phase="judge", scope="tests")
+
+    state = load_state(plan_fixture.plan_dir)
+    state["history"].append(
+        {
+            "step": "execute",
+            "timestamp": "2026-05-31T00:00:00Z",
+            "duration_ms": 5,
+            "cost_usd": 1.5,
+            "result": "success",
+            "output_file": "execution_batch_1.json",
+            "batch_complexity": 5,
+            "tier_model_spec": "hermes:flash",
+            "tier_model_resolved": "resolved::hermes:flash",
+            "tier_projected": 2,
+            "tier_counterfactual_tag": "explore-42",
+        }
+    )
+    (plan_fixture.plan_dir / "state.json").write_text(
+        json.dumps(state, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (plan_fixture.plan_dir / "execution_batch_1.json").write_text(
+        json.dumps({"task_updates": [{"task_id": "T1", "status": "done"}]}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Ship the change",
+                "depends_on": [],
+                "status": "pending",
+                "complexity": 3,
+                "complexity_justification": "Touches runtime wiring and tests.",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+                "reviewer_verdict": "",
+                "metadata": {
+                    "evaluand_ref": {
+                        "piece_version": "piece-v1",
+                        "judge_version": "judge-v1",
+                        "rubric_version": "rubric-v1",
+                        "input_set_hash": "input-hash-v1",
+                    }
+                },
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+    }
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="valid finalize payload",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="finalize-capability-claim",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.finalize,
+        "query_route_if_enabled",
+        lambda *args, **kwargs: RouteSuggestion(tier_spec="codex:medium", confidence=0.7),
+    )
+
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    claims = read_capability_claims(plan_fixture.plan_dir)
+    assert len(claims) == 1
+    claim = claims[0]
+    assert claim.task_signature == "finalize:task_id=T1:complexity=3"
+    assert claim.model_identity == "resolved::hermes:flash"
+    assert claim.predicted_tier == 2
+    assert claim.routed_model == ModelIdentity("resolved::hermes:flash")
+    assert claim.routed_model_identity == "resolved::hermes:flash"
+    assert claim.verifier_identity == "judge-mi"
+    assert claim.verifier_tier == "4"
+    assert claim.taint_class is None
+    assert claim.exploration_tag == "explore-42"
+    assert claim.low_confidence_signal is False
+    assert claim.route_phase == "execute"
+    assert claim.routed_tier_spec == "hermes:flash"
+    assert claim.cost_usd == 1.5
+
+    claim_events = list(read_events(plan_fixture.plan_dir, kinds=[EventKind.CAPABILITY_CLAIM]))
+    assert len(claim_events) == 1
+    assert claim_events[0]["phase"] == "execute"
+
+    filtered = read_capability_claims(
+        plan_fixture.plan_dir,
+        model_identity="resolved::hermes:flash",
+    )
+    assert filtered == claims
+    assert read_capability_claims(
+        plan_fixture.plan_dir,
+        routed_model=ModelIdentity("resolved::hermes:flash"),
+    ) == claims
+    suggestion = route(
+        claim.task_signature,
+        claims=read_capability_claims(plan_fixture.plan_dir),
+        tier_models={"execute": {"2": "hermes:flash", "4": "codex:medium"}},
+        now=record.recorded_at,
+    )
+    assert suggestion.tier_spec == "hermes:flash"
+
+
+def test_finalize_execute_claim_context_accepts_legacy_one_batch_metadata(
+    plan_fixture: PlanFixture,
+) -> None:
+    state = load_state(plan_fixture.plan_dir)
+    state["history"].append(
+        {
+            "step": "execute",
+            "output_file": "execution_batch_1.json",
+            "batch_complexity": 3,
+            "tier_model_spec": "codex:medium",
+            "tier_model_resolved": "resolved::codex:medium",
+            "tier_projected": 2,
+            "tier_exploration_tag": "legacy-one-batch",
+        }
+    )
+    (plan_fixture.plan_dir / "execution_batch_1.json").write_text(
+        json.dumps({"task_updates": [{"task_id": "T1", "status": "done"}]}) + "\n",
+        encoding="utf-8",
+    )
+
+    context = _task_execute_claim_context(plan_fixture.plan_dir, state)
+
+    assert context["T1"]["counterfactual_tag"] == "legacy-one-batch"
+    assert context["T1"]["predicted_tier"] == 2
+    assert context["T1"]["routed_tier_spec"] == "codex:medium"
+    assert context["T1"]["routed_model_identity"] == "resolved::codex:medium"
+
+
+def test_finalize_execute_claim_context_accepts_auto_loop_batch_to_tier_metadata(
+    plan_fixture: PlanFixture,
+) -> None:
+    state = load_state(plan_fixture.plan_dir)
+    state["history"].append(
+        {
+            "step": "execute",
+            "output_file": "execution.json",
+            "batch_to_tier": [
+                {
+                    "batch_number": 1,
+                    "batch_complexity": 5,
+                    "tier_model_spec": "codex:high",
+                    "resolved_model": "resolved::codex:high",
+                    "projected_tier": 4,
+                    "counterfactual_tag": "canonical-auto",
+                    "low_confidence": True,
+                },
+                {
+                    "batch_number": 2,
+                    "batch_complexity": 2,
+                    "tier_model_spec": "claude:medium",
+                    "resolved_model": "resolved::claude:medium",
+                    "exploration_tag": "legacy-auto",
+                },
+            ],
+        }
+    )
+    (plan_fixture.plan_dir / "execution_batch_1.json").write_text(
+        json.dumps({"task_updates": [{"task_id": "T1", "status": "done"}]}) + "\n",
+        encoding="utf-8",
+    )
+    (plan_fixture.plan_dir / "execution_batch_2.json").write_text(
+        json.dumps({"task_updates": [{"task_id": "T2", "status": "done"}]}) + "\n",
+        encoding="utf-8",
+    )
+
+    context = _task_execute_claim_context(plan_fixture.plan_dir, state)
+
+    assert context["T1"]["counterfactual_tag"] == "canonical-auto"
+    assert context["T1"]["predicted_tier"] == 4
+    assert context["T1"]["routed_tier_spec"] == "codex:high"
+    assert context["T1"]["routed_model_identity"] == "resolved::codex:high"
+    assert context["T1"]["low_confidence_signal"] is True
+    assert context["T2"]["counterfactual_tag"] == "legacy-auto"
+    assert context["T2"]["predicted_tier"] == 2
+    assert context["T2"]["routed_tier_spec"] == "claude:medium"
+
+
+def test_handle_finalize_skips_capability_claim_when_evaluand_ref_unavailable(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    monkeypatch.setenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE", "1")
+
+    payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Ship the change",
+                "depends_on": [],
+                "status": "pending",
+                "complexity": 2,
+                "complexity_justification": "Localized change.",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+                "reviewer_verdict": "",
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+    }
+    worker = WorkerResult(
+        payload=payload,
+        raw_output="valid finalize payload",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="finalize-no-evaluand-ref",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.finalize,
+        "query_route_if_enabled",
+        lambda *args, **kwargs: RouteSuggestion(tier_spec="codex:low", confidence=0.6),
+    )
+
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    assert read_capability_claims(plan_fixture.plan_dir) == ()
+
+
 def test_after_execute_user_actions_are_handoff_artifact_not_executor_task(
     plan_fixture: PlanFixture,
 ) -> None:
@@ -227,7 +639,7 @@ def test_after_execute_user_actions_are_handoff_artifact_not_executor_task(
 
 
 def test_finalize_snapshot_remains_pending_after_execute(plan_fixture: PlanFixture) -> None:
-    from megaplan._core import load_finalize_snapshot
+    from arnold.pipelines.megaplan._core import load_finalize_snapshot
 
     make_args = plan_fixture.make_args
     megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
@@ -257,7 +669,7 @@ def test_finalize_snapshot_remains_pending_after_execute(plan_fixture: PlanFixtu
 
 
 def test_render_final_md_pending_partially_done_and_reviewed_states() -> None:
-    from megaplan._core import render_final_md
+    from arnold.pipelines.megaplan._core import render_final_md
 
     pending = {
         "tasks": [
@@ -362,7 +774,7 @@ def test_finalize_writes_contract_json_and_keeps_empty_final_md_inert(
 
 
 def test_render_final_md_renders_contract_sections_when_present() -> None:
-    from megaplan._core import render_final_md
+    from arnold.pipelines.megaplan._core import render_final_md
 
     data = {
         "tasks": [],
@@ -411,7 +823,7 @@ def test_finalize_normalize_complexity_missing_defaults_to_4(plan_fixture: PlanF
     Tasks missing a complexity score default to 4 (Sonnet) — read-and-check
     work is well within Sonnet's capability and ~5–10× cheaper than Opus.
     """
-    from megaplan.handlers.finalize import _normalize_task_complexity
+    from arnold.pipelines.megaplan.handlers.finalize import _normalize_task_complexity
 
     payload = {
         "tasks": [
@@ -437,7 +849,7 @@ def test_finalize_normalize_complexity_missing_defaults_to_4(plan_fixture: PlanF
 
 def test_finalize_normalize_complexity_invalid_values_normalized(plan_fixture: PlanFixture) -> None:
     """Non-integer and out-of-range complexity values are normalized to 4 (Sonnet)."""
-    from megaplan.handlers.finalize import _normalize_task_complexity
+    from arnold.pipelines.megaplan.handlers.finalize import _normalize_task_complexity
 
     payload = {
         "tasks": [
@@ -461,7 +873,7 @@ def test_finalize_normalize_complexity_invalid_values_normalized(plan_fixture: P
 
 def test_finalize_normalize_complexity_valid_values_pass_through(plan_fixture: PlanFixture) -> None:
     """Valid complexity values 1-5 are left unchanged."""
-    from megaplan.handlers.finalize import _normalize_task_complexity
+    from arnold.pipelines.megaplan.handlers.finalize import _normalize_task_complexity
 
     payload = {
         "tasks": [
@@ -535,7 +947,7 @@ def test_finalize_artifacts_include_complexity_after_normalization(plan_fixture:
 
 
 def test_render_final_md_phase_marks_gaps_only_when_due() -> None:
-    from megaplan._core import render_final_md
+    from arnold.pipelines.megaplan._core import render_final_md
 
     data = {
         "tasks": [

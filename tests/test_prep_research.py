@@ -7,10 +7,11 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan._core import WorkerUnit, WorkerUnitResult
-from megaplan.orchestration import prep_research
-from megaplan.types import CliError, PlanState
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan._core import WorkerUnit, WorkerUnitResult
+from arnold.pipelines.megaplan.model_seam import ModelTier
+from arnold.pipelines.megaplan.orchestration import prep_research
+from arnold.pipelines.megaplan.types import CliError, PlanState
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 def _state(project_dir: Path) -> PlanState:
@@ -81,6 +82,10 @@ def test_prep_research_worker_unit_is_picklable_with_representative_payload(tmp_
                 prompt="research prompt",
                 output_path=output_path,
                 read_only=True,
+                validation_step="prep-research",
+                schema=dict(prep_research.PREP_RESEARCH_FINDING_SCHEMA),
+                model="deepseek:deepseek-v4-pro",
+                tier=ModelTier.ENFORCED,
                 extra={"area": {"id": "a", "area": "Area A", "brief": "inspect A"}},
             )
         )
@@ -89,6 +94,9 @@ def test_prep_research_worker_unit_is_picklable_with_representative_payload(tmp_
     assert isinstance(decoded_unit, WorkerUnit)
     assert decoded_unit.step == "prep-research"
     assert decoded_unit.read_only is True
+    assert decoded_unit.validation_step == "prep-research"
+    assert decoded_unit.model == (decoded_unit.resolved.resolved_model or decoded_unit.resolved.model)
+    assert decoded_unit.tier in {ModelTier.ENFORCED, ModelTier.NON_ENFORCED}
     assert decoded_unit.output_path == output_path
     assert decoded_unit.extra["area"]["id"] == "a"
 
@@ -723,6 +731,9 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
             "prep_research_2.json",
         ]
         assert all(unit.read_only is True for unit in units)
+        assert all(unit.validation_step == "prep-research" for unit in units)
+        assert all(unit.schema == dict(prep_research.PREP_RESEARCH_FINDING_SCHEMA) for unit in units)
+        assert all(unit.model == (expected_resolved.resolved_model or expected_resolved.model) for unit in units)
         ordered_results: list[dict[str, Any]] = []
         total_cost = 0.0
         total_prompt_tokens = 0
@@ -777,7 +788,7 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
 
     with (
         patch.object(prep_research, "scatter_worker_units", side_effect=fake_scatter_worker_units),
-        patch("megaplan._core.hermes_fanout.scatter_gather", side_effect=AssertionError("old thread fanout path should not be used")),
+        patch("arnold.pipelines.megaplan._core.hermes_fanout.scatter_gather", side_effect=AssertionError("old thread fanout path should not be used")),
     ):
         result = prep_research.run_research_fanout(
             state,
@@ -800,6 +811,64 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
     assert result.side_results[0]["files"] == ["src/a.py"]
     assert result.side_results[1]["status"] == "error"
     assert result.side_results[2]["status"] == "timed_out"
+
+
+def test_run_research_fanout_degrades_invalid_ordered_payload(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    areas = [
+        {"id": "a", "area": "A", "brief": "inspect a"},
+        {"id": "b", "area": "B", "brief": "inspect b"},
+    ]
+
+    def fake_scatter_worker_units(**kwargs: Any) -> prep_research.GenericScatterResult:
+        units = kwargs["units"]
+        ordered_results = [
+            kwargs["parse_result"](
+                0,
+                WorkerUnitResult(
+                    payload="not a dict",
+                    raw_output="{}",
+                    duration_ms=12,
+                    cost_usd=0.0,
+                    output_path=str(units[0].output_path),
+                    read_only=True,
+                    extra=dict(units[0].extra),
+                ),
+                units[0],
+            ),
+            {"unexpected": "shape"},
+        ]
+        return prep_research.GenericScatterResult(
+            ordered_results=ordered_results,
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    with patch.object(prep_research, "scatter_worker_units", side_effect=fake_scatter_worker_units):
+        result = prep_research.run_research_fanout(
+            state,
+            plan_dir,
+            root=tmp_path,
+            areas=areas,
+            timeout_seconds=1.0,
+            max_concurrent=2,
+        )
+
+    assert [item["area"] for item in result.ordered_results] == ["a", "b"]
+    assert result.ordered_results[0]["status"] == "error"
+    assert result.ordered_results[0]["error"] == "Prep research fan-out returned invalid ordered payload"
+    assert result.ordered_results[1]["status"] == "error"
+    assert result.ordered_results[1]["error"] == "Prep research fan-out payload missing finding metrics"
+    assert [item["area"] for item in result.side_results] == ["a", "b"]
+    assert result.side_results[0]["status"] == "error"
+    assert result.side_results[1]["status"] == "error"
 
 
 def test_run_prep_orchestration_caps_fanout_writes_dossier_and_returns_worker(

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.editorial.gating import evaluate_state_transition, transition_epic_state
-from megaplan.editorial.lockdown import ensure_unlocked_for_edit, scan_lockdown_phrases
-from megaplan.editorial.errors import EditorialWorkflowError
-from megaplan.store import ChecklistItemInput, RevisionConflict, SprintItemInput
+from arnold.pipelines.megaplan.editorial.gating import evaluate_state_transition, transition_epic_state
+from arnold.pipelines.megaplan.editorial.lockdown import ensure_unlocked_for_edit, scan_lockdown_phrases
+from arnold.pipelines.megaplan.editorial.errors import EditorialWorkflowError
+from arnold.pipelines.megaplan.store import ChecklistItemInput, RevisionConflict, SprintItemInput
 
 
 def _body(*, lockdown_phrase: str | None = None) -> str:

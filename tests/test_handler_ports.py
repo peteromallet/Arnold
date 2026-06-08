@@ -13,12 +13,13 @@ from typing import Any
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan._core.io as io_module
+import arnold.pipelines.megaplan.cli as megaplan_cli
 
-from megaplan._pipeline.stages import (
+from arnold.pipelines.megaplan.stages import (
     CritiqueStep,
     ExecuteStep,
     FinalizeStep,
@@ -28,7 +29,7 @@ from megaplan._pipeline.stages import (
     ReviewStep,
     ReviseStep,
 )
-from megaplan._pipeline.types import Step, StepContext
+from arnold.pipelines.megaplan._pipeline.types import Step, StepContext
 
 
 @pytest.fixture

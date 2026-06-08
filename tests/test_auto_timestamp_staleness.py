@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from megaplan import auto
-from megaplan.auto import drive
+from arnold.pipelines.megaplan import auto 
+from arnold.pipelines.megaplan.auto import drive
 
 
 def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
@@ -90,7 +90,7 @@ def test_auto_clears_active_step_when_last_activity_is_stale(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,

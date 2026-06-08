@@ -1,20 +1,24 @@
 """Targeted unit tests for megaplan._pipeline.patterns.
 
 One test per pattern covering the produced Stage/Edge graph: stage
-names, ``Edge.kind`` ('normal' vs 'gate'), and recommendation targets
-for gate edges. Explicit regression cases are spelled out for the three
+names, ``Edge.kind`` ('normal' vs 'decision'), and recommendation targets
+for decision edges. Explicit regression cases are spelled out for the three
 patterns highlighted in the brief:
 
 * ``critique_revise_gate_loop`` — ``gate_extra_edges`` passthrough
-  produces exactly the four ``kind='gate'`` recommendation edges plus
+  produces exactly the four ``kind='decision'`` edges plus
   every caller-supplied extra edge, in order.
 * ``panel_parallel`` — three reviewers produce a :class:`ParallelStage`
   whose join collates per-reviewer outputs as ``{reviewer_id}.{label}``
   in reviewer-list order.
 * ``subpipeline_call`` — round-trips a child :class:`Pipeline` via
   :class:`SubloopStep`, with the ``promote`` callable mapping child
-  state to a :data:`GateRecommendation` on the parent's
+  state via the planning binding onto the parent's
   :class:`PipelineVerdict`.
+
+Post-M3b (T12): GateRecommendation typed literal is removed.
+Recommendation fields use plain ``str`` throughout.  The ``_promote``
+callable returns ``str`` and ``_VerdictStep.recommendation`` is ``str``.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from megaplan._pipeline.patterns import (
+from arnold.pipelines.megaplan._pipeline.patterns import (
     alternating_turns,
     critique_revise_gate_loop,
     escalate_if,
@@ -34,17 +38,24 @@ from megaplan._pipeline.patterns import (
     phase_zero_gate,
     subpipeline_call,
 )
-from megaplan._pipeline.subloop import SubloopStep
-from megaplan._pipeline.types import (
+import pytest
+
+from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
-    GateRecommendation,
     ParallelStage,
     Pipeline,
+    Port,
+    PortRef,
+    ReadRef,
+    ReduceResult,
     Stage,
     StepContext,
     StepResult,
     PipelineVerdict,
+    WriteRef,
 )
+from arnold.pipeline.step_invocation import StepInvocation
 
 
 # ── Lightweight Step doubles ───────────────────────────────────────────
@@ -96,7 +107,7 @@ class _VerdictStep:
     """Step that emits a fixed :class:`PipelineVerdict.recommendation`."""
 
     name: str
-    recommendation: GateRecommendation
+    recommendation: str
     kind: str = "judge"
     prompt_key: str | None = None
     slot: str | None = None
@@ -126,12 +137,12 @@ class TestCritiqueReviseGateLoop:
 
         assert set(stages.keys()) == {"critique", "gate", "revise"}
 
-        # Gate carries exactly the four kind='gate' recommendation edges.
+        # Gate carries exactly the four kind='decision' edges.
         gate_edges = stages["gate"].edges
         assert len(gate_edges) == 4
-        assert all(e.kind == "gate" for e in gate_edges)
-        rec_targets = {e.recommendation: e.target for e in gate_edges}
-        assert rec_targets == {
+        assert all(e.kind == "decision" for e in gate_edges)
+        label_targets = {e.label: e.target for e in gate_edges}
+        assert label_targets == {
             "iterate": "revise",
             "proceed": "finalize",
             "tiebreaker": "tiebreaker",
@@ -178,12 +189,12 @@ class TestCritiqueReviseGateLoop:
         gate_edges = stages["gate"].edges
         assert len(gate_edges) == 8
 
-        # First four edges are the recommendation edges, in fixed order.
+        # First four edges are the decision edges, in fixed order.
         rec_only = gate_edges[:4]
-        assert [e.recommendation for e in rec_only] == [
-            "iterate", "proceed", "tiebreaker", "escalate",
+        assert [e.label for e in rec_only] == [
+            "proceed", "iterate", "tiebreaker", "escalate",
         ]
-        assert all(e.kind == "gate" for e in rec_only)
+        assert all(e.kind == "decision" for e in rec_only)
 
         # The last four are the caller-supplied extras, in supplied order.
         assert tuple(gate_edges[4:]) == extra
@@ -205,7 +216,12 @@ class TestCritiqueReviseGateLoop:
             revise_target="prep",
         )
         assert stages["critique"].edges == critique_fallbacks
-        assert stages["revise"].edges == (Edge(label="critique", target="prep"),)
+        # Revise edge comes from routing plugin (Arnold Edge without recommendation field).
+        revise_edges = stages["revise"].edges
+        assert len(revise_edges) == 1
+        assert revise_edges[0].label == "critique"
+        assert revise_edges[0].target == "prep"
+        assert revise_edges[0].kind == "normal"
 
 
 # ── panel_parallel ─────────────────────────────────────────────────────
@@ -270,6 +286,23 @@ class TestPanelParallel:
         merged = stage.join([StepResult(outputs={})], ctx)
         assert merged.next == "merge"
 
+    def test_panel_parallel_preserves_authored_fields(self) -> None:
+        invocation = StepInvocation(kind="tool", metadata={"action": "fanout"})
+        stage = panel_parallel(
+            "panel_review",
+            reviewers=(("solo", _StubStep(name="panel.solo")),),
+            reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+            writes=(Port(name="review", content_type="text/markdown"),),
+            invocation=invocation,
+            required_capabilities=("model:text", "fs-write"),
+        )
+
+        assert isinstance(stage, ParallelStage)
+        assert stage.reads == (PortRef(port_name="draft", content_type="text/markdown"),)
+        assert stage.writes == (Port(name="review", content_type="text/markdown"),)
+        assert stage.invocation == invocation
+        assert stage.required_capabilities == ("model:text", "fs-write")
+
 
 # ── alternating_turns ──────────────────────────────────────────────────
 
@@ -306,7 +339,7 @@ class TestSubpipelineCall:
     ) -> None:
         """Regression (c): the child Pipeline runs under :class:`SubloopStep`
         with its state propagating back via the ``promote`` callable as a
-        :data:`GateRecommendation` on the parent's :class:`PipelineVerdict`."""
+        plain ``str`` recommendation on the parent's :class:`PipelineVerdict`."""
 
         # Child pipeline: a single Step that publishes
         # ``current_state='critiqued'`` (the shape an InProcessHandlerStep
@@ -317,7 +350,7 @@ class TestSubpipelineCall:
             entry="run",
         )
 
-        def _promote(state: dict[str, Any]) -> GateRecommendation:
+        def _promote(state: dict[str, Any]) -> str:
             cs = state.get("current_state", "")
             if cs == "critiqued":
                 return "iterate"
@@ -352,7 +385,7 @@ class TestSubpipelineCall:
             entry="run",
         )
 
-        def _promote(state: dict[str, Any]) -> GateRecommendation:
+        def _promote(state: dict[str, Any]) -> str:
             return "escalate" if state.get("current_state") == "aborted" else "proceed"
 
         subloop = subpipeline_call(child, promote=_promote)
@@ -402,6 +435,57 @@ class TestModePrompts:
         assert isinstance(ps_stage, Stage)
         assert ps_stage.step.prompt_key == "default"
 
+    def test_overlay_preserves_stage_and_pipeline_fields(self) -> None:
+        @dataclass
+        class _PromptStep:
+            name: str
+            kind: str = "produce"
+            prompt_key: str | None = None
+            slot: str | None = None
+
+            def run(self, ctx: StepContext) -> StepResult:  # pragma: no cover
+                return StepResult(next="done")
+
+        invocation = StepInvocation(kind="model", metadata={"prompt": "default"})
+        loop_condition = lambda state: False
+        pipeline = Pipeline(
+            stages={
+                "draft": Stage(
+                    name="draft",
+                    step=_PromptStep(name="draft", prompt_key="default"),
+                    reads=(ReadRef(name="brief.md"),),
+                    writes=(WriteRef(name="draft.md"),),
+                    produces=(Port(name="draft", content_type="text/markdown"),),
+                    consumes=(PortRef(port_name="brief", content_type="text/markdown"),),
+                    invocation=invocation,
+                    required_capabilities=("llm", "fs-write"),
+                    decision_vocabulary=frozenset({"proceed"}),
+                    override_vocabulary=frozenset({"stop"}),
+                    loop_condition=loop_condition,
+                ),
+            },
+            entry="draft",
+            binding_map={"draft": "binding"},
+            resource_bundles=("bundle",),
+        )
+
+        overlay = mode_prompts({"polish": {"draft": "polish_prompt"}})("polish")
+        out = overlay.apply(pipeline)
+        new_stage = out.stages["draft"]
+        assert isinstance(new_stage, Stage)
+        assert new_stage.step.prompt_key == "polish_prompt"
+        assert new_stage.reads == pipeline.stages["draft"].reads
+        assert new_stage.writes == pipeline.stages["draft"].writes
+        assert new_stage.produces == pipeline.stages["draft"].produces
+        assert new_stage.consumes == pipeline.stages["draft"].consumes
+        assert new_stage.invocation == invocation
+        assert new_stage.required_capabilities == ("llm", "fs-write")
+        assert new_stage.decision_vocabulary == frozenset({"proceed"})
+        assert new_stage.override_vocabulary == frozenset({"stop"})
+        assert new_stage.loop_condition is loop_condition
+        assert out.binding_map == pipeline.binding_map
+        assert out.resource_bundles == pipeline.resource_bundles
+
 
 # ── iterate_until ──────────────────────────────────────────────────────
 
@@ -420,25 +504,59 @@ class TestIterateUntil:
         assert ("iterate", "loop") in labels
         assert ("halt", "halt") in labels
 
+    def test_preserves_stage_fields_while_adding_loop_edges(self) -> None:
+        invocation = StepInvocation(kind="model", metadata={"prompt": "loop"})
+        prior_loop_condition = lambda state: False
+        base = Stage(
+            name="loop",
+            step=_StubStep(name="loop"),
+            edges=(Edge(label="next", target="finalize"),),
+            reads=(ReadRef(name="brief.md"),),
+            writes=(WriteRef(name="draft.md"),),
+            produces=(Port(name="draft", content_type="text/markdown"),),
+            consumes=(PortRef(port_name="brief", content_type="text/markdown"),),
+            invocation=invocation,
+            required_capabilities=("llm",),
+            decision_vocabulary=frozenset({"proceed"}),
+            override_vocabulary=frozenset({"stop"}),
+            loop_condition=prior_loop_condition,
+        )
+
+        wrapped = iterate_until(base, condition=lambda s: True, max_iterations=3)
+        assert wrapped.reads == base.reads
+        assert wrapped.writes == base.writes
+        assert wrapped.produces == base.produces
+        assert wrapped.consumes == base.consumes
+        assert wrapped.invocation == invocation
+        assert wrapped.required_capabilities == base.required_capabilities
+        assert wrapped.decision_vocabulary == base.decision_vocabulary
+        assert wrapped.override_vocabulary == base.override_vocabulary
+        assert wrapped.loop_condition is not None
+        assert wrapped.loop_condition is not prior_loop_condition
+
 
 # ── escalate_if ────────────────────────────────────────────────────────
 
 
 class TestEscalateIf:
-    def test_returns_escape_edge_with_gate_kind_and_recommendation(self) -> None:
+    def test_returns_escape_edge_with_decision_kind_and_label(self) -> None:
         handler = _StubStep(name="escalate_to_human")
         step, edge = escalate_if(lambda s: True, handler)
         assert step is handler
-        assert edge.kind == "gate"
-        assert edge.recommendation == "escalate"
+        assert edge.kind == "decision"
+        assert edge.label == "escalate"
         assert edge.target == "escalate_to_human"
 
 
 # ── majority_vote ──────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("typed_ports", [False, True])
 class TestMajorityVote:
-    def test_strict_majority_wins(self, tmp_path: Path) -> None:
+    def test_strict_majority_wins(
+        self, tmp_path: Path, typed_ports: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1" if typed_ports else "")
         join = majority_vote()
         results = [
             StepResult(verdict=PipelineVerdict(score=1.0, recommendation="proceed")),
@@ -448,10 +566,22 @@ class TestMajorityVote:
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="test")
         merged = join(results, ctx)
         assert merged.verdict is not None
-        assert merged.verdict.recommendation == "proceed"
+        if typed_ports:
+            payload = merged.verdict.payload
+            assert isinstance(payload, dict)
+            reduce_result = payload["reduce_result"]
+            assert isinstance(reduce_result, ReduceResult)
+            assert reduce_result.value == "proceed"
+            assert reduce_result.label == "proceed"
+            assert merged.verdict.recommendation is None
+        else:
+            assert merged.verdict.recommendation == "proceed"
         assert merged.next == "proceed"
 
-    def test_tie_routes_to_tiebreaker(self, tmp_path: Path) -> None:
+    def test_tie_routes_to_tiebreaker(
+        self, tmp_path: Path, typed_ports: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1" if typed_ports else "")
         join = majority_vote()
         results = [
             StepResult(verdict=PipelineVerdict(score=1.0, recommendation="proceed")),
@@ -460,14 +590,34 @@ class TestMajorityVote:
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="test")
         merged = join(results, ctx)
         assert merged.verdict is not None
-        assert merged.verdict.recommendation == "tiebreaker"
+        if typed_ports:
+            payload = merged.verdict.payload
+            assert isinstance(payload, dict)
+            reduce_result = payload["reduce_result"]
+            assert isinstance(reduce_result, ReduceResult)
+            assert reduce_result.value is None
+            assert reduce_result.label is None
+            assert merged.next == "tiebreaker"
+        else:
+            assert merged.verdict.recommendation == "tiebreaker"
 
-    def test_empty_panel_routes_to_tiebreaker(self, tmp_path: Path) -> None:
+    def test_empty_panel_routes_to_tiebreaker(
+        self, tmp_path: Path, typed_ports: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1" if typed_ports else "")
         join = majority_vote()
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="test")
         merged = join([StepResult()], ctx)
         assert merged.verdict is not None
-        assert merged.verdict.recommendation == "tiebreaker"
+        if typed_ports:
+            payload = merged.verdict.payload
+            assert isinstance(payload, dict)
+            reduce_result = payload["reduce_result"]
+            assert isinstance(reduce_result, ReduceResult)
+            assert reduce_result.value is None
+            assert merged.next == "tiebreaker"
+        else:
+            assert merged.verdict.recommendation == "tiebreaker"
 
 
 # ── phase_zero_gate ────────────────────────────────────────────────────

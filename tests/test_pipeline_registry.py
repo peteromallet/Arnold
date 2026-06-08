@@ -19,14 +19,15 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     Pipeline,
     Stage,
     StepContext,
     StepResult,
 )
-from megaplan._pipeline.registry import (
+from arnold.pipeline import Pipeline as ArnoldPipeline
+from arnold.pipelines.megaplan._pipeline.registry import (
     PipelineRegistry,
     describe_pipeline,
     get_pipeline,
@@ -44,7 +45,8 @@ def test_builtin_pipelines_are_registered() -> None:
     demo modules but are no longer registered as built-ins.
     """
     names = registered_pipelines()
-    assert "planning" in names
+    assert "megaplan" in names
+    assert "planning" not in names
     assert "epic-blitz" in names
 
 
@@ -66,7 +68,7 @@ def test_each_builtin_has_a_description() -> None:
 def test_get_pipeline_returns_a_real_pipeline() -> None:
     for name in registered_pipelines():
         pipeline = get_pipeline(name)
-        assert isinstance(pipeline, Pipeline)
+        assert isinstance(pipeline, (Pipeline, ArnoldPipeline))
 
 
 def test_get_unknown_name_raises_with_helpful_message() -> None:
@@ -80,7 +82,7 @@ def test_run_doc_critique_by_name_drives_to_done(tmp_path: Path) -> None:
     Uses the demo module directly instead of ``run_pipeline_by_name``
     because demo pipelines are no longer registered as built-ins.
     """
-    from megaplan._pipeline.demos.doc_critique import run_demo
+    from arnold.pipelines.megaplan._pipeline.demos.doc_critique import run_demo
 
     fixture = tmp_path / "fixture.md"
     fixture.write_text(
@@ -100,7 +102,7 @@ def test_run_doc_critique_by_name_drives_to_done(tmp_path: Path) -> None:
 
 def test_run_judges_by_name_writes_fan_out_artifacts(tmp_path: Path) -> None:
     """Fan-out judges demo — invoked directly instead of via registry."""
-    from megaplan._pipeline.demo_judges import run_demo
+    from arnold.pipelines.megaplan._pipeline.demo_judges import run_demo
 
     fixture = tmp_path / "doc.md"
     fixture.write_text("A short document for the judges to score together.")
@@ -118,6 +120,8 @@ def test_run_judges_by_name_writes_fan_out_artifacts(tmp_path: Path) -> None:
         "judges/judge_brevity/verdict.json",
         "synthesis/synthesis.md",
         "state.json",
+        "events.ndjson",
+        ".events.seq",
     }
 
 

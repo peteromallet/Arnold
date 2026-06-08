@@ -7,8 +7,8 @@ from argparse import Namespace
 import pytest
 from unittest.mock import patch
 
-from megaplan.types import CliError
-from megaplan.workers import resolve_agent_mode, session_key_for, update_session_state
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers import resolve_agent_mode, session_key_for, update_session_state
 from tests._workers_helpers import FakeShutil
 
 
@@ -20,9 +20,9 @@ def test_session_key_for_matches_new_roles() -> None:
     assert session_key_for("execute", "claude") == "claude_executor"
 
 def test_resolve_agent_mode_uses_configured_fallback() -> None:
-    with patch("megaplan.workers._impl.shutil.which", side_effect=lambda name: None if name == "claude" else "/usr/bin/codex"):
-        with patch("megaplan.workers._impl.detect_available_agents", return_value=["codex"]):
-            with patch("megaplan.workers._impl.load_config", return_value={"agents": {"plan": "claude"}}):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", side_effect=lambda name: None if name == "claude" else "/usr/bin/codex"):
+        with patch("arnold.pipelines.megaplan.workers._impl.detect_available_agents", return_value=["codex"]):
+            with patch("arnold.pipelines.megaplan.workers._impl.load_config", return_value={"agents": {"plan": "claude"}}):
                 args = Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[])
                 agent, mode, refreshed, model = resolve_agent_mode("plan", args)
     assert agent == "codex"
@@ -31,7 +31,7 @@ def test_resolve_agent_mode_uses_configured_fallback() -> None:
     assert args._agent_fallback["requested"] == "claude"
 
 def test_resolve_agent_mode_for_review_claude_defaults_to_fresh() -> None:
-    with patch("megaplan._core.io.shutil", FakeShutil("bun", "tmux", "claude")):
+    with patch("arnold.pipelines.megaplan._core.io.shutil", FakeShutil("bun", "tmux", "claude")):
         agent, mode, refreshed, model = resolve_agent_mode("review", Namespace(agent="claude", ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     assert agent == "claude"
     assert mode == "persistent"
@@ -81,8 +81,8 @@ def test_session_key_differs_by_model() -> None:
 def test_session_key_used_consistently_in_apply_session_update() -> None:
     """apply_session_update uses model-aware session keys."""
     import hashlib
-    from megaplan._core.state import apply_session_update
-    from megaplan.workers._impl import session_key_for as skf
+    from arnold.pipelines.megaplan._core.state import apply_session_update
+    from arnold.pipelines.megaplan.workers._impl import session_key_for as skf
 
     state: dict = {"sessions": {}, "config": {}}
     resolved_model = "gpt-5.5"
@@ -105,35 +105,75 @@ def test_session_key_used_consistently_in_apply_session_update() -> None:
     assert state["sessions"][other_key]["id"] == "sess-456"
 
 def test_resolve_agent_mode_cli_flag_override() -> None:
-    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/codex"):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value="/usr/bin/codex"):
         agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent="codex", ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     assert agent == "codex"
 
 def test_resolve_agent_mode_config_override() -> None:
-    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/codex"):
-        with patch("megaplan.workers._impl.load_config", return_value={"agents": {"plan": "codex"}}):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value="/usr/bin/codex"):
+        with patch("arnold.pipelines.megaplan.workers._impl.load_config", return_value={"agents": {"plan": "codex"}}):
             agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     assert agent == "codex"
 
+
+def test_resolve_agent_mode_resolves_symbolic_default_routing_through_vendor() -> None:
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
+        with patch("arnold.pipelines.megaplan.workers._impl.load_config", return_value={"vendor": "codex", "agents": {}}):
+            agent, mode, refreshed, model = resolve_agent_mode(
+                "plan",
+                Namespace(
+                    agent=None,
+                    vendor=None,
+                    ephemeral=False,
+                    fresh=False,
+                    persist=False,
+                    confirm_self_review=False,
+                    hermes=None,
+                    phase_model=[],
+                ),
+            )
+
+    assert agent == "codex"
+    assert mode == "persistent"
+    assert refreshed is False
+
+
+def test_resolve_agent_mode_rejects_unresolved_premium_before_dispatch() -> None:
+    with pytest.raises(CliError, match="Unresolved premium placeholder reached worker dispatch"):
+        resolve_agent_mode(
+            "plan",
+            Namespace(
+                agent=None,
+                vendor=None,
+                ephemeral=False,
+                fresh=False,
+                persist=False,
+                confirm_self_review=False,
+                hermes=None,
+                phase_model=["plan=premium:low"],
+            ),
+        )
+
+
 def test_resolve_agent_mode_explicit_missing_raises() -> None:
-    with patch("megaplan.workers._impl.shutil.which", return_value=None):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value=None):
         with pytest.raises(CliError, match="not found"):
             resolve_agent_mode("plan", Namespace(agent="nosuchagent", ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
 
 def test_resolve_agent_mode_no_agents_raises() -> None:
-    with patch("megaplan.workers._impl.shutil.which", return_value=None):
-        with patch("megaplan.workers._impl.load_config", return_value={}):
-            with patch("megaplan.workers._impl.detect_available_agents", return_value=[]):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value=None):
+        with patch("arnold.pipelines.megaplan.workers._impl.load_config", return_value={}):
+            with patch("arnold.pipelines.megaplan.workers._impl.detect_available_agents", return_value=[]):
                 with pytest.raises(CliError, match="No supported agents"):
                     resolve_agent_mode("plan", Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
 
 def test_resolve_agent_mode_conflicting_flags_raises() -> None:
-    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/claude"):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value="/usr/bin/claude"):
         with pytest.raises(CliError, match="Cannot combine"):
             resolve_agent_mode("plan", Namespace(agent=None, ephemeral=True, fresh=True, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
 
 def test_resolve_agent_mode_ephemeral_mode() -> None:
-    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/claude"):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value="/usr/bin/claude"):
         agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent="claude", ephemeral=True, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     assert mode == "ephemeral"
     assert refreshed is True

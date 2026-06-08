@@ -33,13 +33,13 @@ import time
 
 import pytest
 
-from megaplan._core import (
+from arnold.pipelines.megaplan._core import (
     atomic_write_json,
     read_json,
     save_state_merge_meta,
     set_active_step,
 )
-from megaplan.workers.hermes import _StreamTracker, _start_heartbeat
+from arnold.pipelines.megaplan.workers.hermes import _StreamTracker, _start_heartbeat
 
 
 def _seed_state(plan_dir):

@@ -8,8 +8,8 @@ import sys
 
 import pytest
 
-from megaplan.schemas import BotTurn, ChecklistItem, Epic, EpicLock, Message, SystemLog, ToolCall, utc_now
-from megaplan.store import ArnoldStoreAdapter, BlobStore, HotContext, LockConflict, Store, deterministic_idempotency_key
+from arnold.pipelines.megaplan.schemas import BotTurn, ChecklistItem, Epic, EpicLock, Message, SystemLog, ToolCall, utc_now
+from arnold.pipelines.megaplan.store import ArnoldStoreAdapter, BlobStore, HotContext, LockConflict, Store, deterministic_idempotency_key
 
 
 def _public_methods(cls: type[object]) -> set[str]:

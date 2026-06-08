@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.pricing.fireworks import FIREWORKS_PRICING, cost_from_usage
+from arnold.pipelines.megaplan.pricing.fireworks import FIREWORKS_PRICING, cost_from_usage
 
 
 def test_cost_from_usage_known_model() -> None:

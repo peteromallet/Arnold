@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.quality_resolutions import (
+from arnold.pipelines.megaplan.quality_resolutions import (
     ACCEPTED_WITH_DEBT,
     ADVANCE_WITH_DEBT,
     FIXED,
@@ -16,7 +16,7 @@ from megaplan.quality_resolutions import (
     is_non_terminal_quality_resolution,
     latest_quality_resolutions,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 def test_build_quality_resolution_event_requires_debt_context() -> None:

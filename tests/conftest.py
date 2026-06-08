@@ -10,18 +10,77 @@ from typing import Callable
 
 import pytest
 
-import megaplan
-import megaplan.cli
-import megaplan._core
-import megaplan._core.io as io_module
-from megaplan.orchestration.phase_result import (
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.cli as megaplan_cli
+import arnold.pipelines.megaplan._core as megaplan_core
+import arnold.pipelines.megaplan._core.io as io_module
+from arnold.pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExternalError,
     PhaseResult,
     atomic_write_phase_result,
 )
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.workers import WorkerResult
+
+# Backward-compat aliases for test code that accesses megaplan.cli / megaplan._core
+megaplan.cli = megaplan_cli  # type: ignore[attr-defined]
+megaplan._core = megaplan_core  # type: ignore[attr-defined]
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _prepend_pythonpath(path: Path) -> None:
+    existing = os.environ.get("PYTHONPATH")
+    parts = [str(path)]
+    if existing:
+        parts.extend(part for part in existing.split(os.pathsep) if part and part != str(path))
+    os.environ["PYTHONPATH"] = os.pathsep.join(parts)
+
+
+_prepend_pythonpath(REPO_ROOT)
+
+
+@pytest.fixture(autouse=True)
+def isolate_worker_unit_tests_from_global_mock_env(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Worker subprocess unit tests own their mocks even under broad mock runs.
+
+    The integration suite is often invoked with ``MEGAPLAN_MOCK_WORKERS=1`` so
+    high-level phases use synthetic workers. Low-level worker tests patch the
+    command runners directly and must still exercise that code path; otherwise
+    the global env var bypasses the behavior they are asserting.
+    """
+    rel = request.node.path.relative_to(Path(__file__).resolve().parents[1]).as_posix()
+    if (
+        rel.startswith("tests/test_workers_")
+        or rel.startswith("tests/workers/")
+        or rel == "tests/test_prep.py"
+        or rel in {
+            "tests/test_sandbox.py",
+            "tests/test_shannon_wall_clock_timeout.py",
+        }
+    ):
+        monkeypatch.delenv(megaplan.MOCK_ENV_VAR, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolate_pipeline_contextvars() -> None:
+    """Prevent tree-scoped runtime ContextVars from leaking across tests."""
+    from arnold.pipelines.megaplan._pipeline.envelope import _envelope_ctx, _fanout_active_ctx
+    from arnold.pipelines.megaplan.runtime.governor import _governor_ctx
+
+    env_token = _envelope_ctx.set(None)
+    fanout_token = _fanout_active_ctx.set(False)
+    governor_token = _governor_ctx.set(None)
+    try:
+        yield
+    finally:
+        _governor_ctx.reset(governor_token)
+        _fanout_active_ctx.reset(fanout_token)
+        _envelope_ctx.reset(env_token)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -82,6 +141,7 @@ def make_args_factory(project_dir: Path) -> Callable[..., Namespace]:
             "reason": "",
             "robustness": None,
             "strict_notes": None,
+            "prep_clarify": True,
             "source": "user",
         }
         data.update(overrides)
@@ -175,7 +235,7 @@ def db_store_factory(request: pytest.FixtureRequest):
     dsn = os.environ.get("SUPABASE_DB_URL")
     if not dsn:
         pytest.skip("SUPABASE_DB_URL not set")
-    from megaplan.store import DBStore, deterministic_idempotency_key
+    from arnold.pipelines.megaplan.store import DBStore, deterministic_idempotency_key
     actor_id = f"ci-actor-{uuid.uuid4().hex[:12]}"
     bootstrap = DBStore(actor_id=None, dsn=dsn)
     try:
@@ -202,7 +262,7 @@ def editorial_store(request: pytest.FixtureRequest, tmp_path: Path):
     if backend == "db":
         db_store_factory = request.getfixturevalue("db_store_factory")
         return db_store_factory()
-    from megaplan.store import FileStore
+    from arnold.pipelines.megaplan.store import FileStore
 
     return FileStore(tmp_path / "store")
 
@@ -357,7 +417,7 @@ def fake_run_with_phase_result(
     stderr: str = "",
     **kwargs: object,
 ):
-    """Return a callable matching ``_run_megaplan(cmd, ...) → (int, str, str)``.
+    """Return a callable matching ``_run_planning_phase(cmd, ...) → (int, str, str)``.
 
     The callable also writes a synthetic ``phase_result.json`` alongside so
     that ``_run_phase`` can pick it up.  Returns ``(code, stdout, stderr)``

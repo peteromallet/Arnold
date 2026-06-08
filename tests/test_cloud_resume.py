@@ -5,8 +5,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import Mock
 
-from megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     MegaplanSpec,
@@ -53,13 +53,13 @@ def test_resume_execute_uses_phase_command_and_plan_flag(monkeypatch) -> None:
         stderr="",
     )
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _spec())
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec_obj: provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec_obj: provider)
 
     assert run_cloud_cli(Path("/tmp/project"), args) == 0
     provider.status_payload.assert_called_once_with(plan="plan-x", workspace="/workspace/custom")
     provider.ssh_exec.assert_called_once_with(
-        "cd /workspace/custom && megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan plan-x"
+        "cd /workspace/custom && arnold execute --confirm-destructive --user-approved --retry-blocked-tasks --plan plan-x"
     )
 
 
@@ -75,9 +75,9 @@ def test_resume_review_omits_plan_flag_when_not_supplied(monkeypatch) -> None:
         stderr="",
     )
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _spec())
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec_obj: provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec_obj: provider)
 
     assert run_cloud_cli(Path("/tmp/project"), args) == 0
     provider.status_payload.assert_called_once_with(plan=None, workspace="/workspace/custom")
-    provider.ssh_exec.assert_called_once_with("cd /workspace/custom && megaplan review")
+    provider.ssh_exec.assert_called_once_with("cd /workspace/custom && arnold review")

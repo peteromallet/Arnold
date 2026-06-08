@@ -6,20 +6,20 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.state import (
+from arnold.pipelines.megaplan._core.state import (
     save_state,
     save_state_merge_meta,
     touch_active_step,
     write_plan_state,
 )
-from megaplan._pipeline.executor import _merge_state_to_disk
-from megaplan._pipeline.resume import ResumeCursor
-from megaplan.auto import _clear_orphaned_active_step
-from megaplan.bakeoff.merge import _rewrite_project_dir
-from megaplan.chain import _mark_blocked_execute_as_executed
-from megaplan.store.plan_repository import PlanRepository
-from megaplan.types import CliError, STATE_INITIALIZED, STATE_PLANNED
-from megaplan.types import STATE_EXECUTED, STATE_FINALIZED
+from arnold.pipelines.megaplan._pipeline.executor import _merge_state_to_disk
+from arnold.pipelines.megaplan._pipeline.resume import ResumeCursor
+from arnold.pipelines.megaplan.auto import _clear_orphaned_active_step
+from arnold.pipelines.megaplan.bakeoff.merge import _rewrite_project_dir
+from arnold.pipelines.megaplan.chain import _mark_blocked_execute_as_executed
+from arnold.pipelines.megaplan.store.plan_repository import PlanRepository
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.planning.state import STATE_EXECUTED, STATE_FINALIZED, STATE_INITIALIZED, STATE_PLANNED
 
 
 def _state(**overrides):
@@ -80,7 +80,7 @@ def test_write_plan_state_patch_modes_preserve_existing_state(tmp_path: Path) ->
 def test_write_plan_state_patch_many_creates_state_file_on_first_run(tmp_path: Path) -> None:
     write_plan_state(tmp_path, mode="patch-many", patch={"meta": {"created": True}})
 
-    assert _read(tmp_path) == {"meta": {"created": True}}
+    assert _read(tmp_path) == {"meta": {"created": True}, "schema_version": 0}
 
 
 def test_write_plan_state_executor_key_merge_keeps_unowned_disk_keys(tmp_path: Path) -> None:
@@ -209,6 +209,62 @@ def test_write_plan_state_active_step_heartbeat_only_updates_matching_run(tmp_pa
     assert active["last_activity_at"] != "2026-01-01T00:00:00Z"
 
 
+def test_active_step_heartbeat_coalesces_full_writes_but_keeps_liveness(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import os as _os
+    import arnold.pipelines.megaplan._core.state as state_mod
+    from arnold.pipelines.megaplan._core import io as io_mod
+
+    monkeypatch.setattr(state_mod, "_last_heartbeat_persist_at", {}, raising=True)
+    monkeypatch.setenv("MEGAPLAN_HEARTBEAT_PERSIST_INTERVAL_S", "10000")
+
+    save_state(
+        tmp_path,
+        _state(
+            active_step={
+                "phase": "execute",
+                "agent": "deepseek",
+                "mode": "fresh",
+                "run_id": "r1",
+                "last_activity_at": "2026-01-01T00:00:00Z",
+                "last_activity_kind": "started",
+            }
+        ),
+    )
+    state_path = tmp_path / "state.json"
+
+    touch_active_step(tmp_path, run_id="r1", kind="token", detail="b1")
+    persisted_at_1 = _read(tmp_path)["active_step"]["last_activity_at"]
+    assert _read(tmp_path)["active_step"]["last_activity_kind"] == "token"
+    assert persisted_at_1 != "2026-01-01T00:00:00Z"
+
+    calls = {"n": 0}
+    real_atomic = io_mod.atomic_write_json
+
+    def _counting_atomic(path, data, **kwargs):
+        if str(path) == str(state_path):
+            calls["n"] += 1
+        return real_atomic(path, data, **kwargs)
+
+    monkeypatch.setattr(state_mod, "atomic_write_json", _counting_atomic, raising=True)
+
+    _os.utime(state_path, (1000000000, 1000000000))
+    mtime_before = state_path.stat().st_mtime
+
+    for i in range(5):
+        touch_active_step(tmp_path, run_id="r1", kind="token", detail=f"b{i+2}")
+
+    assert calls["n"] == 0, f"expected 0 full state writes, got {calls['n']}"
+    assert _read(tmp_path)["active_step"]["last_activity_at"] == persisted_at_1
+    assert state_path.stat().st_mtime > mtime_before
+
+    monkeypatch.setenv("MEGAPLAN_HEARTBEAT_PERSIST_INTERVAL_S", "0")
+    touch_active_step(tmp_path, run_id="r1", kind="token", detail="forced")
+    assert calls["n"] == 1
+    assert _read(tmp_path)["active_step"]["last_activity_detail"] == "forced"
+
+
 def test_write_plan_state_legacy_migration_persists_normalized_state(tmp_path: Path) -> None:
     save_state(tmp_path, _state(current_state="initialized"))
     raw = _read(tmp_path)
@@ -311,7 +367,7 @@ def test_no_direct_production_plan_run_state_writes_regression() -> None:
             "rg",
             "-n",
             r"state_path\.write_text|\(.*state\.json.*\)\.write_text|atomic_write_json\([^\n]*(state_path|state\.json)",
-            "megaplan",
+            "arnold/pipelines/megaplan",
         ],
         cwd=repo,
         text=True,
@@ -322,10 +378,12 @@ def test_no_direct_production_plan_run_state_writes_regression() -> None:
     assert result.returncode in {0, 1}, result.stderr
     offenders = []
     allowed = (
-        "megaplan/_core/state.py:",
-        "megaplan/loop/engine.py:",
-        "megaplan/workers/shannon.py:",
-        "megaplan/agent/tests/",
+        "arnold/pipelines/megaplan/_core/state.py:",
+        "arnold/pipelines/megaplan/_core/io.py:",
+        "arnold/pipelines/megaplan/loop/engine.py:",
+        "arnold/pipelines/megaplan/supervisor/state.py:",
+        "arnold/pipelines/megaplan/workers/shannon.py:",
+        "arnold/pipelines/megaplan/agent/tests/",
     )
     for line in result.stdout.splitlines():
         if line.startswith(allowed):

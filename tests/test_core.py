@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan._core import (
+from arnold.pipelines.megaplan._core import (
     add_or_increment_debt,
     batch_artifact_path,
     compute_batch_complexity,

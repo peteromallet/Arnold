@@ -1,13 +1,13 @@
 """Tests for megaplan.auto_escalation."""
 from __future__ import annotations
 
-from megaplan.auto_escalation import (
+from arnold.pipelines.megaplan.auto_escalation import (
     CATEGORY_POLICY,
     FailureCategory,
     classify_failure,
 )
-from megaplan.auto import DEFAULT_MAX_BLOCKED_RETRIES
-from megaplan.orchestration.phase_result import BlockedTask, Deviation, ExitKind
+from arnold.pipelines.megaplan.auto import DEFAULT_MAX_BLOCKED_RETRIES
+from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation, ExitKind
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -64,10 +64,21 @@ def test_internal_error_category() -> None:
     assert ids == []
 
 
+def test_malformed_model_output_category() -> None:
+    cat, ids = classify_failure(ExitKind.malformed_model_output.value, [], [])
+    assert cat == FailureCategory.internal_error
+    assert ids == []
+
+
 def test_external_error_category() -> None:
     cat, ids = classify_failure(ExitKind.external_error.value, [], [])
     assert cat == FailureCategory.external_error
     assert ids == []
+
+
+def test_review_non_convergence_policy_escalates() -> None:
+    assert CATEGORY_POLICY[FailureCategory.review_non_convergence].escalate is True
+    assert CATEGORY_POLICY[FailureCategory.review_non_convergence].retries_first == 0
 
 
 # ─── Structured drift kind wins over substring ───────────────────────────────
@@ -202,6 +213,7 @@ def test_categories_without_per_task_signal_return_empty_ids() -> None:
         ExitKind.context_exhausted,
         ExitKind.timeout,
         ExitKind.internal_error,
+        ExitKind.malformed_model_output,
         ExitKind.external_error,
     )
     for ek in no_task_signal:

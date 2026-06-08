@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from megaplan.chain import ChainSpec, MilestoneSpec
-from megaplan.cloud.preflight import (
+from arnold.pipelines.megaplan.chain import ChainSpec, MilestoneSpec
+from arnold.pipelines.megaplan.cloud.preflight import (
     AGENTS_DEFAULT_WARNING,
     resolve_cloud_chain_runtime_dependencies,
 )
@@ -10,7 +10,8 @@ from megaplan.cloud.preflight import (
 def test_cloud_chain_dependency_resolution_uses_profile_despite_cloud_default(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor", lambda: "claude")
     chain_spec = ChainSpec(
         base_branch="setup/cloud",
         milestones=[MilestoneSpec(label="m1", idea="idea.txt", profile="premium")],
@@ -35,7 +36,8 @@ def test_cloud_chain_dependency_resolution_uses_profile_despite_cloud_default(
 def test_cloud_chain_dependency_resolution_honors_phase_model_override(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor", lambda: "claude")
     chain_spec = ChainSpec(
         milestones=[
             MilestoneSpec(
@@ -76,7 +78,8 @@ def test_cloud_chain_dependency_resolution_uses_cloud_default_when_chain_has_no_
 def test_cloud_chain_dependency_resolution_reports_hermes_provider_without_binary(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor", lambda: "claude")
     chain_spec = ChainSpec(
         milestones=[
             MilestoneSpec(

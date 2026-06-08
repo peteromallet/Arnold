@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan._core import PHASE_RUNTIME_POLICY
-from megaplan.workers import (
+from arnold.pipelines.megaplan._core import PHASE_RUNTIME_POLICY
+from arnold.pipelines.megaplan.workers import (
     _codex_child_env,
     _codex_timeout_for_step,
     _external_worker_env,
@@ -48,7 +48,7 @@ def test_run_command_heartbeats_while_subprocess_is_silent_but_alive() -> None:
     import sys as _sys
     import threading as _threading
 
-    from megaplan.workers._impl import run_command
+    from arnold.pipelines.megaplan.workers._impl import run_command
 
     calls: list[tuple[str, str]] = []
     lock = _threading.Lock()
@@ -70,18 +70,18 @@ def test_run_command_heartbeats_while_subprocess_is_silent_but_alive() -> None:
     assert liveness_beats, f"expected at least one liveness beat, got {calls!r}"
 
 def test_step_schema_filenames_cover_all_steps() -> None:
-    from megaplan.workers import STEP_SCHEMA_FILENAMES
+    from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES
     required_steps = {"plan", "prep", "revise", "critique", "gate", "finalize", "execute", "review"}
     assert required_steps.issubset(set(STEP_SCHEMA_FILENAMES.keys()))
 
 def test_step_schema_filenames_reference_existing_schemas() -> None:
-    from megaplan.workers import STEP_SCHEMA_FILENAMES
-    from megaplan.schemas import SCHEMAS
+    from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES
+    from arnold.pipelines.megaplan.schemas import SCHEMAS
     for step, filename in STEP_SCHEMA_FILENAMES.items():
         assert filename in SCHEMAS, f"Step '{step}' references non-existent schema '{filename}'"
 
 def test_phase_runtime_policy_covers_all_worker_steps() -> None:
-    from megaplan.workers import STEP_SCHEMA_FILENAMES
+    from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES
 
     assert set(PHASE_RUNTIME_POLICY) == set(STEP_SCHEMA_FILENAMES)
 
@@ -92,7 +92,7 @@ def test_codex_timeout_for_step_preserves_execute_timeout() -> None:
     assert _codex_timeout_for_step("execute") == 7200
 
 def test_codex_child_env_strips_parent_session_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    from megaplan.workers import _codex_child_env
+    from arnold.pipelines.megaplan.workers import _codex_child_env
 
     monkeypatch.setenv("CODEX_THREAD_ID", "parent-thread")
     monkeypatch.setenv("CODEX_CI", "1")
@@ -117,8 +117,8 @@ def test_merge_partial_output_appends_output_file_contents(tmp_path: Path) -> No
 def test_run_claude_step_uses_cwd_for_add_dir_when_worktree_differs(
     tmp_path: Path,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import (
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import (
         CommandResult,
         run_claude_step,
         set_work_dir_override,
@@ -135,7 +135,7 @@ def test_run_claude_step_uses_cwd_for_add_dir_when_worktree_differs(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -154,7 +154,7 @@ def test_run_claude_step_uses_cwd_for_add_dir_when_worktree_differs(
         )
 
     try:
-        with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
     finally:
         set_work_dir_override(None)
@@ -166,8 +166,8 @@ def test_run_claude_step_uses_cwd_for_add_dir_when_worktree_differs(
 def test_run_claude_step_honors_explicit_work_dir_override(
     tmp_path: Path,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import (
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import (
         CommandResult,
         run_claude_step,
         set_work_dir_override,
@@ -184,7 +184,7 @@ def test_run_claude_step_honors_explicit_work_dir_override(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -202,7 +202,7 @@ def test_run_claude_step_honors_explicit_work_dir_override(
         )
 
     try:
-        with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
     finally:
         set_work_dir_override(None)
@@ -213,8 +213,8 @@ def test_run_claude_step_honors_explicit_work_dir_override(
 def test_run_codex_step_uses_work_dir_for_dash_c_not_project_dir(
     tmp_path: Path,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import (
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import (
         CommandResult,
         run_codex_step,
         set_work_dir_override,
@@ -229,7 +229,7 @@ def test_run_codex_step_uses_work_dir_for_dash_c_not_project_dir(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -249,7 +249,7 @@ def test_run_codex_step_uses_work_dir_for_dash_c_not_project_dir(
         )
 
     try:
-        with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
             run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
     finally:
         set_work_dir_override(None)
@@ -273,7 +273,7 @@ def test_resolve_work_dir_defaults_to_project_dir_when_no_override(
     sandboxed to an arbitrary subdirectory when the operator cd's around
     between ``megaplan init`` and ``megaplan execute``.
     """
-    from megaplan.workers import resolve_work_dir, set_work_dir_override
+    from arnold.pipelines.megaplan.workers import resolve_work_dir, set_work_dir_override
 
     _plan_dir, state = _mock_state(tmp_path)
     project_dir = Path(state["config"]["project_dir"])
@@ -303,7 +303,7 @@ def test_warn_if_work_dir_differs_from_project_dir_prints_on_divergence(
     buried info line. The message must identify both directories and offer
     a concrete remediation.
     """
-    from megaplan.workers import (
+    from arnold.pipelines.megaplan.workers import (
         set_work_dir_override,
         warn_if_work_dir_differs_from_project_dir,
     )
@@ -328,7 +328,7 @@ def test_warn_if_work_dir_differs_from_project_dir_prints_on_divergence(
 def test_warn_if_work_dir_differs_from_project_dir_silent_when_matching(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from megaplan.workers import (
+    from arnold.pipelines.megaplan.workers import (
         set_work_dir_override,
         warn_if_work_dir_differs_from_project_dir,
     )
@@ -349,7 +349,7 @@ def test_resolve_work_dir_explicit_override_still_wins(tmp_path: Path) -> None:
     """Fix 1 must remain backward-compatible with --work-dir: an explicit
     override should still beat the project_dir default.
     """
-    from megaplan.workers import resolve_work_dir, set_work_dir_override
+    from arnold.pipelines.megaplan.workers import resolve_work_dir, set_work_dir_override
 
     _plan_dir, state = _mock_state(tmp_path)
     forced = tmp_path / "forced"
@@ -371,14 +371,14 @@ def test_resolve_work_dir_explicit_override_still_wins(tmp_path: Path) -> None:
 
 def _patch_isolated_vars(names: list[str]):
     """Patch get_effective so worker_isolated_env_vars resolves to *names*."""
-    from megaplan.types import DEFAULTS
+    from arnold.pipelines.megaplan.types import DEFAULTS
 
     def _fake_get_effective(section: str, key: str):
         if (section, key) == ("execution", "worker_isolated_env_vars"):
             return names
         return DEFAULTS[f"{section}.{key}"]
 
-    return patch("megaplan.workers._impl.get_effective", _fake_get_effective)
+    return patch("arnold.pipelines.megaplan.workers._impl.get_effective", _fake_get_effective)
 
 
 def test_isolation_unset_leaves_env_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:

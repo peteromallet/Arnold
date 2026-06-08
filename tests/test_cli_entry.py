@@ -7,18 +7,18 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.cli import (
+from arnold.pipelines.megaplan.cli import (
     COMMAND_HANDLERS,
     _build_status_payload,
     cli_entry,
     handle_quality_gate,
     handle_user_action,
 )
-from megaplan.cloud.cli import _register_cloud_subcommands, build_cloud_parser
-from megaplan.handlers import handle_override
-from megaplan.handlers.override import _OVERRIDE_ACTIONS
-from megaplan.orchestration.phase_result import BlockedTask, Deviation, ExternalError
-from megaplan.user_actions import (
+from arnold.pipelines.megaplan.cloud.cli import _register_cloud_subcommands, build_cloud_parser
+from arnold.pipelines.megaplan.handlers import handle_override
+from arnold.pipelines.megaplan.handlers.override import _OVERRIDE_ACTIONS
+from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation, ExternalError
+from arnold.pipelines.megaplan.user_actions import (
     VALID_RESOLUTIONS,
     build_resolution_event,
     effective_resolutions,
@@ -116,6 +116,52 @@ def _setup_resolution_plan_dir(tmp_path: Path) -> tuple[Path, Path, dict[str, ob
     state_path = plan_dir / "state.json"
     state_path.write_text(json.dumps(state), encoding="utf-8")
     return root, plan_dir, state
+
+
+def _write_minimal_status_plan(root: Path, plan: str, state: str) -> None:
+    plan_dir = root / ".megaplan" / "plans" / plan
+    plan_dir.mkdir(parents=True)
+    payload = {
+        "name": plan,
+        "idea": "test",
+        "current_state": state,
+        "iteration": 1,
+        "created_at": "2026-06-03T00:00:00Z",
+        "config": {"project_dir": str(root)},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {"notes": []},
+        "last_gate": {},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_status_project_dir_resolves_plan_from_target_not_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from arnold.pipelines.megaplan import cli as cli_mod
+
+    engine_root = tmp_path / "engine"
+    target_root = tmp_path / "target"
+    engine_root.mkdir()
+    target_root.mkdir()
+    _write_minimal_status_plan(engine_root, "demo-plan", "planned")
+    _write_minimal_status_plan(target_root, "demo-plan", "executed")
+
+    monkeypatch.chdir(engine_root)
+    monkeypatch.setattr(cli_mod, "_auto_sync_installed_skills", lambda: None)
+
+    code = cli_mod.main(
+        ["status", "--project-dir", str(target_root), "--plan", "demo-plan"]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["plan"] == "demo-plan"
+    assert payload["state"] == "executed"
 
 
 def _write_finalize_with_actions(
@@ -299,7 +345,7 @@ def test_user_action_resolve_unknown_action_id(tmp_path: Path) -> None:
         instructions=None,
         reason=None,
     )
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as exc_info:
         handle_user_action(root, args)
@@ -341,7 +387,7 @@ def test_user_action_resolve_bad_task_scope(tmp_path: Path) -> None:
         instructions=None,
         reason=None,
     )
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as exc_info:
         handle_user_action(root, args)
@@ -479,7 +525,7 @@ def test_user_action_resolve_task_out_of_action_scope(tmp_path: Path) -> None:
         instructions=None,
         reason=None,
     )
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as exc_info:
         handle_user_action(root, args)
@@ -526,7 +572,7 @@ def test_user_action_resolve_unknown_task_returns_actionable_extra(
         instructions=None,
         reason=None,
     )
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as exc_info:
         handle_user_action(root, args)
@@ -732,7 +778,7 @@ def test_quality_gate_resolve_rejects_unknown_current_blocker(
         debt_note=None,
     )
 
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as exc_info:
         handle_quality_gate(root, args)
@@ -888,7 +934,7 @@ def test_override_recover_blocked_refuses_unresolved_prereq(
         reason="operator tried too early",
     )
 
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as exc_info:
         handle_override(root, args)
@@ -914,7 +960,7 @@ def test_override_recover_blocked_refuses_active_fixed_quality_blocker(
     state["resume_cursor"] = {"phase": "review", "retry_strategy": "fresh_session"}
     state["latest_failure"] = {"kind": "quality_blocked"}
 
-    from megaplan.quality_resolutions import build_quality_resolution_event
+    from arnold.pipelines.megaplan.quality_resolutions import build_quality_resolution_event
 
     state["meta"]["quality_gate_resolutions"] = [
         build_quality_resolution_event(
@@ -948,7 +994,7 @@ def test_override_recover_blocked_refuses_active_fixed_quality_blocker(
         reason="operator marked finding fixed",
     )
 
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as exc_info:
         handle_override(root, args)
@@ -1028,7 +1074,7 @@ def test_override_recover_blocked_external_error_requires_resume(
         reason="operator tried blocker recovery",
     )
 
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError) as exc_info:
         handle_override(root, args)
@@ -1083,7 +1129,7 @@ def test_override_recover_blocked_requires_reason_in_main(
     root, plan_dir, state = _setup_resolution_plan_dir(tmp_path)
     monkeypatch.chdir(root)
 
-    from megaplan.cli import main
+    from arnold.pipelines.megaplan.cli import main
 
     code = main(["override", "recover-blocked", "--plan", "test-plan"])
 
@@ -1095,6 +1141,6 @@ def test_override_recover_blocked_requires_reason_in_main(
 
 def _build_parser_for_test() -> argparse.ArgumentParser:
     """Build a minimal parser for testing argument validation."""
-    from megaplan.cli import build_parser
+    from arnold.pipelines.megaplan.cli import build_parser
 
     return build_parser()

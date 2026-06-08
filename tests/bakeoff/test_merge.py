@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.bakeoff.handlers import handle_merge
-from megaplan.bakeoff.state import save_bakeoff_state
-from megaplan.bakeoff.worktree import capture_base_sha, create_worktree
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.bakeoff.handlers import handle_merge
+from arnold.pipelines.megaplan.bakeoff.state import save_bakeoff_state
+from arnold.pipelines.megaplan.bakeoff.worktree import capture_base_sha, create_worktree
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:

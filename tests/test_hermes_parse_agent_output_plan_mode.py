@@ -30,9 +30,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
-from megaplan.workers.hermes import parse_agent_output
-from megaplan.workers import STEP_SCHEMA_FILENAMES
+from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
+from arnold.pipelines.megaplan.workers.hermes import parse_agent_output
+from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

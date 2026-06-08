@@ -6,8 +6,8 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from megaplan.cloud.providers.ssh import SshProvider
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.providers.ssh import SshProvider
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     MegaplanSpec,
@@ -55,14 +55,14 @@ def test_ssh_provider_build_uses_rsync_and_quoted_remote_commands(monkeypatch, t
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr(
-        "megaplan.cloud.providers.ssh.shutil.which",
+        "arnold.pipelines.megaplan.cloud.providers.ssh.shutil.which",
         lambda name: {
             "ssh": "/usr/bin/ssh",
             "scp": "/usr/bin/scp",
             "rsync": "/usr/bin/rsync",
         }.get(name),
     )
-    monkeypatch.setattr("megaplan.cloud.providers.ssh.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.ssh.subprocess.run", fake_run)
 
     provider = SshProvider(_spec())
     deploy_dir = tmp_path / "deploy"
@@ -106,14 +106,14 @@ def test_ssh_provider_build_falls_back_to_scp_with_warning(monkeypatch, tmp_path
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr(
-        "megaplan.cloud.providers.ssh.shutil.which",
+        "arnold.pipelines.megaplan.cloud.providers.ssh.shutil.which",
         lambda name: {
             "ssh": "/usr/bin/ssh",
             "scp": "/usr/bin/scp",
             "rsync": None,
         }.get(name),
     )
-    monkeypatch.setattr("megaplan.cloud.providers.ssh.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.ssh.subprocess.run", fake_run)
 
     provider = SshProvider(_spec())
     deploy_dir = tmp_path / "deploy"
@@ -143,7 +143,7 @@ def test_ssh_provider_lifecycle_and_transfer_commands_are_quoted(monkeypatch, tm
     follow_calls: list[tuple[list[str], list[str]]] = []
     spec = _spec()
     read_inner = f"cat {shlex.quote('/workspace/app/idea.txt')}"
-    status_inner = "cd /workspace/app && megaplan status --plan demo-plan"
+    status_inner = "cd /workspace/app && arnold status --plan demo-plan"
     upload_inner = (
         f"mkdir -p {shlex.quote('/workspace/app')} && "
         f"base64 -d > {shlex.quote('/workspace/app/idea.txt')}"
@@ -177,16 +177,16 @@ def test_ssh_provider_lifecycle_and_transfer_commands_are_quoted(monkeypatch, tm
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr(
-        "megaplan.cloud.providers.ssh.shutil.which",
+        "arnold.pipelines.megaplan.cloud.providers.ssh.shutil.which",
         lambda name: {
             "ssh": "/usr/bin/ssh",
             "scp": "/usr/bin/scp",
             "rsync": "/usr/bin/rsync",
         }.get(name),
     )
-    monkeypatch.setattr("megaplan.cloud.providers.ssh.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.ssh.subprocess.run", fake_run)
     monkeypatch.setattr(
-        "megaplan.cloud.providers.ssh._logs_follow",
+        "arnold.pipelines.megaplan.cloud.providers.ssh._logs_follow",
         lambda argv, *, cwd=None, secret_names=(), env=None: follow_calls.append((argv, list(secret_names))) or 0,
     )
 

@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan.handlers
-from megaplan.handlers import _merge_imported_decision_criteria
-from megaplan.types import STATE_CRITIQUED
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+from arnold.pipelines.megaplan.handlers import _merge_imported_decision_criteria
+from arnold.pipelines.megaplan.planning.state import STATE_CRITIQUED
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 def _args(project_dir: Path, **overrides: object) -> Namespace:

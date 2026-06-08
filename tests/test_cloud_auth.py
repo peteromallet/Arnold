@@ -9,10 +9,10 @@ from pathlib import Path
 
 import yaml
 
-from megaplan.cloud.auth import seed_codex_oauth
-from megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
-from megaplan.cloud.providers.base import DeployReport, DeployStepReport
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.auth import seed_codex_oauth
+from arnold.pipelines.megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
+from arnold.pipelines.megaplan.cloud.providers.base import DeployReport, DeployStepReport
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     MegaplanSpec,
@@ -145,9 +145,9 @@ mode: idle
             return 0
 
     provider = Provider()
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
     monkeypatch.setattr(
-        "megaplan.cloud.cli.seed_codex_oauth",
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
         lambda _spec, _provider, **_kwargs: calls.append("seed") or {"events": []},
     )
 
@@ -201,14 +201,14 @@ def test_cloud_deploy_reports_rebuild_and_provider_output(
                 image_rebuild="triggered",
                 image_ref="sha256:abc123",
                 vars_updated=1,
-                logs={"command": "megaplan cloud logs --no-follow", "service": "agent"},
+                logs={"command": "arnold cloud logs --no-follow", "service": "agent"},
                 verdict="deploy: rebuilt+pushed image sha256:abc123",
             )
 
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: Provider())
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: Provider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
     monkeypatch.setattr(
-        "megaplan.cloud.cli.seed_codex_oauth",
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
         lambda _spec, _provider, **_kwargs: {"events": []},
     )
 
@@ -262,14 +262,14 @@ def test_cloud_deploy_reports_vars_only_no_image_rebuild(
                 image_rebuild="not_triggered",
                 no_op=False,
                 vars_updated=1,
-                logs={"command": "megaplan cloud logs --no-follow", "service": "agent"},
+                logs={"command": "arnold cloud logs --no-follow", "service": "agent"},
                 verdict="deploy: vars updated, no image rebuild",
             )
 
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: Provider())
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: Provider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
     monkeypatch.setattr(
-        "megaplan.cloud.cli.seed_codex_oauth",
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
         lambda _spec, _provider, **_kwargs: {"events": []},
     )
 
@@ -314,14 +314,14 @@ def test_cloud_deploy_reports_no_op(
                 image_rebuild="not_triggered",
                 no_op=True,
                 vars_updated=0,
-                logs={"command": "megaplan cloud logs --no-follow", "service": "agent"},
+                logs={"command": "arnold cloud logs --no-follow", "service": "agent"},
                 verdict="deploy: no-op (nothing changed)",
             )
 
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: Provider())
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: Provider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
     monkeypatch.setattr(
-        "megaplan.cloud.cli.seed_codex_oauth",
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
         lambda _spec, _provider, **_kwargs: {"events": []},
     )
 
@@ -368,10 +368,10 @@ def test_cloud_chain_invokes_codex_oauth_seed_before_launch(
             return subprocess.CompletedProcess(["ssh"], 0, stdout="\n", stderr="")
 
     provider = Provider()
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _spec())
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _spec())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
     monkeypatch.setattr(
-        "megaplan.cloud.cli.seed_codex_oauth",
+        "arnold.pipelines.megaplan.cloud.cli.seed_codex_oauth",
         lambda _spec, _provider: calls.append("seed"),
     )
 

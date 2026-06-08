@@ -17,10 +17,9 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan import auto
-from megaplan.auto import DriverOutcome, drive
-from megaplan.execute import aggregation as execute_aggregation
-from megaplan.types import CliError
+from arnold.pipelines.megaplan import auto 
+from arnold.pipelines.megaplan.auto import DriverOutcome, drive
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
@@ -32,6 +31,23 @@ def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
         encoding="utf-8",
     )
     return plan_dir
+
+
+def _write_uncorroborated_done_task(plan_dir: Path, task_id: str = "T1") -> None:
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": task_id,
+                        "status": "done",
+                        "executor_notes": "claimed done without evidence",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_format_phase_heartbeat_includes_plan_step_and_progress(tmp_path: Path) -> None:
@@ -114,61 +130,6 @@ def _phase_status(plan: str, state: str = "planning", next_step: str = "prep") -
         "next_step": next_step,
         "valid_next": [next_step],
     }
-
-
-def test_drive_routes_post_revise_plan_to_gate_before_recritique(tmp_path: Path) -> None:
-    plan = "post-revise-gate"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    (plan_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "name": plan,
-                "current_state": "planned",
-                "history": [{"step": "revise", "result": "success"}],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (plan_dir / "plan_v2.meta.json").write_text(
-        json.dumps({"flags_addressed": [{"id": "FLAG-001", "resolution": "fixed"}]}),
-        encoding="utf-8",
-    )
-    (plan_dir / "faults.json").write_text(
-        json.dumps(
-            {
-                "flags": [
-                    {
-                        "id": "FLAG-001",
-                        "status": "addressed",
-                        "severity": "significant",
-                        "category": "correctness",
-                        "concern": "verify post-revise gate",
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    statuses = [
-        {**_phase_status(plan, state="planned", next_step="critique"), "iteration": 2},
-        _done_status(plan),
-    ]
-    run_calls: list[list[str]] = []
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        assert plan_name == plan
-        return statuses.pop(0)
-
-    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
-        run_calls.append(list(args))
-        return 0, "{}", ""
-
-    with patch.object(auto, "_status", side_effect=fake_status), patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(plan, cwd=tmp_path, max_iterations=3, poll_sleep=0, writer=lambda _message: None)
-
-    assert outcome.status == "done"
-    assert run_calls[0][:1] == ["gate"]
-    assert any("post-revise gate ready" in event.get("msg", "") for event in outcome.events)
 
 
 def _active_wait_status(plan: str, state: str = "planning", next_step: str = "plan") -> dict:
@@ -257,7 +218,7 @@ def test_auto_waits_for_healthy_active_step_instead_of_rerunning_phase(tmp_path:
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -274,6 +235,225 @@ def test_auto_waits_for_healthy_active_step_instead_of_rerunning_phase(tmp_path:
     assert any("still running" in event.get("msg", "") for event in outcome.events), (
         "driver should have logged wait messages"
     )
+
+
+def _inprocess_completed_execute_status(plan: str) -> dict:
+    response = _phase_status(plan, state="executed", next_step="review")
+    response["active_step"] = {
+        "phase": "execute",
+        "agent": "hermes",
+        "mode": "persistent",
+        "worker_pid": os.getpid(),
+        "started_at": "2026-05-31T10:00:00Z",
+        "age_seconds": 30,
+        "stale": False,
+        "health": "healthy",
+        "worker_pid_alive": True,
+        "recommended_action": "wait",
+        "recommended_action_reason": (
+            "The active step is within its expected runtime window."
+        ),
+    }
+    return response
+
+
+def test_auto_clears_inprocess_active_step_for_already_completed_phase(
+    tmp_path: Path,
+) -> None:
+    plan = "inprocess-stuck-execute"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    execute_output = plan_dir / "execute_output.json"
+    good_payload = {"result": "success", "batches": [{"id": "b1", "status": "done"}]}
+    execute_output.write_text(json.dumps(good_payload), encoding="utf-8")
+
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "executed"
+    state_data["config"] = {"robustness": "full"}
+    state_data["active_step"] = {
+        "phase": "execute",
+        "agent": "hermes",
+        "mode": "persistent",
+        "worker_pid": os.getpid(),
+        "started_at": "2026-05-31T10:00:00Z",
+    }
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    poll_count = {"n": 0}
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        poll_count["n"] += 1
+        if poll_count["n"] == 1:
+            return _inprocess_completed_execute_status(plan_name)
+        return _done_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            stall_threshold=10,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done", (
+        f"expected done after in-process orphan cleanup, got {outcome.status}: "
+        f"{outcome.reason}"
+    )
+    assert run_calls, "driver should have dispatched the successor phase"
+    assert run_calls[0][0] == "review", (
+        f"driver must advance to next_step=review, not re-run execute; "
+        f"first dispatch was {run_calls[0]}"
+    )
+    assert not any(call[0] == "execute" for call in run_calls), (
+        f"the completed execute phase must not be re-dispatched; calls={run_calls}"
+    )
+    assert outcome.iterations <= 3, (
+        f"completed-orphan recovery should not consume the full iteration "
+        f"budget; used {outcome.iterations}"
+    )
+    assert any(
+        "already completed" in event.get("msg", "") for event in outcome.events
+    ), (
+        "driver should have logged the in-process completed-orphan clear; "
+        f"events: {[event.get('msg') for event in outcome.events]}"
+    )
+
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded.get("active_step") is None
+    assert execute_output.exists(), (
+        "completed phase's valid output must not be quarantined"
+    )
+    assert json.loads(execute_output.read_text(encoding="utf-8")) == good_payload
+    assert not (plan_dir / "execute_output.json.orphaned").exists()
+
+
+def test_auto_blocks_execute_active_step_cleanup_without_authority(
+    tmp_path: Path,
+) -> None:
+    plan = "inprocess-stuck-execute-uncorroborated"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_uncorroborated_done_task(plan_dir)
+
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "executed"
+    state_data["active_step"] = {"phase": "execute", "worker_pid": os.getpid()}
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _inprocess_completed_execute_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=3,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "blocked"
+    assert "corroborated task completion" in outcome.reason
+    assert run_calls == []
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded.get("active_step") == {"phase": "execute", "worker_pid": os.getpid()}
+
+
+def test_auto_preserves_genuinely_running_inprocess_active_step(
+    tmp_path: Path,
+) -> None:
+    plan = "inprocess-running-execute"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "finalized"
+    state_data["config"] = {"robustness": "full"}
+    state_data["active_step"] = {
+        "phase": "execute",
+        "agent": "hermes",
+        "mode": "persistent",
+        "worker_pid": os.getpid(),
+        "started_at": "2026-05-31T10:00:00Z",
+    }
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    poll_count = {"n": 0}
+    run_calls: list[list[str]] = []
+
+    def running_execute_status(plan_name: str) -> dict:
+        response = _phase_status(plan_name, state="finalized", next_step="execute")
+        response["active_step"] = {
+            "phase": "execute",
+            "agent": "hermes",
+            "mode": "persistent",
+            "worker_pid": os.getpid(),
+            "started_at": "2026-05-31T10:00:00Z",
+            "stale": False,
+            "health": "healthy",
+            "worker_pid_alive": True,
+            "recommended_action": "wait",
+            "recommended_action_reason": (
+                "The active step is within its expected runtime window."
+            ),
+        }
+        return response
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        poll_count["n"] += 1
+        if poll_count["n"] <= 3:
+            return running_execute_status(plan_name)
+        return _done_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=3,
+            stall_threshold=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done", (
+        f"expected done, got {outcome.status}: {outcome.reason}"
+    )
+    assert run_calls == [], (
+        f"driver must not dispatch a genuinely-running phase; calls={run_calls}"
+    )
+    assert not any(
+        "already completed" in event.get("msg", "") for event in outcome.events
+    ), (
+        "completed-orphan guard must not fire when phase == next_step; "
+        f"events: {[event.get('msg') for event in outcome.events]}"
+    )
+    assert any(
+        "still running" in event.get("msg", "") for event in outcome.events
+    ), "driver should have waited on the genuinely-running phase"
 
 
 def _orphaned_critique_status(plan: str) -> dict:
@@ -354,7 +534,7 @@ def test_auto_recovers_orphaned_active_step_after_silent_phase_death(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -436,7 +616,7 @@ def test_auto_orphan_recovery_leaves_non_empty_output_alone(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         drive(
             plan,
             cwd=tmp_path,
@@ -545,7 +725,7 @@ def test_auto_clears_rerun_execute_before_redispatch(tmp_path: Path) -> None:
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -636,7 +816,7 @@ def test_auto_orphan_recovery_with_shannon_session_id_in_metadata(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -694,7 +874,7 @@ def test_stall_counter_resets_when_review_json_is_rewritten(tmp_path: Path) -> N
     # Cap iterations low and allow plenty of rework cycles so we exercise
     # the reset path without tripping the rework cap.
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -720,224 +900,6 @@ def test_stall_counter_resets_when_review_json_is_rewritten(tmp_path: Path) -> N
     )
 
 
-def test_stall_counter_resets_when_tasks_complete_despite_unchanged_state(
-    tmp_path: Path,
-) -> None:
-    """Productivity-aware stall detection.
-
-    Simulates a large execute phase: ``state`` stays pinned at ``finalized``
-    for many iterations while tasks are PRODUCTIVELY draining. The naive
-    same-state-name counter would false-kill the run, but each iteration the
-    task-completion signature (``progress.tasks_done``) advances, so the
-    stall counter must reset and the run must NOT be declared stalled — it
-    should run all the way to the iteration backstop.
-    """
-    plan = "draining-execute-plan"
-    _make_plan_dir(tmp_path, plan)
-
-    # Drive a couple of no-progress iterations between each completion so the
-    # stall counter actually climbs (and we can prove the reset fires) without
-    # ever reaching the threshold. Pattern of tasks_done per status call:
-    # 0,0,1,1,2,2,... — stall_count goes 0->1->reset->1->reset, never hits 3.
-    obs = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        # State never changes (execute keeps the plan at finalized); the
-        # task-completion signature advances every other observation.
-        done = obs["n"] // 2
-        obs["n"] += 1
-        status = _execute_status(plan_name, state="finalized")
-        status["progress"] = {
-            "tasks_done": done,
-            "tasks_skipped": 0,
-            "tasks_pending": 100 - done,
-            "tasks_blocked": 0,
-        }
-        return status
-
-    def fake_run(args, cwd=None, timeout=None):
-        return 0, "{}", ""
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            stall_threshold=3,  # would trip after 3 same-state iters if naive
-            max_iterations=10,
-            max_review_rework_cycles=100,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # Progress every iteration => never stalled => run to the iteration cap.
-    assert outcome.status == "cap", (
-        f"expected cap (hit max_iterations) with task-progress resets, got "
-        f"{outcome.status}: {outcome.reason}"
-    )
-    progress_events = [
-        e for e in outcome.events if "task progress advanced" in e.get("msg", "")
-    ]
-    assert progress_events, (
-        "expected at least one task-progress stall-reset event; events: "
-        f"{[e.get('msg') for e in outcome.events]}"
-    )
-
-
-def test_stall_counter_still_trips_when_no_task_progress(tmp_path: Path) -> None:
-    """The real safety net must survive productivity-aware reset.
-
-    State unchanged AND no task progress (the genuinely-stuck case) must
-    still abort with status ``stalled`` once the threshold is reached — the
-    fix only suppresses FALSE stalls, never the real backstop.
-    """
-    plan = "genuinely-stuck-plan"
-    _make_plan_dir(tmp_path, plan)
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        # State pinned at finalized AND task counts frozen — no progress.
-        status = _execute_status(plan_name, state="finalized")
-        status["progress"] = {
-            "tasks_done": 5,
-            "tasks_skipped": 0,
-            "tasks_pending": 10,
-            "tasks_blocked": 0,
-        }
-        return status
-
-    def fake_run(args, cwd=None, timeout=None):
-        # Phase dispatch makes no progress — task signature stays frozen.
-        return 0, "{}", ""
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            stall_threshold=3,
-            max_iterations=50,  # high so stall trips before the cap
-            max_review_rework_cycles=100,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    assert outcome.status == "stalled", (
-        f"expected stalled (no progress) got {outcome.status}: {outcome.reason}"
-    )
-    assert outcome.final_state == "finalized"
-    assert outcome.iterations <= 6, (
-        "stall should trip near the threshold, not run to the iteration cap; "
-        f"iterations={outcome.iterations}"
-    )
-
-
-def test_stall_counter_resets_when_event_journal_progress_advances(
-    tmp_path: Path,
-) -> None:
-    """Same state plus new non-driver events is progress, not a stall."""
-    plan = "event-progress-plan"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        status = _phase_status(plan_name, state="critiquing", next_step="critique")
-        status["progress"] = {
-            "tasks_done": 0,
-            "tasks_skipped": 0,
-            "tasks_pending": 0,
-            "tasks_blocked": 0,
-        }
-        return status
-
-    def fake_run(args, **kwargs):
-        auto.emit_event(
-            auto.EventKind.LLM_TOKEN_HEARTBEAT,
-            plan_dir=plan_dir,
-            phase="critique",
-            payload={"request_id": "req-progress"},
-        )
-        return 0, "{}", ""
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            stall_threshold=1,
-            max_iterations=4,
-            max_review_rework_cycles=100,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    assert outcome.status == "cap", (
-        f"expected cap with event progress, got {outcome.status}: {outcome.reason}"
-    )
-
-
-def test_stall_counter_still_trips_without_event_journal_progress(
-    tmp_path: Path,
-) -> None:
-    """Same state and no progress events still hits the wedge backstop."""
-    plan = "event-wedge-plan"
-    _make_plan_dir(tmp_path, plan)
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        status = _phase_status(plan_name, state="critiquing", next_step="critique")
-        status["progress"] = {
-            "tasks_done": 0,
-            "tasks_skipped": 0,
-            "tasks_pending": 0,
-            "tasks_blocked": 0,
-        }
-        return status
-
-    def fake_run(args, **kwargs):
-        return 0, "{}", ""
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            stall_threshold=2,
-            max_iterations=10,
-            max_review_rework_cycles=100,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    assert outcome.status == "stalled"
-    assert "stalled at 'critiquing' for 2 iterations" in outcome.reason
-
-
-def test_stall_counter_respects_configured_iteration_threshold(
-    tmp_path: Path,
-) -> None:
-    plan = "threshold-plan"
-    _make_plan_dir(tmp_path, plan)
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _phase_status(plan_name, state="critiquing", next_step="critique")
-
-    def fake_run(args, **kwargs):
-        return 0, "{}", ""
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            stall_threshold=4,
-            max_iterations=10,
-            max_review_rework_cycles=100,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    assert outcome.status == "stalled"
-    assert "for 4 iterations" in outcome.reason
-
-
 def test_rework_cap_bails_after_exceeding_max_review_rework_cycles(
     tmp_path: Path,
 ) -> None:
@@ -960,7 +922,7 @@ def test_rework_cap_bails_after_exceeding_max_review_rework_cycles(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1004,7 +966,7 @@ def test_rework_cap_does_not_bail_after_review_approves(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1036,7 +998,7 @@ def test_stall_still_trips_without_review_progress(tmp_path: Path) -> None:
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1048,6 +1010,113 @@ def test_stall_still_trips_without_review_progress(tmp_path: Path) -> None:
 
     assert outcome.status == "stalled"
     assert "stalled at 'finalized'" in outcome.reason
+
+
+def test_stall_counter_resets_when_event_journal_progress_advances(
+    tmp_path: Path,
+) -> None:
+    """Same state plus new non-driver events is progress, not a stall."""
+    plan = "event-progress-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        status = _phase_status(plan_name, state="critiquing", next_step="critique")
+        status["progress"] = {
+            "tasks_done": 0,
+            "tasks_skipped": 0,
+            "tasks_pending": 0,
+            "tasks_blocked": 0,
+        }
+        return status
+
+    def fake_run(args, **kwargs):
+        auto.emit_event(
+            auto.EventKind.LLM_TOKEN_HEARTBEAT,
+            plan_dir=plan_dir,
+            phase="critique",
+            payload={"request_id": "req-progress"},
+        )
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=1,
+            max_iterations=4,
+            max_review_rework_cycles=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "cap", (
+        f"expected cap with event progress, got {outcome.status}: {outcome.reason}"
+    )
+
+
+def test_stall_counter_still_trips_without_event_journal_progress(
+    tmp_path: Path,
+) -> None:
+    """Same state and no progress events still hits the wedge backstop."""
+    plan = "event-wedge-plan"
+    _make_plan_dir(tmp_path, plan)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        status = _phase_status(plan_name, state="critiquing", next_step="critique")
+        status["progress"] = {
+            "tasks_done": 0,
+            "tasks_skipped": 0,
+            "tasks_pending": 0,
+            "tasks_blocked": 0,
+        }
+        return status
+
+    def fake_run(args, **kwargs):
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=2,
+            max_iterations=10,
+            max_review_rework_cycles=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "stalled"
+    assert "stalled at 'critiquing' for 2 iterations" in outcome.reason
+
+
+def test_stall_counter_respects_configured_iteration_threshold(
+    tmp_path: Path,
+) -> None:
+    plan = "threshold-plan"
+    _make_plan_dir(tmp_path, plan)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _phase_status(plan_name, state="critiquing", next_step="critique")
+
+    def fake_run(args, **kwargs):
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=4,
+            max_iterations=10,
+            max_review_rework_cycles=100,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "stalled"
+    assert "for 4 iterations" in outcome.reason
 
 
 def test_resolve_plan_dir_finds_plans_in_parent_tree(tmp_path: Path) -> None:
@@ -1081,26 +1150,121 @@ def test_get_review_marker_returns_none_when_review_missing(
     assert isinstance(marker, float)
 
 
-def test_run_megaplan_uses_module_launcher(tmp_path: Path) -> None:
-    proc = auto.subprocess.CompletedProcess(
-        args=[],
-        returncode=0,
-        stdout="{}",
-        stderr="",
-    )
+def test_run_planning_phase_dispatches_through_registry(tmp_path: Path) -> None:
+    from arnold.runtime.operations import OperationResult
 
-    with patch.object(auto.subprocess, "run", return_value=proc) as mock_run:
-        code, out, err = auto._run_megaplan(["status", "--plan", "demo"], cwd=tmp_path, timeout=5)
+    def fake_dispatch(plugin_id, request):  # noqa: ANN001
+        assert plugin_id == "megaplan"
+        assert request.kind.value == "run_phase"
+        assert request.payload["phase"] == "execute"
+        assert request.payload["plan"] == "demo"
+        assert request.payload["cwd"] == tmp_path
+        assert request.payload["argv"] == ["execute", "--plan", "demo"]
+        return OperationResult(
+            ok=True,
+            payload={"exit_code": 0, "stdout": "{}", "stderr": ""},
+        )
+
+    with patch("arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch):
+        code, out, err = auto._run_planning_phase(
+            ["execute", "--plan", "demo"], cwd=tmp_path, timeout=5
+        )
 
     assert (code, out, err) == (0, "{}", "")
-    assert mock_run.call_args.args[0] == [
-        sys.executable,
-        "-m",
-        "megaplan",
-        "status",
-        "--plan",
-        "demo",
-    ]
+
+
+def test_run_planning_phase_reports_unsupported_operation_nonzero() -> None:
+    from arnold.runtime.operations import OperationResult
+
+    with patch(
+        "arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for",
+        lambda plugin_id, request: OperationResult(
+            ok=False,
+            payload={},
+            errors=("unsupported", "run_phase"),
+        ),
+    ):
+        code, out, err = auto._run_planning_phase(["execute", "--plan", "demo"])
+
+    assert code == 1
+    assert out == ""
+    assert err == "unsupported, run_phase"
+
+
+def test_run_planning_phase_reports_incomplete_operation_result_nonzero() -> None:
+    from arnold.runtime.operations import OperationResult
+
+    with patch(
+        "arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for",
+        lambda plugin_id, request: OperationResult(ok=True, payload={"exit_code": 0}),
+    ):
+        code, out, err = auto._run_planning_phase(["execute", "--plan", "demo"])
+
+    assert code == 1
+    assert out == ""
+    assert "payload.stdout" in err
+
+
+def test_run_override_command_dispatches_apply_through_registry(tmp_path: Path) -> None:
+    from arnold.runtime.operations import OperationResult
+
+    _make_plan_dir(tmp_path, "demo")
+    captured: dict[str, object] = {}
+
+    def fake_dispatch(plugin_id, request):  # noqa: ANN001
+        captured["plugin_id"] = plugin_id
+        captured["kind"] = request.kind.value
+        captured["payload"] = request.payload
+        return OperationResult(
+            ok=True,
+            payload={
+                "response": {
+                    "success": True,
+                    "step": "override",
+                    "summary": "Plan aborted.",
+                    "state": "aborted",
+                }
+            },
+        )
+
+    with patch("arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch), \
+         patch("arnold.pipelines.megaplan.handlers.override._override_abort", side_effect=AssertionError), \
+         patch("arnold.pipelines.megaplan.handlers.override._override_force_proceed", side_effect=AssertionError), \
+         patch("arnold.pipelines.megaplan.handlers.override.handle_override", side_effect=AssertionError):
+        code, out, err = auto._run_override_command(
+            ["override", "abort", "--plan", "demo", "--reason", "stop"],
+            cwd=tmp_path,
+        )
+
+    assert code == 0
+    assert err == ""
+    assert json.loads(out)["state"] == "aborted"
+    assert captured["plugin_id"] == "megaplan"
+    assert captured["kind"] == "override_apply"
+    payload = captured["payload"]
+    assert payload["action"] == "abort"
+    assert payload["plan"] == "demo"
+
+
+def test_run_override_command_dispatches_list_through_registry(tmp_path: Path) -> None:
+    from arnold.runtime.operations import OperationResult
+
+    _make_plan_dir(tmp_path, "demo")
+
+    def fake_dispatch(plugin_id, request):  # noqa: ANN001
+        assert plugin_id == "megaplan"
+        assert request.kind.value == "override_list"
+        return OperationResult(ok=True, payload={"catalog": {"abort": {"kind": "termination"}}})
+
+    with patch("arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch):
+        code, out, err = auto._run_override_command(
+            ["override", "list", "--plan", "demo"],
+            cwd=tmp_path,
+        )
+
+    assert code == 0
+    assert err == ""
+    assert json.loads(out)["catalog"]["abort"]["kind"] == "termination"
 
 
 def test_phase_command_splits_multi_token_next_step() -> None:
@@ -1171,7 +1335,7 @@ def test_drive_dispatches_multi_token_next_step_correctly(tmp_path: Path) -> Non
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1260,7 +1424,7 @@ def test_run_auto_without_outcome_file_preserves_stdout_only_behavior(
 
 
 def test_run_auto_passes_progress_env_to_driver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from megaplan.orchestration.progress import ProgressContext
+    from arnold.pipelines.megaplan.orchestration.progress import ProgressContext
 
     captured: dict[str, dict[str, str] | None] = {}
     env = ProgressContext(
@@ -1298,7 +1462,7 @@ def test_auto_driver_stops_on_lifecycle_terminal_states_without_phase_runs(tmp_p
         calls: list[list[str]] = []
 
         with patch.object(auto, "_status", return_value=_terminal_status(plan, state)), \
-             patch.object(auto, "_run_megaplan", side_effect=lambda *args, **kwargs: calls.append(list(args[0])) or (0, "", "")):
+             patch.object(auto, "_run_planning_phase", side_effect=lambda *args, **kwargs: calls.append(list(args[0])) or (0, "", "")):
             outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
         assert outcome.status == status
@@ -1332,7 +1496,7 @@ def test_auto_driver_recovers_blocked_gate_agent_preflight_via_valid_next(tmp_pa
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1348,7 +1512,6 @@ def test_auto_driver_recovers_blocked_gate_agent_preflight_via_valid_next(tmp_pa
 
 def test_run_auto_exit_codes_for_lifecycle_outcomes(tmp_path: Path, capsys) -> None:
     outcomes = {
-        "finalized": 0,
         "failed": 1,
         "blocked": 5,
         "cancelled": 0,
@@ -1361,60 +1524,70 @@ def test_run_auto_exit_codes_for_lifecycle_outcomes(tmp_path: Path, capsys) -> N
         capsys.readouterr()
 
 
-def test_drive_stop_at_finalized_returns_success_before_execute_dispatch(tmp_path: Path) -> None:
-    plan = "stop-at-finalized"
-    _make_plan_dir(tmp_path, plan)
-    captured_args: list[list[str]] = []
+def test_auto_terminal_done_without_authority_does_not_emit_plan_finished(
+    tmp_path: Path,
+) -> None:
+    plan = "done-uncorroborated"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_uncorroborated_done_task(plan_dir)
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan_name, state="finalized")
+        return _done_status(plan_name)
 
-    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
-        captured_args.append(list(args))
-        return 0, "{}", ""
+    emitted: list[auto.EventKind] = []
+
+    def fake_emit(kind, *, plan_dir=None, payload=None):
+        emitted.append(kind)
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "emit_event", side_effect=fake_emit):
         outcome = drive(
             plan,
             cwd=tmp_path,
-            stop_at_finalized=True,
-            max_iterations=1,
+            max_iterations=3,
             poll_sleep=0,
             writer=lambda _m: None,
         )
 
-    assert outcome.status == "finalized"
-    assert outcome.final_state == "finalized"
-    assert captured_args == []
+    assert outcome.status == "blocked"
+    assert "corroborated task completion" in outcome.reason
+    assert auto.EventKind.PLAN_FINISHED not in emitted
 
 
-def test_drive_default_flow_continues_past_finalized_into_execute(tmp_path: Path) -> None:
-    plan = "continue-past-finalized"
-    _make_plan_dir(tmp_path, plan)
-    statuses = [_execute_status(plan, state="finalized"), _done_status(plan)]
-    captured_args: list[list[str]] = []
+def test_execute_exit_code_zero_without_authority_is_downgraded_to_blocked(
+    tmp_path: Path,
+) -> None:
+    plan = "execute-zero-uncorroborated"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_uncorroborated_done_task(plan_dir)
+    calls: list[list[str]] = []
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
-        return statuses.pop(0)
+        return _execute_status(plan_name)
 
-    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
-        captured_args.append(list(args))
-        return 0, "{}", ""
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        calls.append(list(args))
+        return 0, "execute ok", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
-            max_iterations=2,
+            max_iterations=3,
             poll_sleep=0,
             writer=lambda _m: None,
         )
 
-    assert outcome.status == "done"
-    assert captured_args == [auto._phase_command("execute") + ["--plan", plan]]
-
+    assert len(calls) == 1
+    assert calls[0][0] == "execute"
+    assert calls[0][-2:] == ["--plan", plan]
+    assert outcome.status == "blocked"
+    assert outcome.blocking_reasons
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state_data["latest_failure"]["kind"] == "authority_divergence"
+    assert state_data["resume_cursor"] == {"phase": "execute", "retry_strategy": "rerun_phase"}
 
 def test_context_retry_success_retries_execute_with_fresh(tmp_path: Path) -> None:
     plan = "context-retry-success"
@@ -1433,14 +1606,14 @@ def test_context_retry_success_retries_execute_with_fresh(tmp_path: Path) -> Non
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
-    # Policy retries_first=0 means no retries; single execute call, plan
-    # proceeds to done without context retry.
     assert outcome.status == "done"
-    assert outcome.context_retries_used == 0
-    assert len(calls) == 1
+    assert outcome.context_retries_used == 1
+    assert len(calls) == 2
+    assert "--fresh" not in calls[0]
+    assert "--fresh" in calls[1]
 
 
 def test_context_retry_exhaustion_stops_after_max_retries(tmp_path: Path) -> None:
@@ -1457,7 +1630,7 @@ def test_context_retry_exhaustion_stops_after_max_retries(tmp_path: Path) -> Non
         return 1, fragment, ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1466,11 +1639,12 @@ def test_context_retry_exhaustion_stops_after_max_retries(tmp_path: Path) -> Non
             writer=lambda _m: None,
         )
 
-    # Immediate bail removed; context retry loop never fires (cap=0 via
-    # CATEGORY_POLICY).  Exhaustion falls through to escalate block which
-    # triggers ceiling handoff (no tier ladder) → stall.
-    assert outcome.status == "stalled"
-    assert outcome.context_retries_used == 0
+    assert outcome.status == "context_retry_exhausted"
+    assert outcome.context_retries_used == 2
+    assert len(calls) == 3
+    assert "--fresh" not in calls[0]
+    assert "--fresh" in calls[1]
+    assert "--fresh" in calls[2]
 
 
 def test_context_retry_zero_disables_context_handling(tmp_path: Path) -> None:
@@ -1487,7 +1661,7 @@ def test_context_retry_zero_disables_context_handling(tmp_path: Path) -> None:
         return 1, "", fragment
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1517,7 +1691,7 @@ def test_generic_execute_failure_uses_stall_path_not_fresh_retry(tmp_path: Path)
         return 1, "", "ordinary execute failure"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1551,7 +1725,7 @@ def test_phase_failure_persists_failure_before_next_status(tmp_path: Path) -> No
         return 7, "", "prep exploded"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
@@ -1569,8 +1743,7 @@ def test_cli_rejects_negative_max_context_retries() -> None:
     proc = subprocess.run(
         [
             sys.executable,
-            "-m",
-            "megaplan",
+            "-m", "arnold.pipelines.megaplan",
             "auto",
             "--plan",
             "x",
@@ -1602,7 +1775,7 @@ def test_cost_cap_aborts_after_cumulative_cost_exceeds_cap(tmp_path: Path) -> No
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1634,7 +1807,7 @@ def test_cost_cap_equal_boundary_does_not_abort(tmp_path: Path) -> None:
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1664,7 +1837,7 @@ def test_cost_cap_single_expensive_phase_finishes_before_abort(tmp_path: Path) -
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1696,7 +1869,7 @@ def test_unset_cost_cap_does_not_terminate_on_high_cost(tmp_path: Path) -> None:
         return 0, "", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1715,8 +1888,7 @@ def test_cli_rejects_negative_max_cost_usd() -> None:
     proc = subprocess.run(
         [
             sys.executable,
-            "-m",
-            "megaplan",
+            "-m", "arnold.pipelines.megaplan",
             "auto",
             "--plan",
             "x",
@@ -1765,7 +1937,7 @@ def test_sum_history_cost_usd_handles_missing_corrupt_and_bad_entries(
 
 def test_auto_help_surfaces_cost_and_context_retry_flags() -> None:
     proc = subprocess.run(
-        [sys.executable, "-m", "megaplan", "auto", "--help"],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", "auto", "--help"],
         capture_output=True,
         text=True,
         check=False,
@@ -1795,7 +1967,7 @@ def _write_blocked_execute_history(plan_dir: Path, deviations: list[str] | None 
 def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) -> None:
     plan = "worker-blocked-cap"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    from megaplan.orchestration.phase_result import Deviation
+    from arnold.pipelines.megaplan.orchestration.phase_result import Deviation
     from tests.conftest import fake_run_with_phase_result
 
     # Also write execution_batch for last_artifact assertion
@@ -1810,7 +1982,7 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(
              auto,
-             "_run_megaplan",
+             "_run_planning_phase",
              side_effect=fake_run_with_phase_result(
                  plan_dir,
                  exit_kind="blocked_by_quality",
@@ -1830,17 +2002,15 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
             writer=lambda _m: None,
         )
 
-    # worker_blocked bail removed; exhaustion falls through to escalate
-    # block → ceiling handoff (no tier ladder) → stall.
-    assert outcome.status == "stalled"
+    assert outcome.status == "worker_blocked"
     assert outcome.blocked_retries_used == 1
-    # Ceiling handoff history expected after blocked_retries exhausted
+    # Deviations from PhaseResult surface directly — no more prefix filtering.
+    assert any("missing both files_changed" in r for r in outcome.blocking_reasons)
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    assert any(
-        isinstance(e, dict) and e.get("scope") == "ceiling_handoff"
-        for e in history_entries
-    ), f"expected ceiling_handoff history, got {history_entries}"
+    assert state_data["current_state"] == "blocked"
+    assert state_data["latest_failure"]["kind"] == "execution_blocked"
+    assert state_data["latest_failure"]["last_artifact"] == "execution_batch_1.json"
+    assert state_data["resume_cursor"]["phase"] == "execute"
 
 
 def _write_blocked_task_update_batch(
@@ -1886,7 +2056,7 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     """
     plan = "execute-blocked-awaiting-human"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    from megaplan.orchestration.phase_result import BlockedTask
+    from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask
     from tests.conftest import fake_run_with_phase_result
 
     _write_blocked_task_update_batch(plan_dir)
@@ -1897,7 +2067,7 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(
              auto,
-             "_run_megaplan",
+             "_run_planning_phase",
              side_effect=fake_run_with_phase_result(
                  plan_dir,
                  exit_kind="blocked_by_prereq",
@@ -1943,63 +2113,19 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     )
 
 
-def test_execute_scope_drift_counts_claimed_untracked_files(tmp_path: Path) -> None:
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@example.com"],
-        cwd=tmp_path,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=tmp_path,
-        check=True,
-    )
-    (tmp_path / "tracked.py").write_text("print('tracked')\n", encoding="utf-8")
-    subprocess.run(["git", "add", "tracked.py"], cwd=tmp_path, check=True)
-    subprocess.run(
-        ["git", "commit", "-m", "initial"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-    )
-
-    new_file = tmp_path / "tests" / "characterization" / "_golden_recorders" / "case.py"
-    new_file.parent.mkdir(parents=True)
-    new_file.write_text("print('golden')\n", encoding="utf-8")
-
-    drift = execute_aggregation._compute_execute_scope_drift(
-        tmp_path,
-        {"files_changed": ["tests/characterization/_golden_recorders/case.py"]},
-    )
-
-    assert drift.files_missing == []
-    assert drift.files_added == []
-    assert drift.severity == "none"
-
-
-@pytest.mark.parametrize(
-    "exit_kind",
-    ["blocked_by_quality", "blocked_by_prereq"],
-)
-def test_empty_execute_block_proceeds_without_retry(
-    tmp_path: Path,
-    exit_kind: str,
-) -> None:
-    plan = f"empty-{exit_kind}"
+def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) -> None:
+    plan = "worker-blocked-zero"
     plan_dir = _make_plan_dir(tmp_path, plan)
     from tests.conftest import fake_run_with_phase_result
 
-    statuses = [_execute_status(plan), _done_status(plan)]
-
     def fake_status(plan_name: str, cwd=None, timeout=60):
-        return statuses.pop(0)
+        return _execute_status(plan)
 
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(
              auto,
-             "_run_megaplan",
-             side_effect=fake_run_with_phase_result(plan_dir, exit_kind=exit_kind),
+             "_run_planning_phase",
+             side_effect=fake_run_with_phase_result(plan_dir, exit_kind="blocked_by_quality"),
          ):
         outcome = drive(
             plan,
@@ -2009,9 +2135,8 @@ def test_empty_execute_block_proceeds_without_retry(
             writer=lambda _m: None,
         )
 
-    assert outcome.status == "done"
+    assert outcome.status == "worker_blocked"
     assert outcome.blocked_retries_used == 0
-    assert any("treating as success" in event["msg"] for event in outcome.events)
 
 
 def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_path: Path) -> None:
@@ -2027,7 +2152,7 @@ def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_pat
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(
              auto,
-             "_run_megaplan",
+             "_run_planning_phase",
              side_effect=fake_run_with_phase_result(plan_dir, exit_kind="success"),
          ):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
@@ -2059,7 +2184,7 @@ def test_stale_phase_result_from_previous_phase_does_not_mask_failure(tmp_path: 
         return 1, "", "gate crashed before phase_result emission"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2134,7 +2259,7 @@ def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step
         raise RuntimeError("nested publish failed")
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2191,7 +2316,7 @@ def test_failed_execute_callback_resume_restores_executed_state(tmp_path: Path) 
         return 0, "review ok", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
     assert outcome.status == "done"
@@ -2239,7 +2364,7 @@ def test_failed_execute_callback_resume_restores_blocked_execute_to_finalized(tm
         return 0, "execute ok", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
     assert outcome.status == "done"
@@ -2261,7 +2386,7 @@ def test_phase_complete_callback_skipped_after_nonzero_phase(tmp_path: Path) -> 
         callback_calls.append(step)
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2318,8 +2443,21 @@ def test_auto_strict_notes_blocks_force_proceed_after_escalate(tmp_path: Path) -
             return 1, "", "CliError: escalate_requires_user_approval — user must approve"
         return 0, "{}", ""
 
+    def fake_force_proceed(*, root, plan, reason, user_approved=False):
+        return fake_run(
+            [
+                "override",
+                "force-proceed",
+                "--plan",
+                plan,
+                "--reason",
+                reason,
+            ],
+            cwd=root,
+        )
+
     with patch.object(auto, "_status", side_effect=escalated_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_override_force_proceed_in_process", side_effect=fake_force_proceed):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2430,7 +2568,7 @@ def test_drive_supplies_note_arg_when_dispatching_override_add_note(tmp_path: Pa
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2483,7 +2621,7 @@ def test_drive_escalates_to_force_proceed_after_max_add_note_attempts(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -2520,7 +2658,7 @@ def test_drive_escalates_to_force_proceed_after_max_add_note_attempts(
 
 
 def test_drive_surfaces_external_error_distinctly(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import fake_run_with_phase_result
 
     plan = "external-error-plan"
@@ -2546,7 +2684,7 @@ def test_drive_surfaces_external_error_distinctly(tmp_path: Path) -> None:
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=phase_runner,
     ):
         outcome = drive(
@@ -2564,7 +2702,7 @@ def test_drive_surfaces_external_error_distinctly(tmp_path: Path) -> None:
 
 
 def test_drive_auto_retries_stream_stall_once_for_non_execute_phase(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import make_fake_phase_result
 
     plan = "critique-stream-stall-recovers"
@@ -2609,7 +2747,7 @@ def test_drive_auto_retries_stream_stall_once_for_non_execute_phase(tmp_path: Pa
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ):
         outcome = drive(
@@ -2629,7 +2767,7 @@ def test_drive_auto_retries_stream_stall_once_for_non_execute_phase(tmp_path: Pa
 
 
 def test_drive_blocks_after_retryable_external_error_fails_twice(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import make_fake_phase_result
 
     plan = "critique-stream-stall-twice"
@@ -2665,7 +2803,7 @@ def test_drive_blocks_after_retryable_external_error_fails_twice(tmp_path: Path)
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ):
         outcome = drive(
@@ -2687,12 +2825,12 @@ def test_drive_blocks_after_retryable_external_error_fails_twice(tmp_path: Path)
     assert latest_failure["metadata"]["content_chunk_count"] == 182
     assert latest_failure["metadata"]["external_retries_used"] == 1
     assert latest_failure["metadata"]["suggested_recovery_commands"] == [
-        f"python -m megaplan resume --plan {plan}"
+        f"python -m arnold.pipelines.megaplan resume --plan {plan}"
     ]
 
 
 def test_drive_does_not_auto_retry_permanent_external_errors(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import make_fake_phase_result
 
     plan = "critique-auth-failure"
@@ -2724,7 +2862,7 @@ def test_drive_does_not_auto_retry_permanent_external_errors(tmp_path: Path) -> 
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ):
         outcome = drive(
@@ -2741,7 +2879,7 @@ def test_drive_does_not_auto_retry_permanent_external_errors(tmp_path: Path) -> 
 
 
 def test_drive_does_not_auto_retry_execute_external_stream_stall(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import make_fake_phase_result
 
     plan = "execute-stream-stall"
@@ -2771,7 +2909,7 @@ def test_drive_does_not_auto_retry_execute_external_stream_stall(tmp_path: Path)
 
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ):
         outcome = drive(
@@ -2883,7 +3021,7 @@ def test_drive_logs_warning_when_phase_start_emit_fails(
     caplog.set_level("WARNING", logger="megaplan")
     with patch.object(auto, "_status", side_effect=fake_status), patch.object(
         auto,
-        "_run_megaplan",
+        "_run_planning_phase",
         side_effect=fake_run,
     ), patch.object(auto, "emit_event", side_effect=maybe_fail_emit):
         outcome = drive(plan, cwd=tmp_path, max_iterations=3, poll_sleep=0, writer=lambda _message: None)
@@ -2945,7 +3083,7 @@ def test_drive_halts_before_progress_when_orphan_clear_read_fails(
         return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=lambda *_args, **_kwargs: _orphaned_critique_status(plan)), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         with pytest.raises(CliError, match="M3B_HALT_ORPHAN_CLEAR_READ"):
             drive(
                 plan,
@@ -3007,7 +3145,7 @@ def test_drive_halts_before_progress_when_orphan_clear_write_fails(
     monkeypatch.setattr(auto, "write_plan_state", broken_write)
 
     with patch.object(auto, "_status", side_effect=lambda *_args, **_kwargs: _orphaned_critique_status(plan)), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         with pytest.raises(CliError, match="M3B_HALT_ORPHAN_CLEAR_WRITE"):
             drive(
                 plan,
@@ -3139,12 +3277,7 @@ def _write_tier_state(
     """Stamp state.json with a tier_models.execute ladder and (optionally) an
     execute history entry recording the highest tier the last execute used.
     """
-    state: dict = {
-        "name": plan_dir.name,
-        "current_state": "finalized",
-        "history": [],
-        "meta": {},
-    }
+    state: dict = {"name": plan_dir.name, "current_state": "finalized"}
     if ladder is not None:
         state["config"] = {
             "tier_models": {"execute": {str(k): v for k, v in ladder.items()}}
@@ -3197,6 +3330,162 @@ def test_latest_execute_max_tier_reads_history(tmp_path: Path) -> None:
     assert auto._latest_execute_max_tier(plan_dir) == 3
 
 
+def test_review_nonconvergence_single_cycle_does_not_escalate() -> None:
+    streaks: dict[str, int] = {}
+
+    nonconverging = auto._nonconverging_rework_tasks(
+        previous={},
+        current={"T1": {"flag:REVIEW-001"}},
+        streaks=streaks,
+    )
+
+    assert nonconverging == []
+    assert streaks == {"T1": 1}
+
+
+def test_review_nonconvergence_second_same_issue_escalates() -> None:
+    streaks = {"T1": 1}
+
+    nonconverging = auto._nonconverging_rework_tasks(
+        previous={"T1": {"flag:REVIEW-001"}},
+        current={"T1": {"flag:REVIEW-001"}},
+        streaks=streaks,
+    )
+
+    assert nonconverging == ["T1"]
+    assert streaks["T1"] == 2
+
+
+def test_review_nonconvergence_model_issue_text_normalization_escalates() -> None:
+    previous = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "source": "model",
+                    "issue": "Need  stable evidence",
+                    "evidence_file": "old.json",
+                }
+            ],
+        }
+    )
+    current = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "source": "model",
+                    "issue": "need stable   evidence",
+                    "evidence_file": "new.json",
+                }
+            ],
+        }
+    )
+    streaks = {"T1": 1}
+
+    nonconverging = auto._nonconverging_rework_tasks(
+        previous=previous,
+        current=current,
+        streaks=streaks,
+    )
+
+    assert nonconverging == ["T1"]
+    assert streaks["T1"] == 2
+
+
+def test_review_nonconvergence_different_model_issues_reset_streak() -> None:
+    previous = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {"task_id": "T1", "source": "model", "issue": "first issue"},
+            ],
+        }
+    )
+    current = auto._review_rework_signatures_by_task(
+        {
+            "review_verdict": "needs_rework",
+            "rework_items": [
+                {"task_id": "T1", "source": "model", "issue": "second issue"},
+            ],
+        }
+    )
+    streaks = {"T1": 1}
+
+    nonconverging = auto._nonconverging_rework_tasks(
+        previous=previous,
+        current=current,
+        streaks=streaks,
+    )
+
+    assert nonconverging == []
+    assert streaks["T1"] == 1
+
+
+def test_review_nonconvergence_shrinking_findings_do_not_escalate() -> None:
+    streaks = {"T1": 1}
+
+    nonconverging = auto._nonconverging_rework_tasks(
+        previous={"T1": {"flag:REVIEW-001", "flag:REVIEW-002"}},
+        current={"T1": {"flag:REVIEW-001"}},
+        streaks=streaks,
+    )
+
+    assert nonconverging == []
+    assert streaks["T1"] == 1
+
+
+def test_review_nonconvergence_escalation_plan_uses_next_distinct_tier(
+    tmp_path: Path,
+) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "review-nonconvergence")
+    _write_tier_state(plan_dir, max_tier=3)
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"id": "T1", "complexity": 3, "tier_override": 3},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    baseline, next_tier = auto._review_nonconvergence_escalation_plan(
+        plan_dir=plan_dir,
+        task_id="T1",
+        ladder=_PREMIUM_LADDER,
+    )
+
+    assert baseline == 3
+    assert next_tier == (4, "claude:claude-opus-4-7")
+    assert auto._pin_tasks_to_tier(plan_dir, ["T1"], next_tier[0]) == ["T1"]
+    finalize = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    assert finalize["tasks"][0]["tier_override"] == 4
+
+
+def test_review_nonconvergence_escalation_plan_returns_none_at_ceiling(
+    tmp_path: Path,
+) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "review-nonconvergence-ceiling")
+    _write_tier_state(plan_dir, max_tier=4)
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": "T1", "complexity": 4, "tier_override": 4}]}),
+        encoding="utf-8",
+    )
+
+    baseline, next_tier = auto._review_nonconvergence_escalation_plan(
+        plan_dir=plan_dir,
+        task_id="T1",
+        ladder=_PREMIUM_LADDER,
+    )
+
+    assert baseline == 4
+    assert next_tier is None
+
+
 # ── (a) Consecutive failures escalate up to the next distinct model ──────
 
 
@@ -3229,37 +3518,27 @@ def test_consecutive_failures_escalate_up_to_next_distinct_model(
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
             escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
+            stall_threshold=3,
+            max_iterations=6,
             poll_sleep=0,
             writer=lambda _m: None,
         )
 
-    # First two execute dispatches run un-escalated (internal_error consumes
-    # retries_first=1 inline retry); on the 3rd failure the streak reaches 2
-    # and the driver escalates via phase_pin.  --fresh is appended
-    # (escalation_fired=True) but --phase-model is NOT (only on legacy path).
+    # First two execute dispatches run un-escalated; on the 2nd failure the
+    # driver escalates, so the 3rd execute carries the stronger-model pin.
     escalated_cmds = [
         c for c in seen_cmds
-        if "--fresh" in c
+        if "--phase-model" in c
+        and "execute=claude:claude-opus-4-7" in c
     ]
-    assert len(escalated_cmds) >= 1, (
-        f"expected at least one escalated execute with --fresh, saw: {seen_cmds}"
-    )
-    # Per-task/phase_pin semantics: --phase-model execute=<spec> is NOT
-    # appended (only the legacy category-is-None path sets it).
-    for c in escalated_cmds:
-        assert "--phase-model" not in c, (
-            f"--phase-model should not appear on phase_pin path: {c}"
-        )
+    assert escalated_cmds, f"expected an Opus-pinned execute, saw: {seen_cmds}"
     assert outcome.tier_escalations_used >= 1
-    # escalation_tier_pin is only set on the legacy category-is-None path,
-    # not on the phase_pin path.
+    assert outcome.escalation_tier_pin == 4
     # The escalation is observable as a tier_escalated event carrying the
     # from→to model + tier and the failure count.
     lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
@@ -3307,7 +3586,7 @@ def test_at_ceiling_no_escalation_and_manual_review_halt_fires(
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -3355,25 +3634,24 @@ def test_escalate_forces_fresh_dispatch(tmp_path: Path) -> None:
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         drive(
             plan,
             cwd=tmp_path,
             escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
+            stall_threshold=3,
+            max_iterations=6,
             poll_sleep=0,
             writer=lambda _m: None,
         )
 
-    # Every escalated execute carries --fresh (escalation_fired=True).
-    # --phase-model is NOT appended on the phase_pin path (only legacy).
-    fresh_cmds = [c for c in seen_cmds if "--fresh" in c]
-    assert fresh_cmds, f"expected at least one escalated execute with --fresh, saw {seen_cmds}"
-    for c in fresh_cmds:
-        assert "--phase-model" not in c, (
-            f"--phase-model should not appear on phase_pin path: {c}"
-        )
+    # Every escalated (phase-model-pinned) execute MUST also carry --fresh so
+    # the stronger model starts a new session instead of resuming the failed
+    # worker's old session on the old model.
+    pinned = [c for c in seen_cmds if "--phase-model" in c]
+    assert pinned, f"expected at least one escalated execute, saw {seen_cmds}"
+    for c in pinned:
+        assert "--fresh" in c, f"escalated execute missing --fresh: {c}"
 
 
 # ── (d) Non-tier-routed run no-ops gracefully ─────────────────────────────
@@ -3404,7 +3682,7 @@ def test_non_tier_routed_run_no_ops_gracefully(tmp_path: Path) -> None:
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -3454,7 +3732,7 @@ def test_failure_streak_resets_on_progress(tmp_path: Path) -> None:
         return 1, "", "boom"
 
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -3469,1373 +3747,3 @@ def test_failure_streak_resets_on_progress(tmp_path: Path) -> None:
     # reaches the escalate threshold — no escalation occurs.
     assert not any("--phase-model" in c for c in seen_cmds), seen_cmds
     assert outcome.tier_escalations_used == 0
-
-
-# ── Legacy regression: exit_kind=None degrades to streak-based phase-pin ──
-
-
-def test_legacy_exit_kind_none_phase_model_and_fresh(
-    tmp_path: Path,
-) -> None:
-    """When result.exit_kind is None (uncategorised failure), the legacy
-    streak-based phase-pin path fires: cmd contains --phase-model
-    execute=<spec> AND --fresh."""
-    plan = "legacy-none-exit-kind"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        # Write a phase_result with exit_kind=None so classify_failure
-        # returns (None, []) — the legacy category-is-None path.
-        from tests.conftest import make_fake_phase_result
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind=None,
-            invocation_id=f"inv-{call['n']}",
-        )
-        return 1, "", "generic failure"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # The legacy path sets escalation_pin_spec and escalation_tier_pin,
-    # so --phase-model execute=<spec> AND --fresh both appear.
-    escalated_cmds = [
-        c for c in seen_cmds
-        if "--fresh" in c
-    ]
-    assert len(escalated_cmds) >= 1, (
-        f"expected at least one escalated cmd with --fresh, saw: {seen_cmds}"
-    )
-    for c in escalated_cmds:
-        assert "--phase-model" in c, (
-            f"legacy path should append --phase-model execute=<spec>: {c}"
-        )
-        # Find the --phase-model argument and verify execute=<spec>
-        try:
-            idx = c.index("--phase-model")
-            spec = c[idx + 1]
-            assert spec.startswith("execute="), (
-                f"expected execute=<spec>, got: {spec}"
-            )
-        except (ValueError, IndexError):
-            raise AssertionError(
-                f"--phase-model not found or missing value in: {c}"
-            )
-
-    # The legacy path sets escalation_tier_pin.
-    assert outcome.escalation_tier_pin is not None
-    assert outcome.tier_escalations_used >= 1
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# T5 tests (restored): per-task escalate, context_exhausted, legacy,
-# drift no-op, ceiling handoff
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def test_per_task_escalate_sibling_unset(tmp_path: Path) -> None:
-    """Per-task escalate: pin only failing tasks, cmd has --fresh, no
-    --phase-model execute=<spec>."""
-    plan = "per-task-escalate"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    # Write a finalize.json so _pin_tasks_to_tier has tasks to pin.
-    (plan_dir / "finalize.json").write_text(
-        json.dumps({"tasks": [
-            {"id": "T1", "status": "pending"},
-            {"id": "T2", "status": "done"},
-        ]}),
-        encoding="utf-8",
-    )
-    from tests.conftest import make_fake_phase_result, BlockedTask
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="blocked_by_quality",
-            invocation_id=f"inv-{call['n']}",
-            blocked_tasks=(BlockedTask(task_id="T1", reason="prereq missing"),),
-        )
-        return 1, "", "blocked"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # Escalation should have fired via per_task path.
-    assert outcome.tier_escalations_used >= 1
-    # --fresh present but no --phase-model.
-    fresh_cmds = [c for c in seen_cmds if "--fresh" in c]
-    assert fresh_cmds, f"expected --fresh in escalated cmd, saw {seen_cmds}"
-    for c in fresh_cmds:
-        assert "--phase-model" not in c, (
-            f"--phase-model should not appear on per-task path: {c}"
-        )
-
-
-def test_first_context_exhausted_escalates(tmp_path: Path) -> None:
-    """First-occurrence context_exhausted escalates (retries_first=0)."""
-    plan = "ctx-exhaust-escalate"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    from tests.conftest import make_fake_phase_result
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="context_exhausted",
-            invocation_id=f"inv-{call['n']}",
-        )
-        return 1, "", "context window exhausted"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # Two context_exhausted failures should trigger escalation
-    assert outcome.tier_escalations_used >= 1
-    # Context retry never fires (retries_first=0)
-    assert outcome.context_retries_used == 0
-    # TIER_ESCALATED event should be present
-    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
-    tier_events = [
-        json.loads(ln) for ln in lines if ln.strip()
-        if json.loads(ln).get("kind") == "tier_escalated"
-    ]
-    assert tier_events, "expected a tier_escalated event"
-
-
-def test_legacy_no_category_appends_both_flags(tmp_path: Path) -> None:
-    """Legacy path (category is None): --phase-model AND --fresh appended.
-
-    When classify_failure returns None (e.g., unknown exit_kind), the
-    legacy path sets escalation_pin_spec and both flags are appended.
-    """
-    plan = "legacy-both-flags"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    from tests.conftest import make_fake_phase_result
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        # Use a non-standard exit_kind that classify_failure returns None for
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="unknown_exit_kind",
-            invocation_id=f"inv-{call['n']}",
-        )
-        return 1, "", "unknown failure"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # Legacy path: both --phase-model AND --fresh should appear
-    pinned = [
-        c for c in seen_cmds
-        if "--phase-model" in c and "--fresh" in c
-    ]
-    assert pinned, (
-        f"expected --phase-model + --fresh on legacy path, saw: {seen_cmds}"
-    )
-
-
-def test_drift_noop_and_history(tmp_path: Path) -> None:
-    """blocked_by_quality_drift: no-op — no retry, no escalate, history written."""
-    plan = "drift-noop"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    from tests.conftest import make_fake_phase_result, Deviation
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="blocked_by_quality",
-            invocation_id=f"inv-{call['n']}",
-            deviations=(Deviation(kind="scope_drift", message="scope drift"),),
-        )
-        return 1, "", "drift"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=2,
-            max_iterations=4,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # No escalation should happen for drift
-    assert outcome.tier_escalations_used == 0
-    # Drift skip history should be recorded with category=blocked_by_quality_drift
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    drift_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "drift_skip"
-    ]
-    assert len(drift_entries) >= 1, f"expected drift_skip history, got {history_entries}"
-    # Verify category field
-    for e in drift_entries:
-        assert e.get("category") == "blocked_by_quality_drift", (
-            f"expected category=blocked_by_quality_drift, got {e.get('category')}"
-        )
-    # Verify no streak advancement: no --fresh flags should appear in any
-    # execute commands (--fresh is only appended on escalation).
-    execute_cmds = [c for c in seen_cmds if "execute" in c]
-    for cmd in execute_cmds:
-        assert "--fresh" not in cmd, (
-            f"drift should not advance streak, but --fresh was in: {cmd}"
-        )
-
-
-def test_ceiling_handoff_monotonic(tmp_path: Path) -> None:
-    """Ceiling handoff: no escalation beyond highest distinct tier.
-
-    When already at the ceiling tier, escalation hits ceiling_handoff
-    and does NOT pin a higher tier.
-    """
-    plan = "ceiling-monotonic"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    # Tier 4 is Opus; tier 5 is also Opus (same model).  So the ceiling
-    # is tier 4 — there's no distinct stronger model above.
-    _write_tier_state(plan_dir, max_tier=4)
-    from tests.conftest import make_fake_phase_result
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="internal_error",
-            invocation_id=f"inv-{call['n']}",
-        )
-        return 1, "", "boom"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # No escalation to a higher tier (ceiling reached)
-    assert outcome.tier_escalations_used == 0
-    # Ceiling handoff history should be recorded
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    ceiling_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "ceiling_handoff"
-    ]
-    assert len(ceiling_entries) >= 1, f"expected ceiling_handoff, got {history_entries}"
-    # No --phase-model appended
-    assert not any("--phase-model" in c for c in seen_cmds)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# T6: Timeout remediation
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def test_timeout_remediation_then_escalation(tmp_path: Path) -> None:
-    """Two consecutive timeouts — first appends --batch 1 + --phase-idle-timeout
-    3600 (no tier change); second triggers tier escalation via Step 5."""
-    plan = "timeout-remediation"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    from tests.conftest import make_fake_phase_result
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="timeout",
-            invocation_id=f"inv-{call['n']}",
-        )
-        return 1, "", "timeout"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # After first timeout: remediation cmd should carry --batch 1 and
-    # --phase-idle-timeout 3600
-    remediation_cmds = [
-        c for c in seen_cmds
-        if "--batch" in c and "1" in c and "--phase-idle-timeout" in c
-    ]
-    assert len(remediation_cmds) >= 1, (
-        f"expected remediation cmd with --batch 1 + --phase-idle-timeout, "
-        f"saw: {seen_cmds}"
-    )
-    # The first timeout must NOT escalate (no tier change yet)
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    remediation_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "timeout_remediation"
-    ]
-    assert len(remediation_entries) >= 1, (
-        f"expected timeout_remediation history, got {history_entries}"
-    )
-    # Second consecutive timeout triggers escalation
-    assert outcome.tier_escalations_used >= 1, (
-        "expected tier escalation after second consecutive timeout"
-    )
-    # Verify tier_escalated event exists
-    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
-    tier_events = [
-        json.loads(ln) for ln in lines if ln.strip()
-        if json.loads(ln).get("kind") == "tier_escalated"
-        and json.loads(ln).get("payload", {}).get("scope") != "lateral_deferred"
-    ]
-    assert tier_events, "expected a tier_escalated event after second timeout"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# T8: External error lateral defer
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def test_external_error_lateral_deferred(tmp_path: Path) -> None:
-    """external_error PhaseResult emits lateral_deferred history entry, does
-    not touch tier_override, does not advance streak."""
-    plan = "ext-error-defer"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    from tests.conftest import make_fake_phase_result, ExternalError
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="external_error",
-            invocation_id=f"inv-{call['n']}",
-            external_error=ExternalError(
-                provider="openrouter",
-                error_kind="quota",
-                message="quota exceeded",
-            ),
-        )
-        return 1, "", "quota"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=2,
-            max_iterations=4,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # No escalation — external_error is not a capability problem
-    assert outcome.tier_escalations_used == 0
-    # Lateral deferred history entry should exist
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    deferred_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "lateral_deferred"
-    ]
-    assert len(deferred_entries) >= 1, (
-        f"expected lateral_deferred history, got {history_entries}"
-    )
-    for e in deferred_entries:
-        assert e.get("category") == "external_error"
-    # No --fresh (no streak advancement)
-    execute_cmds = [c for c in seen_cmds if "execute" in c]
-    for cmd in execute_cmds:
-        assert "--fresh" not in cmd, (
-            f"external_error should not advance streak, got --fresh in: {cmd}"
-        )
-    # No tier_override changes (no escalation fired)
-    assert outcome.escalation_tier_pin is None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# T9: Dual-channel escalation recording
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def test_dual_channel_escalation_recording(tmp_path: Path) -> None:
-    """After a simulated escalation, the latest entry in state.json['history']
-    carries category, from_tier, to_tier, retries_before_escalation,
-    failing_task_ids, and scope — AND events.ndjson carries the same fields."""
-    plan = "dual-channel"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    from tests.conftest import make_fake_phase_result, BlockedTask
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="blocked_by_quality",
-            invocation_id=f"inv-{call['n']}",
-            blocked_tasks=(BlockedTask(task_id="T1", reason="prereq missing"),),
-        )
-        return 1, "", "blocked"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    assert outcome.tier_escalations_used >= 1
-
-    # Check state.json history for the escalation entry
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    escalation_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("step") == "escalation"
-        and e.get("scope") not in ("retries_exhausted",)
-        and e.get("scope") != "drift_skip"
-    ]
-    # Find the actual tier escalation entry (not retries_exhausted/drift)
-    tier_entries = [
-        e for e in escalation_entries
-        if e.get("from_tier") is not None
-    ]
-    assert len(tier_entries) >= 1, (
-        f"expected tier escalation history entry, got {escalation_entries}"
-    )
-    entry = tier_entries[-1]
-    # Verify the six required fields
-    assert "category" in entry
-    assert "from_tier" in entry
-    assert "to_tier" in entry
-    assert "retries_before_escalation" in entry
-    assert "failing_task_ids" in entry
-    assert "scope" in entry
-    assert "from_model" in entry
-    assert "to_model" in entry
-
-    # Check events.ndjson for the escalation event
-    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
-    tier_events = [
-        json.loads(ln) for ln in lines if ln.strip()
-        if json.loads(ln).get("kind") == "tier_escalated"
-        and json.loads(ln).get("payload", {}).get("scope") not in (
-            "lateral_deferred", None
-        )
-    ]
-    assert tier_events, "expected a tier_escalated event in events.ndjson"
-    payload = tier_events[0].get("payload", {})
-    assert "category" in payload
-    assert "from_tier" in payload
-    assert "to_tier" in payload
-    assert "retries_before_escalation" in payload
-    assert "failing_task_ids" in payload
-    assert "scope" in payload
-    assert "from_model" in payload
-    assert "to_model" in payload
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# T10: Step 8a core integration tests
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def test_blocked_by_quality_semantic_per_task_escalate(tmp_path: Path) -> None:
-    """Drive a synthetic two-task finalize.json through the auto loop with
-    _run_phase returning blocked_by_quality whose blocked_tasks reference
-    task B. After DEFAULT_MAX_BLOCKED_RETRIES retries assert: B has
-    tier_override == new_tier; A unchanged; one history entry with
-    category=blocked_by_quality_semantic, failing_task_ids=['B'],
-    scope='per_task'; cmd contains --fresh and NOT --phase-model execute=.
-    """
-    plan = "bq-semantic-per-task"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    # Two-task finalize.json
-    (plan_dir / "finalize.json").write_text(
-        json.dumps({
-            "tasks": [
-                {"id": "A", "complexity": 1, "status": "pending"},
-                {"id": "B", "complexity": 1, "status": "pending"},
-            ]
-        }),
-        encoding="utf-8",
-    )
-    from tests.conftest import make_fake_phase_result, BlockedTask
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="blocked_by_quality",
-            invocation_id=f"inv-{call['n']}",
-            blocked_tasks=(BlockedTask(task_id="B", reason="quality gate"),),
-        )
-        return 1, "", "blocked"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            max_blocked_retries=1,
-            escalate_after_fails=1,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # Escalation should have fired via per_task path.
-    assert outcome.tier_escalations_used >= 1
-
-    # Verify finalize.json: B has tier_override, A does not.
-    finalize_data = json.loads(
-        (plan_dir / "finalize.json").read_text(encoding="utf-8")
-    )
-    task_a = next(t for t in finalize_data["tasks"] if t["id"] == "A")
-    task_b = next(t for t in finalize_data["tasks"] if t["id"] == "B")
-    assert task_b.get("tier_override") is not None, (
-        f"task B should have tier_override set, got {task_b}"
-    )
-    new_tier = task_b["tier_override"]
-    assert isinstance(new_tier, int) and new_tier >= 1
-    # A should be unchanged — no tier_override or still the original
-    assert task_a.get("tier_override") is None, (
-        f"task A should NOT have tier_override, got {task_a}"
-    )
-
-    # Verify history: one entry with category=blocked_by_quality_semantic,
-    # failing_task_ids=['B'], scope='per_task'.
-    state_data = json.loads(
-        (plan_dir / "state.json").read_text(encoding="utf-8")
-    )
-    history_entries = state_data.get("history", [])
-    per_task_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "per_task"
-    ]
-    assert len(per_task_entries) >= 1, (
-        f"expected per_task scope history entry, got {history_entries}"
-    )
-    entry = per_task_entries[0]
-    assert entry.get("category") == "blocked_by_quality_semantic", (
-        f"expected category=blocked_by_quality_semantic, got {entry.get('category')}"
-    )
-    assert entry.get("failing_task_ids") == ["B"], (
-        f"expected failing_task_ids=['B'], got {entry.get('failing_task_ids')}"
-    )
-
-    # Verify cmd: contains --fresh and NOT --phase-model execute=
-    fresh_cmds = [c for c in seen_cmds if "--fresh" in c]
-    assert fresh_cmds, f"expected --fresh in escalated cmd, saw {seen_cmds}"
-    for c in fresh_cmds:
-        assert "--phase-model" not in c, (
-            f"--phase-model should not appear on per-task path: {c}"
-        )
-
-
-def test_blocked_by_prereq_awaiting_human_no_escalation(
-    tmp_path: Path,
-) -> None:
-    """blocked_by_prereq: no override applied; awaiting_human outcome;
-    history entry with scope='manual_review_handoff'; no streak increment.
-    """
-    plan = "bq-prereq-awaiting"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    from tests.conftest import make_fake_phase_result, BlockedTask
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="blocked_by_prereq",
-            invocation_id=f"inv-{call['n']}",
-            blocked_tasks=(BlockedTask(task_id="T1", reason="prereq missing"),),
-        )
-        return 1, "", "blocked"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            max_blocked_retries=1,
-            escalate_after_fails=2,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # Should exit as awaiting_human without escalation.
-    assert outcome.status == "awaiting_human", (
-        f"expected awaiting_human, got {outcome.status!r}"
-    )
-    assert outcome.tier_escalations_used == 0, (
-        "blocked_by_prereq must not trigger tier escalation"
-    )
-
-    # No tier_override applied to any task.
-    state_data = json.loads(
-        (plan_dir / "state.json").read_text(encoding="utf-8")
-    )
-    history_entries = state_data.get("history", [])
-    manual_review_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "manual_review_handoff"
-    ]
-    assert len(manual_review_entries) >= 1, (
-        f"expected manual_review_handoff history entry, got {history_entries}"
-    )
-    entry = manual_review_entries[0]
-    assert entry.get("category") == "blocked_by_prereq", (
-        f"expected category=blocked_by_prereq, got {entry.get('category')}"
-    )
-    assert "failing_task_ids" in entry
-
-    # No streak increment: no --fresh in any execute command.
-    execute_cmds = [c for c in seen_cmds if "execute" in c]
-    for cmd in execute_cmds:
-        assert "--fresh" not in cmd, (
-            f"blocked_by_prereq should not advance streak, "
-            f"but --fresh was in: {cmd}"
-        )
-
-    # No tier escalation pin set.
-    assert outcome.escalation_tier_pin is None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# T11: Step 8b remaining-category integration tests
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def test_context_exhausted_override_bypasses_loop(tmp_path: Path) -> None:
-    """context_exhausted → override applied on first failure, existing while
-    loop bypassed (cap=0).  Phase-pin escalates all pending tasks."""
-    plan = "ctx-exhaust-override"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    # finalize.json so phase_pin has tasks to pin
-    (plan_dir / "finalize.json").write_text(
-        json.dumps({"tasks": [
-            {"id": "A", "complexity": 1, "status": "pending"},
-            {"id": "B", "complexity": 1, "status": "pending"},
-        ]}),
-        encoding="utf-8",
-    )
-    from tests.conftest import make_fake_phase_result
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="context_exhausted",
-            invocation_id=f"inv-{call['n']}",
-        )
-        return 1, "", "context exhausted"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=1,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # context_exhausted has retries_first=0 → while loop bypassed →
-    # no context retries consumed
-    assert outcome.context_retries_used == 0
-
-    # Escalation should fire (phase_pin since failing_task_ids is empty)
-    assert outcome.tier_escalations_used >= 1
-
-    # Verify override applied in finalize.json (phase_pin pins all pending)
-    finalize_data = json.loads(
-        (plan_dir / "finalize.json").read_text(encoding="utf-8")
-    )
-    for task in finalize_data["tasks"]:
-        assert task.get("tier_override") is not None, (
-            f"task {task['id']} should have tier_override after phase_pin"
-        )
-        assert isinstance(task["tier_override"], int)
-
-    # --fresh present, no --phase-model (per_task/phase_pin path)
-    fresh_cmds = [c for c in seen_cmds if "--fresh" in c]
-    assert fresh_cmds, f"expected --fresh in escalated cmd, saw {seen_cmds}"
-    for c in fresh_cmds:
-        assert "--phase-model" not in c, (
-            f"--phase-model should not appear on phase_pin path: {c}"
-        )
-
-    # tier_escalated event should be present
-    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
-    tier_events = [
-        json.loads(ln) for ln in lines if ln.strip()
-        if json.loads(ln).get("kind") == "tier_escalated"
-        and json.loads(ln).get("payload", {}).get("scope") not in (
-            "lateral_deferred", None
-        )
-    ]
-    assert tier_events, "expected a tier_escalated event"
-    payload = tier_events[0].get("payload", {})
-    assert payload.get("scope") == "phase_pin", (
-        f"expected scope=phase_pin, got {payload.get('scope')}"
-    )
-
-
-def test_timeout_remediation_before_override_then_escalate(
-    tmp_path: Path,
-) -> None:
-    """timeout → batch-1 + --phase-idle-timeout 3600 applied BEFORE any
-    override; second consecutive timeout escalates."""
-    plan = "timeout-remed-then-esc"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    # finalize.json for phase_pin verification
-    (plan_dir / "finalize.json").write_text(
-        json.dumps({"tasks": [
-            {"id": "A", "complexity": 1, "status": "pending"},
-            {"id": "B", "complexity": 1, "status": "pending"},
-        ]}),
-        encoding="utf-8",
-    )
-    from tests.conftest import make_fake_phase_result
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="timeout",
-            invocation_id=f"inv-{call['n']}",
-        )
-        return 1, "", "timeout"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=1,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # First timeout: remediation cmd with --batch 1 + --phase-idle-timeout 3600
-    batch1_cmds = [
-        c for c in seen_cmds
-        if "--batch" in c and "1" in c
-        and any(a.startswith("--phase-idle-timeout") for a in c)
-    ]
-    assert len(batch1_cmds) >= 1, (
-        f"expected remediation cmd with --batch 1 + --phase-idle-timeout, "
-        f"saw: {seen_cmds}"
-    )
-    # Verify --batch 1 value is a separate arg
-    for cmd in batch1_cmds:
-        batch_idx = cmd.index("--batch") if "--batch" in cmd else -1
-        assert batch_idx >= 0
-        assert cmd[batch_idx + 1] == "1", (
-            f"--batch should be followed by '1', got: {cmd}"
-        )
-
-    # timeout_remediation history entry BEFORE any tier override
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    remediation_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "timeout_remediation"
-    ]
-    assert len(remediation_entries) >= 1, (
-        f"expected timeout_remediation history, got {history_entries}"
-    )
-    for e in remediation_entries:
-        assert e.get("category") == "timeout"
-
-    # Second consecutive timeout should escalate (tier_escalations >= 1)
-    assert outcome.tier_escalations_used >= 1, (
-        "expected tier escalation after second consecutive timeout"
-    )
-
-    # tier_escalated event should exist with scope=phase_pin
-    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
-    tier_events = [
-        json.loads(ln) for ln in lines if ln.strip()
-        if json.loads(ln).get("kind") == "tier_escalated"
-        and json.loads(ln).get("payload", {}).get("scope") not in (
-            "lateral_deferred", None
-        )
-    ]
-    assert tier_events, "expected a tier_escalated event after second timeout"
-
-
-def test_external_error_lateral_deferred_no_override_integration(
-    tmp_path: Path,
-) -> None:
-    """external_error → no override, lateral_deferred history entry, no
-    streak advancement (integration-level)."""
-    plan = "ext-err-lateral-int"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    (plan_dir / "finalize.json").write_text(
-        json.dumps({"tasks": [
-            {"id": "A", "complexity": 1, "status": "pending"},
-        ]}),
-        encoding="utf-8",
-    )
-    from tests.conftest import make_fake_phase_result, ExternalError
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="external_error",
-            invocation_id=f"inv-{call['n']}",
-            external_error=ExternalError(
-                provider="openrouter",
-                error_kind="quota",
-                message="quota exceeded",
-            ),
-        )
-        return 1, "", "quota"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=2,
-            max_iterations=4,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # No escalation — external_error is not a capability problem
-    assert outcome.tier_escalations_used == 0
-
-    # lateral_deferred history entry must exist
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    deferred_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "lateral_deferred"
-    ]
-    assert len(deferred_entries) >= 1, (
-        f"expected lateral_deferred history, got {history_entries}"
-    )
-    for e in deferred_entries:
-        assert e.get("category") == "external_error"
-
-    # No override applied — tier_override must remain None on all tasks
-    finalize_data = json.loads(
-        (plan_dir / "finalize.json").read_text(encoding="utf-8")
-    )
-    for task in finalize_data["tasks"]:
-        assert task.get("tier_override") is None, (
-            f"task {task['id']} should NOT have tier_override"
-        )
-
-    # No --fresh (no streak advancement)
-    execute_cmds = [c for c in seen_cmds if "execute" in c]
-    for cmd in execute_cmds:
-        assert "--fresh" not in cmd, (
-            f"external_error should not advance streak, got --fresh in: {cmd}"
-        )
-
-    assert outcome.escalation_tier_pin is None
-
-
-def test_blocked_by_quality_drift_no_override_no_streak_integration(
-    tmp_path: Path,
-) -> None:
-    """blocked_by_quality_drift → no override, no streak, drift_skip history
-    entry (integration-level)."""
-    plan = "drift-noop-int"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    _write_tier_state(plan_dir, max_tier=3)
-    (plan_dir / "finalize.json").write_text(
-        json.dumps({"tasks": [
-            {"id": "A", "complexity": 1, "status": "pending"},
-        ]}),
-        encoding="utf-8",
-    )
-    from tests.conftest import make_fake_phase_result, Deviation
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="blocked_by_quality",
-            invocation_id=f"inv-{call['n']}",
-            deviations=(Deviation(kind="scope_drift", message="scope drift"),),
-        )
-        return 1, "", "drift"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            escalate_after_fails=2,
-            stall_threshold=2,
-            max_iterations=4,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # No escalation should happen for drift
-    assert outcome.tier_escalations_used == 0
-
-    # drift_skip history with category=blocked_by_quality_drift
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    drift_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "drift_skip"
-    ]
-    assert len(drift_entries) >= 1, f"expected drift_skip history, got {history_entries}"
-    for e in drift_entries:
-        assert e.get("category") == "blocked_by_quality_drift"
-
-    # No override applied
-    finalize_data = json.loads(
-        (plan_dir / "finalize.json").read_text(encoding="utf-8")
-    )
-    for task in finalize_data["tasks"]:
-        assert task.get("tier_override") is None, (
-            f"task {task['id']} should NOT have tier_override"
-        )
-
-    # No --fresh (no streak advancement)
-    execute_cmds = [c for c in seen_cmds if "execute" in c]
-    for cmd in execute_cmds:
-        assert "--fresh" not in cmd, (
-            f"drift should not advance streak, but --fresh was in: {cmd}"
-        )
-
-
-# ── Synthetic ladder for ceiling test: single tier, no distinct upgrade ───
-_SINGLE_TIER_LADDER: dict[int, str] = {
-    1: "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro",
-}
-
-
-def test_ladder_ceiling_blocked_by_quality_semantic_terminates(
-    tmp_path: Path,
-) -> None:
-    """Ladder ceiling: synthetic ladder of length 1; second
-    blocked_by_quality_semantic failure produces ceiling_handoff and
-    terminates."""
-    plan = "ceiling-bq-semantic"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    # Use a synthetic ladder of length 1 — no higher distinct tier exists.
-    _write_tier_state(plan_dir, ladder=_SINGLE_TIER_LADDER, max_tier=1)
-    from tests.conftest import make_fake_phase_result, BlockedTask
-
-    seen_cmds: list[list[str]] = []
-    call = {"n": 0}
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
-                 progress_env=None, liveness_plan_dir=None):
-        seen_cmds.append(list(cmd))
-        call["n"] += 1
-        make_fake_phase_result(
-            plan_dir,
-            exit_kind="blocked_by_quality",
-            invocation_id=f"inv-{call['n']}",
-            blocked_tasks=(BlockedTask(task_id="T1", reason="quality gate"),),
-        )
-        return 1, "", "blocked"
-
-    with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            max_blocked_retries=1,
-            escalate_after_fails=1,
-            stall_threshold=8,
-            max_iterations=12,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    # After retries exhausted, escalate path finds ceiling → ceiling_handoff
-    # No escalation to a higher tier (ceiling reached — only 1 tier in ladder)
-    assert outcome.tier_escalations_used == 0, (
-        "expected no tier escalation at ceiling"
-    )
-
-    # ceiling_handoff history entry must exist
-    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    history_entries = state_data.get("history", [])
-    ceiling_entries = [
-        e for e in history_entries
-        if isinstance(e, dict) and e.get("scope") == "ceiling_handoff"
-    ]
-    assert len(ceiling_entries) >= 1, (
-        f"expected ceiling_handoff history, got {history_entries}"
-    )
-
-    # No --phase-model appended (no legacy escalation)
-    assert not any("--phase-model" in c for c in seen_cmds), seen_cmds
-
-    # No tier escalation pin set
-    assert outcome.escalation_tier_pin is None
-
-
-def _execute_stall_phase_result(plan_dir: Path):
-    from megaplan.orchestration.phase_result import ExternalError
-    from tests.conftest import make_fake_phase_result
-
-    make_fake_phase_result(
-        plan_dir,
-        phase="execute",
-        exit_kind="external_error",
-        external_error=ExternalError(
-            provider="claude",
-            error_kind="worker_stall",
-            message="Worker produced no output for 1800s (stalled stream).",
-            error_layer="worker_stream_stall",
-            stall_timeout_s=1800.0,
-        ),
-    )
-
-
-def test_auto_escalate_drops_tier_on_repeated_worker_stalls_before_halt(
-    tmp_path: Path,
-) -> None:
-    plan = "execute-tier-drop"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    run_calls: list[list[str]] = []
-
-    def fake_run(
-        args,
-        cwd=None,
-        timeout=None,
-        idle_timeout=None,
-        progress_env=None,
-        liveness_plan_dir=None,
-    ):
-        run_calls.append(list(args))
-        _execute_stall_phase_result(plan_dir)
-        return 1, "", "Worker produced no output (stalled stream)."
-
-    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
-        auto, "_run_megaplan", side_effect=fake_run
-    ):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            stall_threshold=5,
-            tier_drop_after_stalls=2,
-            max_tier_drops=2,
-            max_iterations=20,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    assert outcome.status == "stalled"
-    assert "manual intervention required" in outcome.reason
-    assert outcome.tier_drops_used == 2
-    assert outcome.max_tier_drops == 2
-
-    tier_drop_levels = [
-        int(call[call.index("--tier-drop") + 1])
-        for call in run_calls
-        if "--tier-drop" in call
-    ]
-    assert 1 in tier_drop_levels
-    assert 2 in tier_drop_levels
-    assert max(tier_drop_levels) == 2
-    assert "--tier-drop" not in run_calls[0]
-
-    from megaplan.observability.events import read_events
-
-    kinds = [event.get("kind") for event in read_events(plan_dir)]
-    assert "tier_drop" in kinds
-
-
-def test_auto_escalate_disabled_never_drops_tier(tmp_path: Path) -> None:
-    plan = "execute-tier-drop-disabled"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _execute_status(plan)
-
-    run_calls: list[list[str]] = []
-
-    def fake_run(
-        args,
-        cwd=None,
-        timeout=None,
-        idle_timeout=None,
-        progress_env=None,
-        liveness_plan_dir=None,
-    ):
-        run_calls.append(list(args))
-        _execute_stall_phase_result(plan_dir)
-        return 1, "", "Worker produced no output (stalled stream)."
-
-    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
-        auto, "_run_megaplan", side_effect=fake_run
-    ):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            stall_threshold=3,
-            tier_drop_after_stalls=0,
-            max_iterations=20,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    assert outcome.status == "stalled"
-    assert outcome.tier_drops_used == 0
-    assert all("--tier-drop" not in call for call in run_calls)
-
-
-def test_auto_escalate_streak_resets_on_execute_progress(tmp_path: Path) -> None:
-    plan = "execute-tier-drop-reset"
-    plan_dir = _make_plan_dir(tmp_path, plan)
-    statuses = [
-        _execute_status(plan),
-        _execute_status(plan),
-        _execute_status(plan),
-        _done_status(plan),
-    ]
-
-    def fake_status(plan_name: str, cwd=None, timeout=60):
-        return statuses.pop(0)
-
-    run_calls: list[list[str]] = []
-
-    def fake_run(
-        args,
-        cwd=None,
-        timeout=None,
-        idle_timeout=None,
-        progress_env=None,
-        liveness_plan_dir=None,
-    ):
-        from tests.conftest import make_fake_phase_result
-
-        run_calls.append(list(args))
-        if len(run_calls) == 2:
-            make_fake_phase_result(plan_dir, phase="execute", exit_kind="success")
-            return 0, "{}", ""
-        _execute_stall_phase_result(plan_dir)
-        return 1, "", "stalled stream"
-
-    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
-        auto, "_run_megaplan", side_effect=fake_run
-    ):
-        outcome = drive(
-            plan,
-            cwd=tmp_path,
-            stall_threshold=10,
-            tier_drop_after_stalls=2,
-            max_tier_drops=2,
-            max_iterations=20,
-            poll_sleep=0,
-            writer=lambda _m: None,
-        )
-
-    assert outcome.tier_drops_used == 0
-    assert all("--tier-drop" not in call for call in run_calls)

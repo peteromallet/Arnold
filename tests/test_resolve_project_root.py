@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan.cli import _resolve_project_root
-from megaplan.types import CliError
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan.cli import _resolve_project_root
+from arnold.pipelines.megaplan.types import CliError
 
 
 def test_resolve_project_root_prefers_project_dir(tmp_path: Path) -> None:

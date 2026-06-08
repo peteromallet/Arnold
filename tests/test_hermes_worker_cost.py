@@ -10,8 +10,8 @@ rate. These tests pin that wiring.
 
 from __future__ import annotations
 
-from megaplan.pricing import fireworks as fireworks_pricing
-from megaplan.workers.hermes import _resolve_hermes_cost
+from arnold.pipelines.megaplan.pricing import fireworks as fireworks_pricing
+from arnold.pipelines.megaplan.workers.hermes import _resolve_hermes_cost
 
 
 _FIREWORKS_DEEPSEEK = "accounts/fireworks/models/deepseek-v4-pro"

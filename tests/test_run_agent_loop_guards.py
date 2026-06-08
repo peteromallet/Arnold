@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import megaplan.agent  # noqa: F401  (side-effect: makes top-level run_agent importable)
-from megaplan.handlers.critique import _apply_adaptive_critique_routing
+import arnold.pipelines.megaplan.agent  # noqa: F401  (side-effect: makes top-level run_agent importable)
+from arnold.pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
 from run_agent import AIAgent, DEFAULT_API_TIMEOUT_SECONDS
 
 
@@ -54,7 +54,7 @@ def _init_args(**overrides):
 
 
 def test_init_records_critic_model_provenance(monkeypatch):
-    import megaplan.handlers.init as init_mod
+    import arnold.pipelines.megaplan.handlers.init as init_mod
 
     defaults = {
         "robustness": "full",
@@ -140,7 +140,7 @@ def test_stale_critic_model_without_provenance_uses_per_lens_tier(monkeypatch, c
         assert spec == "claude:claude-opus-4-7"
         return ("claude", "persistent", "claude-opus-4-7")
 
-    monkeypatch.setattr("megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec)
+    monkeypatch.setattr("arnold.pipelines.megaplan.execute.batch._resolve_tier_spec", fake_resolve_tier_spec)
 
     pin = _apply_adaptive_critique_routing(state, args, checks)
 
@@ -164,7 +164,7 @@ def test_explicit_critic_model_pin_is_honored_and_warns_for_high_complexity(
     def fail_resolve(*_args, **_kwargs):
         raise AssertionError("explicit critic_model pin must bypass tier routing")
 
-    monkeypatch.setattr("megaplan.execute.batch._resolve_tier_spec", fail_resolve)
+    monkeypatch.setattr("arnold.pipelines.megaplan.execute.batch._resolve_tier_spec", fail_resolve)
 
     pin = _apply_adaptive_critique_routing(state, args, checks)
 

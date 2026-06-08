@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from megaplan.editorial import EditorialError, EditorialOperation, EditorialResult
+from arnold.pipelines.megaplan.editorial import EditorialError, EditorialOperation, EditorialResult
 
 
 class RecordingStore:
@@ -44,9 +44,13 @@ def test_editorial_result_and_error_payloads_are_structured() -> None:
 
 
 def test_editorial_foundation_imports_stay_store_only() -> None:
-    package = Path(__file__).resolve().parents[1] / "megaplan" / "editorial"
-    forbidden_roots = {"supabase", "psycopg", "arnold"}
-    forbidden_modules = {"megaplan.store.file", "megaplan.store.db", "megaplan.store.plan_repository"}
+    package = Path(__file__).resolve().parents[1] / "arnold" / "pipelines" / "megaplan" / "editorial"
+    forbidden_roots = {"supabase", "psycopg"}
+    forbidden_modules = {
+        "arnold.pipelines.megaplan.store.file",
+        "arnold.pipelines.megaplan.store.db",
+        "arnold.pipelines.megaplan.store.plan_repository",
+    }
 
     for path in package.glob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))

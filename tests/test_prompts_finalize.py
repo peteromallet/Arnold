@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan._core import atomic_write_json
-from megaplan.prompts import create_claude_prompt
-from megaplan.workers.hermes import _toolsets_for_phase
+from arnold.pipelines.megaplan._core import atomic_write_json
+from arnold.pipelines.megaplan.prompts import create_claude_prompt
+from arnold.pipelines.megaplan.workers.hermes import _toolsets_for_phase
 from tests.test_prompts import _scaffold
 
 

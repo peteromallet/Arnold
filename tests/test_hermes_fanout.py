@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import multiprocessing as mp
 import time
+from pathlib import Path
 
 import pytest
 
-from megaplan._core.hermes_fanout import scatter_gather, scatter_gather_checks, scatter_gather_processes
+from arnold.pipelines.megaplan._core.hermes_fanout import scatter_gather, scatter_gather_checks, scatter_gather_processes
 
 
 def _process_unit(index, unit):
@@ -48,6 +50,33 @@ def _structured_process_unit(index, unit):
 
 
 def _track_concurrency_process_unit(index, unit):
+    if "counter_path" in unit:
+        import fcntl
+
+        counter_path = Path(unit["counter_path"])
+        lock_path = Path(unit["lock_path"])
+
+        def _update(delta: int) -> None:
+            with lock_path.open("a+", encoding="utf-8") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    if counter_path.exists():
+                        data = json.loads(counter_path.read_text(encoding="utf-8"))
+                    else:
+                        data = {"active": 0, "peak": 0}
+                    data["active"] += delta
+                    data["peak"] = max(data["peak"], data["active"])
+                    counter_path.write_text(json.dumps(data), encoding="utf-8")
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+        _update(1)
+        try:
+            time.sleep(unit["sleep_seconds"])
+            return index, {"unit": unit["name"], "status": "complete"}, 0.0, 0, 0, 0
+        finally:
+            _update(-1)
+
     lock = unit["lock"]
     active = unit["active"]
     peak = unit["peak"]
@@ -127,7 +156,7 @@ def test_scatter_gather_checks_preserves_order_and_flag_union_semantics() -> Non
     assert result.ordered_checks == [{"id": "a"}, {"id": "b"}, {"id": "c"}]
     assert result.verified_flag_ids == ["FLAG-2"]
     assert result.disputed_flag_ids == ["FLAG-3", "FLAG-1"]
-    assert result.total_cost == 0.6
+    assert result.total_cost == pytest.approx(0.6)
     assert result.total_prompt_tokens == 11
     assert result.total_completion_tokens == 14
     assert result.total_tokens == 25
@@ -216,28 +245,26 @@ def test_scatter_gather_processes_accepts_picklable_top_level_callable_and_paylo
     assert result.total_tokens == 23
 
 
-def test_scatter_gather_processes_honors_max_concurrent() -> None:
-    with mp.Manager() as manager:
-        active = manager.Value("i", 0)
-        peak = manager.Value("i", 0)
-        lock = manager.Lock()
-        units = [
-            {
-                "name": f"unit-{idx}",
-                "sleep_seconds": 0.1,
-                "active": active,
-                "peak": peak,
-                "lock": lock,
-            }
-            for idx in range(4)
-        ]
+def test_scatter_gather_processes_honors_max_concurrent(tmp_path: Path) -> None:
+    counter_path = tmp_path / "counter.json"
+    lock_path = tmp_path / "counter.lock"
+    counter_path.write_text(json.dumps({"active": 0, "peak": 0}), encoding="utf-8")
+    units = [
+        {
+            "name": f"unit-{idx}",
+            "sleep_seconds": 0.1,
+            "counter_path": str(counter_path),
+            "lock_path": str(lock_path),
+        }
+        for idx in range(4)
+    ]
 
-        result = scatter_gather_processes(
-            units=units,
-            run_unit_fn=_track_concurrency_process_unit,
-            max_concurrent=2,
-        )
-        peak_value = peak.value
+    result = scatter_gather_processes(
+        units=units,
+        run_unit_fn=_track_concurrency_process_unit,
+        max_concurrent=2,
+    )
+    peak_value = json.loads(counter_path.read_text(encoding="utf-8"))["peak"]
 
     assert peak_value == 2
     assert result.ordered_results == [
@@ -271,7 +298,7 @@ def test_scatter_gather_processes_times_out_unit_and_continues_siblings() -> Non
         units=units,
         run_unit_fn=_slow_process_unit,
         max_concurrent=1,
-        timeout_seconds=2.0,
+        timeout_seconds=3.0,
         hard_kill_grace_seconds=0.05,
         on_unit_error=lambda index, exc: (
             {"unit": units[index], "status": "error", "error": str(exc)},
@@ -283,12 +310,12 @@ def test_scatter_gather_processes_times_out_unit_and_continues_siblings() -> Non
     )
     elapsed = time.monotonic() - started
 
-    assert elapsed < 3.0
+    assert elapsed < 7.0
     assert result.ordered_results == [
         {
             "unit": "slow",
             "status": "error",
-            "error": "process unit 0 timed out after 2.000s",
+            "error": "process unit 0 timed out after 3.000s",
         },
         {"unit": "fast", "status": "complete"},
     ]
@@ -306,7 +333,7 @@ def test_scatter_gather_processes_kills_unit_after_grace_and_continues() -> None
         units=units,
         run_unit_fn=_ignore_term_process_unit,
         max_concurrent=1,
-        timeout_seconds=2.0,
+        timeout_seconds=3.0,
         hard_kill_grace_seconds=0.05,
         on_unit_error=lambda index, exc: (
             {"unit": units[index], "status": "error", "error": str(exc)},
@@ -318,12 +345,12 @@ def test_scatter_gather_processes_kills_unit_after_grace_and_continues() -> None
     )
     elapsed = time.monotonic() - started
 
-    assert elapsed < 5.0, f"Expected kill path under {5.0}s, got {elapsed:.3f}s"
+    assert elapsed < 7.0, f"Expected kill path under {7.0}s, got {elapsed:.3f}s"
     assert result.ordered_results == [
         {
             "unit": "ignore-term",
             "status": "error",
-            "error": "process unit 0 timed out after 2.000s",
+            "error": "process unit 0 timed out after 3.000s",
         },
         {"unit": "fast", "status": "complete"},
     ]

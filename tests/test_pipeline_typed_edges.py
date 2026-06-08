@@ -2,7 +2,7 @@
 
 Pins the new shape: PipelineVerdict carries a typed recommendation; Edge has a
 kind discriminator; the compiled planning Pipeline emits typed
-``kind="gate"`` edges for gate transitions; the executor dispatches
+``kind="decision"`` edges for gate transitions; the executor dispatches
 on verdict.recommendation first, falling back to the legacy
 ``kind="normal"`` label compare. No more packed
 ``"gate_iterate:revise"`` strings anywhere in production code.
@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from typing import ClassVar
 from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     Pipeline,
     Stage,
@@ -24,8 +25,9 @@ from megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._core.topology import RealizedGraph, RunTopologyConfig
 
 
 def test_verdict_has_typed_recommendation_and_override() -> None:
@@ -40,10 +42,10 @@ def test_edge_default_kind_is_normal_with_no_recommendation() -> None:
     assert e.recommendation is None
 
 
-def test_edge_typed_gate_round_trips() -> None:
-    e = Edge(label="iterate", target="planned", kind="gate", recommendation="iterate")
-    assert e.kind == "gate"
-    assert e.recommendation == "iterate"
+def test_edge_typed_decision_round_trips() -> None:
+    e = Edge(label="iterate", target="planned", kind="decision")
+    assert e.kind == "decision"
+    assert e.label == "iterate"
 
 
 def test_compiled_planning_emits_typed_gate_edges() -> None:
@@ -52,8 +54,8 @@ def test_compiled_planning_emits_typed_gate_edges() -> None:
     pipeline = compile_planning_pipeline()
     gate_stage = pipeline.stages["gate"]
 
-    gate_edges = [e for e in gate_stage.edges if e.kind == "gate"]
-    recs = sorted(e.recommendation for e in gate_edges)
+    gate_edges = [e for e in gate_stage.edges if e.kind == "decision"]
+    recs = sorted(e.label for e in gate_edges)
     assert recs == ["escalate", "iterate", "proceed", "tiebreaker"], recs
 
     # Override fan-out falls back to kind="normal" with bare next_step
@@ -72,7 +74,7 @@ def test_no_duplicate_gate_recommendations_per_stage() -> None:
     for stage_name, stage in pipeline.stages.items():
         if not hasattr(stage, "edges"):
             continue
-        recs = [e.recommendation for e in stage.edges if e.kind == "gate"]
+        recs = [e.label for e in stage.edges if e.kind == "decision"]
         assert len(recs) == len(set(recs)), (
             stage_name, recs
         )
@@ -80,7 +82,7 @@ def test_no_duplicate_gate_recommendations_per_stage() -> None:
 
 def test_no_legacy_packed_gate_labels_in_production() -> None:
     proc = subprocess.run(
-        ["git", "grep", "-E", "gate_iterate:|gate_proceed:|gate_tiebreaker:|gate_escalate:", "megaplan/_pipeline/"],
+        ["git", "grep", "-E", "gate_iterate:|gate_proceed:|gate_tiebreaker:|gate_escalate:", "arnold/pipelines/megaplan/_pipeline/"],
         cwd=Path(__file__).resolve().parent.parent,
         capture_output=True,
         text=True,
@@ -99,6 +101,8 @@ class _SyntheticJudge:
     prompt_key = None
     slot = None
     recommendation: str = "iterate"
+    produces: ClassVar[tuple] = ()
+    consumes: ClassVar[tuple] = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(
@@ -115,6 +119,8 @@ class _LabelStep:
     prompt_key = None
     slot = None
     next_label: str = "forward"
+    produces: ClassVar[tuple] = ()
+    consumes: ClassVar[tuple] = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(next=self.next_label)
@@ -127,10 +133,8 @@ def test_executor_dispatches_by_verdict_recommendation(tmp_path: Path) -> None:
             "judge": Stage(
                 name="judge", step=judge,
                 edges=(
-                    Edge(label="iterate", target="iterated", kind="gate",
-                         recommendation="iterate"),
-                    Edge(label="proceed", target="proceeded", kind="gate",
-                         recommendation="proceed"),
+                    Edge(label="iterate", target="iterated", kind="decision"),
+                    Edge(label="proceed", target="proceeded", kind="decision"),
                 ),
             ),
             "iterated": Stage(name="iterated", step=_LabelStep(next_label="halt"),
@@ -146,15 +150,27 @@ def test_executor_dispatches_by_verdict_recommendation(tmp_path: Path) -> None:
 
 
 def test_executor_falls_back_to_label_for_normal_edges(tmp_path: Path) -> None:
-    step = _LabelStep(next_label="forward")
+    class _TopologyLabelStep(_LabelStep):
+        def run(self, ctx: StepContext) -> StepResult:
+            before = {
+                "current_state": "prepped",
+                "config": {"robustness": "full"},
+            }
+            after = {
+                "current_state": "planned",
+                "config": {"robustness": "full"},
+            }
+            graph = RealizedGraph(RunTopologyConfig(robustness="full"))
+            return StepResult(next=graph.next_label("plan", before, after))
+
+    step = _TopologyLabelStep(next_label="unused")
     pipeline = Pipeline(
         stages={
             "labelled": Stage(
                 name="labelled", step=step,
                 edges=(
-                    Edge(label="forward", target="next"),
-                    Edge(label="iterate", target="never", kind="gate",
-                         recommendation="iterate"),
+                    Edge(label="critique", target="next"),
+                    Edge(label="iterate", target="never", kind="decision"),
                 ),
             ),
             "next": Stage(name="next", step=_LabelStep(next_label="halt"),
