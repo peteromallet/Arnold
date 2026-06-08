@@ -167,7 +167,11 @@ def _discover_nested_git_repos(project_dir: Path, claimed_paths: set[str]) -> li
     return sorted(repos, key=lambda path: path.as_posix())
 
 
-def _collect_committed_range_paths(repo_dir: Path) -> set[str]:
+def _collect_committed_range_paths(
+    repo_dir: Path,
+    *,
+    base_ref: str | None = None,
+) -> set[str]:
     """Paths changed in the committed milestone range ``base...HEAD``.
 
     Chain milestones commit their work *before* review, so a working-tree
@@ -176,12 +180,17 @@ def _collect_committed_range_paths(repo_dir: Path) -> set[str]:
     milestone work count as present. Returns an empty set on ``main``/``master``
     or when no base ref resolves — single-plan runs that leave work uncommitted
     in the working tree keep their status-only behavior unchanged.
-    """
-    # Lazy import: reuse the canonical merge-base resolver without a module-load
-    # cycle (loop.git ← execution_evidence ← _core.io would otherwise loop).
-    from megaplan._core.io import _branch_diff_base
 
-    base = _branch_diff_base(repo_dir)
+    If ``base_ref`` is provided it is used as-is; otherwise the heuristic
+    merge-base resolver (``_branch_diff_base``) is consulted.
+    """
+    if base_ref is not None:
+        base = base_ref
+    else:
+        # Lazy import: reuse the canonical merge-base resolver without a
+        # module-load cycle (loop.git ← execution_evidence ← _core.io).
+        from megaplan._core.io import _branch_diff_base
+        base = _branch_diff_base(repo_dir)
     if not base:
         return set()
     try:
@@ -210,6 +219,7 @@ def _collect_git_status_paths_with_nested_repos(
     claimed_paths: set[str],
     untracked_mode: str = "normal",
     include_committed: bool = False,
+    base_ref: str | None = None,
 ) -> tuple[set[str], str | None]:
     paths, error = _run_git_status_paths(project_dir, untracked_mode=untracked_mode)
     if error is not None:
@@ -229,5 +239,5 @@ def _collect_git_status_paths_with_nested_repos(
             continue
         paths.update(f"{prefix}/{path}" for path in nested_paths)
     if include_committed:
-        paths.update(_collect_committed_range_paths(project_dir))
+        paths.update(_collect_committed_range_paths(project_dir, base_ref=base_ref))
     return paths, None

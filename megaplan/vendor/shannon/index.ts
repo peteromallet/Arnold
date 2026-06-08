@@ -310,6 +310,18 @@ async function maybeSendStartupEnterKeys(tmuxSession: string) {
   }
 }
 
+async function acceptBypassPermissionsPrompt(tmuxSession: string) {
+  await runCommand(["tmux", "send-keys", "-t", tmuxSession, "Down"], false);
+  await sleep(100);
+  await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"], false);
+  await sleep(POLL_MS);
+}
+
+async function confirmBypassPermissionsPrompt(tmuxSession: string) {
+  await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"], false);
+  await sleep(POLL_MS);
+}
+
 // >>> megaplan-shannon-helpers v1 >>>
 function megaplanSlashCommand(prompt: unknown): string | undefined {
   if (typeof prompt !== "string") return undefined;
@@ -1091,6 +1103,7 @@ export function rowContainsPromptAfter(
 async function waitForPrompt(tmuxSession: string) {
   const startedAt = Date.now();
   const dbg = Bun.env.SHANNON_DEBUG_READINESS_LOG;
+  let bypassPermissionsPromptAcceptAttempts = 0;
 
   while (Date.now() - startedAt < START_TIMEOUT_MS) {
     const pane = await runCommand(["tmux", "capture-pane", "-pt", tmuxSession, "-S", "-40"]);
@@ -1100,6 +1113,15 @@ async function waitForPrompt(tmuxSession: string) {
     }
     const blocker = classifyClaudeStartupBlocker(pane.stdout);
     if (blocker) {
+      if (blocker.kind === "permission" && bypassPermissionsPromptAcceptAttempts < 5) {
+        if (bypassPermissionsPromptAcceptAttempts === 0) {
+          await acceptBypassPermissionsPrompt(tmuxSession);
+        } else {
+          await confirmBypassPermissionsPrompt(tmuxSession);
+        }
+        bypassPermissionsPromptAcceptAttempts += 1;
+        continue;
+      }
       throw new Error(
         `Claude is waiting at a ${blocker.kind} prompt before Shannon can send a message: ${blocker.detail}\n\nCaptured tmux pane:\n${pane.stdout}`,
       );
@@ -1113,7 +1135,7 @@ async function waitForPrompt(tmuxSession: string) {
 }
 
 type StartupBlocker = {
-  kind: "approval" | "auth" | "trust" | "onboarding";
+  kind: "approval" | "auth" | "trust" | "onboarding" | "permission";
   detail: string;
 };
 

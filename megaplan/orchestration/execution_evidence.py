@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -18,10 +19,11 @@ def validate_execution_evidence(
     *,
     mode: str = "code",
     state: PlanState | None = None,
+    base_ref: str | None = None,
 ) -> dict[str, Any]:
     if is_prose_mode(state or {"config": {"mode": mode}}):
         return _validate_execution_evidence_doc(finalize_data, project_dir)
-    return _validate_execution_evidence_code(finalize_data, project_dir)
+    return _validate_execution_evidence_code(finalize_data, project_dir, base_ref=base_ref)
 
 
 def _validate_execution_evidence_doc(finalize_data: dict[str, Any], project_dir: Path) -> dict[str, Any]:
@@ -98,7 +100,44 @@ def _validate_execution_evidence_doc(finalize_data: dict[str, Any], project_dir:
     }
 
 
-def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir: Path) -> dict[str, Any]:
+def _git_rev_parse_head(project_dir: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(project_dir),
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        if proc.returncode == 0:
+            return proc.stdout.strip() or None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _resolve_ref_sha(project_dir: Path, ref: str) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", ref],
+            cwd=str(project_dir),
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        if proc.returncode == 0:
+            return proc.stdout.strip() or None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _validate_execution_evidence_code(
+    finalize_data: dict[str, Any],
+    project_dir: Path,
+    *,
+    base_ref: str | None = None,
+) -> dict[str, Any]:
     findings: list[str] = []
     files_claimed = sorted(
         {
@@ -116,7 +155,20 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
             "files_claimed": files_claimed,
             "skipped": True,
             "reason": "Project directory is not a git repository.",
+            "evidence_window": {
+                "base_sha": None,
+                "head_sha": None,
+                "source": "declared" if base_ref is not None else "heuristic_merge_base",
+            },
         }
+
+    head_sha = _git_rev_parse_head(project_dir)
+    base_sha = _resolve_ref_sha(project_dir, base_ref) if base_ref is not None else None
+    evidence_window: dict[str, Any] = {
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "source": "declared" if base_ref is not None else "heuristic_merge_base",
+    }
 
     files_in_diff_set, status_error = _collect_git_status_paths_with_nested_repos(
         project_dir,
@@ -126,6 +178,7 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
         # file as a phantom claim ("implementation not present in the diff").
         # Include the committed milestone range so committed work counts.
         include_committed=True,
+        base_ref=base_ref,
     )
     if status_error is not None:
         return {
@@ -134,6 +187,7 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
             "files_claimed": files_claimed,
             "skipped": True,
             "reason": status_error,
+            "evidence_window": evidence_window,
         }
 
     files_in_diff = sorted(files_in_diff_set)
@@ -237,4 +291,5 @@ def _validate_execution_evidence_code(finalize_data: dict[str, Any], project_dir
         "files_claimed": files_claimed,
         "skipped": False,
         "reason": "",
+        "evidence_window": evidence_window,
     }

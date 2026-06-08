@@ -353,7 +353,7 @@ class CompletionContext:
     project_dir: Path
     state: dict[str, Any]
     subject: CompletionSubject
-    git_base_ref: str | None = None  # TODO(enforce): per-milestone base SHA
+    git_base_ref: str | None = None
 
 
 @runtime_checkable
@@ -435,9 +435,7 @@ class LandedDiffProvider:
 
     Reuses ``validate_execution_evidence`` wholesale. Its hollow-done +
     phantom-claim checks already catch the "abandoned after planning, zero
-    diff" case. NOTE (per B-impl-reuse): it reads the **working tree**
-    (`git status`), NOT base..HEAD. Acceptable for shadow; see SHADOW_TODOS
-    for the per-milestone base-ref follow-up.
+    diff" case.
     """
 
     kind = "landed_diff"
@@ -459,7 +457,7 @@ class LandedDiffProvider:
 
         try:
             result = validate_execution_evidence(
-                finalize, ctx.project_dir, state=ctx.state
+                finalize, ctx.project_dir, state=ctx.state, base_ref=ctx.git_base_ref
             )
         except Exception as exc:
             return EvidenceRef(
@@ -477,7 +475,6 @@ class LandedDiffProvider:
             "files_claimed": result.get("files_claimed") or [],
             "skipped": bool(result.get("skipped")),
             "skip_reason": result.get("reason") or "",
-            # TODO(enforce): replace working-tree status with base..HEAD diff.
             "diff_source": "working_tree_git_status",
         }
 
@@ -1345,6 +1342,7 @@ def compute_verdict(
     subject: CompletionSubject,
     mode: str = DEFAULT_CONTRACT_MODE,
     providers: tuple[EvidenceProvider, ...] = DEFAULT_PROVIDERS,
+    git_base_ref: str | None = None,
 ) -> CompletionVerdict:
     """Compute a :class:`CompletionVerdict` from objective evidence.
 
@@ -1363,6 +1361,7 @@ def compute_verdict(
         project_dir=project_dir,
         state=state,
         subject=subject,
+        git_base_ref=git_base_ref,
     )
     for provider in providers:
         try:

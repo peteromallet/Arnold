@@ -221,6 +221,35 @@ class TestFlockCriticalSection:
         assert sorted(seqs) == list(range(len(seqs)))
 
 
+def test_repeated_divergence_halt_constant_exists_and_round_trips(
+    tmp_path: Path,
+) -> None:
+    """REPEATED_DIVERGENCE_HALT is present in EventKind and serializes through emit."""
+    assert EventKind.REPEATED_DIVERGENCE_HALT == "repeated_divergence_halt"
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    writer = EventWriter(plan_dir)
+    payload = {
+        "base_sha": "abc123",
+        "head_sha": "def456",
+        "changed_files": ["src/a.py"],
+        "divergences": ["unexpected file src/b.py"],
+        "milestone_label": "m1",
+        "prior_fingerprint_seen_at": "2026-06-01T12:00:00Z",
+    }
+    event = writer.emit(EventKind.REPEATED_DIVERGENCE_HALT, payload=payload)
+
+    assert event["kind"] == "repeated_divergence_halt"
+    assert event["payload"]["milestone_label"] == "m1"
+
+    # Verify it round-trips through the ndjson file.
+    events = list(read_events(plan_dir, kinds=[EventKind.REPEATED_DIVERGENCE_HALT]))
+    assert len(events) == 1
+    assert events[0]["kind"] == "repeated_divergence_halt"
+    assert events[0]["payload"] == payload
+
+
 def test_atomic_write_text_logs_warning_when_artifact_emit_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1497,6 +1497,9 @@ def _shadow_completion_verdict(
         else:
             project_dir = cwd or Path.cwd()
 
+        # Read milestone_base_sha from plan state chain_policy.
+        # auto.py is single-plan — no ChainState fallback.
+        milestone_base_sha: str | None = state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha")
         subject = CompletionSubject(
             kind="plan",
             name=plan,
@@ -1509,6 +1512,7 @@ def _shadow_completion_verdict(
             state=state,
             subject=subject,
             mode=mode,
+            git_base_ref=milestone_base_sha,
         )
         try:
             write_completion_verdict(plan_dir, verdict)

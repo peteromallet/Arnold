@@ -877,3 +877,156 @@ class TestBuildIntrospectPayload:
         assert EventKind.INIT in payload["event_stats"]["kinds_seen"]
         assert EventKind.PHASE_START in payload["event_stats"]["kinds_seen"]
         assert EventKind.PHASE_END in payload["event_stats"]["kinds_seen"]
+
+
+class TestEvidenceBlock:
+    """Tests for the evidence block in build_introspect_payload."""
+
+    @patch("megaplan.observability.introspect._git_info")
+    @patch("megaplan.observability.introspect._editable_install_location")
+    @patch("megaplan.observability.introspect._get_profiles_list")
+    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("megaplan.observability.introspect._process_tree")
+    def test_evidence_block_present_with_all_keys(
+        self,
+        mock_proc: MagicMock,
+        mock_parse: MagicMock,
+        mock_profiles: MagicMock,
+        mock_editable: MagicMock,
+        mock_git: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Evidence block contains window, changed_file_count, divergence_count,
+        repeated_divergence_fingerprint, and carry_forward_declared."""
+        mock_git.return_value = {"branch": "main", "dirty": False, "head": "abc123"}
+        mock_editable.return_value = "/fake/path"
+        mock_profiles.return_value = ["solo"]
+        mock_parse.return_value = ["solo"]
+        mock_proc.return_value = []
+
+        now_ts = _now_epoch()
+        plan_dir = _make_plan_dir(tmp_path)
+
+        events = [
+            _event(EventKind.INIT, now_ts - 10, seq=0),
+        ]
+        _write_events(plan_dir, events)
+
+        state = {
+            "current_state": "planning",
+            "meta": {
+                "chain_policy": {
+                    "milestone_base_sha": "base000",
+                    "repeated_divergence_fingerprint": "fp123",
+                }
+            },
+        }
+        _write_state(plan_dir, state)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="file1.py\nfile2.py\n", stderr="")
+            payload = build_introspect_payload(plan_dir)
+
+        assert "evidence" in payload, "evidence block missing from payload"
+        ev = payload["evidence"]
+        assert "window" in ev
+        assert ev["window"]["base_sha"] == "base000"
+        assert ev["window"]["head_sha"] == "abc123"
+        assert ev["window"]["source"] == "declared"
+        assert ev["changed_file_count"] == 2
+        assert ev["divergence_count"] is None  # fingerprint is a string, not dict
+        assert ev["repeated_divergence_fingerprint"] == "fp123"
+        assert ev["carry_forward_declared"] is False
+
+    @patch("megaplan.observability.introspect._git_info")
+    @patch("megaplan.observability.introspect._editable_install_location")
+    @patch("megaplan.observability.introspect._get_profiles_list")
+    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("megaplan.observability.introspect._process_tree")
+    def test_evidence_window_heuristic_when_base_absent(
+        self,
+        mock_proc: MagicMock,
+        mock_parse: MagicMock,
+        mock_profiles: MagicMock,
+        mock_editable: MagicMock,
+        mock_git: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """When milestone_base_sha is absent, source is heuristic_merge_base
+        and changed_file_count stays None."""
+        mock_git.return_value = {"branch": "main", "dirty": False, "head": "abc123"}
+        mock_editable.return_value = "/fake/path"
+        mock_profiles.return_value = ["solo"]
+        mock_parse.return_value = ["solo"]
+        mock_proc.return_value = []
+
+        now_ts = _now_epoch()
+        plan_dir = _make_plan_dir(tmp_path)
+
+        events = [
+            _event(EventKind.INIT, now_ts - 10, seq=0),
+        ]
+        _write_events(plan_dir, events)
+
+        # No chain_policy at all
+        _write_state(plan_dir, {"current_state": "planning"})
+
+        payload = build_introspect_payload(plan_dir)
+
+        ev = payload["evidence"]
+        assert ev["window"]["base_sha"] is None
+        assert ev["window"]["head_sha"] == "abc123"
+        assert ev["window"]["source"] == "heuristic_merge_base"
+        assert ev["changed_file_count"] is None
+        assert ev["repeated_divergence_fingerprint"] is None
+        assert ev["carry_forward_declared"] is False
+
+    @patch("megaplan.observability.introspect._git_info")
+    @patch("megaplan.observability.introspect._editable_install_location")
+    @patch("megaplan.observability.introspect._get_profiles_list")
+    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("megaplan.observability.introspect._process_tree")
+    def test_evidence_carry_forward_declared_when_manifest_present(
+        self,
+        mock_proc: MagicMock,
+        mock_parse: MagicMock,
+        mock_profiles: MagicMock,
+        mock_editable: MagicMock,
+        mock_git: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """carry_forward_declared is True when carry_forward_manifest has a milestone_label."""
+        mock_git.return_value = {"branch": "main", "dirty": False, "head": "abc123"}
+        mock_editable.return_value = "/fake/path"
+        mock_profiles.return_value = ["solo"]
+        mock_parse.return_value = ["solo"]
+        mock_proc.return_value = []
+
+        now_ts = _now_epoch()
+        plan_dir = _make_plan_dir(tmp_path)
+
+        events = [
+            _event(EventKind.INIT, now_ts - 10, seq=0),
+        ]
+        _write_events(plan_dir, events)
+
+        state = {
+            "current_state": "executing",
+            "meta": {
+                "chain_policy": {
+                    "carry_forward_manifest": {
+                        "milestone_label": "M1",
+                        "base_sha": "base111",
+                        "head_sha_at_start": "head222",
+                        "inherited_file_count": 3,
+                    }
+                }
+            },
+        }
+        _write_state(plan_dir, state)
+
+        payload = build_introspect_payload(plan_dir)
+
+        ev = payload["evidence"]
+        assert ev["carry_forward_declared"] is True
+        assert ev["window"]["source"] == "heuristic_merge_base"

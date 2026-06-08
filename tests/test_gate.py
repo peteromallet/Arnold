@@ -1755,6 +1755,45 @@ def _persist_state(plan_fixture: PlanFixture, state: dict) -> None:
     )
 
 
+def test_build_gate_signals_repeated_divergence_fingerprint_present(
+    plan_fixture: PlanFixture,
+) -> None:
+    """When plan meta carries repeated_divergence_fingerprint, it appears in signals."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state.setdefault("meta", {})["chain_policy"] = {
+        "repeated_divergence_fingerprint": "abc123def456",
+    }
+    _persist_state(plan_fixture, state)
+
+    _, reloaded = load_plan(plan_fixture.root, plan_fixture.plan_name)
+    signals = megaplan.orchestration.evaluation.build_gate_signals(
+        plan_fixture.plan_dir, reloaded, plan_fixture.root
+    )
+
+    assert signals["signals"]["repeated_divergence_fingerprint"] == "abc123def456"
+
+
+def test_build_gate_signals_repeated_divergence_fingerprint_absent(
+    plan_fixture: PlanFixture,
+) -> None:
+    """When plan meta has no chain_policy, repeated_divergence_fingerprint is None."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    # Ensure no chain_policy in meta
+    state.setdefault("meta", {}).pop("chain_policy", None)
+    _persist_state(plan_fixture, state)
+
+    _, reloaded = load_plan(plan_fixture.root, plan_fixture.plan_name)
+    signals = megaplan.orchestration.evaluation.build_gate_signals(
+        plan_fixture.plan_dir, reloaded, plan_fixture.root
+    )
+
+    assert signals["signals"]["repeated_divergence_fingerprint"] is None
+
+
 def test_cap_with_significant_flag_halts_via_status_path(
     plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:

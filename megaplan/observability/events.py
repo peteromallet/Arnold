@@ -73,10 +73,14 @@ class EventKind:
     # ── Cost (1) ───────────────────────────────────────────────────────
     COST_RECORDED: str = "cost_recorded"
 
-    # ── Diagnostics (2) ────────────────────────────────────────────────
+    # ── Diagnostics (3) ────────────────────────────────────────────────
     HEALTH_CHECK_FAILED: str = "health_check_failed"
     DRIFT_DETECTED: str = "drift_detected"
     ROUTING_DEGRADATION: str = "routing_degradation"
+    # Payload: {base_sha, head_sha, changed_files: list[str],
+    #           divergences: list[str], milestone_label,
+    #           prior_fingerprint_seen_at: str}
+    REPEATED_DIVERGENCE_HALT: str = "repeated_divergence_halt"
 
 
 # Convenience set for fast membership checks.
@@ -110,6 +114,7 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,
         EventKind.ROUTING_DEGRADATION,
+        EventKind.REPEATED_DIVERGENCE_HALT,
     }
 )
 

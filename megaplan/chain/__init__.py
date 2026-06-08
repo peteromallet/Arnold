@@ -660,6 +660,29 @@ class ChainState:
     # Enforce-block retry counts keyed by milestone label; tracks how many
     # times enforce mode has blocked a milestone and routed it back for retry.
     enforce_revise_counts: dict[str, int] = field(default_factory=dict)
+    # Divergence fingerprints and carry-forward manifests, keyed by
+    # milestone_label.  Used by the repeated-divergence halt guard to detect
+    # when a milestone produces the same changed-file signature across retries.
+    #
+    # divergence_fingerprints entry schema:
+    #   {
+    #     "fingerprint": str,           # sorted SHA of changed-file list
+    #     "first_seen_at": str,         # ISO-8601 timestamp
+    #     "consecutive_count": int,     # runs in a row with this fingerprint
+    #   }
+    #
+    # carry_forward_manifests entry schema:
+    #   {
+    #     "base_sha": str | None,       # git SHA of milestone base commit
+    #     "head_sha": str,              # git SHA of HEAD at review time
+    #     "changed_files": list[str],   # files in the milestone diff
+    #     "divergences": list[str],     # human-readable divergence notes
+    #     "source": str,                # "declared" | "heuristic_merge_base"
+    #     "captured_at": str,           # ISO-8601 timestamp
+    #     "milestone_label": str,       # label of the originating milestone
+    #   }
+    divergence_fingerprints: dict[str, Any] = field(default_factory=dict)
+    carry_forward_manifests: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -687,6 +710,8 @@ class ChainState:
             "robustness_bumps": dict(self.robustness_bumps),
             "depth_bumps": dict(self.depth_bumps),
             "enforce_revise_counts": dict(self.enforce_revise_counts),
+            "divergence_fingerprints": dict(self.divergence_fingerprints),
+            "carry_forward_manifests": dict(self.carry_forward_manifests),
         }
 
     @classmethod
@@ -774,6 +799,8 @@ class ChainState:
             robustness_bumps=_str_str_map(raw.get("robustness_bumps")),
             depth_bumps=_str_str_map(raw.get("depth_bumps")),
             enforce_revise_counts=_str_int_map(raw.get("enforce_revise_counts")),
+            divergence_fingerprints=_str_any_map(raw.get("divergence_fingerprints")),
+            carry_forward_manifests=_str_any_map(raw.get("carry_forward_manifests")),
         )
 
 
@@ -1553,6 +1580,41 @@ def effective_chain_policy(
     }
 
 
+def _merge_chain_policy_keys(plan_dir: Path, updates: dict[str, Any]) -> None:
+    """Merge keys into plan state ``meta.chain_policy``.
+
+    Reads ``plan_dir/state.json``, navigates to ``meta.chain_policy``
+    (creating intermediate dicts if missing), then merges *updates* via
+    top-level key overwrite — callers supply full sub-key values; there is
+    no deep merge. Silently returns when ``state.json`` is absent or
+    unreadable. Best-effort mirror, never crashes.
+    """
+    from megaplan._core import read_json
+    from megaplan._core.state import write_plan_state
+
+    state_path = plan_dir / "state.json"
+    if not state_path.exists():
+        return
+    try:
+        state = read_json(state_path)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return
+    if not isinstance(state, dict):
+        return
+
+    def _apply(current: dict[str, Any]) -> bool:
+        meta = current.setdefault("meta", {})
+        if not isinstance(meta, dict):
+            current["meta"] = meta = {}
+        chain_policy = meta.setdefault("chain_policy", {})
+        if not isinstance(chain_policy, dict):
+            meta["chain_policy"] = chain_policy = {}
+        chain_policy.update(updates)
+        return True
+
+    write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_apply)
+
+
 def _write_chain_policy_into_plan_meta(
     root: Path,
     plan_name: str,
@@ -1962,6 +2024,7 @@ def _shadow_milestone_completion_verdict(
     contract_mode: str,
     *,
     log_fn: Callable[[str], None],
+    current_milestone_base_sha: str | None = None,
 ) -> bool:
     """Compute + persist + log a milestone-level completion verdict.
 
@@ -2016,6 +2079,12 @@ def _shadow_milestone_completion_verdict(
         else:
             project_dir = root
 
+        # Resolve milestone_base_sha: prefer plan state chain_policy,
+        # fall back to the caller-supplied kwarg (ChainState).
+        milestone_base_sha: str | None = (
+            state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha")
+            or current_milestone_base_sha
+        )
         subject = CompletionSubject(
             kind="milestone",
             name=milestone_label,
@@ -2029,6 +2098,7 @@ def _shadow_milestone_completion_verdict(
             state=state,
             subject=subject,
             mode=mode,
+            git_base_ref=milestone_base_sha,
         )
         try:
             write_completion_verdict(plan_dir, verdict)
@@ -3139,6 +3209,7 @@ def run_chain(
             outcome.status,
             state.completion_contract_mode,
             log_fn=log,
+            current_milestone_base_sha=state.current_milestone_base_sha,
         )
         if enforce_blocked:
             # Read retry cap from the plan's state.json config (default 2).
