@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan._core import atomic_write_json, atomic_write_text, read_json
-from megaplan.execute.core import _build_aggregate_execution_payload
+from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text, read_json
+from arnold.pipelines.megaplan.execute.core import _build_aggregate_execution_payload
 
 
 def _state(project_dir: Path, *, iteration: int) -> dict:

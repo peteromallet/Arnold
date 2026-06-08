@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import megaplan
-from megaplan._core import workflow_next
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import workflow_next
 
 
 def _state(mode: str, robustness: str, current_state: str, *, form: str | None = None) -> dict:

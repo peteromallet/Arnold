@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     Pipeline,
     Stage,
@@ -21,8 +21,8 @@ from megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan._pipeline.runtime import (
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+from arnold.pipelines.megaplan._pipeline.runtime import (
     BlockedRetry,
     ContextRetry,
     CostTracker,
@@ -32,6 +32,7 @@ from megaplan._pipeline.runtime import (
     pipeline_runtime_enabled,
     policy_from_cli_args,
 )
+from arnold.pipelines.megaplan import auto as auto_module 
 
 
 def test_stall_detector_increments_on_repeat_state() -> None:
@@ -118,6 +119,36 @@ def test_pipeline_runtime_enabled_default_off(monkeypatch: pytest.MonkeyPatch) -
 def test_pipeline_runtime_enabled_when_env_set(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEGAPLAN_PIPELINE_AUTO", "1")
     assert pipeline_runtime_enabled() is True
+
+
+def test_run_planning_phase_uses_canonical_megaplan_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.runtime.operations import OperationResult
+
+    calls: dict[str, object] = {}
+
+    def fake_dispatch(plugin_id: str, request: object) -> OperationResult:
+        calls["pipeline_name"] = plugin_id
+        calls["request"] = request
+        return OperationResult(
+            ok=True,
+            payload={"exit_code": 0, "stdout": "ok", "stderr": ""},
+        )
+
+    monkeypatch.setattr("arnold.pipelines.megaplan._pipeline.registry.dispatch_operation_for", fake_dispatch)
+
+    code, stdout, stderr = auto_module._run_planning_phase(
+        ["execute", "--plan", "demo"],
+        cwd=tmp_path,
+        liveness_plan_dir=tmp_path,
+    )
+
+    assert (code, stdout, stderr) == (0, "ok", "")
+    assert calls["pipeline_name"] == "megaplan"
+    assert calls["request"].kind.value == "run_phase"
+    assert calls["request"].payload["phase"] == "execute"
 
 
 # ----------------------------------------------------------------------------

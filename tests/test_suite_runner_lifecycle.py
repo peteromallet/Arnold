@@ -15,13 +15,13 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.orchestration.suite_runner import (
+from arnold.pipelines.megaplan.orchestration.suite_runner import (
     SuiteRunResult,
     _compute_code_hash,
     _parse_pytest_output,
     run_suite,
 )
-from megaplan.runtime.process import kill_group, spawn
+from arnold.pipelines.megaplan.runtime.process import kill_group, spawn
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +150,7 @@ def test_run_suite_runner_error_on_spawn_failure(
         raise OSError("spawn failed")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.suite_runner.spawn", _failing_spawn
+        "arnold.pipelines.megaplan.orchestration.suite_runner.spawn", _failing_spawn
     )
 
     config = {

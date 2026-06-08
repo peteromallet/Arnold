@@ -7,11 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.orchestration.phase_result import (
+from arnold.pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,
     ExternalError,
+    PHASE_RESULT_CONTRACT_VERSION,
+    PHASE_RESULT_SCHEMA,
+    PHASE_RESULT_SCHEMA_VERSION,
     PhaseResult,
     _emit_phase_result,
     atomic_write_phase_result,
@@ -19,8 +22,9 @@ from megaplan.orchestration.phase_result import (
     phase_result_guard,
     read_phase_result,
     validate_phase_result,
+    validate_phase_result_current,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +248,45 @@ class TestValidatePhaseResult:
         # Should not raise
         validate_phase_result(payload)
 
+    def test_legacy_read_validator_accepts_missing_schema_fields(self) -> None:
+        payload = {
+            "phase": "execute",
+            "invocation_id": "abc",
+            "exit_kind": "success",
+            "blocked_tasks": [],
+            "deviations": [],
+            "artifacts_written": [],
+            "cli_provenance": {},
+        }
+
+        validate_phase_result(payload)
+        result = PhaseResult.from_dict(payload)
+        assert result.schema_version == 0
+        assert result.phase_result_contract_version == 0
+
+    def test_current_write_validator_requires_schema_fields(self) -> None:
+        payload = {
+            "phase": "execute",
+            "invocation_id": "abc",
+            "exit_kind": "success",
+            "blocked_tasks": [],
+            "deviations": [],
+            "artifacts_written": [],
+            "cli_provenance": {},
+        }
+
+        with pytest.raises(CliError, match="missing required fields"):
+            validate_phase_result_current(payload)
+
+    def test_to_dict_stamps_current_schema_fields(self) -> None:
+        result = PhaseResult(phase="execute", invocation_id="abc", exit_kind="success")
+        payload = result.to_dict()
+
+        assert payload["schema"] == PHASE_RESULT_SCHEMA
+        assert payload["schema_version"] == PHASE_RESULT_SCHEMA_VERSION
+        assert payload["phase_result_contract_version"] == PHASE_RESULT_CONTRACT_VERSION
+        validate_phase_result_current(payload)
+
 
 # ---------------------------------------------------------------------------
 # (3) Atomic I/O
@@ -354,6 +397,27 @@ class TestPhaseResultGuard:
         restored = read_phase_result(plan_dir)
         assert restored is not None
         assert restored.exit_kind == ExitKind.internal_error.value
+        assert restored.invocation_id == "abc123"
+
+    def test_guard_classifies_worker_parse_error_as_malformed_model_output(self, tmp_path: Path) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        self._write_state_file(plan_dir, "abc123", step="revise")
+
+        with pytest.raises(CliError):
+            with phase_result_guard(plan_dir):
+                raise CliError(
+                    "parse_error",
+                    "Repair retry for revise did not return valid JSON at line 1 col 29",
+                    extra={
+                        "raw_output": '{"plan":"clarify\\s*\\("}',
+                        "model_output_parse_error": True,
+                    },
+                )
+
+        restored = read_phase_result(plan_dir)
+        assert restored is not None
+        assert restored.exit_kind == ExitKind.malformed_model_output.value
         assert restored.invocation_id == "abc123"
 
     def test_skip_emission_without_invocation_id(self, tmp_path: Path) -> None:

@@ -6,38 +6,41 @@ import json
 import subprocess
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from megaplan.types import CliError
-from megaplan.workers import CommandResult, _build_mock_payload, run_codex_step
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers import CommandResult, _build_mock_payload, run_codex_prep_step, set_work_dir_override
 from tests._workers_helpers import _mock_state, _write_codex_rollout
 
 
-def test_terminal_tool_result_truncation_exact_cap() -> None:
-    import sys
+@pytest.fixture(autouse=True)
+def _allow_engine_write_barrier_for_codex_worker_tests(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[object, str]] = []
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "megaplan" / "agent"))
-    from tools.terminal_tool import _truncate_tool_result
+    def fake_barrier(env: object, phase: str) -> object:
+        calls.append((env, phase))
+        return object()
 
-    assert _truncate_tool_result("a" * 49999) == "a" * 49999
-    truncated = _truncate_tool_result("a" * 50001)
-    assert len(truncated) == 50000
-    assert "[truncated " in truncated
-    assert " of 50001 chars]" in truncated
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.workers._impl.engine_write_barrier",
+        fake_barrier,
+    )
+    return calls
 
 
 def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     captured: dict[str, list[str]] = {}
@@ -56,7 +59,7 @@ def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
             duration_ms=10,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True, effort="low",
         )
@@ -66,16 +69,412 @@ def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
     assert invoked_cmd[idx - 1] == "-c"
 
 
-def test_run_codex_step_clamps_spec_layer_max_effort(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+def test_run_codex_execute_enters_engine_write_barrier(
+    tmp_path: Path,
+    _allow_engine_write_barrier_for_codex_worker_tests: list[tuple[object, str]],
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=1)
+
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+
+    assert [phase for _env, phase in _allow_engine_write_barrier_for_codex_worker_tests] == ["execute"]
+
+
+def test_run_codex_execute_refuses_engine_drift_after_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    engine_root = tmp_path / "engine"
+    engine_root.mkdir()
+    def fake_env(signature: str, *, dirty: bool) -> object:
+        return SimpleNamespace(
+            engine_root=engine_root,
+            engine_commit="abc123",
+            engine_signature=signature,
+            engine_dirty=dirty,
+            to_dict=lambda: {
+                "engine_root": str(engine_root),
+                "engine_commit": "abc123",
+                "engine_signature": signature,
+                "engine_dirty": dirty,
+            },
+        )
+
+    before_env = fake_env("sha256:before", dirty=False)
+    after_env = fake_env("sha256:after", dirty=True)
+    resolve_calls = 0
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+
+    def fake_resolve(*_args: object, **_kwargs: object) -> object:
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return after_env if resolve_calls >= 3 else before_env
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=1)
+
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers._impl.resolve_execution_environment", fake_resolve)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers._impl._trusted_container", lambda: True)
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        with pytest.raises(CliError) as excinfo:
+            run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+
+    assert excinfo.value.code == "engine_mutated_during_worker"
+    drift = excinfo.value.extra["drift"]["engine_signature"]
+    assert drift == {"pinned": "sha256:before", "observed": "sha256:after"}
+
+
+def test_codex_writable_roots_refuse_engine_overlap_and_keep_non_overlapping_sibling(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    sibling = tmp_path / "sibling"
+    sibling.mkdir()
+    engine = tmp_path.parent / f"{tmp_path.name}-engine"
+    engine.mkdir()
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=engine)
+
+    state["config"]["extra_writable_roots"] = [str(sibling)]
+    roots = _codex_writable_roots(project_dir, state, env)
+    assert roots[0] == str(project_dir)
+    assert str(sibling.resolve()) in roots
+
+    state["config"]["extra_writable_roots"] = [str(sibling), str(engine)]
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+    assert excinfo.value.code == "codex_writable_root_overlaps_engine"
+    assert excinfo.value.extra["writable_root"] == str(engine.resolve())
+    assert excinfo.value.extra["writable_root_source"] == "configured"
+    assert excinfo.value.extra["overlap"] == "equal"
+
+
+def test_codex_writable_roots_refuse_engine_child_and_engine_containing_ancestor(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    engine = tmp_path / "engine"
+    engine_child = engine / "child"
+    engine_child.mkdir(parents=True)
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=engine)
+
+    state["config"]["extra_writable_roots"] = [str(engine_child)]
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+    assert excinfo.value.extra["overlap"] == "right_contains_left"
+
+    state["config"]["extra_writable_roots"] = [str(tmp_path)]
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+    assert excinfo.value.extra["overlap"] == "left_contains_right"
+
+
+def test_codex_writable_root_refuses_target_engine_overlap(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=project_dir)
+
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+    assert excinfo.value.code == "codex_writable_root_overlaps_engine"
+    assert excinfo.value.extra["writable_root_source"] == "target_work_dir"
+
+
+def test_codex_writable_roots_allow_same_phase_consumed_engine_overlap_waiver(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import (
+        append_engine_overlap_waiver,
+        resolve_execution_environment,
+    )
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=project_dir)
+    state["meta"], waiver = append_engine_overlap_waiver(
+        state["meta"],
+        env,
+        reason="intentional dogfood overlap",
+        phase="execute",
+        timestamp="2026-06-07T00:00:00Z",
+        expires_after_runs=1,
+    )
+    state["meta"]["engine_overlap_waivers"][0]["remaining_runs"] = 0
+    state["meta"]["engine_overlap_waivers"][0]["consumed_at"] = "2026-06-07T00:01:00Z"
+    state["meta"]["engine_overlap_waivers"][0]["consumed_by_phase"] = "execute"
+
+    roots = _codex_writable_roots(project_dir, state, env, phase="execute")
+
+    assert roots[0] == str(project_dir)
+    assert state["meta"]["latest_engine_overlap_waiver_id"] == waiver["id"]
+
+
+def test_codex_writable_roots_fail_fast_when_auto_widening_would_include_engine(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    (tmp_path / ".git").mkdir()
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=engine)
+
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+
+    assert excinfo.value.code == "codex_writable_root_overlaps_engine"
+    assert excinfo.value.extra["writable_root"] == str(tmp_path.resolve())
+    assert excinfo.value.extra["writable_root_source"] == "auto"
+    assert excinfo.value.extra["overlap"] == "left_contains_right"
+
+
+def test_codex_execute_command_uses_filtered_writable_roots(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    state["config"]["extra_writable_roots"] = [str(allowed)]
+    captured: dict[str, list[str]] = {}
+    payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
+
+    def fake_env(*, root, state, engine_root=None):
+        from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+
+        return resolve_execution_environment(root=root, state=state, engine_root=engine)
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=project_dir, returncode=0, stdout="", stderr="", duration_ms=1)
+
+    with (
+        patch("arnold.pipelines.megaplan.workers._impl.resolve_execution_environment", side_effect=fake_env),
+        patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command),
+    ):
+        run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+
+    roots_arg = next(part for part in captured["command"] if part.startswith("sandbox_workspace_write.writable_roots="))
+    assert str(project_dir) in roots_arg
+    assert str(allowed.resolve()) in roots_arg
+    assert str(engine.resolve()) not in roots_arg
+
+
+def test_codex_execute_session_fingerprint_drift_starts_fresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
+    plan_dir, state = _mock_state(tmp_path)
+    state["sessions"]["codex_executor"] = {"id": "12345678-1234-1234-1234-123456789abc", "sandbox_fingerprint": "stale"}
+    payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
+    captured: dict[str, list[str]] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        stdout = '{"type":"thread.started","thread_id":"87654321-4321-4321-4321-cba987654321"}\n'
+        return CommandResult(command=command, cwd=Path(kwargs["cwd"]), returncode=0, stdout=stdout, stderr="", duration_ms=1)
+
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=True, fresh=False, json_trace=True)
+
+    assert captured["command"][:2] == ["codex", "exec"]
+    assert "resume" not in captured["command"]
+    assert state["sessions"]["codex_executor"]["id"] == "87654321-4321-4321-4321-cba987654321"
+    assert state["sessions"]["codex_executor"]["sandbox_fingerprint"] != "stale"
+
+
+def test_resolve_work_dir_fails_without_project_dir_unless_override(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.workers._impl import resolve_work_dir
+
+    set_work_dir_override(None)
+    try:
+        resolve_work_dir({"config": {}})
+    except CliError as exc:
+        assert exc.code == "missing_project_dir"
+    else:
+        raise AssertionError("missing project_dir should not fall back to cwd")
+
+    set_work_dir_override(tmp_path)
+    try:
+        assert resolve_work_dir({"config": {}}) == tmp_path.resolve()
+    finally:
+        set_work_dir_override(None)
+
+
+def test_resolve_work_dir_fails_for_stale_project_dir(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.workers._impl import resolve_work_dir
+
+    stale = tmp_path / "deleted"
+    set_work_dir_override(None)
+    with pytest.raises(CliError) as excinfo:
+        resolve_work_dir({"config": {"project_dir": str(stale)}})
+    assert excinfo.value.code == "stale_project_dir"
+
+
+def test_resolve_work_dir_explicit_override_precedes_missing_project_dir(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.workers._impl import resolve_work_dir
+
+    override = tmp_path / "override"
+    override.mkdir()
+    set_work_dir_override(override)
+    try:
+        assert resolve_work_dir({"config": {"project_dir": str(tmp_path / "missing")}}) == override.resolve()
+    finally:
+        set_work_dir_override(None)
+
+
+def test_run_codex_step_fresh_uses_enforced_render_and_capture_legacy_payload(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
+        "assumptions": [],
+    }
+    observed_tiers: list[str] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=10)
+
+    real_render = __import__(
+        "arnold.pipelines.megaplan.workers._impl",
+        fromlist=["render_prompt_for_dispatch"],
+    ).render_prompt_for_dispatch
+    real_capture = __import__(
+        "arnold.pipelines.megaplan.workers._impl",
+        fromlist=["capture_step_output"],
+    ).capture_step_output
+
+    def spy_render(*args, **kwargs):
+        observed_tiers.append(kwargs.get("tier").value)
+        return real_render(*args, **kwargs)
+
+    def spy_capture(invocation, output):
+        observed_tiers.append(invocation.metadata["tier"])
+        outcome = real_capture(invocation, output)
+        return outcome.__class__(
+            contract_result=outcome.contract_result,
+            legacy_payload={**dict(outcome.legacy_payload), "plan": "# Captured"},
+            telemetry=outcome.telemetry,
+        )
+
+    with (
+        patch("arnold.pipelines.megaplan.workers._impl.render_prompt_for_dispatch", side_effect=spy_render),
+        patch("arnold.pipelines.megaplan.workers._impl.capture_step_output", side_effect=spy_capture),
+        patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command),
+    ):
+        result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+
+    assert observed_tiers == ["enforced", "enforced"]
+    assert result.payload["plan"] == "# Captured"
+
+
+def test_run_codex_step_execute_resume_uses_non_enforced_render(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
+    state["sessions"]["codex_executor"] = {"id": "sess-keep"}
+    execute_payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
+    observed_tiers: list[str] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(execute_payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=10)
+
+    real_render = __import__(
+        "arnold.pipelines.megaplan.workers._impl",
+        fromlist=["render_prompt_for_dispatch"],
+    ).render_prompt_for_dispatch
+
+    def spy_render(*args, **kwargs):
+        observed_tiers.append(kwargs.get("tier").value)
+        return real_render(*args, **kwargs)
+
+    with (
+        patch("arnold.pipelines.megaplan.workers._impl.render_prompt_for_dispatch", side_effect=spy_render),
+        patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command),
+    ):
+        result = run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=True, fresh=False)
+
+    assert observed_tiers == ["non_enforced"]
+    assert result.payload == execute_payload
+
+
+def test_run_codex_step_clamps_spec_layer_max_effort(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     captured: dict[str, list[str]] = {}
@@ -94,7 +493,7 @@ def test_run_codex_step_clamps_spec_layer_max_effort(tmp_path: Path) -> None:
             duration_ms=10,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True, effort="max",
         )
@@ -103,48 +502,9 @@ def test_run_codex_step_clamps_spec_layer_max_effort(tmp_path: Path) -> None:
     assert "model_reasoning_effort=max" not in invoked_cmd
 
 
-def test_run_codex_step_sets_tool_output_truncation_limit(tmp_path: Path) -> None:
-    """T4: codex tool-result output truncation at 50000 (token limit, defense-in-depth)."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
-
-    ensure_runtime_layout(tmp_path)
-    plan_dir, state = _mock_state(tmp_path)
-    plan_payload = {
-        "plan": "# Plan\nDo it.",
-        "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
-        "assumptions": [],
-    }
-    captured: dict[str, list[str]] = {}
-
-    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
-        captured["command"] = command
-        output_idx = command.index("-o") + 1
-        output_path = Path(command[output_idx])
-        output_path.write_text(json.dumps(plan_payload), encoding="utf-8")
-        return CommandResult(
-            command=command,
-            cwd=tmp_path,
-            returncode=0,
-            stdout="",
-            stderr="",
-            duration_ms=10,
-        )
-
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
-        run_codex_step(
-            "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
-        )
-    invoked_cmd = captured["command"]
-    assert "tool_output_token_limit=50000" in invoked_cmd
-    idx = invoked_cmd.index("tool_output_token_limit=50000")
-    assert invoked_cmd[idx - 1] == "-c"
-
-
 def test_run_codex_step_rejects_invalid_effort(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -154,8 +514,8 @@ def test_run_codex_step_rejects_invalid_effort(tmp_path: Path) -> None:
         )
 
 def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -172,7 +532,7 @@ def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> 
 
     def fake_run_command(*args: object, **kwargs: object) -> CommandResult:
         output_path.write_text(
-            json.dumps({"plan": "# Plan", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must"}], "assumptions": []}),
+            json.dumps({"plan": "# Plan", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must", "requires": []}], "assumptions": []}),
             encoding="utf-8",
         )
         return CommandResult(
@@ -184,9 +544,9 @@ def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> 
             duration_ms=10,
         )
 
-    with patch("megaplan.workers._impl.create_codex_prompt", side_effect=AssertionError("builder should not run")):
-        with patch("megaplan.workers._impl.tempfile.NamedTemporaryFile", side_effect=fake_named_tempfile):
-            with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.create_codex_prompt", side_effect=AssertionError("builder should not run")):
+        with patch("arnold.pipelines.megaplan.workers._impl.tempfile.NamedTemporaryFile", side_effect=fake_named_tempfile):
+            with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
                 run_codex_step(
                     "plan",
                     state,
@@ -197,8 +557,8 @@ def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> 
                 )
 
 def test_run_step_with_worker_passes_prompt_override(tmp_path: Path) -> None:
-    from megaplan.types import AgentMode
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.types import AgentMode
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
@@ -211,7 +571,7 @@ def test_run_step_with_worker_passes_prompt_override(tmp_path: Path) -> None:
         resolved_model="gpt-5.5",
     )
     with patch(
-        "megaplan.workers._impl.run_codex_step",
+        "arnold.pipelines.megaplan.workers._impl.run_codex_step",
         return_value=type("Result", (), {"payload": payload, "raw_output": "", "duration_ms": 1, "cost_usd": 0.0, "session_id": "sess", "trace_output": None})(),
     ) as run_codex:
         run_step_with_worker(
@@ -236,10 +596,10 @@ def test_run_step_with_worker_codex_backstops_resolved_model_from_4tuple(tmp_pat
     hang at startup. The dispatcher now backstops resolved_model via
     ``resolved_default_model_for_agent`` so codex gets an explicit model.
     """
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
-    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": []}
+    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}], "assumptions": []}
     fake_result = type(
         "Result",
         (),
@@ -253,7 +613,7 @@ def test_run_step_with_worker_codex_backstops_resolved_model_from_4tuple(tmp_pat
         },
     )()
     with patch(
-        "megaplan.workers._impl.run_codex_step",
+        "arnold.pipelines.megaplan.workers._impl.run_codex_step",
         return_value=fake_result,
     ) as run_codex:
         run_step_with_worker(
@@ -273,11 +633,11 @@ def test_run_step_with_worker_codex_asserts_when_backstop_also_fails(tmp_path: P
     (e.g. configuration corruption), fail loudly rather than launch codex
     without a model.
     """
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     with patch(
-        "megaplan.workers._impl.resolved_default_model_for_agent",
+        "arnold.pipelines.megaplan.workers._impl.resolved_default_model_for_agent",
         return_value=None,
     ):
         with pytest.raises(AssertionError, match="resolved_model"):
@@ -301,9 +661,9 @@ def test_handlers_execute_resolves_codex_model_into_command(tmp_path: Path) -> N
     ``resolved_model`` were dropped on that boundary, so codex was invoked
     with no ``-c model='gpt-5.5'`` / ``-c model_reasoning_effort=medium``.
     """
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.types import AgentMode
-    from megaplan.workers import CommandResult, run_step_with_worker
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.types import AgentMode
+    from arnold.pipelines.megaplan.workers import CommandResult, run_step_with_worker
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -318,7 +678,7 @@ def test_handlers_execute_resolves_codex_model_into_command(tmp_path: Path) -> N
         effort="medium",
         resolved_model="gpt-5.5",
     )
-    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": []}
+    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}], "assumptions": []}
     fake_result = type(
         "Result",
         (),
@@ -332,7 +692,7 @@ def test_handlers_execute_resolves_codex_model_into_command(tmp_path: Path) -> N
         },
     )()
     with patch(
-        "megaplan.workers._impl.run_codex_step",
+        "arnold.pipelines.megaplan.workers._impl.run_codex_step",
         return_value=fake_result,
     ) as run_codex:
         run_step_with_worker(
@@ -352,15 +712,15 @@ def test_run_codex_step_emits_model_and_effort_flags(tmp_path: Path) -> None:
     ``-c model_reasoning_effort=<effort>``. The wedge in the diagnostic
     happened because both flags were missing.
     """
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     captured: dict[str, list[str]] = {}
@@ -378,7 +738,7 @@ def test_run_codex_step_emits_model_and_effort_flags(tmp_path: Path) -> None:
             duration_ms=1,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         run_codex_step(
             "plan",
             state,
@@ -396,15 +756,15 @@ def test_run_codex_step_emits_model_and_effort_flags(tmp_path: Path) -> None:
     assert "model_reasoning_effort=medium" in cmd, f"missing effort flag in {cmd}"
 
 def test_run_codex_step_parses_output_file(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -422,17 +782,24 @@ def test_run_codex_step_parses_output_file(tmp_path: Path) -> None:
             duration_ms=300,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
-            "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=False,
+            fresh=True,
+            model="gpt-5.4",
         )
     assert result.payload == plan_payload
     assert result.duration_ms == 300
     assert result.cost_usd == 0.0
+    assert result.model_actual == "gpt-5.4"
 
 def test_run_codex_step_reports_schema_validation_error_for_json_payload(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -455,18 +822,18 @@ def test_run_codex_step_reports_schema_validation_error_for_json_payload(tmp_pat
             duration_ms=300,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         with pytest.raises(CliError) as exc_info:
             run_codex_step(
                 "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
             )
 
-    assert "plan output missing required keys" in exc_info.value.message
+    assert "missing_required at /plan" in exc_info.value.message
     assert "not valid JSON" not in exc_info.value.message
 
 def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -475,7 +842,6 @@ def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Pa
             {
                 "id": "correctness",
                 "question": "Is the plan correct?",
-                "guidance": "",
                 "findings": [
                     {
                         "detail": "Checked the plan and found a concrete risk.",
@@ -505,8 +871,8 @@ def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Pa
             duration_ms=1,
         )
 
-    with patch("megaplan.workers._impl._trusted_container", return_value=False), \
-         patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl._trusted_container", return_value=False), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == critique_payload
@@ -515,8 +881,8 @@ def test_run_codex_step_trusted_container_bypasses_sandbox_for_critique(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -526,7 +892,6 @@ def test_run_codex_step_trusted_container_bypasses_sandbox_for_critique(
             {
                 "id": "correctness",
                 "question": "Is the plan correct?",
-                "guidance": "",
                 "findings": [
                     {
                         "detail": "Checked the plan and found no issue in the trusted-container command path.",
@@ -555,14 +920,14 @@ def test_run_codex_step_trusted_container_bypasses_sandbox_for_critique(
             duration_ms=1,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == critique_payload
 
 def test_run_codex_step_grants_plan_dir_when_project_dir_differs(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step, set_work_dir_override
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step, set_work_dir_override
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -573,7 +938,7 @@ def test_run_codex_step_grants_plan_dir_when_project_dir_differs(tmp_path: Path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -595,16 +960,63 @@ def test_run_codex_step_grants_plan_dir_when_project_dir_differs(tmp_path: Path)
         )
 
     try:
-        with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
             result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
     finally:
         set_work_dir_override(None)
 
     assert result.payload == plan_payload
 
+
+def test_run_codex_execute_runs_subprocess_in_work_dir(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_codex_step
+    from arnold.pipelines.megaplan.workers._impl import resolve_work_dir
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    target_dir = resolve_work_dir(state)
+    assert target_dir == Path(state["config"]["project_dir"])
+    assert target_dir != Path.cwd()
+    execute_payload = _build_mock_payload("execute", state, plan_dir, output="done")
+    captured: dict[str, object] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        captured["cwd"] = kwargs["cwd"]
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(execute_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=Path(kwargs["cwd"]),
+            returncode=0,
+            stdout=json.dumps({"type": "thread.started", "thread_id": "execute-session-1"}),
+            stderr="",
+            duration_ms=1,
+        )
+
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=True,
+            fresh=True,
+        )
+
+    command = captured["command"]
+    assert result.payload == execute_payload
+    assert captured["cwd"] == target_dir
+    cd_idx = command.index("-C") + 1
+    assert Path(command[cd_idx]) == target_dir
+    assert Path(command[cd_idx]) != Path.cwd()
+
+
 def test_run_codex_step_accepts_empty_light_critique_payload(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -628,22 +1040,23 @@ def test_run_codex_step_accepts_empty_light_critique_payload(tmp_path: Path) -> 
             duration_ms=1,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == critique_payload
 
 def test_run_codex_step_normalizes_revise_payload_missing_changes_summary(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     revise_payload = {
         "plan": "# Revised Plan\nDo it.",
+        "changes_summary": "No critique flags were raised; refined the plan for execution.",
         "flags_addressed": [],
         "assumptions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "questions": [],
     }
 
@@ -660,14 +1073,14 @@ def test_run_codex_step_normalizes_revise_payload_missing_changes_summary(tmp_pa
             duration_ms=1,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("revise", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload["changes_summary"] == "No critique flags were raised; refined the plan for execution."
 
 def test_run_codex_step_raises_on_nonzero_exit(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -682,15 +1095,15 @@ def test_run_codex_step_raises_on_nonzero_exit(tmp_path: Path) -> None:
             duration_ms=100,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         with pytest.raises(CliError, match="failed with exit code"):
             run_codex_step(
                 "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
             )
 
 def test_run_codex_step_extracts_session_id_from_timeout_output(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -700,14 +1113,14 @@ def test_run_codex_step_extracts_session_id_from_timeout_output(tmp_path: Path) 
         extra={"raw_output": '{"type":"thread.started","thread_id":"codex-timeout-session"}\n'},
     )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=timeout_error):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=True, fresh=True, json_trace=True)
 
     assert exc_info.value.extra["session_id"] == "codex-timeout-session"
 
 def test_run_command_decodes_timeout_byte_streams(tmp_path: Path) -> None:
-    from megaplan.workers import run_command
+    from arnold.pipelines.megaplan.workers import run_command
 
     timeout_error = subprocess.TimeoutExpired(
         cmd=["codex", "exec", "-"],
@@ -716,7 +1129,7 @@ def test_run_command_decodes_timeout_byte_streams(tmp_path: Path) -> None:
         stderr=b"\nextra stderr",
     )
 
-    with patch("megaplan.workers._impl.subprocess.run", side_effect=timeout_error):
+    with patch("arnold.pipelines.megaplan.workers._impl.subprocess.run", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_command(["codex", "exec", "-"], cwd=tmp_path, stdin_text="prompt", timeout=300)
 
@@ -727,8 +1140,8 @@ def test_run_command_decodes_timeout_byte_streams(tmp_path: Path) -> None:
     assert "extra stderr" in raw_output
 
 def test_run_codex_step_recovers_critique_payload_from_timeout_raw_output(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -737,7 +1150,6 @@ def test_run_codex_step_recovers_critique_payload_from_timeout_raw_output(tmp_pa
             {
                 "id": "correctness",
                 "question": "Is the plan correct?",
-                "guidance": "Check the real code.",
                 "findings": [
                     {
                         "detail": "Checked the repository path and found missing propagation for shot metadata.",
@@ -762,7 +1174,7 @@ def test_run_codex_step_recovers_critique_payload_from_timeout_raw_output(tmp_pa
         },
     )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=timeout_error):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=timeout_error):
         result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == critique_payload
@@ -770,8 +1182,8 @@ def test_run_codex_step_recovers_critique_payload_from_timeout_raw_output(tmp_pa
     assert result.cost_usd == 0.0
 
 def test_run_codex_step_recovers_gate_payload_from_mixed_raw_output(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -797,6 +1209,9 @@ def test_run_codex_step_recovers_gate_payload_from_mixed_raw_output(tmp_path: Pa
             }
         ],
         "accepted_tradeoffs": [],
+        "tiebreaker_question": "",
+        "tiebreaker_flag_ids": [],
+        "tiebreaker_fuzzy_group_id": "",
     }
     raw_output = (
         json.dumps(gate_payload)
@@ -814,7 +1229,7 @@ def test_run_codex_step_recovers_gate_payload_from_mixed_raw_output(tmp_path: Pa
             duration_ms=25,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "gate",
             state,
@@ -830,8 +1245,8 @@ def test_run_codex_step_recovers_gate_payload_from_mixed_raw_output(tmp_path: Pa
     assert result.duration_ms == 25
 
 def test_run_codex_step_recovers_execute_payload_from_jsonl_agent_message(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -854,6 +1269,7 @@ def test_run_codex_step_recovers_execute_payload_from_jsonl_agent_message(tmp_pa
                 "executor_notes": "Recovered from Codex JSONL agent message output.",
                 "files_changed": ["reigh-worker/source/task_handlers/queue/task_queue.py"],
                 "commands_run": ["pytest tests/test_workers.py -k jsonl_agent_message"],
+                "auto_attributed_files": False,
             }
         ],
         "sense_check_acknowledgments": [
@@ -891,7 +1307,8 @@ def test_run_codex_step_recovers_execute_payload_from_jsonl_agent_message(tmp_pa
             duration_ms=25,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -909,8 +1326,8 @@ def test_run_codex_step_recovers_execute_payload_from_jsonl_agent_message(tmp_pa
     assert result.duration_ms == 25
 
 def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -922,6 +1339,10 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
         "refreshed": False,
     }
     execute_payload = {
+        "output": "Recovered batch payload.",
+        "files_changed": ["reigh-worker/tests/test_preview_harness.py"],
+        "commands_run": ["pytest tests/test_preview_harness.py -v"],
+        "deviations": [],
         "task_updates": [
             {
                 "task_id": "T8",
@@ -929,6 +1350,7 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
                 "executor_notes": "Recovered batch payload from Codex JSONL agent message output.",
                 "files_changed": ["reigh-worker/tests/test_preview_harness.py"],
                 "commands_run": ["pytest tests/test_preview_harness.py -v"],
+                "auto_attributed_files": False,
             }
         ],
         "sense_check_acknowledgments": [
@@ -966,7 +1388,8 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
             duration_ms=25,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -984,8 +1407,8 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
     assert result.duration_ms == 25
 
 def test_run_codex_step_execute_resume_omits_add_dir_for_current_codex_cli(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1014,7 +1437,8 @@ def test_run_codex_step_execute_resume_omits_add_dir_for_current_codex_cli(tmp_p
             duration_ms=12,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -1029,8 +1453,56 @@ def test_run_codex_step_execute_resume_omits_add_dir_for_current_codex_cli(tmp_p
     assert result.session_id == "execute-session-2"
     assert result.duration_ms == 12
 
+
+def test_run_codex_step_execute_defaults_to_fresh_session(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    state["sessions"]["codex_executor"] = {
+        "id": "execute-session-2",
+        "created_at": "2026-01-01T00:00:00Z",
+        "last_used_at": "2026-01-01T00:00:00Z",
+        "mode": "persistent",
+        "refreshed": False,
+    }
+    execute_payload = _build_mock_payload("execute", state, plan_dir, output="done")
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        assert command[:3] == ["codex", "exec", "--skip-git-repo-check"]
+        assert "resume" not in command
+        assert "--add-dir" in command
+        output_idx = command.index("-o") + 1
+        output_path = Path(command[output_idx])
+        output_path.write_text(json.dumps(execute_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout='{"type":"thread.started","thread_id":"execute-session-fresh"}\n',
+            stderr="",
+            duration_ms=12,
+        )
+
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=True,
+            fresh=False,
+            prompt_override="execute prompt",
+        )
+
+    assert result.payload == execute_payload
+    assert result.session_id == "execute-session-fresh"
+    assert "codex_executor" not in state["sessions"]
+
+
 def test_diagnose_codex_failure_prefers_connection_errors_over_thread_id_numbers() -> None:
-    from megaplan.workers import _diagnose_codex_failure
+    from arnold.pipelines.megaplan.workers import _diagnose_codex_failure
 
     raw = (
         "thread 'reqwest-internal-sync-runtime' (42967821) panicked\n"
@@ -1046,7 +1518,7 @@ def test_diagnose_codex_failure_prefers_connection_errors_over_thread_id_numbers
     assert "connect" in message.lower() or "resolve" in message.lower()
 
 def test_diagnose_codex_failure_detects_real_http_429() -> None:
-    from megaplan.workers import _diagnose_codex_failure
+    from arnold.pipelines.megaplan.workers import _diagnose_codex_failure
 
     code, message = _diagnose_codex_failure("request failed with HTTP 429 rate limit exceeded", 1)
 
@@ -1054,7 +1526,7 @@ def test_diagnose_codex_failure_detects_real_http_429() -> None:
     assert "rate limit" in message.lower()
 
 def test_diagnose_codex_failure_detects_usage_limit() -> None:
-    from megaplan.workers import _diagnose_codex_failure
+    from arnold.pipelines.megaplan.workers import _diagnose_codex_failure
 
     raw = (
         "{\"type\":\"error\",\"message\":\"You've hit your usage limit. "
@@ -1068,8 +1540,8 @@ def test_diagnose_codex_failure_detects_usage_limit() -> None:
     assert "usage limit" in message.lower()
 
 def test_run_codex_step_classifies_nonzero_json_trace_usage_limit(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1092,7 +1564,7 @@ def test_run_codex_step_classifies_nonzero_json_trace_usage_limit(tmp_path: Path
             duration_ms=100,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         with pytest.raises(CliError) as exc_info:
             run_codex_step(
                 "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
@@ -1102,15 +1574,15 @@ def test_run_codex_step_classifies_nonzero_json_trace_usage_limit(tmp_path: Path
     assert "usage limit" in str(exc_info.value).lower()
 
 def test_run_codex_step_uses_step_timeout_for_plan(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1128,14 +1600,14 @@ def test_run_codex_step_uses_step_timeout_for_plan(tmp_path: Path) -> None:
             duration_ms=1,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == plan_payload
 
 def test_run_codex_step_reclassifies_timeout_connection_errors(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1145,7 +1617,7 @@ def test_run_codex_step_reclassifies_timeout_connection_errors(tmp_path: Path) -
         extra={"raw_output": "failed to connect to websocket: failed to lookup address information"},
     )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=timeout_error):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
@@ -1154,8 +1626,8 @@ def test_run_codex_step_reclassifies_timeout_connection_errors(tmp_path: Path) -
     assert "--agent claude" not in exc_info.value.message
 
 def test_run_codex_step_timeout_guidance_prefers_same_step_retry(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1165,7 +1637,7 @@ def test_run_codex_step_timeout_guidance_prefers_same_step_retry(tmp_path: Path)
         extra={"raw_output": ""},
     )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=timeout_error):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
@@ -1174,15 +1646,15 @@ def test_run_codex_step_timeout_guidance_prefers_same_step_retry(tmp_path: Path)
     assert "--agent claude" not in exc_info.value.message
 
 def test_run_step_with_worker_retries_non_execute_codex_timeout_once(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import WorkerResult, run_step_with_worker
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import WorkerResult, run_step_with_worker
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     timeout_error = CliError(
@@ -1198,7 +1670,7 @@ def test_run_step_with_worker_retries_non_execute_codex_timeout_once(tmp_path: P
         session_id="retry-session",
     )
 
-    with patch("megaplan.workers._impl.run_codex_step", side_effect=[timeout_error, worker]) as mocked:
+    with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", side_effect=[timeout_error, worker]) as mocked:
         result, agent, mode, refreshed = run_step_with_worker(
             "plan",
             state,
@@ -1218,8 +1690,8 @@ def test_run_step_with_worker_retries_non_execute_codex_timeout_once(tmp_path: P
     assert state["sessions"][expected_key]["id"] == "retry-session"
 
 def test_run_step_with_worker_does_not_retry_execute_codex_timeout(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1229,7 +1701,7 @@ def test_run_step_with_worker_does_not_retry_execute_codex_timeout(tmp_path: Pat
         extra={"raw_output": "", "session_id": "execute-session"},
     )
 
-    with patch("megaplan.workers._impl.run_codex_step", side_effect=timeout_error) as mocked:
+    with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", side_effect=timeout_error) as mocked:
         with pytest.raises(CliError) as exc_info:
             run_step_with_worker(
                 "execute",
@@ -1243,7 +1715,7 @@ def test_run_step_with_worker_does_not_retry_execute_codex_timeout(tmp_path: Pat
     assert exc_info.value.code == "worker_timeout"
 
 def test_run_step_with_worker_does_not_fallback_for_explicit_agent_runtime_error(tmp_path: Path) -> None:
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     args = Namespace(agent="codex", ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[])
@@ -1253,8 +1725,8 @@ def test_run_step_with_worker_does_not_fallback_for_explicit_agent_runtime_error
         extra={"raw_output": "failed to lookup address information"},
     )
 
-    with patch("megaplan.workers._impl.resolve_agent_mode", return_value=("codex", "persistent", False, None)):
-        with patch("megaplan.workers._impl.run_codex_step", side_effect=connection_error) as mocked_codex:
+    with patch("arnold.pipelines.megaplan.workers._impl.resolve_agent_mode", return_value=("codex", "persistent", False, None)):
+        with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", side_effect=connection_error) as mocked_codex:
             with pytest.raises(CliError) as exc_info:
                 run_step_with_worker(
                     "plan",
@@ -1269,15 +1741,15 @@ def test_run_step_with_worker_does_not_fallback_for_explicit_agent_runtime_error
     assert not hasattr(args, "_agent_fallback")
 
 def test_run_codex_step_sanitizes_codex_child_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     monkeypatch.setenv("CODEX_THREAD_ID", "outer-thread")
@@ -1302,25 +1774,25 @@ def test_run_codex_step_sanitizes_codex_child_env(tmp_path: Path, monkeypatch: p
             duration_ms=1,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == plan_payload
 
 def test_is_poisoned_environmental_failure_matches_bwrap_namespace_error() -> None:
-    from megaplan.workers import _is_poisoned_environmental_failure
+    from arnold.pipelines.megaplan.workers import _is_poisoned_environmental_failure
 
     raw = "something happened\nbwrap: Creating new namespace failed: Permission denied\nmore"
     assert _is_poisoned_environmental_failure(raw) is True
 
 def test_is_poisoned_environmental_failure_matches_permission_denied_sandbox() -> None:
-    from megaplan.workers import _is_poisoned_environmental_failure
+    from arnold.pipelines.megaplan.workers import _is_poisoned_environmental_failure
 
     raw = "error: Permission denied while trying to start the sandbox. cannot start sandbox."
     assert _is_poisoned_environmental_failure(raw) is True
 
 def test_is_poisoned_environmental_failure_matches_repo_cmd_unavailable_sandbox() -> None:
-    from megaplan.workers import _is_poisoned_environmental_failure
+    from arnold.pipelines.megaplan.workers import _is_poisoned_environmental_failure
 
     raw = (
         "Repository command execution is currently unavailable because the sandbox "
@@ -1329,7 +1801,7 @@ def test_is_poisoned_environmental_failure_matches_repo_cmd_unavailable_sandbox(
     assert _is_poisoned_environmental_failure(raw) is True
 
 def test_is_poisoned_environmental_failure_ignores_unrelated_errors() -> None:
-    from megaplan.workers import _is_poisoned_environmental_failure
+    from arnold.pipelines.megaplan.workers import _is_poisoned_environmental_failure
 
     assert _is_poisoned_environmental_failure("") is False
     assert _is_poisoned_environmental_failure("TypeError: foo is not callable") is False
@@ -1337,7 +1809,7 @@ def test_is_poisoned_environmental_failure_ignores_unrelated_errors() -> None:
     assert _is_poisoned_environmental_failure("Permission denied: /root/.cache") is False
 
 def test_is_session_too_large_for_compact_matches_real_codex_error() -> None:
-    from megaplan.workers import _is_session_too_large_for_compact
+    from arnold.pipelines.megaplan.workers import _is_session_too_large_for_compact
 
     raw = (
         '{"type":"error","message":"Error running remote compact task: '
@@ -1347,7 +1819,7 @@ def test_is_session_too_large_for_compact_matches_real_codex_error() -> None:
     assert _is_session_too_large_for_compact(raw) is True
 
 def test_is_session_too_large_for_compact_ignores_unrelated_errors() -> None:
-    from megaplan.workers import _is_session_too_large_for_compact
+    from arnold.pipelines.megaplan.workers import _is_session_too_large_for_compact
 
     assert _is_session_too_large_for_compact("") is False
     # 429 alone (without remote-compact context) is generic rate limiting.
@@ -1361,8 +1833,8 @@ def test_run_codex_step_resumed_session_retries_fresh_on_poisoned_output(
     """Resumed Codex session whose output contains a stale bwrap failure line
     should cause run_codex_step to drop the session id and recursively
     re-invoke itself with fresh=True."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1414,8 +1886,9 @@ def test_run_codex_step_resumed_session_retries_fresh_on_poisoned_output(
             duration_ms=5,
         )
 
-    with patch("megaplan.workers._impl.create_codex_prompt", return_value="prompt"):
-        with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch.dict("os.environ", {"MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION": "1"}), \
+         patch("arnold.pipelines.megaplan.workers._impl.create_codex_prompt", return_value="prompt"), \
+         patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
             result = run_codex_step(
                 "execute",
                 state,
@@ -1436,12 +1909,13 @@ def test_run_codex_step_skips_poison_retry_when_fresh_already(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With fresh=True the poisoned-session branch must not engage."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
 
     poisoned_raw = "bwrap: Creating new namespace failed: Permission denied\n"
 
@@ -1455,8 +1929,8 @@ def test_run_codex_step_skips_poison_retry_when_fresh_already(
             duration_ms=1,
         )
 
-    with patch("megaplan.workers._impl.create_codex_prompt", return_value="prompt"):
-        with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.create_codex_prompt", return_value="prompt"):
+        with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
             with pytest.raises(CliError):
                 run_codex_step(
                     "execute",
@@ -1468,7 +1942,7 @@ def test_run_codex_step_skips_poison_retry_when_fresh_already(
                 )
 
 def test_codex_pricing_table() -> None:
-    from megaplan.pricing.codex import (
+    from arnold.pipelines.megaplan.pricing.codex import (
         DEFAULT_MODEL,
         PRICING,
         cost_from_codex_usage_dict,
@@ -1516,8 +1990,8 @@ def test_codex_pricing_table() -> None:
 def test_codex_step_extracts_token_usage_from_session_jsonl(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1538,7 +2012,7 @@ def test_codex_step_extracts_token_usage_from_session_jsonl(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1554,7 +2028,7 @@ def test_codex_step_extracts_token_usage_from_session_jsonl(
             duration_ms=300,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=True,
         )
@@ -1573,8 +2047,8 @@ def test_codex_step_extracts_token_usage_from_session_jsonl(
 def test_codex_step_handles_missing_session_jsonl_gracefully(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1585,7 +2059,7 @@ def test_codex_step_handles_missing_session_jsonl_gracefully(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1601,7 +2075,7 @@ def test_codex_step_handles_missing_session_jsonl_gracefully(
             duration_ms=300,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=True,
         )
@@ -1615,8 +2089,8 @@ def test_codex_step_handles_missing_session_jsonl_gracefully(
 def test_codex_step_incremental_cost_within_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1638,7 +2112,7 @@ def test_codex_step_incremental_cost_within_session(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1654,7 +2128,7 @@ def test_codex_step_incremental_cost_within_session(
             duration_ms=200,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         first = run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=True,
         )
@@ -1679,7 +2153,7 @@ def test_codex_step_incremental_cost_within_session(
     # Pre-seed session id so the second call resumes (mirroring real flow).
     state["sessions"][session_key]["id"] = session_id
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         second = run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=False,
         )
@@ -1698,8 +2172,8 @@ def test_codex_step_incremental_cost_within_session(
 def test_codex_fresh_step_accounts_against_new_session_not_stored_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1735,7 +2209,7 @@ def test_codex_fresh_step_accounts_against_new_session_not_stored_session(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -1751,7 +2225,7 @@ def test_codex_fresh_step_accounts_against_new_session_not_stored_session(
             duration_ms=200,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "plan",
             state,
@@ -1770,8 +2244,8 @@ def test_codex_fresh_step_accounts_against_new_session_not_stored_session(
 def test_codex_execute_headroom_guard_forces_fresh_before_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1796,6 +2270,7 @@ def test_codex_execute_headroom_guard_forces_fresh_before_resume(
                 "executor_notes": "Done.",
                 "files_changed": ["src/example.py"],
                 "commands_run": ["pytest tests/test_workers.py"],
+                "auto_attributed_files": False,
             }
         ],
         "sense_check_acknowledgments": [],
@@ -1816,7 +2291,7 @@ def test_codex_execute_headroom_guard_forces_fresh_before_resume(
             duration_ms=25,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -1834,8 +2309,8 @@ def test_codex_execute_headroom_guard_forces_fresh_before_resume(
     assert "resume" not in commands[0]
     assert "old-execute-session" not in commands[0]
 
-def test_run_codex_step_read_only_uses_readonly_command_without_write_grants(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
+def test_run_codex_prep_step_uses_readonly_command_without_write_grants(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1848,16 +2323,14 @@ def test_run_codex_step_read_only_uses_readonly_command_without_write_grants(tmp
         Path(command[output_idx]).write_text(json.dumps(payload), encoding="utf-8")
         return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
-        result = run_codex_step(
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_prep_step(
             "prep-triage",
             state,
             plan_dir,
             root=tmp_path,
-            persistent=False,
             prompt_override="triage prompt",
             model="gpt-5.5",
-            read_only=True,
         )
 
     command = commands[0]
@@ -1868,164 +2341,14 @@ def test_run_codex_step_read_only_uses_readonly_command_without_write_grants(tmp
     assert "-C" not in command
     assert "--full-auto" not in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
-    assert not any("sandbox_workspace_write" in part for part in command)
     assert not any("writable_roots" in part for part in command)
-
-
-def test_run_codex_step_read_only_supports_critique(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-
-    ensure_runtime_layout(tmp_path)
-    plan_dir, state = _mock_state(tmp_path)
-    payload = {"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []}
-    commands: list[list[str]] = []
-
-    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
-        commands.append(command)
-        output_idx = command.index("-o") + 1
-        Path(command[output_idx]).write_text(json.dumps(payload), encoding="utf-8")
-        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
-
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
-        result = run_codex_step(
-            "critique",
-            state,
-            plan_dir,
-            root=tmp_path,
-            persistent=False,
-            prompt_override="critique prompt",
-            model="gpt-5.5",
-            read_only=True,
-        )
-
-    command = commands[0]
-    assert result.payload == payload
-    assert "--output-schema" in command
-    assert str(command[command.index("--output-schema") + 1]).endswith("critique.json")
-    assert "--ephemeral" in command
-    assert "sandbox_mode='read-only'" in command
-    assert "--add-dir" not in command
-    assert "-C" not in command
-    assert "--full-auto" not in command
-
-
-def test_run_codex_step_prefers_single_check_critique_output(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-
-    ensure_runtime_layout(tmp_path)
-    plan_dir, state = _mock_state(tmp_path)
-    single_check_payload = {
-        "checks": [
-            {
-                "id": "issue_hints",
-                "question": "Did it address the issue?",
-                "findings": [
-                    {
-                        "detail": "Checked the focused issue-hints lens and found no remaining problem.",
-                        "flagged": False,
-                    }
-                ],
-            }
-        ],
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
-    aggregate_payload = {
-        "checks": [
-            {
-                "id": "issue_hints",
-                "question": "Did it address the issue?",
-                "findings": [
-                    {
-                        "detail": "Checked the focused issue-hints lens and found no remaining problem.",
-                        "flagged": False,
-                    }
-                ],
-            },
-            {
-                "id": "correctness",
-                "question": "Is it correct?",
-                "findings": [
-                    {
-                        "detail": "Checked correctness and found a separate concern.",
-                        "flagged": True,
-                    }
-                ],
-            },
-        ],
-        "flags": [],
-        "verified_flag_ids": [],
-        "disputed_flag_ids": [],
-    }
-    (plan_dir / "critique_output.json").write_text(json.dumps(aggregate_payload), encoding="utf-8")
-
-    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
-        output_idx = command.index("-o") + 1
-        output_path = Path(command[output_idx])
-        assert output_path.name == "critique_check_issue_hints.json"
-        output_path.write_text(json.dumps(single_check_payload), encoding="utf-8")
-        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
-
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
-        result = run_codex_step(
-            "critique",
-            state,
-            plan_dir,
-            root=tmp_path,
-            persistent=False,
-            prompt_override="single check prompt",
-            output_path=plan_dir / "critique_check_issue_hints.json",
-            read_only=True,
-        )
-
-    assert [check["id"] for check in result.payload["checks"]] == ["issue_hints"]
-
-def test_run_step_with_worker_threads_read_only_to_codex(tmp_path: Path) -> None:
-    from megaplan.types import AgentMode
-    from megaplan.workers import run_step_with_worker
-
-    plan_dir, state = _mock_state(tmp_path)
-    payload = {"triage_framing": "No fanout needed.", "areas": []}
-    am = AgentMode(
-        agent="codex",
-        mode="ephemeral",
-        refreshed=True,
-        model="gpt-5.5",
-        effort="medium",
-        resolved_model="gpt-5.5",
-    )
-    fake_result = type(
-        "Result",
-        (),
-        {
-            "payload": payload,
-            "raw_output": "",
-            "duration_ms": 1,
-            "cost_usd": 0.0,
-            "session_id": "sess",
-            "trace_output": None,
-        },
-    )()
-    with patch("megaplan.workers._impl.run_codex_step", return_value=fake_result) as run_codex:
-        run_step_with_worker(
-            "prep-triage",
-            state,
-            plan_dir,
-            Namespace(agent="codex", ephemeral=True, fresh=True, persist=False, confirm_self_review=False, hermes=None, phase_model=[]),
-            root=tmp_path,
-            resolved=am,
-            read_only=True,
-        )
-
-    assert run_codex.call_args.kwargs["read_only"] is True
 
 def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan._core.state import apply_session_update
-    from megaplan.workers import CommandResult, run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan._core.state import apply_session_update
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -2048,7 +2371,7 @@ def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
 
@@ -2064,7 +2387,7 @@ def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run
             duration_ms=200,
         )
 
-    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "plan",
             state,
@@ -2092,7 +2415,7 @@ def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run
 
 def test_codex_model_flag_accepts_valid_models() -> None:
     """Recognised codex/GPT-5.x models build a clean -c model='...' flag."""
-    from megaplan.workers._impl import _codex_model_flag
+    from arnold.pipelines.megaplan.workers._impl import _codex_model_flag
 
     assert _codex_model_flag(None) == []
     assert _codex_model_flag("gpt-5.5") == ["-c", "model='gpt-5.5'"]
@@ -2104,7 +2427,7 @@ def test_codex_model_flag_accepts_valid_models() -> None:
 def test_codex_model_flag_rejects_non_codex_models(bad_model: str) -> None:
     """A non-codex model (e.g. from a malformed 'codex:claude:sonnet' spec) must
     never be passed verbatim to the codex CLI as -c model='...'."""
-    from megaplan.workers._impl import _codex_model_flag
+    from arnold.pipelines.megaplan.workers._impl import _codex_model_flag
 
     with pytest.raises(CliError) as exc:
         _codex_model_flag(bad_model)

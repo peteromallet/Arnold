@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan.cli
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan.cli as megaplan_cli
 
 from tests.conftest import make_args_factory, run_main_json
 
@@ -81,7 +82,7 @@ def test_global_setup_installs_codex_subagent_appendix(tmp_path: Path) -> None:
 
 
 def test_load_save_config_roundtrip(tmp_path: Path) -> None:
-    from megaplan._core import load_config, save_config
+    from arnold.pipelines.megaplan._core import load_config, save_config
     config = {"agents": {"plan": "codex"}, "custom": True}
     save_config(config, tmp_path)
     loaded = load_config(tmp_path)
@@ -89,7 +90,7 @@ def test_load_save_config_roundtrip(tmp_path: Path) -> None:
 
 
 def test_load_config_corrupt_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    from megaplan._core import config_dir, load_config
+    from arnold.pipelines.megaplan._core import config_dir, load_config
     config_path = config_dir(tmp_path) / "config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text("not valid json!!!", encoding="utf-8")
@@ -98,7 +99,7 @@ def test_load_config_corrupt_json(tmp_path: Path, capsys: pytest.CaptureFixture[
 
 
 def test_config_dir_xdg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from megaplan._core import config_dir
+    from arnold.pipelines.megaplan._core import config_dir
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     assert config_dir() == tmp_path / "xdg" / "megaplan"
 
@@ -151,9 +152,9 @@ def test_init_produces_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 def test_list_returns_empty(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
-    from megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
     ensure_runtime_layout(root)
-    response = megaplan.handle_list(root, Namespace(plan=None))
+    response = megaplan.handle_list(root, Namespace(plan=None, no_tree=True))
     assert response["plans"] == []
 
 
@@ -170,6 +171,7 @@ def test_debt_list_on_empty_registry_returns_success(
 ) -> None:
     root = tmp_path / "root"
     root.mkdir()
+    (root / ".megaplan").mkdir()
 
     exit_code, payload = run_main_json(["debt", "list"], cwd=root, capsys=capsys, monkeypatch=monkeypatch)
 
@@ -188,6 +190,7 @@ def test_debt_add_and_list_increment_matching_entry(
 ) -> None:
     root = tmp_path / "root"
     root.mkdir()
+    (root / ".megaplan").mkdir()
 
     exit_code, add_one = run_main_json(
         [
@@ -246,6 +249,7 @@ def test_debt_resolve_hides_entry_from_default_list_but_not_all(
 ) -> None:
     root = tmp_path / "root"
     root.mkdir()
+    (root / ".megaplan").mkdir()
 
     _exit_code, add_payload = run_main_json(
         [

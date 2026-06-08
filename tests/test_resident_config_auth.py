@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from megaplan.resident import (
+from arnold.pipelines.megaplan.resident import (
     AuthorizationSubject,
     ConfirmationManager,
     ResidentAuthorizer,
     ResidentConfig,
     StoreBackedConfirmationManager,
 )
-from megaplan.store import FileStore
+from arnold.pipelines.megaplan.store import FileStore
 
 
 def test_resident_config_loads_allowlists_and_runtime_settings_from_env() -> None:

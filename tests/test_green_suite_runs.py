@@ -17,7 +17,7 @@ from unittest import mock
 
 import pytest
 
-from megaplan.orchestration.completion_contract import (
+from arnold.pipelines.megaplan.orchestration.completion_contract import (
     CONTRACT_MODE_ENFORCE,
     CONTRACT_MODE_OFF,
     CONTRACT_MODE_SHADOW,
@@ -27,7 +27,7 @@ from megaplan.orchestration.completion_contract import (
     EvidenceStatus,
     GreenSuiteProvider,
 )
-from megaplan.orchestration.suite_runner import SuiteRunResult
+from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
 
 
 # ---------------------------------------------------------------------------
@@ -104,11 +104,11 @@ def test_verification_runs_in_all_modes(tmp_path: Path, mode: str) -> None:
     # The functions are imported locally inside collect(), so we mock the
     # source module (suite_runner), not completion_contract.
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         return_value=fake,
     ) as m_run:
         with mock.patch(
-            "megaplan.orchestration.suite_runner.append_suite_run",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
         ) as m_append:
             ref = provider.collect(ctx)
 
@@ -144,11 +144,11 @@ def test_verification_failure_surfaced_in_all_modes(tmp_path: Path, mode: str) -
     )
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         return_value=fake,
     ):
         with mock.patch(
-            "megaplan.orchestration.suite_runner.append_suite_run",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
         ):
             ref = provider.collect(ctx)
 
@@ -172,21 +172,21 @@ def test_freshness_skip_honored_when_hash_matches(tmp_path: Path) -> None:
     # Pre-populate a verification record in suite_runs.ndjson with the
     # same code_hash that _compute_code_hash will produce.
     with mock.patch(
-        "megaplan.orchestration.suite_runner._compute_code_hash",
+        "arnold.pipelines.megaplan.orchestration.suite_runner._compute_code_hash",
         return_value="match-me",
     ):
         # Seed the ndjson log with a matching verification record.
-        from megaplan.orchestration.suite_runner import append_suite_run as real_append
+        from arnold.pipelines.megaplan.orchestration.suite_runner import append_suite_run as real_append
 
         seed = _make_fake_result(code_hash="match-me", phase="verification")
         real_append(ctx.plan_dir, seed)
 
         with mock.patch(
-            "megaplan.orchestration.suite_runner.run_suite",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
             return_value=fake,
         ) as m_run:
             with mock.patch(
-                "megaplan.orchestration.suite_runner.append_suite_run",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
             ) as m_append:
                 ref = provider.collect(ctx)
 
@@ -209,21 +209,21 @@ def test_freshness_skip_not_honored_when_hash_mismatches(tmp_path: Path) -> None
     fake = _make_fake_result(code_hash="new-hash")
 
     # Seed with a DIFFERENT hash.
-    from megaplan.orchestration.suite_runner import append_suite_run as real_append
+    from arnold.pipelines.megaplan.orchestration.suite_runner import append_suite_run as real_append
 
     seed = _make_fake_result(code_hash="old-hash", phase="verification")
     real_append(ctx.plan_dir, seed)
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner._compute_code_hash",
+        "arnold.pipelines.megaplan.orchestration.suite_runner._compute_code_hash",
         return_value="new-hash",
     ):
         with mock.patch(
-            "megaplan.orchestration.suite_runner.run_suite",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
             return_value=fake,
         ) as m_run:
             with mock.patch(
-                "megaplan.orchestration.suite_runner.append_suite_run",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
             ) as m_append:
                 ref = provider.collect(ctx)
 
@@ -243,11 +243,11 @@ def test_freshness_skip_not_honored_when_no_prior_record(tmp_path: Path) -> None
     fake = _make_fake_result()
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner._compute_code_hash",
+        "arnold.pipelines.megaplan.orchestration.suite_runner._compute_code_hash",
         return_value="some-hash",
     ):
         with mock.patch(
-            "megaplan.orchestration.suite_runner.run_suite",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
             return_value=fake,
         ) as m_run:
             ref = provider.collect(ctx)
@@ -272,11 +272,11 @@ def test_suite_run_appended_to_ndjson(tmp_path: Path) -> None:
     ndjson_path = ctx.plan_dir / "verification" / "suite_runs.ndjson"
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner._compute_code_hash",
+        "arnold.pipelines.megaplan.orchestration.suite_runner._compute_code_hash",
         return_value="hash-1",
     ):
         with mock.patch(
-            "megaplan.orchestration.suite_runner.run_suite",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
             return_value=fake,
         ):
             # Use the REAL append_suite_run so the log is actually written.
@@ -304,11 +304,11 @@ def test_multiple_runs_all_appended(tmp_path: Path) -> None:
     for i in range(3):
         fake = _make_fake_result(run_id=f"run-{i}", code_hash=f"hash-{i}")
         with mock.patch(
-            "megaplan.orchestration.suite_runner._compute_code_hash",
+            "arnold.pipelines.megaplan.orchestration.suite_runner._compute_code_hash",
             return_value=f"hash-{i}",
         ):
             with mock.patch(
-                "megaplan.orchestration.suite_runner.run_suite",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
                 return_value=fake,
             ):
                 provider.collect(ctx)
@@ -331,11 +331,11 @@ def test_timeout_surfaced_as_unsatisfied(tmp_path: Path) -> None:
     fake = _make_fake_result(status="timeout", exit_code=None)
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         return_value=fake,
     ):
         with mock.patch(
-            "megaplan.orchestration.suite_runner.append_suite_run",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
         ):
             ref = provider.collect(ctx)
 
@@ -350,11 +350,11 @@ def test_runner_error_surfaced_as_unsatisfied(tmp_path: Path) -> None:
     fake = _make_fake_result(status="runner_error", exit_code=2)
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         return_value=fake,
     ):
         with mock.patch(
-            "megaplan.orchestration.suite_runner.append_suite_run",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
         ):
             ref = provider.collect(ctx)
 
@@ -370,11 +370,11 @@ def test_not_applicable_surfaced_as_not_applicable(tmp_path: Path) -> None:
     fake = _make_fake_result(status="not_applicable", exit_code=5)
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         return_value=fake,
     ):
         with mock.patch(
-            "megaplan.orchestration.suite_runner.append_suite_run",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
         ):
             ref = provider.collect(ctx)
 
@@ -400,7 +400,7 @@ def test_config_timeout_is_used(tmp_path: Path) -> None:
     fake = _make_fake_result()
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         return_value=fake,
     ) as m_run:
         provider.collect(ctx)
@@ -425,11 +425,11 @@ def test_baseline_backcompat_fields_present(tmp_path: Path) -> None:
     fake = _make_fake_result()
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite",
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
         return_value=fake,
     ):
         with mock.patch(
-            "megaplan.orchestration.suite_runner.append_suite_run",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
         ):
             ref = provider.collect(ctx)
 

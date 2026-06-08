@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.pricing.claude import (
+from arnold.pipelines.megaplan.pricing.claude import (
     CLAUDE_PRICING,
     DEFAULT_PROMPT_COMPLETION_RATIO,
     cost_from_usage,

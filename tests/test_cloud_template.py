@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.spec import (
     AutoSpec,
     ChainSubSpec,
     CloudSpec,
@@ -17,7 +17,7 @@ from megaplan.cloud.spec import (
     ResourcesSpec,
     ToolchainSpec,
 )
-from megaplan.cloud.template import (
+from arnold.pipelines.megaplan.cloud.template import (
     PLACEHOLDERS,
     materialize_deploy_dir,
     render_dockerfile,
@@ -99,27 +99,27 @@ def test_render_entrypoint_replaces_placeholders_and_reigh_hardcodes(mode: str) 
     routing_lines = [
         line.strip()
         for line in rendered.splitlines()
-        if "megaplan config set agents." in line
+        if "arnold config set agents." in line
     ]
     assert routing_lines
-    assert all(line.startswith("megaplan config set agents.") for line in routing_lines)
-    assert rendered.count("megaplan config set agents.review claude") == 1
-    assert "megaplan config set agents.review codex" not in rendered
+    assert all(line.startswith("arnold config set agents.") for line in routing_lines)
+    assert rendered.count("arnold config set agents.review claude") == 1
+    assert "arnold config set agents.review codex" not in rendered
     assert "phase_agent." not in rendered
 
     if mode == "auto":
         assert 'if [ ! -f "$IDEA_FILE" ]; then' in rendered
-        assert "megaplan auto --plan auto-plan" in rendered
-        assert "megaplan init --project-dir /workspace/custom-app --name auto-plan" in rendered
-        assert "mp-chain /workspace/chain-custom.yaml" not in rendered
+        assert "arnold auto --plan auto-plan" in rendered
+        assert "arnold init --project-dir /workspace/custom-app --name auto-plan" in rendered
+        assert "arnold-chain /workspace/chain-custom.yaml" not in rendered
     elif mode == "chain":
         assert 'if [ ! -f "$CHAIN_SPEC" ]; then' in rendered
-        assert "mp-chain /workspace/chain-custom.yaml" in rendered
-        assert "megaplan auto --plan auto-plan" not in rendered
+        assert "arnold-chain /workspace/chain-custom.yaml" in rendered
+        assert "arnold auto --plan auto-plan" not in rendered
     else:
         assert 'tmux new-session -d -s agent -c /workspace/custom-app "bash -l"' in rendered
-        assert "megaplan auto --plan" not in rendered
-        assert "mp-chain " not in rendered
+        assert "arnold auto --plan" not in rendered
+        assert "arnold-chain " not in rendered
 
 
 def test_render_entrypoint_apikey_codex_auth_opt_out_omits_chatgpt_forcing() -> None:
@@ -148,7 +148,7 @@ def test_render_entrypoint_wires_megaplan_repo_refresh_install() -> None:
     assert 'MEGAPLAN_REPO="${MEGAPLAN_REPO:-https://github.com/peteromallet/arnold.git}"' in rendered
     assert 'MEGAPLAN_INSTALL_SPEC_OVERRIDE="${MEGAPLAN_INSTALL_SPEC_OVERRIDE:-}"' in rendered
     assert 'repo="https://x-access-token:${GITHUB_TOKEN}@github.com/${repo#https://github.com/}"' in rendered
-    assert 'local spec="megaplan-harness[agent] @ git+$repo"' in rendered
+    assert 'local spec="arnold[agent] @ git+$repo"' in rendered
     assert 'pip install --upgrade --force-reinstall --no-cache-dir "$spec@$MEGAPLAN_REF" 2>&1 | tail -3' in rendered
     assert "/usr/local/bin/mp-refresh-megaplan" in rendered
     assert "mp_install_megaplan" in rendered
@@ -186,7 +186,7 @@ def test_materialize_deploy_dir_creates_expected_layout(tmp_path: Path) -> None:
 
     wrappers = deploy_dir / "wrappers"
     assert wrappers.is_dir()
-    for name in ("mp-run", "mp-supervise", "mp-heartbeat", "mp-chain"):
+    for name in ("mp-run", "mp-supervise", "mp-heartbeat", "mp-chain", "arnold-chain"):
         path = wrappers / name
         assert path.is_file()
         assert os.access(path, os.X_OK)

@@ -36,127 +36,127 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 ALLOWLISTED_CORE: set[str] = {
-    "megaplan/handlers/gate.py",
-    "megaplan/handlers/critique.py",
-    "megaplan/handlers/override.py",
-    "megaplan/handlers/verifiability.py",
-    "megaplan/handlers/shared.py",
-    "megaplan/handlers/finalize.py",
-    "megaplan/_pipeline/executor.py",
-    "megaplan/_pipeline/faults.py",
-    "megaplan/_pipeline/run_cli.py",
-    "megaplan/_pipeline/stages/inprocess_step.py",
-    "megaplan/execute/core.py",
-    "megaplan/execute/quality.py",
-    "megaplan/auto.py",
-    "megaplan/_core/io.py",
-    "megaplan/chain.py",
+    "arnold/pipelines/megaplan/handlers/gate.py",
+    "arnold/pipelines/megaplan/handlers/critique.py",
+    "arnold/pipelines/megaplan/handlers/override.py",
+    "arnold/pipelines/megaplan/handlers/verifiability.py",
+    "arnold/pipelines/megaplan/handlers/shared.py",
+    "arnold/pipelines/megaplan/handlers/finalize.py",
+    "arnold/pipelines/megaplan/_pipeline/executor.py",
+    "arnold/pipelines/megaplan/_pipeline/faults.py",
+    "arnold/pipelines/megaplan/_pipeline/run_cli.py",
+    "arnold/pipelines/megaplan/_pipeline/stages/inprocess_step.py",
+    "arnold/pipelines/megaplan/execute/core.py",
+    "arnold/pipelines/megaplan/execute/quality.py",
+    "arnold/pipelines/megaplan/auto.py",
+    "arnold/pipelines/megaplan/_core/io.py",
+    "arnold/pipelines/megaplan/chain.py",
 }
 
 EXPLICITLY_EXCLUDED_GLOBS: tuple[str, ...] = (
-    "megaplan/agent/",
-    "megaplan/cloud/",
-    "megaplan/workers/",
-    "megaplan/tests/",
+    "arnold/pipelines/megaplan/agent/",
+    "arnold/pipelines/megaplan/cloud/",
+    "arnold/pipelines/megaplan/workers/",
+    "arnold/pipelines/megaplan/tests/",
 )
 
 EXPLICITLY_EXCLUDED_FILES: set[str] = {
-    "megaplan/cli.py",
+    "arnold/pipelines/megaplan/cli.py",
 }
 
 CLASSIFIED_OUT_OF_M3A: set[str] = {
     # ── Previously classified (T2) ──
-    "megaplan/_core/state.py",
-    "megaplan/handlers/review.py",
-    "megaplan/_core/hermes_fanout.py",
+    "arnold/pipelines/megaplan/_core/state.py",
+    "arnold/pipelines/megaplan/handlers/review.py",
+    "arnold/pipelines/megaplan/_core/hermes_fanout.py",
     # ── Phase 1 checkpoint classification (T3): all 66 needs_review files ──
     # _core (2)
-    "megaplan/_core/phase_runtime.py",
-    "megaplan/_core/user_config.py",
+    "arnold/pipelines/megaplan/_core/phase_runtime.py",
+    "arnold/pipelines/megaplan/_core/user_config.py",
     # _pipeline (6)
-    "megaplan/_pipeline/patterns.py",
-    "megaplan/_pipeline/preflight.py",
-    "megaplan/_pipeline/registry.py",
-    "megaplan/_pipeline/resume.py",
-    "megaplan/_pipeline/step_helpers.py",
-    "megaplan/_pipeline/steps/human_gate.py",
+    "arnold/pipelines/megaplan/_pipeline/patterns.py",
+    "arnold/pipelines/megaplan/_pipeline/preflight.py",
+    "arnold/pipelines/megaplan/_pipeline/registry.py",
+    "arnold/pipelines/megaplan/_pipeline/resume.py",
+    "arnold/pipelines/megaplan/_pipeline/step_helpers.py",
+    "arnold/pipelines/megaplan/_pipeline/steps/human_gate.py",
     # audits (1)
-    "megaplan/audits/hermes_vendoring.py",
+    "arnold/pipelines/megaplan/audits/hermes_vendoring.py",
     # bakeoff (7)
-    "megaplan/bakeoff/handlers.py",
-    "megaplan/bakeoff/judge.py",
-    "megaplan/bakeoff/lifecycle.py",
-    "megaplan/bakeoff/live_status.py",
-    "megaplan/bakeoff/merge.py",
-    "megaplan/bakeoff/metrics.py",
-    "megaplan/bakeoff/worktree.py",
+    "arnold/pipelines/megaplan/bakeoff/handlers.py",
+    "arnold/pipelines/megaplan/bakeoff/judge.py",
+    "arnold/pipelines/megaplan/bakeoff/lifecycle.py",
+    "arnold/pipelines/megaplan/bakeoff/live_status.py",
+    "arnold/pipelines/megaplan/bakeoff/merge.py",
+    "arnold/pipelines/megaplan/bakeoff/metrics.py",
+    "arnold/pipelines/megaplan/bakeoff/worktree.py",
     # blocker_recovery (1)
-    "megaplan/blocker_recovery.py",
+    "arnold/pipelines/megaplan/blocker_recovery.py",
     # execute (1) — merge.py is execute-adjacent, not in allowlist
-    "megaplan/execute/merge.py",
+    "arnold/pipelines/megaplan/execute/merge.py",
     # forms (1)
-    "megaplan/forms/directors_notes.py",
+    "arnold/pipelines/megaplan/forms/directors_notes.py",
     # handlers (2) — init/tickets not in allowlist
-    "megaplan/handlers/init.py",
-    "megaplan/handlers/tickets.py",
+    "arnold/pipelines/megaplan/handlers/init.py",
+    "arnold/pipelines/megaplan/handlers/tickets.py",
     # loop (2)
-    "megaplan/loop/engine.py",
-    "megaplan/loop/git.py",
+    "arnold/pipelines/megaplan/loop/engine.py",
+    "arnold/pipelines/megaplan/loop/git.py",
     # observability (4)
-    "megaplan/observability/doctor.py",
-    "megaplan/observability/events.py",
-    "megaplan/observability/introspect.py",
-    "megaplan/observability/trace.py",
+    "arnold/pipelines/megaplan/observability/doctor.py",
+    "arnold/pipelines/megaplan/observability/events.py",
+    "arnold/pipelines/megaplan/observability/introspect.py",
+    "arnold/pipelines/megaplan/observability/trace.py",
     # orchestration (5)
-    "megaplan/orchestration/evaluation.py",
-    "megaplan/orchestration/feedback.py",
-    "megaplan/orchestration/phase_result.py",
-    "megaplan/orchestration/prep_research.py",
-    "megaplan/orchestration/progress.py",
+    "arnold/pipelines/megaplan/orchestration/evaluation.py",
+    "arnold/pipelines/megaplan/orchestration/feedback.py",
+    "arnold/pipelines/megaplan/orchestration/phase_result.py",
+    "arnold/pipelines/megaplan/orchestration/prep_research.py",
+    "arnold/pipelines/megaplan/orchestration/progress.py",
     # pipelines (3)
-    "megaplan/pipelines/creative/prompts/critique_creative.py",
-    "megaplan/pipelines/doc/prompts/execute_doc.py",
-    "megaplan/pipelines/doc/steps.py",
+    "arnold/pipelines/megaplan/pipelines/creative/prompts/critique_creative.py",
+    "arnold/pipelines/megaplan/pipelines/doc/prompts/execute_doc.py",
+    "arnold/pipelines/megaplan/pipelines/doc/steps.py",
     # pricing (3)
-    "megaplan/pricing/claude.py",
-    "megaplan/pricing/codex.py",
-    "megaplan/pricing/fireworks.py",
+    "arnold/pipelines/megaplan/pricing/claude.py",
+    "arnold/pipelines/megaplan/pricing/codex.py",
+    "arnold/pipelines/megaplan/pricing/fireworks.py",
     # profiles (1)
-    "megaplan/profiles/__init__.py",
+    "arnold/pipelines/megaplan/profiles/__init__.py",
     # prompts (7)
-    "megaplan/prompts/execute.py",
-    "megaplan/prompts/feedback.py",
-    "megaplan/prompts/planning.py",
-    "megaplan/prompts/review.py",
-    "megaplan/prompts/review_doc.py",
-    "megaplan/prompts/review_joke.py",
-    "megaplan/prompts/tiebreaker_researcher.py",
+    "arnold/pipelines/megaplan/prompts/execute.py",
+    "arnold/pipelines/megaplan/prompts/feedback.py",
+    "arnold/pipelines/megaplan/prompts/planning.py",
+    "arnold/pipelines/megaplan/prompts/review.py",
+    "arnold/pipelines/megaplan/prompts/review_doc.py",
+    "arnold/pipelines/megaplan/prompts/review_joke.py",
+    "arnold/pipelines/megaplan/prompts/tiebreaker_researcher.py",
     # receipts (4)
-    "megaplan/receipts/drift.py",
-    "megaplan/receipts/query.py",
-    "megaplan/receipts/report.py",
-    "megaplan/receipts/schema.py",
+    "arnold/pipelines/megaplan/receipts/drift.py",
+    "arnold/pipelines/megaplan/receipts/query.py",
+    "arnold/pipelines/megaplan/receipts/report.py",
+    "arnold/pipelines/megaplan/receipts/schema.py",
     # resident (3)
-    "megaplan/resident/agent_loop.py",
-    "megaplan/resident/cloud.py",
-    "megaplan/resident/profile.py",
+    "arnold/pipelines/megaplan/resident/agent_loop.py",
+    "arnold/pipelines/megaplan/resident/cloud.py",
+    "arnold/pipelines/megaplan/resident/profile.py",
     # review (1)
-    "megaplan/review/mechanical.py",
+    "arnold/pipelines/megaplan/review/mechanical.py",
     # runtime (4)
-    "megaplan/runtime/doc_assembly.py",
-    "megaplan/runtime/key_pool.py",
-    "megaplan/runtime/process.py",
-    "megaplan/runtime/sandbox.py",
+    "arnold/pipelines/megaplan/runtime/doc_assembly.py",
+    "arnold/pipelines/megaplan/runtime/key_pool.py",
+    "arnold/pipelines/megaplan/runtime/process.py",
+    "arnold/pipelines/megaplan/runtime/sandbox.py",
     # store (4)
-    "megaplan/store/compat.py",
-    "megaplan/store/db.py",
-    "megaplan/store/identity.py",
-    "megaplan/store/multi.py",
+    "arnold/pipelines/megaplan/store/compat.py",
+    "arnold/pipelines/megaplan/store/db.py",
+    "arnold/pipelines/megaplan/store/identity.py",
+    "arnold/pipelines/megaplan/store/multi.py",
     # tickets (4)
-    "megaplan/tickets/core.py",
-    "megaplan/tickets/files.py",
-    "megaplan/tickets/identity.py",
-    "megaplan/tickets/registry.py",
+    "arnold/pipelines/megaplan/tickets/core.py",
+    "arnold/pipelines/megaplan/tickets/files.py",
+    "arnold/pipelines/megaplan/tickets/identity.py",
+    "arnold/pipelines/megaplan/tickets/registry.py",
 }
 
 
@@ -442,7 +442,7 @@ def classify(filepath: str) -> str:
 
 def run_census() -> dict[str, Any]:
     """Run the full census and return structured results."""
-    src_dir = REPO_ROOT / "megaplan"
+    src_dir = REPO_ROOT / "arnold" / "pipelines" / "megaplan"
 
     buckets: dict[str, list[dict[str, Any]]] = {
         "in_scope_core": [],

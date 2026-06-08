@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.receipt import ReceiptDecorator
-from megaplan._pipeline.types import Step, StepContext, StepResult, PipelineVerdict
+from arnold.pipelines.megaplan._pipeline.receipt import ReceiptDecorator
+from arnold.pipelines.megaplan._pipeline.types import Step, StepContext, StepResult, PipelineVerdict
 
 
 @dataclass

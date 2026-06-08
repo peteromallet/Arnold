@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan.auto import DriverOutcome
-from megaplan.types import CliError
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _args(project_dir: Path, **overrides: object) -> Namespace:
@@ -65,7 +65,36 @@ def test_init_rejects_both_positional_and_idea_file(
             _args(project_dir, idea="positional", idea_file=str(idea_file)),
         )
 
-    assert info.value.code == "invalid_args"
+    assert info.value.code == "missing_idea_file"
+
+
+def test_init_direct_relative_missing_idea_file_reports_resolved_project_path(
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    missing = "docs/missing-idea.md"
+
+    with pytest.raises(CliError) as info:
+        megaplan.handle_init(root, _args(project_dir, idea_file=missing))
+
+    expected = project_dir / missing
+    assert info.value.code == "missing_idea_file"
+    assert str(expected.resolve()) in str(info.value)
+    assert "BRIEF_MISSING" not in str(info.value)
+
+
+def test_init_positional_path_like_missing_file_reports_missing_not_empty(
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    missing = "missing-brief.md"
+
+    with pytest.raises(CliError) as info:
+        megaplan.handle_init(root, _args(project_dir, idea=missing))
+
+    assert info.value.code == "missing_idea_file"
+    assert str((project_dir / missing).resolve()) in str(info.value)
+    assert "BRIEF_MISSING" not in str(info.value)
 
 
 def test_init_rejects_empty_idea_file(tmp_path: Path, bootstrap_fixture: tuple[Path, Path]) -> None:
@@ -79,8 +108,29 @@ def test_init_rejects_empty_idea_file(tmp_path: Path, bootstrap_fixture: tuple[P
             _args(project_dir, idea_file=str(idea_file)),
         )
 
-    assert info.value.code == "invalid_args"
+    assert info.value.code == "BRIEF_MISSING"
     assert "--idea-file" in str(info.value)
+
+
+def test_init_rejects_missing_idea_file_with_resolved_path(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    idea_file = tmp_path / "missing.txt"
+    resolved_path = idea_file.resolve()
+
+    with pytest.raises(CliError) as info:
+        megaplan.handle_init(
+            root,
+            _args(project_dir, idea_file=str(idea_file)),
+        )
+
+    assert info.value.code == "invalid_args"
+    message = str(info.value)
+    assert "idea file not found" in message
+    assert str(resolved_path) in message
+    assert "BRIEF_MISSING" not in message
 
 
 def test_init_slugify_uses_resolved_idea_text(
@@ -116,6 +166,63 @@ def test_init_state_idea_is_file_contents(
     assert state["idea"] == "keep trimmed content"
 
 
+def test_init_positional_existing_markdown_file_stores_contents(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    idea_file = tmp_path / "positional.md"
+    idea_file.write_text("  positional file content  \n", encoding="utf-8")
+
+    response = megaplan.handle_init(
+        root,
+        _args(project_dir, name="positional-file-plan", idea=str(idea_file)),
+    )
+    state = _load_state(root, response["plan"])
+    plan_dir = megaplan.plans_root(root) / response["plan"]
+
+    assert state["idea"] == "positional file content"
+    assert state["idea"] != str(idea_file)
+    assert state["idea_snapshot_path"] == "idea_snapshot.md"
+    assert (
+        (plan_dir / "idea_snapshot.md").read_text(encoding="utf-8")
+        == "positional file content"
+    )
+
+
+def test_init_rejects_empty_positional_idea_file(
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    idea_file = tmp_path / "empty-positional.md"
+    idea_file.write_text(" \n\t", encoding="utf-8")
+
+    with pytest.raises(CliError) as info:
+        megaplan.handle_init(
+            root,
+            _args(project_dir, idea=str(idea_file)),
+        )
+
+    assert info.value.code == "BRIEF_MISSING"
+    assert "positional idea file must contain non-empty" in str(info.value)
+
+
+def test_init_inline_positional_text_that_is_not_file_stays_verbatim(
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    idea = "ship the inline brief"
+
+    response = megaplan.handle_init(
+        root,
+        _args(project_dir, name="inline-idea-plan", idea=idea),
+    )
+    state = _load_state(root, response["plan"])
+
+    assert state["idea"] == idea
+
+
 def test_init_auto_start_invokes_drive(
     tmp_path: Path,
     bootstrap_fixture: tuple[Path, Path],
@@ -138,7 +245,7 @@ def test_init_auto_start_invokes_drive(
             events=[{"msg": "auto advanced"}],
         )
 
-    monkeypatch.setattr("megaplan.auto.drive", fake_drive)
+    monkeypatch.setattr("arnold.pipelines.megaplan.auto.drive", fake_drive)
 
     response = megaplan.handle_init(
         root,

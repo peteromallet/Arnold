@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from megaplan.cloud.providers.base import _logs_follow
+from arnold.pipelines.megaplan.cloud.providers.base import _logs_follow
 
 
 class _LineStream:
@@ -48,10 +48,10 @@ def test_logs_follow_redacts_each_line_before_reading_the_next(
             proc.output.append(chunk)
 
     monkeypatch.setattr(
-        "megaplan.cloud.providers.base.subprocess.Popen",
+        "arnold.pipelines.megaplan.cloud.providers.base.subprocess.Popen",
         lambda *args, **kwargs: proc,
     )
-    monkeypatch.setattr("megaplan.cloud.providers.base.sys.stdout", _Stdout())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.base.sys.stdout", _Stdout())
 
     assert _logs_follow(
         ["docker", "logs", "-f", "agent"],

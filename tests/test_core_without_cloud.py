@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import megaplan.cli
+import arnold.pipelines.megaplan.cli as megaplan_cli
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -112,11 +112,11 @@ def test_core_commands_work_when_cloud_import_fails(tmp_path: Path) -> None:
             )
 
         fake_auto.drive = drive
-        sys.modules["megaplan.auto"] = fake_auto
-        sys.modules["megaplan.cloud"] = None
-        sys.modules.pop("megaplan.cloud.cli", None)
+        sys.modules["arnold.pipelines.megaplan.auto"] = fake_auto
+        sys.modules["arnold.pipelines.megaplan.cloud"] = None
+        sys.modules.pop("arnold.pipelines.megaplan.cloud.cli", None)
 
-        import megaplan.cli as cli
+        import arnold.pipelines.megaplan.cli as cli
 
         def run(argv):
             stdout = io.StringIO()
@@ -155,7 +155,7 @@ def test_core_commands_work_when_cloud_import_fails(tmp_path: Path) -> None:
 
 def test_cloud_help_still_discoverable(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as info:
-        megaplan.cli.main(["cloud", "--help"])
+        megaplan_cli.main(["cloud", "--help"])
 
     assert info.value.code == 0
     output = capsys.readouterr().out

@@ -4,8 +4,8 @@ import subprocess
 
 import pytest
 
-from megaplan.cloud.cli import _relay_output
-from megaplan.cloud.redact import REDACTION, redact
+from arnold.pipelines.megaplan.cloud.cli import _relay_output
+from arnold.pipelines.megaplan.cloud.redact import REDACTION, redact
 
 
 @pytest.mark.parametrize(

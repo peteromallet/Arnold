@@ -26,15 +26,16 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan._core.io as io_module
+import arnold.pipelines.megaplan.cli as megaplan_cli
 
-from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan._pipeline.planning import compile_planning_pipeline
-from megaplan._pipeline.runtime import policy_from_cli_args
-from megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.runtime import policy_from_cli_args
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 
 
 EXPECTED_PHASE_STAGES = {
@@ -49,16 +50,16 @@ def test_base_pipeline_has_canonical_phase_nodes() -> None:
     assert pipeline.entry == "prep"
 
 
-def test_gate_stage_carries_typed_recommendation_edges() -> None:
+def test_gate_stage_carries_typed_decision_edges() -> None:
     pipeline = compile_planning_pipeline()
-    gate_edges = [e for e in pipeline.stages["gate"].edges if e.kind == "gate"]
-    recs = sorted(e.recommendation for e in gate_edges)
-    assert recs == ["escalate", "iterate", "proceed", "tiebreaker"], recs
+    gate_edges = [e for e in pipeline.stages["gate"].edges if e.kind == "decision"]
+    labels = sorted(e.label for e in gate_edges)
+    assert labels == ["escalate", "iterate", "proceed", "tiebreaker"], labels
 
 
 def test_gate_stage_total_edge_count_locks_extras() -> None:
     """T11 parity: the gate stage carries exactly 8 edges — the four
-    ``kind='gate'`` recommendation edges plus the four label-only
+    ``kind='decision'`` edges plus the four label-only
     fallback/override edges (revise, gate, override force-proceed,
     override abort)."""
     pipeline = compile_planning_pipeline()
@@ -74,9 +75,9 @@ def test_gate_stage_total_edge_count_locks_extras() -> None:
     }, label_targets
 
 
-def test_tiebreaker_stage_edges_are_three_gate_recommendation_edges() -> None:
+def test_tiebreaker_stage_edges_are_three_decision_edges() -> None:
     """T11 LOAD-BEARING: the tiebreaker stage carries exactly three
-    ``kind='gate'`` recommendation edges with the mapping
+    ``kind='decision'`` edges with the mapping
     ``{iterate→critique, proceed→finalize, escalate→finalize}``. The
     legacy label-only edges (``critique→critique``,
     ``tiebreaker_decide→critique``) are gone."""
@@ -84,8 +85,8 @@ def test_tiebreaker_stage_edges_are_three_gate_recommendation_edges() -> None:
     tb_stage = pipeline.stages["tiebreaker"]
     assert len(tb_stage.edges) == 3, tb_stage.edges
     for e in tb_stage.edges:
-        assert e.kind == "gate", e
-    mapping = {e.recommendation: e.target for e in tb_stage.edges}
+        assert e.kind == "decision", e
+    mapping = {e.label: e.target for e in tb_stage.edges}
     assert mapping == {
         "iterate": "critique",
         "proceed": "finalize",

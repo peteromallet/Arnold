@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from argparse import Namespace
 from importlib.resources import files
 from pathlib import Path
@@ -8,16 +9,18 @@ from unittest.mock import patch
 
 import pytest
 
-import megaplan
-import megaplan.profiles as profiles_module
-from megaplan.profiles import (
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan._core.user_config as user_config_module
+import arnold.pipelines.megaplan.profiles as profiles_module
+import arnold.pipelines.megaplan.profiles.policy as profiles_policy
+from arnold.pipelines.megaplan.profiles import (
     CANONICAL_PREP_MODELS,
     apply_profile_expansion,
     load_profiles,
     validate_prep_stage_provider,
 )
-from megaplan.types import CliError
-from megaplan.workers import resolve_agent_mode
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers import resolve_agent_mode
 
 
 def _write_profiles(path: Path, content: str) -> None:
@@ -65,12 +68,12 @@ def _init_args(project_dir: Path, **overrides: object) -> Namespace:
 
 
 def test_profiles_package_layout_and_builtins_only(tmp_path: Path) -> None:
-    from megaplan.profiles import apply_profile_expansion as imported_apply_profile_expansion
-    from megaplan.profiles import load_profiles as imported_load_profiles
+    from arnold.pipelines.megaplan.profiles import apply_profile_expansion as imported_apply_profile_expansion
+    from arnold.pipelines.megaplan.profiles import load_profiles as imported_load_profiles
 
     package_entries = {
         entry.name
-        for entry in files("megaplan.profiles").iterdir()
+        for entry in files("arnold.pipelines.megaplan.profiles").iterdir()
         if entry.is_file()
     }
     assert {
@@ -200,7 +203,7 @@ def test_apply_profile_expansion_preserves_ad_hoc_precedence_and_is_idempotent(
 
     assert args.phase_model == expanded_once
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
     assert agent == "claude"
     assert model is None
@@ -208,7 +211,7 @@ def test_apply_profile_expansion_preserves_ad_hoc_precedence_and_is_idempotent(
     profile_only = _worker_args(profile="all-open")
     apply_profile_expansion(profile_only, None)
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", profile_only)
     assert agent == "hermes"
     assert model == "glm-5.1"
@@ -236,7 +239,7 @@ def test_apply_profile_expansion_persisted_cli_override_beats_profile_default_on
     apply_profile_expansion(init_args, None)
 
     # init resolves plan -> claude in-process (first-match-wins).
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("plan", init_args)
     assert agent == "claude"
     assert model is None
@@ -255,7 +258,7 @@ def test_apply_profile_expansion_persisted_cli_override_beats_profile_default_on
     apply_profile_expansion(step_args, None, state=persisted_state)
 
     # Persisted CLI override must beat the profile default.
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("plan", step_args)
     assert agent == "claude", (
         f"Step subprocess clobbered persisted CLI override: resolved plan to "
@@ -273,6 +276,38 @@ def test_apply_profile_expansion_persisted_cli_override_beats_profile_default_on
     )
 
 
+def test_apply_profile_expansion_latest_persisted_phase_override_wins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later persisted override must beat an older persisted profile pin."""
+    monkeypatch.setattr(
+        profiles_module,
+        "config_dir",
+        lambda home=None: tmp_path / ".config" / "megaplan",
+    )
+    persisted_state = {
+        "config": {
+            "profile": "partnered",
+            "phase_model": [
+                "plan=claude:low",
+                "plan=codex:low",
+            ],
+        }
+    }
+
+    step_args = _worker_args(profile=None, phase_model=[])
+    apply_profile_expansion(step_args, None, state=persisted_state)
+
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("plan", step_args)
+    assert agent == "codex"
+    assert model is None
+
+    plan_entries = [pm for pm in step_args.phase_model if pm.startswith("plan=")]
+    assert plan_entries[0] == "plan=codex:low"
+
+
 def test_apply_profile_expansion_falls_back_to_state_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -288,7 +323,7 @@ def test_apply_profile_expansion_falls_back_to_state_profile(
 
     apply_profile_expansion(args, None, state=state)
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
     assert agent == "hermes"
     assert model == "glm-5.1"
@@ -308,7 +343,7 @@ def test_all_deepseek_pro_profile_defaults_to_direct_deepseek_v4_pro(
     args = _worker_args(profile="all-deepseek-pro")
     apply_profile_expansion(args, None)
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
 
     assert agent == "hermes"
@@ -328,7 +363,7 @@ def test_all_deepseek_pro_profile_can_explicitly_use_fireworks_deepseek_v4_pro(
     args = _worker_args(profile="all-deepseek-pro", deepseek_provider="fireworks")
     apply_profile_expansion(args, None)
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
 
     assert agent == "hermes"
@@ -360,7 +395,7 @@ def test_provider_profiles_use_expected_native_model(
     args = _worker_args(profile=profile_name)
     apply_profile_expansion(args, None)
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
 
     assert agent == "hermes"
@@ -433,6 +468,45 @@ def test_handle_init_persists_deepseek_provider_in_state(
     assert state["config"]["deepseek_provider"] == "direct"
 
 
+def test_handle_init_persists_routing_degradations_in_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    response = megaplan.handle_init(
+        root,
+        _init_args(
+            project_dir,
+            profile="partnered",
+            vendor="codex",
+            name="routing-degradation-state",
+        ),
+    )
+    state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    degradations = state["config"]["routing_degradations"]
+    assert {
+        "phase": "execute",
+        "tier": 4,
+        "from": "codex:gpt-5.4",
+        "to": DEEPSEEK_DIRECT,
+        "reason": (
+            "no premium credential or CLI route detected for vendor=codex; "
+            "no premium credential or CLI route detected for vendor=claude; "
+            "using DeepSeek credential floor"
+        ),
+    } in degradations
+
+
 def test_profile_expansion_resolves_prep_models_with_canonical_fallback_trace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -477,7 +551,7 @@ def test_default_agent_routing_prep_is_hermes_flat_phase_models_preserved(
     The ``flat_agent == 'codex'`` resolver exception (variable-codex
     triage/distill) is preserved this sprint per SD2.
     """
-    from megaplan.types import DEFAULT_AGENT_ROUTING
+    from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING
 
     # prep is a valid phase key in the routing table
     assert "prep" in DEFAULT_AGENT_ROUTING
@@ -486,7 +560,7 @@ def test_default_agent_routing_prep_is_hermes_flat_phase_models_preserved(
     assert DEFAULT_AGENT_ROUTING["prep"] == "hermes"
 
     # Prove the flat_agent=='codex' deferred exception is still present.
-    from megaplan.profiles import resolve_prep_models
+    from arnold.pipelines.megaplan.profiles import resolve_prep_models
 
     # With flat_prep_spec='codex' and no explicit prep_models, the legacy
     # variable-codex exception must still route triage/distill to codex.
@@ -982,7 +1056,30 @@ def _isolate_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     # Vendor default uses the user-config module; pin that to "claude" so
     # tests that rely on the default behavior are deterministic regardless
     # of dev-machine state.
-    monkeypatch.setattr(profiles_module, "_resolve_default_vendor", lambda: "claude")
+    fake_home_config.mkdir(parents=True, exist_ok=True)
+    (fake_home_config / "config.toml").write_text(
+        "[defaults]\nvendor = \"claude\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(user_config_module, "config_dir", lambda home=None: fake_home_config)
+
+
+def _clear_model_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    for env_var in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "FIREWORKS_API_KEY",
+    ):
+        monkeypatch.delenv(env_var, raising=False)
+
+
+def _disable_premium_cli_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        profiles_policy,
+        "_premium_cli_route_available",
+        lambda vendor: False,
+    )
 
 
 def test_vendor_codex_flips_premium_slots_on_all_claude(
@@ -1255,7 +1352,7 @@ def test_all_codex_resolves_to_codex_without_vendor_flag(
         assert agent == "codex", (
             f"{phase} expected codex but got {resolved[phase]!r}"
         )
-    assert resolved["feedback"] == "claude:low"
+    assert resolved["feedback"] == "codex:low"
 
 
 def test_vendor_codex_without_profile_selects_all_codex(
@@ -1423,7 +1520,7 @@ def test_config_default_vendor_honored_when_flag_absent(
 
     # Point user_config at the same directory so its config.toml read
     # hits our test file.
-    from megaplan._core import user_config as user_config_module
+    from arnold.pipelines.megaplan._core import user_config as user_config_module
     monkeypatch.setattr(user_config_module, "config_dir", lambda home=None: fake_home_config)
 
     fake_home_config.mkdir(parents=True, exist_ok=True)
@@ -1446,7 +1543,7 @@ def test_cli_vendor_flag_overrides_config_default(
 ) -> None:
     fake_home_config = tmp_path / ".config" / "megaplan"
     monkeypatch.setattr(profiles_module, "config_dir", lambda home=None: fake_home_config)
-    from megaplan._core import user_config as user_config_module
+    from arnold.pipelines.megaplan._core import user_config as user_config_module
     monkeypatch.setattr(user_config_module, "config_dir", lambda home=None: fake_home_config)
 
     fake_home_config.mkdir(parents=True, exist_ok=True)
@@ -1542,24 +1639,26 @@ def test_new_tier_profiles_all_load(
         assert name in catalog, f"missing tier profile {name!r}: catalog={sorted(catalog)}"
 
 
-def test_solo_profile_resolves_to_deepseek_end_to_end(
+def test_solo_profile_resolves_to_deepseek_reasoning_with_premium_floor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 
     args = _worker_args(profile="solo")
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    # solo runs DeepSeek end-to-end (including critique/review); no Kimi slot.
+    # solo keeps every flat phase on DeepSeek; higher execute tiers remain
+    # profile metadata and are used only when tier routing selects them.
     for phase in (
         "plan",
         "prep",
         "critique",
         "revise",
         "gate",
-        "finalize",
         "execute",
         "loop_plan",
         "loop_execute",
@@ -1568,14 +1667,38 @@ def test_solo_profile_resolves_to_deepseek_end_to_end(
         "tiebreaker_challenger",
     ):
         assert resolved[phase] == DEEPSEEK_DIRECT, f"solo.{phase} should be DeepSeek, got {resolved[phase]!r}"
+    assert resolved["finalize"] == DEEPSEEK_DIRECT
+    assert args.tier_models["execute"][4] == "claude:claude-sonnet-4-6"
+    assert args.tier_models["execute"][5] == "claude:claude-opus-4-7"
+
+
+def test_solo_profile_deepseek_only_falls_back_for_finalize_and_execute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    args = _worker_args(profile="solo")
+    apply_profile_expansion(args, None)
+    resolved = _phase_models_to_map(args.phase_model)
+
+    assert resolved["finalize"] == DEEPSEEK_DIRECT
+    assert args.tier_models["execute"][4] == DEEPSEEK_DIRECT
+    assert args.tier_models["execute"][5] == DEEPSEEK_DIRECT
 
 
 def test_solo_profile_is_noop_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """solo has no premium slots, so --vendor codex must not change anything."""
+    """solo reasoning is unchanged under --vendor codex."""
     _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
 
     baseline = _worker_args(profile="solo")
     apply_profile_expansion(baseline, None)
@@ -1675,6 +1798,97 @@ def test_partnered_profile_flips_all_premium_under_vendor_codex(
     tiers = args.tier_models["execute"]
     assert tiers[4] == "codex:gpt-5.4"
     assert tiers[5] == "codex:gpt-5.5"
+
+
+def test_partnered_vendor_codex_execute_keeps_codex_tiers_with_cli_auth_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No OpenAI/Anthropic env keys must not degrade Codex-reachable execute tiers."""
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    monkeypatch.setenv("FIREWORKS_API_KEY", "fw-test")
+    monkeypatch.setattr(
+        profiles_policy,
+        "_premium_cli_route_available",
+        lambda vendor: vendor == "codex",
+    )
+
+    args = _worker_args(
+        profile="partnered",
+        vendor="codex",
+        deepseek_provider="fireworks",
+    )
+    with caplog.at_level(logging.WARNING, logger="megaplan"):
+        apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    assert tier_models["execute"][4] == "codex:gpt-5.4"
+    assert tier_models["execute"][5] == "codex:gpt-5.5"
+    assert tier_models["execute"][4] == tier_models["critique"][4]
+    assert tier_models["execute"][5] == tier_models["critique"][5]
+    assert getattr(args, "routing_degradations", []) == []
+    assert "M_WARN_ROUTING_DEGRADED" not in caplog.text
+
+
+def test_partnered_vendor_codex_execute_degrades_when_no_premium_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """With no env-key or CLI-backed premium route, the DeepSeek floor remains."""
+    _isolate_user_config(tmp_path, monkeypatch)
+    _clear_model_credentials(monkeypatch)
+    _disable_premium_cli_routes(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    args = _worker_args(
+        profile="partnered",
+        vendor="codex",
+    )
+    with caplog.at_level(logging.WARNING, logger="megaplan"):
+        apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    assert tier_models["execute"][4] == DEEPSEEK_DIRECT
+    assert tier_models["execute"][5] == DEEPSEEK_DIRECT
+    assert tier_models["critique"][4] == "codex:gpt-5.4"
+    assert tier_models["critique"][5] == "codex:gpt-5.5"
+
+    degradations = getattr(args, "routing_degradations", None)
+    assert isinstance(degradations, list)
+    execute_degradations = [
+        item for item in degradations if item["phase"] == "execute" and item["tier"] in {4, 5}
+    ]
+    assert execute_degradations == [
+        {
+            "phase": "execute",
+            "tier": 4,
+            "from": "codex:gpt-5.4",
+            "to": DEEPSEEK_DIRECT,
+            "reason": (
+                "no premium credential or CLI route detected for vendor=codex; "
+                "no premium credential or CLI route detected for vendor=claude; "
+                "using DeepSeek credential floor"
+            ),
+        },
+        {
+            "phase": "execute",
+            "tier": 5,
+            "from": "codex:gpt-5.5",
+            "to": DEEPSEEK_DIRECT,
+            "reason": (
+                "no premium credential or CLI route detected for vendor=codex; "
+                "no premium credential or CLI route detected for vendor=claude; "
+                "using DeepSeek credential floor"
+            ),
+        },
+    ]
+    assert "M_WARN_ROUTING_DEGRADED" in caplog.text
+    assert "execute tier 4,5 -> hermes:deepseek:deepseek-v4-pro" in caplog.text
 
 
 def test_partnered_critic_kimi_overrides_critique_and_review(
@@ -2066,7 +2280,7 @@ def test_depth_invalid_value_rejected_at_argparse(
 ) -> None:
     """--depth ultra is rejected by argparse choices= before the loader
     ever sees it."""
-    from megaplan.cli import build_parser
+    from arnold.pipelines.megaplan.cli import build_parser
 
     parser = build_parser()
     with pytest.raises(SystemExit):
@@ -2083,7 +2297,7 @@ def test_deepseek_provider_invalid_value_rejected_at_argparse(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan.cli import build_parser
+    from arnold.pipelines.megaplan.cli import build_parser
 
     parser = build_parser()
     with pytest.raises(SystemExit):
@@ -2316,7 +2530,7 @@ def test_builtin_profile_resolution_with_default_model_pins(
             pass  # valid bare spec
         else:
             # If there's a model, parse_agent_spec should handle it
-            from megaplan.types import parse_agent_spec
+            from arnold.pipelines.megaplan.types import parse_agent_spec
             parsed = parse_agent_spec(spec)
             assert parsed.agent in ("claude", "codex", "hermes", "shannon"), (
                 f"Unexpected agent in spec '{spec}' for phase '{phase}'"
@@ -2327,7 +2541,7 @@ def test_builtin_profile_resolution_with_default_model_pins(
     apply_profile_expansion(args2, None)
     resolved2 = _phase_models_to_map(args2.phase_model)
     for phase, spec in resolved2.items():
-        from megaplan.types import parse_agent_spec
+        from arnold.pipelines.megaplan.types import parse_agent_spec
         parsed = parse_agent_spec(spec)
         assert parsed.agent is not None, (
             f"Could not parse spec '{spec}' for phase '{phase}'"
@@ -2341,7 +2555,7 @@ def test_builtin_profile_resolution_with_default_model_pins(
 
 def test_shannon_accepted_as_valid_agent_spec() -> None:
     """shannon is a valid agent spec for profiles."""
-    from megaplan.types import parse_agent_spec
+    from arnold.pipelines.megaplan.types import parse_agent_spec
     spec = parse_agent_spec("shannon")
     assert spec.agent == "shannon"
     assert spec.model is None
@@ -2349,13 +2563,13 @@ def test_shannon_accepted_as_valid_agent_spec() -> None:
 
 def test_shannon_rejected_when_misspelled() -> None:
     """Misspelled agent specs are rejected."""
-    from megaplan.types import parse_agent_spec
+    from arnold.pipelines.megaplan.types import parse_agent_spec
     spec = parse_agent_spec("shanon")  # parse_agent_spec accepts any agent name
     assert spec.agent == "shanon"  # parser is lenient; validation happens elsewhere
 
 
 def test_known_agents_includes_shannon() -> None:
-    from megaplan.types import KNOWN_AGENTS
+    from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
 
 
@@ -2366,7 +2580,7 @@ def test_known_agents_includes_shannon() -> None:
 
 def test_extract_tier_models_nested_toml_table() -> None:
     """Nested TOML tables are normalised to {phase: {tier: spec}}."""
-    from megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
 
     raw = {"execute": {"1": "hermes:deepseek-flash", "2": "hermes:deepseek-pro"}}
     result = _extract_tier_models(raw)
@@ -2375,7 +2589,7 @@ def test_extract_tier_models_nested_toml_table() -> None:
 
 def test_extract_tier_models_flattened_dotted_keys() -> None:
     """Already re-nested flattened keys are handled identically."""
-    from megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
 
     # Simulating what _split_profile_dict re-nests from pipeline-local
     raw = {"execute": {"1": "hermes:deepseek-flash", "3": "hermes:deepseek-pro"}}
@@ -2385,7 +2599,7 @@ def test_extract_tier_models_flattened_dotted_keys() -> None:
 
 def test_extract_tier_models_string_tier_keys_converted_to_int() -> None:
     """String tier keys like '1' are converted to int 1."""
-    from megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
 
     raw = {"execute": {"1": "hermes:deepseek-flash", "5": "codex:high"}}
     result = _extract_tier_models(raw)
@@ -2394,7 +2608,7 @@ def test_extract_tier_models_string_tier_keys_converted_to_int() -> None:
 
 def test_extract_tier_models_non_dict_returns_empty() -> None:
     """Non-dict input returns empty dict."""
-    from megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
     assert _extract_tier_models(None) == {}
     assert _extract_tier_models("not a dict") == {}
     assert _extract_tier_models([]) == {}
@@ -2402,8 +2616,8 @@ def test_extract_tier_models_non_dict_returns_empty() -> None:
 
 def test_validate_tier_models_rejects_unknown_phase() -> None:
     """Unknown phase names in tier_models are rejected."""
-    from megaplan.profiles import _validate_tier_models
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _validate_tier_models
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="unknown phase 'bogus'"):
         _validate_tier_models("test.toml", "test-profile", {"bogus": {1: "claude:low"}})
@@ -2411,8 +2625,8 @@ def test_validate_tier_models_rejects_unknown_phase() -> None:
 
 def test_validate_tier_models_rejects_tier_key_out_of_range() -> None:
     """Tier keys must be 1..5."""
-    from megaplan.profiles import _validate_tier_models
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _validate_tier_models
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="tier key must be an integer 1..5"):
         _validate_tier_models("test.toml", "test-profile", {"execute": {0: "claude:low"}})
@@ -2423,8 +2637,8 @@ def test_validate_tier_models_rejects_tier_key_out_of_range() -> None:
 
 def test_validate_tier_models_rejects_non_integer_tier_key() -> None:
     """Non-integer tier keys like 'x' are rejected by _validate_tier_models."""
-    from megaplan.profiles import _extract_tier_models, _validate_tier_models
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models, _validate_tier_models
+    from arnold.pipelines.megaplan.types import CliError
 
     raw = {"execute": {"x": "claude:low"}}
     tier_data = _extract_tier_models(raw)
@@ -2434,8 +2648,8 @@ def test_validate_tier_models_rejects_non_integer_tier_key() -> None:
 
 def test_validate_tier_models_rejects_unknown_agent() -> None:
     """Unknown agents in tier specs are rejected."""
-    from megaplan.profiles import _validate_tier_models
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _validate_tier_models
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="unknown agent 'bogus-agent'"):
         _validate_tier_models("test.toml", "test-profile", {"execute": {1: "bogus-agent:low"}})
@@ -2443,8 +2657,8 @@ def test_validate_tier_models_rejects_unknown_agent() -> None:
 
 def test_validate_tier_models_rejects_non_string_spec() -> None:
     """Non-string tier specs are rejected by _validate_tier_models."""
-    from megaplan.profiles import _extract_tier_models, _validate_tier_models
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models, _validate_tier_models
+    from arnold.pipelines.megaplan.types import CliError
 
     raw = {"execute": {"1": 123}}
     tier_data = _extract_tier_models(raw)
@@ -2456,8 +2670,8 @@ def test_validate_tier_models_rejects_non_string_spec() -> None:
 def test_extract_tier_models_rejects_non_dict_tier_map_when_path_provided() -> None:
     """Non-dict tier entries (e.g. a list) must raise CliError at profile
     load time when path/profile_name are supplied."""
-    from megaplan.profiles import _extract_tier_models
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="tier entry must be a TOML table"):
         _extract_tier_models({"execute": [1, 2, 3]}, path="test.toml", profile_name="test")
@@ -2466,8 +2680,8 @@ def test_extract_tier_models_rejects_non_dict_tier_map_when_path_provided() -> N
 def test_extract_tier_models_rejects_non_str_phase_key_when_path_provided() -> None:
     """Non-string phase keys must raise CliError at profile load time
     when path/profile_name are supplied."""
-    from megaplan.profiles import _extract_tier_models
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="phase key must be a string"):
         _extract_tier_models({123: {"1": "claude"}}, path="test.toml", profile_name="test")
@@ -2476,7 +2690,7 @@ def test_extract_tier_models_rejects_non_str_phase_key_when_path_provided() -> N
 def test_extract_tier_models_non_dict_tier_map_no_path_still_skips() -> None:
     """Without path/profile_name, non-dict tier maps are silently skipped
     (backward compat for already-validated data paths)."""
-    from megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
 
     result = _extract_tier_models({"execute": [1, 2, 3]})
     assert result == {}
@@ -2485,7 +2699,7 @@ def test_extract_tier_models_non_dict_tier_map_no_path_still_skips() -> None:
 def test_extract_tier_models_non_str_phase_no_path_still_skips() -> None:
     """Without path/profile_name, non-string phase keys are silently skipped
     (backward compat for already-validated data paths)."""
-    from megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
 
     result = _extract_tier_models({123: {"1": "claude"}})
     assert result == {}
@@ -2493,8 +2707,8 @@ def test_extract_tier_models_non_str_phase_no_path_still_skips() -> None:
 
 def test_extract_tier_models_non_dict_with_path_raises() -> None:
     """Non-dict input (string) with path/profile_name raises CliError."""
-    from megaplan.profiles import _extract_tier_models
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="expected a TOML table for tier_models"):
         _extract_tier_models("bad", path="test.toml", profile_name="test")
@@ -2502,17 +2716,38 @@ def test_extract_tier_models_non_dict_with_path_raises() -> None:
 
 def test_extract_tier_models_non_dict_list_with_path_raises() -> None:
     """Non-dict input (list) with path/profile_name raises CliError."""
-    from megaplan.profiles import _extract_tier_models
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _extract_tier_models
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="expected a TOML table for tier_models"):
         _extract_tier_models([1, 2, 3], path="test.toml", profile_name="test")
 
 
+def test_validate_projected_tier_models_reuses_existing_grammar() -> None:
+    """Projected tier-model views validate through the same TOML grammar."""
+    from arnold.pipelines.megaplan.profiles import _validate_projected_tier_models
+
+    result = _validate_projected_tier_models(
+        {"execute": {"1": "hermes:deepseek-flash", 5: "codex:high"}}
+    )
+    assert result == {
+        "execute": {1: "hermes:deepseek-flash", 5: "codex:high"}
+    }
+
+
+def test_canonicalize_tier_models_for_json_stringifies_tier_keys() -> None:
+    """Canonical JSON parity uses string tier keys."""
+    from arnold.pipelines.megaplan.profiles import _canonicalize_tier_models_for_json
+
+    assert _canonicalize_tier_models_for_json(
+        {"execute": {1: "hermes:deepseek-flash", 5: "codex:high"}}
+    ) == {"execute": {"1": "hermes:deepseek-flash", "5": "codex:high"}}
+
+
 def test_split_profile_dict_rejects_two_part_tier_key() -> None:
     """Flattened key 'tier_models.execute' (2 parts, missing tier) raises CliError."""
-    from megaplan.profiles import _split_profile_dict
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _split_profile_dict
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="malformed tier_models key"):
         _split_profile_dict("test.toml", "test", {"tier_models.execute": "claude"})
@@ -2520,8 +2755,8 @@ def test_split_profile_dict_rejects_two_part_tier_key() -> None:
 
 def test_split_profile_dict_rejects_four_part_tier_key() -> None:
     """Flattened key 'tier_models.execute.1.extra' (4 parts) raises CliError."""
-    from megaplan.profiles import _split_profile_dict
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.profiles import _split_profile_dict
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="malformed tier_models key"):
         _split_profile_dict("test.toml", "test", {"tier_models.execute.1.extra": "claude"})
@@ -2529,7 +2764,7 @@ def test_split_profile_dict_rejects_four_part_tier_key() -> None:
 
 def test_split_profile_dict_extracts_flattened_tier_models() -> None:
     """Flattened tier_models.execute.1 keys are re-nested into metadata."""
-    from megaplan.profiles import _split_profile_dict
+    from arnold.pipelines.megaplan.profiles import _split_profile_dict
 
     flat = {
         "vendor_locked": True,
@@ -2549,7 +2784,7 @@ def test_split_profile_dict_extracts_flattened_tier_models() -> None:
 
 def test_split_profile_dict_nested_tier_models() -> None:
     """Nested tier_models dict is placed in metadata directly."""
-    from megaplan.profiles import _split_profile_dict
+    from arnold.pipelines.megaplan.profiles import _split_profile_dict
 
     nested = {
         "vendor_locked": True,
@@ -2563,7 +2798,7 @@ def test_split_profile_dict_nested_tier_models() -> None:
 
 def test_resolve_tier_models_inheritance_child_overrides_parent() -> None:
     """Child tier overrides parent for the same phase+tier."""
-    from megaplan.profiles import _resolve_tier_models_with_inheritance
+    from arnold.pipelines.megaplan.profiles import _resolve_tier_models_with_inheritance
 
     system_profiles = {
         "parent": {"plan": "claude:low"},
@@ -2598,7 +2833,7 @@ def test_resolve_tier_models_inheritance_child_overrides_parent() -> None:
 
 def test_resolve_tier_models_inheritance_no_parent_tiers() -> None:
     """Profile without extends returns its own tier_models."""
-    from megaplan.profiles import _resolve_tier_models_with_inheritance
+    from arnold.pipelines.megaplan.profiles import _resolve_tier_models_with_inheritance
 
     system_profiles = {"solo": {"plan": "claude:low"}}
     system_metadata = {
@@ -2626,7 +2861,7 @@ def test_resolve_tier_models_inheritance_no_parent_tiers() -> None:
 
 def test_vendor_rewrite_propagates_to_tier_entries() -> None:
     """--vendor codex swaps only premium (claude/codex) tier entries; DeepSeek tiers pass through."""
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     tier_models = {"execute": {1: "hermes:deepseek-flash", 3: "hermes:deepseek-pro", 4: "claude:medium", 5: "claude:high"}}
     profile = {"plan": "claude:low"}
@@ -2642,7 +2877,7 @@ def test_vendor_rewrite_propagates_to_tier_entries() -> None:
 
 
 def test_vendor_rewrite_propagates_to_prep_models_and_leaves_hermes_unchanged() -> None:
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     prep_models = {
         "triage": "claude:claude-sonnet-4-6",
@@ -2661,7 +2896,7 @@ def test_vendor_rewrite_propagates_to_prep_models_and_leaves_hermes_unchanged() 
 
 
 def test_vendor_rewrite_maps_codex_prep_models_back_to_claude() -> None:
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     prep_models = {
         "triage": "codex:gpt-5.4",
@@ -2679,7 +2914,7 @@ def test_vendor_rewrite_maps_codex_prep_models_back_to_claude() -> None:
 
 
 def test_vendor_rewrite_prep_model_conflict_names_stage() -> None:
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     prep_models = {
         "triage": "claude:sonnet-4.6:high",
@@ -2697,7 +2932,7 @@ def test_vendor_rewrite_prep_model_conflict_names_stage() -> None:
 
 def test_vendor_rewrite_prep_models_full_claude_to_codex_mapping() -> None:
     """All three Claude model tiers (haiku, sonnet, opus) map to Codex prep models."""
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     prep_models = {
         "triage": "claude:claude-haiku-4-5",
@@ -2718,7 +2953,7 @@ def test_vendor_rewrite_prep_models_full_claude_to_codex_mapping() -> None:
 def test_vendor_rewrite_tier_and_prep_models_share_premium_swap_logic() -> None:
     """Tier models and prep models are both rewritten by the same _swap_premium_spec
     logic when passed together to apply_vendor_rewrite."""
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     tier_models = {"execute": {4: "claude:medium", 5: "claude:high"}}
     prep_models = {
@@ -2747,7 +2982,7 @@ def test_vendor_rewrite_tier_and_prep_models_share_premium_swap_logic() -> None:
 
 def test_deepseek_provider_rewrite_propagates_to_tier_entries() -> None:
     """--deepseek-provider direct swaps canonical Fireworks DeepSeek specs in tier entries."""
-    from megaplan.profiles import apply_deepseek_provider_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_deepseek_provider_rewrite
 
     FIREWORKS_DS = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
     tier_models = {"execute": {1: FIREWORKS_DS, 5: "claude:high"}}
@@ -2763,7 +2998,7 @@ def test_deepseek_provider_rewrite_propagates_to_tier_entries() -> None:
 
 def test_depth_rewrite_propagates_to_tier_entries_author_phases_only() -> None:
     """--depth rewrites tier entries for author phases (e.g. plan) but not execute."""
-    from megaplan.profiles import apply_depth_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_depth_rewrite
 
     tier_models = {
         "plan": {1: "claude:low", 4: "claude:medium"},
@@ -2783,7 +3018,7 @@ def test_depth_rewrite_propagates_to_tier_entries_author_phases_only() -> None:
 
 def test_named_vendor_tier_drift_raises_profile_resolution_mismatch() -> None:
     """A variable-codex tier 4 of claude:medium must raise profile_resolution_mismatch."""
-    from megaplan.profiles import _validate_named_profile_invariants
+    from arnold.pipelines.megaplan.profiles import _validate_named_profile_invariants
 
     with pytest.raises(CliError, match="expected codex"):
         _validate_named_profile_invariants(
@@ -2795,7 +3030,7 @@ def test_named_vendor_tier_drift_raises_profile_resolution_mismatch() -> None:
 
 def test_named_vendor_tier_drift_passes_when_correct() -> None:
     """A variable-codex profile with correct codex tier entries passes validation."""
-    from megaplan.profiles import _validate_named_profile_invariants
+    from arnold.pipelines.megaplan.profiles import _validate_named_profile_invariants
 
     # Should not raise
     _validate_named_profile_invariants(
@@ -2888,7 +3123,7 @@ def test_explicit_agent_overrides_persisted_phase_model_recovery_route(
 
     apply_profile_expansion(args, None, state=state)
 
-    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/codex"):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value="/usr/bin/codex"):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
     assert agent == "codex"
     assert model is None
@@ -2906,7 +3141,7 @@ def test_live_phase_model_still_beats_explicit_agent(
 
     apply_profile_expansion(args, None)
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
     assert agent == "hermes"
     assert model == "deepseek:deepseek-v4-pro"
@@ -2929,15 +3164,62 @@ def test_apply_profile_expansion_flat_profile_no_tier_models(
 
 def test_vendor_rewrite_tier_entries_tier_models_none_does_not_crash() -> None:
     """Passing tier_models=None does not crash (backward compat)."""
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     result = apply_vendor_rewrite({"plan": "claude:low"}, "codex")
     assert result["plan"] == "codex:low"
 
 
+def test_apply_vendor_rewrite_resolves_symbolic_premium_slots() -> None:
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
+
+    tier_models = {"execute": {4: "premium:medium"}}
+    prep_models = {"triage": "premium:low"}
+    profile = {
+        "plan": "premium:high",
+        "critique": "hermes:deepseek:deepseek-v4-pro",
+        "feedback": "premium:low",
+    }
+
+    rewritten = apply_vendor_rewrite(
+        profile,
+        "codex",
+        tier_models=tier_models,
+        prep_models=prep_models,
+    )
+
+    assert rewritten == {
+        "plan": "codex:high",
+        "critique": "hermes:deepseek:deepseek-v4-pro",
+        "feedback": "codex:low",
+    }
+    assert tier_models["execute"][4] == "codex:medium"
+    assert prep_models["triage"] == "codex:low"
+
+
+def test_apply_vendor_rewrite_does_not_inject_feedback_when_omitted() -> None:
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
+
+    assert apply_vendor_rewrite({"plan": "premium:high"}, "codex") == {
+        "plan": "codex:high"
+    }
+
+
+def test_validate_resolved_profile_invariants_rejects_symbolic_premium() -> None:
+    from arnold.pipelines.megaplan.profiles import _validate_resolved_profile_invariants
+
+    with pytest.raises(CliError, match="symbolic premium placeholders still present"):
+        _validate_resolved_profile_invariants(
+            "premium",
+            {"plan": "premium:low"},
+            tier_models={"execute": {4: "premium:medium"}},
+            prep_models={"triage": "premium:low"},
+        )
+
+
 def test_deepseek_provider_rewrite_tier_models_none_does_not_crash() -> None:
     """Passing tier_models=None does not crash (backward compat)."""
-    from megaplan.profiles import apply_deepseek_provider_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_deepseek_provider_rewrite
 
     result = apply_deepseek_provider_rewrite(
         {"plan": "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"}, "direct"
@@ -2947,7 +3229,7 @@ def test_deepseek_provider_rewrite_tier_models_none_does_not_crash() -> None:
 
 def test_depth_rewrite_tier_models_none_does_not_crash() -> None:
     """Passing tier_models=None does not crash (backward compat)."""
-    from megaplan.profiles import apply_depth_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_depth_rewrite
 
     result = apply_depth_rewrite({"plan": "claude:low"}, "high")
     assert result["plan"] == "claude:high"
@@ -2955,7 +3237,7 @@ def test_depth_rewrite_tier_models_none_does_not_crash() -> None:
 
 def test_validate_named_profile_invariants_tier_models_none_does_not_crash() -> None:
     """Passing tier_models=None to _validate_named_profile_invariants does not crash."""
-    from megaplan.profiles import _validate_named_profile_invariants
+    from arnold.pipelines.megaplan.profiles import _validate_named_profile_invariants
 
     # Should not raise
     _validate_named_profile_invariants("all-codex", {"plan": "codex:low"}, tier_models=None)
@@ -3051,10 +3333,7 @@ def test_critique_tiers_4_and_5_match_execute_tiers(
     monkeypatch: pytest.MonkeyPatch,
     profile_name: str,
 ) -> None:
-    """Tiers 4-5 of ``tier_models.critique`` match the corresponding
-    ``tier_models.execute`` entries.  No profile in this sprint needs
-    3-tier aliasing because every built-in profile defines the full
-    1-5 ladder."""
+    """Tiers 4-5 match execute except solo, whose execute has the floor."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile=profile_name)
@@ -3064,6 +3343,12 @@ def test_critique_tiers_4_and_5_match_execute_tiers(
     assert tier_models is not None
     execute_tiers = tier_models["execute"]
     critique_tiers = tier_models["critique"]
+
+    if profile_name == "solo":
+        for t in (4, 5):
+            assert "deepseek" in critique_tiers[t].lower()
+            assert critique_tiers[t] != execute_tiers[t]
+        return
 
     for t in (4, 5):
         assert critique_tiers[t] == execute_tiers[t], (
@@ -3425,7 +3710,7 @@ execute = "claude:medium"
 
 def test_validate_named_profile_invariants_empty_tier_models_does_not_crash() -> None:
     """Empty tier_models dict is harmless."""
-    from megaplan.profiles import _validate_named_profile_invariants
+    from arnold.pipelines.megaplan.profiles import _validate_named_profile_invariants
 
     # Should not raise
     _validate_named_profile_invariants("all-codex", {"plan": "codex:low"}, tier_models={})
@@ -3480,7 +3765,7 @@ def test_init_saves_tier_models_when_present(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When args.tier_models is set, init handler persists it in state.config.tier_models."""
-    from megaplan.handlers.init import handle_init
+    from arnold.pipelines.megaplan.handlers.init import handle_init
 
     _isolate_user_config(tmp_path, monkeypatch)
 
@@ -3512,7 +3797,7 @@ feedback = "claude:low"
     apply_profile_expansion(args, project_dir)
 
     # Create the plan directory and run handle_init with a root that already exists
-    import megaplan._core.io as io_module
+    import arnold.pipelines.megaplan._core.io as io_module
     monkeypatch.setattr(io_module, "plans_root", lambda r: plan_root)
 
     response = handle_init(root, args)
@@ -3524,25 +3809,56 @@ feedback = "claude:low"
     assert state["config"]["tier_models"]["execute"]["4"] == "claude:medium"
 
 
+def test_init_saves_max_execute_tier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan.handlers.init import handle_init
+
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+
+    response = handle_init(
+        root,
+        _init_args(
+            project_dir,
+            profile="solo",
+            name="max-execute-tier-state",
+            auto_approve=True,
+            max_execute_tier=3,
+        ),
+    )
+
+    state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["config"]["max_execute_tier"] == 3
+
+
 def test_snapshot_cli_provenance_includes_tier_models() -> None:
     """_snapshot_cli_provenance includes tier_models when present in config."""
-    from megaplan.handlers.shared import _snapshot_cli_provenance
+    from arnold.pipelines.megaplan.handlers.shared import _snapshot_cli_provenance
 
     state = {
         "config": {
             "profile": "variable",
             "mode": "code",
+            "max_execute_tier": 3,
             "tier_models": {"execute": {1: "hermes:deepseek-flash", 5: "claude:high"}},
         }
     }
     snap = _snapshot_cli_provenance(state)
     assert "tier_models" in snap
     assert snap["tier_models"]["execute"][1] == "hermes:deepseek-flash"
+    assert snap["max_execute_tier"] == 3
 
 
 def test_snapshot_cli_provenance_omits_tier_models_when_absent() -> None:
     """_snapshot_cli_provenance does not include tier_models when not in config."""
-    from megaplan.handlers.shared import _snapshot_cli_provenance
+    from arnold.pipelines.megaplan.handlers.shared import _snapshot_cli_provenance
 
     state = {"config": {"profile": "partnered", "mode": "code"}}
     snap = _snapshot_cli_provenance(state)
@@ -3614,7 +3930,7 @@ def test_all_codex_byte_identical_across_independent_expansions(
                   "tiebreaker_researcher", "tiebreaker_challenger"):
         agent = resolved[phase].split(":", 1)[0]
         assert agent == "codex", f"{phase} expected codex, got {resolved[phase]!r}"
-    assert resolved["feedback"] == "claude:low"
+    assert resolved["feedback"] == "codex:low"
 
 
 def test_all_codex_no_tier_metadata(
@@ -3624,7 +3940,7 @@ def test_all_codex_no_tier_metadata(
     """all-codex now carries a within-Codex execute effort ladder
     (single-vendor cost routing) — metadata exposes tier_models.execute."""
     _isolate_user_config(tmp_path, monkeypatch)
-    from megaplan.profiles import load_profile_metadata
+    from arnold.pipelines.megaplan.profiles import load_profile_metadata
 
     all_meta = load_profile_metadata(home=tmp_path / "home",
                                       project_dir=tmp_path / "project")
@@ -3641,7 +3957,7 @@ def test_partnered_no_tier_metadata(
 ) -> None:
     """partnered now has tier_models metadata (execute complexity routing added)."""
     _isolate_user_config(tmp_path, monkeypatch)
-    from megaplan.profiles import load_profile_metadata
+    from arnold.pipelines.megaplan.profiles import load_profile_metadata
 
     all_meta = load_profile_metadata(home=tmp_path / "home",
                                       project_dir=tmp_path / "project")
@@ -3677,7 +3993,7 @@ feedback = "claude:low"
 5 = "claude:high"
 """, encoding="utf-8")
 
-    from megaplan.profiles import load_profile_metadata
+    from arnold.pipelines.megaplan.profiles import load_profile_metadata
 
     all_meta = load_profile_metadata(home=tmp_path / "home",
                                       project_dir=project_dir)
@@ -3711,7 +4027,7 @@ feedback = "claude:low"
 1 = "bogus-agent:low"
 """, encoding="utf-8")
 
-    from megaplan.profiles import load_profile_metadata
+    from arnold.pipelines.megaplan.profiles import load_profile_metadata
 
     with pytest.raises(CliError, match="unknown agent"):
         load_profile_metadata(home=tmp_path / "home",

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.runtime.key_pool import resolve_model
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.runtime.key_pool import resolve_model
+from arnold.pipelines.megaplan.types import CliError
 
 
 def test_resolve_model_none_raises_claude_via_openrouter_blocked() -> None:

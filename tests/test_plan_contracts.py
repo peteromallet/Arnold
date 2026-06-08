@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan.orchestration.plan_contracts import (
+from arnold.pipelines.megaplan.orchestration.plan_contracts import (
     contract_diff_fingerprint,
     diff_assumes_against_provides,
     normalize_contract_payload,

@@ -2,6 +2,17 @@
   "artifact_filenames": [
     ".events.seq",
     ".plan.lock",
+    ".routing_ledger.lock",
+    "contract.json",
+    "critique_check_all_locations.json",
+    "critique_check_callers.json",
+    "critique_check_conventions.json",
+    "critique_check_correctness.json",
+    "critique_check_criteria_quality.json",
+    "critique_check_issue_hints.json",
+    "critique_check_prerequisite_ordering.json",
+    "critique_check_scope.json",
+    "critique_check_verification.json",
     "critique_v1.json",
     "critique_v2.json",
     "events.ndjson",
@@ -17,6 +28,7 @@
     "gate_carry.json",
     "gate_signals_v1.json",
     "gate_signals_v2.json",
+    "idea_snapshot.md",
     "phase_result.json",
     "plan_v1.md",
     "plan_v1.meta.json",
@@ -24,6 +36,7 @@
     "plan_v2.meta.json",
     "prep.json",
     "review.json",
+    "routing_ledger.jsonl",
     "state.json",
     "step_receipt_critique_v1.json",
     "step_receipt_critique_v2.json",
@@ -40,6 +53,17 @@
   "artifact_filenames_at_halt": [
     ".events.seq",
     ".plan.lock",
+    ".routing_ledger.lock",
+    "contract.json",
+    "critique_check_all_locations.json",
+    "critique_check_callers.json",
+    "critique_check_conventions.json",
+    "critique_check_correctness.json",
+    "critique_check_criteria_quality.json",
+    "critique_check_issue_hints.json",
+    "critique_check_prerequisite_ordering.json",
+    "critique_check_scope.json",
+    "critique_check_verification.json",
     "critique_v1.json",
     "critique_v2.json",
     "events.ndjson",
@@ -55,6 +79,7 @@
     "gate_carry.json",
     "gate_signals_v1.json",
     "gate_signals_v2.json",
+    "idea_snapshot.md",
     "phase_result.json",
     "plan_v1.md",
     "plan_v1.meta.json",
@@ -62,6 +87,7 @@
     "plan_v2.meta.json",
     "prep.json",
     "review.json",
+    "routing_ledger.jsonl",
     "state.json",
     "step_receipt_critique_v1.json",
     "step_receipt_critique_v2.json",
@@ -97,7 +123,7 @@
         "step": "init"
       },
       {
-        "agent": "claude",
+        "agent": "hermes",
         "output_file": "prep.json",
         "result": "success",
         "session_mode": "persistent",
@@ -111,8 +137,8 @@
         "step": "plan"
       },
       {
-        "agent": "codex",
-        "flags_count": 12,
+        "agent": "claude",
+        "flags_count": 10,
         "output_file": "critique_v1.json",
         "result": "success",
         "session_mode": "persistent",
@@ -138,7 +164,7 @@
         "step": "revise"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "flags_count": 1,
         "output_file": "critique_v2.json",
         "result": "success",
@@ -218,11 +244,7 @@
         "mode": "persistent",
         "refreshed": true
       },
-      "claude_prep": {
-        "mode": "persistent",
-        "refreshed": true
-      },
-      "codex_critic": {
+      "hermes_prep": {
         "mode": "persistent",
         "refreshed": true
       }
@@ -298,18 +320,6 @@
       ],
       "disputed_flag_ids": [],
       "flags": [
-        {
-          "category": "completeness",
-          "id": "FLAG-001",
-          "severity_hint": "likely-significant",
-          "status": null
-        },
-        {
-          "category": "correctness",
-          "id": "FLAG-002",
-          "severity_hint": "likely-significant",
-          "status": null
-        },
         {
           "category": "verifiability",
           "id": "verifiability-0",
@@ -446,7 +456,7 @@
       ]
     },
     "finalize.json": {
-      "baseline_test_command": "pytest --tb=no -q --no-header",
+      "baseline_test_command": "pytest --tb=no -q --no-header -rA",
       "baseline_test_failures": [],
       "sense_checks": [
         {
@@ -513,8 +523,6 @@
       "signals": {
         "iteration": 2,
         "resolved_flag_ids": [
-          "FLAG-001",
-          "FLAG-002",
           "issue_hints",
           "correctness",
           "scope",
@@ -652,7 +660,7 @@
         "step": "init"
       },
       {
-        "agent": "claude",
+        "agent": "hermes",
         "output_file": "prep.json",
         "result": "success",
         "session_mode": "persistent",
@@ -666,8 +674,8 @@
         "step": "plan"
       },
       {
-        "agent": "codex",
-        "flags_count": 12,
+        "agent": "claude",
+        "flags_count": 10,
         "output_file": "critique_v1.json",
         "result": "success",
         "session_mode": "persistent",
@@ -693,7 +701,7 @@
         "step": "revise"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "flags_count": 1,
         "output_file": "critique_v2.json",
         "result": "success",
@@ -716,7 +724,7 @@
         "step": "finalize"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "approval_mode": "user_approved",
         "output_file": "execution.json",
         "result": "success",
@@ -724,7 +732,7 @@
         "step": "execute"
       },
       {
-        "agent": "codex",
+        "agent": "claude",
         "output_file": "review.json",
         "result": "success",
         "session_mode": "persistent",
@@ -776,6 +784,10 @@
       }
     ],
     "sessions": {
+      "claude_executor": {
+        "mode": "persistent",
+        "refreshed": false
+      },
       "claude_finalizer": {
         "mode": "persistent",
         "refreshed": true
@@ -788,19 +800,11 @@
         "mode": "persistent",
         "refreshed": true
       },
-      "claude_prep": {
+      "claude_reviewer": {
         "mode": "persistent",
         "refreshed": true
       },
-      "codex_critic": {
-        "mode": "persistent",
-        "refreshed": true
-      },
-      "codex_executor": {
-        "mode": "persistent",
-        "refreshed": false
-      },
-      "codex_reviewer": {
+      "hermes_prep": {
         "mode": "persistent",
         "refreshed": true
       }

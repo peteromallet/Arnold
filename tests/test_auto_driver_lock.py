@@ -29,9 +29,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core import driver_lock, driver_lock_path
-from megaplan._core.state import _pid_is_live, _read_lock_pid
-from megaplan.types import CliError
+from arnold.pipelines.megaplan._core import driver_lock, driver_lock_path
+from arnold.pipelines.megaplan._core.state import _pid_is_live, _read_lock_pid
+from arnold.pipelines.megaplan.types import CliError
 
 
 WORKTREE = str(Path(__file__).resolve().parents[1])
@@ -47,7 +47,7 @@ def _spawn_lock_holder(plan_dir: Path, hold_seconds: float = 30.0) -> subprocess
         f"""
         import sys, time
         from pathlib import Path
-        from megaplan._core import driver_lock
+        from arnold.pipelines.megaplan._core import driver_lock
         with driver_lock(Path({str(plan_dir)!r})):
             sys.stdout.write("LOCKED\\n")
             sys.stdout.flush()

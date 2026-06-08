@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from megaplan._pipeline.registry import get_pipeline, registered_pipelines
+from arnold.pipelines.megaplan._pipeline.registry import get_pipeline, registered_pipelines
 
 
 EXPECTED_PLANNING_STAGES = {

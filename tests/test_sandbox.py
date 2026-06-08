@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.runtime.sandbox import (
+from arnold.pipelines.megaplan.runtime.sandbox import (
     SANDBOX_CWD,
     SandboxViolation,
     _unwrap_all_for_tests,
@@ -411,9 +411,9 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
       * ``SANDBOX_CWD`` ContextVar is set to project_dir while the agent runs, AND
       * tool registry handlers are wrapped while the agent runs.
     """
-    from megaplan.workers import hermes as hw
-    from megaplan._core import atomic_write_json, atomic_write_text, schemas_root
-    from megaplan.workers import STEP_SCHEMA_FILENAMES
+    from arnold.pipelines.megaplan.workers import hermes as hw
+    from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text, schemas_root
+    from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES
 
     project_dir = tmp_path / "worktree"
     project_dir.mkdir()
@@ -457,7 +457,7 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
             "version": 1,
             "timestamp": "2026-05-01T00:00:00Z",
             "hash": "sha256:test",
-            "success_criteria": [{"criterion": "do x", "priority": "must"}],
+            "success_criteria": [{"criterion": "do x", "priority": "must", "requires": []}],
             "questions": [],
             "assumptions": [],
         },
@@ -485,15 +485,14 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
             # Snapshot ContextVar + handler identity at the moment the agent runs.
             observed["sandbox_cwd"] = str(get_sandbox_cwd()) if get_sandbox_cwd() else None
             observed["terminal_handler"] = fake_tools_registry._tools["terminal"].handler
-            # Return a payload the parser will accept.  For execute we
-            # need files_claimed + summary.
+            # Return a payload the current execute contract will accept.
             payload = {
-                "files_claimed": [],
-                "summary": "did nothing",
-                "tasks_completed": [],
-                "tests_run": [],
-                "issues": [],
-                "next_steps": [],
+                "output": "did nothing",
+                "files_changed": [],
+                "commands_run": [],
+                "deviations": [],
+                "task_updates": [],
+                "sense_check_acknowledgments": [],
             }
             return {
                 "final_response": json.dumps(payload),
@@ -523,9 +522,9 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
 
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.setattr(hw, "read_json", lambda p: {} if "schemas" in str(p) else json.loads(Path(p).read_text()))
-    monkeypatch.setattr(hw, "schemas_root", lambda root: repo_root / "megaplan" / "schemas")
+    monkeypatch.setattr(hw, "schemas_root", lambda root: repo_root / "arnold" / "pipelines" / "megaplan" / "schemas")
     # Bypass the schema-name lookup — execute schema file may not exist on disk in this minimal setup.
-    monkeypatch.setattr("megaplan.schemas.get_execution_schema_key", lambda *a, **kw: STEP_SCHEMA_FILENAMES.get("execute", "execute_v2.json"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.schemas.get_execution_schema_key", lambda *a, **kw: STEP_SCHEMA_FILENAMES.get("execute", "execute_v2.json"))
 
     monkeypatch.delenv("MEGAPLAN_MOCK", raising=False)
     monkeypatch.delenv("TERMINAL_CWD", raising=False)

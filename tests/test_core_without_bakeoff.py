@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import megaplan.cli
+import arnold.pipelines.megaplan.cli as megaplan_cli
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -79,11 +79,11 @@ def test_core_commands_work_when_bakeoff_import_fails(tmp_path: Path) -> None:
         project_dir = Path({str(project_dir)!r})
         spec_path = Path({str(spec_path)!r})
 
-        sys.modules["megaplan.bakeoff"] = None
-        sys.modules["megaplan.bakeoff.cli"] = None
-        sys.modules["megaplan.bakeoff.judge"] = None
+        sys.modules["arnold.pipelines.megaplan.bakeoff"] = None
+        sys.modules["arnold.pipelines.megaplan.bakeoff.cli"] = None
+        sys.modules["arnold.pipelines.megaplan.bakeoff.judge"] = None
 
-        import megaplan.cli as cli
+        import arnold.pipelines.megaplan.cli as cli
 
         def run(argv):
             stdout = io.StringIO()
@@ -131,7 +131,7 @@ def test_core_commands_work_when_bakeoff_import_fails(tmp_path: Path) -> None:
 
 def test_top_level_help_lists_bakeoff(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as info:
-        megaplan.cli.main(["--help"])
+        megaplan_cli.main(["--help"])
 
     assert info.value.code == 0
     output = capsys.readouterr().out
@@ -140,7 +140,7 @@ def test_top_level_help_lists_bakeoff(capsys: pytest.CaptureFixture[str]) -> Non
 
 def test_bakeoff_help_still_discoverable(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as info:
-        megaplan.cli.main(["bakeoff", "--help"])
+        megaplan_cli.main(["bakeoff", "--help"])
 
     assert info.value.code == 0
     output = capsys.readouterr().out

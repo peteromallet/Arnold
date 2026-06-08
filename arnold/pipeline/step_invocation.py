@@ -1,0 +1,134 @@
+"""Neutral step-invocation seam primitives for adapter-backed execution.
+
+This module defines the minimal Arnold-side invocation shape plus the
+fail-closed adapter registry that later milestones can extend with concrete
+adapter implementations.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Protocol, runtime_checkable
+
+
+class ModelAdapterNotImplementedError(NotImplementedError):
+    """Raised when the reserved model adapter slot is invoked before M3."""
+
+
+@dataclass(frozen=True)
+class StepInvocation:
+    """Neutral invocation descriptor passed to an adapter.
+
+    ``kind`` selects the adapter slot. ``metadata`` carries JSON-compatible
+    invocation detail without imposing Megaplan-specific structure here.
+    """
+
+    kind: str
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def model(
+        cls,
+        *,
+        adapter_config: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> "StepInvocation":
+        """Construct a ``model`` invocation with canonical adapter metadata."""
+        return cls.with_adapter_config(
+            kind="model",
+            adapter_config=adapter_config,
+            metadata=metadata,
+        )
+
+    @classmethod
+    def with_adapter_config(
+        cls,
+        *,
+        kind: str,
+        adapter_config: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> "StepInvocation":
+        """Construct an invocation whose adapter config lives under ``metadata``."""
+        canonical_metadata = _metadata_with_adapter_config(
+            metadata=metadata,
+            adapter_config=adapter_config,
+        )
+        return cls(kind=kind, metadata=canonical_metadata)
+
+
+def _metadata_with_adapter_config(
+    *,
+    metadata: Mapping[str, Any] | None,
+    adapter_config: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    canonical_metadata = dict(metadata or {})
+    if adapter_config is None:
+        return canonical_metadata
+    canonical_adapter_config = dict(adapter_config)
+    existing_adapter_config = canonical_metadata.get("adapter_config")
+    if existing_adapter_config is not None and existing_adapter_config != canonical_adapter_config:
+        raise ValueError("conflicting adapter_config supplied via metadata and factory")
+    canonical_metadata["adapter_config"] = canonical_adapter_config
+    return canonical_metadata
+
+
+@runtime_checkable
+class StepInvocationAdapter(Protocol):
+    """Structural protocol for objects that can handle a step invocation."""
+
+    def invoke(self, invocation: StepInvocation) -> Any: ...
+
+
+class _ModelAdapterPlaceholder:
+    """Reserved ``model`` adapter slot. Concrete behavior lands in M3."""
+
+    def invoke(self, invocation: StepInvocation) -> Any:
+        raise ModelAdapterNotImplementedError(
+            "StepInvocation adapter kind 'model' is reserved for M3 and is not "
+            "implemented in M2"
+        )
+
+
+class StepInvocationAdapterRegistry:
+    """Small fail-closed registry for step-invocation adapters.
+
+    The registry starts with only the reserved ``model`` slot wired to a
+    placeholder implementation. Unknown kinds fail closed during resolution.
+    """
+
+    def __init__(self) -> None:
+        self._adapters: dict[str, StepInvocationAdapter] = {
+            "model": _ModelAdapterPlaceholder(),
+        }
+
+    def register(self, kind: str, adapter: StepInvocationAdapter) -> None:
+        """Register *adapter* under *kind* or reject duplicate registrations."""
+        if kind in self._adapters:
+            raise ValueError(f"adapter kind {kind!r} already registered")
+        self._adapters[kind] = adapter
+
+    def replace_reserved(self, kind: str, adapter: StepInvocationAdapter) -> None:
+        """Replace a reserved placeholder adapter with a concrete implementation."""
+        current = self.resolve(kind)
+        if not isinstance(current, _ModelAdapterPlaceholder):
+            raise ValueError(
+                f"adapter kind {kind!r} is not a reserved placeholder and cannot be replaced"
+            )
+        self._adapters[kind] = adapter
+
+    def resolve(self, kind: str) -> StepInvocationAdapter:
+        """Return the registered adapter for *kind* or fail closed."""
+        if kind not in self._adapters:
+            raise KeyError(
+                f"unknown adapter kind {kind!r}; registered kinds: {sorted(self._adapters)}"
+            )
+        return self._adapters[kind]
+
+    def invoke(self, invocation: StepInvocation) -> Any:
+        """Resolve *invocation.kind* and delegate to the registered adapter."""
+        return self.resolve(invocation.kind).invoke(invocation)
+
+    @property
+    def registered_kinds(self) -> tuple[str, ...]:
+        """Return the registry contents in deterministic order."""
+        return tuple(sorted(self._adapters))

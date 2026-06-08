@@ -8,15 +8,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-from megaplan import chain as chain_module
-from megaplan.cloud.cli import (
+from arnold.pipelines.megaplan import chain as chain_module 
+from arnold.pipelines.megaplan.cloud.cli import (
     _classify_effective_status,
     _marker_dir,
     build_cloud_parser,
     cloud_chain_status_payload,
     run_cloud_cli,
 )
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.spec import (
     ChainSubSpec,
     CloudSpec,
     CodexSpec,
@@ -164,10 +164,10 @@ def test_cloud_status_chain_honors_explicit_remote_spec_and_matches_local_shape(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli.load_spec",
+        "arnold.pipelines.megaplan.cloud.cli.load_spec",
         lambda _path: _cloud_spec(mode="chain", remote_chain_spec="/workspace/app/fallback.yaml"),
     )
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
 
     args = parser.parse_args(
         [
@@ -227,10 +227,10 @@ def test_cloud_status_chain_uses_marker_before_cloud_yaml_fallback(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli.load_spec",
+        "arnold.pipelines.megaplan.cloud.cli.load_spec",
         lambda _path: _cloud_spec(mode="chain", remote_chain_spec="/workspace/app/from-cloud-yaml.yaml"),
     )
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
 
     args = parser.parse_args(["cloud", "status", "--chain", "--cloud-yaml", str(cloud_yaml_path)])
     assert run_cloud_cli(tmp_path, args) == 0
@@ -263,10 +263,10 @@ def test_cloud_status_chain_falls_back_to_cloud_yaml_chain_spec(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli.load_spec",
+        "arnold.pipelines.megaplan.cloud.cli.load_spec",
         lambda _path: _cloud_spec(mode="chain", remote_chain_spec=remote_spec),
     )
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: provider)
 
     args = parser.parse_args(["cloud", "status", "--chain"])
     assert run_cloud_cli(tmp_path, args) == 0
@@ -287,8 +287,8 @@ def test_cloud_status_chain_errors_when_no_remote_spec_can_be_resolved(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec())
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: _StubProvider({}))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: _StubProvider({}))
 
     args = parser.parse_args(["cloud", "status", "--chain"])
     assert run_cloud_cli(tmp_path, args) == 1
@@ -455,7 +455,7 @@ def test_cloud_status_payload_contains_all_additive_keys(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -511,7 +511,7 @@ def test_cloud_status_no_current_plan_reports_plan_missing(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -549,7 +549,7 @@ def test_cloud_status_runner_alive_detected(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -592,7 +592,7 @@ def test_cloud_status_missing_provider_methods_graceful(
     provider = _MinimalProvider()
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -810,7 +810,7 @@ def test_supervisor_running_chain_noop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Running chain: supervisor returns noop, does NOT emit ``chain start --one``."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -837,7 +837,7 @@ def test_supervisor_running_chain_noop(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -866,7 +866,7 @@ def test_supervisor_completed_chain_done(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Completed chain (all milestones done): supervisor returns done, no mutation."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -891,7 +891,7 @@ def test_supervisor_completed_chain_done(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -918,7 +918,7 @@ def test_supervisor_human_prerequisite_blocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """human_prerequisite: supervisor blocks, no mutation."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -961,7 +961,7 @@ def test_supervisor_human_prerequisite_blocked(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -988,7 +988,7 @@ def test_supervisor_quality_gate_blocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """quality_gate: supervisor blocks, no mutation."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -1030,7 +1030,7 @@ def test_supervisor_quality_gate_blocked(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -1057,7 +1057,7 @@ def test_supervisor_stale_bookkeeping_dead_restart(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """stale_bookkeeping + dead runner: supervisor restarts tmux and runs one tick."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -1084,7 +1084,7 @@ def test_supervisor_stale_bookkeeping_dead_restart(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -1120,7 +1120,7 @@ def test_supervisor_merged_pr_advance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """awaiting_pr_merge + PR merged: supervisor advances with ``chain start --one``."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -1152,7 +1152,7 @@ def test_supervisor_merged_pr_advance(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -1185,7 +1185,7 @@ def test_supervisor_unmerged_pr_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """awaiting_pr_merge + PR unmerged: supervisor blocks, no mutation."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -1216,7 +1216,7 @@ def test_supervisor_unmerged_pr_block(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -1271,7 +1271,7 @@ def test_supervisor_invariant_no_destructive_commands_in_noop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No destructive commands appear in a noop supervisor tick."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -1298,7 +1298,7 @@ def test_supervisor_invariant_no_destructive_commands_in_noop(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -1319,7 +1319,7 @@ def test_supervisor_invariant_no_destructive_commands_in_restart(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No destructive commands appear during a stale_bookkeeping restart."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -1346,7 +1346,7 @@ def test_supervisor_invariant_no_destructive_commands_in_restart(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -1368,7 +1368,7 @@ def test_supervisor_invariant_no_destructive_commands_in_advance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No destructive commands appear during a PR-merge advance."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -1400,7 +1400,7 @@ def test_supervisor_invariant_no_destructive_commands_in_advance(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -1422,7 +1422,7 @@ def test_supervisor_invariant_no_destructive_commands_in_blocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No destructive commands appear when supervisor blocks (quality_gate)."""
-    from megaplan.cloud.supervise import cloud_supervise_tick
+    from arnold.pipelines.megaplan.cloud.supervise import cloud_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -1464,7 +1464,7 @@ def test_supervisor_invariant_no_destructive_commands_in_blocked(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 
@@ -1490,7 +1490,7 @@ def test_supervise_tick_stdout_json_stderr_human(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """``_run_supervise_tick`` writes JSON to stdout and human summary to stderr."""
-    from megaplan.cloud.cli import _run_supervise_tick
+    from arnold.pipelines.megaplan.cloud.cli import _run_supervise_tick
 
     local_spec_path = tmp_path / "chain.yaml"
     _write_chain_spec_milestones(local_spec_path, milestone_count=2)
@@ -1517,7 +1517,7 @@ def test_supervise_tick_stdout_json_stderr_human(
     )
 
     monkeypatch.setattr(
-        "megaplan.cloud.cli._resolve_remote_chain_spec",
+        "arnold.pipelines.megaplan.cloud.cli._resolve_remote_chain_spec",
         lambda _root, _args, _spec: remote_spec,
     )
 

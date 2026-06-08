@@ -20,18 +20,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from megaplan._pipeline.builder import PipelineBuilder
-from megaplan._pipeline.steps.agent import AgentStep
-from megaplan._pipeline.steps.human_gate import HumanDecisionStep
-from megaplan._pipeline.steps.panel import PanelReviewerStep
-from megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.builder import PipelineBuilder
+from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
+from arnold.pipelines.megaplan._pipeline.steps.human_gate import HumanDecisionStep
+from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     ParallelStage,
     Pipeline,
+    Port,
+    PortRef,
+    ReadRef,
     Stage,
     StepContext,
     StepResult,
+    WriteRef,
 )
+from arnold.pipeline.step_invocation import StepInvocation
 
 
 @dataclass
@@ -39,7 +44,7 @@ class _StubGateStep:
     """Lightweight Step double used as the gate's underlying Step.
 
     The builder's ``.gate`` method takes ``step=`` directly and wires
-    the four ``kind='gate'`` recommendation edges itself, so the Step
+    the four ``kind='decision'`` edges itself, so the Step
     implementation only needs to satisfy the Protocol shape.
     """
 
@@ -94,10 +99,10 @@ class TestBuilderEquivalence:
             name="gate",
             step=gate_step,
             edges=(
-                Edge(label="iterate", target="plan", kind="gate", recommendation="iterate"),
-                Edge(label="proceed", target="finalize", kind="gate", recommendation="proceed"),
-                Edge(label="tiebreaker", target="tiebreaker", kind="gate", recommendation="tiebreaker"),
-                Edge(label="escalate", target="halt", kind="gate", recommendation="escalate"),
+                Edge(label="proceed", target="finalize", kind="decision"),
+                Edge(label="iterate", target="plan", kind="decision"),
+                Edge(label="tiebreaker", target="tiebreaker", kind="decision"),
+                Edge(label="escalate", target="halt", kind="decision"),
             ),
         )
         expected = Pipeline(
@@ -242,3 +247,362 @@ class TestHumanGateConstruction:
         assert isinstance(hg_stage, Stage)
         stop_edge = next(e for e in hg_stage.edges if e.label == "stop")
         assert stop_edge.target == "done"
+
+
+class TestMegaplanBuilderDeclarationPassThrough:
+    def test_agent_derives_legacy_model_invocation_without_breaking_prompt_inputs(self) -> None:
+        pipeline = (
+            Pipeline.builder("authoring")
+            .agent(
+                "draft",
+                prompt="prompts/draft.md",
+                inputs=["brief", "outline"],
+                reads=(ReadRef(name="brief.md"),),
+                writes=(WriteRef(name="draft.md"),),
+                required_capabilities=("model:text",),
+            )
+            .build()
+        )
+
+        stage = pipeline.stages["draft"]
+        assert isinstance(stage, Stage)
+        assert stage.reads == (ReadRef(name="brief.md"),)
+        assert stage.writes == (WriteRef(name="draft.md"),)
+        assert stage.required_capabilities == ("model:text",)
+        assert stage.invocation == StepInvocation(
+            kind="model",
+            metadata={
+                "prompt": "prompts/draft.md",
+                "input_refs": ["brief", "outline"],
+            },
+        )
+        assert isinstance(stage.step, AgentStep)
+        assert stage.step._prompt_ref == "prompts/draft.md"
+        assert stage.step._input_refs == ["brief", "outline"]
+
+    @staticmethod
+    def _assert_authored_fields(
+        stage: Stage | ParallelStage,
+        *,
+        reads: tuple[ReadRef | PortRef, ...],
+        writes: tuple[WriteRef | Port, ...],
+        invocation: StepInvocation,
+        required_capabilities: tuple[str, ...],
+    ) -> None:
+        assert stage.reads == reads
+        assert stage.writes == writes
+        assert stage.invocation == invocation
+        assert stage.required_capabilities == required_capabilities
+
+    def test_panel_accepts_and_preserves_authored_fields(self) -> None:
+        invocation = StepInvocation(kind="tool", metadata={"action": "author"})
+        pipeline = (
+            Pipeline.builder("authoring")
+            .panel(
+                "review",
+                reviewers=(("a", "prompts/a.md"), ("b", "prompts/b.md")),
+                inputs=["draft"],
+                reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+                writes=(Port(name="review", content_type="text/markdown"),),
+                invocation=invocation,
+                required_capabilities=("model:text",),
+            )
+            .build()
+        )
+
+        review = pipeline.stages["review"]
+        assert isinstance(review, ParallelStage)
+        self._assert_authored_fields(
+            review,
+            reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+            writes=(Port(name="review", content_type="text/markdown"),),
+            invocation=invocation,
+            required_capabilities=("model:text",),
+        )
+
+    def test_gate_accepts_and_preserves_authored_fields(self) -> None:
+        invocation = StepInvocation(kind="tool", metadata={"action": "judge"})
+        pipeline = (
+            Pipeline.builder("authoring")
+            .gate(
+                "gate",
+                step=_StubGateStep(name="gate"),
+                on_proceed="human",
+                on_iterate="review",
+                on_tiebreaker="tiebreaker",
+                on_escalate="halt",
+                reads=(ReadRef(name="review.md"),),
+                writes=(WriteRef(name="gate.json"),),
+                invocation=invocation,
+                required_capabilities=("decoder:image",),
+            )
+            .build()
+        )
+
+        gate = pipeline.stages["gate"]
+        assert isinstance(gate, Stage)
+        self._assert_authored_fields(
+            gate,
+            reads=(ReadRef(name="review.md"),),
+            writes=(WriteRef(name="gate.json"),),
+            invocation=invocation,
+            required_capabilities=("decoder:image",),
+        )
+
+    def test_human_gate_accepts_and_preserves_authored_fields(self) -> None:
+        invocation = StepInvocation(kind="tool", metadata={"action": "approve"})
+        pipeline = (
+            Pipeline.builder("authoring")
+            .human_gate(
+                "human",
+                artifact="review",
+                options=["approve", "reject"],
+                edges={"approve": "child", "reject": "halt"},
+                reads=(ReadRef(name="review.md"),),
+                writes=(WriteRef(name="decision.json"),),
+                invocation=invocation,
+                required_capabilities=("model:vision",),
+            )
+            .build()
+        )
+
+        human = pipeline.stages["human"]
+        assert isinstance(human, Stage)
+        self._assert_authored_fields(
+            human,
+            reads=(ReadRef(name="review.md"),),
+            writes=(WriteRef(name="decision.json"),),
+            invocation=invocation,
+            required_capabilities=("model:vision",),
+        )
+
+    def test_subpipeline_accepts_and_preserves_authored_fields(self) -> None:
+        invocation = StepInvocation(kind="tool", metadata={"action": "delegate"})
+        child = Pipeline(
+            stages={"child": Stage(name="child", step=_StubGateStep(name="child"), edges=())},
+            entry="child",
+        )
+        pipeline = (
+            Pipeline.builder("authoring")
+            .subpipeline(
+                "child",
+                child=child,
+                promote=lambda state: "proceed",
+                reads=(ReadRef(name="decision.json"),),
+                writes=(WriteRef(name="child.md"),),
+                invocation=invocation,
+                required_capabilities=("model:text", "decoder:image"),
+            )
+            .build()
+        )
+
+        child_stage = pipeline.stages["child"]
+        assert isinstance(child_stage, Stage)
+        self._assert_authored_fields(
+            child_stage,
+            reads=(ReadRef(name="decision.json"),),
+            writes=(WriteRef(name="child.md"),),
+            invocation=invocation,
+            required_capabilities=("model:text", "decoder:image"),
+        )
+
+    def test_tiebreaker_accepts_and_preserves_authored_fields(self) -> None:
+        invocation = StepInvocation(kind="tool", metadata={"action": "break-tie"})
+        pipeline = (
+            Pipeline.builder("authoring")
+            .tiebreaker(
+                "tiebreaker",
+                reads=(ReadRef(name="review.md"),),
+                writes=(WriteRef(name="tie.md"),),
+                invocation=invocation,
+                required_capabilities=("model:text",),
+            )
+            .build()
+        )
+
+        tiebreaker = pipeline.stages["tiebreaker"]
+        assert isinstance(tiebreaker, Stage)
+        self._assert_authored_fields(
+            tiebreaker,
+            reads=(ReadRef(name="review.md"),),
+            writes=(WriteRef(name="tie.md"),),
+            invocation=invocation,
+            required_capabilities=("model:text",),
+        )
+
+
+class TestMegaplanBuilderFieldPreservation:
+    def test_escalate_preserves_unrelated_stage_fields(self) -> None:
+        builder = PipelineBuilder("test", "field preservation pipeline")
+        invocation = StepInvocation(kind="model", metadata={"prompt": "hi"})
+        loop_condition = lambda state: False
+        stage = Stage(
+            name="draft",
+            step=AgentStep(
+                name="draft",
+                kind="produce",
+                prompt_key=None,
+                slot=None,
+                _prompt_ref="prompts/draft.md",
+                _pipeline_name="test",
+                _input_refs=["brief"],
+                _produces="markdown",
+                _panel_reviewer_order={},
+                _mode="",
+            ),
+            reads=(ReadRef(name="brief.md"),),
+            writes=(WriteRef(name="draft.md"),),
+            produces=(Port(name="draft", content_type="text/markdown"),),
+            consumes=(PortRef(port_name="brief", content_type="text/markdown"),),
+            invocation=invocation,
+            required_capabilities=("llm", "fs-read"),
+            decision_vocabulary=frozenset({"proceed"}),
+            override_vocabulary=frozenset({"abort"}),
+            loop_condition=loop_condition,
+        )
+
+        builder.add_stage(stage)
+        builder.escalate(condition=lambda state: True, handler=_StubGateStep(name="halt"))
+        updated = builder.build().stages["draft"]
+
+        assert updated.edges[-1] == Edge(
+            label="escalate",
+            target="halt",
+            kind="decision",
+        )
+        assert updated.reads == stage.reads
+        assert updated.writes == stage.writes
+        assert updated.produces == stage.produces
+        assert updated.consumes == stage.consumes
+        assert updated.invocation == invocation
+        assert updated.required_capabilities == stage.required_capabilities
+        assert updated.decision_vocabulary == stage.decision_vocabulary
+        assert updated.override_vocabulary == stage.override_vocabulary
+        assert updated.loop_condition is loop_condition
+
+    def test_auto_link_preserves_unrelated_parallel_stage_fields(self) -> None:
+        builder = PipelineBuilder("test", "parallel field preservation pipeline")
+        invocation = StepInvocation(kind="tool", metadata={"action": "fanout"})
+
+        fanout = ParallelStage(
+            name="fanout",
+            steps=(
+                PanelReviewerStep(
+                    name="fanout.a",
+                    kind="produce",
+                    prompt_key=None,
+                    slot=None,
+                    _prompt_ref="prompts/a.md",
+                    _pipeline_name="test",
+                    _input_refs=["brief"],
+                    _reviewer_id="a",
+                    _panel_reviewer_order={},
+                    _mode="",
+                ),
+                PanelReviewerStep(
+                    name="fanout.b",
+                    kind="produce",
+                    prompt_key=None,
+                    slot=None,
+                    _prompt_ref="prompts/b.md",
+                    _pipeline_name="test",
+                    _input_refs=["brief"],
+                    _reviewer_id="b",
+                    _panel_reviewer_order={},
+                    _mode="",
+                ),
+            ),
+            join=lambda results, ctx: StepResult(next="next"),
+            reads=(ReadRef(name="brief.md"),),
+            writes=(WriteRef(name="notes.md"),),
+            produces=(Port(name="notes", content_type="text/markdown"),),
+            consumes=(PortRef(port_name="brief", content_type="text/markdown"),),
+            invocation=invocation,
+            required_capabilities=("llm", "fs-write"),
+            decision_vocabulary=frozenset({"continue"}),
+            override_vocabulary=frozenset({"stop"}),
+        )
+
+        builder.add_parallel_stage(fanout, emit_label="next")
+        builder.add_stage(Stage(name="after", step=_StubGateStep(name="after"), edges=()))
+        updated = builder.build().stages["fanout"]
+
+        assert updated.edges == (Edge(label="next", target="after"),)
+        assert updated.reads == fanout.reads
+        assert updated.writes == fanout.writes
+        assert updated.produces == fanout.produces
+        assert updated.consumes == fanout.consumes
+        assert updated.invocation == invocation
+        assert updated.required_capabilities == fanout.required_capabilities
+        assert updated.decision_vocabulary == fanout.decision_vocabulary
+        assert updated.override_vocabulary == fanout.override_vocabulary
+
+
+def test_build_with_binding_flag_off_keeps_binding_map_none(monkeypatch):
+    """Flag-OFF: build_with_binding returns pipeline with binding_map None."""
+    monkeypatch.delenv("MEGAPLAN_TYPED_PORTS", raising=False)
+    from arnold.pipelines.megaplan._core.workflow import build_with_binding
+    from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
+
+    class _S:
+        name = "s"; kind = "produce"; prompt_key = None; slot = None
+        produces = (); consumes = ()
+        def run(self, ctx):  # pragma: no cover
+            raise NotImplementedError
+
+    pipe = Pipeline(
+        stages={"s": Stage(name="s", step=_S(), edges=(Edge("done", "halt"),))},
+        entry="s",
+    )
+    out = build_with_binding(pipe)
+    assert out is pipe
+    assert out.binding_map is None
+
+
+def test_build_derives_binding_map_from_clean_typed_declarations() -> None:
+    builder = PipelineBuilder("typed-build", "typed authoring pipeline")
+    builder.add_stage(
+        Stage(
+            name="src",
+            step=_StubGateStep(name="src"),
+            edges=(Edge("done", "sink"),),
+            writes=(Port(name="draft", content_type="text/markdown"),),
+        )
+    )
+    builder.add_stage(
+        Stage(
+            name="sink",
+            step=_StubGateStep(name="sink"),
+            edges=(),
+            reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+        )
+    )
+
+    pipeline = builder.build()
+
+    assert pipeline.binding_map == {("sink", "draft"): ("src", "draft")}
+
+
+def test_build_skips_binding_map_when_declarations_drift() -> None:
+    builder = PipelineBuilder("typed-build", "drifted authoring pipeline")
+    builder.add_stage(
+        Stage(
+            name="src",
+            step=_StubGateStep(name="src"),
+            edges=(Edge("done", "sink"),),
+            writes=(Port(name="draft", content_type="text/markdown"),),
+            produces=(Port(name="other", content_type="text/markdown"),),
+        )
+    )
+    builder.add_stage(
+        Stage(
+            name="sink",
+            step=_StubGateStep(name="sink"),
+            edges=(),
+            reads=(PortRef(port_name="draft", content_type="text/markdown"),),
+        )
+    )
+
+    pipeline = builder.build()
+
+    assert pipeline.binding_map is None

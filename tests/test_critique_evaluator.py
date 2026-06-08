@@ -19,18 +19,18 @@ from importlib.resources import files
 
 import pytest
 
-import megaplan
-import megaplan.handlers
-import megaplan.handlers.critique as critique_mod
-from megaplan.audits.critique_evaluator import (
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+import arnold.pipelines.megaplan.handlers.critique as critique_mod
+from arnold.pipelines.megaplan.audits.critique_evaluator import (
     CRITIC_MODEL_ROSTER,
     roster_dispatch_spec,
     roster_rank,
     validate_evaluator_verdict,
 )
-from megaplan.audits.robustness import CRITIQUE_CHECKS
-from megaplan.types import ROBUSTNESS_LEVELS
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.audits.robustness import CRITIQUE_CHECKS
+from arnold.pipelines.megaplan.profiles import ROBUSTNESS_LEVELS
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests.conftest import PlanFixture
 
 
@@ -129,7 +129,7 @@ def test_dispatch_spec_routes_deepseek_critics_to_direct_api() -> None:
 
 
 def test_dispatch_spec_premium_roster_tokens_carry_their_agent() -> None:
-    from megaplan.types import parse_agent_spec
+    from arnold.pipelines.megaplan.types import parse_agent_spec
 
     assert parse_agent_spec(roster_dispatch_spec("claude-opus-4-7")).agent == "claude"
     assert parse_agent_spec(roster_dispatch_spec("gpt-5.5")).agent == "codex"
@@ -445,8 +445,8 @@ def test_critique_prompt_uses_passed_active_checks_via_real_dispatch(
 ) -> None:
     """create_claude_prompt('critique', ..., active_checks=subset) drives the
     real _critique_prompt with the provided subset, NOT recomputed defaults."""
-    from megaplan._core import load_plan
-    from megaplan.prompts import create_claude_prompt
+    from arnold.pipelines.megaplan._core import load_plan
+    from arnold.pipelines.megaplan.prompts import create_claude_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
@@ -482,7 +482,7 @@ def test_forced_parallel_failure_sequential_fallback_honors_verdict(
     not recompute from robustness defaults."""
     import json
 
-    from megaplan.prompts import create_claude_prompt
+    from arnold.pipelines.megaplan.prompts import create_claude_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
@@ -572,7 +572,7 @@ def test_other_selection_synthesized_into_active_checks(
     synthesized id flows through to expected_ids."""
     import json
 
-    from megaplan.prompts import create_claude_prompt
+    from arnold.pipelines.megaplan.prompts import create_claude_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     state_path = plan_fixture.plan_dir / "state.json"
@@ -774,8 +774,8 @@ def test_differential_section_present_only_on_iteration_n(
 ) -> None:
     """Iteration N>=2 with faults/pressure/gate signals produces a differential
     prompt distinct from the blind iteration-1 selection."""
-    from megaplan._core import load_plan
-    from megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
+    from arnold.pipelines.megaplan._core import load_plan
+    from arnold.pipelines.megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
@@ -833,8 +833,8 @@ def test_prep_section_present_when_prep_artifacts_supplied(
 ) -> None:
     """The evaluator prompt surfaces the prep dossier + coverage signals when
     prep artifacts are passed, and omits the section when they are not."""
-    from megaplan._core import load_plan
-    from megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
+    from arnold.pipelines.megaplan._core import load_plan
+    from arnold.pipelines.megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
@@ -876,8 +876,8 @@ def test_evaluator_prompt_steers_cheapest_capable_critic(
 ) -> None:
     """The evaluator prompt must instruct the evaluator to score per-lens
     complexity, justify it, and respect the hard floors for critical lenses."""
-    from megaplan._core import load_plan
-    from megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
+    from arnold.pipelines.megaplan._core import load_plan
+    from arnold.pipelines.megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
@@ -913,7 +913,7 @@ def test_finalize_rank_not_weaker_than_strongest_execute_tier(profile_name: str)
     """rater>=dispatchee for finalize: roster_rank(finalize) <= roster_rank of the
     strongest execute-tier model (rank 1 = strongest)."""
     data = tomllib.loads(
-        files("megaplan.profiles").joinpath(f"{profile_name}.toml").read_text()
+        files("arnold.pipelines.megaplan.profiles").joinpath(f"{profile_name}.toml").read_text()
     )
     profile = data["profiles"][profile_name]
     finalize_model = profile["finalize"]
@@ -1083,8 +1083,8 @@ def test_critique_evaluator_step_registered_in_schema_filenames() -> None:
     and downgraded to the static robustness lens list — silently, for every
     iteration of every (non-creative) plan run.
     """
-    from megaplan.schemas import SCHEMAS
-    from megaplan.workers._impl import STEP_SCHEMA_FILENAMES, _STEP_REQUIRED_KEYS
+    from arnold.pipelines.megaplan.schemas import SCHEMAS
+    from arnold.pipelines.megaplan.workers._impl import STEP_SCHEMA_FILENAMES, _STEP_REQUIRED_KEYS
 
     assert "critique_evaluator" in STEP_SCHEMA_FILENAMES, (
         "critique_evaluator step must have a schema filename or the adaptive "

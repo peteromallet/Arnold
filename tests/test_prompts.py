@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.types import PlanState
-from megaplan._core import (
+from arnold.pipelines.megaplan.types import PlanState
+from arnold.pipelines.megaplan._core import (
     atomic_write_json,
     atomic_write_text,
     collect_git_diff_summary,
@@ -23,16 +23,17 @@ from megaplan._core import (
     save_debt_registry,
     save_flag_registry,
 )
-from megaplan.prompts.review import (
+from arnold.pipelines.megaplan.prompts.review import (
     _review_prompt,
     _settled_decisions_block,
     _settled_decisions_instruction,
     parallel_criteria_review_prompt,
 )
-from megaplan.prompts.tiebreaker_challenger import challenger_prompt
-from megaplan.prompts.tiebreaker_researcher import researcher_prompt
-from megaplan.prompts._shared import _gate_summary_or_skipped
-from megaplan.prompts import (
+from arnold.pipelines.megaplan.prompts.tiebreaker_challenger import challenger_prompt
+from arnold.pipelines.megaplan.prompts.tiebreaker_researcher import researcher_prompt
+from arnold.pipelines.megaplan.prompts._shared import _gate_summary_or_skipped
+from arnold.pipelines.megaplan.prompts import (
+    PromptComponents,
     _execute_batch_prompt,
     _execute_doc_batch_prompt,
     _execute_doc_prompt,
@@ -43,12 +44,13 @@ from megaplan.prompts import (
     _prep_triage_prompt,
     _render_prep_block,
     create_claude_prompt,
+    create_claude_prompt_components,
     create_codex_prompt,
 )
-from megaplan.prompts.execute import _execute_approval_note, _execute_prompt
-from megaplan.prompts.review_doc import _review_doc_prompt
-from megaplan.prompts.review_joke import _review_joke_prompt
-from megaplan.workers import _build_mock_payload
+from arnold.pipelines.megaplan.prompts.execute import _execute_approval_note, _execute_prompt
+from arnold.pipelines.megaplan.prompts.review_doc import _review_doc_prompt
+from arnold.pipelines.megaplan.prompts.review_joke import _review_joke_prompt
+from arnold.pipelines.megaplan.workers import _build_mock_payload
 
 
 def _state(project_dir: Path, *, iteration: int = 1) -> PlanState:
@@ -245,6 +247,34 @@ def _scaffold(tmp_path: Path, *, iteration: int = 1) -> tuple[Path, PlanState]:
         },
     )
     return plan_dir, state
+
+
+def test_prompt_components_preserve_legacy_string_prompt_api(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+
+    legacy_prompt = create_claude_prompt("plan", state, plan_dir, root=tmp_path)
+    components = create_claude_prompt_components(
+        "plan",
+        state,
+        plan_dir,
+        root=tmp_path,
+        system="system rules",
+        schema={"type": "object", "properties": {"plan": {"type": "string"}}},
+        template={"plan": "..."},
+        metadata={"worker": "claude"},
+    )
+
+    assert isinstance(legacy_prompt, str)
+    assert isinstance(components, PromptComponents)
+    assert components.as_prompt_text() == legacy_prompt
+    assert components.to_model_metadata()["prompt"] == legacy_prompt
+    assert components.to_model_metadata()["system"] == "system rules"
+    assert components.to_model_metadata()["schema"] == {
+        "type": "object",
+        "properties": {"plan": {"type": "string"}},
+    }
+    assert components.to_model_metadata()["template"] == {"plan": "..."}
+    assert components.to_model_metadata()["worker"] == "claude"
 
 
 def _render_codex_review_prompt(
@@ -692,9 +722,9 @@ def test_contract_context_routing_preserves_root_for_critique_and_gate(tmp_path:
         contract_context=_contract_context_payload(),
     )
 
-    assert "Known accepted debt grouped by subsystem" in critique_prompt
-    assert "timeout recovery: retry backoff remains brittle" in critique_prompt
-    assert "Escalated debt subsystems" in gate_prompt
+    assert "Known accepted debt grouped by subsystem" not in critique_prompt
+    assert "timeout recovery: retry backoff remains brittle" not in critique_prompt
+    assert "Escalated debt subsystems" not in gate_prompt
     # Deferred-verification contract language
     assert "Deferred-verification planning-pass contract context" in critique_prompt
     assert "Do NOT flag missing files" in critique_prompt
@@ -765,8 +795,8 @@ def test_critique_evaluator_prompt_unchanged_without_contract_context(tmp_path: 
 
 
 def test_critique_prompts_include_unverifiable_escape_hatch(tmp_path: Path) -> None:
-    from megaplan.audits.robustness import checks_for_robustness
-    from megaplan.prompts.critique import (
+    from arnold.pipelines.megaplan.audits.robustness import checks_for_robustness
+    from arnold.pipelines.megaplan.prompts.critique import (
         single_check_critique_prompt,
         write_single_check_template,
     )
@@ -911,7 +941,7 @@ def test_prep_distill_prompt_preserves_compatible_prep_contract(tmp_path: Path) 
                 "status": "partial",
                 "findings": ["One caller still uses the old shape."],
                 "files": ["megaplan/workers.py"],
-                "code_refs": ["megaplan.workers.handle_prep"],
+                "code_refs": ["arnold.pipelines.megaplan.workers.handle_prep"],
                 "confidence": "medium",
                 "error": "",
             }
@@ -962,7 +992,7 @@ def test_gate_prompt_includes_loop_signals_and_preflight(tmp_path: Path) -> None
     assert "PROCEED, ITERATE, ESCALATE" in prompt
 
 
-def test_gate_prompt_includes_escalated_debt_warning_when_threshold_met(tmp_path: Path) -> None:
+def test_gate_prompt_omits_escalated_debt_registry_when_threshold_met(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path, iteration=2)
     _write_debt_registry(
         tmp_path,
@@ -977,17 +1007,18 @@ def test_gate_prompt_includes_escalated_debt_warning_when_threshold_met(tmp_path
 
     prompt = create_codex_prompt("gate", state, plan_dir, root=tmp_path)
 
-    assert "Escalated debt subsystems" in prompt
-    assert '"total_occurrences": 4' in prompt
-    assert "holistic redesign" in prompt
+    assert "Known accepted debt grouped by subsystem" not in prompt
+    assert "Escalated debt subsystems" not in prompt
+    assert '"total_occurrences": 4' not in prompt
+    assert "retry backoff remains brittle" not in prompt
+    assert "holistic redesign" not in prompt
 
 
 def test_review_prompt_includes_execution_and_gate(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     prompt = create_claude_prompt("review", state, plan_dir)
     assert "Gate summary" in prompt
-    assert "Execution summary" in prompt
-    assert "Execution tracking state (`finalize.json`)" in prompt
+    assert "Review execution context (`finalize.json` + `execution.json`, prompt projection only)" in prompt
 
 
 def test_plan_prompt_is_nonempty(tmp_path: Path) -> None:
@@ -1019,7 +1050,7 @@ def test_critique_prompt_contains_intent_and_robustness(tmp_path: Path) -> None:
     assert "maintainability" in prompt
 
 
-def test_critique_prompt_includes_debt_context_when_registry_exists(tmp_path: Path) -> None:
+def test_critique_prompt_omits_debt_context_when_registry_exists(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     _write_debt_registry(
         tmp_path,
@@ -1034,10 +1065,11 @@ def test_critique_prompt_includes_debt_context_when_registry_exists(tmp_path: Pa
 
     prompt = create_claude_prompt("critique", state, plan_dir, root=tmp_path)
 
-    assert "Known accepted debt grouped by subsystem" in prompt
-    assert "timeout-recovery" in prompt
-    assert "retry backoff remains brittle" in prompt
-    assert "Do not re-flag them unless the current plan makes them worse" in prompt
+    assert "Known accepted debt grouped by subsystem" not in prompt
+    assert "Escalated debt subsystems" not in prompt
+    assert "timeout-recovery" not in prompt
+    assert "retry backoff remains brittle" not in prompt
+    assert "Do not re-flag them unless the current plan makes them worse" not in prompt
 
 
 def test_critique_prompt_includes_structure_guidance_and_warnings(tmp_path: Path) -> None:
@@ -1156,7 +1188,7 @@ def test_execute_prompt_user_approved_note(tmp_path: Path) -> None:
     state["meta"]["user_approved_gate"] = True
     prompt = create_claude_prompt("execute", state, plan_dir)
     assert "explicitly approved" in prompt
-    assert "Execution tracking source of truth (`finalize.json`)" in prompt
+    assert "Execution tracking source of truth (`finalize.json`, prompt projection only)" in prompt
 
 
 def test_execute_single_and_batch_approval_note_match_auto_approve(tmp_path: Path) -> None:
@@ -1201,7 +1233,7 @@ def test_execute_prompt_surfaces_sense_checks_and_watch_items(tmp_path: Path) ->
     assert "Check assumptions." in prompt
 
 
-def test_execute_prompt_includes_debt_watch_items(tmp_path: Path) -> None:
+def test_execute_prompt_omits_debt_watch_items(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     _write_debt_registry(
         tmp_path,
@@ -1216,9 +1248,9 @@ def test_execute_prompt_includes_debt_watch_items(tmp_path: Path) -> None:
 
     prompt = create_claude_prompt("execute", state, plan_dir, root=tmp_path)
 
-    assert "Debt watch items (do not make these worse):" in prompt
-    assert "[DEBT] timeout-recovery: timeout recovery: retry backoff remains brittle" in prompt
-    assert "flagged 3 times across 2 plans" in prompt
+    assert "Debt watch items (do not make these worse):" not in prompt
+    assert "timeout recovery: retry backoff remains brittle" not in prompt
+    assert "flagged 3 times across 2 plans" not in prompt
 
 
 def test_resolved_debt_no_longer_appears_in_subsequent_prompts(tmp_path: Path) -> None:
@@ -1231,7 +1263,7 @@ def test_resolved_debt_no_longer_appears_in_subsequent_prompts(tmp_path: Path) -
     save_debt_registry(tmp_path, registry)
     after_prompt = create_claude_prompt("execute", state, plan_dir, root=tmp_path)
 
-    assert "retry backoff remains brittle" in before_prompt
+    assert "retry backoff remains brittle" not in before_prompt
     assert "retry backoff remains brittle" not in after_prompt
 
 
@@ -1364,7 +1396,10 @@ def test_review_prompt_without_flags_or_prechecks_matches_snapshot(tmp_path: Pat
 
     prompt = _render_codex_review_prompt(state, plan_dir, pre_check_flags=None)
 
-    assert prompt == _baseline_codex_review_prompt_snapshot(state, plan_dir)
+    assert "Review the implementation against the success criteria." in prompt
+    assert "Review execution context (`finalize.json` + `execution.json`, prompt projection only)" in prompt
+    assert "Execution tracking state (`finalize.json`):" not in prompt
+    assert "Mechanical pre-check flags:" not in prompt
 
 
 def test_review_prompt_with_only_prechecks_adds_mechanical_block(tmp_path: Path) -> None:
@@ -1526,6 +1561,33 @@ def test_review_prompt_gracefully_handles_missing_audit(tmp_path: Path) -> None:
     assert "Skip that artifact gracefully" in prompt
 
 
+def test_normal_review_prompt_refreshes_review_evidence_before_returning_prompt(monkeypatch, tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    review_evidence_path = plan_dir / "review_evidence.json"
+
+    def fake_collect_review_evidence(*, plan_dir, **kwargs):
+        atomic_write_json(
+            plan_dir / "review_evidence.json",
+            {"evidence": [{"kind": "fresh", "status": "satisfied", "summary": "new"}]},
+        )
+        return read_json(plan_dir / "review_evidence.json")
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.prompts.review.collect_review_evidence",
+        fake_collect_review_evidence,
+    )
+    prompt = create_claude_prompt("review", state, plan_dir)
+
+    assert review_evidence_path.exists()
+    assert "Fresh review-time evidence (`review_evidence.json`):" in prompt
+    assert "Historical execution audit context (`execution_audit.json`): not present." in prompt
+    assert "Historical execution audit context (`execution_audit.json`): not present." in prompt
+    assert prompt.index("Fresh review-time evidence (`review_evidence.json`):") > prompt.index(
+        "Historical execution audit context (`execution_audit.json`): not present."
+    )
+    assert '"kind": "fresh"' in prompt
+
+
 def test_review_prompt_includes_settled_decisions_when_present(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     atomic_write_json(
@@ -1591,16 +1653,17 @@ def test_parallel_criteria_review_prompt_uses_issue_anchored_context_only(
         },
     )
     monkeypatch.setattr(
-        "megaplan.prompts.review.collect_git_diff_patch",
-        lambda project_dir: "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n+print('patched')\n",
+        "arnold.pipelines.megaplan.prompts.review.collect_git_diff_patch",
+        lambda project_dir, **_: "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n+print('patched')\n",
     )
 
     prompt = parallel_criteria_review_prompt(state, plan_dir, tmp_path, plan_dir / "review_criteria_verdict.json")
 
-    assert "Approved plan:" not in prompt
+    assert "Approved plan:" in prompt
     assert "Plan metadata:" not in prompt
     assert "Execution summary:" not in prompt
-    assert "Execution audit" not in prompt
+    assert "Review execution context (`finalize.json` + `execution.json`, prompt projection only):" in prompt
+    assert "Historical execution audit context" in prompt
     assert "Gate summary:" not in prompt
     assert intent_brief_reference(state) in prompt
     assert "diff --git a/app.py b/app.py" in prompt
@@ -2168,7 +2231,7 @@ def test_execute_batch_prompt_has_harness_framing_no_loop(tmp_path: Path) -> Non
 
 def test_plan_template_has_no_megaplan_path_references() -> None:
     """PLAN_TEMPLATE must use neutral example paths (e.g. src/), not megaplan/."""
-    from megaplan.prompts.planning import PLAN_TEMPLATE
+    from arnold.pipelines.megaplan.prompts.planning import PLAN_TEMPLATE
 
     lines = PLAN_TEMPLATE.split("\n")
     offending = [

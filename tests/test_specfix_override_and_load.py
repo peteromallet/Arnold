@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan._core import load_plan
-from megaplan._core.state import load_plan_from_dir
-from megaplan.types import CliError
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import load_plan
+from arnold.pipelines.megaplan._core.state import load_plan_from_dir
+from arnold.pipelines.megaplan.types import CliError
 from tests.conftest import PlanFixture
 
 

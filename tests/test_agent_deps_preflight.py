@@ -19,14 +19,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from megaplan.chain import (
+from arnold.pipelines.megaplan.chain import (
     MilestoneSpec,
     _milestone_uses_hermes_backend,
     _preflight_agent_backends,
     load_spec,
     run_chain,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _write_spec(tmp_path: Path, spec_dict: dict) -> Path:
@@ -92,7 +92,7 @@ def test_preflight_raises_when_backend_missing(tmp_path: Path, monkeypatch) -> N
     spec = _spec_with_prep_milestone(tmp_path)
     # Simulate the backend NOT importable.
     monkeypatch.setattr(
-        "megaplan.workers._is_agent_available", lambda agent: False
+        "arnold.pipelines.megaplan.workers._is_agent_available", lambda agent: False
     )
     with pytest.raises(CliError) as excinfo:
         _preflight_agent_backends(spec, writer=lambda _m: None)
@@ -107,7 +107,7 @@ def test_preflight_raises_when_backend_missing(tmp_path: Path, monkeypatch) -> N
 def test_preflight_passes_when_backend_present(tmp_path: Path, monkeypatch) -> None:
     spec = _spec_with_prep_milestone(tmp_path)
     monkeypatch.setattr(
-        "megaplan.workers._is_agent_available", lambda agent: True
+        "arnold.pipelines.megaplan.workers._is_agent_available", lambda agent: True
     )
     # Must not raise.
     _preflight_agent_backends(spec, writer=lambda _m: None)
@@ -128,7 +128,7 @@ def test_preflight_noop_when_no_milestone_needs_backend(
     def _boom(_agent):  # pragma: no cover - should never be called
         raise AssertionError("_is_agent_available should not be probed")
 
-    monkeypatch.setattr("megaplan.workers._is_agent_available", _boom)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers._is_agent_available", _boom)
     _preflight_agent_backends(spec, writer=lambda _m: None)
 
 
@@ -141,7 +141,7 @@ def test_run_chain_fails_fast_before_driving_when_backend_missing(
         {"milestones": [{"label": "m1", "idea": str(idea), "with_prep": True}]},
     )
     monkeypatch.setattr(
-        "megaplan.workers._is_agent_available", lambda agent: False
+        "arnold.pipelines.megaplan.workers._is_agent_available", lambda agent: False
     )
 
     # If the preflight fired, we never reach the plan-driving path. Make that
@@ -150,7 +150,7 @@ def test_run_chain_fails_fast_before_driving_when_backend_missing(
         raise AssertionError("chain drove a milestone despite missing backend")
 
     monkeypatch.setattr(
-        "megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        "arnold.pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
         _should_not_run,
     )
 

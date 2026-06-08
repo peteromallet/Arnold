@@ -4,14 +4,17 @@ import json
 
 import pytest
 
-import megaplan
-import megaplan.execute.aggregation
-import megaplan.execute.batch
-import megaplan.execute.core
-import megaplan.handlers
-import megaplan.execute.merge
-import megaplan.workers
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.execute.aggregation as megaplan_execute_aggregation
+import arnold.pipelines.megaplan.execute.batch as megaplan_execute_batch
+import arnold.pipelines.megaplan.execute.core as megaplan_execute_core
+import arnold.pipelines.megaplan.handlers as megaplan_handlers
+import arnold.pipelines.megaplan.execute.merge as megaplan_execute_merge
+from arnold.pipelines.megaplan.orchestration.transition_policy import (
+    TRANSITION_DECISION_REVIEW_DONE_FILENAME,
+)
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 from tests.conftest import PlanFixture, load_state, read_json
 
@@ -267,8 +270,9 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
     first_review = WorkerResult(
         payload={
             "review_verdict": "approved",
-            "criteria": [{"name": "criterion", "pass": True, "evidence": "checked"}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "pass", "evidence": "checked"}],
             "issues": [],
+            "rework_items": [],
             "summary": "Partial review.",
             "task_verdicts": [
                 {
@@ -294,8 +298,9 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
     second_review = WorkerResult(
         payload={
             "review_verdict": "approved",
-            "criteria": [{"name": "criterion", "pass": True, "evidence": "checked again"}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "pass", "evidence": "checked again"}],
             "issues": [],
+            "rework_items": [],
             "summary": "Complete review.",
             "task_verdicts": [
                 {
@@ -346,11 +351,12 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
     assert after_block["tasks"][1]["reviewer_verdict"] == ""
     assert blocked_entry["result"] == "blocked"
     assert (plan_fixture.plan_dir / "review.json").exists()
+    assert not (plan_fixture.plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME).exists()
     assert "## Coverage Gaps" in blocked_md
     assert "Reviewer verdicts pending: 1" in blocked_md
     assert "Sense-check verdicts pending: 1" in blocked_md
     # Verify phase_result.json is written with success (review always emits success)
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr_blocked = read_phase_result(plan_fixture.plan_dir)
     assert pr_blocked is not None, "phase_result.json must be written after review"
     assert pr_blocked.exit_kind == "success"
@@ -400,8 +406,9 @@ def test_review_blocks_empty_evidence_files_without_substantive_verdict(
     worker = WorkerResult(
         payload={
             "review_verdict": "approved",
-            "criteria": [{"name": "criterion", "pass": True, "evidence": "checked"}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "pass", "evidence": "checked"}],
             "issues": [],
+            "rework_items": [],
             "summary": "Review missing evidence files.",
             "task_verdicts": [
                 {
@@ -438,7 +445,7 @@ def test_review_blocks_empty_evidence_files_without_substantive_verdict(
     assert response["next_step"] == "review"
     assert "missing reviewer evidence_files" in response["summary"]
     # Verify phase_result.json is written
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after review"
     assert pr.exit_kind == "success"
@@ -464,9 +471,26 @@ def test_review_softens_substantive_verdict_without_evidence_files_and_can_kick_
     worker = WorkerResult(
         payload={
             "review_verdict": "needs_rework",
-            "criteria": [{"name": "criterion", "pass": False, "evidence": "Task T1 still needs follow-up edits."}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "fail", "evidence": "Task T1 still needs follow-up edits."}],
             "issues": ["T1 implementation is incomplete and needs another execute pass."],
             "summary": "Needs rework: one task is still incomplete.",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "issue": "Deterministic check still fails.",
+                    "expected": "The regression check should pass after execute.",
+                    "actual": "The same check failed before and after execute.",
+                    "evidence_file": "review.json",
+                    "flag_id": None,
+                    "source": "review_deterministic_check",
+                    "deterministic_check": {
+                        "command": "pytest tests/test_regression.py",
+                        "baseline_status": "failed",
+                        "post_status": "failed",
+                        "evidence_file": "review.json",
+                    },
+                }
+            ],
             "task_verdicts": [
                 {
                     "task_id": "T1",
@@ -507,11 +531,233 @@ def test_review_softens_substantive_verdict_without_evidence_files_and_can_kick_
     assert state["current_state"] == megaplan.STATE_FINALIZED
     assert state["history"][-1]["result"] == "needs_rework"
     assert stored_review["review_verdict"] == "needs_rework"
+    assert stored_review["blocking_rework_items"]
+    assert not (plan_fixture.plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME).exists()
     # Verify phase_result.json emission
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after review"
     assert pr.exit_kind == "success"
+
+
+def test_review_demotes_ungrounded_prose_rework_when_declared_checks_pass(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+
+    worker = WorkerResult(
+        payload={
+            "review_verdict": "needs_rework",
+            "criteria": [
+                {
+                    "name": "Forbidden Megaplan vocabulary remains",
+                    "priority": "must",
+                    "pass": "fail",
+                    "evidence": "Matched prose in policy docstrings.",
+                }
+            ],
+            "issues": ["Prose-only criterion failed."],
+            "summary": "Needs rework based on prose interpretation.",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "issue": "Plan appears to diverge from approved intent.",
+                    "expected": "Match the reviewer interpretation.",
+                    "actual": "Implementation differs from reviewer prose.",
+                    "evidence_file": "review.json",
+                    "flag_id": None,
+                    "source": "review_prose",
+                    "deterministic_check": None,
+                }
+            ],
+            "task_verdicts": [
+                {
+                    "task_id": "T1",
+                    "reviewer_verdict": "Pass with implementation evidence.",
+                    "evidence_files": ["IMPLEMENTED_BY_MEGAPLAN.txt"],
+                },
+                {
+                    "task_id": "T2",
+                    "reviewer_verdict": (
+                        "Verification work is acceptable and was checked through "
+                        "command evidence captured in the executor notes."
+                    ),
+                    "evidence_files": [],
+                },
+            ],
+            "sense_check_verdicts": [
+                {"sense_check_id": "SC1", "verdict": "Confirmed."},
+                {"sense_check_id": "SC2", "verdict": "Confirmed."},
+            ],
+        },
+        raw_output="ungrounded review",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="review-ungrounded",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "codex", "persistent", False),
+    )
+
+    response = megaplan.handle_review(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    stored_review = read_json(plan_fixture.plan_dir / "review.json")
+    state = load_state(plan_fixture.plan_dir)
+
+    assert response["success"] is True
+    assert response["state"] == megaplan.STATE_DONE
+    assert response["next_step"] is None
+    assert stored_review["review_verdict"] == "approved"
+    assert stored_review["rework_items"] == []
+    assert stored_review["advisory_rework_items"][0]["source"] == "review_prose"
+    assert stored_review["advisory_failed_criteria"][0]["name"] == "Forbidden Megaplan vocabulary remains"
+    assert any("not blocking" in issue for issue in response["issues"])
+    assert state["history"][-1]["result"] == "success"
+
+
+def test_real_megaplan_import_usage_ignores_comments_and_docstrings() -> None:
+    from arnold.pipelines.megaplan.review.mechanical import real_megaplan_import_usages
+
+    source = '''
+"""Policy says no import megaplan vocabulary is allowed."""
+# import megaplan
+TEXT = "from megaplan import handlers"
+from megaplan.types import CliError
+'''
+
+    assert real_megaplan_import_usages(source) == [(5, "from megaplan.types")]
+
+
+def test_review_disputed_flag_cannot_block_even_with_grounded_check() -> None:
+    import arnold.pipelines.megaplan.handlers.review as review_handler
+
+    payload = {
+        "review_verdict": "needs_rework",
+        "criteria": [],
+        "disputed_flag_ids": ["FLAG-1"],
+        "rework_items": [
+            {
+                "task_id": "T1",
+                "issue": "Disputed issue.",
+                "expected": "Pass",
+                "actual": "Fail",
+                "evidence_file": "review.json",
+                "flag_id": "FLAG-1",
+                "source": "review_flag_reverify",
+                "deterministic_check": {
+                    "command": "pytest tests/test_regression.py",
+                    "baseline_status": "failed",
+                    "post_status": "failed",
+                },
+            }
+        ],
+    }
+    issues: list[str] = []
+
+    review_handler._normalize_review_blockers(payload, issues)
+
+    assert payload["review_verdict"] == "approved"
+    assert payload["rework_items"] == []
+    assert payload["advisory_rework_items"][0]["flag_id"] == "FLAG-1"
+    assert any("not blocking" in issue for issue in issues)
+
+
+def test_review_force_proceed_records_outcome_matching_hashed_artifact(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_execute(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+    )
+    state = load_state(plan_fixture.plan_dir)
+    state["history"].extend(
+        {"step": "review", "result": "needs_rework"} for _ in range(3)
+    )
+    megaplan._core.atomic_write_json(plan_fixture.plan_dir / "state.json", state)
+
+    worker = WorkerResult(
+        payload={
+            "review_verdict": "needs_rework",
+            "criteria": [
+                {"name": "copy polish", "priority": "should", "pass": "fail", "evidence": "Minor wording remains."}
+            ],
+            "issues": ["Minor cosmetic wording remains."],
+            "summary": "Needs cosmetic rework.",
+            "rework_items": [
+                {
+                    "task_id": "T1",
+                    "issue": "nit: wording",
+                    "expected": "Cleaner copy.",
+                    "actual": "Acceptable but not polished.",
+                    "evidence_file": "review.json",
+                    "flag_id": None,
+                    "source": "review_cosmetic",
+                    "severity": "minor",
+                    "deterministic_check": {
+                        "command": "pytest tests/test_cosmetic.py",
+                        "baseline_status": "failed",
+                        "post_status": "failed",
+                        "evidence_file": "review.json",
+                    },
+                }
+            ],
+            "task_verdicts": [
+                {"task_id": "T1", "reviewer_verdict": "Pass with cosmetic nit.", "evidence_files": ["IMPLEMENTED_BY_MEGAPLAN.txt"]},
+                {"task_id": "T2", "reviewer_verdict": "Pass with command evidence.", "evidence_files": ["IMPLEMENTED_BY_MEGAPLAN.txt"]},
+            ],
+            "sense_check_verdicts": [
+                {"sense_check_id": "SC1", "verdict": "Confirmed."},
+                {"sense_check_id": "SC2", "verdict": "Confirmed."},
+            ],
+        },
+        raw_output="review cosmetic rework",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="review-force-proceeded",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "codex", "persistent", False),
+    )
+
+    response = megaplan.handle_review(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    state_after = load_state(plan_fixture.plan_dir)
+    stored_review = read_json(plan_fixture.plan_dir / "review.json")
+    receipt = read_json(plan_fixture.plan_dir / "step_receipt_review_v1.json")
+    artifact_hash = megaplan._core.sha256_file(plan_fixture.plan_dir / "review.json")
+
+    assert response["success"] is True
+    assert response["state"] == megaplan.STATE_DONE
+    assert state_after["current_state"] == megaplan.STATE_DONE
+    assert state_after["history"][-1]["result"] == "force_proceeded"
+    assert state_after["history"][-1]["artifact_hash"] == artifact_hash
+    assert stored_review["review_verdict"] == "needs_rework"
+    assert stored_review["outcome"]["result"] == "force_proceeded"
+    assert receipt["verdict"] == "force_proceeded"
+    assert not (plan_fixture.plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME).exists()
 
 
 def test_review_incomplete_rework_payload_stays_in_review(
@@ -534,7 +780,7 @@ def test_review_incomplete_rework_payload_stays_in_review(
     worker = WorkerResult(
         payload={
             "review_verdict": "needs_rework",
-            "criteria": [{"name": "criterion", "pass": False, "evidence": "review did not inspect repository"}],
+            "criteria": [{"name": "criterion", "priority": "must", "pass": "pass", "evidence": "review did not inspect repository"}],
             "issues": ["No repository inspection was performed; review output is incomplete."],
             "summary": "Review infrastructure failed.",
             "rework_items": [
@@ -543,7 +789,10 @@ def test_review_incomplete_rework_payload_stays_in_review(
                     "issue": "No repository inspection was performed.",
                     "expected": "Review should inspect repository state before requesting implementation rework.",
                     "actual": "Placeholder review response.",
+                    "evidence_file": "review.json",
+                    "flag_id": None,
                     "source": "review_incomplete",
+                    "deterministic_check": None,
                 }
             ],
             "task_verdicts": [
@@ -575,6 +824,7 @@ def test_review_incomplete_rework_payload_stays_in_review(
     assert "review infrastructure" in response["summary"]
     assert state["current_state"] == megaplan.STATE_EXECUTED
     assert state["history"][-1]["result"] == "blocked"
+    assert not (plan_fixture.plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME).exists()
 
 
 def test_review_works_after_batch_by_batch_execution(
@@ -686,7 +936,7 @@ def test_review_works_after_batch_by_batch_execution(
 
     original_run_step = megaplan.workers.run_step_with_worker
 
-    def _worker_dispatch(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+    def _worker_dispatch(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None, read_only=False):
         if step == "execute":
             return _local_batch_worker(
                 step,
@@ -697,6 +947,7 @@ def test_review_works_after_batch_by_batch_execution(
                 resolved=resolved,
                 prompt_override=prompt_override,
             )
+        del read_only
         return original_run_step(step, state, plan_dir, args, root=root, resolved=resolved, prompt_override=prompt_override)
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _worker_dispatch)
@@ -715,7 +966,7 @@ def test_review_works_after_batch_by_batch_execution(
     )
     assert review["state"] == megaplan.STATE_DONE
     # Verify phase_result.json is written after this review too
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after review"
     assert pr.exit_kind == "success"
@@ -751,7 +1002,7 @@ def test_execution_merge_config_includes_blocked_status() -> None:
     """The enum_fields passed to the execute merge path must include blocked."""
     # Import source to sanity-check the constant survives future edits.
     import inspect
-    import megaplan.execute.core as execution_module
+    import arnold.pipelines.megaplan.execute.core as execution_module
 
     source = inspect.getsource(execution_module._merge_batch_results)
     assert '"blocked"' in source, (

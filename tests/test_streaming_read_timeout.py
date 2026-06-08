@@ -20,9 +20,9 @@ import os
 
 import pytest
 
-# Importing megaplan.agent prepends the agent dir to sys.path so the
+# Importing arnold.pipelines.megaplan.agent prepends the agent dir to sys.path so the
 # top-level `run_agent` module resolves the same way the worker imports it.
-import megaplan.agent  # noqa: F401  (side-effect: sys.path setup)
+import arnold.pipelines.megaplan.agent  # noqa: F401  (side-effect: sys.path setup)
 
 import httpx
 import openai
@@ -948,7 +948,7 @@ def test_stream_tracker_reasoning_emitted_increments():
     ``reasoning_emitted`` in heartbeats, instead of looking identical to a
     completely dead connection (``tokens_emitted == 0`` forever).
     """
-    from megaplan.workers.hermes import _StreamTracker
+    from arnold.pipelines.megaplan.workers.hermes import _StreamTracker
 
     tracker = _StreamTracker()
     assert tracker.tokens_emitted == 0
@@ -975,14 +975,14 @@ def test_heartbeat_payload_includes_reasoning_counters(tmp_path, monkeypatch):
     import threading
     import time as _time
 
-    from megaplan.workers.hermes import _StreamTracker, _start_heartbeat
+    from arnold.pipelines.megaplan.workers.hermes import _StreamTracker, _start_heartbeat
 
     captured = []
 
     def _fake_emit(kind, *, plan_dir, phase, payload):
         captured.append((kind, payload))
 
-    monkeypatch.setattr("megaplan.observability.events.emit", _fake_emit)
+    monkeypatch.setattr("arnold.pipelines.megaplan.observability.events.emit", _fake_emit)
 
     tracker = _StreamTracker()
     stop = threading.Event()
@@ -1016,14 +1016,14 @@ def test_retry_error_callback_emits_llm_call_error_via_worker(monkeypatch):
     set by the hermes worker must fire with a structured payload that
     ``_emit_llm_error`` maps onto an ``llm_call_error`` event.
     """
-    from megaplan.workers.hermes import _emit_llm_error
+    from arnold.pipelines.megaplan.workers.hermes import _emit_llm_error
 
     captured = []
 
     def _fake_emit(kind, *, plan_dir, phase, payload):
         captured.append((kind, phase, payload))
 
-    monkeypatch.setattr("megaplan.observability.events.emit", _fake_emit)
+    monkeypatch.setattr("arnold.pipelines.megaplan.observability.events.emit", _fake_emit)
 
     # Build the lambda exactly as _run_attempt does.
     plan_dir = None  # _emit_llm_error doesn't dereference plan_dir before emit()

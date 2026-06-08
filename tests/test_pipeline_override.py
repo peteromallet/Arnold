@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline import (
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     Pipeline,
     Stage,
@@ -15,8 +15,8 @@ from megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.override import find_override_edge, override_edge
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.override import find_override_edge, override_edge
 
 
 @dataclass

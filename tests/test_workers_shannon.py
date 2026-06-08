@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from megaplan.types import CliError
-from megaplan.workers import WorkerResult, resolve_agent_mode, session_key_for
+from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers import WorkerResult, resolve_agent_mode, session_key_for
 from tests._workers_helpers import FakeShutil, _mock_state
 
 
@@ -26,94 +28,113 @@ def _assume_shannon_patched(monkeypatch: pytest.MonkeyPatch) -> None:
     return
 
 
+@pytest.fixture(autouse=True)
+def _allow_engine_write_barrier_for_shannon_worker_tests(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[object, str]] = []
+
+    def fake_barrier(env: object, phase: str) -> object:
+        calls.append((env, phase))
+        return object()
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.workers._impl.engine_write_barrier",
+        fake_barrier,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.workers.shannon.engine_write_barrier",
+        fake_barrier,
+    )
+    return calls
+
+
 def test_is_shannon_available_all_deps_present() -> None:
-    from megaplan._core.io import is_shannon_available
+    from arnold.pipelines.megaplan._core.io import is_shannon_available
     fake = FakeShutil("bun", "tmux", "claude")
     assert is_shannon_available(shutil_ref=fake) is True
 
 def test_is_shannon_available_missing_tmux() -> None:
-    from megaplan._core.io import is_shannon_available
+    from arnold.pipelines.megaplan._core.io import is_shannon_available
     fake = FakeShutil("bun", "claude")
     assert is_shannon_available(shutil_ref=fake) is False
 
 def test_is_shannon_available_missing_claude() -> None:
-    from megaplan._core.io import is_shannon_available
+    from arnold.pipelines.megaplan._core.io import is_shannon_available
     fake = FakeShutil("bun", "tmux")
     assert is_shannon_available(shutil_ref=fake) is False
 
 def test_is_shannon_available_missing_bun() -> None:
-    from megaplan._core.io import is_shannon_available
+    from arnold.pipelines.megaplan._core.io import is_shannon_available
     fake = FakeShutil("tmux", "claude")
     assert is_shannon_available(shutil_ref=fake) is False
 
 def test_shannon_missing_deps_lists_missing() -> None:
-    from megaplan._core.io import shannon_missing_deps
+    from arnold.pipelines.megaplan._core.io import shannon_missing_deps
     fake = FakeShutil("claude")  # missing bun and tmux
     assert sorted(shannon_missing_deps(shutil_ref=fake)) == ["bun", "tmux"]
 
 def test_detect_available_agents_includes_shannon_when_deps_present() -> None:
-    from megaplan._core.io import detect_available_agents
+    from arnold.pipelines.megaplan._core.io import detect_available_agents
     # detect_available_agents uses `import megaplan._core as _core_pkg; _core_pkg.shutil`
     # which resolves to the stdlib shutil re-exported in megaplan/_core/__init__.py.
-    with patch("megaplan._core.shutil", FakeShutil("bun", "tmux", "claude", "codex")):
+    with patch("arnold.pipelines.megaplan._core.shutil", FakeShutil("bun", "tmux", "claude", "codex")):
         agents = detect_available_agents()
     assert "shannon" in agents
 
 def test_detect_available_agents_excludes_shannon_when_deps_missing() -> None:
-    from megaplan._core.io import detect_available_agents
-    with patch("megaplan._core.shutil", FakeShutil("claude", "codex")):
+    from arnold.pipelines.megaplan._core.io import detect_available_agents
+    with patch("arnold.pipelines.megaplan._core.shutil", FakeShutil("claude", "codex")):
         agents = detect_available_agents()
     assert "shannon" not in agents
 
 def test_is_agent_available_shannon_agrees_with_is_shannon_available() -> None:
     """_is_agent_available('shannon') delegates to is_shannon_available()."""
-    from megaplan.workers import _is_agent_available
+    from arnold.pipelines.megaplan.workers import _is_agent_available
     # _is_agent_available('shannon') calls is_shannon_available() which uses
     # the `shutil` imported in io.py, and detect_available_agents uses
     # megaplan._core.shutil (re-exported in __init__.py).  Patch both.
     with (
-        patch("megaplan._core.io.shutil", FakeShutil("bun", "tmux", "claude")),
-        patch("megaplan._core.shutil", FakeShutil("bun", "tmux", "claude")),
+        patch("arnold.pipelines.megaplan._core.io.shutil", FakeShutil("bun", "tmux", "claude")),
+        patch("arnold.pipelines.megaplan._core.shutil", FakeShutil("bun", "tmux", "claude")),
     ):
         assert _is_agent_available("shannon") is True
     with (
-        patch("megaplan._core.io.shutil", FakeShutil("claude")),
-        patch("megaplan._core.shutil", FakeShutil("claude")),
+        patch("arnold.pipelines.megaplan._core.io.shutil", FakeShutil("claude")),
+        patch("arnold.pipelines.megaplan._core.shutil", FakeShutil("claude")),
     ):
         assert _is_agent_available("shannon") is False
 
 def test_is_agent_available_claude_routes_through_shannon_deps() -> None:
     """The public 'claude' agent now means Shannon-backed Claude."""
-    from megaplan.workers import _is_agent_available
+    from arnold.pipelines.megaplan.workers import _is_agent_available
 
-    with patch("megaplan._core.io.shutil", FakeShutil("bun", "tmux", "claude")):
+    with patch("arnold.pipelines.megaplan._core.io.shutil", FakeShutil("bun", "tmux", "claude")):
         assert _is_agent_available("claude") is True
-    with patch("megaplan._core.io.shutil", FakeShutil("claude")):
+    with patch("arnold.pipelines.megaplan._core.io.shutil", FakeShutil("claude")):
         assert _is_agent_available("claude") is False
 
 def test_resolve_agent_mode_agent_shannon_explicit_fails_on_missing_deps() -> None:
     """--agent shannon when deps missing → CliError('agent_deps_missing')."""
-    with patch("megaplan.workers._impl.shutil.which", return_value=None):
-        with patch("megaplan.workers._impl.load_config", return_value={}):
-            with patch("megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value=None):
+        with patch("arnold.pipelines.megaplan.workers._impl.load_config", return_value={}):
+            with patch("arnold.pipelines.megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
                 with pytest.raises(CliError, match="Shannon requires"):
                     resolve_agent_mode("plan", Namespace(agent="shannon", ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
 
 def test_resolve_agent_mode_phase_model_shannon_explicit_fails_on_missing_deps() -> None:
     """--phase-model plan=shannon when deps missing → CliError('agent_deps_missing')."""
-    with patch("megaplan.workers._impl.shutil.which", return_value=None):
-        with patch("megaplan.workers._impl.load_config", return_value={}):
-            with patch("megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value=None):
+        with patch("arnold.pipelines.megaplan.workers._impl.load_config", return_value={}):
+            with patch("arnold.pipelines.megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
                 with pytest.raises(CliError, match="Shannon requires"):
                     resolve_agent_mode("plan", Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=["plan=shannon"]))
 
 def test_resolve_agent_mode_non_explicit_shannon_can_fallback() -> None:
     """When Shannon is not explicitly requested, it can fall back to another agent."""
-    with patch("megaplan.workers._impl.shutil.which", side_effect=lambda name: "/usr/bin/claude" if name == "claude" else None):
-        with patch("megaplan.workers._impl.load_config", return_value={"agents": {"plan": "shannon"}}):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", side_effect=lambda name: "/usr/bin/claude" if name == "claude" else None):
+        with patch("arnold.pipelines.megaplan.workers._impl.load_config", return_value={"agents": {"plan": "shannon"}}):
             # Shannon isn't available, and the config default isn't explicit via --agent,
             # so fallback to the next available.
-            with patch("megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
+            with patch("arnold.pipelines.megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
                 agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     # Falls back to claude because shannon is unavailable and not explicit
     assert agent == "claude"
@@ -124,14 +145,14 @@ def test_resolve_agent_mode_shannon_mock_mode_bypasses_availability_check(
     """MEGAPLAN_MOCK_WORKERS=1 + --agent shannon must skip availability checks."""
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
     # shutil.which returns None for everything — Shannon deps are missing
-    with patch("megaplan.workers._impl.shutil.which", return_value=None):
-        with patch("megaplan.workers._impl.load_config", return_value={}):
+    with patch("arnold.pipelines.megaplan.workers._impl.shutil.which", return_value=None):
+        with patch("arnold.pipelines.megaplan.workers._impl.load_config", return_value={}):
             agent, mode, refreshed, model = resolve_agent_mode("plan", Namespace(agent="shannon", ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]))
     assert agent == "shannon"
     assert mode == "persistent"
 
 def test_run_step_with_worker_shannon_calls_run_shannon_step(tmp_path: Path) -> None:
-    from megaplan.workers import run_step_with_worker, CommandResult
+    from arnold.pipelines.megaplan.workers import run_step_with_worker, CommandResult
 
     plan_dir, state = _mock_state(tmp_path)
     payload = {
@@ -153,7 +174,7 @@ def test_run_step_with_worker_shannon_calls_run_shannon_step(tmp_path: Path) -> 
         completion_tokens=5,
         total_tokens=15,
     )
-    with patch("megaplan.workers.shannon.run_shannon_step", return_value=fake_worker) as run_shannon:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_shannon_step", return_value=fake_worker) as run_shannon:
         run_step_with_worker(
             "plan",
             state,
@@ -166,7 +187,7 @@ def test_run_step_with_worker_shannon_calls_run_shannon_step(tmp_path: Path) -> 
     assert run_shannon.call_args.args[0] == "plan"
 
 def test_run_step_with_worker_shannon_returns_agent_shannon(tmp_path: Path) -> None:
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     payload = {
@@ -188,7 +209,7 @@ def test_run_step_with_worker_shannon_returns_agent_shannon(tmp_path: Path) -> N
         completion_tokens=0,
         total_tokens=0,
     )
-    with patch("megaplan.workers.shannon.run_shannon_step", return_value=fake_worker):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_shannon_step", return_value=fake_worker):
         result, agent, mode, refreshed = run_step_with_worker(
             "plan",
             state,
@@ -203,13 +224,13 @@ def test_run_step_with_worker_shannon_returns_agent_shannon(tmp_path: Path) -> N
     assert result.payload == payload
 
 def test_run_step_with_worker_claude_calls_run_shannon_step(tmp_path: Path) -> None:
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_worker = WorkerResult(
@@ -220,7 +241,7 @@ def test_run_step_with_worker_claude_calls_run_shannon_step(tmp_path: Path) -> N
         session_id="shannon-backed-claude",
         rendered_prompt="p",
     )
-    with patch("megaplan.workers.shannon.run_shannon_step", return_value=fake_worker) as run_shannon:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_shannon_step", return_value=fake_worker) as run_shannon:
         result, agent, mode, refreshed = run_step_with_worker(
             "plan",
             state,
@@ -245,7 +266,7 @@ def test_session_key_for_shannon_steps() -> None:
     assert session_key_for("finalize", "shannon") == "shannon_finalizer"
 
 def test_parse_shannon_output_structured_output() -> None:
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     envelope, payload = _parse_shannon_output(json.dumps({
         "structured_output": {"plan": "# Plan", "questions": []},
@@ -255,15 +276,31 @@ def test_parse_shannon_output_structured_output() -> None:
     assert envelope["session_id"] == "sess-1"
 
 def test_parse_shannon_output_result_string() -> None:
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     envelope, payload = _parse_shannon_output(json.dumps({
         "result": json.dumps({"output": "done"}),
     }))
     assert payload == {"output": "done"}
 
+
+def test_extract_actual_model_from_shannon_envelope() -> None:
+    from arnold.pipelines.megaplan.workers.shannon import _extract_actual_model_from_envelope
+
+    assert (
+        _extract_actual_model_from_envelope({"model": "claude-opus-4-7"})
+        == "claude-opus-4-7"
+    )
+    assert (
+        _extract_actual_model_from_envelope(
+            {"message": {"model": "claude-sonnet-4-6"}}
+        )
+        == "claude-sonnet-4-6"
+    )
+
+
 def test_parse_shannon_output_transcript_array() -> None:
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     transcript = [
         {"type": "user", "message": {"content": "Do X"}},
@@ -276,7 +313,7 @@ def test_parse_shannon_output_transcript_array() -> None:
     assert payload == {"plan": "# Plan"}
 
 def test_parse_shannon_output_transcript_with_result_string() -> None:
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     transcript = [
         {"type": "user", "message": {"content": "Do X"}},
@@ -288,7 +325,7 @@ def test_parse_shannon_output_transcript_with_result_string() -> None:
     assert payload == {"output": "done"}
 
 def test_parse_shannon_output_prefers_result_event() -> None:
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     transcript = [
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "ignore"}]}},
@@ -315,7 +352,7 @@ def test_parse_shannon_output_result_event_markdown_fenced_json() -> None:
     and downstream gates surfaced "parse_error: <step> output missing required
     keys: plan". The parser should now fall back to _extract_json_object.
     """
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     plan_payload = {
         "plan": "Step 1: do the thing.",
@@ -344,7 +381,7 @@ def test_parse_shannon_output_result_event_markdown_fenced_json() -> None:
 
 def test_parse_shannon_output_assistant_message_markdown_fenced_json() -> None:
     """Regression: fenced JSON in an assistant message's `result` field should also parse."""
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     plan_payload = {
         "plan": "Do it.",
@@ -362,7 +399,7 @@ def test_parse_shannon_output_assistant_message_markdown_fenced_json() -> None:
 
 def test_parse_shannon_output_assistant_content_block_fenced_json() -> None:
     """Regression: fenced JSON inside an assistant content-block text should also parse."""
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     plan_payload = {
         "plan": "P",
@@ -378,13 +415,13 @@ def test_parse_shannon_output_assistant_content_block_fenced_json() -> None:
     assert payload == plan_payload
 
 def test_parse_shannon_output_invalid_json() -> None:
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     with pytest.raises(CliError, match="not valid JSON"):
         _parse_shannon_output("not json")
 
 def test_parse_shannon_output_auth_error() -> None:
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     with pytest.raises(CliError, match="Shannon step failed"):
         _parse_shannon_output(json.dumps({
@@ -393,7 +430,7 @@ def test_parse_shannon_output_auth_error() -> None:
         }))
 
 def test_parse_shannon_output_empty_transcript_uses_last_dict() -> None:
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     # Transcript with no structured_output → falls back to last element
     transcript = [
@@ -409,8 +446,9 @@ def test_parse_shannon_output_empty_transcript_uses_last_dict() -> None:
 # stream-json (NDJSON) parsing — the liveness output format
 #
 # Sample events mirror @dexh/shannon's stream-json emission shape (one JSON
-# object per line): system/init after session discovery, per-turn
-# assistant + result, and a trailing shannon_session metadata row on cleanup.
+# object per line): system/init after session discovery, then per-turn
+# assistant + result. Wrapper-only shannon_session metadata is hidden by
+# default so the stream is closer to native Claude output.
 # The final structured-output payload lives in the type=result event's
 # `result` field, identical to the legacy buffered json-array path.
 # ---------------------------------------------------------------------------
@@ -422,7 +460,7 @@ def _shannon_stream_json(events: list[dict]) -> str:
 
 
 def test_parse_shannon_stream_json_prefers_result_event() -> None:
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     payload = {
         "output": "done",
@@ -444,9 +482,6 @@ def test_parse_shannon_stream_json_prefers_result_event() -> None:
             "total_cost_usd": 0.05,
             "usage": {"input_tokens": 20, "output_tokens": 10},
         },
-        # Trailing cleanup metadata row, last line — must be skipped in favour
-        # of the result event above.
-        {"type": "shannon_session", "subtype": "metadata", "session_id": "sess-stream"},
     ])
     envelope, parsed = _parse_shannon_output(raw)
     assert parsed == payload
@@ -456,7 +491,7 @@ def test_parse_shannon_stream_json_prefers_result_event() -> None:
 
 def test_parse_shannon_stream_json_matches_buffered_array() -> None:
     """The NDJSON path must extract the SAME payload the legacy json array does."""
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     payload = {"plan": "# Plan", "questions": [], "success_criteria": ["ok"], "assumptions": []}
     events = [
@@ -481,7 +516,7 @@ def test_parse_shannon_stream_json_matches_buffered_array() -> None:
 
 def test_parse_shannon_stream_json_result_markdown_fenced() -> None:
     """Fenced JSON in the streamed result event must still recover via _extract_json_object."""
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     payload = {"plan": "P", "questions": [], "success_criteria": [], "assumptions": []}
     fenced = "```json\n" + json.dumps(payload) + "\n```"
@@ -504,7 +539,7 @@ def test_parse_shannon_stream_json_result_markdown_fenced() -> None:
 
 def test_parse_shannon_stream_json_falls_back_to_assistant_structured_output() -> None:
     """With no result event, the NDJSON path walks back to an assistant message."""
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     raw = _shannon_stream_json([
         {"type": "system", "subtype": "init", "session_id": "s3"},
@@ -520,7 +555,7 @@ def test_parse_shannon_stream_json_falls_back_to_assistant_structured_output() -
 def test_parse_shannon_single_line_json_array_unchanged() -> None:
     """A single-line JSON array (legacy buffered shape) must still use the
     single-document path, not be misread as NDJSON."""
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     payload = {"output": "ok"}
     transcript = [
@@ -534,7 +569,7 @@ def test_parse_shannon_single_line_json_array_unchanged() -> None:
 def test_parse_shannon_single_result_line_parses_as_object() -> None:
     """A degenerate one-event stream (just the result line) parses via the
     single-object dict path — len(lines) < 2 declines the NDJSON branch."""
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     payload = {"output": "single"}
     raw = json.dumps({
@@ -553,7 +588,7 @@ def test_parse_shannon_stream_json_pretty_array_not_misread() -> None:
     """A pretty-printed (multi-line) JSON array is NOT NDJSON: its lines are not
     independently parseable, so the parser must fall back to the single-document
     path and still decode the whole array."""
-    from megaplan.workers.shannon import _parse_shannon_output
+    from arnold.pipelines.megaplan.workers.shannon import _parse_shannon_output
 
     payload = {"output": "pretty"}
     transcript = [
@@ -567,8 +602,8 @@ def test_parse_shannon_stream_json_pretty_array_not_misread() -> None:
 def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
 
     ensure_runtime_layout(tmp_path)
     # This test asserts the legacy "non-execute always starts fresh" contract:
@@ -586,7 +621,7 @@ def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
     }
 
     timeout_error = CliError("worker_timeout", "Shannon timed out", extra={"raw_output": "partial"})
-    with patch("megaplan.workers.shannon.run_command", side_effect=timeout_error):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=False)
 
@@ -594,9 +629,9 @@ def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
     assert exc_info.value.extra["session_id"]
 
 def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
@@ -628,7 +663,7 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
         duration_ms=123,
     )
 
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         result = run_shannon_step(
             "execute",
             state,
@@ -639,18 +674,26 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
         )
 
     command = run_command.call_args.args[0]
-    # Shannon is launched as ``bun <vendored-index.ts> ... -p <launcher-prompt> ...``
-    # post-cutover (no ``shannon`` shim on PATH).
-    from megaplan.workers.shannon import VENDORED_SHANNON_PATH
+    env = run_command.call_args.kwargs["env"]
+    # Shannon is launched as ``bun <vendored-index.ts> ...`` and the main
+    # megaplan prompt is handed to the wrapper over stream-json stdin. The
+    # vendored wrapper then starts native Claude in tmux and pastes it after
+    # readiness.
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
     assert command[0:2] == ["bun", str(VENDORED_SHANNON_PATH)]
-    assert "-p" in command
-    p_idx = command.index("-p")
-    assert "Read the full megaplan phase prompt from this file" in command[p_idx + 1]
+    assert "-p" not in command
+    assert "--input-format=stream-json" in command
+    stdin_msg = json.loads(run_command.call_args.kwargs["stdin_text"])
+    assert stdin_msg["type"] == "user"
+    assert "return json" in stdin_msg["message"]["content"]
     # Shannon is launched with stream-json so it emits incremental NDJSON
     # events that reset the _impl.py idle-output watchdog (real liveness),
     # instead of the fully buffered single-array --output-format=json.
     assert "--output-format=stream-json" in command
     assert "--output-format=json" not in command
+    assert "--strict-mcp-config" in command
+    mcp_config = Path(command[command.index("--mcp-config") + 1])
+    assert json.loads(mcp_config.read_text(encoding="utf-8")) == {"mcpServers": {}}
     assert "--json-schema" not in command
     assert "--add-dir" not in command
     assert "--permission-mode" in command
@@ -659,23 +702,37 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     assert "--allow-dangerously-skip-permissions" in command
     # Readiness probe may trigger probabilistically; accept either flag.
     assert ("--session-id" in command) or ("--resume" in command)
-    assert run_command.call_args.kwargs["stdin_text"] is None
-    assert run_command.call_args.kwargs["env"]["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
+    assert env["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
     # Output ceiling is raised above the inherited ~64k default so opus is not
     # cut off mid-run before emitting the structured envelope.
-    assert run_command.call_args.kwargs["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
-    assert run_command.call_args.kwargs["env"]["BASH_DEFAULT_TIMEOUT_MS"] == "7200000"
-    assert run_command.call_args.kwargs["env"]["BASH_MAX_TIMEOUT_MS"] == "7200000"
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
+    assert env["BASH_DEFAULT_TIMEOUT_MS"] == "7200000"
+    assert env["BASH_MAX_TIMEOUT_MS"] == "7200000"
+    assert env["SHANNON_TMUX_SESSION_NAME"]
+    assert re.fullmatch(r"[0-9a-f]{12}", env["SHANNON_TMUX_SESSION_NAME"])
     # On non-root systems, ANTHROPIC_API_KEY is set to "" to block Bun's dotenv auto-load.
-    api_key_val = run_command.call_args.kwargs["env"].get("ANTHROPIC_API_KEY")
+    api_key_val = env.get("ANTHROPIC_API_KEY")
     assert api_key_val is None or api_key_val == ""
     # Prompt file now lives under .megaplan/runs/<plan_id>/<step>/shannon/
     # (the per-run artifact directory) instead of the plan directory root.
     run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "execute" / "shannon"
+    assert env["CLAUDE_CONFIG_DIR"] == str(run_dir / "claude_config")
     prompt_file = run_dir / "execute_shannon_prompt.txt"
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "return json" in prompt_text
     assert "Output format:" in prompt_text
+    ledger_path = run_dir / "tmux_session.json"
+    assert ledger_path.is_relative_to(run_dir)
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert ledger == {
+        "version": 1,
+        "plan_id": state["name"],
+        "step": "execute",
+        "iteration": int(state.get("iteration", 0) or 0),
+        "tmux_session_name": env["SHANNON_TMUX_SESSION_NAME"],
+        "tmux_session_name_derivation": "sha256(plan_id|step|iteration)[:12]",
+        "run_dir": str(run_dir),
+    }
     assert result.payload == payload
     assert result.session_id == "real-shannon-session"
     assert result.cost_usd == 0.02
@@ -683,18 +740,18 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
 def test_run_shannon_step_preserves_anthropic_api_key_for_root_cloud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 0)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.os.geteuid", lambda: 0)
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -715,7 +772,7 @@ def test_run_shannon_step_preserves_anthropic_api_key_for_root_cloud(
         duration_ms=123,
     )
 
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_shannon_step(
             "plan",
             state,
@@ -730,21 +787,21 @@ def test_run_shannon_step_preserves_anthropic_api_key_for_root_cloud(
 def test_run_shannon_step_drops_root_for_trusted_cloud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
     monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
-    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 0)
-    monkeypatch.setattr("megaplan.workers.shannon.shutil.which", lambda name: "/bin/su" if name == "su" else None)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.os.geteuid", lambda: 0)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.shutil.which", lambda name: "/bin/su" if name == "su" else None)
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -765,7 +822,7 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
         duration_ms=123,
     )
 
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_shannon_step(
             "plan",
             state,
@@ -778,24 +835,98 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     command = run_command.call_args.args[0]
     env = run_command.call_args.kwargs["env"]
     assert command[:6] == ["/bin/su", "-m", "-s", "/bin/bash", "nobody", "-c"]
-    from megaplan.workers.shannon import VENDORED_SHANNON_PATH
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
     # bun-invoked vendored fork, not a PATH-resolved ``shannon`` shim.
     assert f"bun {VENDORED_SHANNON_PATH}" in command[6]
-    assert " -p " in command[6]
+    assert " -p " not in command[6]
+    assert "--input-format=stream-json" in command[6]
     assert "claude -p" not in command[6]
+    assert "--strict-mcp-config" in command[6]
+    assert "--mcp-config" in command[6]
     assert "--bare" in command[6]
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-test"
     assert env["HOME"] == str(tmp_path / "project" / ".megaplan" / "shannon-home")
+    run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon"
+    assert env["CLAUDE_CONFIG_DIR"] == str(run_dir / "claude_config")
     assert env["MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT"] == "4"
     assert (tmp_path / "project" / ".megaplan" / "shannon-home" / ".claude.json").exists()
+
+
+def test_run_shannon_step_native_config_mode_uses_effective_child_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE", "native")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "should-not-leak"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.os.geteuid", lambda: 0)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.shutil.which", lambda name: "/bin/su" if name == "su" else None)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
+        "assumptions": [],
+    }
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(payload),
+                "session_id": "real-shannon-session",
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon._ensure_workspace_trusted") as trust,
+        patch("arnold.pipelines.megaplan.workers.shannon._make_shannon_liveness_probe", return_value=lambda: True) as liveness,
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+        )
+
+    env = run_command.call_args.kwargs["env"]
+    expected_home = tmp_path / "project" / ".megaplan" / "shannon-home"
+    run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "plan" / "shannon"
+    assert env["HOME"] == str(expected_home)
+    assert "CLAUDE_CONFIG_DIR" not in env
+    assert not (run_dir / "claude_config").exists()
+    assert trust.call_args.kwargs == {
+        "claude_config_dir": None,
+        "home": str(expected_home),
+    }
+    assert liveness.call_args.kwargs == {
+        "claude_config_dir": None,
+        "home": str(expected_home),
+    }
+
 
 def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import shannon as shannon_mod
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import shannon as shannon_mod
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     # Force the handshake roll to always fire by setting the probability to 1
@@ -811,7 +942,7 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     final_raw = json.dumps([
@@ -825,9 +956,11 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
         }
     ])
     calls: list[list[str]] = []
+    stdins: list[object] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         calls.append(command)
+        stdins.append(kwargs.get("stdin_text"))
         if len(calls) == 1:
             assert kwargs["timeout"] == 120
             return CommandResult(
@@ -847,7 +980,7 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
             duration_ms=123,
         )
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         result = run_shannon_step(
             "plan",
             state,
@@ -867,16 +1000,18 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     # Second turn is the main work turn resuming the same session.
     assert "--resume" in calls[1]
     assert calls[1][calls[1].index("--resume") + 1] == session_id
-    p1 = calls[1].index("-p")
-    assert "Read the full megaplan phase prompt from this file" in calls[1][p1 + 1]
+    assert "-p" not in calls[1]
+    assert "--input-format=stream-json" in calls[1]
+    stdin_msg = json.loads(stdins[1])
+    assert "return json" in stdin_msg["message"]["content"]
     assert result.payload == payload
 
 def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     # Probability 0 → the seeded plan_session roll never fires the handshake.
@@ -885,7 +1020,7 @@ def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     raw = json.dumps([
@@ -908,8 +1043,8 @@ def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
     )
 
     with (
-        patch("megaplan.workers.shannon.time.sleep") as sleep,
-        patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+        patch("arnold.pipelines.megaplan.workers.shannon.time.sleep") as sleep,
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
     ):
         result = run_shannon_step(
             "plan",
@@ -925,17 +1060,19 @@ def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
     command = run_command.call_args.args[0]
     assert "--session-id" in command
     assert "--resume" not in command
-    p_idx = command.index("-p")
-    assert "Read the full megaplan phase prompt from this file" in command[p_idx + 1]
+    assert "-p" not in command
+    assert "--input-format=stream-json" in command
+    stdin_msg = json.loads(run_command.call_args.kwargs["stdin_text"])
+    assert "return json" in stdin_msg["message"]["content"]
     sleep.assert_not_called()
     assert result.payload == payload
 
 def test_run_shannon_step_repeats_execute_batch_scope_after_schema(
     tmp_path: Path,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -973,7 +1110,7 @@ def test_run_shannon_step_repeats_execute_batch_scope_after_schema(
         ]
     )
 
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result):
         run_shannon_step(
             "execute",
             state,
@@ -989,19 +1126,424 @@ def test_run_shannon_step_repeats_execute_batch_scope_after_schema(
     assert "exactly these task IDs and no others: T2" in prompt_text
     assert "exactly these sense check IDs and no others: SC2" in prompt_text
 
+
+def test_run_shannon_step_checks_builder_prompt_after_schema_before_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "execute"
+        assert "EXECUTE BATCH OUTPUT SCOPE" in prompt_text
+        assert "exactly these task IDs and no others: T2" in prompt_text
+        assert "exactly these sense check IDs and no others: SC2" in prompt_text
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon._write_prompt_file",
+            side_effect=AssertionError("prompt file should not be written"),
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            side_effect=AssertionError("run_command should not be reached"),
+        ),
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+            )
+
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
+
+
+def test_run_shannon_step_checks_prompt_override_after_schema_before_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    prompt_override = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        assert phase == "execute"
+        assert prompt_text.startswith("Execute batch 2.")
+        assert "EXECUTE BATCH OUTPUT SCOPE" in prompt_text
+        assert "exactly these task IDs and no others: T2" in prompt_text
+        assert "exactly these sense check IDs and no others: SC2" in prompt_text
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=prompt_override, prompt=prompt_override),
+        ) as mock_render_prompt,
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon._write_prompt_file",
+            side_effect=AssertionError("prompt file should not be written"),
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            side_effect=AssertionError("run_command should not be reached"),
+        ),
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+                prompt_override=prompt_override,
+            )
+
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] == prompt_override
+
+
+def test_run_shannon_step_normal_builder_prompt_dispatches_after_guard_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normal-sized builder prompt reaches dispatch after the guard passes,
+    and scope-reinforcement strings are present at guard time."""
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "normal-builder-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    guard_checked: list[str] = []
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        guard_checked.append(prompt_text)
+        # Normal — no raise
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+        )
+
+    assert run_command.call_count == 1
+    assert result.payload == payload
+    # Guard was consulted with the full prompt after schema augmentation
+    assert len(guard_checked) == 1
+    assert "Execute batch 2." in guard_checked[0]
+    # Scope-reinforcement strings are present when the guard runs
+    assert "EXECUTE BATCH OUTPUT SCOPE" in guard_checked[0]
+    assert "exactly these task IDs and no others: T2" in guard_checked[0]
+    assert "exactly these sense check IDs and no others: SC2" in guard_checked[0]
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
+
+
+def test_run_shannon_step_normal_prompt_override_dispatches_after_guard_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normal-sized prompt_override reaches dispatch after the guard passes,
+    and scope-reinforcement strings are present at guard time."""
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    prompt_override = "\n".join(
+        [
+            "Execute batch 2.",
+            "- Only produce `task_updates` for these tasks: [T2]",
+            "- Only produce `sense_check_acknowledgments` for these sense checks: [SC2]",
+        ]
+    )
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "normal-override-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    guard_checked: list[str] = []
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        guard_checked.append(prompt_text)
+        # Normal — no raise
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=prompt_override, prompt=prompt_override),
+        ) as mock_render_prompt,
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override=prompt_override,
+        )
+
+    assert run_command.call_count == 1
+    assert result.payload == payload
+    # Guard was consulted with the full prompt after schema augmentation
+    assert len(guard_checked) == 1
+    assert "Execute batch 2." in guard_checked[0]
+    # Scope-reinforcement strings are present when the guard runs
+    assert "EXECUTE BATCH OUTPUT SCOPE" in guard_checked[0]
+    assert "exactly these task IDs and no others: T2" in guard_checked[0]
+    assert "exactly these sense check IDs and no others: SC2" in guard_checked[0]
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] == prompt_override
+
+
+def test_run_shannon_step_passes_read_only_projection_capabilities_to_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
+        "assumptions": [],
+    }
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(plan_payload),
+                "session_id": "read-only-session",
+                "total_cost_usd": 0.02,
+                "usage": {"input_tokens": 11, "output_tokens": 7},
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text="return json", prompt="return json"),
+        ) as mock_render_prompt,
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result),
+    ):
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            read_only=True,
+        )
+
+    caps = mock_render_prompt.call_args.kwargs["projection_capabilities"]
+    assert caps.can_read_plan_dir is True
+    assert caps.can_read_project_dir is True
+    assert caps.has_file_tools is True
+    assert caps.checkpoint_write_access is False
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
+
+
+def test_run_shannon_step_passes_write_projection_capabilities_to_prompt_and_keeps_schema_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import RenderedStepMessage
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "write-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text="return json", prompt="return json"),
+        ) as mock_render_prompt,
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result),
+    ):
+        run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            read_only=False,
+        )
+
+    caps = mock_render_prompt.call_args.kwargs["projection_capabilities"]
+    assert caps.can_read_plan_dir is True
+    assert caps.can_read_project_dir is True
+    assert caps.has_file_tools is True
+    assert caps.checkpoint_write_access is True
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
+    run_dir = plan_dir / ".megaplan" / "runs" / state["name"] / "execute" / "shannon"
+    prompt_text = (run_dir / "execute_shannon_prompt.txt").read_text(encoding="utf-8")
+    assert "Output format:" in prompt_text
+
+
 def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
     tmp_path: Path,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     raw = json.dumps([
@@ -1023,7 +1565,7 @@ def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
         duration_ms=123,
     )
 
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_shannon_step(
             "plan",
             state,
@@ -1043,9 +1585,9 @@ def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
 def test_run_shannon_step_read_only_uses_tool_restrictions_without_bypass_flags(
     tmp_path: Path,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -1069,7 +1611,7 @@ def test_run_shannon_step_read_only_uses_tool_restrictions_without_bypass_flags(
         duration_ms=123,
     )
 
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         result = run_shannon_step(
             "prep-triage",
             state,
@@ -1108,11 +1650,96 @@ def test_run_shannon_step_read_only_uses_tool_restrictions_without_bypass_flags(
     assert result.payload == payload
 
 
+def test_vendored_shannon_current_launch_and_paste_contracts() -> None:
+    """Pin wrapper-owned native launch and stdin-backed paste before hardening."""
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
+
+    src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
+
+    # The TypeScript wrapper owns the interactive tmux launch and starts the
+    # plain Claude CLI inside the tmux pane.
+    assert "const claudeLaunchArgs = [" in src
+    assert '"claude",' in src
+    assert '"tmux",\n      "new-session",' in src
+    assert "...claudeLaunchArgs," in src
+    # The user prompt is not threaded into the inner Claude argv; sendPrompt
+    # waits for readiness and delivers prompt bytes through tmux paste instead.
+    launch_block = src[src.index("const claudeLaunchArgs = [") : src.index("void maybeSendStartupEnterKeys")]
+    assert "options.prompt" not in launch_block
+    assert "prompt" not in launch_block
+    assert "await waitUntilReadyToSend(tmuxSession);" in src
+    assert "await sendPrompt(tmuxSession, prompt);" in src
+
+    # Long/main prompt delivery stays stdin-backed with an opaque tmux buffer:
+    # load-buffer reads from "-", prompt bytes are written to stdin, then
+    # paste-buffer -p and Enter submit. The temporary buffer is cleaned up
+    # without naming the worker/session/cwd in tmux global buffer state.
+    assert "const _mpBuf = randomUUID();" in src
+    assert "const _mpBuf = `shannon-${tmuxSession}`;" not in src
+    assert 'Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"]' in src
+    assert "_mpLoad.stdin.write(prompt)" in src
+    assert '"paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession' in src
+    assert '"send-keys", "-t", tmuxSession, "C-m"' in src
+    assert "finally {" in src
+    assert 'await runCommand(["tmux", "delete-buffer", "-b", _mpBuf]);' in src
+
+    # Optional short-turn typing is a narrow env-gated branch: by default the
+    # threshold is zero, typed prompts must fit the threshold and contain no
+    # newline/control characters, and the branch uses tmux send-keys -l before
+    # falling through to the unchanged paste-buffer path for every other turn.
+    assert "const TYPE_PROMPT_MAX_CHARS = Number(Bun.env.SHANNON_TYPE_PROMPT_MAX_CHARS ?? 0);" in src
+    assert "function canTypePromptLiterally(prompt: string)" in src
+    assert "TYPE_PROMPT_MAX_CHARS > 0" in src
+    assert "prompt.length <= TYPE_PROMPT_MAX_CHARS" in src
+    assert r"&& !/[\r\n\x00-\x1F\x7F]/.test(prompt)" in src
+    assert '"send-keys", "-t", tmuxSession, "-l", prompt' in src
+
+    # Transcript discovery has a single project-folder helper chain. Claude
+    # Code v2.1.x scopes config files to CLAUDE_CONFIG_DIR but still writes
+    # transcripts under the effective child HOME, so the helper deliberately
+    # ignores CLAUDE_CONFIG_DIR for project-folder lookup.
+    assert "export function claudeProjectsRoot(" in src
+    assert "claudeConfigDir = Bun.env.CLAUDE_CONFIG_DIR" in src
+    assert "void claudeConfigDir;" in src
+    assert 'if (claudeConfigDir) return join(claudeConfigDir, "projects");' not in src
+    assert 'return join(home, ".claude", "projects");' in src
+    assert "return join(claudeProjectsRoot(claudeConfigDir, home), projectKeyForCwd(cwd));" in src
+    assert "export function claudeProjectFolder(" in src
+    assert "const projectFolder = claudeProjectFolder(options.cwd);" in src
+    assert src.count("claudeProjectFolder(options.cwd)") == 1
+    assert src.count("listTranscriptPaths(projectFolder)") == 2
+    assert "await waitForSessionWithPrompt(" in src
+
+
+def test_python_shannon_current_session_teardown_and_drop_root_contracts() -> None:
+    """Pin worker-side session identity, teardown, and drop-root HOME contracts."""
+    import inspect
+
+    from arnold.pipelines.megaplan.workers import shannon as shannon_mod
+
+    run_src = inspect.getsource(shannon_mod.run_shannon_step)
+    assert 'env["SHANNON_TMUX_SESSION_NAME"] = session_name' in run_src
+    assert "tmux_session = TmuxSession(session_name)" in run_src
+    assert "_write_tmux_session_ledger(" in run_src
+    assert "pids = pane_pids(session_name)" in run_src
+    assert "tmux_session.teardown()" in run_src
+    assert "if tmux_session.exists():" in run_src
+    assert 'remediation=f"tmux kill-session -t {session_name}"' in run_src
+    assert run_src.index("_write_tmux_session_ledger(") < run_src.index("pids = pane_pids(session_name)")
+
+    nonroot_src = inspect.getsource(shannon_mod._prepare_nonroot_shannon_runtime)
+    assert 'work_dir / ".megaplan" / "shannon-home"' in nonroot_src
+    assert 'child_env["HOME"] = str(home)' in nonroot_src
+    assert 'child_env.pop("TMUX", None)' in nonroot_src
+    assert 'child_env["TMUX_TMPDIR"] = "/tmp"' in nonroot_src
+    assert 'return [su_path, "-m", "-s", "/bin/bash", user, "-c"], child_env' in nonroot_src
+
+
 def test_vendored_shannon_contains_turn_timeout_and_tool_use_patches() -> None:
     """The vendored fork must carry the P1 (TURN_TIMEOUT_MS) and P2 (tool_use
     guard) replacement strings — a regression here means the vendor was reset to
     pristine without re-applying patches."""
-    from megaplan.workers.shannon import VENDORED_SHANNON_PATH
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
 
     src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
     # P1: hardcoded 180_000 -> env-overridable 900_000.
@@ -1127,8 +1754,8 @@ def test_vendored_shannon_contains_turn_timeout_and_tool_use_patches() -> None:
 def test_run_shannon_step_mock_worker_no_deps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
 
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
     ensure_runtime_layout(tmp_path)
@@ -1144,9 +1771,9 @@ def test_run_shannon_execute_repairs_truncated_envelope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A truncated/invalid execute output triggers one envelope-repair resume."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
@@ -1193,7 +1820,7 @@ def test_run_shannon_execute_repairs_truncated_envelope(
             command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=10,
         )
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=_fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=_fake_run_command):
         result = run_shannon_step(
             "execute", state, plan_dir,
             root=tmp_path, fresh=True, prompt_override="do the batch",
@@ -1209,9 +1836,71 @@ def test_run_shannon_execute_repairs_truncated_envelope(
     assert "structured result" in repair_cmd[p_idx + 1]
 
 
+def test_run_shannon_execute_repairs_structural_audit_failure_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+
+    structurally_invalid = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps({"task_updates": "not-an-array"}),
+            "session_id": "sess-struct",
+            "total_cost_usd": 0.5,
+            "usage": {"input_tokens": 1000, "output_tokens": 64000},
+        }
+    ])
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    repaired = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "sess-struct",
+            "total_cost_usd": 0.1,
+            "usage": {"input_tokens": 1200, "output_tokens": 200},
+        }
+    ])
+    calls = []
+
+    def _fake_run_command(command, **kwargs):
+        calls.append(command)
+        raw = structurally_invalid if len(calls) == 1 else repaired
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=10)
+
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=_fake_run_command):
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="do the batch",
+        )
+
+    assert result.payload == payload
+    assert len(calls) == 2
+    assert calls[1].count("--resume") == 1
+    assert "sess-struct" in calls[1]
+
+
 def test_shannon_accepted_in_agent_choice_surfaces() -> None:
     """All --agent choice surfaces accept 'shannon'."""
-    from megaplan.types import KNOWN_AGENTS
+    from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
 
 
@@ -1250,12 +1939,12 @@ def _fake_tmux_capture(outputs):
 def test_liveness_probe_reports_progress_on_pane_change() -> None:
     """Probe returns True while the tmux pane content keeps changing (Claude is
     streaming tokens into its pane even though stdout is buffered)."""
-    from megaplan.runtime.process import TmuxSession
-    from megaplan.workers.shannon import _make_shannon_liveness_probe
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.workers.shannon import _make_shannon_liveness_probe
 
     panes = ["frame-0", "frame-1", "frame-2"]
-    with patch("megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
-        with patch("megaplan.workers.shannon._claude_transcript_paths", return_value=[]):
+    with patch("arnold.pipelines.megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
+        with patch("arnold.pipelines.megaplan.workers.shannon._claude_transcript_paths", return_value=[]):
             probe = _make_shannon_liveness_probe(TmuxSession("sess"), "sid", Path.cwd())
             assert probe() is True  # priming call
             assert probe() is True  # pane changed frame-0 -> frame-1
@@ -1271,15 +1960,15 @@ def test_liveness_probe_reports_no_progress_on_static_pane(tmp_path) -> None:
     pane forever). So "no progress" requires an observed-but-static transcript;
     with no transcript at all the probe stays conservative (returns True) and
     lets the wall-clock cap govern. This test pins the static-transcript case."""
-    from megaplan.runtime.process import TmuxSession
-    from megaplan.workers.shannon import _make_shannon_liveness_probe
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.workers.shannon import _make_shannon_liveness_probe
 
     transcript = tmp_path / "sid.jsonl"
     transcript.write_text("{}\n")
     panes = ["frozen", "frozen", "frozen"]
-    with patch("megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
+    with patch("arnold.pipelines.megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
         with patch(
-            "megaplan.workers.shannon._claude_transcript_paths",
+            "arnold.pipelines.megaplan.workers.shannon._claude_transcript_paths",
             return_value=[transcript],
         ):
             probe = _make_shannon_liveness_probe(TmuxSession("sess"), "sid", tmp_path)
@@ -1291,17 +1980,17 @@ def test_liveness_probe_reports_no_progress_on_static_pane(tmp_path) -> None:
 def test_liveness_probe_reports_progress_on_transcript_mtime(tmp_path) -> None:
     """Even with a static pane, an advancing transcript .jsonl mtime counts as
     progress (the turn is flushing completed content blocks to disk)."""
-    from megaplan.runtime.process import TmuxSession
-    from megaplan.workers.shannon import _make_shannon_liveness_probe
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.workers.shannon import _make_shannon_liveness_probe
 
     transcript = tmp_path / "sid.jsonl"
     transcript.write_text("{}\n")
     import os as _os
 
     panes = ["static", "static", "static"]
-    with patch("megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
+    with patch("arnold.pipelines.megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
         with patch(
-            "megaplan.workers.shannon._claude_transcript_paths",
+            "arnold.pipelines.megaplan.workers.shannon._claude_transcript_paths",
             return_value=[transcript],
         ):
             probe = _make_shannon_liveness_probe(TmuxSession("sess"), "sid", tmp_path)
@@ -1356,18 +2045,20 @@ def test_session_strategy_never_plain_resumes_reused_session(
     # turn) — it is always shed via an injected /compact or /clear op turn before
     # the work turn. So a reused execute session always produces TWO calls (op +
     # work), never a single bare resume.
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
     plan_dir, state = _mock_state(tmp_path)
     _seed_shannon_session(state, "execute", "sess-keep")
     calls: list[list[str]] = []
+    stdins: list[object] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         calls.append(command)
+        stdins.append(kwargs.get("stdin_text"))
         if len(calls) == 1:
             return CommandResult(
                 command=command, cwd=tmp_path, returncode=0,
@@ -1378,7 +2069,7 @@ def test_session_strategy_never_plain_resumes_reused_session(
             stdout=_execute_result_json(), stderr="", duration_ms=12,
         )
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         run_shannon_step(
             "execute", state, plan_dir, root=tmp_path, fresh=False,
             prompt_override="batch",
@@ -1391,9 +2082,9 @@ def test_session_strategy_never_plain_resumes_reused_session(
 def test_session_strategy_compact_injects_slash_compact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "1")
@@ -1401,9 +2092,11 @@ def test_session_strategy_compact_injects_slash_compact(
     plan_dir, state = _mock_state(tmp_path)
     _seed_shannon_session(state, "execute", "sess-keep")
     calls: list[list[str]] = []
+    stdins: list[object] = []
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         calls.append(command)
+        stdins.append(kwargs.get("stdin_text"))
         if len(calls) == 1:
             return CommandResult(
                 command=command, cwd=tmp_path, returncode=0,
@@ -1414,27 +2107,29 @@ def test_session_strategy_compact_injects_slash_compact(
             stdout=_execute_result_json(), stderr="", duration_ms=12,
         )
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         run_shannon_step(
             "execute", state, plan_dir, root=tmp_path, fresh=False,
             prompt_override="batch",
         )
     # Turn 1 is the injected /compact against the resumed session; turn 2 is the
-    # real work turn resuming the same id with the launcher prompt.
+    # real work turn resuming the same id with the full prompt over stdin.
     assert len(calls) == 2
     assert calls[0][calls[0].index("-p") + 1] == "/compact"
     assert calls[0][calls[0].index("--resume") + 1] == "sess-keep"
     assert calls[1][calls[1].index("--resume") + 1] == "sess-keep"
-    p1 = calls[1].index("-p")
-    assert "Read the full megaplan phase prompt from this file" in calls[1][p1 + 1]
+    assert "-p" not in calls[1]
+    assert "--input-format=stream-json" in calls[1]
+    stdin_msg = json.loads(stdins[1])
+    assert "batch" in stdin_msg["message"]["content"]
 
 
 def test_session_strategy_clear_injects_slash_clear(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")
@@ -1455,7 +2150,7 @@ def test_session_strategy_clear_injects_slash_clear(
             stdout=_execute_result_json(), stderr="", duration_ms=12,
         )
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         run_shannon_step(
             "execute", state, plan_dir, root=tmp_path, fresh=False,
             prompt_override="batch",
@@ -1471,9 +2166,9 @@ def test_session_strategy_context_op_failure_falls_back_to_fresh_session(
     # Policy is "never carry stale context". When the /compact (or /clear) op
     # turn fails, we must NOT plain-resume the un-shed original session — we shed
     # it the safe way with a fresh `new` session (--session-id), not --resume.
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "1")
@@ -1492,7 +2187,7 @@ def test_session_strategy_context_op_failure_falls_back_to_fresh_session(
             stdout=_execute_result_json(), stderr="", duration_ms=12,
         )
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         result = run_shannon_step(
             "execute", state, plan_dir, root=tmp_path, fresh=False,
             prompt_override="batch",
@@ -1511,9 +2206,9 @@ def test_session_strategy_non_execute_also_sheds_prior_session(
     # Non-execute phases with a stored session are also shed, never plain-resumed:
     # they inject /clear (or /compact) before the work turn rather than carrying
     # the prior planner/critic conversation forward.
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")  # -> clear
@@ -1523,7 +2218,7 @@ def test_session_strategy_non_execute_also_sheds_prior_session(
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     work_stdout = json.dumps([
@@ -1550,7 +2245,7 @@ def test_session_strategy_non_execute_also_sheds_prior_session(
             stdout=work_stdout, stderr="", duration_ms=12,
         )
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         run_shannon_step(
             "plan", state, plan_dir, root=tmp_path, fresh=True,
             prompt_override="return json",
@@ -1563,9 +2258,9 @@ def test_session_strategy_non_execute_also_sheds_prior_session(
 def test_session_roulette_disabled_restores_legacy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
@@ -1579,7 +2274,7 @@ def test_session_roulette_disabled_restores_legacy(
         command=[], cwd=tmp_path, returncode=0,
         stdout=_execute_result_json(), stderr="", duration_ms=12,
     )
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as rc:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as rc:
         run_shannon_step(
             "execute", state, plan_dir, root=tmp_path, fresh=False,
             prompt_override="batch",
@@ -1595,9 +2290,9 @@ def test_session_strategy_clear_resumes_rotated_session(
     # /clear rotates the session id; the work turn must resume the NEW id that
     # the op turn landed on (reported in shannon's stream-json output), not the
     # cleared id.
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")  # -> clear
@@ -1619,7 +2314,7 @@ def test_session_strategy_clear_resumes_rotated_session(
             stdout=_execute_result_json(), stderr="", duration_ms=12,
         )
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         run_shannon_step(
             "execute", state, plan_dir, root=tmp_path, fresh=False,
             prompt_override="batch",
@@ -1633,7 +2328,7 @@ def test_session_strategy_clear_resumes_rotated_session(
 def test_vendored_shannon_contains_slash_completion_helpers() -> None:
     """The vendored fork must carry the P10/P11/P12/P13 slash-completion
     helpers and the discovery + completion gates that route through them."""
-    from megaplan.workers.shannon import VENDORED_SHANNON_PATH
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
 
     src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
     # P10: helper-block sentinel + the four megaplan helper functions.
@@ -1654,9 +2349,80 @@ def test_vendored_shannon_contains_slash_completion_helpers() -> None:
     assert "isCompactSummary === true" in src
 
 
+def test_vendored_shannon_launches_native_claude_and_sends_after_ready() -> None:
+    """Vendored Shannon must launch plain interactive Claude, then paste turns.
+
+    The outer Shannon process may receive text via argv or stdin, but the inner
+    Claude process should look like a native tmux launch: no prompt argv, no
+    ``claude -p`` fallback, and each message sent only after prompt readiness
+    plus a randomized delay.
+    """
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
+
+    src = VENDORED_SHANNON_PATH.read_text(encoding="utf-8")
+    assert '"claude",' in src
+    assert '"-p"' not in src[src.index("const claudeLaunchArgs"):src.index("await runCommand([", src.index("const claudeLaunchArgs"))]
+    assert "...options.claudeArgs, prompt" not in src
+    assert "...rootSafeClaudeArgs(options.claudeArgs), prompt" not in src
+    assert "let launchedWithPrompt" not in src
+    assert "await waitUntilReadyToSend(tmuxSession);" in src
+    assert "const promptSentAt = Date.now();" in src
+    assert "classifyClaudeStartupBlocker(pane.stdout)" in src
+    assert "paneLooksReadyForUserMessage(pane.stdout)" in src
+    assert "function randomSendDelayMs()" in src
+    assert "Math.random()" in src
+    assert "SHANNON_START_TIMEOUT_MS" in src
+    assert 'Bun.env.SHANNON_EMIT_METADATA !== "1"' in src
+    assert "type: \"shannon_session\"" in src  # still available when explicitly opted in
+
+
+def test_vendored_shannon_readiness_classifier_handles_blockers() -> None:
+    """The TypeScript pane classifier must not treat blocker screens as ready."""
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
+    import subprocess
+
+    script = f"""
+      import {{
+        classifyClaudeStartupBlocker,
+        paneLooksReadyForUserMessage,
+      }} from {json.dumps(str(VENDORED_SHANNON_PATH))};
+
+      const cases = [
+        ["trust", "Is this a project you trust? >"],
+        ["auth", "Not logged in. Run /login first. >"],
+        ["approval", "Do you want to proceed? Yes, and don't ask again >"],
+        ["permission", "By proceeding, you accept all responsibility. 2. Yes, I accept >"],
+        ["onboarding", "Press Enter to continue >"],
+      ];
+      for (const [kind, pane] of cases) {{
+        const blocker = classifyClaudeStartupBlocker(pane);
+        if (!blocker || blocker.kind !== kind) {{
+          throw new Error(`expected ${{kind}} blocker, got ${{JSON.stringify(blocker)}}`);
+        }}
+      }}
+      if (!paneLooksReadyForUserMessage("\\n│ ❯ ")) {{
+        throw new Error("expected composer prompt to be ready");
+      }}
+      const claude2160Pane = [
+        "Some startup text",
+        "⚠ 2 setup issues: MCP · /doctor",
+        "",
+        "❯ Try \\"write a test for cli.py\\"",
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · PR #65 · ← for agents",
+      ].join("\\n");
+      if (!paneLooksReadyForUserMessage(claude2160Pane)) {{
+        throw new Error("expected Claude Code v2.1.160 composer prompt to be ready");
+      }}
+      if (paneLooksReadyForUserMessage("normal output > with more text")) {{
+        throw new Error("non-terminal greater-than sign should not be ready");
+      }}
+    """
+    subprocess.run(["bun", "-e", script], check=True)
+
+
 def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every historical env-var must map to its ShannonConfig field correctly."""
-    from megaplan.workers.shannon import ShannonConfig
+    from arnold.pipelines.megaplan.workers.shannon import ShannonConfig
 
     # Set every historical env-var to a non-default value.
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "always")
@@ -1676,6 +2442,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv("MEGAPLAN_SHANNON_DROP_ROOT", "1")
     monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_ENV_SCRUB", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE", "native")
 
     cfg = ShannonConfig.load({})
 
@@ -1696,6 +2463,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert cfg.max_output_tokens == 64000
     assert cfg.drop_root is True
     assert cfg.chmod_workspace is False
+    assert cfg.claude_config_mode == "native"
     assert cfg.env_scrub is False
 
     # Defaults fire when env-vars are absent.
@@ -1706,17 +2474,19 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delenv("MEGAPLAN_SHANNON_DROP_ROOT")
     monkeypatch.delenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE")
     monkeypatch.delenv("MEGAPLAN_SHANNON_ENV_SCRUB")
+    monkeypatch.delenv("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE")
     # Override root detection so drop_root auto-logic is predictable in CI.
-    monkeypatch.setattr("megaplan.workers.shannon._running_as_root", lambda: False)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon._running_as_root", lambda: False)
 
     cfg2 = ShannonConfig.load({})
     assert cfg2.readiness_probe_raw == ""
     assert cfg2.readiness_probe_forced is False
     assert cfg2.trusted_container is False
     assert cfg2.session_roulette_enabled is True
-    assert cfg2.paste_first_turn is False
+    assert cfg2.paste_first_turn is True
     assert cfg2.drop_root is False
     assert cfg2.chmod_workspace is True
+    assert cfg2.claude_config_mode == "isolated"
     assert cfg2.env_scrub is True
     assert cfg2.readiness_timeout_seconds == 99   # still set from above
     assert cfg2.execute_timeout_seconds == 888
@@ -1724,6 +2494,7 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
 
     # Verify the pure defaults when nothing is set at all.
     default_cfg = ShannonConfig.load({}, env={})
+    assert default_cfg.claude_config_mode == "isolated"
     assert default_cfg.readiness_timeout_seconds == 120
     assert default_cfg.execute_timeout_seconds == 7200
     assert default_cfg.context_op_timeout_seconds == 180
@@ -1734,34 +2505,71 @@ def test_shannon_config_loads_back_compat_env(monkeypatch: pytest.MonkeyPatch) -
     assert default_cfg.session_compact_probability == pytest.approx(0.25)
     assert default_cfg.context_op_delay_min_seconds == pytest.approx(1.0)
     assert default_cfg.context_op_delay_max_seconds == pytest.approx(15.0)
-    assert default_cfg.paste_first_turn is False
+    assert default_cfg.paste_first_turn is True
     assert default_cfg.max_output_tokens == 128000
     assert default_cfg.chmod_workspace is True
     assert default_cfg.env_scrub is True
     assert default_cfg.voice == "announced"
 
 
-def test_paste_first_turn_delivers_prompt_via_stdin(
+def test_shannon_config_rejects_unknown_claude_config_mode() -> None:
+    from arnold.pipelines.megaplan.workers.shannon import ShannonConfig
+
+    with pytest.raises(CliError, match="MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE"):
+        ShannonConfig.load({}, env={"MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE": "shared"})
+
+
+def test_python_shannon_claude_config_mode_contracts() -> None:
+    """Isolated config stays default; native mode follows effective child HOME."""
+    import inspect
+
+    from arnold.pipelines.megaplan.workers import shannon as shannon_mod
+
+    config_src = inspect.getsource(shannon_mod.ShannonConfig.load)
+    assert (
+        '_get("MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE").lower() or "isolated"'
+        in config_src
+    )
+    assert 'claude_config_mode not in {"isolated", "native"}' in config_src
+
+    run_src = inspect.getsource(shannon_mod.run_shannon_step)
+    assert (
+        'run_dir / "claude_config" if cfg.claude_config_mode == "isolated" else None'
+        in run_src
+    )
+    assert 'env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)' in run_src
+    assert 'env.pop("CLAUDE_CONFIG_DIR", None)' in run_src
+    assert "home=env.get(\"HOME\")" in run_src
+
+    trust_src = inspect.getsource(shannon_mod._ensure_workspace_trusted)
+    assert 'cfg_path = Path(claude_config_dir) / ".claude.json"' in trust_src
+    assert 'cfg_path = Path(home) / ".claude.json"' in trust_src
+
+    transcript_src = inspect.getsource(shannon_mod._claude_transcript_paths)
+    assert 'projects_root = Path(claude_config_dir) / "projects"' in transcript_src
+    assert 'projects_root = Path(home) / ".claude" / "projects"' in transcript_src
+
+
+def test_native_prompt_handoff_delivers_prompt_via_stdin_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # With paste-first-turn on, the main turn carries the REAL prompt over stdin
-    # (a stream-json user message), uses --input-format=stream-json, drops the
-    # argv -p launcher entirely, and sets the env flag that activates the Shannon
-    # patch. No "read this file" pointer reaches Claude.
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    # By default, the main turn carries the REAL prompt over stdin (a stream-json
+    # user message), uses --input-format=stream-json, drops the argv -p launcher
+    # entirely, and avoids sending the "read this file" pointer as the task.
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
-    monkeypatch.setenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", "1")
+    monkeypatch.delenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", raising=False)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")  # legacy -> fresh, no op turn
-    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 1000, raising=False)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers.shannon.os.geteuid", lambda: 1000, raising=False)
     plan_dir, state = _mock_state(tmp_path)
     payload = {
         "plan": "# P",
         "questions": [],
-        "success_criteria": [{"criterion": "c", "priority": "must"}],
+        "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     raw = json.dumps([
@@ -1778,7 +2586,7 @@ def test_paste_first_turn_delivers_prompt_via_stdin(
         captured["env"] = kwargs.get("env")
         return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1)
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         run_shannon_step(
             "plan", state, plan_dir, root=tmp_path, fresh=True,
             prompt_override="DO THE REAL TASK",
@@ -1793,13 +2601,15 @@ def test_paste_first_turn_delivers_prompt_via_stdin(
     assert captured["env"]["MEGAPLAN_SHANNON_PASTE_FIRST_TURN"] == "1"
 
 
-def test_paste_first_turn_off_keeps_argv_launcher(
+def test_shannon_prompt_override_is_budgeted_through_non_enforced_model_seam(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Default (flag off): unchanged -p launcher in argv, no stdin, no env flag.
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import (
+        render_prompt_for_dispatch as real_render_prompt_for_dispatch,
+    )
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.delenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", raising=False)
@@ -1807,8 +2617,70 @@ def test_paste_first_turn_off_keeps_argv_launcher(
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
     plan_dir, state = _mock_state(tmp_path)
     payload = {
+        "plan": "# P",
+        "questions": [],
+        "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}],
+        "assumptions": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "s",
+            "total_cost_usd": 0.0,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    ])
+    rendered: list[object] = []
+
+    def render_spy(*args: object, **kwargs: object):
+        result = real_render_prompt_for_dispatch(*args, **kwargs)
+        rendered.append(result)
+        return result
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1)
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch", side_effect=render_spy),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command),
+    ):
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="DO THE REAL TASK",
+            session_agent="shannon",
+        )
+
+    assert rendered
+    assert rendered[0].telemetry.tier.tier.value == "non_enforced"
+    assert rendered[0].budget is not None
+    assert rendered[0].budget.budget_result.value in {"within_budget", "degraded_fallback"}
+
+
+def test_native_prompt_handoff_can_be_disabled_for_legacy_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Explicit opt-out keeps the legacy outer-Shannon argv launcher. The vendored
+    # launcher still starts native Claude in tmux and pastes this text after
+    # readiness; this only changes whether megaplan sends the full prompt or the
+    # prompt-file pointer to Shannon.
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
         "plan": "# P", "questions": [],
-        "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": [],
+        "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}], "assumptions": [],
     }
     raw = json.dumps([
         {"type": "result", "subtype": "success", "result": json.dumps(payload),
@@ -1822,7 +2694,7 @@ def test_paste_first_turn_off_keeps_argv_launcher(
         captured["env"] = kwargs.get("env")
         return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1)
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         run_shannon_step(
             "plan", state, plan_dir, root=tmp_path, fresh=True,
             prompt_override="DO THE REAL TASK",
@@ -1831,7 +2703,7 @@ def test_paste_first_turn_off_keeps_argv_launcher(
     assert "-p" in command
     assert "--input-format=stream-json" not in command
     assert captured["stdin"] is None
-    assert "MEGAPLAN_SHANNON_PASTE_FIRST_TURN" not in (captured["env"] or {})
+    assert (captured["env"] or {}).get("MEGAPLAN_SHANNON_PASTE_FIRST_TURN") != "1"
 
 
 def test_plan_session_seeded_reproducibility() -> None:
@@ -1840,7 +2712,7 @@ def test_plan_session_seeded_reproducibility() -> None:
     # session, reuse→clear/compact, explicit refresh, roulette-disabled).
     import random as _rnd
 
-    from megaplan.workers.shannon import ShannonConfig, plan_session
+    from arnold.pipelines.megaplan.workers.shannon import ShannonConfig, plan_session
 
     cfg = ShannonConfig.load({}, env={})  # defaults; no env influence
     fixtures = [
@@ -1898,7 +2770,7 @@ def test_plan_session_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess as _subprocess
     import time as _time
 
-    from megaplan.workers.shannon import ShannonConfig, plan_session
+    from arnold.pipelines.megaplan.workers.shannon import ShannonConfig, plan_session
 
     cfg = ShannonConfig.load({}, env={})
 
@@ -1930,28 +2802,29 @@ def test_plan_session_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
             tripped.append(f"os.environ.get({key!r})")
             raise AssertionError(f"plan_session must not read os.environ.get({key!r})")
 
-    monkeypatch.setattr(os, "environ", _NoEnviron())
+    with monkeypatch.context() as env_patch:
+        env_patch.setattr(os, "environ", _NoEnviron())
 
-    # Exercise every plan_session branch: new (with/without handshake roll
-    # firing), reuse→clear/compact, explicit_fresh.
-    fixtures = [
-        ("execute", None, False),
-        ("execute", None, True),
-        ("execute", "stored-abc", False),
-        ("execute", "stored-abc", True),
-        ("critique", "stored-xyz", False),
-        ("plan", None, False),
-    ]
-    for seed in range(5):
-        for step, stored_id, fresh in fixtures:
-            plan = plan_session(
-                step,
-                stored_id=stored_id,
-                fresh=fresh,
-                cfg=cfg,
-                rng=_rnd.Random(seed),
-            )
-            assert plan.kind in {"new", "resume", "clear", "compact"}
+        # Exercise every plan_session branch: new (with/without handshake roll
+        # firing), reuse→clear/compact, explicit_fresh.
+        fixtures = [
+            ("execute", None, False),
+            ("execute", None, True),
+            ("execute", "stored-abc", False),
+            ("execute", "stored-abc", True),
+            ("critique", "stored-xyz", False),
+            ("plan", None, False),
+        ]
+        for seed in range(5):
+            for step, stored_id, fresh in fixtures:
+                plan = plan_session(
+                    step,
+                    stored_id=stored_id,
+                    fresh=fresh,
+                    cfg=cfg,
+                    rng=_rnd.Random(seed),
+                )
+                assert plan.kind in {"new", "resume", "clear", "compact"}
     assert tripped == [], f"plan_session touched forbidden IO: {tripped}"
 
 
@@ -1959,7 +2832,7 @@ def test_session_strategy_falls_back_to_new_without_slash_patch() -> None:
     # When the installed shannon lacks the slash-completion patch, the reuse path
     # must NOT inject /clear or /compact (which would burn the op timeout) — it
     # sheds context via a fresh "new" session instead. Same policy, safe mechanism.
-    from megaplan.workers.shannon import _select_session_strategy
+    from arnold.pipelines.megaplan.workers.shannon import _select_session_strategy
 
     for _ in range(50):
         assert _select_session_strategy(
@@ -1984,9 +2857,9 @@ def test_session_strategy_stall_after_clear_rotation_clears_persisted_id(
     # C1 regression: after /clear rotates the session id, a stall must still drop
     # the PERSISTED (pre-clear) id from state — else the next executor cycle
     # resumes a dead/cleared session and races the orphan.
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")  # -> clear
@@ -2006,7 +2879,7 @@ def test_session_strategy_stall_after_clear_rotation_clears_persisted_id(
             )
         raise CliError("worker_stall", "stalled", extra={})
 
-    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=fake_run_command):
         with pytest.raises(CliError):
             run_shannon_step(
                 "execute", state, plan_dir, root=tmp_path, fresh=False,
@@ -2024,8 +2897,8 @@ def test_session_strategy_stall_after_clear_rotation_clears_persisted_id(
 def _make_turn_ctx(tmp_path: Path, *, shannon_prefix: list[str] | None = None,
                    env: dict[str, str] | None = None) -> "object":
     """Build a TurnContext mirroring what the T8 orchestrator will pass."""
-    from megaplan.workers.shannon import TurnContext, VENDORED_SHANNON_PATH
-    from megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.workers.shannon import TurnContext, VENDORED_SHANNON_PATH
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession
 
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir(exist_ok=True)
@@ -2047,6 +2920,7 @@ def _make_turn_ctx(tmp_path: Path, *, shannon_prefix: list[str] | None = None,
         work_dir=work_dir,
         plan_dir=plan_dir,
         run_dir=plan_dir / ".megaplan" / "runs" / "t7-plan" / "execute" / "shannon",
+        claude_config_dir=str(plan_dir / ".megaplan" / "runs" / "t7-plan" / "execute" / "shannon" / "claude_config"),
         tmux_session=TmuxSession("t7-test-session"),
         state={"name": "t7-plan", "iteration": 1},
     )
@@ -2054,8 +2928,8 @@ def _make_turn_ctx(tmp_path: Path, *, shannon_prefix: list[str] | None = None,
 
 def test_run_turn_builds_resume_and_session_id_args(tmp_path: Path) -> None:
     """run_turn maps Turn.resume/Turn.delivery to the correct argv shape."""
-    from megaplan.workers.shannon import run_turn, Turn
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_turn, Turn
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ctx = _make_turn_ctx(tmp_path)
     fake = CommandResult(
@@ -2068,7 +2942,7 @@ def test_run_turn_builds_resume_and_session_id_args(tmp_path: Path) -> None:
         session_id="sid-resume", resume=True, body="/clear",
         delivery="argv", expect="rotation", timeout=60, pre_sleep_s=0.0,
     )
-    with patch("megaplan.workers.shannon.run_command", return_value=fake) as rc:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
         result = run_turn(turn_resume, ctx)
     cmd = rc.call_args.args[0]
     assert "-p" in cmd
@@ -2086,7 +2960,7 @@ def test_run_turn_builds_resume_and_session_id_args(tmp_path: Path) -> None:
         session_id="sid-new", resume=False, body="hello",
         delivery="argv", expect="non_empty", timeout=120, pre_sleep_s=0.0,
     )
-    with patch("megaplan.workers.shannon.run_command", return_value=fake) as rc:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
         run_turn(turn_new, ctx)
     cmd = rc.call_args.args[0]
     assert "-p" in cmd and cmd[cmd.index("-p") + 1] == "hello"
@@ -2098,7 +2972,7 @@ def test_run_turn_builds_resume_and_session_id_args(tmp_path: Path) -> None:
         session_id="sid-paste", resume=False, body="the real prompt",
         delivery="stdin", expect="envelope", timeout=7200, pre_sleep_s=0.0,
     )
-    with patch("megaplan.workers.shannon.run_command", return_value=fake) as rc:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
         run_turn(turn_paste, ctx)
     cmd = rc.call_args.args[0]
     assert "--input-format=stream-json" in cmd
@@ -2114,11 +2988,55 @@ def test_run_turn_builds_resume_and_session_id_args(tmp_path: Path) -> None:
     }
 
 
+def test_run_turn_enables_typed_env_only_for_short_control_turns(tmp_path: Path) -> None:
+    """Short pre-turns may opt into typing without mutating shared worker env."""
+    from arnold.pipelines.megaplan.workers.shannon import run_turn, Turn
+    from arnold.pipelines.megaplan.workers import CommandResult
+
+    shared_env = {"BASE": "1"}
+    ctx = _make_turn_ctx(tmp_path, env=shared_env)
+    fake = CommandResult(
+        command=[], cwd=tmp_path, returncode=0,
+        stdout='{"session_id": "landed"}', stderr="", duration_ms=1,
+    )
+
+    readiness = Turn(
+        session_id="sid-ready", resume=False,
+        body="Hello, say ready when you are.",
+        delivery="argv", expect="non_empty", timeout=60, pre_sleep_s=0.0,
+    )
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(readiness, ctx)
+    readiness_env = rc.call_args.kwargs["env"]
+    assert readiness_env is not ctx.env
+    assert readiness_env["SHANNON_TYPE_PROMPT_MAX_CHARS"] == "256"
+    assert "SHANNON_TYPE_PROMPT_MAX_CHARS" not in ctx.env
+    assert shared_env == {"BASE": "1"}
+
+    clear = Turn(
+        session_id="sid-clear", resume=True, body="/clear",
+        delivery="argv", expect="rotation", timeout=60, pre_sleep_s=0.0,
+    )
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(clear, ctx)
+    assert rc.call_args.kwargs["env"]["SHANNON_TYPE_PROMPT_MAX_CHARS"] == "256"
+    assert "SHANNON_TYPE_PROMPT_MAX_CHARS" not in ctx.env
+
+    main = Turn(
+        session_id="sid-main", resume=True, body="the real prompt",
+        delivery="stdin", expect="envelope", timeout=7200, pre_sleep_s=0.0,
+    )
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        run_turn(main, ctx)
+    assert rc.call_args.kwargs["env"] is ctx.env
+    assert "SHANNON_TYPE_PROMPT_MAX_CHARS" not in rc.call_args.kwargs["env"]
+
+
 def test_run_turn_propagates_cli_error_codes(tmp_path: Path) -> None:
     """worker_stall / worker_timeout / connection_error propagate UNCHANGED,
     decorated only with the turn's session_id so the _impl.py retry loop
     (line ~2681) keeps the resume key it uses for session cleanup."""
-    from megaplan.workers.shannon import run_turn, Turn
+    from arnold.pipelines.megaplan.workers.shannon import run_turn, Turn
 
     ctx = _make_turn_ctx(tmp_path)
     turn = Turn(
@@ -2128,7 +3046,7 @@ def test_run_turn_propagates_cli_error_codes(tmp_path: Path) -> None:
 
     for code in ("worker_stall", "worker_timeout", "connection_error"):
         err = CliError(code, f"forced {code}", extra={"raw_output": ""})
-        with patch("megaplan.workers.shannon.run_command", side_effect=err):
+        with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=err):
             with pytest.raises(CliError) as exc_info:
                 run_turn(turn, ctx)
         assert exc_info.value.code == code  # code preserved verbatim
@@ -2137,7 +3055,7 @@ def test_run_turn_propagates_cli_error_codes(tmp_path: Path) -> None:
     # Non-retryable codes are propagated WITHOUT session_id decoration —
     # they don't feed the retry loop and shouldn't be conflated with it.
     err_other = CliError("worker_error", "boom", extra={"raw_output": ""})
-    with patch("megaplan.workers.shannon.run_command", side_effect=err_other):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=err_other):
         with pytest.raises(CliError) as exc_info:
             run_turn(turn, ctx)
     assert exc_info.value.code == "worker_error"
@@ -2148,8 +3066,8 @@ def test_run_turn_uses_ctx_nonroot_prefix(tmp_path: Path) -> None:
     """run_turn MUST consume the ctx-supplied shannon prefix verbatim and
     MUST NOT call _prepare_nonroot_shannon_runtime per turn (the orchestrator
     calls it ONCE and threads the result via ctx)."""
-    from megaplan.workers.shannon import run_turn, Turn
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_turn, Turn
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     prefix = ["/bin/su", "-m", "-s", "/bin/bash", "nobody", "-c"]
     nonroot_env = {"HOME": "/home/nobody", "FOO": "bar"}
@@ -2171,10 +3089,10 @@ def test_run_turn_uses_ctx_nonroot_prefix(tmp_path: Path) -> None:
     )
 
     with patch(
-        "megaplan.workers.shannon._prepare_nonroot_shannon_runtime",
+        "arnold.pipelines.megaplan.workers.shannon._prepare_nonroot_shannon_runtime",
         side_effect=_trap_prepare,
     ):
-        with patch("megaplan.workers.shannon.run_command", return_value=fake) as rc:
+        with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake) as rc:
             run_turn(turn, ctx)
 
     assert prepare_calls == []  # nonroot runtime NOT recomputed per turn
@@ -2194,7 +3112,7 @@ def test_run_turn_uses_ctx_nonroot_prefix(tmp_path: Path) -> None:
 
 def test_session_id_of_formats() -> None:
     """session_id_of consolidates NDJSON / legacy-array / dict parsing."""
-    from megaplan.workers.shannon import session_id_of
+    from arnold.pipelines.megaplan.workers.shannon import session_id_of
 
     # Empty / non-JSON inputs
     assert session_id_of("") is None
@@ -2251,7 +3169,7 @@ def test_inner_env_scrubbed_via_vendored_patch() -> None:
     prefixes.
     """
     import re
-    from megaplan.workers.shannon import VENDORED_SHANNON_PATH
+    from arnold.pipelines.megaplan.workers.shannon import VENDORED_SHANNON_PATH
 
     # (a) P15 replacement string present in the vendored fork.
     with VENDORED_SHANNON_PATH.open("r", encoding="utf-8") as fh:
@@ -2294,10 +3212,10 @@ def test_run_artifacts_written_to_run_dir_not_cwd(
     The prompt file, Claude config, and transcript paths must resolve under
     the per-run directory — never in cwd or plan_dir root.
     """
-    import os
+    import re
 
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import (
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import (
         _write_prompt_file,
         _shannon_run_dir,
     )
@@ -2311,7 +3229,7 @@ def test_run_artifacts_written_to_run_dir_not_cwd(
             "version": 1,
             "timestamp": "2026-03-20T00:00:00Z",
             "hash": "sha256:test",
-            "success_criteria": [{"criterion": "c", "priority": "must"}],
+            "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}],
             "questions": [],
             "assumptions": [],
         }),
@@ -2346,14 +3264,30 @@ def test_run_artifacts_written_to_run_dir_not_cwd(
     assert not cwd_claude.exists(), f"Claude config leaked to cwd: {cwd_claude}"
 
     # ── Transcript paths resolve under CLAUDE_CONFIG_DIR ──
-    from megaplan.workers.shannon import _claude_transcript_paths
-    cd_str = str(claude_config_dir)
+    from arnold.pipelines.megaplan.workers.shannon import _claude_transcript_paths
+    projects_root = claude_config_dir / "projects"
+    slug = re.sub(r"[^a-zA-Z0-9_-]", "-", str(tmp_path.resolve()))
+    transcript = projects_root / slug / "test-sid.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("{}\n", encoding="utf-8")
     paths = _claude_transcript_paths(
-        "test-sid", tmp_path, claude_config_dir=cd_str
+        "test-sid", tmp_path, claude_config_dir=str(claude_config_dir)
     )
-    # Even if no transcript exists yet, the projects root is under claude_config_dir
-    # (Py3.9 does not have is_relative_to so we use str.startswith)
-    assert cd_str in str(Path.home() / ".claude") or True  # home fallback not used when cd is set
+    assert paths == [transcript]
+    assert all(path.is_relative_to(projects_root) for path in paths)
+
+    # Native config mode leaves CLAUDE_CONFIG_DIR unset, so transcript probing
+    # must use the effective child HOME rather than the supervisor's home.
+    child_home = run_dir / "native-home"
+    native_projects_root = child_home / ".claude" / "projects"
+    native_transcript = native_projects_root / slug / "native-sid.jsonl"
+    native_transcript.parent.mkdir(parents=True)
+    native_transcript.write_text("{}\n", encoding="utf-8")
+    native_paths = _claude_transcript_paths(
+        "native-sid", tmp_path, claude_config_dir=None, home=str(child_home)
+    )
+    assert native_paths == [native_transcript]
+    assert all(path.is_relative_to(native_projects_root) for path in native_paths)
 
 
 # ---------------------------------------------------------------------------
@@ -2367,9 +3301,9 @@ def test_session_plan_recorded_in_state(
     """``run_shannon_step`` records the rolled ``SessionPlan`` on the
     returned ``WorkerResult.shannon_plan`` with the correct shape so the
     receipt carries a forensic record of every randomness-driven decision."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import run_shannon_step
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
@@ -2396,7 +3330,7 @@ def test_session_plan_recorded_in_state(
         command=[], cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=10,
     )
 
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result):
         result = run_shannon_step(
             "execute", state, plan_dir,
             root=tmp_path, fresh=True, prompt_override="hello",
@@ -2431,8 +3365,8 @@ def test_session_plan_reproducible_from_state(
     import copy
     import random as _rnd
 
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers.shannon import (
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers.shannon import (
         ShannonConfig,
         _seeded_rng_for_run,
         _shannon_run_nonce,
@@ -2440,7 +3374,7 @@ def test_session_plan_reproducible_from_state(
         plan_session,
         run_shannon_step,
     )
-    from megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
@@ -2495,12 +3429,12 @@ def test_session_plan_reproducible_from_state(
 
     # ── (c) Orchestrator level: two identical runs → identical shannon_plan ──
     state2 = copy.deepcopy(state)
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result):
         result1 = run_shannon_step(
             "execute", state, plan_dir,
             root=tmp_path, fresh=True, prompt_override="hello",
         )
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result):
         result2 = run_shannon_step(
             "execute", state2, plan_dir,
             root=tmp_path, fresh=True, prompt_override="hello",
@@ -2512,4 +3446,426 @@ def test_session_plan_reproducible_from_state(
         f"shannon_plan not reproducible across identical orchestrator runs:\n"
         f"  run 1: {result1.shannon_plan}\n"
         f"  run 2: {result2.shannon_plan}"
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T15 — review compaction via seam (render_compact_review_prompt)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_no_direct_compact_review_prompt_import_in_shannon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prove shannon.py no longer imports or calls compact_review_prompt directly."""
+    import ast
+    from pathlib import Path as _Path
+
+    shannon_path = _Path(__file__).resolve().parents[1] / "arnold" / "pipelines" / "megaplan" / "workers" / "shannon.py"
+    source = shannon_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    direct_compact_imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == "arnold.pipelines.megaplan.prompts.review":
+                for alias in node.names:
+                    if alias.name == "compact_review_prompt":
+                        direct_compact_imports.append(
+                            f"line {node.lineno}: from {node.module} import {alias.name}"
+                        )
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if "compact_review_prompt" in alias.name:
+                    direct_compact_imports.append(
+                        f"line {node.lineno}: import {alias.name}"
+                    )
+
+    bare_calls: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == "compact_review_prompt":
+                bare_calls.append(f"line {node.lineno}: compact_review_prompt(...)")
+
+    assert not direct_compact_imports, (
+        f"shannon.py must not import compact_review_prompt directly. Found: {direct_compact_imports}"
+    )
+    assert not bare_calls, (
+        f"shannon.py must not call compact_review_prompt directly. Found: {bare_calls}"
+    )
+
+
+def test_model_budget_error_review_fallback_uses_seam_compact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ModelBudgetError on review → render_compact_review_prompt is called."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, RenderedStepMessage
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult, _build_mock_payload
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Review batch 1.\n- task_updates: [T1]\n- sense_check_acknowledgments: [SC1]"
+
+    def _raise_budget(*args: object, **kwargs: object) -> object:
+        raise ModelBudgetError("prompt is too large")
+
+    review_payload = _build_mock_payload("review", state, plan_dir)
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(review_payload),
+            "session_id": "review-session",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=100,
+    )
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            side_effect=_raise_budget,
+        ) as mock_render_prompt,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
+        ) as mock_check_prompt_size,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            return_value=fake_result,
+        ),
+    ):
+        mock_compact.return_value = RenderedStepMessage(
+            text="compacted",
+            prompt="compacted",
+        )
+        run_shannon_step(
+            "review",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            session_agent="shannon",
+            model="claude-sonnet-4-5",
+        )
+
+    assert mock_render_prompt.call_count == 1
+    render_kwargs = mock_render_prompt.call_args.kwargs
+    assert render_kwargs["prompt_override"] is None
+    assert render_kwargs["worker"] == "shannon"
+    assert render_kwargs["model"] == "claude-sonnet-4-5"
+    assert render_kwargs["schema"]
+    assert render_kwargs["metadata"]["projection_capabilities"] == render_kwargs["projection_capabilities"]
+    mock_compact.assert_called_once()
+    call_args, call_kwargs = mock_compact.call_args
+    assert call_args[0] == "claude"
+    assert call_args[1] == "review"
+    assert call_kwargs.get("root") == tmp_path
+    assert call_kwargs.get("worker") == "shannon"
+    assert call_kwargs.get("model") == "claude-sonnet-4-5"
+    assert call_kwargs.get("tier") == ModelTier.NON_ENFORCED
+    assert "prompt_size_error" in call_kwargs
+    mock_check_prompt_size.assert_called_once()
+    assert mock_check_prompt_size.call_args.kwargs["phase"] == "review"
+    assert "compacted" in mock_check_prompt_size.call_args.args[0]
+
+
+def test_prompt_oversized_review_fallback_uses_seam_compact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """prompt_oversized on review → render_compact_review_prompt is called."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.types import CliError
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult, _build_mock_payload
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Review batch 1.\n- task_updates: [T1]\n- sense_check_acknowledgments: [SC1]"
+
+    _call_count = 0
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        nonlocal _call_count
+        _call_count += 1
+        if _call_count == 1:
+            raise CliError("prompt_oversized", "too large", extra={"token_count": 500_000})
+        # second call (post-compaction) passes
+
+    review_payload = _build_mock_payload("review", state, plan_dir)
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(review_payload),
+            "session_id": "review-session",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=100,
+    )
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
+            side_effect=fake_check_prompt_size,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            return_value=fake_result,
+        ),
+    ):
+        mock_compact.return_value = RenderedStepMessage(
+            text="compacted text",
+            prompt="compacted text",
+        )
+        run_shannon_step(
+            "review",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            session_agent="shannon",
+            model="claude-sonnet-4-5",
+        )
+
+    assert mock_render_prompt.call_count == 1
+    render_kwargs = mock_render_prompt.call_args.kwargs
+    assert render_kwargs["prompt_override"] is None
+    assert render_kwargs["worker"] == "shannon"
+    assert render_kwargs["model"] == "claude-sonnet-4-5"
+    assert render_kwargs["schema"]
+    assert render_kwargs["metadata"]["projection_capabilities"] == render_kwargs["projection_capabilities"]
+    mock_compact.assert_called_once()
+    call_args, call_kwargs = mock_compact.call_args
+    assert call_args[0] == "claude"
+    assert call_args[1] == "review"
+    assert call_kwargs.get("root") == tmp_path
+    assert call_kwargs.get("prompt_size_error") == {"token_count": 500_000}
+    assert _call_count == 2
+
+
+def test_non_review_model_budget_error_still_raised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ModelBudgetError on non-review step is NOT caught — it propagates."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.model_seam import ModelBudgetError
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Execute batch 1."
+
+    def _raise_budget(*args: object, **kwargs: object) -> object:
+        raise ModelBudgetError("too large")
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            side_effect=_raise_budget,
+        ) as mock_render_prompt,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+    ):
+        with pytest.raises(ModelBudgetError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+            )
+
+    assert mock_render_prompt.call_count == 1
+    render_kwargs = mock_render_prompt.call_args.kwargs
+    assert render_kwargs["prompt_override"] is None
+    assert render_kwargs["schema"]
+    assert render_kwargs["metadata"]["projection_capabilities"] == render_kwargs["projection_capabilities"]
+    mock_compact.assert_not_called()
+
+
+def test_non_review_prompt_oversized_still_raised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """prompt_oversized on non-review step is NOT caught — it propagates."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.types import CliError
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Execute batch 1."
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        raise CliError("prompt_oversized", "too large")
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
+            side_effect=fake_check_prompt_size,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+    ):
+        with pytest.raises(CliError, match="too large"):
+            run_shannon_step(
+                "execute",
+                state,
+                plan_dir,
+                root=tmp_path,
+                fresh=True,
+            )
+
+    assert mock_render_prompt.call_count == 1
+    render_kwargs = mock_render_prompt.call_args.kwargs
+    assert render_kwargs["prompt_override"] is None
+    assert render_kwargs["schema"]
+    assert render_kwargs["metadata"]["projection_capabilities"] == render_kwargs["projection_capabilities"]
+    mock_compact.assert_not_called()
+
+
+def test_compact_review_fidelity_preserves_prompt_string(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compact path produces a usable prompt string for downstream processing."""
+    from unittest.mock import patch
+
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.types import CliError
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan.workers import CommandResult, _build_mock_payload
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+
+    built_prompt = "Review batch 1.\n- task_updates: [T1]\n- sense_check_acknowledgments: [SC1]"
+
+    compacted_text = "COMPACTED: review with limited context"
+
+    _call_count = 0
+
+    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
+        nonlocal _call_count
+        _call_count += 1
+        if _call_count == 1:
+            raise CliError("prompt_oversized", "too large", extra={"token_count": 500_000})
+        # second call (post-compaction) passes — we just verify content
+
+    review_payload = _build_mock_payload("review", state, plan_dir)
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(review_payload),
+            "session_id": "fidelity-session",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=100,
+    )
+
+    with (
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_prompt_for_dispatch",
+            return_value=RenderedStepMessage(text=built_prompt, prompt=built_prompt),
+        ) as mock_render_prompt,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.check_prompt_size",
+            side_effect=fake_check_prompt_size,
+        ),
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.render_compact_review_prompt",
+        ) as mock_compact,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon._write_prompt_file",
+        ) as mock_write,
+        patch(
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
+            return_value=fake_result,
+        ),
+    ):
+        mock_compact.return_value = RenderedStepMessage(
+            text=compacted_text,
+            prompt=compacted_text,
+        )
+        run_shannon_step(
+            "review",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            session_agent="shannon",
+            model="claude-sonnet-4-5",
+        )
+
+    assert mock_render_prompt.call_count == 1
+    assert mock_render_prompt.call_args.kwargs["prompt_override"] is None
+    # The prompt written to disk must contain the compacted text
+    prompt_written = mock_write.call_args.args[2]
+    assert compacted_text in prompt_written, (
+        f"Compacted text must appear in the written prompt file.\n"
+        f"Expected to find: {compacted_text!r}\n"
+        f"In: {prompt_written!r}"
     )

@@ -30,8 +30,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.types import CliError
-from megaplan.workers._impl import (
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers._impl import (
     DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS,
     _worker_stream_idle_timeout_seconds,
     run_command,

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.editorial import checklist
-from megaplan.editorial.errors import EditorialNotFound, EditorialValidationError, EditorialWorkflowError
-from megaplan.store import ChecklistItemInput
+from arnold.pipelines.megaplan.editorial import checklist
+from arnold.pipelines.megaplan.editorial.errors import EditorialNotFound, EditorialValidationError, EditorialWorkflowError
+from arnold.pipelines.megaplan.store import ChecklistItemInput
 
 
 def test_checklist_crud_status_helpers_and_events(editorial_store) -> None:

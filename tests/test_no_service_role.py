@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def test_no_service_role_in_python_source() -> None:
-    pkg_dir = Path(__file__).parent.parent / "megaplan"
+    pkg_dir = Path(__file__).parent.parent / "arnold" / "pipelines" / "megaplan"
     offenders = [
         str(path.relative_to(pkg_dir.parent))
         for path in sorted(pkg_dir.rglob("*.py"))

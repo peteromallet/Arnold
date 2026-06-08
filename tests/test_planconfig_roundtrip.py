@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan._core.io import get_effective
-from megaplan.chain import run_chain
-from megaplan.handlers.init import _build_state_config
-from megaplan.types import DEFAULTS, _SETTABLE_NUMERIC, _SETTABLE_STRING
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core.io import get_effective
+from arnold.pipelines.megaplan.chain import run_chain
+from arnold.pipelines.megaplan.handlers.init import _build_state_config
+from arnold.pipelines.megaplan.types import DEFAULTS, _SETTABLE_NUMERIC, _SETTABLE_STRING
 
 from tests.conftest import load_state, make_args_factory
 

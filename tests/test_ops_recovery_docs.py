@@ -4,17 +4,17 @@ from datetime import timedelta
 import json
 from pathlib import Path
 
-import megaplan.cli
-from megaplan._core.io import (
+import arnold.pipelines.megaplan.cli as megaplan_cli
+from arnold.pipelines.megaplan._core.io import (
     journal_bytes_write,
     journal_commit_path,
     prepare_journal_transaction,
     recover_journal,
     write_journal_commit_marker,
 )
-from megaplan.schemas import MigrationRun, utc_now
-from megaplan.store import MultiStore, deterministic_idempotency_key
-from megaplan.store.file import FileStore
+from arnold.pipelines.megaplan.schemas import MigrationRun, utc_now
+from arnold.pipelines.megaplan.store import MultiStore, deterministic_idempotency_key
+from arnold.pipelines.megaplan.store.file import FileStore
 
 
 REQUIRED_SCENARIOS = {
@@ -146,9 +146,9 @@ def test_ops_missing_blob_export_and_partial_legacy_conflict(tmp_path: Path, mon
     )
     store.file.blobs.delete(image.blob_id)
     monkeypatch.chdir(project)
-    monkeypatch.setattr(megaplan.cli, "build_epic_store", lambda root, actor_id=None: store)
+    monkeypatch.setattr(megaplan_cli, "build_epic_store", lambda root, actor_id=None: store)
 
-    fail_exit = megaplan.cli.main(["epic", "export", epic.id, "--output", str(tmp_path / "failed.tar")])
+    fail_exit = megaplan_cli.main(["epic", "export", epic.id, "--output", str(tmp_path / "failed.tar")])
     fail_response = json.loads(capsys.readouterr().out)
     assert fail_exit == 1
     assert fail_response["error"] == "export_failed"
@@ -168,11 +168,11 @@ def test_ops_missing_blob_export_and_partial_legacy_conflict(tmp_path: Path, mon
         "--project-dir",
         str(project),
     ]
-    assert megaplan.cli.main(args) == 0
+    assert megaplan_cli.main(args) == 0
     assert MultiStore.canonical_filestore_root(project).is_relative_to((target_home / ".megaplan").resolve())
     capsys.readouterr()
     (source_plan / "state.json").write_text("{\"ok\": false}\n", encoding="utf-8")
-    assert megaplan.cli.main(args) == 0
+    assert megaplan_cli.main(args) == 0
     conflict = json.loads(capsys.readouterr().out)
     assert conflict["conflicts"]
 

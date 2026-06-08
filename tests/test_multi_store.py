@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.store import (
+from arnold.pipelines.megaplan.store import (
     ChecklistItemInput,
     CloudRunInput,
     LeaseConflict,
@@ -18,9 +18,9 @@ from megaplan.store import (
     StoreError,
     deterministic_idempotency_key,
 )
-from megaplan.store.file import FileStore
-from megaplan.tickets.identity import repo_codebase_identity
-from megaplan.schemas import MigrationRun
+from arnold.pipelines.megaplan.store.file import FileStore
+from arnold.pipelines.megaplan.tickets.identity import repo_codebase_identity
+from arnold.pipelines.megaplan.schemas import MigrationRun
 from tests.contract._store_contract import run_store_contract, run_store_error_class_parity_contract
 
 
@@ -342,7 +342,7 @@ def test_multi_store_acquire_execution_lease_derives_epic_id(tmp_path: Path) -> 
 
 
 def test_multi_store_exported_from_package() -> None:
-    from megaplan.store import MultiStore as ExportedMultiStore
+    from arnold.pipelines.megaplan.store import MultiStore as ExportedMultiStore
 
     assert ExportedMultiStore is MultiStore
 
