@@ -852,11 +852,19 @@ def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
         success_criteria = plan_meta.get("success_criteria", []) or []
         worker_caps = get_worker_capabilities(state_data)
         _, human_deferred = classify_criteria(success_criteria, worker_caps)
-        deferred_must = [
+        # Under auto_approve the operator delegates sign-off to the harness for
+        # ALL human-deferred criteria, not just must-priority ones. A plan that
+        # entered ``awaiting_human_verify`` solely on deferred *should* criteria
+        # (its must criteria all auto-verifiable) would otherwise halt forever:
+        # auto-verify found no deferred-MUST, bailed, and the driver stopped for
+        # a human who, under auto_approve, has already delegated sign-off. Record
+        # verdicts for every deferred criterion (must + should) so should-only
+        # plans advance too.
+        deferred = [
             (i, sc) for i, sc in enumerate(success_criteria)
-            if sc in human_deferred and sc.get("priority") == "must"
+            if sc in human_deferred
         ]
-        if not deferred_must:
+        if not deferred:
             return False
 
         verifications_path = plan_dir / "human_verifications.json"
@@ -866,7 +874,7 @@ def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
             if isinstance(loaded, list):
                 verifications = loaded
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        for idx, sc in deferred_must:
+        for idx, sc in deferred:
             verifications.append({
                 "criterion_idx": idx,
                 "criterion": sc.get("criterion", ""),
@@ -887,7 +895,7 @@ def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
             return False
         state_data["current_state"] = STATE_DONE
         save_state_merge_meta(plan_dir, state_data)
-        log(f"auto-verified {len(deferred_must)} deferred-must criteria → done")
+        log(f"auto-verified {len(deferred)} deferred criteria (must+should) → done")
         return True
     except Exception as exc:  # fail safe: any error → human halt, never a false done
         log(f"auto-verify failed ({exc!r}) — falling through to human halt")
