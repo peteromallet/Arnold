@@ -63,11 +63,25 @@ A named typed port that declares its content type.
 Every pipeline Step declares zero-or-more ports via ``produces`` and
 ``consumes``.  The executor uses these declarations for
 contract-level validation and routing-key construction when
-``MEGAPLAN_TYPED_PORTS`` is on.
+typed-port support is enabled by the consuming runtime.
+
+``taint`` is a frozenset of security/trust labels (e.g.
+``frozenset({"secret", "pii"})``) that are propagated through the
+dependency graph by the runtime's taint engine.
+
+``cardinality`` is the public M2 data-shape vocabulary:
+``"singleton"`` for exactly one value, ``"collection"`` for
+fan-out/fan-in values, and reserved ``"stream"`` for future streaming
+seams.  ``logical_type`` and ``accepted_version_range`` describe the
+payload schema namespace for typed seam validation; they are optional
+so legacy ``Port(name, content_type)`` declarations remain valid.
 
 | field | type | default |
 | --- | --- | --- |
+| accepted_version_range | AcceptedVersionRange \| None | None |
+| cardinality | PortCardinality | 'singleton' |
 | content_type | str | required |
+| logical_type | str \| None | None |
 | name | str | required |
 | taint | frozenset[str] | default_factory=frozenset |
 
@@ -75,9 +89,19 @@ contract-level validation and routing-key construction when
 
 A reference to a named port with its declared content type.
 
+``cardinality`` mirrors :class:`Port` so consumers can declare whether
+they expect a singleton, collection, or future stream input.  The
+default remains singleton, preserving existing two-argument call sites.
+``logical_type`` and ``accepted_version_range`` are optional logical
+payload schema metadata for consumers that validate retained contract
+payload versions.
+
 | field | type | default |
 | --- | --- | --- |
+| accepted_version_range | AcceptedVersionRange \| None | None |
+| cardinality | PortCardinality | 'singleton' |
 | content_type | str | required |
+| logical_type | str \| None | None |
 | port_name | str | required |
 
 #### RoutingKey
@@ -125,37 +149,31 @@ content type declared on a producing port.
 
 | source | defect_template |
 | --- | --- |
-| megaplan._pipeline.validator:111 | stage {...} is unreachable from entry {...} |
-| megaplan._pipeline.validator:58 | entry stage {...} not present in pipeline.stages |
-| megaplan._pipeline.validator:71 | stage {...}: edge uses reserved label 'halt' (halt is a target sentinel, not an edge label) |
-| megaplan._pipeline.validator:76 | stage {...}: edge {...} targets unknown stage {...} |
-| megaplan._pipeline.validator:83 | stage {...}: gate edge {...} has no recommendation set (gate verdict would not dispatch) |
-| megaplan._pipeline.validator:88 | stage {...}: gate edge {...} has recommendation {...} not in GateRecommendation literals {...} |
 
 ### Judge Manifest Validator Defects
 
 | source | defect_template |
 | --- | --- |
-| megaplan._pipeline.judge_manifest_discovery:101 | kind must be {...} |
-| megaplan._pipeline.judge_manifest_discovery:103 | consumes must declare at least one input port |
-| megaplan._pipeline.judge_manifest_discovery:105 | produces must declare at least one output port |
-| megaplan._pipeline.judge_manifest_discovery:110 | {...} must be a 64-character SHA-256 hex digest |
-| megaplan._pipeline.judge_manifest_discovery:118 | {...} port name must be a non-empty string |
-| megaplan._pipeline.judge_manifest_discovery:120 | {...}.{...} content_type must be a non-empty string |
-| megaplan._pipeline.judge_manifest_discovery:125 | {...}.{...} uses unknown content type {...} |
-| megaplan._pipeline.judge_manifest_discovery:134 | produces must include {...} |
-| megaplan._pipeline.judge_manifest_discovery:96 | {...} must be a non-empty string |
-| megaplan._pipeline.judge_manifest_discovery:99 | schema must be {...} |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:101 | kind must be {...} |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:103 | consumes must declare at least one input port |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:105 | produces must declare at least one output port |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:110 | {...} must be a 64-character SHA-256 hex digest |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:118 | {...} port name must be a non-empty string |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:120 | {...}.{...} content_type must be a non-empty string |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:125 | {...}.{...} uses unknown content type {...} |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:134 | produces must include {...} |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:96 | {...} must be a non-empty string |
+| arnold.pipelines.megaplan._pipeline.judge_manifest_discovery:99 | schema must be {...} |
 
 ### Contract Repair Error Kinds
 
 | error_kind | source |
 | --- | --- |
-| cardinality_mismatch | megaplan/_pipeline/contracts.py |
-| content_type_mismatch | megaplan/_pipeline/contracts.py |
-| no_match | megaplan/_pipeline/contracts.py |
-| schema_mismatch | megaplan/_pipeline/contracts.py |
-| typo_name | megaplan/_pipeline/contracts.py |
+| cardinality_mismatch | arnold/pipeline/contracts.py |
+| content_type_mismatch | arnold/pipeline/contracts.py |
+| no_match | arnold/pipeline/contracts.py |
+| schema_mismatch | arnold/pipeline/contracts.py |
+| typo_name | arnold/pipeline/contracts.py |
 
 ## CLI Check and Doctor Facts
 
@@ -163,49 +181,52 @@ content type declared on a producing port.
 
 | command | subcommand | source |
 | --- | --- | --- |
-| audit | query | megaplan/cli/parser.py |
-| audit | report | megaplan/cli/parser.py |
-| brief | epic | megaplan/cli/parser.py |
-| brief | list | megaplan/cli/parser.py |
-| brief | new | megaplan/cli/parser.py |
-| brief | search | megaplan/cli/parser.py |
-| brief | show | megaplan/cli/parser.py |
-| chain | override | megaplan/cli/parser.py |
-| chain | start | megaplan/cli/parser.py |
-| chain | status | megaplan/cli/parser.py |
-| config | profiles | megaplan/cli/parser.py |
-| config | reset | megaplan/cli/parser.py |
-| config | set | megaplan/cli/parser.py |
-| config | show | megaplan/cli/parser.py |
-| config | use-profile | megaplan/cli/parser.py |
-| debt | add | megaplan/cli/parser.py |
-| debt | list | megaplan/cli/parser.py |
-| debt | resolve | megaplan/cli/parser.py |
-| epic | capsule | megaplan/cli/parser.py |
-| epic | export | megaplan/cli/parser.py |
-| epic | migrate | megaplan/cli/parser.py |
-| epic | snapshot | megaplan/cli/parser.py |
-| pipelines | check | megaplan/cli/parser.py |
-| pipelines | doctor | megaplan/cli/parser.py |
-| pipelines | new | megaplan/cli/parser.py |
-| quality-gate | resolve | megaplan/cli/parser.py |
-| step | add | megaplan/cli/parser.py |
-| step | move | megaplan/cli/parser.py |
-| step | remove | megaplan/cli/parser.py |
-| ticket | addressed | megaplan/cli/parser.py |
-| ticket | dismiss | megaplan/cli/parser.py |
-| ticket | edit | megaplan/cli/parser.py |
-| ticket | link | megaplan/cli/parser.py |
-| ticket | list | megaplan/cli/parser.py |
-| ticket | new | megaplan/cli/parser.py |
-| ticket | reopen | megaplan/cli/parser.py |
-| ticket | search | megaplan/cli/parser.py |
-| ticket | show | megaplan/cli/parser.py |
-| ticket | unlink | megaplan/cli/parser.py |
-| tiebreaker | audit | megaplan/cli/parser.py |
-| tiebreaker | decide | megaplan/cli/parser.py |
-| tiebreaker | status | megaplan/cli/parser.py |
-| user-action | resolve | megaplan/cli/parser.py |
+| audit | query | arnold/pipelines/megaplan/cli/parser.py |
+| audit | report | arnold/pipelines/megaplan/cli/parser.py |
+| brief | epic | arnold/pipelines/megaplan/cli/parser.py |
+| brief | list | arnold/pipelines/megaplan/cli/parser.py |
+| brief | new | arnold/pipelines/megaplan/cli/parser.py |
+| brief | search | arnold/pipelines/megaplan/cli/parser.py |
+| brief | show | arnold/pipelines/megaplan/cli/parser.py |
+| chain | override | arnold/pipelines/megaplan/cli/parser.py |
+| chain | start | arnold/pipelines/megaplan/cli/parser.py |
+| chain | status | arnold/pipelines/megaplan/cli/parser.py |
+| config | profiles | arnold/pipelines/megaplan/cli/parser.py |
+| config | reset | arnold/pipelines/megaplan/cli/parser.py |
+| config | set | arnold/pipelines/megaplan/cli/parser.py |
+| config | show | arnold/pipelines/megaplan/cli/parser.py |
+| config | use-profile | arnold/pipelines/megaplan/cli/parser.py |
+| contract | mode | arnold/pipelines/megaplan/cli/parser.py |
+| contract | self-validate | arnold/pipelines/megaplan/cli/parser.py |
+| contract | violations | arnold/pipelines/megaplan/cli/parser.py |
+| debt | add | arnold/pipelines/megaplan/cli/parser.py |
+| debt | list | arnold/pipelines/megaplan/cli/parser.py |
+| debt | resolve | arnold/pipelines/megaplan/cli/parser.py |
+| epic | capsule | arnold/pipelines/megaplan/cli/parser.py |
+| epic | export | arnold/pipelines/megaplan/cli/parser.py |
+| epic | migrate | arnold/pipelines/megaplan/cli/parser.py |
+| epic | snapshot | arnold/pipelines/megaplan/cli/parser.py |
+| pipelines | check | arnold/pipelines/megaplan/cli/parser.py |
+| pipelines | doctor | arnold/pipelines/megaplan/cli/parser.py |
+| pipelines | new | arnold/pipelines/megaplan/cli/parser.py |
+| quality-gate | resolve | arnold/pipelines/megaplan/cli/parser.py |
+| step | add | arnold/pipelines/megaplan/cli/parser.py |
+| step | move | arnold/pipelines/megaplan/cli/parser.py |
+| step | remove | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | addressed | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | dismiss | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | edit | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | link | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | list | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | new | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | reopen | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | search | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | show | arnold/pipelines/megaplan/cli/parser.py |
+| ticket | unlink | arnold/pipelines/megaplan/cli/parser.py |
+| tiebreaker | audit | arnold/pipelines/megaplan/cli/parser.py |
+| tiebreaker | decide | arnold/pipelines/megaplan/cli/parser.py |
+| tiebreaker | status | arnold/pipelines/megaplan/cli/parser.py |
+| user-action | resolve | arnold/pipelines/megaplan/cli/parser.py |
 
 ### Doctor Options
 
@@ -221,17 +242,17 @@ content type declared on a producing port.
 
 | vocabulary | value | source |
 | --- | --- | --- |
-| module_verb | auto | megaplan/cli/arnold.py |
-| module_verb | check | megaplan/cli/arnold.py |
-| module_verb | describe | megaplan/cli/arnold.py |
-| module_verb | doctor | megaplan/cli/arnold.py |
-| module_verb | run | megaplan/cli/arnold.py |
-| planning_module_verb | auto | megaplan/cli/arnold.py |
-| planning_module_verb | check | megaplan/cli/arnold.py |
-| planning_module_verb | describe | megaplan/cli/arnold.py |
-| planning_module_verb | doctor | megaplan/cli/arnold.py |
-| planning_module_verb | override | megaplan/cli/arnold.py |
-| planning_module_verb | run | megaplan/cli/arnold.py |
+| module_verb | auto | arnold/pipelines/megaplan/cli/arnold.py |
+| module_verb | check | arnold/pipelines/megaplan/cli/arnold.py |
+| module_verb | describe | arnold/pipelines/megaplan/cli/arnold.py |
+| module_verb | doctor | arnold/pipelines/megaplan/cli/arnold.py |
+| module_verb | run | arnold/pipelines/megaplan/cli/arnold.py |
+| planning_module_verb | auto | arnold/pipelines/megaplan/cli/arnold.py |
+| planning_module_verb | check | arnold/pipelines/megaplan/cli/arnold.py |
+| planning_module_verb | describe | arnold/pipelines/megaplan/cli/arnold.py |
+| planning_module_verb | doctor | arnold/pipelines/megaplan/cli/arnold.py |
+| planning_module_verb | override | arnold/pipelines/megaplan/cli/arnold.py |
+| planning_module_verb | run | arnold/pipelines/megaplan/cli/arnold.py |
 
 ## Control Vocabulary
 
@@ -239,72 +260,47 @@ content type declared on a producing port.
 
 | vocabulary | value | source |
 | --- | --- | --- |
-| EdgeKind | gate | megaplan/_pipeline/types.py |
-| EdgeKind | normal | megaplan/_pipeline/types.py |
-| EdgeKind | override | megaplan/_pipeline/types.py |
-| GateRecommendation | escalate | megaplan/_pipeline/types.py |
-| GateRecommendation | iterate | megaplan/_pipeline/types.py |
-| GateRecommendation | proceed | megaplan/_pipeline/types.py |
-| GateRecommendation | tiebreaker | megaplan/_pipeline/types.py |
-| OverrideAction | abort | megaplan/_pipeline/types.py |
-| OverrideAction | add_note | megaplan/_pipeline/types.py |
-| OverrideAction | force_proceed | megaplan/_pipeline/types.py |
-| OverrideAction | replan | megaplan/_pipeline/types.py |
+| EdgeKind | decision | arnold/pipeline/types.py |
+| EdgeKind | normal | arnold/pipeline/types.py |
+| EdgeKind | override | arnold/pipeline/types.py |
+| Decision vocabulary | frozenset[str] (per-stage) | arnold/pipeline/types.py |
+| Override vocabulary | frozenset[str] (per-stage) | arnold/pipeline/types.py |
 
 ### Planning State Constants
 
 | constant | value | source |
 | --- | --- | --- |
-| STATE_ABORTED | aborted | megaplan/types.py |
-| STATE_AWAITING_HUMAN | awaiting_human_verify | megaplan/types.py |
-| STATE_AWAITING_HUMAN_VERIFY | awaiting_human_verify | megaplan/types.py |
-| STATE_AWAITING_PR_MERGE | awaiting_pr_merge | megaplan/types.py |
-| STATE_BLOCKED | blocked | megaplan/types.py |
-| STATE_CANCELLED | cancelled | megaplan/types.py |
-| STATE_CRITIQUED | critiqued | megaplan/types.py |
-| STATE_DONE | done | megaplan/types.py |
-| STATE_EXECUTED | executed | megaplan/types.py |
-| STATE_FAILED | failed | megaplan/types.py |
-| STATE_FINALIZED | finalized | megaplan/types.py |
-| STATE_GATED | gated | megaplan/types.py |
-| STATE_INITIALIZED | initialized | megaplan/types.py |
-| STATE_PAUSED | paused | megaplan/types.py |
-| STATE_PLANNED | planned | megaplan/types.py |
-| STATE_PREPPED | prepped | megaplan/types.py |
-| STATE_REVIEWED | reviewed | megaplan/types.py |
-| STATE_TIEBREAKER_PENDING | tiebreaker_pending | megaplan/types.py |
-| STATE_TIEBREAKER_READY | tiebreaker_ready | megaplan/types.py |
 
 ### Run and Control Targets
 
 | vocabulary | value | source |
 | --- | --- | --- |
-| RunOutcome | awaiting_human | megaplan/run_outcome.py |
-| RunOutcome | blocked | megaplan/run_outcome.py |
-| RunOutcome | escalated | megaplan/run_outcome.py |
-| RunOutcome | failed | megaplan/run_outcome.py |
-| RunOutcome | succeeded | megaplan/run_outcome.py |
-| ControlTarget | abort | megaplan/control_interface.py |
-| ControlTarget | force-advance | megaplan/control_interface.py |
-| ControlTarget | re-route | megaplan/control_interface.py |
-| ControlTarget | recover-from-stuck | megaplan/control_interface.py |
-| UserActionResolution | accepted_blocked | megaplan/user_actions.py |
-| UserActionResolution | manual_required | megaplan/user_actions.py |
-| UserActionResolution | rejected | megaplan/user_actions.py |
-| UserActionResolution | satisfied | megaplan/user_actions.py |
-| UserActionResolution | waived | megaplan/user_actions.py |
-| QualityResolution | accepted_with_debt | megaplan/quality_resolutions.py |
-| QualityResolution | fixed | megaplan/quality_resolutions.py |
-| QualityResolution | manual_required | megaplan/quality_resolutions.py |
-| QualityResolution | rejected | megaplan/quality_resolutions.py |
+| RunOutcome | awaiting_human | arnold/pipelines/megaplan/run_outcome.py |
+| RunOutcome | blocked | arnold/pipelines/megaplan/run_outcome.py |
+| RunOutcome | escalated | arnold/pipelines/megaplan/run_outcome.py |
+| RunOutcome | failed | arnold/pipelines/megaplan/run_outcome.py |
+| RunOutcome | succeeded | arnold/pipelines/megaplan/run_outcome.py |
+| ControlTarget | abort | arnold/pipelines/megaplan/control_interface.py |
+| ControlTarget | force-advance | arnold/pipelines/megaplan/control_interface.py |
+| ControlTarget | re-route | arnold/pipelines/megaplan/control_interface.py |
+| ControlTarget | recover-from-stuck | arnold/pipelines/megaplan/control_interface.py |
+| UserActionResolution | accepted_blocked | arnold/pipelines/megaplan/user_actions.py |
+| UserActionResolution | manual_required | arnold/pipelines/megaplan/user_actions.py |
+| UserActionResolution | rejected | arnold/pipelines/megaplan/user_actions.py |
+| UserActionResolution | satisfied | arnold/pipelines/megaplan/user_actions.py |
+| UserActionResolution | waived | arnold/pipelines/megaplan/user_actions.py |
+| QualityResolution | accepted_with_debt | arnold/pipelines/megaplan/quality_resolutions.py |
+| QualityResolution | fixed | arnold/pipelines/megaplan/quality_resolutions.py |
+| QualityResolution | manual_required | arnold/pipelines/megaplan/quality_resolutions.py |
+| QualityResolution | rejected | arnold/pipelines/megaplan/quality_resolutions.py |
 
 ### Judge Manifest Constants
 
 | constant | value | source |
 | --- | --- | --- |
-| JUDGE_MANIFEST_SCHEMA | megaplan.judge-manifest.v1 | megaplan/_pipeline/judge_manifest.py |
-| JUDGE_KIND | judge | megaplan/_pipeline/judge_manifest.py |
-| EVALUAND_RECORD_CONTENT_TYPE | application/x-evaluand-record+json | megaplan/_pipeline/judge_manifest.py |
+| JUDGE_MANIFEST_SCHEMA | megaplan.judge-manifest.v1 | arnold/pipelines/megaplan/_pipeline/judge_manifest.py |
+| JUDGE_KIND | judge | arnold/pipelines/megaplan/_pipeline/judge_manifest.py |
+| EVALUAND_RECORD_CONTENT_TYPE | application/x-evaluand-record+json | arnold/pipelines/megaplan/_pipeline/judge_manifest.py |
 
 ## Behavioral Manifest Projections
 
