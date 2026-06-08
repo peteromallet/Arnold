@@ -41,3 +41,15 @@ def read_completion_verdict(plan_dir: Path) -> dict | None:
     except (OSError, json.JSONDecodeError) as exc:
         log.debug("could not read %s: %s", path, exc)
         return None
+
+
+def read_typed_completion_verdict(plan_dir: Path) -> CompletionVerdict | None:
+    """Read and deserialize a verdict, or ``None`` if absent/corrupt/untyped."""
+    payload = read_completion_verdict(plan_dir)
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return CompletionVerdict.from_dict(payload)
+    except Exception as exc:
+        log.debug("could not deserialize typed verdict in %s: %s", plan_dir, exc)
+        return None

@@ -18,11 +18,15 @@ mutations are applied via the SD2 path.
 from __future__ import annotations
 
 import enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arnold.pipelines.megaplan._core.scheduler.types import Reduce
 from arnold.pipelines.megaplan.execute import _blocked_task_reason, build_blocking_reasons
 from arnold.pipelines.megaplan.execute.merge import _is_blocking_deviation
+from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    corroborated_completed_task_ids,
+)
 from arnold.pipelines.megaplan.planning.state import STATE_EXECUTED
 
 if TYPE_CHECKING:
@@ -54,6 +58,11 @@ def reduce_batch(
     finalize_data: dict[str, Any],
     batch_task_ids: list[str],
     task_deviation_dict: dict[str, list[str]] | None = None,
+    completed_task_ids: set[str] | None = None,
+    plan_dir: Path | str | None = None,
+    evidence_nucleus: Any = None,
+    current_head: str | None = None,
+    current_code_hash: str | None = None,
 ) -> BatchReduceResult:
     """Classify a BatchResult into one of four outcomes.
 
@@ -69,6 +78,13 @@ def reduce_batch(
         task_deviation_dict: SD2 5th-tuple from _merge_batch_results in
             reducer mode: task_id → ordered list of blocking deviation strings
             + patch-corruption errors.  Empty/None → legacy mode (no mutations).
+        completed_task_ids: Precomputed authority-corroborated completed IDs.
+            When omitted, the reducer computes them with the shared authority
+            adapter from ``finalize_data["tasks"]`` plus optional evidence inputs.
+            Raw ``done``/``skipped`` labels are never success authority here.
+        plan_dir/evidence_nucleus/current_head/current_code_hash: Optional
+            authority adapter inputs used only when ``completed_task_ids`` is
+            not supplied.
 
     Returns:
         BatchReduceResult with the classified BatchOutcome.
@@ -119,6 +135,14 @@ def reduce_batch(
 
     all_tasks: list[dict[str, Any]] = finalize_data.get("tasks", [])
     tracked_tasks = [t for t in all_tasks if isinstance(t.get("id"), str)]
+    if completed_task_ids is None:
+        completed_task_ids = corroborated_completed_task_ids(
+            tracked_tasks,
+            plan_dir=plan_dir,
+            evidence_nucleus=evidence_nucleus,
+            current_head=current_head,
+            current_code_hash=current_code_hash,
+        )
     batch_task_id_set = set(batch_task_ids)
     batch_blocked_ids = [
         t.get("id")
@@ -129,8 +153,29 @@ def reduce_batch(
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
 
-    all_tracked = all(t.get("status") in {"done", "skipped"} for t in tracked_tasks)
-    any_done = any(t.get("status") == "done" for t in tracked_tasks)
+    tracked_task_ids = {
+        task_id for task_id in (t.get("id") for t in tracked_tasks) if isinstance(task_id, str)
+    }
+    uncorroborated_tracked_ids = sorted(tracked_task_ids - completed_task_ids)
+    raw_terminal_uncorroborated_ids = {
+        task_id
+        for task_id in uncorroborated_tracked_ids
+        for task in tracked_tasks
+        if task.get("id") == task_id and task.get("status") in {"done", "skipped"}
+    }
+    batch_uncorroborated_ids = [
+        task_id
+        for task_id in uncorroborated_tracked_ids
+        if task_id in batch_task_id_set and task_id in raw_terminal_uncorroborated_ids
+    ]
+    if batch_uncorroborated_ids:
+        blocking_reasons.append(
+            "tracked task(s) lack authority-corroborated completion: "
+            + ", ".join(batch_uncorroborated_ids)
+        )
+
+    all_tracked = bool(tracked_tasks) and not uncorroborated_tracked_ids
+    any_done = any(t.get("id") in completed_task_ids for t in tracked_tasks)
     if all_tracked and tracked_tasks and not any_done:
         blocking_reasons.append(
             "All tasks were skipped with none completed — execution produced no work."
@@ -139,7 +184,7 @@ def reduce_batch(
 
     blocked = bool(blocking_reasons)
 
-    if blocked and batch_blocked_ids:
+    if blocked and (batch_blocked_ids or batch_uncorroborated_ids):
         return BatchReduceResult(value=BatchOutcome.BLOCKED_BY_PREREQ)
     if blocked:
         return BatchReduceResult(value=BatchOutcome.BLOCKED_BY_QUALITY)

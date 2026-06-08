@@ -26,6 +26,10 @@ from arnold.pipeline import (
     write_step_io_policy,
 )
 from arnold.pipelines.megaplan.orchestration.completion_contract import (
+    ArtifactRef,
+    EvidenceRef,
+    EvidenceStatus,
+    TrustClass,
     normalize_contract_mode,
 )
 from arnold.pipelines.megaplan.store import PlanRepository
@@ -1341,3 +1345,20 @@ def test_t6_legacy_write_with_context_preserves_payload_shape_across_roundtrip(
         assert read_back == payload, (
             f"roundtrip for {logical_type} changed payload shape"
         )
+
+
+def test_completion_contract_compatibility_exports_survive_step_io_imports() -> None:
+    """Step-IO chokepoint imports keep working after evidence symbol migration."""
+    ref = EvidenceRef(
+        kind="step_io",
+        status=EvidenceStatus.unknown,
+        summary="legacy payload passed through",
+        details={"mode": normalize_contract_mode("invalid")},
+        trust_class=TrustClass.routing,
+        artifact=ArtifactRef(path="finalize.json", artifact_type="plan_artifact"),
+    )
+
+    assert ref.details["mode"] == "shadow"
+    assert ref.trust_class is TrustClass.routing
+    assert ref.artifact is not None
+    assert ref.artifact.artifact_type == "plan_artifact"

@@ -212,6 +212,7 @@ def _run_worker(
     resolved: tuple[str, str, bool, str | None] | None = None,
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
+    read_only: bool = False,
 ) -> tuple[WorkerResult, str, str, bool]:
     failure_iteration = state["iteration"] if iteration is None else iteration
     from arnold.pipelines.megaplan import handlers as _handlers_pkg
@@ -236,6 +237,8 @@ def _run_worker(
             }
             if prompt_kwargs is not None and _supports_prompt_kwargs(worker_module.run_step_with_worker):
                 run_step_kwargs["prompt_kwargs"] = prompt_kwargs
+            if read_only:
+                run_step_kwargs["read_only"] = True
             return worker_module.run_step_with_worker(
                 step,
                 state,

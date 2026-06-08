@@ -20,6 +20,8 @@ from arnold.pipelines.megaplan._core import (
     load_flag_registry,
     read_json,
 )
+from arnold.pipelines.megaplan.orchestration.completion_contract import CompletionSubject
+from arnold.pipelines.megaplan.orchestration.review_evidence import collect_review_evidence
 from arnold.pipelines.megaplan.types import PlanState
 
 from ._projection import (
@@ -30,12 +32,81 @@ from ._projection import (
 from ._shared import _gate_summary_or_skipped
 
 log = logging.getLogger(__name__)
+REVIEW_EVIDENCE_FILENAME = "review_evidence.json"
 
 LARGE_REVIEW_DIFF_MAX_BYTES = 120 * 1024
 LARGE_REVIEW_DIFF_MAX_FILES = 40
 COMPACT_REVIEW_PLAN_MAX_CHARS = 20_000
 COMPACT_REVIEW_CONTEXT_MAX_CHARS = 60_000
 COMPACT_REVIEW_MAX_CHANGED_FILES = 200
+
+
+def _review_subject(state: PlanState) -> CompletionSubject:
+    config = state.get("config", {})
+    plan_name = str(config.get("plan") or config.get("plan_name") or state.get("plan_name") or "plan")
+    return CompletionSubject(
+        kind="plan",
+        name=plan_name,
+        to_state="done",
+        from_state=str(state.get("current_state") or "executed"),
+        phase="review",
+        plan_name=plan_name,
+    )
+
+
+def ensure_review_evidence_for_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    """Refresh review-time evidence for explicit review prompt entrypoints."""
+    project_dir = root or Path(state["config"]["project_dir"])
+    return collect_review_evidence(
+        plan_dir=plan_dir,
+        project_dir=Path(project_dir),
+        state=state,
+        subject=_review_subject(state),
+        iteration=state.get("iteration") if isinstance(state.get("iteration"), int) else None,
+    )
+
+
+def _read_review_evidence(plan_dir: Path) -> tuple[dict[str, Any] | None, str | None]:
+    path = plan_dir / REVIEW_EVIDENCE_FILENAME
+    if not path.exists():
+        return None, f"`{REVIEW_EVIDENCE_FILENAME}` is absent."
+    try:
+        payload = read_json(path)
+    except (OSError, ValueError) as exc:
+        return None, f"`{REVIEW_EVIDENCE_FILENAME}` is malformed or unreadable: {exc}."
+    if not isinstance(payload, dict):
+        return None, f"`{REVIEW_EVIDENCE_FILENAME}` is malformed: expected a JSON object."
+    evidence = payload.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        return payload, f"`{REVIEW_EVIDENCE_FILENAME}` has zero evidence refs."
+    return payload, None
+
+
+def _review_evidence_block(plan_dir: Path) -> str:
+    review_evidence, degraded_reason = _read_review_evidence(plan_dir)
+    if review_evidence is None:
+        return (
+            "Fresh review-time evidence (`review_evidence.json`): degraded. "
+            f"{degraded_reason} Treat stale execution-time artifacts as advisory and inspect the repository directly."
+        )
+    if degraded_reason:
+        return textwrap.dedent(
+            f"""
+            Fresh review-time evidence (`review_evidence.json`): degraded.
+            {degraded_reason}
+            {json_dump(review_evidence).strip()}
+            """
+        ).strip()
+    return textwrap.dedent(
+        f"""
+        Fresh review-time evidence (`review_evidence.json`):
+        {json_dump(review_evidence).strip()}
+        """
+    ).strip()
 
 
 def _changed_files_from_patch(patch: str) -> list[str]:
@@ -318,7 +389,7 @@ def compact_review_prompt(
     The reviewer must inspect the repository directly, because this prompt
     intentionally carries summaries instead of the full patch.
     """
-    del root
+    ensure_review_evidence_for_prompt(state, plan_dir, root=root)
     project_dir = Path(state["config"]["project_dir"])
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     finalize_data = read_json(plan_dir / "finalize.json")
@@ -381,6 +452,8 @@ def compact_review_prompt(
 
         {_execution_audit_block(execution_audit_data, capabilities=projection_capabilities)}
 
+        {_review_evidence_block(plan_dir)}
+
         {_settled_decisions_review_block(_gate_summary_or_skipped(plan_dir).get("settled_decisions", []))}
 
         {pre_check_block}
@@ -419,14 +492,14 @@ def _execution_audit_block(
 ) -> str:
     if execution_audit_data is None:
         return (
-            "Execution audit source of truth (`execution_audit.json`): not present. "
+            "Historical execution audit context (`execution_audit.json`): not present. "
             "Skip that artifact gracefully and rely on `finalize.json`, `execution.json`, "
             "the approved plan, and the git diff."
         )
     projected_audit = project_execution_audit_context(execution_audit_data)
     return textwrap.dedent(
         f"""
-        Execution audit source of truth (`execution_audit.json`, prompt projection only):
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
         {json_dump(projected_audit).strip()}
         """
     ).strip()
@@ -598,7 +671,7 @@ def single_check_review_prompt(
     prior_flags: list[dict[str, Any]] | None = None,
     projection_capabilities: PromptProjectionCapabilities | None = None,
 ) -> str:
-    del root
+    review_evidence = ensure_review_evidence_for_prompt(state, plan_dir, root=root)
     context = _parallel_review_context(state, plan_dir)
     projected_review, _ = _projected_review_blocks(
         context["finalize_data"],
@@ -657,6 +730,8 @@ def single_check_review_prompt(
 
             {audit_block}
 
+            {_review_evidence_block(plan_dir)}
+
             {_settled_decisions_review_block(context["settled_decisions"])}
 
             Advisory mechanical pre-check flags (copy these verbatim into `pre_check_flags` in the output file):
@@ -712,6 +787,8 @@ def single_check_review_prompt(
 
         {audit_block}
 
+        {_review_evidence_block(plan_dir)}
+
         {_settled_decisions_review_block(context["settled_decisions"])}
 
         Advisory mechanical pre-check flags (copy these verbatim into `pre_check_flags` in the output file):
@@ -760,7 +837,7 @@ def parallel_criteria_review_prompt(
     `_review_prompt()` while still keeping the approved plan inline and
     projecting oversized execution artifacts.
     """
-    del root
+    ensure_review_evidence_for_prompt(state, plan_dir, root=root)
     context = _parallel_review_context(state, plan_dir)
     projected_review, _ = _projected_review_blocks(
         context["finalize_data"],
@@ -797,6 +874,8 @@ def parallel_criteria_review_prompt(
             {json_dump(projected_review).strip()}
 
             {audit_block}
+
+            {_review_evidence_block(plan_dir)}
 
             {_settled_decisions_review_block(context["settled_decisions"])}
 
@@ -841,6 +920,8 @@ def parallel_criteria_review_prompt(
         {json_dump(projected_review).strip()}
 
         {audit_block}
+
+        {_review_evidence_block(plan_dir)}
 
         {_settled_decisions_review_block(context["settled_decisions"])}
 
@@ -1036,12 +1117,14 @@ def _review_prompt(
 
         {audit_block}
 
+        {_review_evidence_block(plan_dir)}
+
         Git diff summary:
         {diff_summary}
 
         Requirements:
         - {criteria_guidance}
-        - Trust executor evidence by default. Dig deeper only where the git diff, `execution_audit.json`, or vague notes make the claim ambiguous.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
         - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
         - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
           - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.

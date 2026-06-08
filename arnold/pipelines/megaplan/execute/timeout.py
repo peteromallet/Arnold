@@ -41,6 +41,9 @@ from arnold.pipelines.megaplan.orchestration.execution_evidence import (
 from arnold.pipelines.megaplan.types import CliError, PlanState, StepResponse
 from arnold.pipelines.megaplan.planning.state import STATE_FINALIZED
 from arnold.pipelines.megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    corroborated_completed_task_ids,
+)
 
 
 def _resolve_execute_approval_mode(
@@ -346,14 +349,42 @@ def _recover_execute_timeout(
         save_state_merge_meta(plan_dir, state)
 
     tasks = finalize_data.get("tasks", [])
-    completed_tasks = [
-        task for task in tasks if task.get("status") in {"done", "skipped"}
-    ]
+
+    # ── Best-effort authority corroboration ─────────────────────────────
+    corroborated_ids: set[str] = set()
+    try:
+        corroborated_ids = corroborated_completed_task_ids(
+            finalize_data.get("tasks", []),
+            plan_dir=plan_dir,
+        )
+    except Exception as exc:
+        deviations.append(
+            f"Advisory: authority corroboration failed during timeout recovery: {exc}"
+        )
+    else:
+        uncorroborated_terminal = [
+            t for t in tasks
+            if t.get("status") in {"done", "skipped"}
+            and t.get("id") not in corroborated_ids
+        ]
+        if uncorroborated_terminal:
+            asserted_ids = sorted(t["id"] for t in uncorroborated_terminal if isinstance(t.get("id"), str))
+            deviations.append(
+                f"Advisory: {len(uncorroborated_terminal)} task(s) marked done/skipped "
+                f"without authority corroboration: {', '.join(asserted_ids)}. "
+                f"These tasks are labeled as asserted/uncorroborated."
+            )
+
+    # ── Build summary with authority awareness ──────────────────────────
+    corroborated_tasks = [t for t in tasks if t.get("id") in corroborated_ids]
+    raw_terminal_tasks = [t for t in tasks if t.get("status") in {"done", "skipped"}]
+    uncorroborated_count = len(raw_terminal_tasks) - len(corroborated_tasks)
+
     if is_prose_mode(state):
         files_changed = sorted(
             {
                 section
-                for task in completed_tasks
+                for task in corroborated_tasks
                 for section in task.get("sections_written", [])
                 if isinstance(section, str) and section.strip()
             }
@@ -362,16 +393,27 @@ def _recover_execute_timeout(
         files_changed = sorted(
             {
                 path
-                for task in completed_tasks
+                for task in corroborated_tasks
                 for path in task.get("files_changed", [])
                 if isinstance(path, str) and path.strip()
             }
         )
-    summary = (
-        "Execute timed out after partial progress. "
-        f"{len(completed_tasks)}/{len(tasks)} tasks remain marked done or skipped on disk. "
-        "Re-run execute to finish and re-emit structured output."
-    )
+
+    summary_parts = [
+        "Execute timed out after partial progress.",
+        f"{len(corroborated_tasks)}/{len(tasks)} tasks are authority-corroborated completed.",
+    ]
+    if uncorroborated_count:
+        summary_parts.append(
+            f"{uncorroborated_count} task(s) are asserted/uncorroborated "
+            f"(raw done/skipped without corroborating evidence)."
+        )
+    else:
+        summary_parts.append(
+            f"{len(raw_terminal_tasks)}/{len(tasks)} tasks remain marked done or skipped on disk."
+        )
+    summary_parts.append("Re-run execute to finish and re-emit structured output.")
+    summary = " ".join(summary_parts)
     response: StepResponse = {
         "success": False,
         "step": "execute",

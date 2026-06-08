@@ -18,11 +18,14 @@ from unittest import mock
 import pytest
 
 from arnold.pipelines.megaplan.orchestration.completion_contract import (
+    ArtifactRef,
     CompletionContext,
     CompletionSubject,
+    EvidenceRef,
     EvidenceStatus,
     GreenSuiteProvider,
     SuiteDelta,
+    TrustClass,
     compute_delta,
 )
 from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
@@ -848,3 +851,20 @@ def test_suite_delta_to_dict_roundtrip(tmp_path: Path) -> None:
     assert d["duration"] == 1.23
     # Should be JSON-serializable.
     json.dumps(d)
+
+
+def test_completion_contract_reexports_evidence_symbols_for_green_suite_compat() -> None:
+    """Compatibility imports used by green-suite tests remain available."""
+    ref = EvidenceRef(
+        kind="green_suite",
+        status=EvidenceStatus.satisfied,
+        summary="suite passed",
+        details={"delta": {}},
+        trust_class=TrustClass.evidence,
+        artifact=ArtifactRef(path="suite_runs.ndjson", artifact_type="suite_run_log"),
+    )
+
+    assert ref.status is EvidenceStatus.satisfied
+    assert ref.trust_class is TrustClass.evidence
+    assert ref.artifact is not None
+    assert ref.artifact.path == "suite_runs.ndjson"

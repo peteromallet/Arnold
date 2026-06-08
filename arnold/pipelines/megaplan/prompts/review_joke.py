@@ -84,13 +84,13 @@ def _review_joke_prompt(
     if execution_audit_data is not None:
         projected_audit = project_execution_audit_context(execution_audit_data)
         audit_block = (
-            "Execution audit source of truth (`execution_audit.json`, prompt projection only):\n"
+            "Historical execution audit context (`execution_audit.json`, prompt projection only):\n"
             + json_dump(projected_audit).strip()
             + "\n"
         )
     else:
         audit_block = (
-            "Execution audit source of truth (`execution_audit.json`): not present. "
+            "Historical execution audit context (`execution_audit.json`): not present. "
             "Skip that artifact gracefully and rely on `finalize.json`, `execution.json`, "
             "the approved scene canvas, and the output scene.\n"
         )

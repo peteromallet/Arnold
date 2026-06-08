@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 import arnold.pipelines.megaplan as megaplan
-from arnold.pipelines.megaplan._core import now_utc
+from arnold.pipelines.megaplan._core import now_utc, save_state
 from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask, ExternalError
 from arnold.pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_PREPPED
 from arnold.pipelines.megaplan.user_actions import build_resolution_event
@@ -323,6 +323,29 @@ def test_set_model_rejects_reserved_effort_token_as_model(plan_fixture: PlanFixt
     assert "effort token" in str(excinfo.value.message).lower() or "reserved" in str(excinfo.value.message).lower()
 
 
+def test_set_model_rejects_vendor_token_as_model(plan_fixture: PlanFixture) -> None:
+    """set-model --model codex is an agent/vendor token, not a concrete model."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_override(
+            plan_fixture.root,
+            plan_fixture.make_args(
+                plan=plan_fixture.plan_name,
+                override_action="set-model",
+                phase="critique",
+                model="codex",
+                effort="high",
+                reason="should use set-vendor instead",
+            ),
+        )
+
+    assert excinfo.value.code == "invalid_args"
+    assert "names an agent" in excinfo.value.message
+    state = load_state(plan_fixture.plan_dir)
+    assert "critique=codex:codex:high" not in (state["config"].get("phase_model") or [])
+
+
 def _capture_override_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> list[dict[str, Any]]:
@@ -380,11 +403,16 @@ def _write_finalize_with_user_action_gate(plan_dir: Path) -> None:
     )
 
 
-def test_override_actions_registry_is_exact_legacy_ten() -> None:
+def test_override_actions_registry_includes_engine_overlap_waiver() -> None:
+    from arnold.pipelines.megaplan.cli.parser import build_parser
+    from arnold.pipelines.megaplan.planning.operations import override_catalog
+
     assert set(megaplan.handlers.override._OVERRIDE_ACTIONS) == {
         "add-note",
         "abort",
         "force-proceed",
+        "waive-engine-overlap",
+        "refresh-engine-pin",
         "replan",
         "recover-blocked",
         "resume-clarify",
@@ -393,7 +421,153 @@ def test_override_actions_registry_is_exact_legacy_ten() -> None:
         "set-model",
         "set-vendor",
     }
-    assert len(megaplan.handlers.override._OVERRIDE_ACTIONS) == 10
+    assert len(megaplan.handlers.override._OVERRIDE_ACTIONS) == 12
+    parsed = build_parser().parse_args(
+        [
+            "override",
+            "waive-engine-overlap",
+            "--reason",
+            "test",
+            "--phase",
+            "execute",
+            "--expires-after-runs",
+            "1",
+            "--target-root",
+            "/tmp/target",
+        ]
+    )
+    assert parsed.override_action == "waive-engine-overlap"
+    assert parsed.expires_after_runs == 1
+    assert parsed.target_root == "/tmp/target"
+    assert override_catalog()["waive-engine-overlap"]["kind"] == "security-waiver"
+    parsed = build_parser().parse_args(["override", "refresh-engine-pin", "--reason", "test"])
+    assert parsed.override_action == "refresh-engine-pin"
+    assert override_catalog()["refresh-engine-pin"]["kind"] == "security-waiver"
+
+
+def test_waive_engine_overlap_records_append_only_scoped_waiver(
+    plan_fixture: PlanFixture,
+) -> None:
+    response = megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            override_action="waive-engine-overlap",
+            reason="local dogfood engine and target intentionally overlap",
+            phase="execute",
+            expires_after_runs=2,
+            target_root=str(plan_fixture.project_dir),
+        ),
+    )
+    state = load_state(plan_fixture.plan_dir)
+    meta = state["meta"]
+    waiver = meta["engine_overlap_waivers"][0]
+
+    assert response["waiver_id"] == waiver["id"]
+    assert meta["latest_engine_overlap_waiver_id"] == waiver["id"]
+    assert waiver["action"] == "waive-engine-overlap"
+    assert waiver["phase"] == "execute"
+    assert waiver["expires_after_runs"] == 2
+    assert waiver["remaining_runs"] == 2
+    assert waiver["scope"]["target_root"] == str(Path(state["config"]["project_dir"]).resolve())
+    assert waiver["scope"]["engine_root"]
+    assert state["meta"]["overrides"][-1]["waiver_id"] == waiver["id"]
+
+
+def test_engine_overlap_waivers_are_append_only_meta_merge_field() -> None:
+    from arnold.pipelines.megaplan._core import state as state_module
+
+    assert "engine_overlap_waivers" in state_module._DEFAULT_MERGE_FIELDS
+    assert "engine_overlap_waivers" in state_module._FIELD_KEY_FUNCS
+
+
+def test_waive_engine_overlap_requires_reason(plan_fixture: PlanFixture) -> None:
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_override(
+            plan_fixture.root,
+            plan_fixture.make_args(
+                plan=plan_fixture.plan_name,
+                override_action="waive-engine-overlap",
+                reason="",
+            ),
+        )
+    assert excinfo.value.code == "invalid_args"
+
+
+def test_refresh_engine_pin_replaces_pinned_identity_with_audit_record(
+    plan_fixture: PlanFixture,
+) -> None:
+    state = load_state(plan_fixture.plan_dir)
+    previous_signature = "sha256:old-engine"
+    state["meta"]["engine_isolation"] = {
+        "schema_version": 1,
+        "pinned": True,
+        "created_phase": "execute",
+        "last_observed_phase": "execute",
+        "engine_root": "/old/engine",
+        "engine_commit": "old-commit",
+        "engine_signature": previous_signature,
+        "engine_dirty": False,
+    }
+    save_state(plan_fixture.plan_dir, state)
+
+    response = megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            override_action="refresh-engine-pin",
+            reason="operator patched review to use read-only worker sandbox",
+            phase="review",
+        ),
+    )
+    next_state = load_state(plan_fixture.plan_dir)
+    meta = next_state["meta"]
+    refresh = meta["engine_pin_refreshes"][0]
+
+    assert response["refresh_id"] == refresh["id"]
+    assert meta["engine_isolation"]["engine_signature"] != previous_signature
+    assert meta["engine_isolation"]["last_observed_phase"] == "override:refresh-engine-pin"
+    assert refresh["previous"]["engine_signature"] == previous_signature
+    assert refresh["current"]["engine_signature"] == meta["engine_isolation"]["engine_signature"]
+    assert meta["overrides"][-1]["action"] == "refresh-engine-pin"
+
+
+def test_refresh_engine_pin_requires_reason(plan_fixture: PlanFixture) -> None:
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_override(
+            plan_fixture.root,
+            plan_fixture.make_args(
+                plan=plan_fixture.plan_name,
+                override_action="refresh-engine-pin",
+                reason="",
+            ),
+        )
+    assert excinfo.value.code == "invalid_args"
+
+
+def test_waive_engine_overlap_routed_transition_dedupes_waiver(plan_fixture: PlanFixture) -> None:
+    from arnold.pipelines.megaplan.control_interface import ControlTransition, RunStateView
+    from arnold.pipelines.megaplan.planning.control_binding import planning_control_binding
+
+    state = load_state(plan_fixture.plan_dir)
+    payload = {
+        "reason": "local dogfood overlap",
+        "phase": "execute",
+        "source": "user",
+        "root": str(plan_fixture.root),
+    }
+    binding = planning_control_binding()
+    transition = ControlTransition(op="override", target_id="waive-engine-overlap", payload=payload)
+    first = binding.apply_transition(RunStateView(run_id=plan_fixture.plan_name, raw_state=state), transition)
+    state["meta"] = first.state_deltas[0].value
+    second = binding.apply_transition(RunStateView(run_id=plan_fixture.plan_name, raw_state=state), transition)
+    next_meta = second.state_deltas[0].value
+
+    assert first.accepted is True
+    assert second.accepted is True
+    assert first.artifacts["waiver_id"] == second.artifacts["waiver_id"]
+    assert len(next_meta["engine_overlap_waivers"]) == 1
+    assert next_meta["latest_engine_overlap_waiver_id"] == first.artifacts["waiver_id"]
 
 
 def test_other_override_actions_unchanged_add_note(plan_fixture: PlanFixture) -> None:
@@ -744,6 +918,33 @@ def test_other_override_actions_unchanged_set_profile(plan_fixture: PlanFixture)
     assert response["success"] is True
     state = load_state(plan_fixture.plan_dir)
     assert state["config"].get("profile") == "all-deepseek-pro"
+
+
+def test_set_profile_persists_concrete_phase_models(plan_fixture: PlanFixture) -> None:
+    """Symbolic premium profile entries are resolved before persistence."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["config"]["vendor"] = "codex"
+    state["config"]["depth"] = "high"
+    save_state(plan_fixture.plan_dir, state)
+
+    response = megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            override_action="set-profile",
+            profile="premium",
+            reason="switch to symbolic premium",
+        ),
+    )
+
+    assert response["success"] is True
+    state = load_state(plan_fixture.plan_dir)
+    phase_models = state["config"].get("phase_model") or []
+    assert phase_models
+    assert all("premium" not in spec for spec in phase_models)
+    assert any(spec.startswith("critique=codex:") for spec in phase_models)
+    assert state["config"]["vendor"] == "codex"
 
 
 @pytest.mark.parametrize(

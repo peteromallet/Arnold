@@ -6,13 +6,29 @@ import json
 import subprocess
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from arnold.pipelines.megaplan.types import CliError
-from arnold.pipelines.megaplan.workers import CommandResult, _build_mock_payload, run_codex_prep_step
+from arnold.pipelines.megaplan.workers import CommandResult, _build_mock_payload, run_codex_prep_step, set_work_dir_override
 from tests._workers_helpers import _mock_state, _write_codex_rollout
+
+
+@pytest.fixture(autouse=True)
+def _allow_engine_write_barrier_for_codex_worker_tests(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[object, str]] = []
+
+    def fake_barrier(env: object, phase: str) -> object:
+        calls.append((env, phase))
+        return object()
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.workers._impl.engine_write_barrier",
+        fake_barrier,
+    )
+    return calls
 
 
 def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
@@ -51,6 +67,310 @@ def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
     assert "model_reasoning_effort=low" in invoked_cmd
     idx = invoked_cmd.index("model_reasoning_effort=low")
     assert invoked_cmd[idx - 1] == "-c"
+
+
+def test_run_codex_execute_enters_engine_write_barrier(
+    tmp_path: Path,
+    _allow_engine_write_barrier_for_codex_worker_tests: list[tuple[object, str]],
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=1)
+
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+
+    assert [phase for _env, phase in _allow_engine_write_barrier_for_codex_worker_tests] == ["execute"]
+
+
+def test_run_codex_execute_refuses_engine_drift_after_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    engine_root = tmp_path / "engine"
+    engine_root.mkdir()
+    def fake_env(signature: str, *, dirty: bool) -> object:
+        return SimpleNamespace(
+            engine_root=engine_root,
+            engine_commit="abc123",
+            engine_signature=signature,
+            engine_dirty=dirty,
+            to_dict=lambda: {
+                "engine_root": str(engine_root),
+                "engine_commit": "abc123",
+                "engine_signature": signature,
+                "engine_dirty": dirty,
+            },
+        )
+
+    before_env = fake_env("sha256:before", dirty=False)
+    after_env = fake_env("sha256:after", dirty=True)
+    resolve_calls = 0
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+
+    def fake_resolve(*_args: object, **_kwargs: object) -> object:
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return after_env if resolve_calls >= 3 else before_env
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=1)
+
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers._impl.resolve_execution_environment", fake_resolve)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers._impl._trusted_container", lambda: True)
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        with pytest.raises(CliError) as excinfo:
+            run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+
+    assert excinfo.value.code == "engine_mutated_during_worker"
+    drift = excinfo.value.extra["drift"]["engine_signature"]
+    assert drift == {"pinned": "sha256:before", "observed": "sha256:after"}
+
+
+def test_codex_writable_roots_refuse_engine_overlap_and_keep_non_overlapping_sibling(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    sibling = tmp_path / "sibling"
+    sibling.mkdir()
+    engine = tmp_path.parent / f"{tmp_path.name}-engine"
+    engine.mkdir()
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=engine)
+
+    state["config"]["extra_writable_roots"] = [str(sibling)]
+    roots = _codex_writable_roots(project_dir, state, env)
+    assert roots[0] == str(project_dir)
+    assert str(sibling.resolve()) in roots
+
+    state["config"]["extra_writable_roots"] = [str(sibling), str(engine)]
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+    assert excinfo.value.code == "codex_writable_root_overlaps_engine"
+    assert excinfo.value.extra["writable_root"] == str(engine.resolve())
+    assert excinfo.value.extra["writable_root_source"] == "configured"
+    assert excinfo.value.extra["overlap"] == "equal"
+
+
+def test_codex_writable_roots_refuse_engine_child_and_engine_containing_ancestor(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    engine = tmp_path / "engine"
+    engine_child = engine / "child"
+    engine_child.mkdir(parents=True)
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=engine)
+
+    state["config"]["extra_writable_roots"] = [str(engine_child)]
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+    assert excinfo.value.extra["overlap"] == "right_contains_left"
+
+    state["config"]["extra_writable_roots"] = [str(tmp_path)]
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+    assert excinfo.value.extra["overlap"] == "left_contains_right"
+
+
+def test_codex_writable_root_refuses_target_engine_overlap(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=project_dir)
+
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+    assert excinfo.value.code == "codex_writable_root_overlaps_engine"
+    assert excinfo.value.extra["writable_root_source"] == "target_work_dir"
+
+
+def test_codex_writable_roots_allow_same_phase_consumed_engine_overlap_waiver(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import (
+        append_engine_overlap_waiver,
+        resolve_execution_environment,
+    )
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=project_dir)
+    state["meta"], waiver = append_engine_overlap_waiver(
+        state["meta"],
+        env,
+        reason="intentional dogfood overlap",
+        phase="execute",
+        timestamp="2026-06-07T00:00:00Z",
+        expires_after_runs=1,
+    )
+    state["meta"]["engine_overlap_waivers"][0]["remaining_runs"] = 0
+    state["meta"]["engine_overlap_waivers"][0]["consumed_at"] = "2026-06-07T00:01:00Z"
+    state["meta"]["engine_overlap_waivers"][0]["consumed_by_phase"] = "execute"
+
+    roots = _codex_writable_roots(project_dir, state, env, phase="execute")
+
+    assert roots[0] == str(project_dir)
+    assert state["meta"]["latest_engine_overlap_waiver_id"] == waiver["id"]
+
+
+def test_codex_writable_roots_fail_fast_when_auto_widening_would_include_engine(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+    from arnold.pipelines.megaplan.workers._impl import _codex_writable_roots
+
+    (tmp_path / ".git").mkdir()
+    plan_dir, state = _mock_state(tmp_path)
+    del plan_dir
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    env = resolve_execution_environment(root=tmp_path, state=state, engine_root=engine)
+
+    with pytest.raises(CliError) as excinfo:
+        _codex_writable_roots(project_dir, state, env)
+
+    assert excinfo.value.code == "codex_writable_root_overlaps_engine"
+    assert excinfo.value.extra["writable_root"] == str(tmp_path.resolve())
+    assert excinfo.value.extra["writable_root_source"] == "auto"
+    assert excinfo.value.extra["overlap"] == "left_contains_right"
+
+
+def test_codex_execute_command_uses_filtered_writable_roots(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    project_dir = Path(state["config"]["project_dir"]).resolve()
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    state["config"]["extra_writable_roots"] = [str(allowed)]
+    captured: dict[str, list[str]] = {}
+    payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
+
+    def fake_env(*, root, state, engine_root=None):
+        from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+
+        return resolve_execution_environment(root=root, state=state, engine_root=engine)
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=project_dir, returncode=0, stdout="", stderr="", duration_ms=1)
+
+    with (
+        patch("arnold.pipelines.megaplan.workers._impl.resolve_execution_environment", side_effect=fake_env),
+        patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command),
+    ):
+        run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
+
+    roots_arg = next(part for part in captured["command"] if part.startswith("sandbox_workspace_write.writable_roots="))
+    assert str(project_dir) in roots_arg
+    assert str(allowed.resolve()) in roots_arg
+    assert str(engine.resolve()) not in roots_arg
+
+
+def test_codex_execute_session_fingerprint_drift_starts_fresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION", "1")
+    plan_dir, state = _mock_state(tmp_path)
+    state["sessions"]["codex_executor"] = {"id": "12345678-1234-1234-1234-123456789abc", "sandbox_fingerprint": "stale"}
+    payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
+    captured: dict[str, list[str]] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        stdout = '{"type":"thread.started","thread_id":"87654321-4321-4321-4321-cba987654321"}\n'
+        return CommandResult(command=command, cwd=Path(kwargs["cwd"]), returncode=0, stdout=stdout, stderr="", duration_ms=1)
+
+    with patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=True, fresh=False, json_trace=True)
+
+    assert captured["command"][:2] == ["codex", "exec"]
+    assert "resume" not in captured["command"]
+    assert state["sessions"]["codex_executor"]["id"] == "87654321-4321-4321-4321-cba987654321"
+    assert state["sessions"]["codex_executor"]["sandbox_fingerprint"] != "stale"
+
+
+def test_resolve_work_dir_fails_without_project_dir_unless_override(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.workers._impl import resolve_work_dir
+
+    set_work_dir_override(None)
+    try:
+        resolve_work_dir({"config": {}})
+    except CliError as exc:
+        assert exc.code == "missing_project_dir"
+    else:
+        raise AssertionError("missing project_dir should not fall back to cwd")
+
+    set_work_dir_override(tmp_path)
+    try:
+        assert resolve_work_dir({"config": {}}) == tmp_path.resolve()
+    finally:
+        set_work_dir_override(None)
+
+
+def test_resolve_work_dir_fails_for_stale_project_dir(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.workers._impl import resolve_work_dir
+
+    stale = tmp_path / "deleted"
+    set_work_dir_override(None)
+    with pytest.raises(CliError) as excinfo:
+        resolve_work_dir({"config": {"project_dir": str(stale)}})
+    assert excinfo.value.code == "stale_project_dir"
+
+
+def test_resolve_work_dir_explicit_override_precedes_missing_project_dir(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan.workers._impl import resolve_work_dir
+
+    override = tmp_path / "override"
+    override.mkdir()
+    set_work_dir_override(override)
+    try:
+        assert resolve_work_dir({"config": {"project_dir": str(tmp_path / "missing")}}) == override.resolve()
+    finally:
+        set_work_dir_override(None)
 
 
 def test_run_codex_step_fresh_uses_enforced_render_and_capture_legacy_payload(

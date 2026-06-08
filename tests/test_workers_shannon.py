@@ -28,6 +28,25 @@ def _assume_shannon_patched(monkeypatch: pytest.MonkeyPatch) -> None:
     return
 
 
+@pytest.fixture(autouse=True)
+def _allow_engine_write_barrier_for_shannon_worker_tests(monkeypatch: pytest.MonkeyPatch):
+    calls: list[tuple[object, str]] = []
+
+    def fake_barrier(env: object, phase: str) -> object:
+        calls.append((env, phase))
+        return object()
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.workers._impl.engine_write_barrier",
+        fake_barrier,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.workers.shannon.engine_write_barrier",
+        fake_barrier,
+    )
+    return calls
+
+
 def test_is_shannon_available_all_deps_present() -> None:
     from arnold.pipelines.megaplan._core.io import is_shannon_available
     fake = FakeShutil("bun", "tmux", "claude")

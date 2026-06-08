@@ -33,6 +33,23 @@ def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
     return plan_dir
 
 
+def _write_uncorroborated_done_task(plan_dir: Path, task_id: str = "T1") -> None:
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": task_id,
+                        "status": "done",
+                        "executor_notes": "claimed done without evidence",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_format_phase_heartbeat_includes_plan_step_and_progress(tmp_path: Path) -> None:
     plan_dir = _make_plan_dir(tmp_path, "heartbeat-plan")
     (plan_dir / "state.json").write_text(
@@ -318,6 +335,46 @@ def test_auto_clears_inprocess_active_step_for_already_completed_phase(
     )
     assert json.loads(execute_output.read_text(encoding="utf-8")) == good_payload
     assert not (plan_dir / "execute_output.json.orphaned").exists()
+
+
+def test_auto_blocks_execute_active_step_cleanup_without_authority(
+    tmp_path: Path,
+) -> None:
+    plan = "inprocess-stuck-execute-uncorroborated"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_uncorroborated_done_task(plan_dir)
+
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "executed"
+    state_data["active_step"] = {"phase": "execute", "worker_pid": os.getpid()}
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _inprocess_completed_execute_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=3,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "blocked"
+    assert "corroborated task completion" in outcome.reason
+    assert run_calls == []
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded.get("active_step") == {"phase": "execute", "worker_pid": os.getpid()}
 
 
 def test_auto_preserves_genuinely_running_inprocess_active_step(
@@ -1465,6 +1522,73 @@ def test_run_auto_exit_codes_for_lifecycle_outcomes(tmp_path: Path, capsys) -> N
         with patch.object(auto, "drive", return_value=outcome):
             assert auto.run_auto(tmp_path, _auto_args(f"demo-{status}")) == expected_rc
         capsys.readouterr()
+
+
+def test_auto_terminal_done_without_authority_does_not_emit_plan_finished(
+    tmp_path: Path,
+) -> None:
+    plan = "done-uncorroborated"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_uncorroborated_done_task(plan_dir)
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _done_status(plan_name)
+
+    emitted: list[auto.EventKind] = []
+
+    def fake_emit(kind, *, plan_dir=None, payload=None):
+        emitted.append(kind)
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "emit_event", side_effect=fake_emit):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=3,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "blocked"
+    assert "corroborated task completion" in outcome.reason
+    assert auto.EventKind.PLAN_FINISHED not in emitted
+
+
+def test_execute_exit_code_zero_without_authority_is_downgraded_to_blocked(
+    tmp_path: Path,
+) -> None:
+    plan = "execute-zero-uncorroborated"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_uncorroborated_done_task(plan_dir)
+    calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        calls.append(list(args))
+        return 0, "execute ok", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_planning_phase", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=3,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert len(calls) == 1
+    assert calls[0][0] == "execute"
+    assert calls[0][-2:] == ["--plan", plan]
+    assert outcome.status == "blocked"
+    assert outcome.blocking_reasons
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state_data["latest_failure"]["kind"] == "authority_divergence"
+    assert state_data["resume_cursor"] == {"phase": "execute", "retry_strategy": "rerun_phase"}
+
 def test_context_retry_success_retries_execute_with_fresh(tmp_path: Path) -> None:
     plan = "context-retry-success"
     _make_plan_dir(tmp_path, plan)

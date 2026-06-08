@@ -252,6 +252,40 @@ def test_extreme_robustness_milestone_capped_at_one(tmp_path: Path) -> None:
     assert state.retry_counts["m1"] == 1
 
 
+def test_authority_divergence_blocked_outcome_does_not_advance_milestone(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [{"label": "m1", "idea": "/x.txt"}],
+            "on_failure": {"retry": "retry_milestone", "abort": "stop_chain"},
+        },
+    )
+    spec = load_spec(spec_path)
+    state = ChainState()
+    outcome = DriverOutcome(
+        status="blocked",
+        plan="plan-m1",
+        final_state="done",
+        iterations=1,
+        reason="execute terminal success lacks corroborated task completion",
+        blocking_reasons=["T1:unknown"],
+    )
+    messages: list[str] = []
+
+    decision = _handle_outcome(
+        outcome,
+        spec=spec,
+        writer=messages.append,
+        milestone=_ladder_milestone(),
+        state=state,
+    )
+
+    assert decision == "retry"
+    assert state.completed == []
+    assert state.retry_counts["m1"] == 1
+    assert any("ended blocked" in message for message in messages)
+
+
 def test_ladder_does_not_infinite_loop_on_deterministic_failure(tmp_path: Path) -> None:
     """The whole point: a chain run with retry+bump must terminate."""
     idea = _touch_idea(tmp_path, "m1.txt", "idea")
@@ -338,8 +372,24 @@ def test_retry_milestone_resumes_resumable_current_plan(tmp_path: Path) -> None:
         return "plan-m1"
 
     def fake_drive(root, plan, spec, *, on_phase_complete=None, writer):
-        del root, spec, on_phase_complete, writer
+        del spec, on_phase_complete, writer
         drive_calls.append(plan)
+        if len(drive_calls) > 1:
+            plan_dir = root / ".megaplan" / "plans" / plan
+            (plan_dir / "execution_batch_1.json").write_text(
+                json.dumps(
+                    {
+                        "task_updates": [
+                            {
+                                "task_id": "T1",
+                                "status": "done",
+                                "files_changed": ["docs/m1.md"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
         return _fake_outcome(plan, "failed" if len(drive_calls) == 1 else "done")
 
     with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=fake_init), patch(

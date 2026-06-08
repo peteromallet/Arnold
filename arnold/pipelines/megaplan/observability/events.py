@@ -99,7 +99,7 @@ def _resolve_run_id() -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 class EventKind:
-    """String-literal constants for all 30 event kinds.
+    """String-literal constants for all event kinds.
 
     Use these instead of bare strings so typos are caught at import time.
     """
@@ -147,10 +147,11 @@ class EventKind:
     # ── Evaluation (1) ─────────────────────────────────────────────────
     EVALUAND_RECORDED: str = "evaluand_recorded"
 
-    # ── Diagnostics (2) ────────────────────────────────────────────────
+    # ── Diagnostics (3) ────────────────────────────────────────────────
     HEALTH_CHECK_FAILED: str = "health_check_failed"
     DRIFT_DETECTED: str = "drift_detected"
     ROUTING_DEGRADATION: str = "routing_degradation"
+    AUTHORITY_DIVERGENCE: str = "authority_divergence"
 
     # ── Activation (1) ─────────────────────────────────────────────────
     ACTIVATION_TRANSITIONED: str = "activation_transitioned"
@@ -205,6 +206,7 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,
         EventKind.ROUTING_DEGRADATION,
+        EventKind.AUTHORITY_DIVERGENCE,
         EventKind.ACTIVATION_TRANSITIONED,
         EventKind.STATE_CACHE_DRIFT,
         EventKind.CAPABILITY_CLAIM,
@@ -242,6 +244,7 @@ _SYSTEM_EVENT_KINDS: Set[str] = frozenset(
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,
         EventKind.ROUTING_DEGRADATION,
+        EventKind.AUTHORITY_DIVERGENCE,
     }
 )
 

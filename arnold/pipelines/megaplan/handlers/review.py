@@ -12,6 +12,15 @@ from arnold.pipelines.megaplan.review import checks as review_checks
 from arnold.pipelines.megaplan.execute.quality import _check_done_task_evidence
 from arnold.pipelines.megaplan.execute.batch import build_monitor_hint
 from arnold.pipelines.megaplan.orchestration.rubber_stamp import is_rubber_stamp
+from arnold.pipelines.megaplan.orchestration.evidence_contract import (
+    EvidenceRef,
+    TransitionDecision,
+)
+from arnold.pipelines.megaplan.orchestration.transition_policy import (
+    TRANSITION_DECISION_REVIEW_DONE_FILENAME,
+    TransitionPolicy,
+    TransitionWriter,
+)
 from arnold.pipelines.megaplan.execute.merge import _validate_and_merge_batch
 from arnold.pipelines.megaplan.model_seam import ModelStructuralAuditError, audit_step_payload
 from arnold.pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
@@ -36,6 +45,7 @@ from arnold.pipelines.megaplan.workers import (
     WorkerResult,
     warn_if_work_dir_differs_from_project_dir,
 )
+from arnold.pipelines.megaplan.runtime.execution_environment import preflight_phase
 from arnold.pipelines.megaplan._core import (
     append_history,
     apply_session_update,
@@ -760,6 +770,81 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
     return rework_items
 
 
+def _review_done_evidence_refs(review_evidence: dict[str, Any]) -> tuple[EvidenceRef, ...]:
+    raw_evidence = review_evidence.get("evidence")
+    if not isinstance(raw_evidence, list):
+        return ()
+    return tuple(
+        EvidenceRef.from_dict(ref)
+        for ref in raw_evidence
+        if isinstance(ref, dict)
+    )
+
+
+def _persist_review_done_transition_decision(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    result: str,
+    next_state: str,
+    review_payload: dict[str, Any],
+) -> Any | None:
+    if result != "success" or next_state != STATE_DONE:
+        return None
+
+    review_evidence_path = plan_dir / "review_evidence.json"
+    review_evidence = read_json(review_evidence_path) if review_evidence_path.exists() else {}
+    if not isinstance(review_evidence, dict):
+        review_evidence = {}
+    project_dir = Path(str(state.get("config", {}).get("project_dir", "")))
+    policy_decision = TransitionPolicy.evaluate_review_done(
+        result=result,
+        next_state=next_state,
+        review_payload=review_payload,
+        review_evidence=review_evidence,
+        project_dir=project_dir if str(project_dir) else None,
+    )
+    meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
+    invocation_id = meta.get("current_invocation_id")
+    if not isinstance(invocation_id, str) or not invocation_id:
+        invocation_id = review_evidence.get("invocation_id")
+    iteration = state.get("iteration")
+    decision = TransitionDecision(
+        decision_id=f"review-done-{invocation_id or iteration or 'unknown'}",
+        subject=f"plan:{state.get('name', '')}",
+        from_state=str(state.get("current_state")) if state.get("current_state") is not None else None,
+        to_state=next_state,
+        action="allow_transition" if policy_decision.allowed else "deny_transition",
+        status="allowed" if policy_decision.allowed else "denied",
+        evidence=_review_done_evidence_refs(review_evidence),
+        would_block_reasons=policy_decision.reasons,
+        invocation_id=invocation_id if isinstance(invocation_id, str) else None,
+        phase="review",
+        iteration=iteration if isinstance(iteration, int) else None,
+        base_sha=review_evidence.get("base_sha") if isinstance(review_evidence.get("base_sha"), str) else None,
+        head_sha=review_evidence.get("head_sha") if isinstance(review_evidence.get("head_sha"), str) else None,
+        code_hash=review_evidence.get("code_hash") if isinstance(review_evidence.get("code_hash"), str) else None,
+        routing_provider="transition_policy",
+        routing_provenance={
+            "policy": "review_done",
+            "advisory": list(policy_decision.advisory),
+        },
+    )
+    TransitionWriter.write_review_done(
+        plan_dir,
+        decision,
+        retryable=not policy_decision.allowed,
+        next_action="mark_done" if policy_decision.allowed else "review",
+        denial_kind=None if policy_decision.allowed else "policy_denied",
+        operator_summary=(
+            "Review-to-done transition allowed by policy."
+            if policy_decision.allowed
+            else "Review-to-done transition denied by policy."
+        ),
+    )
+    return policy_decision
+
+
 def _finalize_review_outcome(
     *,
     root: Path,
@@ -830,6 +915,94 @@ def _finalize_review_outcome(
         plan_dir, "review.json", worker.payload,
         contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
     )
+    policy_decision = _persist_review_done_transition_decision(
+        plan_dir=plan_dir,
+        state=state,
+        result=result,
+        next_state=next_state,
+        review_payload=worker.payload,
+    )
+    if policy_decision is not None and not policy_decision.allowed:
+        denial_metadata = {
+            "denial_kind": "policy_denied",
+            "reasons": list(policy_decision.reasons),
+            "advisory": list(policy_decision.advisory),
+            "retryable": True,
+            "next_action": "review",
+            "operator_summary": "Review-to-done transition denied by policy.",
+            "transition_decision": TRANSITION_DECISION_REVIEW_DONE_FILENAME,
+        }
+        worker.payload["outcome"] = {
+            "result": "policy_denied",
+            "review_verdict": review_verdict,
+            "state": STATE_EXECUTED,
+            "next_step": "review",
+            "policy_denial": denial_metadata,
+        }
+        write_plan_artifact_json(
+            plan_dir, "review.json", worker.payload,
+            contract_context=StepIOContractContext(operation=StepIOOperation.WRITE),
+        )
+        state["current_state"] = STATE_EXECUTED
+        clear_active_step(state)
+        apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
+        append_history(
+            state,
+            make_history_entry(
+                "review",
+                duration_ms=worker.duration_ms, cost_usd=worker.cost_usd,
+                result="policy_denied",
+                worker=worker, agent=agent, mode=mode,
+                output_file="review.json",
+                prompt_tokens=worker.prompt_tokens,
+                completion_tokens=worker.completion_tokens,
+                total_tokens=worker.total_tokens,
+                artifact_hash=sha256_file(plan_dir / "review.json"),
+                finalize_hash=finalize_hash,
+            ),
+        )
+        worker.receipt_metrics = review_metrics(worker.payload, plan_dir / "review.json")
+        _emit_receipt(
+            plan_dir=plan_dir,
+            state=state,
+            args=args,
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            phase="review",
+            output_file="review.json",
+            artifact_hash=sha256_file(plan_dir / "review.json"),
+            verdict="policy_denied",
+        )
+        save_state_merge_meta(plan_dir, state)
+        summary = "Review-to-done transition denied by policy. Re-run review after addressing the policy evidence."
+        deviations = tuple(_PhaseDeviation.from_string(reason) for reason in policy_decision.reasons)
+        _emit_phase_result(
+            phase="review",
+            state=state,
+            plan_dir=plan_dir,
+            exit_kind="blocked_by_quality",
+            deviations=deviations,
+            artifacts_written=("review.json", TRANSITION_DECISION_REVIEW_DONE_FILENAME),
+        )
+        response: StepResponse = {
+            "success": False,
+            "step": "review",
+            "summary": summary,
+            "artifacts": ["review.json", "finalize.json", TRANSITION_DECISION_REVIEW_DONE_FILENAME],
+            "monitor_hint": build_monitor_hint(plan_dir),
+            "next_step": "review",
+            "state": STATE_EXECUTED,
+            "issues": issues,
+            "rework_items": list(worker.payload.get("rework_items", [])),
+            "policy_denial": denial_metadata,
+            "deviations": list(policy_decision.reasons),
+            "warnings": list(policy_decision.reasons),
+            "_phase_outcome": "blocked_by_quality",
+        }
+        _attach_next_step_runtime(response)
+        attach_agent_fallback(response, args)
+        return response
     atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
     force_proceed_blocked = result == "blocked" and next_state == STATE_BLOCKED
     if force_proceed_blocked:
@@ -948,6 +1121,8 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
         # notice when codex is pinned to a narrower tree than the plan's
         # project_dir.
         warn_if_work_dir_differs_from_project_dir(state)
+        preflight_phase(root=root, state=state, phase="review")
+        save_state_merge_meta(plan_dir, state)
         robustness = configured_robustness(state)
         plan_mode = state["config"].get("mode", "code")
         pre_check_flags: list[dict[str, Any]] = []
@@ -979,6 +1154,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 resolved=resolved,
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
+                read_only=True,
             )
             _audit_review_payload_or_raise(
                 plan_dir=plan_dir,
@@ -1012,6 +1188,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     args,
                     root=root,
                     resolved=(agent_type, mode, refreshed, model),
+                    read_only=True,
                 )
                 _audit_review_payload_or_raise(
                     plan_dir=plan_dir,

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from arnold.pipelines.megaplan._core.workflow import resume_plan
 from arnold.pipelines.megaplan._pipeline.resume import (
     COMPOSITE_SUSPENSION_CURSOR_VERSION,
     COMPOSITE_SUSPENSION_KIND,
@@ -19,6 +20,7 @@ from arnold.pipelines.megaplan._pipeline.resume import (
     save_composite_resume_cursor,
     with_entry,
 )
+from arnold.pipelines.megaplan.types import CliError
 from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult
 
 
@@ -69,6 +71,50 @@ def test_load_reads_stage_key_alias(tmp_path: Path) -> None:
     )
     cursor = ResumeCursor.load(tmp_path)
     assert cursor is not None and cursor.stage == "execute"
+
+
+def test_resume_execute_divergent_completion_preserves_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_megaplan_resume(monkeypatch)
+    plan_dir = _write_resume_plan(
+        tmp_path,
+        "resume-execute-divergent",
+        phase="execute",
+        tasks=[{"id": "T1", "status": "done", "depends_on": []}],
+    )
+
+    result = resume_plan(tmp_path, "resume-execute-divergent")
+
+    state = json.loads((plan_dir / "state.json").read_text())
+    assert result["success"] is False
+    assert result["authority"]["reason"] == "execute_authority_diverged"
+    assert result["authority"]["missing_task_ids"] == ["T1"]
+    assert state["current_state"] == "blocked"
+    assert state["resume_cursor"]["phase"] == "execute"
+
+
+def test_resume_later_phase_blocks_on_incomplete_execute_authority_before_rewrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_megaplan_resume(monkeypatch)
+    plan_dir = _write_resume_plan(
+        tmp_path,
+        "resume-review-incomplete",
+        phase="review",
+        tasks=[],
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        resume_plan(tmp_path, "resume-review-incomplete")
+
+    state = json.loads((plan_dir / "state.json").read_text())
+    assert exc_info.value.code == "resume_execute_authority_blocked"
+    assert exc_info.value.extra["reason"] == "execute_authority_unknown"
+    assert state["current_state"] == "blocked"
+    assert state["resume_cursor"]["phase"] == "review"
 
 
 def test_with_payload_returns_immutable_copy() -> None:
@@ -139,6 +185,54 @@ def _write_state_json(plan_dir: Path, data: dict[str, object]) -> Path:
     path = plan_dir / "state.json"
     path.write_text(json.dumps(data))
     return path
+
+
+def _write_resume_plan(
+    root: Path,
+    plan_name: str,
+    *,
+    phase: str,
+    current_state: str = "blocked",
+    tasks: list[dict[str, object]] | None = None,
+) -> Path:
+    plan_dir = root / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    _write_state_json(
+        plan_dir,
+        {
+            "name": plan_name,
+            "idea": "resume authority",
+            "current_state": current_state,
+            "iteration": 0,
+            "created_at": "2026-01-01T00:00:00Z",
+            "config": {"robustness": "full"},
+            "sessions": {},
+            "plan_versions": [],
+            "history": [],
+            "meta": {},
+            "last_gate": {},
+            "latest_failure": {"result": "failed", "phase": phase},
+            "resume_cursor": {"phase": phase, "retry_strategy": "fresh_session"},
+        },
+    )
+    if tasks is not None:
+        (plan_dir / "finalize.json").write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
+    return plan_dir
+
+
+def _stub_megaplan_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+    from arnold.pipelines.megaplan._core import workflow
+    from arnold.pipelines.megaplan._pipeline import registry
+
+    monkeypatch.setattr(workflow, "preflight_phase", lambda **_: None)
+    monkeypatch.setattr(workflow, "preflight_mutating_phase", lambda **_: None)
+    monkeypatch.setattr(registry, "canonical_pipeline_name", lambda name: name)
+    monkeypatch.setattr(
+        registry,
+        "dispatch_operation_for",
+        lambda *_args, **_kwargs: {"success": True, "exit_code": 0, "stdout": "", "stderr": ""},
+    )
+    monkeypatch.setattr(registry, "resume_result_from_operation_result", lambda result, **_: result)
 
 
 # ---- load_resume_cursor_payload ----

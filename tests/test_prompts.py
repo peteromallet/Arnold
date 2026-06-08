@@ -1561,6 +1561,33 @@ def test_review_prompt_gracefully_handles_missing_audit(tmp_path: Path) -> None:
     assert "Skip that artifact gracefully" in prompt
 
 
+def test_normal_review_prompt_refreshes_review_evidence_before_returning_prompt(monkeypatch, tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    review_evidence_path = plan_dir / "review_evidence.json"
+
+    def fake_collect_review_evidence(*, plan_dir, **kwargs):
+        atomic_write_json(
+            plan_dir / "review_evidence.json",
+            {"evidence": [{"kind": "fresh", "status": "satisfied", "summary": "new"}]},
+        )
+        return read_json(plan_dir / "review_evidence.json")
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.prompts.review.collect_review_evidence",
+        fake_collect_review_evidence,
+    )
+    prompt = create_claude_prompt("review", state, plan_dir)
+
+    assert review_evidence_path.exists()
+    assert "Fresh review-time evidence (`review_evidence.json`):" in prompt
+    assert "Historical execution audit context (`execution_audit.json`): not present." in prompt
+    assert "Historical execution audit context (`execution_audit.json`): not present." in prompt
+    assert prompt.index("Fresh review-time evidence (`review_evidence.json`):") > prompt.index(
+        "Historical execution audit context (`execution_audit.json`): not present."
+    )
+    assert '"kind": "fresh"' in prompt
+
+
 def test_review_prompt_includes_settled_decisions_when_present(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     atomic_write_json(
@@ -1636,7 +1663,7 @@ def test_parallel_criteria_review_prompt_uses_issue_anchored_context_only(
     assert "Plan metadata:" not in prompt
     assert "Execution summary:" not in prompt
     assert "Review execution context (`finalize.json` + `execution.json`, prompt projection only):" in prompt
-    assert "Execution audit source of truth" in prompt
+    assert "Historical execution audit context" in prompt
     assert "Gate summary:" not in prompt
     assert intent_brief_reference(state) in prompt
     assert "diff --git a/app.py b/app.py" in prompt

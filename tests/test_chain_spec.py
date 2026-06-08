@@ -482,6 +482,7 @@ class TestChainStateEdgeCases:
         state = ChainState()
         assert state.current_milestone_index == -1
         assert state.current_plan_name is None
+        assert state.metadata == {}
         assert state.schema_version == 0
 
     def test_round_trip_to_dict_and_back(self) -> None:
@@ -497,6 +498,7 @@ class TestChainStateEdgeCases:
             profile_bumps={"m1": "apex"},
             robustness_bumps={"m1": "extreme"},
             depth_bumps={"m1": "max"},
+            metadata={"engine_isolation": {"pinned": True}},
         )
         d = original.to_dict()
         restored = ChainState.from_dict(d)
@@ -511,6 +513,7 @@ class TestChainStateEdgeCases:
         assert restored.profile_bumps == {"m1": "apex"}
         assert restored.robustness_bumps == {"m1": "extreme"}
         assert restored.depth_bumps == {"m1": "max"}
+        assert restored.metadata == {"engine_isolation": {"pinned": True}}
 
     def test_from_empty_dict(self) -> None:
         state = ChainState.from_dict({})

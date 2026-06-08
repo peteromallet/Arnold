@@ -243,6 +243,18 @@ def _compute_execute_scope_drift(
                 doc_path = _normalize_execute_claimed_path(output_path, project_dir)
                 files_claimed.add(doc_path)
                 per_call_claimed.add(doc_path)
+        meta = state.get("meta") if isinstance(state, dict) else {}
+        operator_claimed = (
+            meta.get("execute_operator_attributed_files", [])
+            if isinstance(meta, dict)
+            else []
+        )
+        if isinstance(operator_claimed, list):
+            for path in operator_claimed:
+                if isinstance(path, str) and path.strip():
+                    claimed_path = _normalize_execute_claimed_path(path, project_dir)
+                    files_claimed.add(claimed_path)
+                    per_call_claimed.add(claimed_path)
     try:
         observed_snapshot, observed_error = _capture_execute_scope_snapshot(project_dir)
     except Exception as exc:

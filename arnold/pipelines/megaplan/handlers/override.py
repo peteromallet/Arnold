@@ -36,6 +36,10 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_PLANNED,
     STATE_PREPPED,
 )
+from arnold.pipelines.megaplan.runtime.execution_environment import (
+    preflight_mutating_phase,
+    preflight_phase,
+)
 from arnold.pipelines.megaplan._core import (
     add_or_increment_debt,
     extract_subsystem_tag,
@@ -63,6 +67,10 @@ from arnold.pipelines.megaplan.orchestration.gate_checks import (
 )
 from arnold.pipelines.megaplan.orchestration.gate_signals import build_gate_signals
 from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
+from arnold.pipelines.megaplan.runtime.execution_environment import (
+    append_engine_overlap_waiver,
+    resolve_execution_environment,
+)
 
 from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
 
@@ -73,6 +81,8 @@ _ROUTED_OVERRIDE_ACTIONS = frozenset(
         "add-note",
         "abort",
         "force-proceed",
+        "waive-engine-overlap",
+        "refresh-engine-pin",
         "recover-blocked",
         "replan",
         "resume-clarify",
@@ -143,6 +153,48 @@ def _routed_override_response(
                 "debt_entries_added",
                 latest_override.get("debt_entries_added", 0),
             ),
+        }
+        _attach_next_step_runtime(response)
+        return response
+    if action == "waive-engine-overlap":
+        meta = state.get("meta")
+        overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
+        latest_override = next(
+            (
+                entry
+                for entry in reversed(overrides)
+                if isinstance(entry, dict) and entry.get("action") == "waive-engine-overlap"
+            ),
+            {},
+        )
+        response = {
+            "success": True,
+            "step": "override",
+            "summary": "Recorded engine-overlap waiver.",
+            "next_step": next_steps[0] if next_steps else None,
+            "state": state["current_state"],
+            "waiver_id": latest_override.get("waiver_id"),
+        }
+        _attach_next_step_runtime(response)
+        return response
+    if action == "refresh-engine-pin":
+        meta = state.get("meta")
+        overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
+        latest_override = next(
+            (
+                entry
+                for entry in reversed(overrides)
+                if isinstance(entry, dict) and entry.get("action") == "refresh-engine-pin"
+            ),
+            {},
+        )
+        response = {
+            "success": True,
+            "step": "override",
+            "summary": "Refreshed pinned Megaplan engine identity.",
+            "next_step": next_steps[0] if next_steps else None,
+            "state": state["current_state"],
+            "refresh_id": latest_override.get("refresh_id"),
         }
         _attach_next_step_runtime(response)
         return response
@@ -325,6 +377,28 @@ def _emit_routed_override_events(
                 payload={"action": "force-proceed", "reason": args.reason},
             )
             return
+        if action == "waive-engine-overlap":
+            meta = state.get("meta")
+            overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
+            latest_override = next(
+                (
+                    entry
+                    for entry in reversed(overrides)
+                    if isinstance(entry, dict) and entry.get("action") == "waive-engine-overlap"
+                ),
+                {},
+            )
+            emit(
+                EventKind.OVERRIDE_APPLIED,
+                plan_dir=plan_dir,
+                payload={
+                    "action": "waive-engine-overlap",
+                    "reason": latest_override.get("reason"),
+                    "waiver_id": latest_override.get("waiver_id"),
+                    "phase": latest_override.get("phase"),
+                },
+            )
+            return
         if action == "set-robustness":
             meta = state.get("meta")
             overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
@@ -398,6 +472,14 @@ def _emit_routed_override_events(
             _warn_best_effort_emit_failure(
                 "M3A_WARN_EMIT_OVERRIDE_FORCE_PROCEED",
                 action="override-force-proceed",
+                plan_dir=plan_dir,
+                event_kind="override_applied",
+            )
+            return
+        if action == "waive-engine-overlap":
+            _warn_best_effort_emit_failure(
+                "M3A_WARN_EMIT_OVERRIDE_ENGINE_OVERLAP_WAIVER",
+                action="override-waive-engine-overlap",
                 plan_dir=plan_dir,
                 event_kind="override_applied",
             )
@@ -772,6 +854,142 @@ def _override_force_proceed(
     return response
 
 
+def _override_waive_engine_overlap(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    reason = getattr(args, "reason", None)
+    if not isinstance(reason, str) or not reason.strip():
+        raise CliError("invalid_args", "override waive-engine-overlap requires --reason")
+    timestamp = now_utc()
+    env = resolve_execution_environment(root=root, state=state)
+    meta = state.get("meta")
+    next_meta, waiver = append_engine_overlap_waiver(
+        meta if isinstance(meta, dict) else {},
+        env,
+        reason=reason,
+        phase=getattr(args, "phase", None),
+        source=getattr(args, "source", None) or "user",
+        timestamp=timestamp,
+        expires_after_runs=getattr(args, "expires_after_runs", None),
+        target_root=getattr(args, "target_root", None),
+    )
+    state["meta"] = next_meta
+    _append_to_meta(
+        state,
+        "overrides",
+        {
+            "action": "waive-engine-overlap",
+            "timestamp": timestamp,
+            "reason": reason,
+            "phase": getattr(args, "phase", None),
+            "waiver_id": waiver["id"],
+            "scope": waiver["scope"],
+            "expires_after_runs": waiver.get("expires_after_runs"),
+        },
+    )
+    save_state_merge_meta(plan_dir, state)
+    try:
+        from arnold.pipelines.megaplan.observability.events import emit, EventKind
+
+        emit(
+            EventKind.OVERRIDE_APPLIED,
+            plan_dir=plan_dir,
+            payload={
+                "action": "waive-engine-overlap",
+                "reason": reason,
+                "waiver_id": waiver["id"],
+                "phase": getattr(args, "phase", None),
+            },
+        )
+    except Exception:
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_OVERRIDE_ENGINE_OVERLAP_WAIVER",
+            action="override-waive-engine-overlap",
+            plan_dir=plan_dir,
+            event_kind="override_applied",
+        )
+    next_steps = infer_next_steps(state)
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "summary": "Recorded engine-overlap waiver.",
+        "next_step": next_steps[0] if next_steps else None,
+        "state": state["current_state"],
+        "waiver_id": waiver["id"],
+    }
+    _attach_next_step_runtime(response)
+    return response
+
+
+def _override_refresh_engine_pin(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    reason = getattr(args, "reason", None)
+    if not isinstance(reason, str) or not reason.strip():
+        raise CliError("invalid_args", "override refresh-engine-pin requires --reason")
+    timestamp = now_utc()
+    env = resolve_execution_environment(root=root, state=state)
+    meta = state.get("meta")
+    next_meta: dict[str, Any] = dict(meta) if isinstance(meta, dict) else {}
+    previous = next_meta.get("engine_isolation")
+    previous_identity = previous if isinstance(previous, dict) else {}
+    refresh_id = f"engine-pin-refresh-{timestamp.replace(':', '').replace('.', '-')}"
+    next_meta["engine_isolation"] = {
+        "schema_version": 1,
+        "pinned": True,
+        "created_phase": previous_identity.get("created_phase", f"override:refresh-engine-pin"),
+        "last_observed_phase": "override:refresh-engine-pin",
+        **env.to_dict(),
+    }
+    refreshes = list(next_meta.get("engine_pin_refreshes") or [])
+    refreshes.append(
+        {
+            "id": refresh_id,
+            "action": "refresh-engine-pin",
+            "timestamp": timestamp,
+            "reason": reason,
+            "phase": getattr(args, "phase", None),
+            "previous": {
+                "engine_root": previous_identity.get("engine_root"),
+                "engine_commit": previous_identity.get("engine_commit"),
+                "engine_signature": previous_identity.get("engine_signature"),
+                "engine_dirty": previous_identity.get("engine_dirty"),
+            },
+            "current": {
+                "engine_root": str(env.engine_root),
+                "engine_commit": env.engine_commit,
+                "engine_signature": env.engine_signature,
+                "engine_dirty": env.engine_dirty,
+            },
+        }
+    )
+    next_meta["engine_pin_refreshes"] = refreshes
+    state["meta"] = next_meta
+    _append_to_meta(
+        state,
+        "overrides",
+        {
+            "action": "refresh-engine-pin",
+            "timestamp": timestamp,
+            "reason": reason,
+            "phase": getattr(args, "phase", None),
+            "refresh_id": refresh_id,
+        },
+    )
+    save_state_merge_meta(plan_dir, state)
+    next_steps = infer_next_steps(state)
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "summary": "Refreshed pinned Megaplan engine identity.",
+        "next_step": next_steps[0] if next_steps else None,
+        "state": state["current_state"],
+        "refresh_id": refresh_id,
+    }
+    _attach_next_step_runtime(response)
+    return response
+
+
 def _override_replan(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
@@ -1033,6 +1251,8 @@ def _override_set_profile(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
     from arnold.pipelines.megaplan.profiles import (
+        apply_depth_rewrite,
+        apply_vendor_rewrite,
         load_profiles,
         resolve_profile,
         profile_to_phase_models,
@@ -1049,11 +1269,17 @@ def _override_set_profile(
     project_dir = Path(state["config"].get("project_dir", str(root)))
     profiles = load_profiles(project_dir=project_dir)
     resolved = resolve_profile(new_profile, profiles)
+    vendor = effective_premium_vendor(config=state.get("config", {}))
+    resolved = apply_vendor_rewrite(resolved, vendor)
+    depth = state["config"].get("depth")
+    if depth is not None:
+        resolved = apply_depth_rewrite(resolved, depth)
     phase_models = profile_to_phase_models(resolved)
 
     previous_profile = state["config"].get("profile")
     state["config"]["profile"] = new_profile
     state["config"]["phase_model"] = phase_models
+    state["config"]["vendor"] = vendor
     exec_spec = next(
         (phase_model.split("=", 1)[1] for phase_model in phase_models if phase_model.startswith("execute=")),
         "",
@@ -1117,6 +1343,13 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
         raise CliError("invalid_args", "override set-model requires --phase PHASE")
     if not model_arg:
         raise CliError("invalid_args", "override set-model requires --model MODEL")
+    if model_arg in _PREMIUM_VENDORS:
+        raise CliError(
+            "invalid_args",
+            f"override set-model --model {model_arg!r} names an agent, not a model. "
+            f"Use `override set-vendor --vendor {model_arg}` to switch vendors, "
+            "or pass an actual model name/spec.",
+        )
 
     # Validate known phase names
     if phase not in DEFAULT_AGENT_ROUTING:
@@ -1460,6 +1693,8 @@ _OVERRIDE_ACTIONS: dict[
     "add-note": _override_add_note,
     "abort": _override_abort,
     "force-proceed": _override_force_proceed,
+    "waive-engine-overlap": _override_waive_engine_overlap,
+    "refresh-engine-pin": _override_refresh_engine_pin,
     "replan": _override_replan,
     "recover-blocked": _override_recover_blocked,
     "resume-clarify": _override_resume_clarify,
@@ -1473,6 +1708,13 @@ _OVERRIDE_ACTIONS: dict[
 def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
     plan_dir, state = load_plan(root, args.plan)
     action = args.override_action
+    if action == "refresh-engine-pin":
+        pass
+    elif action in {"force-proceed", "recover-blocked", "resume-clarify"}:
+        preflight_mutating_phase(root=root, state=state, phase=f"override:{action}")
+    else:
+        preflight_phase(root=root, state=state, phase=f"override:{action}")
+    save_state_merge_meta(plan_dir, state)
     if control_interface_routing_on() and action in _ROUTED_OVERRIDE_ACTIONS:
         return _handle_routed_override(root, plan_dir, state, args)
     handler = _OVERRIDE_ACTIONS.get(action)

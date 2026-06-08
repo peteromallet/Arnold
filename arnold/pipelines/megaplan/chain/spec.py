@@ -505,6 +505,7 @@ class ChainState:
     robustness_bumps: dict[str, str] = field(default_factory=dict)
     depth_bumps: dict[str, str] = field(default_factory=dict)
     enforce_revise_counts: dict[str, int] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     schema_version: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -532,6 +533,7 @@ class ChainState:
             "robustness_bumps": dict(self.robustness_bumps),
             "depth_bumps": dict(self.depth_bumps),
             "enforce_revise_counts": dict(self.enforce_revise_counts),
+            "metadata": dict(self.metadata),
         }
 
     @classmethod
@@ -585,6 +587,9 @@ class ChainState:
                 if isinstance(key, str) and isinstance(val, str)
             }
 
+        metadata = raw.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
@@ -608,6 +613,7 @@ class ChainState:
             robustness_bumps=_str_str_map(raw.get("robustness_bumps")),
             depth_bumps=_str_str_map(raw.get("depth_bumps")),
             enforce_revise_counts=_str_int_map(raw.get("enforce_revise_counts")),
+            metadata=dict(metadata),
         )
 
 
@@ -722,11 +728,16 @@ def effective_chain_policy(
 
 
 def validate_paths(spec: ChainSpec, root: Path) -> None:
+    root = Path(root).expanduser().resolve()
     for milestone in spec.milestones:
-        if not Path(milestone.idea).exists():
+        idea_path = Path(milestone.idea).expanduser()
+        if not idea_path.is_absolute():
+            idea_path = root / idea_path
+        idea_path = idea_path.resolve()
+        if not idea_path.is_file():
             raise CliError(
                 "missing_idea_file",
-                f"milestone {milestone.label!r} idea file not found: {milestone.idea}",
+                f"milestone {milestone.label!r} idea file not found under {root}: {idea_path}",
             )
     if spec.seed_plan:
         try:

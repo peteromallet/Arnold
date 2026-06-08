@@ -54,6 +54,10 @@ from arnold.pipelines.megaplan.orchestration.phase_result import (
     PhaseResult,
     read_phase_result,
 )
+from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    AuthorityDecision,
+    corroborated_completed_task_ids,
+)
 from arnold.pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
 from arnold.pipelines.megaplan.store import PlanRepository
 from arnold.pipelines.megaplan.types import (
@@ -1578,6 +1582,21 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
         execute_result = last_execute.get("result")
         if execute_result not in {"success", "blocked"}:
             return False
+        if execute_result == "success":
+            ok, reasons = _execute_completion_authority(plan_dir)
+            if not ok:
+                _record_lifecycle_failure(
+                    plan_dir=plan_dir,
+                    kind="authority_divergence",
+                    message="execute callback recovery refused uncorroborated success",
+                    current_state=STATE_BLOCKED,
+                    phase="execute",
+                    resume_cursor={"phase": "execute", "retry_strategy": "rerun_phase"},
+                    suggested_action="Rerun execute so task completion can be corroborated.",
+                    metadata={"reasons": reasons},
+                    progress_emitter=None,
+                )
+                return False
         if not (plan_dir / "execution.json").exists():
             return False
         next_state = (
@@ -1606,6 +1625,101 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
             reason="unreadable",
         )
         return False
+
+
+def _finalize_tasks(plan_dir: Path | None) -> tuple[dict[str, Any], ...]:
+    if plan_dir is None:
+        return ()
+    try:
+        payload = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return ()
+    return tuple(dict(task) for task in tasks if isinstance(task, dict) and (task.get("id") or task.get("task_id")))
+
+
+def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str]]:
+    """Return whether execute terminal success is corroborated by task evidence."""
+
+    tasks = _finalize_tasks(plan_dir)
+    if not tasks:
+        return True, []
+    decisions: dict[str, AuthorityDecision] = {}
+    completed = corroborated_completed_task_ids(
+        tasks,
+        plan_dir=plan_dir,
+        decisions=decisions,
+    )
+    missing: list[str] = []
+    for task in tasks:
+        task_id = str(task.get("id") or task.get("task_id") or "")
+        raw_status = task.get("status")
+        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"} and task_id not in completed:
+            decision = decisions.get(task_id)
+            reason = "unknown"
+            if decision is not None:
+                reason = decision.status.value
+                if decision.would_block_reasons:
+                    reason = f"{reason}:{','.join(decision.would_block_reasons)}"
+            missing.append(f"{task_id}:{reason}")
+    return not missing, missing
+
+
+def _block_for_execute_authority_divergence(
+    *,
+    plan_dir: Path | None,
+    state: str,
+    iteration: int,
+    last_phase: str | None,
+    reasons: list[str],
+    log: Callable[..., None],
+    outcome: Callable[..., DriverOutcome],
+) -> DriverOutcome:
+    preserved_active_step: Any = None
+    if plan_dir is not None:
+        try:
+            state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+            if isinstance(state_payload, dict):
+                preserved_active_step = state_payload.get("active_step")
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            preserved_active_step = None
+    log(
+        "execute terminal success lacks corroborated task completion — blocking for recovery",
+        authority_divergence=reasons,
+    )
+    _record_lifecycle_failure(
+        plan_dir=plan_dir,
+        kind="authority_divergence",
+        message="execute terminal success lacks corroborated task completion",
+        current_state=STATE_BLOCKED,
+        phase="execute",
+        resume_cursor={"phase": "execute", "retry_strategy": "rerun_phase"},
+        suggested_action="Rerun execute so task completion can be corroborated.",
+        metadata={"iteration": iteration, "reasons": reasons},
+        progress_emitter=None,
+    )
+    if isinstance(preserved_active_step, dict) and plan_dir is not None:
+        try:
+            write_plan_state(
+                plan_dir,
+                mode="patch-many",
+                patch={"active_step": preserved_active_step},
+                validate_current_state=False,
+            )
+        except Exception:
+            pass
+    return outcome(
+        "blocked",
+        final_state=state,
+        iterations=iteration,
+        reason="execute terminal success lacks corroborated task completion",
+        last_phase=last_phase,
+        blocking_reasons=reasons,
+    )
 
 
 # Output artifacts written incrementally by long-running phase workers. When
@@ -2223,6 +2337,17 @@ def drive(
             }.get(state, state)
             log(f"terminal state reached: {state}")
             if terminal_status == "done":
+                ok, reasons = _execute_completion_authority(plan_dir)
+                if not ok:
+                    return _block_for_execute_authority_divergence(
+                        plan_dir=plan_dir,
+                        state=state,
+                        iteration=iteration,
+                        last_phase=last_phase,
+                        reasons=reasons,
+                        log=log,
+                        outcome=_outcome,
+                    )
                 enforce_result = _shadow_completion_verdict(plan, plan_dir, cwd, log=log)
                 if enforce_result == "routed":
                     continue
@@ -2332,6 +2457,18 @@ def drive(
                     current_state=state,
                     next_step=next_step,
                 )
+                if active_name == "execute":
+                    ok, reasons = _execute_completion_authority(plan_dir)
+                    if not ok:
+                        return _block_for_execute_authority_divergence(
+                            plan_dir=plan_dir,
+                            state=state,
+                            iteration=iteration,
+                            last_phase=last_phase,
+                            reasons=reasons,
+                            log=log,
+                            outcome=_outcome,
+                        )
                 _clear_orphaned_active_step(
                     plan_dir, active_name, quarantine=False
                 )
@@ -3173,6 +3310,17 @@ def drive(
         if next_step == "execute" and result is not None and max_blocked_retries >= 0:
             ek = getattr(result, "exit_kind", None)
             if ek == ExitKind.success.value:
+                ok, reasons = _execute_completion_authority(plan_dir)
+                if not ok:
+                    return _block_for_execute_authority_divergence(
+                        plan_dir=plan_dir,
+                        state=state,
+                        iteration=iteration,
+                        last_phase=last_phase,
+                        reasons=reasons,
+                        log=log,
+                        outcome=_outcome,
+                    )
                 # Executor succeeded — continue to next phase without retry.
                 pass
             elif ek == ExitKind.blocked_by_prereq.value:

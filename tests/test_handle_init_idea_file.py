@@ -65,7 +65,36 @@ def test_init_rejects_both_positional_and_idea_file(
             _args(project_dir, idea="positional", idea_file=str(idea_file)),
         )
 
-    assert info.value.code == "invalid_args"
+    assert info.value.code == "missing_idea_file"
+
+
+def test_init_direct_relative_missing_idea_file_reports_resolved_project_path(
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    missing = "docs/missing-idea.md"
+
+    with pytest.raises(CliError) as info:
+        megaplan.handle_init(root, _args(project_dir, idea_file=missing))
+
+    expected = project_dir / missing
+    assert info.value.code == "missing_idea_file"
+    assert str(expected.resolve()) in str(info.value)
+    assert "BRIEF_MISSING" not in str(info.value)
+
+
+def test_init_positional_path_like_missing_file_reports_missing_not_empty(
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    root, project_dir = bootstrap_fixture
+    missing = "missing-brief.md"
+
+    with pytest.raises(CliError) as info:
+        megaplan.handle_init(root, _args(project_dir, idea=missing))
+
+    assert info.value.code == "missing_idea_file"
+    assert str((project_dir / missing).resolve()) in str(info.value)
+    assert "BRIEF_MISSING" not in str(info.value)
 
 
 def test_init_rejects_empty_idea_file(tmp_path: Path, bootstrap_fixture: tuple[Path, Path]) -> None:

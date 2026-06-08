@@ -199,6 +199,24 @@ class TestScheduleBatchesCompletedIds:
         result = schedule_batches(work, max_batch_size=5, completed_ids={"T1"})
         assert result == [["T2", "T3"], ["T4"]]
 
+    def test_completed_ids_empty_keeps_phantom_dependency_blocked(self):
+        """If the authority wrapper withholds a raw terminal claim, the dependent stays blocked."""
+        work = [
+            {"id": "T1", "depends_on": []},
+            {"id": "T2", "depends_on": ["T1"]},
+        ]
+
+        assert schedule_batches(work, max_batch_size=5, completed_ids=set()) == [["T1"], ["T2"]]
+
+    def test_completed_ids_only_unlock_when_wrapper_supplies_corroborated_dependency(self):
+        """Scheduler unlocks solely from the corroborated completed_ids input contract."""
+        work = [
+            {"id": "T1", "depends_on": []},
+            {"id": "T2", "depends_on": ["T1"]},
+        ]
+
+        assert schedule_batches(work, max_batch_size=5, completed_ids={"T1"}) == [["T2"]]
+
 
 # ---------------------------------------------------------------------------
 # Sanity checks

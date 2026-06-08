@@ -40,10 +40,7 @@ def artifact_dir(repo_root: str | Path, kind: str) -> Path:
 def parse_markdown_artifact(path: str | Path) -> MarkdownArtifact | None:
     """Read a markdown artifact, parsing optional YAML frontmatter."""
     path = Path(path)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
+    text = path.read_text(encoding="utf-8")
 
     metadata: dict[str, Any] = {}
     body = text

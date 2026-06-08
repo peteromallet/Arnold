@@ -15,6 +15,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+PHASE_RESULT_SCHEMA = "megaplan.phase_result"
+PHASE_RESULT_SCHEMA_VERSION = 1
+PHASE_RESULT_CONTRACT_VERSION = 1
+
 
 class ExitKind(str, Enum):
     """Classification for how a phase exited.
@@ -253,6 +257,9 @@ def _classify_external_error(exc: Exception) -> ExternalError | None:
 
 _PHASE_RESULT_FIELDS = frozenset(
     {
+        "schema",
+        "schema_version",
+        "phase_result_contract_version",
         "phase",
         "invocation_id",
         "exit_kind",
@@ -264,6 +271,15 @@ _PHASE_RESULT_FIELDS = frozenset(
 )
 
 _VALID_EXIT_KINDS: frozenset[str] = frozenset(e.value for e in ExitKind)
+
+
+def _optional_int(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 @dataclass(frozen=True)
@@ -283,6 +299,9 @@ class PhaseResult:
     artifacts_written: tuple[str, ...] = ()
     cli_provenance: dict[str, Any] = field(default_factory=dict)
     external_error: ExternalError | None = None
+    schema: str = PHASE_RESULT_SCHEMA
+    schema_version: int = PHASE_RESULT_SCHEMA_VERSION
+    phase_result_contract_version: int = PHASE_RESULT_CONTRACT_VERSION
 
     # ── helpers ─────────────────────────────────────────────────────────
 
@@ -294,6 +313,9 @@ class PhaseResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema": PHASE_RESULT_SCHEMA,
+            "schema_version": PHASE_RESULT_SCHEMA_VERSION,
+            "phase_result_contract_version": PHASE_RESULT_CONTRACT_VERSION,
             "phase": self.phase,
             "invocation_id": self.invocation_id,
             "exit_kind": self.exit_kind,
@@ -327,6 +349,11 @@ class PhaseResult:
                 if isinstance((raw := d.get("external_error")), dict)
                 else None
             ),
+            schema=str(d.get("schema", PHASE_RESULT_SCHEMA)),
+            schema_version=_optional_int(d.get("schema_version")),
+            phase_result_contract_version=_optional_int(
+                d.get("phase_result_contract_version")
+            ),
         )
 
 
@@ -346,7 +373,9 @@ def atomic_write_phase_result(plan_dir: Path, result: PhaseResult) -> None:
     from arnold.pipelines.megaplan._core.io import atomic_write_json
 
     path = plan_dir / PHASE_RESULT_FILENAME
-    atomic_write_json(path, result.to_dict())
+    payload = result.to_dict()
+    validate_phase_result_current(payload)
+    atomic_write_json(path, payload)
 
 
 def read_phase_result(plan_dir: Path) -> PhaseResult | None:
@@ -357,6 +386,7 @@ def read_phase_result(plan_dir: Path) -> PhaseResult | None:
     from arnold.pipelines.megaplan._core.io import read_json
 
     raw = read_json(path)
+    validate_phase_result(raw)
     return PhaseResult.from_dict(raw)
 
 
@@ -386,11 +416,16 @@ def _active_phase_name(active: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-def validate_phase_result(payload: dict[str, Any]) -> None:
+def _validate_phase_result_structure(
+    payload: dict[str, Any],
+    *,
+    require_current_schema: bool,
+) -> None:
     """Validate the **structure** of a ``PhaseResult`` dict.
 
     Checks:
     - All required fields are present.
+    - Current writes include current schema/version fields.
     - ``exit_kind`` is a recognised enum literal.
     - ``blocked_tasks`` and ``deviations`` have the correct nested shapes.
     - ``phase``, ``invocation_id`` are strings; ``artifacts_written`` is a
@@ -402,12 +437,33 @@ def validate_phase_result(payload: dict[str, Any]) -> None:
         raise CliError("parse_error", "phase_result payload must be a dict")
 
     # --- required fields --------------------------------------------------
-    missing = sorted(_PHASE_RESULT_FIELDS - set(payload))
+    required_fields = set(_PHASE_RESULT_FIELDS)
+    if not require_current_schema:
+        required_fields -= {"schema", "schema_version", "phase_result_contract_version"}
+    missing = sorted(required_fields - set(payload))
     if missing:
         raise CliError(
             "parse_error",
             "phase_result missing required fields: " + ", ".join(missing),
         )
+
+    if require_current_schema:
+        if payload.get("schema") != PHASE_RESULT_SCHEMA:
+            raise CliError(
+                "parse_error",
+                f"phase_result.schema must be {PHASE_RESULT_SCHEMA!r}",
+            )
+        if payload.get("schema_version") != PHASE_RESULT_SCHEMA_VERSION:
+            raise CliError(
+                "parse_error",
+                f"phase_result.schema_version must be {PHASE_RESULT_SCHEMA_VERSION}",
+            )
+        if payload.get("phase_result_contract_version") != PHASE_RESULT_CONTRACT_VERSION:
+            raise CliError(
+                "parse_error",
+                "phase_result.phase_result_contract_version must be "
+                f"{PHASE_RESULT_CONTRACT_VERSION}",
+            )
 
     # --- exit_kind enum ---------------------------------------------------
     ek = payload.get("exit_kind")
@@ -497,6 +553,21 @@ def validate_phase_result(payload: dict[str, Any]) -> None:
             )
 
 
+def validate_phase_result(payload: dict[str, Any]) -> None:
+    """Validate a legacy-readable ``PhaseResult`` dict.
+
+    This read-side validator accepts artifacts emitted before schema/version
+    fields existed. Use :func:`validate_phase_result_current` before writing
+    current emissions.
+    """
+    _validate_phase_result_structure(payload, require_current_schema=False)
+
+
+def validate_phase_result_current(payload: dict[str, Any]) -> None:
+    """Validate a current write-side ``PhaseResult`` dict."""
+    _validate_phase_result_structure(payload, require_current_schema=True)
+
+
 # ---------------------------------------------------------------------------
 # Phase-result emission helper
 # ---------------------------------------------------------------------------
@@ -550,8 +621,8 @@ def _emit_phase_result(
         external_error=external_error,
     )
 
-    # Validate against schema before writing
-    validate_phase_result(result.to_dict())
+    # Validate against the current schema before writing.
+    validate_phase_result_current(result.to_dict())
     atomic_write_phase_result(plan_dir, result)
 
 
@@ -617,6 +688,7 @@ def phase_result_guard(plan_dir: Path):
                         exit_kind=ek,
                         external_error=external_error,
                     )
+                    validate_phase_result_current(result.to_dict())
                     atomic_write_phase_result(plan_dir, result)
         except Exception:
             # If we can't emit, that's fine — never swallow the original
@@ -626,6 +698,9 @@ def phase_result_guard(plan_dir: Path):
 
 
 __all__ = [
+    "PHASE_RESULT_SCHEMA",
+    "PHASE_RESULT_SCHEMA_VERSION",
+    "PHASE_RESULT_CONTRACT_VERSION",
     "ExitKind",
     "BlockedTask",
     "Deviation",
@@ -636,6 +711,7 @@ __all__ = [
     "read_phase_result",
     "generate_invocation_id",
     "validate_phase_result",
+    "validate_phase_result_current",
     "_emit_phase_result",
     "phase_result_guard",
 ]

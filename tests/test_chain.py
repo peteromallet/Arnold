@@ -91,6 +91,26 @@ def _write_blocked_execute_batch(
     return plan_dir
 
 
+def _write_authoritative_execution_batch(root: Path, plan: str, state: str = "done") -> Path:
+    plan_dir = _write_execute_plan_state(root, plan, state)
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["arnold/pipelines/megaplan/chain/__init__.py"],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return plan_dir
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
@@ -1546,12 +1566,13 @@ def test_run_chain_recovers_blocked_execute_when_latest_batch_tasks_done(
                     {
                         "task_id": "T1",
                         "status": "done",
+                        "files_changed": ["arnold/pipelines/megaplan/chain/__init__.py"],
                         "executor_notes": "finished",
                     }
                 ],
             )
             return _fake_outcome(plan, "worker_blocked")
-        _write_execute_plan_state(tmp_path, plan, "done")
+        _write_authoritative_execution_batch(tmp_path, plan)
         return _fake_outcome(plan, "done")
 
     with patch(
@@ -1606,6 +1627,38 @@ def test_run_chain_treats_blocked_execute_with_pending_tasks_as_failure(
     assert any("treating as real block" in message for message in messages)
     saved = load_chain_state(spec_path)
     assert saved.last_state == "blocked"
+    assert saved.completed == []
+
+
+def test_run_chain_treats_blocked_execute_raw_done_without_authority_as_failure(
+    tmp_path: Path,
+) -> None:
+    spec_path = _setup_two_milestones(tmp_path)
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+    messages: list[str] = []
+    drive_calls: list[str] = []
+
+    def fake_drive(plan, **_kwargs):
+        drive_calls.append(plan)
+        _write_blocked_execute_batch(
+            tmp_path,
+            plan,
+            [{"task_id": "T1", "status": "done", "executor_notes": "legacy claim"}],
+        )
+        return _fake_outcome(plan, "blocked")
+
+    with patch(
+        "arnold.pipelines.megaplan.chain._init_plan",
+        side_effect=lambda root, idea_path, **_k: f"plan-for-{Path(idea_path).stem}",
+    ), patch("arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive), patch(
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ):
+        result = run_chain(spec_path, tmp_path, writer=messages.append)
+
+    assert result["status"] == "stopped"
+    assert drive_calls == ["plan-for-m1"]
+    assert any("non-authoritative tasks" in message for message in messages)
+    saved = load_chain_state(spec_path)
     assert saved.completed == []
 
 
@@ -1690,6 +1743,7 @@ def test_run_chain_with_seed_drives_seed_first(tmp_path: Path) -> None:
 
     def fake_drive(plan, **_kwargs):
         drive_calls.append(plan)
+        _write_authoritative_execution_batch(tmp_path, plan)
         return _fake_outcome(plan, "done")
 
     with patch("arnold.pipelines.megaplan.chain._plan_state", side_effect=fake_plan_state), \
@@ -1702,6 +1756,88 @@ def test_run_chain_with_seed_drives_seed_first(tmp_path: Path) -> None:
     # Seed must be driven first, then the milestone plan.
     assert drive_calls[0] == seed_name
     assert drive_calls[1].startswith("plan-m1")
+
+
+def test_run_chain_blocks_terminal_seed_skip_without_authority(
+    tmp_path: Path,
+) -> None:
+    i1 = _touch_idea(tmp_path, "m1.txt")
+    seed_name = "seed-plan-20260415"
+    seed_dir = tmp_path / ".megaplan" / "plans" / seed_name
+    seed_dir.mkdir(parents=True)
+    (seed_dir / "state.json").write_text(
+        json.dumps({"name": seed_name, "current_state": "done", "iteration": 1}),
+        encoding="utf-8",
+    )
+    (seed_dir / "execution_batch_1.json").write_text(
+        json.dumps({"task_updates": [{"task_id": "T1", "status": "done"}]}),
+        encoding="utf-8",
+    )
+    spec_path = _write_spec(
+        tmp_path,
+        {"seed": {"plan": seed_name}, "milestones": [{"label": "m1", "idea": str(i1)}]},
+    )
+    messages: list[str] = []
+
+    with patch(
+        "arnold.pipelines.megaplan.chain._plan_state",
+        side_effect=lambda root, plan, *, timeout: "done" if plan == seed_name else "missing",
+    ), patch(
+        "arnold.pipelines.megaplan.chain._init_plan",
+        side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}",
+    ), patch("arnold.pipelines.megaplan.chain.auto_drive") as drive, patch(
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ):
+        result = run_chain(spec_path, tmp_path, writer=messages.append)
+
+    assert result["status"] == "blocked"
+    assert "seed plan terminal state lacks authority" in result["reason"]
+    assert drive.call_count == 0
+    assert any("lacks authority" in message for message in messages)
+    saved = load_chain_state(spec_path)
+    assert saved.current_plan_name == seed_name
+    assert saved.completed == []
+
+
+def test_run_chain_blocks_current_plan_advance_without_authority(
+    tmp_path: Path,
+) -> None:
+    spec_path = _setup_two_milestones(tmp_path)
+    plan_name = "plan-for-m1"
+    plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan_name, "current_state": "done", "iteration": 1}),
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps({"task_updates": [{"task_id": "T1", "status": "done"}]}),
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(current_milestone_index=0, current_plan_name=plan_name),
+    )
+    messages: list[str] = []
+
+    with patch(
+        "arnold.pipelines.megaplan.chain._plan_state",
+        return_value="done",
+    ), patch(
+        "arnold.pipelines.megaplan.chain.auto_drive",
+        return_value=_fake_outcome(plan_name, "done"),
+    ) as drive, patch(
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ):
+        result = run_chain(spec_path, tmp_path, writer=messages.append)
+
+    assert result["status"] == "blocked"
+    assert drive.call_count == 1
+    assert any("lacks task authority" in message for message in messages)
+    saved = load_chain_state(spec_path)
+    assert saved.current_milestone_index == 0
+    assert saved.current_plan_name == plan_name
+    assert saved.completed == []
 
 
 # ---------------------------------------------------------------------------
@@ -1791,7 +1927,7 @@ def test_plan_state_uses_module_launcher(tmp_path: Path) -> None:
         "--plan",
         "demo-plan",
     ]
-    assert mock_run.call_args.kwargs["cwd"] == str(chain_module.megaplan_engine_root())
+    assert mock_run.call_args.kwargs["cwd"] == str(tmp_path)
     env = mock_run.call_args.kwargs["env"]
     assert env["PYTHONPATH"].split(os.pathsep)[0] == str(chain_module.megaplan_engine_root())
 
@@ -1853,9 +1989,70 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
         "--idea-file",
         str(idea_path),
     ]
-    assert mock_run.call_args.kwargs["cwd"] == str(chain_module.megaplan_engine_root())
+    assert mock_run.call_args.kwargs["cwd"] == str(tmp_path)
     env = mock_run.call_args.kwargs["env"]
     assert env["PYTHONPATH"].split(os.pathsep)[0] == str(chain_module.megaplan_engine_root())
+
+
+def test_init_plan_resolves_relative_idea_against_project_root_and_uses_absolute_args(tmp_path: Path) -> None:
+    idea_path = _touch_idea(tmp_path, "relative.txt", "hello")
+    proc = subprocess.CompletedProcess(args=[], returncode=0, stdout='{"plan": "demo"}', stderr="")
+
+    with patch("arnold.pipelines.megaplan.chain.subprocess.run", return_value=proc) as mock_run:
+        from arnold.pipelines.megaplan.chain import _init_plan
+
+        assert _init_plan(
+            tmp_path,
+            str(Path("ideas") / idea_path.name),
+            robustness="standard",
+            auto_approve=True,
+            writer=lambda _m: None,
+        ) == "demo"
+
+    argv = mock_run.call_args.args[0]
+    assert argv[argv.index("--project-dir") + 1] == str(tmp_path.resolve())
+    assert argv[argv.index("--idea-file") + 1] == str(idea_path.resolve())
+    assert mock_run.call_args.kwargs["cwd"] == str(tmp_path.resolve())
+
+
+def test_run_chain_persists_execution_contract_before_driving(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(tmp_path, {"milestones": [{"label": "m1", "idea": str(idea)}]})
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    with patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("arnold.pipelines.megaplan.chain._init_plan", return_value="plan-m1"), \
+         patch("arnold.pipelines.megaplan.chain._drive_plan", return_value=_fake_outcome("plan-m1", "done")):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert result["status"] == "done"
+    metadata = load_chain_state(spec_path).metadata["engine_isolation"]
+    assert metadata["last_observed_phase"] == "chain_start"
+    assert Path(metadata["target_root"]).is_absolute()
+    assert Path(metadata["engine_root"]).is_absolute()
+
+
+def test_run_chain_refuses_preflight_before_init_or_drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(tmp_path, {"milestones": [{"label": "m1", "idea": str(idea)}]})
+    calls: list[str] = []
+
+    def refuse(*_args, **_kwargs):
+        raise CliError("engine_pin_drift", "refuse before chain mutation")
+
+    def should_not_run(*_args, **_kwargs):
+        calls.append("ran")
+        raise AssertionError("chain should refuse before init/drive")
+
+    monkeypatch.setattr(chain_module, "resolve_execution_environment", refuse)
+    monkeypatch.setattr(chain_module, "_init_plan", should_not_run)
+    monkeypatch.setattr(chain_module, "_drive_plan", should_not_run)
+
+    with pytest.raises(CliError) as excinfo:
+        run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert excinfo.value.code == "engine_pin_drift"
+    assert calls == []
 
 
 def test_init_plan_long_options_are_registered_on_init_parser() -> None:
@@ -2851,6 +3048,7 @@ def test_initialized_plan_receives_chain_policy_metadata(
         "idea": str(idea),
     }
     (plan_dir / "state.json").write_text(json.dumps(stub_state), encoding="utf-8")
+    _write_authoritative_execution_batch(tmp_path, "plan-stub-20260520")
 
     with patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
          patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch"), \
@@ -2900,6 +3098,7 @@ def test_initialized_plan_respects_runtime_override_source(
         "idea": str(idea),
     }
     (plan_dir / "state.json").write_text(json.dumps(stub_state), encoding="utf-8")
+    _write_authoritative_execution_batch(tmp_path, "plan-stub-20260520")
 
     with patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
          patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch"), \
@@ -2960,3 +3159,51 @@ def test_latest_execute_result_logs_corrupt_state(
     caplog.set_level("WARNING", logger="megaplan")
     assert chain_module._latest_execute_result(plan_dir) is None
     assert any("M3A_WARN_EXECUTE_RESULT_READ" in record.getMessage() for record in caplog.records)
+
+
+def test_latest_execution_batch_completion_requires_corroborated_task_evidence(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps({"task_updates": [{"task_id": "T1", "status": "done"}]}),
+        encoding="utf-8",
+    )
+
+    all_done, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert all_done is False
+    assert "non-authoritative tasks" in reason
+    assert "T1" in reason
+
+
+def test_latest_execution_batch_completion_requires_finalize_authority(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["arnold/pipelines/megaplan/chain/__init__.py"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": "T1", "status": "done"}]}),
+        encoding="utf-8",
+    )
+
+    all_done, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert all_done is False
+    assert "finalize.json has non-authoritative tasks" in reason
+    assert "T1" in reason
