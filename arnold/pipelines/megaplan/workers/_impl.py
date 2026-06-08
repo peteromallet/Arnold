@@ -72,12 +72,21 @@ from arnold.pipelines.megaplan.model_seam import (
     schema_audits_step_payload,
 )
 from arnold.pipelines.megaplan.runtime.process import TmuxSession, kill_group, spawn
+from arnold.pipelines.megaplan.runtime.engine_isolation import engine_write_barrier
+from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
+from arnold.pipelines.megaplan.runtime.execution_environment import (
+    ExecutionEnvironment,
+    classify_path_overlap,
+    isolation_cli_error,
+    latest_engine_overlap_waiver,
+)
 
 
 from arnold.pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _CODEX_TEMPLATE_WRITE_STEPS = {"critique", "review"}
+_MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
 
 # Shared mapping from step name to schema filename, used by both
 # run_claude_step and run_codex_step.
@@ -353,8 +362,8 @@ def resolve_work_dir(state: PlanState) -> Path:
     1. Explicit override set via :func:`set_work_dir_override` (e.g. from the
        CLI ``--work-dir`` flag).
     2. The plan's stored ``project_dir`` (persisted at ``megaplan init``).
-    3. Current working directory (``Path.cwd()``) as a last-resort fallback
-       when the plan has no ``project_dir`` recorded.
+    Missing or stale ``project_dir`` fails closed unless an explicit override
+    was supplied.
 
     If the resolved path differs from the plan's stored ``project_dir``, a
     one-time informational line is printed so operators notice worktree
@@ -363,21 +372,30 @@ def resolve_work_dir(state: PlanState) -> Path:
     entry point — this function keeps the log terse because it fires on every
     worker invocation.)
     """
-    try:
-        project_dir = Path(state["config"]["project_dir"]).resolve()
-    except Exception:
-        project_dir = None
     override = _WORK_DIR_OVERRIDE.get()
     if override is not None:
-        work_dir = override
-    elif project_dir is not None:
-        work_dir = project_dir
-    else:
-        work_dir = Path.cwd()
+        resolved_override = Path(override).expanduser().resolve()
+        if not resolved_override.is_dir():
+            raise CliError(
+                "invalid_work_dir",
+                f"worker work-dir override does not exist or is not a directory: {resolved_override}",
+            )
+        return resolved_override
     try:
-        resolved_work = work_dir.resolve()
-    except Exception:
-        resolved_work = work_dir
+        raw_project_dir = state["config"]["project_dir"]
+    except Exception as exc:
+        raise CliError(
+            "missing_project_dir",
+            "plan state is missing config.project_dir; refusing to use process cwd for worker execution",
+        ) from exc
+    project_dir = Path(str(raw_project_dir)).expanduser().resolve()
+    if not project_dir.is_dir():
+        raise CliError(
+            "stale_project_dir",
+            f"plan config.project_dir does not exist or is not a directory: {project_dir}",
+        )
+    work_dir = project_dir
+    resolved_work = work_dir.resolve()
     if project_dir is not None and resolved_work != project_dir:
         with _WORK_DIR_WARNED_LOCK:
             if resolved_work not in _WORK_DIR_WARNED:
@@ -387,7 +405,88 @@ def resolve_work_dir(state: PlanState) -> Path:
                     f"subprocess --add-dir. Override with --work-dir if needed.",
                     flush=True,
                 )
-    return work_dir
+    return resolved_work
+
+
+def _guard_mutating_worker_launch(step: str, state: PlanState, root: Path) -> None:
+    if step not in _MUTATING_WORKER_STEPS:
+        return
+    env = resolve_execution_environment(root=root, state=state)
+    proof = engine_write_barrier(env, step)
+    _record_engine_verification(
+        state,
+        step=step,
+        timing="before_worker",
+        env=env,
+        proof=proof.to_dict() if hasattr(proof, "to_dict") else {"provider": type(proof).__name__},
+    )
+
+
+def _record_engine_verification(
+    state: PlanState,
+    *,
+    step: str,
+    timing: str,
+    env: ExecutionEnvironment,
+    proof: dict[str, Any] | None = None,
+) -> None:
+    meta = state.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+        state["meta"] = meta
+    verifications = meta.setdefault("engine_isolation_verifications", [])
+    if not isinstance(verifications, list):
+        verifications = []
+        meta["engine_isolation_verifications"] = verifications
+    record: dict[str, Any] = {
+        "phase": step,
+        "timing": timing,
+        "engine_root": str(env.engine_root),
+        "engine_commit": env.engine_commit,
+        "engine_signature": env.engine_signature,
+        "engine_dirty": env.engine_dirty,
+    }
+    if proof is not None:
+        record["proof"] = proof
+    verifications.append(record)
+
+
+def _verify_engine_after_mutating_worker(
+    step: str,
+    state: PlanState,
+    root: Path,
+    before_env: ExecutionEnvironment,
+) -> None:
+    if step not in _MUTATING_WORKER_STEPS:
+        return
+    after_env = resolve_execution_environment(root=root, state=state)
+    _record_engine_verification(
+        state,
+        step=step,
+        timing="after_worker",
+        env=after_env,
+    )
+    drift: dict[str, dict[str, Any]] = {}
+    for key, before, after in (
+        ("engine_root", str(before_env.engine_root), str(after_env.engine_root)),
+        ("engine_commit", before_env.engine_commit, after_env.engine_commit),
+        ("engine_signature", before_env.engine_signature, after_env.engine_signature),
+    ):
+        if before != after:
+            drift[key] = {"pinned": before, "observed": after}
+    if drift:
+        raise isolation_cli_error(
+            "engine_mutated_during_worker",
+            "engine identity changed during mutating worker execution",
+            env=after_env,
+            extra={
+                "phase": step,
+                "drift": drift,
+                "pinned_engine_root": str(before_env.engine_root),
+                "pinned_engine_commit": before_env.engine_commit,
+                "pinned_engine_signature": before_env.engine_signature,
+            },
+        )
 
 
 def warn_if_work_dir_differs_from_project_dir(state: PlanState) -> None:
@@ -1066,7 +1165,83 @@ def _trusted_container() -> bool:
     }
 
 
-def _sandbox_fingerprint(work_dir: Path | str) -> str:
+def _codex_writable_roots(
+    work_dir: Path | str,
+    state: PlanState,
+    env: ExecutionEnvironment,
+    *,
+    phase: str | None = None,
+) -> list[str]:
+    """Return Codex writable roots after engine-overlap filtering.
+
+    The target work dir is always present. Auto/configured extra roots are
+    accepted only when they are disjoint from the engine root.
+    """
+
+    roots: list[tuple[Path, str]] = [(Path(work_dir).resolve(), "target_work_dir")]
+    roots.extend((Path(root).resolve(), "auto") for root in _auto_writable_roots(Path(work_dir)))
+    try:
+        raw_extra = state.get("config", {}).get("extra_writable_roots", []) or []
+        if isinstance(raw_extra, list):
+            for root in raw_extra:
+                if not isinstance(root, str):
+                    continue
+                path = Path(root)
+                roots.append(
+                    (
+                        (Path(work_dir) / path).resolve() if not path.is_absolute() else path.resolve(),
+                        "configured",
+                    )
+                )
+    except Exception:
+        pass
+
+    seen: set[str] = set()
+    filtered: list[str] = []
+    for root, source in roots:
+        root_str = str(root)
+        if root_str in seen:
+            continue
+        seen.add(root_str)
+        overlap = classify_path_overlap(root, env.engine_root)
+        if overlap != "disjoint":
+            waiver = latest_engine_overlap_waiver(state.get("meta") if isinstance(state, dict) else None)
+            scope = waiver.get("scope") if isinstance(waiver, dict) else None
+            identity = waiver.get("engine_identity") if isinstance(waiver, dict) else None
+            waiver_allows_phase = (
+                isinstance(waiver, dict)
+                and waiver.get("action") == "waive-engine-overlap"
+                and (phase is None or waiver.get("consumed_by_phase") == phase)
+                and isinstance(scope, dict)
+                and scope.get("target_root") == str(env.target_root)
+                and scope.get("work_dir") == str(env.work_dir)
+                and scope.get("engine_root") == str(env.engine_root)
+                and isinstance(identity, dict)
+                and identity.get("engine_signature") == env.engine_signature
+                and identity.get("engine_commit") == env.engine_commit
+            )
+            if waiver_allows_phase:
+                filtered.append(root_str)
+                continue
+            raise isolation_cli_error(
+                "codex_writable_root_overlaps_engine",
+                "Codex writable root overlaps the engine root; refusing engine-writable sandbox",
+                env=env,
+                extra={
+                    "writable_root": root_str,
+                    "writable_root_source": source,
+                    "overlap": overlap,
+                    "latest_engine_overlap_waiver_id": waiver.get("id") if isinstance(waiver, dict) else None,
+                },
+            )
+        filtered.append(root_str)
+    work_str = str(Path(work_dir).resolve())
+    if work_str not in filtered:
+        filtered.insert(0, work_str)
+    return filtered
+
+
+def _codex_sandbox_fingerprint(work_dir: Path | str, state: PlanState, env: ExecutionEnvironment) -> str:
     """Return a stable hash of the sandbox-affecting inputs for codex.
 
     Captures every input that would change codex's effective sandbox
@@ -1082,13 +1257,17 @@ def _sandbox_fingerprint(work_dir: Path | str) -> str:
     ``MEGAPLAN_TRUSTED_CONTAINER=1`` *after* a session was created and
     codex keeps using the locked-in (broken) sandbox forever.
     """
-    trusted = "1" if _trusted_container() else "0"
-    try:
-        work_resolved = str(Path(work_dir).resolve())
-    except Exception:
-        work_resolved = str(work_dir)
-    payload = f"trusted={trusted}\nwork_dir={work_resolved}\n"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    waiver = latest_engine_overlap_waiver(state.get("meta") if isinstance(state, dict) else None)
+    payload = {
+        "trusted_container": _trusted_container(),
+        "work_dir": str(Path(work_dir).resolve()),
+        "writable_roots": [] if _trusted_container() else _codex_writable_roots(work_dir, state, env),
+        "engine_root": str(env.engine_root),
+        "engine_signature": env.engine_signature,
+        "engine_commit": env.engine_commit,
+        "latest_engine_overlap_waiver_id": waiver.get("id") if isinstance(waiver, dict) else None,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
 def _worker_isolated_env_vars() -> list[str]:
@@ -1584,7 +1763,7 @@ def _recover_payload_from_candidates(
     for candidate in candidates:
         if not validate:
             return dict(candidate)
-        payload = dict(candidate)
+        payload = _normalize_step_payload_for_audit(step, dict(candidate))
         try:
             audit_step_payload(step, payload)
         except ModelStructuralAuditError as error:
@@ -1656,6 +1835,45 @@ def parse_json_file(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise CliError("parse_error", f"Output file {path.name} did not contain a JSON object")
     return payload
+
+
+def _normalize_step_payload_for_audit(step: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if step != "critique":
+        return payload
+    checks = payload.get("checks")
+    if not isinstance(checks, list):
+        return payload
+    changed = False
+    clean_checks: list[Any] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            clean_checks.append(check)
+            continue
+        findings = check.get("findings")
+        if not isinstance(findings, list):
+            clean_checks.append(check)
+            continue
+        clean_findings: list[Any] = []
+        check_changed = False
+        for finding in findings:
+            if not isinstance(finding, dict):
+                clean_findings.append(finding)
+                continue
+            extra_keys = set(finding) - {"detail", "flagged"}
+            if extra_keys:
+                finding = {k: v for k, v in finding.items() if k in {"detail", "flagged"}}
+                check_changed = True
+            clean_findings.append(finding)
+        if check_changed:
+            check = dict(check)
+            check["findings"] = clean_findings
+            changed = True
+        clean_checks.append(check)
+    if not changed:
+        return payload
+    clean_payload = dict(payload)
+    clean_payload["checks"] = clean_checks
+    return clean_payload
 
 
 def validate_payload(step: str, payload: dict[str, Any]) -> None:
@@ -1929,8 +2147,15 @@ def run_codex_step(
     if os.getenv(MOCK_ENV_VAR) == "1":
         _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
-    project_dir = Path(state["config"]["project_dir"])
     work_dir = resolve_work_dir(state)
+    execution_env = resolve_execution_environment(root=root, state=state)
+    sandbox_fingerprint = (
+        "read-only"
+        if read_only
+        else _codex_sandbox_fingerprint(work_dir, state, execution_env)
+    )
+    if not read_only:
+        _guard_mutating_worker_launch(step, state, root)
     plan_mode = state["config"].get("mode", "code")
     codex_schema_name = (
         get_execution_schema_key(plan_mode, form=creative_form_id(state))
@@ -1940,6 +2165,17 @@ def run_codex_step(
     schema_file = schemas_root(root) / codex_schema_name
     session_key = session_key_for(step, "codex", model=model)
     session = state["sessions"].get(session_key, {})
+    if persistent and step == "execute" and session.get("id") and not fresh:
+        prior_fingerprint = session.get("sandbox_fingerprint")
+        if prior_fingerprint and prior_fingerprint != sandbox_fingerprint:
+            print(
+                f"[megaplan] Codex executor session {session['id']} sandbox "
+                "fingerprint changed; starting execute with a fresh session",
+                flush=True,
+            )
+            state["sessions"].pop(session_key, None)
+            session = {}
+            fresh = True
     if fresh and persistent and step == "execute" and session.get("id"):
         print(
             f"[megaplan] Fresh codex execute requested; invalidating prior "
@@ -2052,34 +2288,7 @@ def run_codex_step(
             # (e.g. tools/ as project_dir but plan creates animations/ at the
             # workspace root). Roots are passed verbatim to codex; relative
             # paths are resolved against work_dir.
-            extra_roots: list[str] = []
-            # Auto-widen the sandbox to the enclosing workspace root when
-            # work_dir is a subdirectory of a larger checkout. Without this,
-            # plans whose project_dir is e.g. ``tools/`` get blocked from
-            # writing siblings like ``effects/`` even though they're part of
-            # the same repo. Set MEGAPLAN_NARROW_SANDBOX=1 to opt out.
-            extra_roots.extend(_auto_writable_roots(Path(work_dir)))
-            try:
-                state_path = plan_dir / "state.json"
-                if state_path.is_file():
-                    state_data = json.loads(state_path.read_text(encoding="utf-8"))
-                    raw_extra = state_data.get("config", {}).get("extra_writable_roots", []) or []
-                    if isinstance(raw_extra, list):
-                        for root in raw_extra:
-                            if not isinstance(root, str):
-                                continue
-                            resolved = (Path(work_dir) / root).resolve() if not Path(root).is_absolute() else Path(root).resolve()
-                            extra_roots.append(str(resolved))
-            except Exception:
-                pass
-            # Deduplicate while preserving order; ensures work_dir is first
-            # (codex treats the first entry as the primary workspace).
-            seen: set[str] = set()
-            roots: list[str] = []
-            for r in [str(work_dir), *extra_roots]:
-                if r not in seen:
-                    seen.add(r)
-                    roots.append(r)
+            roots = _codex_writable_roots(work_dir, state, execution_env, phase=step)
             roots_literal = ", ".join(f"\"{r}\"" for r in roots)
             command.extend([
                 "-c",
@@ -2132,6 +2341,8 @@ def run_codex_step(
             pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
             idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
         )
+        if not read_only:
+            _verify_engine_after_mutating_worker(step, state, root, execution_env)
     except CliError as error:
         error.extra["raw_output"] = _merge_partial_output(
             str(error.extra.get("raw_output", "")),
@@ -2252,7 +2463,10 @@ def run_codex_step(
                     ),
                     str(error.extra.get("raw_output", "")),
                 )
-                recovered_payload = dict(capture_outcome.legacy_payload)
+                recovered_payload = _normalize_step_payload_for_audit(
+                    step,
+                    dict(capture_outcome.legacy_payload),
+                )
             except (json.JSONDecodeError, ModelStructuralAuditError):
                 recovered_payload = None
             if recovered_payload is not None:
@@ -2414,7 +2628,10 @@ def run_codex_step(
             ),
             raw,
         )
-        payload = dict(capture_outcome.legacy_payload)
+        payload = _normalize_step_payload_for_audit(
+            step,
+            dict(capture_outcome.legacy_payload),
+        )
     except json.JSONDecodeError:
         payload = None
     except ModelStructuralAuditError as error:
@@ -2477,6 +2694,15 @@ def run_codex_step(
     cost_usd, prompt_tokens, completion_tokens, model_actual, current_totals = _codex_step_cost(
         cost_session_id, session_entry
     )
+    should_record_session = persistent and not (
+        step == "execute" and os.getenv("MEGAPLAN_CODEX_EXECUTE_PERSIST_SESSION") != "1"
+    )
+    if should_record_session and isinstance(state.get("sessions"), dict):
+        entry = state["sessions"].setdefault(session_key, {})
+        if isinstance(entry, dict):
+            if session_id:
+                entry["id"] = session_id
+            entry["sandbox_fingerprint"] = sandbox_fingerprint
     if current_totals is not None:
         # Persist the running totals so the next step in the same session
         # only bills its own delta. We mutate the existing session entry
@@ -2486,6 +2712,7 @@ def run_codex_step(
             if isinstance(entry, dict):
                 if cost_session_id:
                     entry["id"] = cost_session_id
+                entry["sandbox_fingerprint"] = sandbox_fingerprint
                 entry["last_total_tokens"] = dict(current_totals)
     if cost_usd == 0.0 and cost_session_id and current_totals is None:
         # Don't crash; just leave a breadcrumb so operators can investigate
@@ -2574,7 +2801,7 @@ def run_codex_prep_step(
 
     result = run_command(
         command,
-        cwd=Path(state["config"].get("project_dir", Path.cwd())),
+        cwd=resolve_work_dir(state),
         stdin_text=prompt,
         env=_codex_child_env(turn_id=f'prep_worker_{state["name"]}'),
         timeout=_codex_timeout_for_step("prep"),
@@ -2608,7 +2835,10 @@ def run_codex_prep_step(
             ),
             raw,
         )
-        payload = dict(capture_outcome.legacy_payload)
+        payload = _normalize_step_payload_for_audit(
+            step,
+            dict(capture_outcome.legacy_payload),
+        )
     except json.JSONDecodeError:
         payload = None
     except ModelStructuralAuditError as error:

@@ -46,7 +46,14 @@ from arnold.pipelines.megaplan.supervisor.state import (
     save_supervisor_state,
     validate_supervisor_state,
 )
+from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    corroborated_completed_task_ids,
+)
 from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.runtime.execution_environment import (
+    merge_isolation_evidence,
+    resolve_execution_environment,
+)
 
 SUPERVISOR_DRIVER_ESCALATE_ACTION = "fail"
 
@@ -115,11 +122,26 @@ def run_chain(
     spec = chain_spec.load_spec(spec_path)
     chain_spec.validate_paths(spec, root)
     chain_state = chain_spec.load_chain_state(spec_path)
+    env = resolve_execution_environment(
+        root=root,
+        state={"config": {"project_dir": str(root), "base_branch": spec.base_branch}},
+    )
+    chain_state.metadata = merge_isolation_evidence(
+        chain_state.metadata,
+        env,
+        phase="supervisor_chain_start",
+    )
+    chain_spec.save_chain_state(spec_path, chain_state)
     state_id = str(spec_path)
     supervisor_state = _load_or_create_supervisor_state(
         root=root,
         state_id=state_id,
         spec=spec,
+    )
+    supervisor_state.metadata = merge_isolation_evidence(
+        supervisor_state.metadata,
+        env,
+        phase="supervisor_chain_start",
     )
     driver = driver or DefaultRunDriver()
     pack_runner = pack_runner or ChainMilestonePackRunner()
@@ -648,14 +670,25 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     if not task_records:
         return False, f"{latest.name} has no task records"
 
-    incomplete: list[str] = []
+    decisions: dict[str, Any] = {}
+    completed = corroborated_completed_task_ids(
+        task_records,
+        plan_dir=plan_dir,
+        decisions=decisions,
+    )
+    pending: list[str] = []
     for task in task_records:
-        if task.get("status") == "done":
+        task_id = str(task.get("task_id") or task.get("id") or "?")
+        if task_id in completed:
             continue
-        task_id = task.get("task_id") or task.get("id") or "?"
-        incomplete.append(f"{task_id}={task.get('status')!r}")
-    if incomplete:
-        return False, f"{latest.name} has non-done tasks: {', '.join(incomplete)}"
+        decision = decisions.get(task_id)
+        authority_status = getattr(getattr(decision, "status", None), "value", None)
+        if authority_status is None:
+            authority_status = "unknown"
+        raw_status = task.get("status")
+        pending.append(f"{task_id}={raw_status!r}:authority={authority_status}")
+    if pending:
+        return False, f"{latest.name} has uncorroborated tasks: {', '.join(pending)}"
     return True, latest.name
 
 

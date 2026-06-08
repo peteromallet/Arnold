@@ -564,6 +564,99 @@ def test_chain_enforce_runner_error_not_blocking(tmp_path, monkeypatch, caplog):
                 for r in caplog.records), "expected structured warning for runner_error"
 
 
+@pytest.mark.parametrize(
+    ("mode", "suite_result", "expected_auto", "expected_chain_blocked"),
+    [
+        (
+            "shadow",
+            {
+                "failures": ["tests/test_foo.py::test_a"],
+                "passes": [],
+                "collected_ids": ["tests/test_foo.py::test_a"],
+                "status": "failed",
+                "exit_code": 1,
+            },
+            "done",
+            False,
+        ),
+        (
+            "warn",
+            {
+                "failures": ["tests/test_foo.py::test_a"],
+                "passes": [],
+                "collected_ids": ["tests/test_foo.py::test_a"],
+                "status": "failed",
+                "exit_code": 1,
+            },
+            "done",
+            False,
+        ),
+        (
+            "enforce",
+            {
+                "failures": ["tests/test_foo.py::test_a"],
+                "passes": [],
+                "collected_ids": ["tests/test_foo.py::test_a"],
+                "status": "failed",
+                "exit_code": 1,
+            },
+            "routed",
+            True,
+        ),
+        (
+            "enforce",
+            {
+                "failures": [],
+                "passes": [],
+                "collected_ids": [],
+                "status": "runner_error",
+                "exit_code": 2,
+                "collections_parse_ok": False,
+            },
+            "done",
+            False,
+        ),
+    ],
+)
+def test_auto_and_chain_completion_hooks_remain_mode_compatible(
+    tmp_path,
+    monkeypatch,
+    mode,
+    suite_result,
+    expected_auto,
+    expected_chain_blocked,
+):
+    """Auto and chain completion hooks preserve the same shadow/warn/enforce outcomes."""
+    from arnold.pipelines.megaplan import auto
+    from arnold.pipelines.megaplan.chain import _shadow_milestone_completion_verdict
+
+    auto_root = tmp_path / "auto"
+    auto_root.mkdir()
+    plan_dir, _ = _make_plan_dir(auto_root, mode=mode)
+    root = tmp_path / "chain"
+    root.mkdir()
+    plan_name = f"{mode}-plan"
+    _make_chain_plan_dir(root, plan_name, mode=mode)
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: _make_run_result(**suite_result),
+    )
+
+    auto_result = auto._shadow_completion_verdict("plan-x", plan_dir, None, log=lambda m, **k: None)
+    chain_blocked = _shadow_milestone_completion_verdict(
+        root,
+        plan_name,
+        "milestone-1",
+        "done",
+        mode,
+        log_fn=lambda m: None,
+    )
+
+    assert auto_result == expected_auto
+    assert chain_blocked is expected_chain_blocked
+
+
 def test_chain_enforce_revise_retry_cap(tmp_path, monkeypatch):
     """chain runner halts with 'blocked' status when enforce retry cap is exhausted."""
     from arnold.pipelines.megaplan.chain import ChainState, _shadow_milestone_completion_verdict

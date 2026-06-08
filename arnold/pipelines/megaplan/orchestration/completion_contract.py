@@ -31,10 +31,19 @@ import os
 import shlex
 import tempfile
 import time
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+from arnold.pipelines.megaplan._core.io import sha256_file, sha256_text
+from arnold.pipelines.megaplan.orchestration.evidence_contract import (
+    ArtifactRef,
+    EVIDENCE_CONTRACT_SCHEMA_VERSION,
+    EvidenceRef,
+    EvidenceStatus,
+    TrustClass,
+    normalize_evidence_status,
+)
 
 log = logging.getLogger("megaplan.orchestration.completion_contract")
 
@@ -79,6 +88,10 @@ VALID_CONTRACT_MODES: frozenset[str] = frozenset(
 
 DEFAULT_CONTRACT_MODE = CONTRACT_MODE_SHADOW
 
+COMPLETION_VERDICT_SCHEMA = "megaplan.completion_verdict"
+COMPLETION_VERDICT_SCHEMA_VERSION = 1
+COMPLETION_VERDICT_CONTRACT_VERSION = EVIDENCE_CONTRACT_SCHEMA_VERSION
+
 
 def normalize_contract_mode(value: Any) -> str:
     """Coerce *value* to a valid contract mode, defaulting to shadow."""
@@ -87,28 +100,22 @@ def normalize_contract_mode(value: Any) -> str:
     return DEFAULT_CONTRACT_MODE
 
 
+def _optional_str(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _optional_int(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
-
-
-class EvidenceStatus(str, Enum):
-    """Status of one evidence class for a subject.
-
-    ``unsatisfied`` is the only status that (in a future enforce mode) would
-    deny a transition. ``unknown`` is for "couldn't evaluate" (e.g. signal
-    unavailable) and must NEVER be treated as a failure — we mark unknown
-    rather than guess (per B-impl-reuse).
-    """
-
-    satisfied = "satisfied"
-    unsatisfied = "unsatisfied"
-    not_applicable = "not_applicable"
-    not_evaluated = "not_evaluated"
-    unknown = "unknown"
-    # review-specific: review reported success but only via a force-proceed at
-    # the rework cap — informational in shadow.
-    fail_not_success = "fail-not-success"
 
 
 @dataclass(frozen=True)
@@ -134,37 +141,16 @@ class CompletionSubject:
             "milestone_label": self.milestone_label,
         }
 
-
-@dataclass(frozen=True)
-class EvidenceRef:
-    """One evidence class's observation for a subject."""
-
-    kind: str
-    status: EvidenceStatus
-    summary: str
-    details: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "kind": self.kind,
-            "status": self.status.value,
-            "summary": self.summary,
-            "details": dict(self.details),
-        }
-
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "EvidenceRef":
-        raw_status = d.get("status", EvidenceStatus.unknown.value)
-        try:
-            status = EvidenceStatus(raw_status)
-        except ValueError:
-            status = EvidenceStatus.unknown
-        details = d.get("details")
+    def from_dict(cls, d: dict[str, Any]) -> "CompletionSubject":
         return cls(
-            kind=str(d.get("kind", "?")),
-            status=status,
-            summary=str(d.get("summary", "")),
-            details=dict(details) if isinstance(details, dict) else {},
+            kind=str(d.get("kind", "")),
+            name=str(d.get("name", "")),
+            to_state=str(d.get("to_state", "")),
+            from_state=_optional_str(d.get("from_state")),
+            phase=_optional_str(d.get("phase")),
+            plan_name=_optional_str(d.get("plan_name")),
+            milestone_label=_optional_str(d.get("milestone_label")),
         )
 
 
@@ -172,10 +158,9 @@ class EvidenceRef:
 class CompletionVerdict:
     """The computed verdict for a subject's terminal transition.
 
-    ``accepted`` is True iff no evidence is ``unsatisfied`` (review
-    ``fail-not-success`` is treated as a soft failure that flips ``accepted``
-    to False so the verdict surfaces the force-proceed, but in shadow it does
-    not affect control flow). ``would_block`` mirrors what an enforce mode
+    ``accepted`` is True iff no evidence is canonically ``unsatisfied``.
+    Legacy review ``fail-not-success`` is normalized to ``unsatisfied`` during
+    evidence deserialization. ``would_block`` mirrors what an enforce mode
     would do; in shadow it is purely informational.
     """
 
@@ -184,6 +169,13 @@ class CompletionVerdict:
     evidence: tuple[EvidenceRef, ...]
     accepted: bool
     failures: tuple[str, ...] = ()
+    schema: str = COMPLETION_VERDICT_SCHEMA
+    schema_version: int = COMPLETION_VERDICT_SCHEMA_VERSION
+    evidence_contract_version: int = COMPLETION_VERDICT_CONTRACT_VERSION
+    providers_used: tuple[str, ...] = ()
+    legacy_evidence_count: int = 0
+    unknown_evidence_count: int = 0
+    would_block_reasons: tuple[str, ...] = ()
 
     @property
     def would_block(self) -> bool:
@@ -191,12 +183,19 @@ class CompletionVerdict:
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
+            "schema": COMPLETION_VERDICT_SCHEMA,
+            "schema_version": COMPLETION_VERDICT_SCHEMA_VERSION,
+            "evidence_contract_version": COMPLETION_VERDICT_CONTRACT_VERSION,
             "mode": self.mode,
             "subject": self.subject.to_dict(),
             "evidence": [e.to_dict() for e in self.evidence],
             "accepted": self.accepted,
             "would_block": self.would_block,
             "failures": list(self.failures),
+            "providers_used": list(self.providers_used),
+            "legacy_evidence_count": self.legacy_evidence_count,
+            "unknown_evidence_count": self.unknown_evidence_count,
+            "would_block_reasons": list(self.would_block_reasons),
         }
         # Surface green_suite.delta at the top level for easy consumption
         # (also available under evidence[].details.delta for the green_suite ref).
@@ -209,14 +208,58 @@ class CompletionVerdict:
                 break
         return d
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "CompletionVerdict":
+        raw_subject = d.get("subject")
+        subject = (
+            CompletionSubject.from_dict(raw_subject)
+            if isinstance(raw_subject, dict)
+            else CompletionSubject(kind="", name="", to_state="")
+        )
+        raw_evidence = d.get("evidence", ())
+        if not isinstance(raw_evidence, (list, tuple)):
+            raw_evidence = ()
+        evidence = tuple(
+            EvidenceRef.from_dict(item)
+            for item in raw_evidence
+            if isinstance(item, dict)
+        )
+        failures = d.get("failures", ())
+        if not isinstance(failures, (list, tuple)):
+            failures = ()
+        providers_used = d.get("providers_used", ())
+        if not isinstance(providers_used, (list, tuple)):
+            providers_used = ()
+        would_block_reasons = d.get("would_block_reasons", ())
+        if not isinstance(would_block_reasons, (list, tuple)):
+            would_block_reasons = ()
+        return cls(
+            mode=normalize_contract_mode(d.get("mode")),
+            subject=subject,
+            evidence=evidence,
+            accepted=bool(d.get("accepted", False)),
+            failures=tuple(str(item) for item in failures),
+            schema=str(d.get("schema", COMPLETION_VERDICT_SCHEMA)),
+            schema_version=_optional_int(d.get("schema_version")),
+            evidence_contract_version=_optional_int(d.get("evidence_contract_version")),
+            providers_used=tuple(str(item) for item in providers_used),
+            legacy_evidence_count=_optional_int(d.get("legacy_evidence_count")),
+            unknown_evidence_count=_optional_int(d.get("unknown_evidence_count")),
+            would_block_reasons=tuple(str(item) for item in would_block_reasons),
+        )
+
     def one_line(self) -> str:
         verdict = "accepted" if self.accepted else "blocked-would-be"
         if not self.would_block and not self.accepted:
             verdict = "accepted-for-mode"
         fails = ",".join(self.failures) if self.failures else "none"
+        providers = ",".join(self.providers_used) if self.providers_used else "none"
         return (
             f"completion verdict ({self.mode}): {verdict} "
-            f"subject={self.subject.kind}:{self.subject.name} failures=[{fails}]"
+            f"subject={self.subject.kind}:{self.subject.name} failures=[{fails}] "
+            f"providers=[{providers}] "
+            f"legacy_evidence={self.legacy_evidence_count} "
+            f"unknown_evidence={self.unknown_evidence_count}"
         )
 
 
@@ -384,6 +427,94 @@ def _read_finalize(plan_dir: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _evidence_id(
+    kind: str,
+    subject: CompletionSubject,
+    payload: dict[str, Any],
+) -> str:
+    """Return a deterministic id for one evidence observation."""
+    canonical = json.dumps(
+        {
+            "kind": kind,
+            "subject": subject.to_dict(),
+            "payload": payload,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256_text(canonical)
+
+
+def _artifact_ref_for_path(path: Path, *, root: Path, artifact_type: str) -> ArtifactRef | None:
+    try:
+        if not path.is_file():
+            return None
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            rel = str(path)
+        return ArtifactRef(
+            path=rel,
+            sha256=sha256_file(path),
+            artifact_type=artifact_type,
+        )
+    except OSError:
+        return None
+
+
+def _suite_run_record(plan_dir: Path, phase: str, run_id: str) -> dict[str, Any] | None:
+    from arnold.pipelines.megaplan.orchestration.suite_runs_log import latest_run_for_phase
+
+    record = latest_run_for_phase(plan_dir, phase)
+    if not isinstance(record, dict):
+        return None
+    if str(record.get("run_id", "")) != run_id:
+        return None
+    return record
+
+
+def _provider_evidence_ref(
+    *,
+    kind: str,
+    status: EvidenceStatus,
+    summary: str,
+    details: dict[str, Any],
+    ctx: CompletionContext,
+    trust_class: TrustClass,
+    artifact: ArtifactRef | None = None,
+    artifacts: tuple[ArtifactRef, ...] = (),
+    source: str | None = None,
+    code_hash: str | None = None,
+    provider: str | None = None,
+) -> EvidenceRef:
+    """Build a provider ref with stable provenance common to contract providers."""
+    payload = {
+        "status": status.value,
+        "summary": summary,
+        "details": details,
+        "artifact": artifact.to_dict() if artifact is not None else None,
+        "artifacts": [a.to_dict() for a in artifacts],
+        "source": source,
+        "code_hash": code_hash,
+    }
+    enriched_details = dict(details)
+    enriched_details["evidence_id"] = _evidence_id(kind, ctx.subject, payload)
+    return EvidenceRef(
+        kind,
+        status,
+        summary,
+        enriched_details,
+        trust_class=trust_class,
+        provider=provider or f"{type(ctx).__module__}.{kind}",
+        provider_version=str(EVIDENCE_CONTRACT_SCHEMA_VERSION),
+        artifact=artifact,
+        artifacts=artifacts,
+        source=source,
+        subject=ctx.subject.name,
+        code_hash=code_hash,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Evidence providers
 # ---------------------------------------------------------------------------
@@ -401,9 +532,17 @@ class PhaseCoverageProvider:
 
     def collect(self, ctx: CompletionContext) -> EvidenceRef:
         from arnold.pipelines.megaplan.chain import _latest_execution_batch_all_tasks_done
-        from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
+        from arnold.pipelines.megaplan.orchestration.phase_result import (
+            PHASE_RESULT_FILENAME,
+            read_phase_result,
+        )
 
         details: dict[str, Any] = {}
+        artifact = _artifact_ref_for_path(
+            ctx.plan_dir / PHASE_RESULT_FILENAME,
+            root=ctx.plan_dir,
+            artifact_type="application/json",
+        )
         phase_result = read_phase_result(ctx.plan_dir)
         if phase_result is not None:
             details["phase"] = phase_result.phase
@@ -412,22 +551,55 @@ class PhaseCoverageProvider:
         try:
             all_done, reason = _latest_execution_batch_all_tasks_done(ctx.plan_dir)
         except Exception as exc:  # fail-soft → unknown, never crash
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.unknown,
-                f"could not evaluate batch coverage: {exc}",
-                details,
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary=f"could not evaluate batch coverage: {exc}",
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=artifact,
+                source=PHASE_RESULT_FILENAME if artifact is not None else None,
+                provider=type(self).__name__,
             )
 
         details["reason"] = reason
         if all_done:
-            return EvidenceRef(
-                self.kind, EvidenceStatus.satisfied, "all batch tasks done", details
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.satisfied,
+                summary="all batch tasks done",
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=artifact,
+                source=PHASE_RESULT_FILENAME if artifact is not None else None,
+                provider=type(self).__name__,
             )
         if "no execution_batch" in reason:
             # No execute artifact at all (e.g. prose/plan-only) → can't judge.
-            return EvidenceRef(self.kind, EvidenceStatus.unknown, reason, details)
-        return EvidenceRef(self.kind, EvidenceStatus.unsatisfied, reason, details)
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary=reason,
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=artifact,
+                source=PHASE_RESULT_FILENAME if artifact is not None else None,
+                provider=type(self).__name__,
+            )
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.unsatisfied,
+            summary=reason,
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.judgment,
+            artifact=artifact,
+            source=PHASE_RESULT_FILENAME if artifact is not None else None,
+            provider=type(self).__name__,
+        )
 
 
 class LandedDiffProvider:
@@ -449,12 +621,22 @@ class LandedDiffProvider:
         )
 
         finalize = _read_finalize(ctx.plan_dir)
+        finalize_artifact = _artifact_ref_for_path(
+            ctx.plan_dir / "finalize.json",
+            root=ctx.plan_dir,
+            artifact_type="application/json",
+        )
         if not finalize:
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.unknown,
-                "no finalize.json to evaluate landed diff",
-                {},
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="no finalize.json to evaluate landed diff",
+                details={},
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=finalize_artifact,
+                source="finalize.json" if finalize_artifact is not None else None,
+                provider=type(self).__name__,
             )
 
         try:
@@ -462,11 +644,16 @@ class LandedDiffProvider:
                 finalize, ctx.project_dir, state=ctx.state
             )
         except Exception as exc:
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.unknown,
-                f"could not evaluate landed diff: {exc}",
-                {},
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary=f"could not evaluate landed diff: {exc}",
+                details={},
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=finalize_artifact,
+                source="execution_evidence.validate_execution_evidence",
+                provider=type(self).__name__,
             )
 
         findings = result.get("findings") or []
@@ -482,11 +669,16 @@ class LandedDiffProvider:
         }
 
         if result.get("skipped"):
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.unknown,
-                f"evidence check skipped: {result.get('reason')}",
-                details,
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary=f"evidence check skipped: {result.get('reason')}",
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=finalize_artifact,
+                source="execution_evidence.validate_execution_evidence",
+                provider=type(self).__name__,
             )
 
         prose = False
@@ -509,21 +701,39 @@ class LandedDiffProvider:
         # Empty diff in code mode == abandonment signal (unless a waiver exists,
         # which the driver folds in separately). Prose mode tracks sections.
         if real_findings:
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.unsatisfied,
-                "execution evidence findings: " + "; ".join(str(f) for f in real_findings),
-                details,
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary="execution evidence findings: " + "; ".join(str(f) for f in real_findings),
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=finalize_artifact,
+                source="execution_evidence.validate_execution_evidence",
+                provider=type(self).__name__,
             )
         if not prose and not files_in_diff:
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.unsatisfied,
-                "no files in working-tree diff (possible abandonment / zero-diff)",
-                details,
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary="no files in working-tree diff (possible abandonment / zero-diff)",
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=finalize_artifact,
+                source="execution_evidence.validate_execution_evidence",
+                provider=type(self).__name__,
             )
-        return EvidenceRef(
-            self.kind, EvidenceStatus.satisfied, "diff present and claim-consistent", details
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.satisfied,
+            summary="diff present and claim-consistent",
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.judgment,
+            artifact=finalize_artifact,
+            source="execution_evidence.validate_execution_evidence",
+            provider=type(self).__name__,
         )
 
 
@@ -541,12 +751,28 @@ class WorkerDidWorkProvider:
 
     def collect(self, ctx: CompletionContext) -> EvidenceRef:
         batches = sorted(ctx.plan_dir.glob("execution_batch_*.json"))
+        artifacts = tuple(
+            ref
+            for ref in (
+                _artifact_ref_for_path(
+                    batch_path,
+                    root=ctx.plan_dir,
+                    artifact_type="application/json",
+                )
+                for batch_path in batches
+            )
+            if ref is not None
+        )
         if not batches:
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.unknown,
-                "no execution_batch_*.json to assess worker activity",
-                {},
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="no execution_batch_*.json to assess worker activity",
+                details={},
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="execution_batch_*.json",
+                provider=type(self).__name__,
             )
 
         files_changed = 0
@@ -574,18 +800,32 @@ class WorkerDidWorkProvider:
             "commands_run": commands_run,
             "sections_written": sections_written,
             "batches": len(batches),
+            "batch_artifacts": [artifact.path for artifact in artifacts],
             # TODO(enforce): incorporate delegate tool_trace / api_calls count.
             "activity_source": "execution_batch_records",
         }
         if files_changed or commands_run or sections_written:
-            return EvidenceRef(
-                self.kind, EvidenceStatus.satisfied, "worker activity present", details
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.satisfied,
+                summary="worker activity present",
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                artifacts=artifacts,
+                source="execution_batch_*.json",
+                provider=type(self).__name__,
             )
-        return EvidenceRef(
-            self.kind,
-            EvidenceStatus.unsatisfied,
-            "no files changed, commands run, or sections written across any batch",
-            details,
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.unsatisfied,
+            summary="no files changed, commands run, or sections written across any batch",
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.evidence,
+            artifacts=artifacts,
+            source="execution_batch_*.json",
+            provider=type(self).__name__,
         )
 
 
@@ -1067,6 +1307,73 @@ class GreenSuiteProvider:
             details["baseline_stale"] = baseline_stale
         return details
 
+    def _suite_evidence_ref(
+        self,
+        ctx: CompletionContext,
+        status: EvidenceStatus,
+        summary: str,
+        result: "SuiteRunResult",
+        details: dict[str, Any],
+    ) -> EvidenceRef:
+        verification_log = ctx.plan_dir / "verification" / "suite_runs.ndjson"
+        log_record = _suite_run_record(ctx.plan_dir, result.phase, result.run_id)
+        artifacts = tuple(
+            artifact
+            for artifact in (
+                _artifact_ref_for_path(
+                    result.raw_log_path,
+                    root=ctx.plan_dir,
+                    artifact_type="text/plain",
+                ),
+                _artifact_ref_for_path(
+                    verification_log,
+                    root=ctx.plan_dir,
+                    artifact_type="application/x-ndjson",
+                ),
+            )
+            if artifact is not None
+        )
+        details["artifact_refs"] = [artifact.to_dict() for artifact in artifacts]
+        details["suite_run_log_path"] = (
+            verification_log.relative_to(ctx.plan_dir).as_posix()
+            if verification_log.exists()
+            else "verification/suite_runs.ndjson"
+        )
+        if log_record is not None:
+            details["suite_run_log_ts"] = log_record.get("ts")
+        details["evidence_id"] = _evidence_id(
+            self.kind,
+            ctx.subject,
+            {
+                "run_id": result.run_id,
+                "phase": result.phase,
+                "command": result.command,
+                "exit_code": result.exit_code,
+                "status": result.status,
+                "code_hash": result.code_hash,
+                "failure_count": details.get("failure_count"),
+                "collected": details.get("collected"),
+                "freshness_cache_hit": details.get("freshness_cache_hit"),
+                "delta": details.get("delta"),
+                "artifacts": [artifact.to_dict() for artifact in artifacts],
+            },
+        )
+        return EvidenceRef(
+            self.kind,
+            status,
+            summary,
+            details,
+            trust_class=TrustClass.evidence,
+            provider=self.__class__.__name__,
+            provider_version=str(EVIDENCE_CONTRACT_SCHEMA_VERSION),
+            artifact=artifacts[0] if artifacts else None,
+            artifacts=artifacts,
+            source=f"{result.phase}:{result.run_id}",
+            subject=f"{ctx.subject.kind}:{ctx.subject.name}",
+            observed_at=_optional_str(log_record.get("ts")) if log_record is not None else None,
+            code_hash=result.code_hash,
+        )
+
     def _evidence_from_suite_status(
         self,
         ctx: CompletionContext,
@@ -1080,11 +1387,12 @@ class GreenSuiteProvider:
         if delta is not None and not delta.computable:
             details["failures"] = ["runner_error"]
             self._emit_telemetry(ctx, result, delta, details, cached)
-            return EvidenceRef(
-                self.kind,
+            return self._suite_evidence_ref(
+                ctx,
                 EvidenceStatus.unsatisfied,
                 "verification suite ran but delta is not computable "
                 "(collection parse failure in baseline or verification)",
+                result,
                 details,
             )
 
@@ -1095,10 +1403,11 @@ class GreenSuiteProvider:
 
         if result.status == "passed":
             self._emit_telemetry(ctx, result, delta, details, cached)
-            return EvidenceRef(
-                self.kind,
+            return self._suite_evidence_ref(
+                ctx,
                 EvidenceStatus.satisfied,
                 "verification suite passed",
+                result,
                 details,
             )
         elif result.status == "failed":
@@ -1106,28 +1415,31 @@ class GreenSuiteProvider:
         elif result.status == "timeout":
             details["failures"] = ["runner_error"]
             self._emit_telemetry(ctx, result, delta, details, cached)
-            return EvidenceRef(
-                self.kind,
+            return self._suite_evidence_ref(
+                ctx,
                 EvidenceStatus.unsatisfied,
                 f"verification suite timed out after {timeout}s",
+                result,
                 details,
             )
         elif result.status == "runner_error":
             details["failures"] = ["runner_error"]
             self._emit_telemetry(ctx, result, delta, details, cached)
-            return EvidenceRef(
-                self.kind,
+            return self._suite_evidence_ref(
+                ctx,
                 EvidenceStatus.unsatisfied,
                 "verification suite runner error",
+                result,
                 details,
             )
         else:  # unknown/unexpected status – treat as runner_error
             details["failures"] = ["runner_error"]
             self._emit_telemetry(ctx, result, delta, details, cached)
-            return EvidenceRef(
-                self.kind,
+            return self._suite_evidence_ref(
+                ctx,
                 EvidenceStatus.unsatisfied,
                 f"verification suite unexpected status: {result.status}",
+                result,
                 details,
             )
 
@@ -1144,19 +1456,21 @@ class GreenSuiteProvider:
         if baseline_collected > 0:
             details["failures"] = ["runner_error"]
             self._emit_telemetry(ctx, result, delta, details, cached)
-            return EvidenceRef(
-                self.kind,
+            return self._suite_evidence_ref(
+                ctx,
                 EvidenceStatus.unsatisfied,
                 "verification suite runner error: "
                 f"baseline collected {baseline_collected} test(s) "
                 "but verification collected 0 (partial-drop / catastrophic failure)",
+                result,
                 details,
             )
         self._emit_telemetry(ctx, result, delta, details, cached)
-        return EvidenceRef(
-            self.kind,
+        return self._suite_evidence_ref(
+            ctx,
             EvidenceStatus.not_applicable,
             "verification suite not applicable (no tests collected)",
+            result,
             details,
         )
 
@@ -1175,17 +1489,19 @@ class GreenSuiteProvider:
             and not delta.newly_failing
             and not delta.deleted_tests
         ):
-            return EvidenceRef(
-                self.kind,
+            return self._suite_evidence_ref(
+                ctx,
                 EvidenceStatus.satisfied,
                 "verification suite has only pre-existing baseline "
                 f"failures ({len(result.failures)}); no new regressions",
+                result,
                 details,
             )
-        return EvidenceRef(
-            self.kind,
+        return self._suite_evidence_ref(
+            ctx,
             EvidenceStatus.unsatisfied,
             f"verification suite has {len(result.failures)} failing test(s)",
+            result,
             details,
         )
 
@@ -1239,21 +1555,32 @@ class ReviewDispositionProvider:
     """review_disposition — was review a genuine success or a force-proceed?
 
     Reads ``review.json``. If review force-proceeded at the rework cap
-    (review.py:248-252 appends a "Force-proceeding…" issue), record
-    ``fail-not-success`` (informational in shadow). Absence of review.json is
-    ``not_applicable`` (e.g. bare robustness skips review).
+    (review.py:248-252 appends a "Force-proceeding…" issue), record canonical
+    ``unsatisfied`` with legacy provenance in details. Absence of review.json
+    is ``not_applicable`` (e.g. bare robustness skips review).
     """
 
     kind = "review_disposition"
 
     def collect(self, ctx: CompletionContext) -> EvidenceRef:
-        review = _read_json(ctx.plan_dir / "review.json")
+        review_path = ctx.plan_dir / "review.json"
+        review_artifact = _artifact_ref_for_path(
+            review_path,
+            root=ctx.plan_dir,
+            artifact_type="application/json",
+        )
+        review = _read_json(review_path)
         if not isinstance(review, dict):
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.not_applicable,
-                "no review.json (review may have been skipped)",
-                {},
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.not_applicable,
+                summary="no review.json (review may have been skipped)",
+                details={},
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=review_artifact,
+                source="review.json" if review_artifact is not None else None,
+                provider=type(self).__name__,
             )
 
         issues = review.get("issues") or []
@@ -1269,14 +1596,33 @@ class ReviewDispositionProvider:
             "force_proceeded": forced,
         }
         if forced:
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.fail_not_success,
-                "review force-proceeded at the rework cap with unresolved issues",
-                details,
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary="review force-proceeded at the rework cap with unresolved issues",
+                details={
+                    **details,
+                    "diagnostics": {
+                        "legacy_status": "fail-not-success",
+                        "canonical_status": EvidenceStatus.unsatisfied.value,
+                    },
+                },
+                ctx=ctx,
+                trust_class=TrustClass.judgment,
+                artifact=review_artifact,
+                source="review.json",
+                provider=type(self).__name__,
             )
-        return EvidenceRef(
-            self.kind, EvidenceStatus.satisfied, "review reported success", details
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.satisfied,
+            summary="review reported success",
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.judgment,
+            artifact=review_artifact,
+            source="review.json",
+            provider=type(self).__name__,
         )
 
 
@@ -1298,20 +1644,34 @@ class DeclaredNoopProvider:
         ):
             data = _read_json(candidate)
             if isinstance(data, dict):
-                return EvidenceRef(
-                    self.kind,
-                    EvidenceStatus.satisfied,
-                    "typed no-op/waiver artifact present",
-                    {
+                artifact = _artifact_ref_for_path(
+                    candidate,
+                    root=ctx.plan_dir,
+                    artifact_type="application/json",
+                )
+                return _provider_evidence_ref(
+                    kind=self.kind,
+                    status=EvidenceStatus.waived,
+                    summary="typed no-op/waiver artifact present",
+                    details={
                         "artifact": candidate.name,
                         "reason": data.get("reason") or data.get("reason_code"),
                     },
+                    ctx=ctx,
+                    trust_class=TrustClass.claim,
+                    artifact=artifact,
+                    source=artifact.path if artifact is not None else candidate.name,
+                    provider=type(self).__name__,
                 )
-        return EvidenceRef(
-            self.kind,
-            EvidenceStatus.not_applicable,
-            "no declared no-op/waiver artifact (absence is not a failure)",
-            {},
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.not_applicable,
+            summary="no declared no-op/waiver artifact (absence is not a failure)",
+            details={},
+            ctx=ctx,
+            trust_class=TrustClass.claim,
+            source="completion/noop.json|completion_noop.json",
+            provider=type(self).__name__,
         )
 
 
@@ -1332,9 +1692,7 @@ DEFAULT_PROVIDERS: tuple[EvidenceProvider, ...] = (
 # ---------------------------------------------------------------------------
 
 #: Statuses that, in a future enforce mode, would deny a terminal transition.
-_BLOCKING_STATUSES: frozenset[EvidenceStatus] = frozenset(
-    {EvidenceStatus.unsatisfied, EvidenceStatus.fail_not_success}
-)
+_BLOCKING_STATUSES: frozenset[EvidenceStatus] = frozenset({EvidenceStatus.unsatisfied})
 
 
 def compute_verdict(
@@ -1352,12 +1710,13 @@ def compute_verdict(
     bug degrades to ``unknown`` rather than aborting the verdict. This is the
     single entry point the drivers call (inside their own try/except).
 
-    A ``declared_noop`` ``satisfied`` ref acts as a waiver: it downgrades a
+    A ``declared_noop`` ``satisfied`` or ``waived`` ref acts as a waiver: it downgrades a
     ``landed_diff``/``worker_did_work`` ``unsatisfied`` to non-blocking, so an
     honestly-declared no-op passes while silent abandonment still fails.
     """
     mode = normalize_contract_mode(mode)
     refs: list[EvidenceRef] = []
+    providers_invoked: list[str] = []
     ctx = CompletionContext(
         plan_dir=plan_dir,
         project_dir=project_dir,
@@ -1365,12 +1724,14 @@ def compute_verdict(
         subject=subject,
     )
     for provider in providers:
+        kind = getattr(provider, "kind", "unknown")
+        providers_invoked.append(kind)
         try:
             refs.append(provider.collect(ctx))
         except Exception as exc:  # fail-open per provider
             refs.append(
                 EvidenceRef(
-                    getattr(provider, "kind", "unknown"),
+                    kind,
                     EvidenceStatus.unknown,
                     f"provider crashed: {exc}",
                     {},
@@ -1378,7 +1739,9 @@ def compute_verdict(
             )
 
     has_waiver = any(
-        r.kind == "declared_noop" and r.status == EvidenceStatus.satisfied for r in refs
+        r.kind == "declared_noop"
+        and r.status in {EvidenceStatus.satisfied, EvidenceStatus.waived}
+        for r in refs
     )
     waivable = {"landed_diff", "worker_did_work"}
 
@@ -1390,10 +1753,28 @@ def compute_verdict(
             continue  # honest declared no-op excuses missing diff/activity
         failures.append(f"{ref.kind}: {ref.summary}")
 
+    # --- telemetry counts (purely informational, no control-flow impact) ---
+    legacy_count = 0
+    unknown_count = 0
+    for ref in refs:
+        if ref.status == EvidenceStatus.unknown:
+            unknown_count += 1
+        details = ref.details if isinstance(ref.details, dict) else {}
+        diag = details.get("diagnostics")
+        if isinstance(diag, dict) and "legacy_status" in diag:
+            legacy_count += 1
+
+    # would_block_reasons: mirror failures (reasons that would block in enforce)
+    would_block_reasons = tuple(failures)
+
     return CompletionVerdict(
         mode=mode,
         subject=subject,
         evidence=tuple(refs),
         accepted=not failures,
         failures=tuple(failures),
+        providers_used=tuple(providers_invoked),
+        legacy_evidence_count=legacy_count,
+        unknown_evidence_count=unknown_count,
+        would_block_reasons=would_block_reasons,
     )

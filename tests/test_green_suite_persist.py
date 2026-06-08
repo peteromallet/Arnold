@@ -20,11 +20,16 @@ from unittest import mock
 import pytest
 
 from arnold.pipelines.megaplan.orchestration.completion_contract import (
+    COMPLETION_VERDICT_CONTRACT_VERSION,
+    COMPLETION_VERDICT_SCHEMA,
+    COMPLETION_VERDICT_SCHEMA_VERSION,
     CompletionContext,
     CompletionSubject,
     CompletionVerdict,
+    EvidenceRef,
     EvidenceStatus,
     GreenSuiteProvider,
+    TrustClass,
     compute_verdict,
 )
 from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
@@ -222,6 +227,19 @@ def test_verdict_json_contains_green_suite_delta(tmp_path: Path) -> None:
     }
     assert set(delta.keys()) == expected_keys
 
+    # New telemetry fields (T14) are present at the verdict level.
+    assert verdict_dict["schema"] == COMPLETION_VERDICT_SCHEMA
+    assert verdict_dict["schema_version"] == COMPLETION_VERDICT_SCHEMA_VERSION
+    assert verdict_dict["evidence_contract_version"] == COMPLETION_VERDICT_CONTRACT_VERSION
+    assert "providers_used" in verdict_dict
+    assert isinstance(verdict_dict["providers_used"], list)
+    assert "legacy_evidence_count" in verdict_dict
+    assert isinstance(verdict_dict["legacy_evidence_count"], int)
+    assert "unknown_evidence_count" in verdict_dict
+    assert isinstance(verdict_dict["unknown_evidence_count"], int)
+    assert "would_block_reasons" in verdict_dict
+    assert isinstance(verdict_dict["would_block_reasons"], list)
+
 
 def test_evidence_details_contain_required_fields(tmp_path: Path) -> None:
     """The green_suite EvidenceRef details contain flake_retried, baseline_stale,
@@ -252,6 +270,119 @@ def test_evidence_details_contain_required_fields(tmp_path: Path) -> None:
     assert isinstance(details["baseline_stale"], bool)
     assert "delta.computable" in details
     assert isinstance(details["delta.computable"], bool)
+
+
+def test_green_suite_evidence_ref_is_enriched_with_provenance(
+    tmp_path: Path,
+) -> None:
+    """Green suite evidence carries deterministic provenance from available artifacts."""
+    ctx = _ctx(tmp_path)
+    provider = GreenSuiteProvider()
+    verification_dir = tmp_path / "verification"
+    verification_dir.mkdir(exist_ok=True)
+    raw_log = verification_dir / "raw_vf-1.log"
+    raw_log.write_text("PASSED tests/test_a.py::test_x\n", encoding="utf-8")
+    suite_log = verification_dir / "suite_runs.ndjson"
+    suite_log.write_text(
+        json.dumps(
+            {
+                "run_id": "vf-1",
+                "phase": "verification",
+                "code_hash": "abc123",
+                "command": "pytest --tb=no -q --no-header -rA",
+                "duration": 0.1,
+                "collected": 2,
+                "collected_ids": ["tests/test_a.py::test_x", "tests/test_b.py::test_y"],
+                "failures": [],
+                "passes": ["tests/test_a.py::test_x", "tests/test_b.py::test_y"],
+                "status": "passed",
+                "raw_log_path": str(raw_log),
+                "collections_parse_ok": True,
+                "ts": "2026-06-07T20:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    verification = _make_result(
+        run_id="vf-1",
+        phase="verification",
+        raw_log_path=raw_log,
+        code_hash="abc123",
+        status="passed",
+    )
+
+    with contextlib.ExitStack() as stack:
+        for p in _mock_collect_deps(verification, baseline=None):
+            stack.enter_context(p)
+        ref = provider.collect(ctx)
+
+    assert ref.trust_class == TrustClass.evidence
+    assert ref.provider == "GreenSuiteProvider"
+    assert ref.provider_version == "1"
+    assert ref.source == "verification:vf-1"
+    assert ref.subject == "plan:plan-x"
+    assert ref.observed_at == "2026-06-07T20:00:00Z"
+    assert ref.code_hash == "abc123"
+    assert ref.artifact is not None
+    assert ref.artifact.path == "verification/raw_vf-1.log"
+    assert [artifact.path for artifact in ref.artifacts] == [
+        "verification/raw_vf-1.log",
+        "verification/suite_runs.ndjson",
+    ]
+    assert ref.details["suite_run_log_path"] == "verification/suite_runs.ndjson"
+    assert ref.details["suite_run_log_ts"] == "2026-06-07T20:00:00Z"
+    assert ref.details["evidence_id"].startswith("sha256:")
+    assert len(ref.details["artifact_refs"]) == 2
+
+
+def test_green_suite_evidence_id_is_deterministic_for_same_inputs(
+    tmp_path: Path,
+) -> None:
+    """The evidence id is stable for the same subject, run facts, and artifacts."""
+    ctx = _ctx(tmp_path)
+    provider = GreenSuiteProvider()
+    verification_dir = tmp_path / "verification"
+    verification_dir.mkdir(exist_ok=True)
+    raw_log = verification_dir / "raw_vf-1.log"
+    raw_log.write_text("PASSED tests/test_a.py::test_x\n", encoding="utf-8")
+    suite_log = verification_dir / "suite_runs.ndjson"
+    suite_log.write_text(
+        json.dumps(
+            {
+                "run_id": "vf-1",
+                "phase": "verification",
+                "code_hash": "abc123",
+                "command": "pytest --tb=no -q --no-header -rA",
+                "duration": 0.1,
+                "collected": 2,
+                "collected_ids": ["tests/test_a.py::test_x", "tests/test_b.py::test_y"],
+                "failures": [],
+                "passes": ["tests/test_a.py::test_x", "tests/test_b.py::test_y"],
+                "status": "passed",
+                "raw_log_path": str(raw_log),
+                "collections_parse_ok": True,
+                "ts": "2026-06-07T20:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    verification = _make_result(
+        run_id="vf-1",
+        phase="verification",
+        raw_log_path=raw_log,
+        code_hash="abc123",
+        status="passed",
+    )
+
+    with contextlib.ExitStack() as stack:
+        for p in _mock_collect_deps(verification, baseline=None):
+            stack.enter_context(p)
+        first = provider.collect(ctx)
+        second = provider.collect(ctx)
+
+    assert first.details["evidence_id"] == second.details["evidence_id"]
 
 
 def test_baseline_stale_true_when_code_hash_differs(tmp_path: Path) -> None:
@@ -704,3 +835,88 @@ def test_telemetry_includes_deleted_tests_count(
 
     # test_a was deleted (baseline had it, verification doesn't)
     assert "deleted_tests=1" in msg
+
+
+# ---------------------------------------------------------------------------
+# (vi) Verdict one_line and to_dict include T14 telemetry fields
+# ---------------------------------------------------------------------------
+
+
+def test_verdict_one_line_includes_telemetry_fields() -> None:
+    """``CompletionVerdict.one_line()`` surfaces providers, legacy_evidence,
+    and unknown_evidence when populated."""
+    ref = EvidenceRef(
+        kind="green_suite",
+        status=EvidenceStatus.satisfied,
+        summary="passed",
+        details={"status": "passed", "code_hash": "abc123"},
+    )
+    verdict = CompletionVerdict(
+        mode="shadow",
+        subject=_subject(),
+        evidence=(ref,),
+        accepted=True,
+        providers_used=("green_suite", "phase_coverage"),
+        legacy_evidence_count=2,
+        unknown_evidence_count=0,
+    )
+    line = verdict.one_line()
+
+    # Check individual fields without requiring full-text format.
+    assert "providers=[green_suite,phase_coverage]" in line
+    assert "legacy_evidence=2" in line
+    assert "unknown_evidence=0" in line
+    assert "completion verdict" in line
+    assert "accepted" in line
+
+
+def test_verdict_one_line_defaults_when_no_providers() -> None:
+    """``one_line()`` shows ``providers=[none]`` when providers_used is empty."""
+    verdict = CompletionVerdict(
+        mode="shadow",
+        subject=_subject(),
+        evidence=(),
+        accepted=False,
+    )
+    line = verdict.one_line()
+    assert "providers=[none]" in line
+    assert "legacy_evidence=0" in line
+    assert "unknown_evidence=0" in line
+
+
+def test_verdict_to_dict_surfaces_telemetry_when_set(
+    tmp_path: Path,
+) -> None:
+    """``to_dict()`` surfaces providers_used, counts, and would_block_reasons
+    when they are populated by the verdict (e.g. via compute_verdict path)."""
+    ctx = _ctx(tmp_path)
+    provider = GreenSuiteProvider()
+
+    verification = _make_result(
+        run_id="vf-1",
+        phase="verification",
+        status="passed",
+        code_hash="abc123",
+    )
+
+    with contextlib.ExitStack() as stack:
+        for p in _mock_collect_deps(verification, baseline=None):
+            stack.enter_context(p)
+        ref = provider.collect(ctx)
+
+    verdict = CompletionVerdict(
+        mode="shadow",
+        subject=_subject(),
+        evidence=(ref,),
+        accepted=True,
+        providers_used=("green_suite",),
+        legacy_evidence_count=0,
+        unknown_evidence_count=0,
+        would_block_reasons=(),
+    )
+    d = verdict.to_dict()
+
+    assert d["providers_used"] == ["green_suite"]
+    assert d["legacy_evidence_count"] == 0
+    assert d["unknown_evidence_count"] == 0
+    assert d["would_block_reasons"] == []

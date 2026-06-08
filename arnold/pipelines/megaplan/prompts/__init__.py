@@ -60,6 +60,7 @@ from .review import (
     _settled_decisions_block,
     _settled_decisions_instruction,
     _write_review_template,
+    ensure_review_evidence_for_prompt,
 )
 from .critique_evaluator import _critique_evaluator_prompt
 from .review_doc import _review_doc_prompt
@@ -313,6 +314,7 @@ def create_prompt(
     builder = _resolve_builder(builders, step, state, label)
     contract_context = prompt_kwargs.pop("contract_context", None)
     if step == "review":
+        ensure_review_evidence_for_prompt(state, plan_dir, root=root)
         return _prepend_harness_guard(builder(state, plan_dir, **_builder_kwargs(builder, prompt_kwargs)))
     if step == "plan":
         return _prepend_harness_guard(builder(state, plan_dir, contract_context=contract_context))

@@ -82,7 +82,11 @@ from arnold.pipelines.megaplan.workers._impl import (
     resolve_work_dir,
     run_command,
     session_key_for,
+    _guard_mutating_worker_launch,
+    _verify_engine_after_mutating_worker,
+    engine_write_barrier,
 )
+from arnold.pipelines.megaplan.runtime.execution_environment import resolve_execution_environment
 from arnold.pipelines.megaplan.workers._projection_caps import shannon_projection_capabilities
 
 
@@ -2004,6 +2008,9 @@ def run_shannon_step(
     cfg = ShannonConfig.load(state.get("config", {}), state=state)
     _assert_vendored_shannon_sentinel()
     work_dir = resolve_work_dir(state)
+    execution_env = resolve_execution_environment(root=root, state=state)
+    if not read_only and step in {"execute", "revise", "loop_execute"}:
+        _guard_mutating_worker_launch(step, state, root)
 
     # Per-run artifact directory so prompt files, Claude config, and
     # transcripts stay scoped to this invocation and don't pollute cwd or
@@ -2471,6 +2478,9 @@ def run_shannon_step(
                 extra={"raw_output": repaired_raw, "original_raw_output": raw},
             ) from repair_error
         raw = repaired_raw
+
+    if not read_only:
+        _verify_engine_after_mutating_worker(step, state, root, execution_env)
 
     return WorkerResult(
         payload=payload,

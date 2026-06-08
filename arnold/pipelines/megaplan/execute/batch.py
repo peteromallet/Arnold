@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -43,9 +44,7 @@ from arnold.pipelines.megaplan.observability.routing_ledger import (
 from arnold.pipelines.megaplan.execute.aggregation import (
     _append_scope_drift_blocker,
     _build_aggregate_execution_payload,
-    _compute_execute_scope_drift,
     _compute_scope_drift_for_execute_surface,
-    _stable_unique_strings,
 )
 from arnold.pipelines.megaplan.execute.merge import (
     TERMINAL_TASK_STATUSES,
@@ -73,6 +72,9 @@ from arnold.pipelines.megaplan.model_seam import (
 )
 from arnold.pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
+)
+from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    scheduler_completed_ids,
 )
 from arnold.pipelines.megaplan.calibration import query_route_if_enabled
 from arnold.pipelines.megaplan.prompts import _execute_batch_prompt
@@ -127,6 +129,39 @@ _MODEL_SEAM_PROVIDER_PREFIXES = frozenset(
         "zhipu",
     }
 )
+
+
+def _scheduler_completed_ids_for_tasks(
+    tasks: Iterable[dict[str, Any]],
+    *,
+    plan_dir: Path,
+    root: Path | None = None,
+    decisions: dict[str, Any] | None = None,
+) -> set[str]:
+    current_head = _best_effort_git_head(root)
+    return scheduler_completed_ids(
+        tasks,
+        plan_dir=plan_dir,
+        current_head=current_head,
+        decisions=decisions,
+    )
+
+
+def _best_effort_git_head(root: Path | None) -> str | None:
+    if root is None:
+        return None
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    head = completed.stdout.strip()
+    return head or None
 
 
 def _batch_task_signature(batch_task_ids: Iterable[str], batch_complexity: int) -> str:
@@ -948,21 +983,49 @@ def handle_execute_one_batch(
             status = update.get("status")
             if isinstance(tid, str) and isinstance(status, str) and status:
                 batch_status_overlay[tid] = status
-    completed_ids = {
-        task["id"]
-        for task in tasks
-        if isinstance(task.get("id"), str)
-        and batch_status_overlay.get(task["id"], task.get("status"))
-        in {"done", "skipped"}
-    }
+    overlaid_tasks = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str):
+            continue
+        overlaid_task = dict(task)
+        if task_id in batch_status_overlay:
+            overlaid_task["status"] = batch_status_overlay[task_id]
+        overlaid_tasks.append(overlaid_task)
+    authority_decisions: dict[str, Any] = {}
+    completed_ids = _scheduler_completed_ids_for_tasks(
+        overlaid_tasks,
+        plan_dir=plan_dir,
+        root=root,
+        decisions=authority_decisions,
+    )
     for prior_idx in range(batch_number - 1):
         prior_batch = global_batches[prior_idx]
         missing = [task_id for task_id in prior_batch if task_id not in completed_ids]
         if missing:
+            missing_decisions = {
+                task_id: authority_decisions[task_id].diagnostics
+                | {
+                    "authority_status": authority_decisions[task_id].status.value,
+                    "would_block_reasons": list(authority_decisions[task_id].would_block_reasons),
+                    "missing_outputs": list(authority_decisions[task_id].missing_outputs),
+                    "stale_evidence": list(authority_decisions[task_id].stale_evidence),
+                }
+                for task_id in missing
+                if task_id in authority_decisions
+            }
             raise CliError(
                 "batch_prerequisites",
                 f"Batch {batch_number} requires batches 1..{batch_number - 1} to be complete. "
                 f"Batch {prior_idx + 1} has incomplete tasks: {', '.join(missing)}",
+                extra={
+                    "batch_number": batch_number,
+                    "prior_batch_number": prior_idx + 1,
+                    "missing_task_ids": missing,
+                    "authority_decisions": missing_decisions,
+                },
             )
 
     batch_task_ids = global_batches[batch_number - 1]
@@ -1647,11 +1710,11 @@ def handle_execute_auto_loop(
         for sense_check in finalize_data.get("sense_checks", [])
         if isinstance(sense_check, dict) and isinstance(sense_check.get("id"), str)
     ]
-    completed_task_ids = {
-        task["id"]
-        for task in tasks
-        if task.get("status") in {"done", "skipped"} and isinstance(task.get("id"), str)
-    }
+    completed_task_ids = _scheduler_completed_ids_for_tasks(
+        tasks,
+        plan_dir=plan_dir,
+        root=root,
+    )
     blocked_task_ids = {
         task["id"]
         for task in tasks
@@ -1660,7 +1723,9 @@ def handle_execute_auto_loop(
     pending_tasks = [
         task
         for task in tasks
-        if task.get("status") == "pending" and isinstance(task.get("id"), str)
+        if isinstance(task.get("id"), str)
+        and task.get("status") != "blocked"
+        and task.get("id") not in completed_task_ids
     ]
     review_data: dict[str, Any] = {}
     review_rework_task_ids: list[str] = []
@@ -2073,16 +2138,10 @@ def handle_execute_auto_loop(
         routing_degradations.extend(result.routing_degradations)
         if result.worker.trace_output is not None:
             trace_chunks.append(result.worker.trace_output)
-        completed_task_ids.update(
-            task_id
-            for task_id in batch_task_ids
-            if task_id
-            in {
-                task["id"]
-                for task in finalize_data.get("tasks", [])
-                if task.get("status") in {"done", "skipped"}
-                and isinstance(task.get("id"), str)
-            }
+        completed_task_ids = _scheduler_completed_ids_for_tasks(
+            finalize_data.get("tasks", []),
+            plan_dir=plan_dir,
+            root=root,
         )
         newly_blocked_task_ids = {
             task["id"]

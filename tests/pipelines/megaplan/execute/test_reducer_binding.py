@@ -10,6 +10,7 @@ that produce each outcome, asserting:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -75,7 +76,7 @@ def _make_batch_result(
 
 
 @pytest.mark.parametrize(
-    "result,finalize_data,batch_task_ids,task_deviation_dict,expected_outcome",
+    "result,finalize_data,batch_task_ids,task_deviation_dict,completed_task_ids,expected_outcome",
     [
         # SUCCESS: all tasks done, no blocking reasons
         (
@@ -87,6 +88,7 @@ def _make_batch_result(
             {"tasks": [{"id": "T1", "status": "done"}]},
             ["T1"],
             None,
+            {"T1"},
             BatchOutcome.SUCCESS,
         ),
         # BLOCKED_BY_QUALITY: untracked task — missing executor update
@@ -99,6 +101,7 @@ def _make_batch_result(
             {"tasks": [{"id": "T1", "status": "pending"}]},
             ["T1"],
             None,
+            set(),
             BatchOutcome.BLOCKED_BY_QUALITY,
         ),
         # BLOCKED_BY_PREREQ: task explicitly marked blocked by executor
@@ -111,6 +114,7 @@ def _make_batch_result(
             {"tasks": [{"id": "T1", "status": "blocked"}]},
             ["T1"],
             None,
+            set(),
             BatchOutcome.BLOCKED_BY_PREREQ,
         ),
         # TIMEOUT: _phase_outcome carries "timeout" (highest priority)
@@ -124,6 +128,7 @@ def _make_batch_result(
             {"tasks": [{"id": "T1", "status": "done"}]},
             ["T1"],
             None,
+            {"T1"},
             BatchOutcome.TIMEOUT,
         ),
     ],
@@ -134,6 +139,7 @@ def test_reduce_batch_outcome(
     finalize_data: dict[str, Any],
     batch_task_ids: list[str],
     task_deviation_dict: dict[str, list[str]] | None,
+    completed_task_ids: set[str],
     expected_outcome: BatchOutcome,
 ) -> None:
     """(a) reduce_batch returns a BatchReduceResult with the expected outcome."""
@@ -142,11 +148,66 @@ def test_reduce_batch_outcome(
         finalize_data=finalize_data,
         batch_task_ids=batch_task_ids,
         task_deviation_dict=task_deviation_dict,
+        completed_task_ids=completed_task_ids,
     )
     assert isinstance(reduced, Reduce)
     assert reduced.value == expected_outcome
     # BatchReduceResult is a subscripted generic alias; verify type via annotation
     assert type(reduced) is Reduce
+
+
+def test_reduce_batch_success_can_use_authority_adapter_evidence(tmp_path) -> None:
+    """SUCCESS is allowed when all tracked tasks have corroborated evidence."""
+    task = {"id": "T1", "status": "done", "files_changed": ["src/a.py"]}
+    (tmp_path / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/a.py"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    reduced = reduce_batch(
+        _make_batch_result(
+            merged_task_count=1,
+            total_task_count=1,
+            batch_task_ids=["T1"],
+        ),
+        finalize_data={"tasks": [task]},
+        batch_task_ids=["T1"],
+        plan_dir=tmp_path,
+    )
+
+    assert reduced.value == BatchOutcome.SUCCESS
+
+
+def test_reduce_batch_raw_done_without_corroboration_is_not_success(tmp_path) -> None:
+    """Raw done divergence cannot produce SUCCESS for a tracked batch task."""
+    task = {"id": "T1", "status": "done"}
+    (tmp_path / "execution_batch_1.json").write_text(
+        json.dumps({"task_updates": [{"task_id": "T1", "status": "done"}]}),
+        encoding="utf-8",
+    )
+
+    reduced = reduce_batch(
+        _make_batch_result(
+            merged_task_count=1,
+            total_task_count=1,
+            batch_task_ids=["T1"],
+        ),
+        finalize_data={"tasks": [task]},
+        batch_task_ids=["T1"],
+        plan_dir=tmp_path,
+    )
+
+    assert reduced.value == BatchOutcome.BLOCKED_BY_PREREQ
 
 
 # ---------------------------------------------------------------------------

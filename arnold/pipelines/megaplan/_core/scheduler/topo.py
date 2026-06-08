@@ -28,13 +28,16 @@ def schedule_batches(
 
     Tasks whose IDs appear in *completed_ids* are excluded from the
     output (they are treated as dependency-satisfied).  This mirrors the
-    auto-loop call shape where ``pending_tasks`` are pre-filtered.
+    auto-loop call shape where ``pending_tasks`` are pre-filtered. The
+    scheduler does not inspect evidence or statuses itself; production callers
+    are expected to pass only authority-corroborated completed IDs here.
 
     Args:
         work_list: Task dicts with ``id`` and ``depends_on`` keys.
         max_batch_size: Maximum tasks per batch (used by ``split_oversized_batches``).
         completed_ids: Already-completed task IDs to exclude from scheduling
-            and treat as satisfied dependencies.
+            and treat as satisfied dependencies. In production this should be
+            the corroborated authority set, not raw terminal claims.
         default_max_size: Fallback when *max_batch_size* ≤ 0.
 
     Returns:

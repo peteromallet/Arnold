@@ -65,6 +65,43 @@ class RecoverableBlockedPackRunner(FakePackRunner):
             json.dumps(
                 {
                     "task_updates": [
+                        {
+                            "task_id": f"{node.node_id}-1",
+                            "status": "done",
+                            "commands_run": ["python -m pytest tests/test_a.py -q"],
+                        },
+                        {
+                            "task_id": f"{node.node_id}-2",
+                            "status": "done",
+                            "files_changed": ["src/b.py"],
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return plan_name
+
+
+class RawDoneBlockedPackRunner(FakePackRunner):
+    def prepare_plan(self, *, root: Path, node: RunNode) -> str:
+        plan_name = super().prepare_plan(root=root, node=node)
+        plan_dir = root / ".megaplan" / "plans" / plan_name
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": plan_name,
+                    "current_state": "blocked",
+                    "config": {"robustness": "standard"},
+                    "history": [{"step": "execute", "result": "blocked"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "execution_batch_1.json").write_text(
+            json.dumps(
+                {
+                    "task_updates": [
                         {"task_id": f"{node.node_id}-1", "status": "done"},
                         {"task_id": f"{node.node_id}-2", "status": "done"},
                     ]
@@ -343,6 +380,34 @@ def test_chain_runner_recovers_blocked_execute_only_after_legacy_guard(tmp_path:
     )
     assert state_payload["current_state"] == "executed"
     assert "resume_cursor" not in state_payload
+
+
+def test_chain_runner_does_not_recover_blocked_execute_from_raw_done_without_authority(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_spec(tmp_path)
+    binding = FakeBinding()
+
+    result, _pack, driver = _run(
+        spec_path,
+        tmp_path,
+        ["blocked", "done", "done"],
+        pack=RawDoneBlockedPackRunner(),
+        binding=binding,
+        ladder_policy=SupervisorLadderPolicy(retry_limit=0),
+    )
+
+    assert result["status"] == "done"
+    assert [request.plan for request in driver.requests] == [
+        "plan-a-1",
+        "plan-a-2",
+        "plan-b-1",
+    ]
+    assert len(binding.transitions) == 1
+    transition = binding.transitions[0]
+    assert transition.target_id == CONTROL_TARGET_RECOVER_FROM_STUCK
+    assert transition.payload["plan_dir"].endswith(".megaplan/plans/plan-a-1")
+    assert not [event for event in result["events"] if event["kind"] == "blocked_execute_recovered"]
 
 
 def test_chain_runner_treats_guard_failed_blocked_execute_as_real_block(tmp_path: Path) -> None:

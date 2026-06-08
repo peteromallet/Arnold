@@ -59,6 +59,14 @@ def compute_task_batches(
     tasks: list[dict[str, Any]],
     completed_ids: set[str] | None = None,
 ) -> list[list[str]]:
+    """Compute topological batches from task records plus already-satisfied IDs.
+
+    ``completed_ids`` is intentionally a pure input contract: it is a set of
+    task IDs whose dependencies should be treated as already satisfied. In
+    production, callers must derive that set from corroborated authority
+    evidence, not raw legacy ``status="done"`` / ``"skipped"`` assertions.
+    """
+
     completed = set(completed_ids or set())
     if not tasks:
         return []

@@ -39,6 +39,7 @@ from arnold.pipelines.megaplan._core import (
 )
 from arnold.pipelines.megaplan._core.io import read_plan_state_cached
 from arnold.pipelines.megaplan.workers import warn_if_work_dir_differs_from_project_dir
+from arnold.pipelines.megaplan.runtime.execution_environment import preflight_mutating_phase
 
 from .shared import _agent_mode_parts, _emit_phase_notice, attach_agent_fallback, worker_module
 from arnold.pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
@@ -143,6 +144,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 "missing_approval",
                 "Execute requires explicit user approval (--user-approved) when auto-approve is not set. The orchestrator must confirm with the user at the gate checkpoint before proceeding.",
             )
+        preflight_mutating_phase(root=root, state=state, phase="execute")
+        save_state_merge_meta(plan_dir, state)
         am = worker_module.resolve_agent_mode("execute", args)
         agent, mode, refreshed, model = _agent_mode_parts(am)
         # Pull the resolved (default-applied) model + effort directly off the

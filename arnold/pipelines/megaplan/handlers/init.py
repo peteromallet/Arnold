@@ -8,6 +8,9 @@ from typing import Any
 
 from arnold.pipelines.megaplan.artifacts import markdown_body
 from arnold.pipelines.megaplan.runtime.doc_assembly import extract_settled_decisions
+from arnold.pipelines.megaplan.runtime.execution_environment import (
+    persist_plan_isolation_evidence,
+)
 from arnold.pipelines.megaplan.forms import available_form_ids
 from arnold.pipelines.megaplan.profiles import apply_profile_expansion, load_profile_metadata
 from arnold.pipelines.megaplan.profiles import ROBUSTNESS_LEVELS, normalize_robustness
@@ -297,22 +300,24 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     if positional_idea and idea_file:
         raise CliError("invalid_args", "Pass either the positional idea or --idea-file, not both")
     if idea_file:
-        idea_path = Path(idea_file).expanduser().resolve()
+        idea_path = _resolve_idea_path(idea_file, project_dir=project_dir)
         if not idea_path.is_file():
-            raise CliError("invalid_args", f"idea file not found: {idea_path}")
+            raise CliError("missing_idea_file", f"idea file not found under {project_dir}: {idea_path}")
         try:
             idea_text = markdown_body(idea_path).strip()
         except OSError as exc:
             raise CliError("invalid_args", f"Unable to read --idea-file {idea_path}: {exc}") from exc
         idea_source = "--idea-file"
     elif positional_idea:
-        idea_path = Path(positional_idea).expanduser()
+        idea_path = _resolve_idea_path(positional_idea, project_dir=project_dir)
         if idea_path.is_file():
             try:
                 idea_text = markdown_body(idea_path).strip()
             except OSError as exc:
-                raise CliError("invalid_args", f"Unable to read idea file {idea_path}: {exc}") from exc
+                raise CliError("invalid_args", f"Unable to read idea file under {project_dir}: {idea_path}: {exc}") from exc
             idea_source = "positional idea file"
+        elif _looks_like_idea_file_path(positional_idea):
+            raise CliError("missing_idea_file", f"idea file not found under {project_dir}: {idea_path}")
         else:
             idea_text = positional_idea
             idea_source = "positional idea"
@@ -515,6 +520,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
             },
         ),
     )
+    persist_plan_isolation_evidence(root=root, state=state, phase="init")
     save_state(plan_dir, state)
     next_steps = workflow_next(state)
     if worktree_meta:
@@ -558,3 +564,17 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         }
     _attach_next_step_runtime(response)
     return response
+
+
+def _resolve_idea_path(raw: str | Path, *, project_dir: Path) -> Path:
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    return (project_dir / path).resolve()
+
+
+def _looks_like_idea_file_path(raw: object) -> bool:
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    path = Path(raw)
+    return path.suffix.lower() in {".md", ".markdown", ".txt"} or len(path.parts) > 1

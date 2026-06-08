@@ -699,6 +699,7 @@ def _recover_valid_critique_output(plan_dir: Path, *, expected_ids: list[str]) -
     if not output_path.exists():
         return None
     payload = read_json(output_path)
+    payload = _normalize_critique_payload_for_recovery(payload)
     try:
         audit_step_payload("critique", payload)
     except ModelStructuralAuditError:
@@ -707,6 +708,43 @@ def _recover_valid_critique_output(plan_dir: Path, *, expected_ids: list[str]) -
     if invalid_checks:
         return None
     return payload
+
+
+def _normalize_critique_payload_for_recovery(payload: dict[str, Any]) -> dict[str, Any]:
+    checks = payload.get("checks")
+    if not isinstance(checks, list):
+        return payload
+    changed = False
+    clean_checks: list[Any] = []
+    for check in checks:
+        if not isinstance(check, dict):
+            clean_checks.append(check)
+            continue
+        findings = check.get("findings")
+        if not isinstance(findings, list):
+            clean_checks.append(check)
+            continue
+        clean_findings: list[Any] = []
+        check_changed = False
+        for finding in findings:
+            if not isinstance(finding, dict):
+                clean_findings.append(finding)
+                continue
+            extra_keys = set(finding) - {"detail", "flagged"}
+            if extra_keys:
+                finding = {k: v for k, v in finding.items() if k in {"detail", "flagged"}}
+                check_changed = True
+            clean_findings.append(finding)
+        if check_changed:
+            check = dict(check)
+            check["findings"] = clean_findings
+            changed = True
+        clean_checks.append(check)
+    if not changed:
+        return payload
+    clean_payload = dict(payload)
+    clean_payload["checks"] = clean_checks
+    return clean_payload
 
 
 def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:

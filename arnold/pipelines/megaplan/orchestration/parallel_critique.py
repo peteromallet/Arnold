@@ -70,6 +70,32 @@ def _unverifiable_check_payload(check_id: str, question: str, reason: str) -> di
     }
 
 
+def _sanitize_critique_check_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize benign model schema drift in a single critique check payload."""
+
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        return payload
+    changed = False
+    clean_findings: list[Any] = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            clean_findings.append(finding)
+            continue
+        extra = set(finding) - {"detail", "flagged"}
+        if not extra:
+            clean_findings.append(finding)
+            continue
+        cleaned = {k: v for k, v in finding.items() if k not in extra}
+        clean_findings.append(cleaned)
+        changed = True
+    if not changed:
+        return payload
+    cleaned_payload = dict(payload)
+    cleaned_payload["findings"] = clean_findings
+    return cleaned_payload
+
+
 def _run_check(
     index: int,
     check: dict[str, Any],
@@ -380,6 +406,7 @@ def run_parallel_critique(
         ):
             _check_payload = dict(_check_payload)
             _check_payload["question"] = unit.extra.get("question", "")
+        _check_payload = _sanitize_critique_check_payload(_check_payload)
         annotate_unverifiable_checks({"checks": [_check_payload]})
         return (
             _check_payload,
@@ -402,6 +429,29 @@ def run_parallel_critique(
         )
 
     def _scatter_raw(current_units: list[WorkerUnit]) -> Any:
+        def _on_unit_error(_index: int, exc: Exception) -> tuple[Any, float, int, int, int]:
+            unit = current_units[_index]
+            check_id = str(unit.extra.get("check_id", "?"))
+            reason = f"parallel critique worker failed for check '{check_id}': {exc}"
+            return (
+                {
+                    "checks": [
+                        _unverifiable_check_payload(
+                            check_id,
+                            str(unit.extra.get("question", "")),
+                            reason,
+                        )
+                    ],
+                    "flags": [],
+                    "verified_flag_ids": [],
+                    "disputed_flag_ids": [],
+                },
+                0.0,
+                0,
+                0,
+                0,
+            )
+
         return scatter_worker_units(
             units=current_units,
             state=state,
@@ -409,6 +459,7 @@ def run_parallel_critique(
             root=root,
             args=_args,
             max_concurrent=max_concurrent,
+            on_unit_error=_on_unit_error,
         )
 
     def _accumulate_scatter_totals(scatter_result: Any) -> None:

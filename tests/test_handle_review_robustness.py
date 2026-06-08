@@ -57,6 +57,7 @@ def _make_plan_fixture(
 
     monkeypatch.setattr(_io_module, "config_dir", _config_dir)
     monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
+    monkeypatch.setattr("arnold.pipelines.megaplan.workers._impl.load_config", lambda home=None: {})
 
     make_args = make_args_factory(project_dir)
     response = megaplan.handle_init(root, make_args(name=f"{robustness}-plan", robustness=robustness))
@@ -72,7 +73,7 @@ def _make_plan_fixture(
 
 
 def _advance_to_executed(fixture: PlanFixture) -> None:
-    args = fixture.make_args(plan=fixture.plan_name)
+    args = fixture.make_args(plan=fixture.plan_name, agent="codex")
     megaplan.handlers.handle_prep(fixture.root, args)
     megaplan.handle_plan(fixture.root, args)
     megaplan.handle_critique(fixture.root, args)
@@ -184,10 +185,19 @@ def test_handle_review_standard_branch_attaches_prechecks_and_updates_flags(
 
     monkeypatch.setattr(megaplan.handlers, "run_pre_checks", _run_pre_checks)
     monkeypatch.setattr(megaplan.handlers, "update_flags_after_review", _update_flags_after_review)
+
+    worker_kwargs: list[dict[str, object]] = []
+
+    def _run_step_with_worker(*args: object, **kwargs: object) -> tuple[WorkerResult, str, str, bool]:
+        del args
+        worker_kwargs.append(kwargs)
+        call_order.append("run_step_with_worker")
+        return worker, "codex", "persistent", False
+
     monkeypatch.setattr(
         megaplan.handlers.worker_module,
         "run_step_with_worker",
-        lambda *args, **kwargs: (call_order.append("run_step_with_worker") or (worker, "codex", "persistent", False)),
+        _run_step_with_worker,
     )
 
     megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
@@ -199,6 +209,7 @@ def test_handle_review_standard_branch_attaches_prechecks_and_updates_flags(
     assert update_calls[0]["payload"] is worker.payload
     assert update_calls[0]["iteration"] == state["iteration"]
     assert call_order == ["run_pre_checks", "run_step_with_worker", "update_flags_after_review"]
+    assert worker_kwargs[0]["read_only"] is True
 
 
 def test_handle_review_light_branch_skips_prechecks_and_keeps_review_payload_unadorned(
@@ -237,10 +248,18 @@ def test_handle_review_light_branch_skips_prechecks_and_keeps_review_payload_una
         update_call_count += 1
 
     monkeypatch.setattr(megaplan.handlers, "update_flags_after_review", _update_flags_after_review)
+
+    worker_kwargs: list[dict[str, object]] = []
+
+    def _run_step_with_worker(*args: object, **kwargs: object) -> tuple[WorkerResult, str, str, bool]:
+        del args
+        worker_kwargs.append(kwargs)
+        return worker, "codex", "persistent", False
+
     monkeypatch.setattr(
         megaplan.handlers.worker_module,
         "run_step_with_worker",
-        lambda *args, **kwargs: (worker, "codex", "persistent", False),
+        _run_step_with_worker,
     )
 
     megaplan.handle_review(fixture.root, fixture.make_args(plan=fixture.plan_name))
@@ -252,6 +271,7 @@ def test_handle_review_light_branch_skips_prechecks_and_keeps_review_payload_una
     assert stored_review["review_verdict"] == golden["review_verdict"]
     assert stored_review["checks"] == golden["checks"]
     assert stored_review["pre_check_flags"] == golden["pre_check_flags"]
+    assert worker_kwargs[0]["read_only"] is True
 
 
 def test_handle_review_standard_branch_rejects_schema_invalid_model_payload_before_flag_updates(

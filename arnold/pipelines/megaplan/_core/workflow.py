@@ -30,6 +30,10 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_REVIEWED,
 )
 from arnold.pipelines.megaplan.store import ProgressEventInput, RevisionConflict, Store
+from arnold.pipelines.megaplan.runtime.execution_environment import (
+    preflight_mutating_phase,
+    preflight_phase,
+)
 from .modes import is_creative_mode
 from .io import find_plan_dir
 from .workflow_data import (
@@ -425,6 +429,110 @@ def _run_id_from_state(state: dict[str, Any], plan: str) -> str:
     return plan
 
 
+def _task_id_from_record(task: Any) -> str:
+    if not isinstance(task, dict):
+        return ""
+    value = task.get("id") or task.get("task_id")
+    return value if isinstance(value, str) and value else ""
+
+
+def _resume_execute_authority_failure(
+    plan_dir: Path,
+    *,
+    cursor: dict[str, Any],
+    guard: str,
+) -> dict[str, Any] | None:
+    """Return failure details when resume cannot trust execute completion.
+
+    Resume may advance from a stored cursor into a later phase, or clear the
+    cursor after re-running execute. Both transitions are authority-increasing:
+    raw task terminal labels are not enough to prove execute actually completed.
+    """
+
+    finalize_path = plan_dir / "finalize.json"
+    try:
+        finalize = json.loads(finalize_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "guard": guard,
+            "reason": "execute_authority_unavailable",
+            "message": str(exc),
+            "resume_cursor": dict(cursor),
+        }
+    if not isinstance(finalize, dict):
+        return {
+            "guard": guard,
+            "reason": "execute_authority_unavailable",
+            "message": "finalize.json is not an object",
+            "resume_cursor": dict(cursor),
+        }
+    tasks = finalize.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return {
+            "guard": guard,
+            "reason": "execute_authority_unknown",
+            "message": "finalize.json has no task list for execute authority",
+            "resume_cursor": dict(cursor),
+        }
+    task_records = [task for task in tasks if isinstance(task, dict)]
+    task_ids = {_task_id_from_record(task) for task in task_records}
+    task_ids.discard("")
+    if not task_ids:
+        return {
+            "guard": guard,
+            "reason": "execute_authority_unknown",
+            "message": "finalize.json task list has no task IDs",
+            "resume_cursor": dict(cursor),
+        }
+    from arnold.pipelines.megaplan.orchestration.authority_readers import (
+        AuthorityDecision,
+        corroborated_completed_task_ids,
+    )
+
+    decisions: dict[str, AuthorityDecision] = {}
+    completed = corroborated_completed_task_ids(
+        task_records,
+        plan_dir=plan_dir,
+        decisions=decisions,
+    )
+    missing = sorted(task_ids - completed)
+    if not missing:
+        return None
+    return {
+        "guard": guard,
+        "reason": "execute_authority_diverged",
+        "message": "Execute completion is not fully corroborated by authority evidence",
+        "resume_cursor": dict(cursor),
+        "missing_task_ids": missing,
+        "decisions": {
+            task_id: {
+                "status": decision.status.value,
+                "authoritative": decision.authoritative,
+                "would_block_reasons": list(decision.would_block_reasons),
+                "missing_outputs": list(decision.missing_outputs),
+                "stale_evidence": list(decision.stale_evidence),
+                "error": decision.error,
+            }
+            for task_id, decision in sorted(decisions.items())
+            if task_id in missing
+        },
+    }
+
+
+def _raise_resume_execute_authority_failure(
+    plan: str,
+    phase: str,
+    failure: dict[str, Any] | None,
+) -> None:
+    if failure is None:
+        return
+    raise CliError(
+        "resume_execute_authority_blocked",
+        f"Refusing to resume '{plan}' into '{phase}' before execute completion is corroborated",
+        extra=failure,
+    )
+
+
 def _current_manifest_hash_for(pipeline_name: str) -> str | None:
     from arnold.pipelines.megaplan._pipeline.registry import pipeline_metadata
 
@@ -587,10 +695,26 @@ def resume_plan(
             )
     from arnold.pipelines.megaplan._core import topology as _topology
     active_state = _topology.predecessors(phase, policy="resume")
+    if active_state == STATE_EXECUTED:
+        _raise_resume_execute_authority_failure(
+            plan,
+            phase,
+            _resume_execute_authority_failure(
+                plan_dir,
+                cursor=cursor,
+                guard="before_later_phase_dispatch",
+            ),
+        )
     if active_state and previous_state.get("current_state") in {"failed", "blocked"}:
         state = dict(previous_state)
         state["current_state"] = active_state
         repo.save_state(state)
+    state_for_preflight = repo.load_state()
+    if phase in {"execute", "revise", "loop_execute"}:
+        preflight_mutating_phase(root=root, state=state_for_preflight, phase=f"resume:{phase}")
+    else:
+        preflight_phase(root=root, state=state_for_preflight, phase=f"resume:{phase}")
+    repo.save_state(state_for_preflight)
     if pipeline_name == "megaplan":
         _persist_resume_runtime_envelope(
             repo,
@@ -674,6 +798,28 @@ def resume_plan(
             "exit_code": code,
             "stdout": stdout,
             "stderr": stderr,
+        }
+    execute_authority_failure = (
+        _resume_execute_authority_failure(
+            plan_dir,
+            cursor=cursor,
+            guard="before_cursor_clear",
+        )
+        if phase == "execute"
+        else None
+    )
+    if execute_authority_failure is not None:
+        repo.save_state(rollback_state)
+        return {
+            "success": False,
+            "step": "resume",
+            "plan": plan,
+            "phase": phase,
+            "resume_cursor": cursor,
+            "exit_code": 1,
+            "stdout": stdout,
+            "stderr": "Execute completion is not corroborated; preserving resume cursor",
+            "authority": execute_authority_failure,
         }
     state = repo.load_state()
     state.pop("latest_failure", None)

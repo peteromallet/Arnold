@@ -10,6 +10,9 @@ import arnold.pipelines.megaplan.execute.batch as megaplan_execute_batch
 import arnold.pipelines.megaplan.execute.core as megaplan_execute_core
 import arnold.pipelines.megaplan.handlers as megaplan_handlers
 import arnold.pipelines.megaplan.execute.merge as megaplan_execute_merge
+from arnold.pipelines.megaplan.orchestration.transition_policy import (
+    TRANSITION_DECISION_REVIEW_DONE_FILENAME,
+)
 import arnold.pipelines.megaplan.workers as megaplan_workers
 from arnold.pipelines.megaplan.workers import WorkerResult
 
@@ -348,6 +351,7 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
     assert after_block["tasks"][1]["reviewer_verdict"] == ""
     assert blocked_entry["result"] == "blocked"
     assert (plan_fixture.plan_dir / "review.json").exists()
+    assert not (plan_fixture.plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME).exists()
     assert "## Coverage Gaps" in blocked_md
     assert "Reviewer verdicts pending: 1" in blocked_md
     assert "Sense-check verdicts pending: 1" in blocked_md
@@ -528,6 +532,7 @@ def test_review_softens_substantive_verdict_without_evidence_files_and_can_kick_
     assert state["history"][-1]["result"] == "needs_rework"
     assert stored_review["review_verdict"] == "needs_rework"
     assert stored_review["blocking_rework_items"]
+    assert not (plan_fixture.plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME).exists()
     # Verify phase_result.json emission
     from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
@@ -752,6 +757,7 @@ def test_review_force_proceed_records_outcome_matching_hashed_artifact(
     assert stored_review["review_verdict"] == "needs_rework"
     assert stored_review["outcome"]["result"] == "force_proceeded"
     assert receipt["verdict"] == "force_proceeded"
+    assert not (plan_fixture.plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME).exists()
 
 
 def test_review_incomplete_rework_payload_stays_in_review(
@@ -818,6 +824,7 @@ def test_review_incomplete_rework_payload_stays_in_review(
     assert "review infrastructure" in response["summary"]
     assert state["current_state"] == megaplan.STATE_EXECUTED
     assert state["history"][-1]["result"] == "blocked"
+    assert not (plan_fixture.plan_dir / TRANSITION_DECISION_REVIEW_DONE_FILENAME).exists()
 
 
 def test_review_works_after_batch_by_batch_execution(
@@ -929,7 +936,7 @@ def test_review_works_after_batch_by_batch_execution(
 
     original_run_step = megaplan.workers.run_step_with_worker
 
-    def _worker_dispatch(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+    def _worker_dispatch(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None, read_only=False):
         if step == "execute":
             return _local_batch_worker(
                 step,
@@ -940,6 +947,7 @@ def test_review_works_after_batch_by_batch_execution(
                 resolved=resolved,
                 prompt_override=prompt_override,
             )
+        del read_only
         return original_run_step(step, state, plan_dir, args, root=root, resolved=resolved, prompt_override=prompt_override)
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _worker_dispatch)

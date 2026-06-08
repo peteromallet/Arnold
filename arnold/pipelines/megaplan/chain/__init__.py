@@ -65,8 +65,16 @@ from arnold.pipelines.megaplan.auto import (
     drive as auto_drive,
 )
 from arnold.pipelines.megaplan._pipeline.flags import supervisor_tier_routing_on
+from arnold.pipelines.megaplan.runtime.execution_environment import (
+    merge_isolation_evidence,
+    resolve_execution_environment,
+)
 from arnold.pipelines.megaplan._core import resolve_plan_dir
 from arnold.pipelines.megaplan._core.user_config import VALID_VENDORS
+from arnold.pipelines.megaplan.orchestration.authority_readers import (
+    AuthorityDecision,
+    corroborated_completed_task_ids,
+)
 from arnold.pipelines.megaplan.profiles import (
     VALID_CRITIC_CHOICES,
     VALID_DEEPSEEK_PROVIDER_CHOICES,
@@ -227,7 +235,7 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
                 "--plan",
                 plan,
             ],
-            cwd=str(megaplan_engine_root()),
+            cwd=str(root),
             capture_output=True,
             text=True,
             check=False,
@@ -294,9 +302,10 @@ def _init_plan(
     writer,
 ) -> str:
     """Run `megaplan init --idea-file ...` and return the plan name."""
-    # The init subprocess runs with cwd=megaplan_engine_root(), so a spec-relative
+    # The init subprocess does not run from the engine root, but a spec-relative
     # idea path must be resolved against the project root here — otherwise init
-    # resolves it against the engine repo and fails with a misleading BRIEF_MISSING.
+    # depends on caller cwd and can fail with a misleading BRIEF_MISSING.
+    root = root.resolve(strict=False)
     idea_path = str(_resolve_idea_path(root, idea_path))
     _warn_vendor_ignored_for_locked_profile(
         root,
@@ -332,7 +341,7 @@ def _init_plan(
     writer(f"[chain] initializing plan from {idea_path}\n")
     proc = subprocess.run(
         args,
-        cwd=str(megaplan_engine_root()),
+        cwd=str(root),
         capture_output=True,
         text=True,
         check=False,
@@ -613,14 +622,15 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     if not task_records:
         return False, f"{latest.name} has no task records"
 
-    incomplete: list[str] = []
-    for task in task_records:
-        if task.get("status") == "done":
-            continue
-        task_id = task.get("task_id") or task.get("id") or "?"
-        incomplete.append(f"{task_id}={task.get('status')!r}")
+    batch_decisions: dict[str, AuthorityDecision] = {}
+    completed = corroborated_completed_task_ids(
+        task_records,
+        plan_dir=plan_dir,
+        decisions=batch_decisions,
+    )
+    incomplete = _non_authoritative_task_reasons(task_records, completed, batch_decisions)
     if incomplete:
-        return False, f"{latest.name} has non-done tasks: {', '.join(incomplete)}"
+        return False, f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}"
     finalize_path = plan_dir / "finalize.json"
     if finalize_path.exists():
         try:
@@ -631,14 +641,63 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             finalize_payload.get("tasks") if isinstance(finalize_payload, dict) else None
         )
         if isinstance(finalize_tasks, list) and finalize_tasks:
-            pending = [
-                f"{(task.get('id') or '?')}={task.get('status')!r}"
-                for task in finalize_tasks
-                if isinstance(task, dict) and task.get("status") not in {"done", "skipped"}
-            ]
+            finalize_records = [task for task in finalize_tasks if isinstance(task, dict)]
+            finalize_decisions: dict[str, AuthorityDecision] = {}
+            finalize_completed = corroborated_completed_task_ids(
+                finalize_records,
+                plan_dir=plan_dir,
+                decisions=finalize_decisions,
+            )
+            pending = _non_authoritative_task_reasons(
+                finalize_records,
+                finalize_completed,
+                finalize_decisions,
+            )
+            pending.extend(_finalize_records_missing_authority_fields(finalize_records))
             if pending:
-                return False, f"finalize.json has incomplete tasks: {', '.join(pending)}"
+                return False, f"finalize.json has non-authoritative tasks: {', '.join(pending)}"
     return True, latest.name
+
+
+def _plan_terminal_completion_is_authoritative(root: Path, plan_name: str) -> tuple[bool, str]:
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        return True, f"plan {plan_name} directory unavailable; no chain artifacts to inspect"
+    return _latest_execution_batch_all_tasks_done(plan_dir)
+
+
+def _finalize_records_missing_authority_fields(
+    task_records: list[dict[str, Any]],
+) -> list[str]:
+    missing: list[str] = []
+    for task in task_records:
+        task_id = str(task.get("task_id") or task.get("id") or "?")
+        if any(task.get(field) for field in ("files_changed", "commands_run", "evidence_files", "sections_written", "evidence")):
+            continue
+        if task.get("status") in {"waived", "not_applicable"}:
+            continue
+        missing.append(f"{task_id}='unknown':missing_finalize_authority_fields")
+    return missing
+
+
+def _non_authoritative_task_reasons(
+    task_records: list[dict[str, Any]],
+    completed: set[str],
+    decisions: dict[str, AuthorityDecision],
+) -> list[str]:
+    incomplete: list[str] = []
+    for task in task_records:
+        task_id = str(task.get("task_id") or task.get("id") or "?")
+        if task_id in completed:
+            continue
+        decision = decisions.get(task_id)
+        if decision is None:
+            incomplete.append(f"{task_id}={task.get('status')!r}")
+            continue
+        reason = next(iter(decision.would_block_reasons), decision.status.value)
+        incomplete.append(f"{task_id}={decision.status.value!r}:{reason}")
+    return incomplete
 
 
 def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
@@ -886,11 +945,13 @@ def _handle_outcome(
     writer,
     milestone: "MilestoneSpec | None" = None,
     state: ChainState | None = None,
+    root: Path | None = None,
 ) -> str:
     """Decide the next action given a DriverOutcome, walking the ladder.
 
     Returns one of: "advance" (move to next milestone), "stop" (chain halts),
-    "retry" (re-run the same milestone FRESH), "skip" (advance without waiting).
+    "retry" (re-run the same milestone FRESH), "skip" (advance without waiting),
+    "authority_blocked" (terminal claim was not corroborated).
 
     On a failure/escalate outcome the structured ladder is walked with a
     BOUNDED, persisted per-milestone retry counter:
@@ -904,6 +965,16 @@ def _handle_outcome(
     """
     status = outcome.status
     if status in {"done", "finalized"}:
+        if root is not None:
+            authoritative, reason = _plan_terminal_completion_is_authoritative(
+                root, outcome.plan
+            )
+            if not authoritative:
+                writer(
+                    f"[chain] plan {outcome.plan} outcome={status} lacks task authority: "
+                    f"{reason}\n"
+                )
+                return "authority_blocked"
         return "advance"
     if status == "awaiting_human":
         writer(
@@ -1095,10 +1166,18 @@ def run_chain(
     one: bool = False,
 ) -> dict[str, Any]:
     """Drive the full chain. Returns a structured JSON-serializable result."""
+    root = root.resolve(strict=False)
+    spec_path = spec_path.resolve(strict=False)
     spec = chain_spec.load_spec(spec_path)
     chain_spec.validate_paths(spec, root)
     _preflight_agent_backends(spec, writer=writer)
     state = chain_spec.load_chain_state(spec_path)
+    env = resolve_execution_environment(
+        root=root,
+        state={"config": {"project_dir": str(root), "base_branch": spec.base_branch}},
+    )
+    state.metadata = merge_isolation_evidence(state.metadata, env, phase="chain_start")
+    chain_spec.save_chain_state(spec_path, state)
     preexisting_dirty_paths = _dirty_worktree_paths(root)
     push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
 
@@ -1123,7 +1202,17 @@ def run_chain(
             )
             state.last_state = outcome.status
             chain_spec.save_chain_state(spec_path, state)
-            decision = _handle_outcome(outcome, spec=spec, writer=writer)
+            decision = _handle_outcome(outcome, spec=spec, writer=writer, root=root)
+            if decision == "authority_blocked":
+                state.last_state = "authority_divergence"
+                chain_spec.save_chain_state(spec_path, state)
+                return _result(
+                    "blocked",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=f"seed plan terminal outcome lacks authority",
+                )
             if decision == "stop":
                 return _result("stopped", state, events, spec=spec, reason=f"seed plan {outcome.status}")
             if decision == "retry":
@@ -1138,7 +1227,43 @@ def run_chain(
                 chain_spec.save_chain_state(spec_path, state)
                 if outcome.status != "done":
                     return _result("stopped", state, events, spec=spec, reason="seed retry failed")
+                authoritative, reason = _plan_terminal_completion_is_authoritative(
+                    root, spec.seed_plan
+                )
+                if not authoritative:
+                    writer(
+                        f"[chain] seed retry {spec.seed_plan} outcome=done lacks authority; "
+                        f"stopping: {reason}\n"
+                    )
+                    state.last_state = "authority_divergence"
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "blocked",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=f"seed retry terminal outcome lacks authority: {reason}",
+                    )
             # skip / advance both proceed to milestones
+        else:
+            authoritative, reason = _plan_terminal_completion_is_authoritative(
+                root, spec.seed_plan
+            )
+            if not authoritative:
+                writer(
+                    f"[chain] seed plan {spec.seed_plan} terminal state={seed_state} "
+                    f"lacks authority; stopping: {reason}\n"
+                )
+                state.last_state = "authority_divergence"
+                state.current_plan_name = spec.seed_plan
+                chain_spec.save_chain_state(spec_path, state)
+                return _result(
+                    "blocked",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=f"seed plan terminal state lacks authority: {reason}",
+                )
         state.completed.append(
             {"label": "seed", "plan": spec.seed_plan, "status": state.last_state or seed_state}
         )
@@ -1340,8 +1465,37 @@ def run_chain(
         state.last_state = outcome.status
         chain_spec.save_chain_state(spec_path, state)
         decision = _handle_outcome(
-            outcome, spec=spec, writer=writer, milestone=milestone, state=state
+            outcome, spec=spec, writer=writer, milestone=milestone, state=state, root=root
         )
+        if decision == "authority_blocked":
+            state.last_state = "authority_divergence"
+            chain_spec.save_chain_state(spec_path, state)
+            return _result(
+                "blocked",
+                state,
+                events,
+                spec=spec,
+                reason=f"milestone {milestone.label} terminal outcome lacks authority",
+            )
+        if decision in {"advance", "skip"}:
+            authoritative, reason = _plan_terminal_completion_is_authoritative(root, plan_name)
+            if not authoritative:
+                writer(
+                    f"[chain] milestone {milestone.label} outcome={outcome.status} "
+                    f"lacks task authority; stopping: {reason}\n"
+                )
+                state.last_state = "authority_divergence"
+                chain_spec.save_chain_state(spec_path, state)
+                return _result(
+                    "blocked",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=(
+                        f"milestone {milestone.label} terminal outcome lacks authority: "
+                        f"{reason}"
+                    ),
+                )
 
         if decision == "stop":
             _maybe_file_ladder_ticket(

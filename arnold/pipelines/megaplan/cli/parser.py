@@ -962,6 +962,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[
             "abort",
             "force-proceed",
+            "waive-engine-overlap",
+            "refresh-engine-pin",
             "add-note",
             "replan",
             "recover-blocked",
@@ -975,6 +977,8 @@ def build_parser() -> argparse.ArgumentParser:
     override_parser.add_argument("--plan")
     override_parser.add_argument("--reason", default="")
     override_parser.add_argument("--note")
+    override_parser.add_argument("--expires-after-runs", type=int, default=None)
+    override_parser.add_argument("--target-root", default=None)
     override_parser.add_argument(
         "--robustness", choices=list(ROBUSTNESS_ACCEPTED), default=None
     )
