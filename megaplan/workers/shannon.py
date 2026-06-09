@@ -205,6 +205,8 @@ class ShannonConfig:
     drop_root: bool        # MEGAPLAN_SHANNON_DROP_ROOT (or auto-detect)
     chmod_workspace: bool  # MEGAPLAN_SHANNON_CHMOD_WORKSPACE
     claude_config_mode: str  # MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE; isolated|native
+    pin_claude: bool   # MEGAPLAN_SHANNON_PIN_CLAUDE; pin resolved claude bin per-run (default True)
+    claude_bin: str    # MEGAPLAN_SHANNON_CLAUDE_BIN; explicit claude binary path override
 
     # ── structural tells (T9 targets; fields land here now) ──────────────
     voice: str       # prompt voice; no env-var yet; default "announced"
@@ -292,6 +294,8 @@ class ShannonConfig:
                 "Invalid MEGAPLAN_SHANNON_CLAUDE_CONFIG_MODE "
                 f"{claude_config_mode!r}; expected 'isolated' or 'native'.",
             )
+        pin_claude = _truthy("MEGAPLAN_SHANNON_PIN_CLAUDE")
+        claude_bin = _get("MEGAPLAN_SHANNON_CLAUDE_BIN")
 
         return cls(
             readiness_probe_raw=readiness_probe_raw,
@@ -312,6 +316,8 @@ class ShannonConfig:
             drop_root=drop_root,
             chmod_workspace=(_truthy("MEGAPLAN_SHANNON_CHMOD_WORKSPACE") is not False),
             claude_config_mode=claude_config_mode,
+            pin_claude=(True if pin_claude is None else bool(pin_claude)),
+            claude_bin=claude_bin,
             voice="announced",
             env_scrub=(_truthy("MEGAPLAN_SHANNON_ENV_SCRUB") is not False),
         )
@@ -1946,6 +1952,60 @@ def _ensure_workspace_trusted(
         )
 
 
+def _resolve_pinned_claude(cfg: ShannonConfig) -> str | None:
+    """Resolve the claude binary to pin for this run, or None to leave PATH alone.
+
+    Precedence: the explicit ``MEGAPLAN_SHANNON_CLAUDE_BIN`` override, else (when
+    ``pin_claude`` — the default) the *real* absolute path of the ``claude``
+    currently on PATH. We resolve the symlink to its target so a mid-run symlink
+    flip — e.g. the Claude CLI auto-updater repointing ``~/.local/bin/claude`` to
+    a newer, headless-broken build — cannot switch the version under a running
+    step. Returns None when pinning is disabled or no ``claude`` is found
+    (preserves the legacy PATH-resolution behavior).
+    """
+    if cfg.claude_bin:
+        resolved = os.path.realpath(os.path.expanduser(cfg.claude_bin))
+        if not os.path.isfile(resolved):
+            raise CliError(
+                "worker_error",
+                f"MEGAPLAN_SHANNON_CLAUDE_BIN={cfg.claude_bin!r} is not a file "
+                f"(resolved {resolved}).",
+            )
+        return resolved
+    if not cfg.pin_claude:
+        return None
+    found = shutil.which("claude")
+    if not found:
+        return None
+    return os.path.realpath(found)
+
+
+def _install_claude_pin(
+    env: dict[str, str], run_dir: Path, pinned: str
+) -> dict[str, str]:
+    """Prepend a per-run shim dir to ``PATH`` so the vendored launcher's
+    ``which claude`` resolves to *pinned* (an absolute binary path), immune to
+    any ``~/.local/bin/claude`` symlink churn during the run. Returns a new env
+    dict; does not mutate the input.
+    """
+    shim_dir = run_dir / "claude_pin"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    shim = shim_dir / "claude"
+    try:
+        if shim.exists() or shim.is_symlink():
+            shim.unlink()
+        os.symlink(pinned, shim)
+    except OSError:
+        # Symlink not permitted on this mount — fall back to an exec wrapper.
+        shim.write_text(
+            f'#!/bin/bash\nexec {shlex.quote(pinned)} "$@"\n', encoding="utf-8"
+        )
+        shim.chmod(0o755)
+    new_env = dict(env)
+    new_env["PATH"] = f"{shim_dir}{os.pathsep}{new_env.get('PATH', '')}"
+    return new_env
+
+
 def run_shannon_step(
     step: str,
     state: PlanState,
@@ -2187,6 +2247,13 @@ def run_shannon_step(
     # Compute the nonroot shannon prefix + child env EXACTLY ONCE per run and
     # thread the result through ctx — :func:`run_turn` MUST NOT recompute it.
     shannon_prefix, env = _prepare_nonroot_shannon_runtime(work_dir, env, cfg=cfg)
+    # Pin the claude binary for this run (default on): resolve it once to an
+    # absolute path and put it first on the child PATH so the vendored launcher's
+    # `which claude` cannot be hijacked mid-run by the Claude CLI auto-updater
+    # repointing the ~/.local/bin/claude symlink to a headless-broken build.
+    pinned_claude = _resolve_pinned_claude(cfg)
+    if pinned_claude:
+        env = _install_claude_pin(env, run_dir, pinned_claude)
     _ensure_workspace_trusted(
         work_dir,
         claude_config_dir=str(claude_config_dir) if claude_config_dir is not None else None,
