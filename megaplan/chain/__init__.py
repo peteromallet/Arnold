@@ -1855,6 +1855,10 @@ def _init_plan(
     writer,
 ) -> str:
     """Run `megaplan init --idea-file ...` and return the plan name."""
+    # The init subprocess runs with cwd=megaplan_engine_root(), so a spec-relative
+    # idea path must be resolved against the project root here — otherwise init
+    # resolves it against the engine repo and fails with a misleading BRIEF_MISSING.
+    idea_path = str(_resolve_idea_path(root, idea_path))
     _warn_vendor_ignored_for_locked_profile(
         root,
         profile=profile,
@@ -2848,6 +2852,31 @@ def run_chain(
     while idx < len(spec.milestones):
         milestone = spec.milestones[idx]
         log(f"milestone {milestone.label} starting")
+        # Preflight disk guard: a disk that fills mid-milestone corrupts SQLite
+        # (WAL can't flush → "database is locked") and crashes the driver at
+        # interpreter shutdown (sqlite3.Connection.__del__ raising during GC on a
+        # full/locked DB). Halt CLEANLY here instead so a babysit/operator can
+        # free space and resume, rather than losing the run to a fatal teardown.
+        _min_free_gb = float(os.environ.get("MEGAPLAN_MIN_FREE_DISK_GB", "1.5"))
+        try:
+            _free_gb = shutil.disk_usage(root).free / 1e9
+        except OSError:
+            _free_gb = None
+        if _free_gb is not None and _free_gb < _min_free_gb:
+            log(
+                f"disk critically low ({_free_gb:.2f} GB free < {_min_free_gb} GB) "
+                f"before milestone {milestone.label}; halting cleanly — free space and resume"
+            )
+            return _result(
+                "stopped",
+                state,
+                events,
+                spec=spec,
+                reason=(
+                    f"low_disk: {_free_gb:.2f} GB free before milestone "
+                    f"{milestone.label} (min {_min_free_gb} GB)"
+                ),
+            )
         use_pr = push_enabled and bool(milestone.branch)
         effective_use_pr = use_pr and not planning_pass
         if planning_pass and (state.pr_number is not None or state.pr_state is not None):
