@@ -589,3 +589,37 @@ def test_rollback_on_patch_failure(
     # `git worktree remove` does NOT delete the branch by default. We just
     # assert the source's working tree is intact.
     assert (repo / "README.md").read_text(encoding="utf-8") == "about-to-fail\n"
+
+def test_carry_includes_gitignored_briefs_excludes_run_state(tmp_path: Path) -> None:
+    """`.megaplan/briefs/` is gitignored INPUT and must be carried into the
+    worktree; `.megaplan/plans/` (run state) must NOT be. Regression for the
+    `missing_idea_file` launch failure when `.megaplan/` is gitignored."""
+    from megaplan.bakeoff import worktree as wt
+
+    repo = tmp_path / "repo"
+    head = _init_repo(repo)
+    # Gitignore the whole .megaplan dir (as real repos do).
+    (repo / ".gitignore").write_text(".megaplan/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore megaplan")
+
+    # Input material (briefs) — gitignored but required by the run.
+    briefs = repo / ".megaplan" / "briefs" / "epic"
+    briefs.mkdir(parents=True)
+    (briefs / "chain.yaml").write_text("milestones: []\n", encoding="utf-8")
+    (briefs / "m0.md").write_text("# m0\n", encoding="utf-8")
+    # Run state — gitignored AND must stay out of the carry.
+    plans = repo / ".megaplan" / "plans" / "run1"
+    plans.mkdir(parents=True)
+    (plans / "state.json").write_text("{}", encoding="utf-8")
+
+    target = tmp_path / "worktrees" / "wt1"
+    wt.create_named_worktree(repo, target, head, "epic/test")
+
+    tracked, untracked = wt.carry_dirty_state(repo, target)
+
+    assert (target / ".megaplan" / "briefs" / "epic" / "chain.yaml").is_file()
+    assert (target / ".megaplan" / "briefs" / "epic" / "m0.md").is_file()
+    # Run state was NOT carried.
+    assert not (target / ".megaplan" / "plans" / "run1" / "state.json").exists()
+    assert untracked >= 2
