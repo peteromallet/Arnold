@@ -1544,6 +1544,108 @@ class TestAvailableNodeSignatures:
         class_types = {r.class_type for r in rows}
         assert class_types == {"NoneTypeIn", "StarTypeIn"}
 
+    # -- FIX 1 / FIX 2: combo choices and output slot names ---------------
+
+    def test_combo_input_renders_choices_inline(self) -> None:
+        from vibecomfy.porting.emitter import (
+            InputSignatureField,
+            NodeSignatureRow,
+            format_signature_rows,
+        )
+
+        rows = [
+            NodeSignatureRow(
+                class_type="VAELoader",
+                inputs=[
+                    InputSignatureField(
+                        name="vae_name",
+                        type="COMBO",
+                        required=True,
+                        choices=("ae.safetensors", "flux_vae.safetensors"),
+                    ),
+                ],
+                outputs=[],
+            ),
+        ]
+        text = format_signature_rows(rows)
+        assert (
+            'def VAELoader(vae_name: COMBO["ae.safetensors", "flux_vae.safetensors"]) -> None:'
+            in text
+        )
+
+    def test_combo_input_truncates_over_limit(self) -> None:
+        from vibecomfy.porting.emitter import (
+            InputSignatureField,
+            NodeSignatureRow,
+            format_signature_rows,
+        )
+
+        many_choices = tuple(f"model_{i:04d}.safetensors" for i in range(347))
+        rows = [
+            NodeSignatureRow(
+                class_type="BigLoader",
+                inputs=[
+                    InputSignatureField(
+                        name="ckpt_name",
+                        type="COMBO",
+                        required=True,
+                        choices=many_choices,
+                    ),
+                ],
+                outputs=[],
+            ),
+        ]
+        text = format_signature_rows(rows)
+        # Only 40 values rendered
+        assert '"model_0000.safetensors"' in text
+        assert '"model_0039.safetensors"' in text
+        assert '"model_0040.safetensors"' not in text
+        # Truncation guidance present
+        assert "+307 more" in text
+        assert "ask the user for an exact name if you need one not listed" in text
+
+    def test_output_name_differs_from_type_renders_name_colon_type(self) -> None:
+        from vibecomfy.porting.emitter import (
+            NodeSignatureRow,
+            OutputSignatureField,
+            format_signature_rows,
+        )
+
+        rows = [
+            NodeSignatureRow(
+                class_type="SamplerCustomAdvanced",
+                inputs=[],
+                outputs=[
+                    OutputSignatureField(name="output", type="LATENT"),
+                    OutputSignatureField(name="denoised_output", type="LATENT"),
+                ],
+            ),
+        ]
+        text = format_signature_rows(rows)
+        assert "def SamplerCustomAdvanced() -> output:LATENT, denoised_output:LATENT:" in text
+
+    def test_output_name_equals_type_renders_type_only(self) -> None:
+        from vibecomfy.porting.emitter import (
+            InputSignatureField,
+            NodeSignatureRow,
+            OutputSignatureField,
+            format_signature_rows,
+        )
+
+        rows = [
+            NodeSignatureRow(
+                class_type="VAEDecode",
+                inputs=[
+                    InputSignatureField(name="samples", type="LATENT", required=True),
+                    InputSignatureField(name="vae", type="VAE", required=True),
+                ],
+                outputs=[OutputSignatureField(name="IMAGE", type="IMAGE")],
+            ),
+        ]
+        text = format_signature_rows(rows)
+        assert "def VAEDecode(samples: LATENT, vae: VAE) -> IMAGE:" in text
+        assert "-> IMAGE:IMAGE:" not in text
+
 
 # =====================================================================
 # M1 T7 — Import smoke tests for the public M1 surface
