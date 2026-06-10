@@ -78,6 +78,10 @@ from megaplan.workers._impl import (
     validate_payload,
 )
 from megaplan.workers._projection_caps import shannon_projection_capabilities
+from megaplan.workers.subscription_gate import (
+    SubscriptionSlotTimeout,
+    subscription_slot,
+)
 
 
 # Sentinel marker the vendored fork carries on line 2 of index.ts. Mirrors
@@ -1068,28 +1072,45 @@ def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
     if typed_env is not None:
         run_env = {**ctx.env, **typed_env}
 
+    # Host-wide subscription gate. Every Shannon turn drives the single local
+    # ``claude`` CLI subscription; when multiple chains run on one box they all
+    # contend for it. The gate makes turns QUEUE for a slot instead of all
+    # starving — and crucially, the wait-to-acquire happens OUTSIDE the turn's
+    # ``run_command`` timeout window below, so queueing never burns the phase
+    # wall/idle timeout. When the gate is disabled (MEGAPLAN_SHANNON_MAX_CONCURRENT
+    # unset/<=0) this is a no-op and behaviour is unchanged. A saturation timeout
+    # is surfaced as a retryable ``worker_stall`` (BLOCKED/resumable), NOT a
+    # terminal phase failure.
     try:
-        result = run_command(
-            launch_command,
-            cwd=ctx.work_dir,
-            stdin_text=stdin_text,
-            env=run_env,
-            timeout=turn.timeout,
-            activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
-            idle_timeout=_worker_stream_idle_timeout_seconds(),
-            liveness_probe=_make_shannon_liveness_probe(
-                ctx.tmux_session,
-                turn.session_id,
-                ctx.work_dir,
-                claude_config_dir=ctx.claude_config_dir,
-                home=ctx.env.get("HOME"),
-            ),
-            tmux_session=ctx.tmux_session,
-        )
-    except CliError as error:
-        if error.code in {"worker_stall", "worker_timeout", "connection_error"}:
-            error.extra["session_id"] = turn.session_id
-        raise
+        with subscription_slot():
+            try:
+                result = run_command(
+                    launch_command,
+                    cwd=ctx.work_dir,
+                    stdin_text=stdin_text,
+                    env=run_env,
+                    timeout=turn.timeout,
+                    activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
+                    idle_timeout=_worker_stream_idle_timeout_seconds(),
+                    liveness_probe=_make_shannon_liveness_probe(
+                        ctx.tmux_session,
+                        turn.session_id,
+                        ctx.work_dir,
+                        claude_config_dir=ctx.claude_config_dir,
+                        home=ctx.env.get("HOME"),
+                    ),
+                    tmux_session=ctx.tmux_session,
+                )
+            except CliError as error:
+                if error.code in {"worker_stall", "worker_timeout", "connection_error"}:
+                    error.extra["session_id"] = turn.session_id
+                raise
+    except SubscriptionSlotTimeout as error:
+        raise CliError(
+            "worker_stall",
+            f"shannon subscription gate: {error}",
+            extra={"session_id": turn.session_id, "error_layer": "worker_stream_stall"},
+        ) from error
 
     raw = (result.stdout or "") + (result.stderr or "")
     return TurnResult(
