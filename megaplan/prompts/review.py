@@ -386,6 +386,7 @@ def compact_review_prompt(
         - Set `review_verdict` to `needs_rework` only for issue-anchored, deterministic failures that require another execute pass. Use `approved` when all must criteria are satisfied.
         - Set `review_completion_status` to `"incomplete"` only if repository inspection or required verification commands cannot complete; otherwise set it to `"complete"`.
         - Populate `criteria`, `issues`, `rework_items`, `summary`, `task_verdicts`, and `sense_check_verdicts` using the existing review JSON shape.
+        - `task_verdicts` and `sense_check_verdicts` are PRE-FILLED with one object per id. Return them with that SAME one-object-per-id structure, filling in each `reviewer_verdict` / `verdict`. Every `task_id` / `sense_check_id` MUST be exactly one concrete id from the provided list — NEVER a range or comma-list such as `"T1-T28"`, `"T1,T2"`, or `"SC1-SC17,SC19-SC28"`. Emit a separate object for EVERY task and sense check, even when your verdict text is identical across many (copy the same text into each). A lumped or range id is rejected as missing coverage and forces a wasteful re-review.
         - If uncertainty remains because the compact prompt omitted detail, record that as an advisory issue unless a deterministic check demonstrates a blocker.
         """
     ).strip()
@@ -1102,6 +1103,7 @@ def _review_prompt(
           - `flag_id`: critique/review flag ID when applicable, otherwise `null`
           - `source`: short machine-readable source tag when applicable, otherwise `null`
           - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `task_verdicts` and `sense_check_verdicts` are pre-filled with one object per id. Return that SAME one-object-per-id structure, filling in each `reviewer_verdict` / `verdict`. Every `task_id` / `sense_check_id` MUST be exactly one concrete id from the provided list — NEVER a range or comma-list such as `"T1-T28"`, `"T1,T2"`, or `"SC1-SC17,SC19-SC28"`. Emit a separate object for EVERY task and sense check, even when the verdict text is identical (copy it into each). A lumped or range id is rejected as missing coverage and forces a wasteful re-review.
         - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
         - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.
         """

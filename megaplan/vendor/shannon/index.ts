@@ -1248,7 +1248,7 @@ async function sendPrompt(tmuxSession: string, prompt: string) {
       throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);
     }
     await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
-    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+    await submitAfterPaste(tmuxSession);
   } catch (error) {
     primaryError = error;
     throw error;
@@ -1259,6 +1259,31 @@ async function sendPrompt(tmuxSession: string, prompt: string) {
       if (primaryError === undefined) {
         throw deleteError;
       }
+    }
+  }
+}
+
+// A large bracketed paste (`paste-buffer -p`) is ingested asynchronously by
+// Claude's TUI, which collapses a multi-line prompt into a "[Pasted text #N +M
+// lines]" placeholder in the composer. An immediately-following `C-m` races the
+// paste-end (`ESC[201~`) sequence and gets absorbed into the paste instead of
+// submitting it, leaving the prompt parked unsent — observed as a 2.1.168
+// "Timed out waiting for Claude transcript" with the pane showing
+// "[Pasted text #1 +225 lines]" still in the composer. Let the paste settle,
+// send Enter, then verify the placeholder cleared and retry Enter if it is
+// still parked.
+async function submitAfterPaste(tmuxSession: string) {
+  const settleMs = Number(process.env.MEGAPLAN_SHANNON_PASTE_SETTLE_MS ?? "500");
+  const maxAttempts = Number(
+    process.env.MEGAPLAN_SHANNON_PASTE_SUBMIT_ATTEMPTS ?? "5",
+  );
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await Bun.sleep(settleMs);
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+    await Bun.sleep(settleMs);
+    const pane = await capturePane(tmuxSession);
+    if (!/\[Pasted text/i.test(pane)) {
+      return;
     }
   }
 }

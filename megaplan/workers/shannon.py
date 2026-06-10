@@ -157,6 +157,34 @@ def _raw_contains_success_result(raw: str) -> bool:
     return False
 
 
+_TMUX_DIED_MARKERS = (
+    "no server running",
+    "no current client",
+    "can't find session",
+    "lost server",
+)
+
+
+def _raw_indicates_tmux_died(raw: str) -> bool:
+    """Return True when Shannon's output reveals its tmux server/session died.
+
+    The vendored Shannon launcher drives Claude inside a tmux session; when that
+    server dies — e.g. during the ``waitForPrompt`` startup poll — it surfaces a
+    line like ``tmux capture-pane -pt <id> -S -40 failed with 1: no server
+    running``. That is a transient INFRASTRUCTURE stall (the Claude session
+    crashed before producing a result), NOT a model/result error. It must be
+    classified as a retryable ``worker_stall`` (which sheds the session and
+    retries fresh), never misparsed as a bad result / ``internal_error`` because
+    the only surviving stdout was Claude's ``system/init`` line.
+    """
+    if not raw:
+        return False
+    low = raw.lower()
+    if "tmux" not in low and "capture-pane" not in low:
+        return False
+    return any(marker in low for marker in _TMUX_DIED_MARKERS)
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -2421,6 +2449,36 @@ def run_shannon_step(
         raise
 
     raw = main_result.raw
+
+    # A dead tmux server during the turn (the vendored launcher surfaces
+    # ``tmux capture-pane ... no server running``) means the Claude session
+    # crashed before emitting a result — a transient infra stall, not a bad
+    # result. Without this guard the tmux-error text falls through to
+    # ``_parse_shannon_output``, which finds no result envelope and the only
+    # surviving line is Claude's ``system/init`` message — so the crash is
+    # misparsed and surfaces as a non-retryable ``internal_error`` that loops.
+    # Classify it as a retryable ``worker_stall`` instead: shed the persisted
+    # session id (matching the run_turn stall handler above) and re-raise so the
+    # next attempt spawns a fresh session.
+    if not _raw_contains_success_result(raw) and _raw_indicates_tmux_died(raw):
+        try:
+            sessions = state.get("sessions")
+            if isinstance(sessions, dict):
+                entry = sessions.get(session_key)
+                entry_id = entry.get("id") if isinstance(entry, dict) else None
+                if entry_id is not None and entry_id in {
+                    main_turn.session_id, persisted_session_id,
+                }:
+                    sessions.pop(session_key, None)
+        except Exception:
+            pass
+        raise CliError(
+            "worker_stall",
+            "Shannon tmux server died during the turn (no server running); the "
+            "Claude session crashed before producing a result — retrying on a "
+            "fresh session.",
+            extra={"raw_output": raw, "session_id": main_turn.session_id},
+        )
 
     # ── (i) parse + (execute-only) repair the structured envelope ───────
     # A heavy execute batch can exhaust max_tokens on reasoning before emitting

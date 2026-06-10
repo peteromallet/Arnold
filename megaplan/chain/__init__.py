@@ -1729,7 +1729,20 @@ def validate_paths(spec: ChainSpec, root: Path, state: ChainState | None = None)
         if state is not None and index == current_index and current_plan_name:
             continue
         idea_path = _resolve_idea_path(root, m.idea)
-        if not idea_path.exists():
+        try:
+            exists = idea_path.exists()
+        except OSError:
+            # An inline brief (or any oversized string) accidentally placed in
+            # `idea:` cannot be a path — stat() raises ENAMETOOLONG. Surface a
+            # clear, actionable error instead of an unhandled OSError traceback.
+            preview = m.idea.strip().splitlines()[0][:80] if m.idea.strip() else ""
+            raise CliError(
+                "invalid_idea_path",
+                f"milestone {m.label!r} `idea` must be a PATH to a brief file, "
+                f"not inline text (got {preview!r}…). Write the brief to a file "
+                f"under .megaplan/briefs/ and set `idea:` to that path.",
+            )
+        if not exists:
             raise CliError(
                 "missing_idea_file",
                 f"milestone {m.label!r} idea file not found: {m.idea}",
@@ -1815,6 +1828,7 @@ from .git_ops import (
     _classify_sync_state,
     _command_env,
     commit_plan_artifacts_to_base,
+    _commit_phase,
     _commit_and_push_phase,
     _dirty_nested_repos_from_claimed_paths,
     _dirty_worktree_paths,
@@ -2221,13 +2235,45 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             finalize_payload.get("tasks") if isinstance(finalize_payload, dict) else None
         )
         if isinstance(finalize_tasks, list) and finalize_tasks:
+            # A "no new failures vs the recorded baseline" checkpoint cannot be
+            # evaluated when baseline capture failed (baseline_test_failures is
+            # null — e.g. the suite timed out). The execute layer already treats
+            # such checkpoints as acknowledged deviations rather than real blocks
+            # (batch.py prereq_blocked = active_blocked - baseline_blocked); the
+            # chain completion gate must apply the SAME exemption, or a transient
+            # baseline-capture failure permanently deadlocks a finished milestone
+            # on an unattended (auto_approve) run — there is no operator to clear
+            # the "end-of-run signal" the interim-vs-final distinction reserved.
+            from megaplan.execute.batch import baseline_unavailable_checkpoint_ids
+
+            all_finalize_ids = {
+                task["id"]
+                for task in finalize_tasks
+                if isinstance(task, dict) and isinstance(task.get("id"), str)
+            }
+            baseline_unavailable = baseline_unavailable_checkpoint_ids(
+                finalize_payload, all_finalize_ids
+            )
             pending = [
                 f"{(task.get('id') or '?')}={task.get('status')!r}"
                 for task in finalize_tasks
-                if isinstance(task, dict) and task.get("status") not in {"done", "skipped"}
+                if isinstance(task, dict)
+                and task.get("status") not in {"done", "skipped"}
+                and task.get("id") not in baseline_unavailable
             ]
             if pending:
                 return False, f"finalize.json has incomplete tasks: {', '.join(pending)}"
+            if baseline_unavailable:
+                print(
+                    "[chain] WARNING: no-new-failures checkpoint(s) "
+                    f"{', '.join(sorted(baseline_unavailable))} could not be "
+                    "verified (baseline capture failed / baseline_test_failures "
+                    "is null); milestone completion is NOT blocked on an "
+                    "un-capturable baseline. Review the post-execute suite for "
+                    "regressions.",
+                    file=sys.stderr,
+                    flush=True,
+                )
     return True, latest.name
 
 
@@ -2525,8 +2571,10 @@ def _assert_clean_base(
             "[chain] WARNING: require_clean_base is STASHING non-.megaplan WIP "
             f"for milestone {milestone.label} ({sample}).\n"
             "[chain] WARNING: this stashed work will NOT be in this milestone's "
-            "base. If this is a prior milestone's uncommitted output (e.g. under "
-            "--no-push), milestones are NOT building on each other.",
+            "base. Under --no-push each completed milestone now commits its own "
+            "output locally, so this carried WIP is presumed to be UNRELATED "
+            "pre-existing work — confirm it is not a milestone's product before "
+            "relying on the stash.",
             file=sys.stderr,
         )
         writer(
@@ -2723,34 +2771,37 @@ def run_chain(
         )
     preexisting_dirty_paths = _dirty_worktree_paths(root)
 
-    # ---- Preflight: data-loss guard for --no-push + require_clean_base ----
-    # With pushing disabled, milestones never commit, so each milestone's output
-    # stays as uncommitted WIP. With require_clean_base, that WIP is stashed away
-    # before the next milestone inits — so HEAD never advances and every
-    # milestone silently builds on the same base, prior work siloed in stashes.
-    if not push_enabled and spec.require_clean_base and len(spec.milestones) > 1:
+    # ---- Preflight: announce --no-push local-commit integration mode ----
+    # Under --no-push each milestone now commits LOCALLY onto the base branch as
+    # it completes (see the advance path / _commit_phase), so HEAD advances and
+    # milestones build on each other. (Historically --no-push milestones never
+    # committed — their output stayed as uncommitted WIP that, with
+    # require_clean_base, got stashed away, freezing HEAD and siloing prior work.
+    # The local commit closes that data-integrity gap.)
+    if not push_enabled and len(spec.milestones) > 1:
         print(
             "\n"
             "============================================================\n"
-            "[chain] PREFLIGHT WARNING: --no-push + require_clean_base: true\n"
+            "[chain] --no-push: LOCAL-COMMIT integration mode\n"
             "============================================================\n"
-            f"This chain has {len(spec.milestones)} milestones, pushing is "
-            "disabled, and require_clean_base is true.\n"
+            f"This chain has {len(spec.milestones)} milestones and pushing is "
+            "disabled.\n"
             "\n"
-            "With --no-push, milestones NEVER commit — their output stays as\n"
-            "uncommitted WIP. require_clean_base will then STASH each milestone's\n"
-            "output before the next one inits. Result: HEAD never advances and\n"
-            "milestones do NOT build on each other — every milestone forks the\n"
-            "same base while prior work is siloed in git stashes. This can run\n"
-            "undetected for a long time because the stash is silent.\n"
+            "Each milestone is committed LOCALLY onto the base branch\n"
+            f"({spec.base_branch}) as it completes — HEAD advances so every\n"
+            "milestone builds on the previous one's integrated tree, exactly as a\n"
+            "pushed chain would, just without contacting origin. Nothing is pushed\n"
+            "and no PRs are opened; publish with a manual `git push` when ready.\n"
             "\n"
-            "To fix, pick ONE of:\n"
-            "  - DROP --no-push so milestones commit+push and each builds on the\n"
-            "    last (set a merge_policy as needed), OR\n"
-            "  - SET require_clean_base: false so uncommitted work ACCUMULATES in\n"
-            "    the worktree across milestones.\n"
-            "\n"
-            "--no-push is only safe for a single-milestone throwaway local test.\n"
+            "Notes:\n"
+            "  - Per-milestone history is real local commits (one 'megaplan: <plan>\n"
+            "    done' commit per milestone), so each milestone has a reviewable\n"
+            "    diff and the completion contract can compute per-milestone deltas.\n"
+            "  - require_clean_base stays compatible: the worktree is clean between\n"
+            "    milestones (work is committed, not stashed), so it no longer silos\n"
+            "    output into stashes.\n"
+            "  - Unrelated pre-existing WIP present at chain start is NOT swept into\n"
+            "    milestone commits.\n"
             "============================================================\n",
             file=sys.stderr,
         )
@@ -3282,6 +3333,39 @@ def run_chain(
             save_chain_state(spec_path, state)
             continue
 
+        # --no-push local integration. When we are NOT managing a milestone
+        # branch/PR (push disabled, so ``effective_use_pr`` is False), the
+        # branch+PR commit path at decision=="advance" above never runs and the
+        # milestone's CODE would otherwise be left as uncommitted WIP while HEAD
+        # stayed frozen at the chain's start. Commit the milestone's worktree
+        # diff locally onto the base branch (HEAD) — no push — so HEAD advances
+        # and the next milestone's base (``_current_head_sha``) is this
+        # milestone's integrated tree. This is what makes --no-push milestones
+        # build on each other instead of all forking the same frozen base.
+        local_commit_sha: str | None = None
+        if (
+            decision == "advance"
+            and execution_pass
+            and not effective_use_pr
+            # Only integrate where there is real git history to build on. Off a
+            # git repo (logic-only tests, degenerate setups) _current_head_sha is
+            # None and there is nothing to commit onto.
+            and _current_head_sha(root) is not None
+        ):
+            local_commit_sha = _commit_phase(
+                root,
+                plan_name,
+                "done",
+                writer=writer,
+                preexisting_dirty_paths=preexisting_dirty_paths,
+            )
+            if local_commit_sha:
+                state.branch_head = local_commit_sha
+                log(
+                    f"--no-push: integrated milestone {milestone.label} locally as "
+                    f"{local_commit_sha[:10]} on {spec.base_branch} (HEAD advanced; not pushed)"
+                )
+
         # advance or skip
         completed_record = _completed_record_for_status(state, milestone) or {}
         if planning_pass and outcome.status == "finalized":
@@ -3308,7 +3392,12 @@ def run_chain(
                 "label": milestone.label,
                 "plan": plan_name,
                 "status": outcome.status,
-                "plan_branch": _completed_record_branch(completed_record),
+                "plan_branch": (
+                    spec.base_branch
+                    if local_commit_sha
+                    else _completed_record_branch(completed_record)
+                ),
+                "local_commit_sha": local_commit_sha,
                 "pr_number": state.pr_number,
                 "pr_state": state.pr_state,
             }
@@ -3529,8 +3618,11 @@ def build_chain_parser(subparsers: Any) -> None:
         "--no-push",
         action="store_true",
         help=(
-            "Disable milestone branch creation, PR creation, commits, and pushes. "
-            "Also enabled by MEGAPLAN_CHAIN_NO_PUSH=1; intended for local/no-network tests."
+            "Disable milestone branch creation, PR creation, and pushes to origin. "
+            "Milestones still commit LOCALLY onto the base branch as they complete, "
+            "so HEAD advances and each builds on the previous one's integrated tree "
+            "(publish later with a manual git push). Also enabled by "
+            "MEGAPLAN_CHAIN_NO_PUSH=1; intended for local/no-network runs."
         ),
     )
     chain_parser.add_argument(

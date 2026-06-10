@@ -2346,11 +2346,19 @@ def run_codex_step(
         # liveness heartbeat), so this converts an indefinite park into a retryable
         # ``worker_stall`` instead of riding the 2h wall-clock. Set generously so a
         # single long, output-silent tool subprocess (bounded by the test baseline)
-        # is not false-killed. Override via MEGAPLAN_CODEX_IDLE_TIMEOUT_S (0 disables).
+        # is not false-killed. The default MUST exceed the finalize test-baseline
+        # timeout (``test_baseline_timeout``, default 900s in handlers/finalize.py):
+        # a verification task whose executor shells one silent full ``pytest`` run
+        # legitimately produces zero output for the whole suite duration, so a
+        # default below the baseline cap false-kills it mid-suite and the resulting
+        # ``worker_stall`` (an ``external_error`` that the auto loop laterally
+        # defers) re-enters execute forever with zero progress. 1200s clears the
+        # 900s baseline cap plus margin. Override via MEGAPLAN_CODEX_IDLE_TIMEOUT_S
+        # (0 disables).
         try:
-            codex_idle_s = float(os.getenv("MEGAPLAN_CODEX_IDLE_TIMEOUT_S", "600"))
+            codex_idle_s = float(os.getenv("MEGAPLAN_CODEX_IDLE_TIMEOUT_S", "1200"))
         except (TypeError, ValueError):
-            codex_idle_s = 600.0
+            codex_idle_s = 1200.0
         result = run_command(
             command,
             cwd=Path.cwd(),
