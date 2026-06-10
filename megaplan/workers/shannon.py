@@ -1667,6 +1667,187 @@ def _claude_transcript_paths(
     return paths
 
 
+def _read_turn_ndjson_from_transcript(
+    transcript_path: str | Path,
+    *,
+    since_user_uuid: str | None = None,
+) -> str | None:
+    """Return raw NDJSON lines for the most recent COMPLETED turn in *transcript_path*.
+
+    Reads a Claude Code ``.jsonl`` transcript file and walks it backwards to
+    locate the most recently completed assistant turn.  A turn is defined as:
+
+    * **Turn-opener** — the first ``type=user`` record whose
+      ``message.content`` contains at least one block whose ``type`` is NOT
+      ``tool_result`` (genuine user input, not an injected tool result).
+    * **Turn-close** — an ``assistant`` record with
+      ``stop_reason='end_turn'`` *immediately* followed by a ``system``
+      record whose ``subtype='turn_duration'`` and ``parentUuid`` matches the
+      assistant's ``uuid``.
+
+    Every record between (and including) the turn-opener and the turn-close
+    ``system`` record is returned as raw NDJSON — one JSON object per line,
+    exactly as it appears in the transcript file.  This includes interleaved
+    ``tool_use`` assistant blocks, ``tool_result`` user blocks, and any other
+    records the Claude runtime inserted during the turn.
+
+    When *since_user_uuid* is given, only turns whose turn-opener ``uuid``
+    differs from *since_user_uuid* are considered (i.e. only turns that start
+    with a *new* user message).  Returns ``None`` when no completed turn is
+    found, the file does not exist, or every visible turn is stale.
+    """
+    path = Path(transcript_path)
+    if not path.is_file():
+        return None
+
+    # Read raw lines so we can return them byte-for-byte.
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    if not raw_lines:
+        return None
+
+    # Parse every line into JSON; skip unparseable trailing cruft.
+    parsed: list[dict[str, Any] | None] = []
+    for line in raw_lines:
+        stripped = line.strip()
+        if not stripped:
+            parsed.append(None)
+            continue
+        try:
+            parsed.append(json.loads(stripped))
+        except json.JSONDecodeError:
+            parsed.append(None)
+
+    # Walk backwards to find the most recent completed turn.
+    n = len(parsed)
+    close_idx: int | None = None   # index of the system turn_duration row
+    assistant_uuid: str | None = None
+
+    # 1) Find the turn-close: system subtype=turn_duration with parentUuid.
+    for i in range(n - 1, -1, -1):
+        row = parsed[i]
+        if not isinstance(row, dict):
+            continue
+        if row.get("type") != "system":
+            continue
+        if row.get("subtype") != "turn_duration":
+            continue
+        puuid = row.get("parentUuid")
+        if not isinstance(puuid, str) or not puuid:
+            continue
+        # Found a candidate turn_duration.  The assistant must be the
+        # immediately preceding record (the runtime always appends the
+        # turn_duration right after the assistant row).
+        if i == 0:
+            continue
+        prev = parsed[i - 1]
+        if not isinstance(prev, dict):
+            continue
+        if prev.get("type") != "assistant":
+            continue
+        msg = prev.get("message")
+        if not isinstance(msg, dict):
+            continue
+        if msg.get("stop_reason") != "end_turn":
+            continue
+        if prev.get("uuid") != puuid:
+            continue
+        close_idx = i
+        assistant_uuid = puuid
+        break
+
+    if close_idx is None:
+        return None  # No completed turn found.
+
+    # 2) Walk backwards from the assistant row to find the turn-opener.
+    open_idx: int | None = None
+    for i in range(close_idx - 1, -1, -1):
+        row = parsed[i]
+        if not isinstance(row, dict):
+            continue
+        if row.get("type") != "user":
+            continue
+        msg = row.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list) or not content:
+            continue
+        # Turn-opener: at least one content block whose type is not tool_result.
+        if not any(
+            isinstance(block, dict) and block.get("type") != "tool_result"
+            for block in content
+        ):
+            continue
+        # Check the since_user_uuid filter.
+        row_uuid = row.get("uuid")
+        if since_user_uuid is not None and row_uuid == since_user_uuid:
+            return None  # This turn's opener is the stale UUID → no newer turn.
+        open_idx = i
+        break
+
+    if open_idx is None:
+        return None  # No user-opener found before this turn.
+
+    # 3) Return the raw lines for [open_idx .. close_idx] inclusive.
+    return "\n".join(raw_lines[open_idx : close_idx + 1]) + "\n"
+
+
+def _tmux_capture_pane(session_name: str) -> str | None:
+    """Return the captured pane text for *session_name*, or ``None`` on failure."""
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", session_name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _is_headless_crash_signature(tmux_session: "TmuxSession") -> bool:
+    """Return True when the tmux pane shows the headless-crash signature.
+
+    The signature is: the tmux session is gone **or** its pane captured content
+    is empty/whitespace.  Either condition means ``claude`` never painted output
+    into the pane before the readiness timeout — the canonical indicator that the
+    CLI crashed or refused to render in the headless tmux path (e.g. a
+    headless-broken auto-updated build).
+
+    Conservatively returns ``False`` when the pane is non-empty — the process
+    may still be alive but slow, so we let the ordinary CliError propagate
+    unchanged.
+    """
+    try:
+        session_alive = tmux_session.exists()
+    except Exception:
+        # Cannot tell — treat as non-crash so we don't over-fire.
+        return False
+
+    if not session_alive:
+        # Session is already gone — process exited before producing readiness.
+        return True
+
+    pane = _tmux_capture_pane(tmux_session.name)
+    # None means capture-pane failed (session vanished between the exists() call
+    # and the capture); empty/whitespace means no visible output was written.
+    return pane is None or not pane.strip()
+
+
+_HEADLESS_BROKEN_MSG = (
+    "claude CLI appears broken in the headless tmux path (empty pane / server "
+    "exited before readiness). Pin a known-good build via "
+    "MEGAPLAN_SHANNON_CLAUDE_BIN (e.g. a version that renders headlessly)."
+)
+
+
 def _make_shannon_liveness_probe(
     tmux_session: TmuxSession,
     session_id: str | None,
@@ -1712,20 +1893,6 @@ def _make_shannon_liveness_probe(
     last_mtime = [0.0]
     primed = [False]
 
-    def _capture_pane() -> str | None:
-        try:
-            result = subprocess.run(
-                ["tmux", "capture-pane", "-p", "-t", tmux_session.name],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-        except FileNotFoundError:
-            return None
-        if result.returncode != 0:
-            return None
-        return result.stdout
-
     def _max_transcript_mtime() -> float:
         newest = 0.0
         for path in _claude_transcript_paths(
@@ -1748,7 +1915,7 @@ def _make_shannon_liveness_probe(
         except Exception:
             session_alive = True  # cannot tell — do not kill on this alone
 
-        pane = _capture_pane()
+        pane = _tmux_capture_pane(tmux_session.name)
         mtime = _max_transcript_mtime()
 
         if not primed[0]:
@@ -2314,8 +2481,22 @@ def run_shannon_step(
             try:
                 pre_result = run_turn(pre_turn, ctx)
             except CliError as error:
-                if error.code == "worker_timeout":
+                if error.code in {"worker_timeout", "worker_stall"}:
                     error.extra["session_id"] = pre_turn.session_id
+                    # Loud-fail guard: a timeout/stall during the readiness
+                    # probe with an empty or absent pane is the headless-crash
+                    # signature — the claude CLI exited or hung before painting
+                    # any output into the tmux pane.  Surface a clear CliError
+                    # instead of letting this look like a generic stall.
+                    if _is_headless_crash_signature(ctx.tmux_session):
+                        raise CliError(
+                            "shannon_claude_headless_broken",
+                            _HEADLESS_BROKEN_MSG,
+                            extra={
+                                "session_id": pre_turn.session_id,
+                                "original_code": error.code,
+                            },
+                        ) from error
                 raise
             if pre_result.returncode != 0:
                 if _raw_contains_success_result(pre_result.raw):
@@ -2333,6 +2514,15 @@ def run_shannon_step(
                     extra={"raw_output": pre_result.raw, "session_id": pre_turn.session_id},
                 )
             if not pre_result.raw.strip():
+                # Zero-exit but empty output: the process ran and exited cleanly
+                # but wrote nothing.  This is also a headless-crash signature
+                # when the pane is empty — claude quit without rendering.
+                if _is_headless_crash_signature(ctx.tmux_session):
+                    raise CliError(
+                        "shannon_claude_headless_broken",
+                        _HEADLESS_BROKEN_MSG,
+                        extra={"session_id": pre_turn.session_id, "original_code": "empty_output"},
+                    )
                 raise CliError(
                     "worker_error",
                     "Shannon readiness probe returned no output",
@@ -2422,6 +2612,35 @@ def run_shannon_step(
 
     raw = main_result.raw
 
+    # ── (h.1) Prefer .jsonl transcript over stdout/pane raw ──────────────
+    # Claude Code appends every turn to a per-session .jsonl transcript under
+    # ~/.claude/projects/<slug>/<session>.jsonl.  The structured NDJSON in that
+    # file is more reliable than the tmux pane / stdout scrape, which can be
+    # empty on paste-first-turn success.  Try the transcript first; fall back
+    # to stdout raw on any failure so the existing repair path stays reachable.
+    transcript_raw: str | None = None
+    try:
+        transcript_paths = _claude_transcript_paths(
+            main_turn.session_id,
+            ctx.work_dir,
+            claude_config_dir=ctx.claude_config_dir,
+            home=ctx.env.get("HOME"),
+        )
+        if transcript_paths:
+            # Multiple candidates can exist (shouldn't, but be defensive).
+            # Pick newest-by-mtime — the real Claude transcript was written
+            # during this turn and has the freshest stamp.
+            transcript_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for tp in transcript_paths:
+                ndjson = _read_turn_ndjson_from_transcript(tp)
+                if ndjson:
+                    transcript_raw = ndjson
+                    break
+    except Exception:
+        # Any failure in transcript resolution (file IO, glob, JSON) is
+        # swallowed — fall through to stdout raw below.
+        transcript_raw = None
+
     # ── (i) parse + (execute-only) repair the structured envelope ───────
     # A heavy execute batch can exhaust max_tokens on reasoning before emitting
     # the envelope. The work itself stands — a resume turn that asks for ONLY
@@ -2434,43 +2653,53 @@ def run_shannon_step(
         validate_payload(step, pay_)
         return env_, pay_
 
-    try:
-        envelope, payload = _parse_and_validate(raw)
-    except CliError as error:
-        repaired_raw: str | None = None
-        if step == "execute" and error.code in {"parse_error", "schema_error"}:
-            repair_sid = session_id_of(raw) or main_turn.session_id
-            repair_turn = Turn(
-                session_id=repair_sid,
-                resume=True,
-                body=_EXECUTE_ENVELOPE_REPAIR_PROMPT,
-                delivery="argv",
-                expect="envelope",
-                timeout=cfg.execute_timeout_seconds,
-                pre_sleep_s=0.0,
-            )
-            print(
-                "[megaplan] execute output was truncated/invalid; resuming "
-                f"session {repair_sid} to re-request only the structured envelope.",
-                file=sys.stderr,
-                flush=True,
-            )
-            try:
-                repair_result = run_turn(repair_turn, ctx)
-                repaired_raw = repair_result.raw or None
-            except CliError:
-                repaired_raw = None
-        if repaired_raw is None:
-            raise CliError(error.code, error.message, extra={"raw_output": raw}) from error
+    # Try transcript NDJSON first; on parse / schema failure fall through
+    # to stdout raw before the execute-only repair path is ever invoked.
+    if transcript_raw is not None:
         try:
-            envelope, payload = _parse_and_validate(repaired_raw)
-        except CliError as repair_error:
-            raise CliError(
-                repair_error.code,
-                f"{repair_error.message} (after structured-envelope repair attempt)",
-                extra={"raw_output": repaired_raw, "original_raw_output": raw},
-            ) from repair_error
-        raw = repaired_raw
+            envelope, payload = _parse_and_validate(transcript_raw)
+            raw = transcript_raw  # WorkerResult.raw_output carries whichever was parsed
+        except CliError:
+            transcript_raw = None  # signal: fall through to stdout
+
+    if transcript_raw is None:
+        try:
+            envelope, payload = _parse_and_validate(raw)
+        except CliError as error:
+            repaired_raw: str | None = None
+            if step == "execute" and error.code in {"parse_error", "schema_error"}:
+                repair_sid = session_id_of(raw) or main_turn.session_id
+                repair_turn = Turn(
+                    session_id=repair_sid,
+                    resume=True,
+                    body=_EXECUTE_ENVELOPE_REPAIR_PROMPT,
+                    delivery="argv",
+                    expect="envelope",
+                    timeout=cfg.execute_timeout_seconds,
+                    pre_sleep_s=0.0,
+                )
+                print(
+                    "[megaplan] execute output was truncated/invalid; resuming "
+                    f"session {repair_sid} to re-request only the structured envelope.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                try:
+                    repair_result = run_turn(repair_turn, ctx)
+                    repaired_raw = repair_result.raw or None
+                except CliError:
+                    repaired_raw = None
+            if repaired_raw is None:
+                raise CliError(error.code, error.message, extra={"raw_output": raw}) from error
+            try:
+                envelope, payload = _parse_and_validate(repaired_raw)
+            except CliError as repair_error:
+                raise CliError(
+                    repair_error.code,
+                    f"{repair_error.message} (after structured-envelope repair attempt)",
+                    extra={"raw_output": repaired_raw, "original_raw_output": raw},
+                ) from repair_error
+            raw = repaired_raw
 
     return WorkerResult(
         payload=payload,
