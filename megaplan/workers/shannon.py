@@ -71,6 +71,7 @@ from megaplan.workers._impl import (
     _external_worker_env,
     _normalize_worker_payload,
     _worker_stream_idle_timeout_seconds,
+    build_three_channel_liveness_probe,
     mock_worker_output,
     resolve_work_dir,
     run_command,
@@ -1905,6 +1906,199 @@ _HEADLESS_BROKEN_MSG = (
 )
 
 
+def _ps_children(pid: str) -> list[str]:
+    """Return the direct child PIDs of *pid* via ``ps`` (portable; macOS+Linux).
+
+    Best-effort: returns ``[]`` when ``ps`` is unavailable or errors.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "pid=,ppid="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    children: list[str] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        child, parent = parts
+        if parent == pid:
+            children.append(child)
+    return children
+
+
+def _process_tree_pids(roots: list[str], *, max_pids: int = 256) -> list[str]:
+    """BFS the process subtree rooted at each pid in *roots* (descendants too).
+
+    Catches the silent-tool-call case: the claude process spawns
+    ``bash`` → ``python`` → ``pytest``, and CPU is burned by the descendants,
+    not the claude process itself. Bounded by *max_pids* so a fork bomb cannot
+    blow up the walk. Degrades to whatever it could collect.
+    """
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    frontier = [p for p in roots if p]
+    while frontier and len(seen) < max_pids:
+        pid = frontier.pop()
+        if pid in seen_set:
+            continue
+        seen_set.add(pid)
+        seen.append(pid)
+        frontier.extend(_ps_children(pid))
+    return seen
+
+
+def _cputime_to_seconds(raw: str) -> float | None:
+    """Parse a ``ps`` ``cputime`` field (``[[DD-]HH:]MM:SS[.ss]``) to seconds."""
+    raw = raw.strip()
+    if not raw or raw == "-":
+        return None
+    days = 0
+    if "-" in raw:
+        day_str, _, raw = raw.partition("-")
+        try:
+            days = int(day_str)
+        except ValueError:
+            days = 0
+    parts = raw.split(":")
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        return None
+    seconds = 0.0
+    for n in nums:
+        seconds = seconds * 60 + n
+    return seconds + days * 86400.0
+
+
+def _subtree_cputime_sample(roots: list[str]) -> float | None:
+    """Cumulative CPU-time (seconds) consumed by the process subtree of *roots*.
+
+    The probe compares successive samples: a positive DELTA means a descendant
+    consumed CPU between samples (the silent-tool-call signal). We sum cumulative
+    cputime (not instantaneous %) so a brief burst between samples is never
+    missed. Returns ``None`` when ``ps`` is unavailable or no pid is readable, so
+    a missing/blocked ``ps`` degrades to "unknown" rather than "flat" — never a
+    false kill.
+    """
+    pids = _process_tree_pids(roots)
+    if not pids:
+        return None
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "pid=,cputime="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    pid_set = set(pids)
+    total = 0.0
+    saw_any = False
+    for line in result.stdout.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid, cputime = parts[0], parts[1]
+        if pid not in pid_set:
+            continue
+        secs = _cputime_to_seconds(cputime)
+        if secs is None:
+            continue
+        saw_any = True
+        total += secs
+    return total if saw_any else None
+
+
+def _socket_recv_sample(roots: list[str]) -> float | None:
+    """Cumulative bytes RECEIVED on the worker subtree's outbound sockets.
+
+    Catches the silent-thinking case: while Claude thinks server-side it has
+    surfaced no tokens (transcript flat) and burns ~no local CPU, but its HTTPS
+    connection to the API is still receiving SSE pings/keepalives — recv-bytes
+    advance. A genuinely wedged connection (ESTABLISHED but receiving nothing)
+    shows a FLAT recv counter.
+
+    macOS: ``nettop -P -L 1 -x -p <pid>`` prints one CSV sample with a
+    ``bytes_in`` column. We sum ``bytes_in`` across the subtree pids. ``nettop``
+    is macOS-only; on Linux (or when ``nettop`` is absent) this returns ``None``
+    (degrades to "unknown", never "flat") so the OTHER two channels carry the
+    decision and a missing tool can never cause a false kill.
+    """
+    nettop = shutil.which("nettop")
+    if not nettop or not roots:
+        return None
+    pids = _process_tree_pids(roots)
+    if not pids:
+        return None
+    total = 0.0
+    saw_any = False
+    for pid in pids:
+        sample = _nettop_bytes_in(nettop, pid)
+        if sample is None:
+            continue
+        saw_any = True
+        total += sample
+    return total if saw_any else None
+
+
+def _nettop_bytes_in(nettop_path: str, pid: str) -> float | None:
+    """Sum the ``bytes_in`` column of a single-sample ``nettop`` run for *pid*.
+
+    ``nettop -P -L 1 -x -p <pid>`` emits a CSV header row plus per-connection
+    rows for one sample interval. We locate the ``bytes_in`` column from the
+    header and sum it across rows. Returns ``None`` on any parse failure or when
+    nettop produced no usable bytes_in column — the caller treats that as
+    "unknown", not "flat".
+
+    ASSUMPTION / COMPROMISE: nettop's CSV layout (``-x``) and ``bytes_in`` header
+    name. If a future macOS renames the column the parse yields ``None`` and the
+    channel degrades to unknown — safe (no false kill), it just stops
+    contributing the socket signal until fixed.
+    """
+    try:
+        result = subprocess.run(
+            [nettop_path, "-P", "-L", "1", "-x", "-p", pid],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+    header = [h.strip() for h in lines[0].split(",")]
+    try:
+        idx = header.index("bytes_in")
+    except ValueError:
+        return None
+    total = 0.0
+    saw_any = False
+    for row in lines[1:]:
+        cols = row.split(",")
+        if idx >= len(cols):
+            continue
+        try:
+            total += float(cols[idx].strip() or 0)
+            saw_any = True
+        except ValueError:
+            continue
+    return total if saw_any else None
+
+
 def _make_shannon_liveness_probe(
     tmux_session: TmuxSession,
     session_id: str | None,
@@ -1913,105 +2107,78 @@ def _make_shannon_liveness_probe(
     claude_config_dir: str | None = None,
     home: str | None = None,
 ):
-    """Build a liveness probe for the buffered shannon worker.
+    """Build the THREE-CHANNEL liveness probe for the buffered shannon worker.
 
-    The shannon worker runs Claude under ``--output-format=json``: the CLI
-    buffers its ENTIRE response and writes nothing to the host stdout/stderr
-    pipe until the turn completes. The ``run_command`` idle-output watchdog
-    therefore sees zero bytes for the whole turn and, on a long-but-healthy
-    turn, would kill it at the idle bound with a misleading ``worker_stall``.
+    The shannon worker runs Claude in a tmux pane under
+    ``--output-format=stream-json``: it can be legitimately silent on the host
+    stdout/stderr pipe for many minutes — while running a long synchronous tool
+    call (a 10-20 min ``pytest``) or while thinking server-side before any token
+    surfaces. The ``run_command`` idle-output watchdog therefore sees zero bytes
+    and, on a healthy-but-silent turn, would false-kill it at the idle bound.
 
-    This probe gives ``run_command`` a REAL liveness signal so it only kills a
-    worker that is genuinely stuck. It reports progress (``True``) ONLY when:
+    "Silence == death" is wrong because silence is AMBIGUOUS. This probe gives
+    ``run_command`` a real liveness signal by sampling THREE independent channels
+    and treating the turn as ALIVE if ANY advanced since the last sample, WEDGED
+    only if ALL THREE are flat for the whole idle window K:
 
-    * a candidate Claude transcript ``.jsonl`` mtime has advanced — the turn is
-      flushing completed content blocks / tool events to disk. This is the only
-      TRUSTWORTHY signal of genuine work.
+    1. **Transcript .jsonl growth** — newest matching transcript mtime advances
+       as completed content blocks / tool events flush to disk (normal token
+       streaming). Dir resolution honours ``CLAUDE_CONFIG_DIR`` (native mode) via
+       :func:`_claude_transcript_paths`, so the native-mode glob is no longer
+       blind.
+    2. **Process-subtree CPU** — cumulative CPU-time of the pane's process
+       subtree (the claude process + descendants, e.g. ``bash``→``python``→
+       ``pytest``). A positive delta means a descendant did work — catches the
+       SILENT TOOL CALL (transcript flat, no tokens, but the test is running).
+    3. **API socket recv** — bytes received on the subtree's outbound HTTPS
+       sockets (SSE pings/deltas arriving even before tokens surface) — catches
+       the SILENT THINKING. macOS ``nettop`` only; degrades to "unknown" (never
+       "flat") elsewhere.
 
-    Crucially, tmux pane-content churn is NOT treated as progress on its own.
-    A wedged Claude (HTTP/SSE stream stalled — sockets ESTABLISHED, 0% CPU, no
-    tokens) still repaints its interactive pane (cursor redraws, spinner
-    animations, status-line refreshes) while writing NOTHING to its transcript.
-    Counting that pane churn as "progress" reset the idle clock forever, so a
-    wedged turn never tripped the inter-event ``stalled_stream`` bound and burned
-    the full window before retrying — and re-wedging. Requiring transcript growth
-    makes a wedged turn correctly read as idle so the bound bites within its
-    intended window.
-
-    It reports ``False`` (no progress) when the session is alive but the
-    transcript mtime is static across the idle window — i.e. a genuinely hung
-    turn — or when the tmux session has vanished entirely. Every tmux/FS call
-    degrades gracefully; a probe that cannot read ANY signal at all (no
-    transcript found AND pane unreadable) returns ``True`` so the conservative
-    wall-clock ``timeout`` stays the sole bound rather than risking a false kill.
+    The combining / decision logic lives in
+    :func:`megaplan.workers._impl.build_three_channel_liveness_probe` (unit-
+    testable without a live process / sockets). Every sampler degrades gracefully
+    to ``None`` ("unknown") when its tool is unavailable, so a missing ``nettop``
+    or ``ps`` can never cause a false kill — the other channels carry the
+    decision, and if NONE are readable the probe stays conservative (alive) and
+    the hard caps in ``run_command`` bound a genuinely dead turn.
     """
-    # Captured-snapshot state across probe calls.
-    last_pane = [""]
-    last_mtime = [0.0]
-    primed = [False]
 
-    def _max_transcript_mtime() -> float:
+    def _transcript_sample() -> float | None:
         newest = 0.0
+        saw_any = False
         for path in _claude_transcript_paths(
             session_id, work_dir, claude_config_dir=claude_config_dir, home=home
         ):
             try:
-                m = path.stat().st_mtime
+                st = path.stat()
             except OSError:
                 continue
-            if m > newest:
-                newest = m
-        return newest
+            saw_any = True
+            # Combine mtime and size so a same-second append (mtime granularity)
+            # still registers as growth on filesystems with coarse mtimes.
+            signal = max(st.st_mtime, 0.0) + float(st.st_size) * 1e-9
+            if signal > newest:
+                newest = signal
+        return newest if saw_any else None
 
-    def _probe() -> bool:
-        # If the tmux session is gone, the worker can no longer be progressing
-        # in a pane we can observe — defer to the stdout/wall-clock bounds (do
-        # NOT claim progress).
+    def _pane_pids() -> list[str]:
         try:
-            session_alive = tmux_session.exists()
+            return pane_pids(tmux_session.name)
         except Exception:
-            session_alive = True  # cannot tell — do not kill on this alone
+            return []
 
-        pane = _tmux_capture_pane(tmux_session.name)
-        mtime = _max_transcript_mtime()
+    def _cpu_sample() -> float | None:
+        return _subtree_cputime_sample(_pane_pids())
 
-        if not primed[0]:
-            # First probe establishes the baseline; treat as progress so the
-            # very first idle expiry never kills before we have a comparison.
-            last_pane[0] = pane or ""
-            last_mtime[0] = mtime
-            primed[0] = True
-            return True
+    def _socket_sample() -> float | None:
+        return _socket_recv_sample(_pane_pids())
 
-        # Transcript mtime advancing is the ONLY trusted progress signal: it
-        # means completed content blocks / tool events are being flushed to
-        # disk. Pane churn is deliberately ignored as a standalone signal — a
-        # wedged Claude repaints its pane without writing any transcript, and
-        # counting that as progress reset the idle clock forever (the root-cause
-        # bug). We still refresh the pane baseline for diagnostics/parity.
-        progressing = mtime > last_mtime[0]
-
-        # Refresh baselines for the next comparison.
-        if pane is not None:
-            last_pane[0] = pane
-        if mtime > last_mtime[0]:
-            last_mtime[0] = mtime
-
-        if progressing:
-            return True
-
-        # No transcript movement. If we have NO observable transcript signal at
-        # all (no transcript file found yet) and the session still exists, stay
-        # conservative (return True) and let the wall-clock cap govern — we
-        # cannot distinguish a hang from a turn that simply has not opened its
-        # transcript. Only declare "not progressing" when we genuinely observed
-        # a static-but-alive transcript.
-        have_signal = mtime > 0.0
-        if not have_signal and session_alive:
-            return True
-        return False
-
-    return _probe
+    return build_three_channel_liveness_probe(
+        transcript_sample=_transcript_sample,
+        cpu_sample=_cpu_sample,
+        socket_sample=_socket_sample,
+    )
 
 
 # ---------------------------------------------------------------------------
