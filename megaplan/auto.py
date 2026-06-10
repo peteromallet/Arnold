@@ -1922,12 +1922,43 @@ def _active_step_progress_signature(
     )
 
 
+def _heartbeat_stream_counts(payload: dict[str, Any]) -> tuple[int, int] | None:
+    """Extract (tokens_emitted, reasoning_emitted) from a heartbeat payload.
+
+    Returns None when neither count is present, so a heartbeat shape that
+    predates the count fields (or a non-heartbeat caller) is treated as
+    *unknown* progress rather than zero progress.
+    """
+    tokens = payload.get("tokens_emitted_so_far")
+    reasoning = payload.get("reasoning_emitted_so_far")
+    if tokens is None and reasoning is None:
+        return None
+    try:
+        return int(tokens or 0), int(reasoning or 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def _stall_event_progress_snapshot(plan_dir: Path | None) -> tuple[int | None, bool, str | None]:
     """Return journal progress relevant to same-state stall detection.
 
     Driver lifecycle events are intentionally ignored here. Otherwise the
     auto-driver's own phase_start/phase_end writes would make every poll look
     productive and defeat the genuine-wedge backstop.
+
+    ``LLM_TOKEN_HEARTBEAT`` is handled *progress-aware*: a heartbeat advances
+    the progress cursor ONLY when its ``tokens_emitted_so_far`` /
+    ``reasoning_emitted_so_far`` exceeds the running max for that stream. A
+    wedged stream keeps emitting heartbeats at a *frozen* count (the ~28-minute
+    DeepSeek-V4-Pro SSE hang of 2026-06-10); counting those flat beats as
+    progress reset the same-state stall counter forever and left the genuine
+    wedge invisible to this backstop. A heartbeat whose payload predates the
+    count fields is treated as progress (fail-open) to preserve old behaviour.
+
+    The in-flight flag is likewise progress-aware: an open ``llm_call_start``
+    with no matching end is only reported as "in flight" while its stream is
+    still *growing*. A wedged call that has stopped producing tokens must NOT
+    keep the run looking alive via this channel either.
     """
     if plan_dir is None:
         return None, False, None
@@ -1935,6 +1966,14 @@ def _stall_event_progress_snapshot(plan_dir: Path | None) -> tuple[int | None, b
     latest_progress_kind: str | None = None
     open_llm_calls: dict[str, dict[str, Any]] = {}
     anonymous_llm_starts: dict[str, dict[str, Any]] = {}
+    # Running max stream counts seen across heartbeats this scan. A heartbeat
+    # only counts as progress when it pushes one of these higher.
+    max_tokens = -1
+    max_reasoning = -1
+    # Whether the most recent heartbeat showed growth — used to qualify the
+    # in-flight flag so a wedged open call doesn't mask the stall.
+    last_heartbeat_advanced = False
+    saw_heartbeat = False
     try:
         for event in read_events(plan_dir):
             kind = event.get("kind")
@@ -1944,15 +1983,37 @@ def _stall_event_progress_snapshot(plan_dir: Path | None) -> tuple[int | None, b
                 kind == EventKind.TIER_ESCALATED
                 and payload.get("scope") == "lateral_deferred"
             )
+            counts_progress = True
+            if kind == EventKind.LLM_TOKEN_HEARTBEAT:
+                saw_heartbeat = True
+                counts = _heartbeat_stream_counts(payload)
+                if counts is None:
+                    # Pre-count heartbeat shape — fail open (treat as progress).
+                    last_heartbeat_advanced = True
+                else:
+                    tokens, reasoning = counts
+                    counts_progress = tokens > max_tokens or reasoning > max_reasoning
+                    if tokens > max_tokens:
+                        max_tokens = tokens
+                    if reasoning > max_reasoning:
+                        max_reasoning = reasoning
+                    last_heartbeat_advanced = counts_progress
             if (
                 kind in STALL_PROGRESS_EVENT_KINDS
                 and isinstance(seq, int)
                 and not driver_lateral_defer
+                and counts_progress
             ):
                 latest_progress_seq = seq
                 latest_progress_kind = str(kind)
             if kind == EventKind.LLM_CALL_START:
                 request_id = payload.get("request_id")
+                # A new call (re)starts the growth signal: until its first
+                # heartbeat lands, an open call counts as in-flight progress so
+                # a legitimately-slow first-token latency isn't false-stalled.
+                last_heartbeat_advanced = True
+                max_tokens = -1
+                max_reasoning = -1
                 if request_id:
                     open_llm_calls[str(request_id)] = event
                 elif isinstance(seq, int):
@@ -1965,9 +2026,14 @@ def _stall_event_progress_snapshot(plan_dir: Path | None) -> tuple[int | None, b
                     anonymous_llm_starts.clear()
     except Exception:
         return latest_progress_seq, False, latest_progress_kind
+    # An open call only counts as "in flight" (a progress signal) while its
+    # stream is still advancing. Once heartbeats flatline, the open call is a
+    # wedge — drop the in-flight signal so same-state stall detection can fire.
+    call_open = bool(open_llm_calls or anonymous_llm_starts)
+    in_flight_progress = call_open and (last_heartbeat_advanced or not saw_heartbeat)
     return (
         latest_progress_seq,
-        bool(open_llm_calls or anonymous_llm_starts),
+        in_flight_progress,
         latest_progress_kind,
     )
 
