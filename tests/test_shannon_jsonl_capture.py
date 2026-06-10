@@ -633,3 +633,54 @@ class TestTranscriptIntegration:
         assert result.payload["output"] == "stdout-wins"
 
 
+# ── (k) real Shannon shape: string-content turn-opener ────────────────────────
+
+
+class TestStringContentOpener:
+    """Real Claude Code writes the Shannon prompt opener's ``message.content`` as
+    a plain STRING — only injected ``tool_result`` records are list-form.  The
+    parser MUST treat a string opener as a genuine turn-opener; the earlier
+    list-only assumption made the whole .jsonl path a no-op on real Shannon turns
+    (recovered 0/49 real structural-decomp transcripts).  Regression guard."""
+
+    @staticmethod
+    def _string_opener(uuid: str, text: str = "Execute the approved plan.") -> dict:
+        return {
+            "type": "user",
+            "uuid": uuid,
+            "message": {"content": text},  # STRING, as real Claude Code writes it
+        }
+
+    def test_recovers_turn_with_string_opener(self, tmp_path: Path) -> None:
+        user_uuid = str(uuid_mod.uuid4())
+        assistant_uuid = str(uuid_mod.uuid4())
+        records = [
+            self._string_opener(user_uuid),
+            _assistant_msg(uuid=assistant_uuid, stop_reason="end_turn"),
+            _turn_duration(parent_uuid=assistant_uuid),
+        ]
+        path = tmp_path / "transcript.jsonl"
+        _write_ndjson(path, records)
+
+        result = _read_turn_ndjson_from_transcript(str(path))
+        assert result is not None, "string-content opener must be recognized as a turn-opener"
+        parsed = [json.loads(ln) for ln in result.strip().split("\n")]
+        assert len(parsed) == 3
+        assert parsed[0]["type"] == "user"
+        assert parsed[0]["message"]["content"] == "Execute the approved plan."
+        assert parsed[1]["message"]["stop_reason"] == "end_turn"
+        assert parsed[2]["subtype"] == "turn_duration"
+
+    def test_blank_string_opener_is_not_a_turn_opener(self, tmp_path: Path) -> None:
+        # A whitespace-only string is not genuine user input → no completed turn.
+        assistant_uuid = str(uuid_mod.uuid4())
+        records = [
+            self._string_opener(str(uuid_mod.uuid4()), text="   "),
+            _assistant_msg(uuid=assistant_uuid, stop_reason="end_turn"),
+            _turn_duration(parent_uuid=assistant_uuid),
+        ]
+        path = tmp_path / "transcript.jsonl"
+        _write_ndjson(path, records)
+        assert _read_turn_ndjson_from_transcript(str(path)) is None
+
+

@@ -1802,13 +1802,21 @@ def _read_turn_ndjson_from_transcript(
         if not isinstance(msg, dict):
             continue
         content = msg.get("content")
-        if not isinstance(content, list) or not content:
-            continue
-        # Turn-opener: at least one content block whose type is not tool_result.
-        if not any(
-            isinstance(block, dict) and block.get("type") != "tool_result"
-            for block in content
-        ):
+        # A genuine turn-opener is real user input, not an injected tool_result.
+        # Claude Code writes a plain Shannon prompt as a STRING and tool_result
+        # injections as a LIST of blocks.  Accept both shapes:
+        #   * str  -> a genuine opener (every real Shannon turn-opener is a string)
+        #   * list -> opener only if it carries a non-tool_result block
+        if isinstance(content, str):
+            if not content.strip():
+                continue
+        elif isinstance(content, list) and content:
+            if not any(
+                isinstance(block, dict) and block.get("type") != "tool_result"
+                for block in content
+            ):
+                continue
+        else:
             continue
         # Check the since_user_uuid filter.
         row_uuid = row.get("uuid")
