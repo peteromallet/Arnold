@@ -3199,11 +3199,21 @@ def drive(
         # Timeout detection: read from PhaseResult.exit_kind, not exit code.
         if result is not None and getattr(result, "exit_kind", None) == ExitKind.timeout.value:
             log(f"phase '{next_step}' timed out — stall detection will enforce the cap")
+            # current_state=None (NOT STATE_FAILED): a phase timeout is a retryable
+            # stall (a single worker turn hung — e.g. a Shannon TUI handshake stall),
+            # not a terminal plan failure. Passing None preserves the plan's actual
+            # pre-phase state so the next status() returns this same phase as next_step
+            # and the driver RE-RUNS it (rerun_phase), bounded by stall detection — the
+            # exact contract the log line above promises. This mirrors the sibling
+            # internal_error/phase_failed path below (also current_state=None). Writing
+            # STATE_FAILED here made the driver's terminal-state check give up on the
+            # whole plan despite resume_cursor.retry_strategy=="rerun_phase", turning a
+            # transient single-turn stall into a chain-killing failure.
             _record_failure(
                 plan_dir=plan_dir,
                 kind="phase_timeout",
                 message=f"phase '{next_step}' timed out after {phase_timeout}s",
-                current_state=STATE_FAILED,
+                current_state=None,
                 phase=next_step,
                 resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
                 last_artifact=_latest_artifact_name(plan_dir),
