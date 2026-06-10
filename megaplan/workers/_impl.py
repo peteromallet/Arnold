@@ -160,17 +160,49 @@ class CommandResult:
 DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 300.0
 
 # Guaranteed backstop for the liveness-probe rescue path (_impl.py run_command).
-# The probe's transcript-mtime "progress" signal can be wrong (e.g. it globs the
-# wrong Claude project dir and falls into its no-signal branch that returns True
-# forever — the exact bug that let a wedged turn keep its idle clock reset past
-# the 300s bound). This caps how long a turn that has produced ZERO real
-# stdout/stderr may be kept alive by probe rescues alone, INDEPENDENT of the
-# probe. NDJSON events from a healthy shannon turn reset the real-output clock,
-# so this only fires on a genuinely stdout-silent turn. Sits below the 2h
-# wall-clock ``timeout`` so a wedge dies in minutes even if the probe lies; the
-# slug-correct probe is the primary path and kills a wedge at ~the idle bound
-# (~5 min). Override via SHANNON_PROBE_RESCUE_CAP_SECONDS.
+#
+# THREE-CHANNEL LIVENESS MODEL (2026-06-10). The shannon ``liveness_probe`` no
+# longer treats "silence == death". Silence is ambiguous: a healthy turn is
+# legitimately silent while (a) running a long synchronous tool call (a 10-20 min
+# ``pytest``) — Claude emits nothing and the transcript does not grow; or (b)
+# thinking server-side for minutes — no tokens surfaced yet. A genuine wedge
+# (stalled SSE: sockets ESTABLISHED, 0% CPU, receiving nothing) ALSO looks
+# silent. Conflating these false-killed healthy turns. The probe now samples
+# THREE independent channels and treats the turn as ALIVE if ANY advanced since
+# the last sample, WEDGED only if ALL THREE are flat continuously for the idle
+# window K (``SHANNON_STREAM_READ_TIMEOUT``, default 300s):
+#   1. transcript .jsonl mtime/size advanced  (catches normal token streaming);
+#   2. process-subtree CPU-time advanced       (catches the silent tool call);
+#   3. API socket recv-bytes advanced          (catches the silent thinking).
+# See ``build_three_channel_liveness_probe`` below and
+# ``shannon._make_shannon_liveness_probe`` for the concrete samplers. Silence on
+# its own NEVER kills; only all-three-flat-for-K does.
+#
+# Two distinct backstops still exist BELOW the three channels:
+#
+# ``DEFAULT_PROBE_RESCUE_CAP_SECONDS`` / ``SHANNON_PROBE_RESCUE_CAP_SECONDS`` —
+# caps how long a turn that has produced ZERO real stdout/stderr may be kept
+# alive by probe rescues alone, INDEPENDENT of the probe, in case the probe's
+# signals are all unreadable (e.g. it globs the wrong project dir, or ps/nettop
+# are missing). NDJSON events from a healthy shannon turn reset the real-output
+# clock, so this only fires on a genuinely stdout-silent turn. It is RESET by
+# real output, so it is NOT an absolute cap — see the next one.
 DEFAULT_PROBE_RESCUE_CAP_SECONDS = 600.0
+
+# Hard ABSOLUTE per-turn wall-clock cap (``DEFAULT_TURN_HARD_CAP_SECONDS`` /
+# ``SHANNON_TURN_HARD_CAP_SECONDS``). INDEPENDENT of the three-channel probe AND
+# the rescue cap: it fires regardless of any channel staying hot and is NEVER
+# reset by any signal (measured from ``run_command`` entry). The three channels
+# stop FALSE kills (a silent-but-alive turn); this cap stops INFINITE runs —
+# e.g. a ``pytest`` stuck in an infinite loop spins CPU forever (channel 2 hot
+# forever), or a connection that pings forever without ever completing (channel
+# 3 hot forever). Default 5400s (90 min) sits comfortably above a legitimate
+# large test run + thinking (the engine's ``execution.test_baseline_timeout``
+# default is 3600s) yet well below the 2h (7200s) worker wall-clock ``timeout``
+# so a runaway dies before the coarse phase budget. Only applied when a
+# ``liveness_probe`` is supplied (the shannon path); other callers are unchanged.
+# Override via ``SHANNON_TURN_HARD_CAP_SECONDS``.
+DEFAULT_TURN_HARD_CAP_SECONDS = 5400.0
 # Rotate the persistent codex executor session to a FRESH one once its
 # accumulated context crosses this many tokens. The old value (80M) never fired
 # — gpt-5.x's effective context is a tiny fraction of it — so the executor kept
@@ -225,6 +257,125 @@ def _probe_rescue_cap_seconds() -> float:
     except (TypeError, ValueError):
         value = DEFAULT_PROBE_RESCUE_CAP_SECONDS
     return max(value, 120.0)
+
+
+def _turn_hard_cap_seconds() -> float:
+    """Hard ABSOLUTE per-turn wall-clock cap (see ``DEFAULT_TURN_HARD_CAP_SECONDS``).
+
+    INDEPENDENT of the three-channel probe and the rescue cap; never reset by any
+    signal. Stops an INFINITE run (e.g. a ``pytest`` stuck in an infinite loop
+    keeping the CPU channel hot forever) even when the channels correctly report
+    the turn as "alive". Configurable via ``SHANNON_TURN_HARD_CAP_SECONDS``.
+    Clamped to a generous floor so it can never undercut a legitimately long
+    test-plus-thinking turn — its sole job is to bound a genuine runaway.
+    """
+    try:
+        value = float(os.getenv(
+            "SHANNON_TURN_HARD_CAP_SECONDS",
+            DEFAULT_TURN_HARD_CAP_SECONDS,
+        ))
+    except (TypeError, ValueError):
+        value = DEFAULT_TURN_HARD_CAP_SECONDS
+    # Floor: comfortably above the test_baseline_timeout default (3600s) so a
+    # legitimate large test run plus thinking is never cut short.
+    return max(value, 3600.0)
+
+
+def build_three_channel_liveness_probe(
+    *,
+    transcript_sample: Callable[[], float | int | None],
+    cpu_sample: Callable[[], float | int | None],
+    socket_sample: Callable[[], float | int | None],
+) -> Callable[[], bool]:
+    """Compose three independent activity samplers into one liveness probe.
+
+    This is the COMBINING / DECISION half of the three-channel liveness model —
+    deliberately separated from the concrete samplers so it is unit-testable
+    WITHOUT a live ``claude`` process, live sockets, or ``ps``/``nettop``. Each
+    sampler returns a monotone-comparable token (a counter / mtime / byte total)
+    or ``None`` when that channel is unreadable RIGHT NOW.
+
+    Returned probe semantics (matches ``run_command``'s ``liveness_probe``
+    contract: ``True`` == "alive, reset the idle clock", ``False`` == "wedged,
+    proceed to kill"):
+
+    * First call primes the baselines and returns ``True`` (no comparison yet).
+    * On each later call a channel is "active" iff its token is readable now AND
+      STRICTLY GREATER than its last readable value. The turn is ALIVE if ANY of
+      the three channels is active.
+    * The turn is WEDGED (``False``) only when ALL THREE channels are FLAT — i.e.
+      every readable channel's token is unchanged. Because ``run_command`` only
+      consults the probe after the idle window K has elapsed with no real output,
+      a ``False`` here means all three were flat continuously across K → kill.
+    * GRACEFUL DEGRADATION: a channel that returns ``None`` (tool unavailable,
+      e.g. ``nettop`` missing, or no transcript yet) is "unknown", NOT "flat". A
+      sample that raises is also treated as unknown. If EVERY channel is unknown
+      we cannot prove a wedge, so we return ``True`` (defer to the rescue cap /
+      hard cap / wall-clock ``timeout``) — a missing tool can never cause a false
+      kill. Once a channel becomes readable its baseline is (re)established so the
+      first readable sample is not mistaken for "advanced".
+    """
+    last: dict[str, float] = {}
+    primed = [False]
+
+    def _sample(name: str, fn: Callable[[], float | int | None]) -> float | None:
+        try:
+            value = fn()
+        except Exception:
+            return None
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _probe() -> bool:
+        samples = {
+            "transcript": _sample("transcript", transcript_sample),
+            "cpu": _sample("cpu", cpu_sample),
+            "socket": _sample("socket", socket_sample),
+        }
+
+        if not primed[0]:
+            for name, value in samples.items():
+                if value is not None:
+                    last[name] = value
+            primed[0] = True
+            return True
+
+        any_active = False
+        any_readable = False
+        for name, value in samples.items():
+            if value is None:
+                # Unknown right now — neither active nor flat. Do not update the
+                # baseline so a transient read failure can't swallow real growth.
+                continue
+            any_readable = True
+            prev = last.get(name)
+            if prev is None:
+                # Channel just became readable; establish its baseline. Not
+                # counted as activity (no prior value to advance from).
+                last[name] = value
+                continue
+            if value > prev:
+                any_active = True
+            # Advance the high-water mark monotonically (never regress on a
+            # transient lower read, e.g. a transcript rotation).
+            if value > prev:
+                last[name] = value
+
+        if any_active:
+            return True
+        if not any_readable:
+            # No channel could be read at all — cannot prove a wedge. Stay
+            # conservative; the rescue cap / hard cap / wall-clock timeout bound
+            # a genuinely dead turn so this never hangs forever.
+            return True
+        # At least one channel readable and ALL readable channels flat → wedged.
+        return False
+
+    return _probe
 
 
 def _codex_executor_session_headroom_tokens() -> int:
@@ -611,6 +762,18 @@ def run_command(
             )
             if idle_timeout is not None or first_byte_deadline is not None:
                 deadline = started + timeout
+                # Hard ABSOLUTE per-turn cap (three-channel liveness backstop).
+                # Independent of the probe and never reset by any signal: it
+                # bounds an INFINITE run that keeps a liveness channel hot forever
+                # (e.g. a pytest stuck in an infinite loop spinning CPU). Only
+                # armed on the shannon liveness path (a probe was supplied); other
+                # callers keep their exact prior behaviour. Clamped at/below the
+                # wall-clock ``timeout`` so it can only ever tighten, never loosen.
+                hard_cap_deadline = (
+                    started + min(_turn_hard_cap_seconds(), float(timeout))
+                    if liveness_probe is not None
+                    else None
+                )
                 try:
                     while True:
                         remaining = deadline - time.monotonic()
@@ -622,6 +785,33 @@ def run_command(
                             returncode = process.wait(timeout=wait_slice)
                             break
                         except subprocess.TimeoutExpired:
+                            # Hard absolute cap first: fires regardless of probe
+                            # channels or real output. A runaway that keeps a
+                            # channel hot forever (infinite-loop pytest, a forever
+                            # pinging socket) is killed here even though the probe
+                            # would correctly call it "alive".
+                            if (
+                                hard_cap_deadline is not None
+                                and time.monotonic() > hard_cap_deadline
+                            ):
+                                kill_group(process)
+                                returncode = process.poll() if process.poll() is not None else -1
+                                heartbeat_stop.set()
+                                for thread in threads:
+                                    thread.join(timeout=1)
+                                cap = min(_turn_hard_cap_seconds(), float(timeout))
+                                raise CliError(
+                                    "worker_timeout",
+                                    (
+                                        f"Worker exceeded the hard per-turn cap "
+                                        f"({cap:.0f}s; SHANNON_TURN_HARD_CAP_SECONDS); "
+                                        f"runaway turn killed: {' '.join(command[:3])}..."
+                                    ),
+                                    extra={
+                                        "raw_output": _coerce_timeout_output(stdout_parts)
+                                        + _coerce_timeout_output(stderr_parts)
+                                    },
+                                )
                             # Still running: check the pre-first-byte bound first.
                             # Only real stdout/stderr flips first_byte_seen; the
                             # heartbeat explicitly does not, so a wedged subprocess
