@@ -1394,6 +1394,33 @@ def _reset_chain_worktree_target(
             )
 
 
+def _chain_worktree_base_ref(args: argparse.Namespace) -> str:
+    """Resolve the git ref to fork the chain's shared worktree from.
+
+    Explicit ``--worktree-from`` always wins. Otherwise default to the chain
+    spec's ``base_branch`` — NOT the invoking ``HEAD``. The chain runs every
+    milestone off ``base_branch`` (``git checkout -B <milestone> <base_branch>``),
+    so forking the worktree from a stale invoking HEAD makes any carried-untracked
+    file that is *tracked* on ``base_branch`` collide on that checkout
+    ("untracked working tree files would be overwritten"; ticket 01KTQ35AB8).
+    Forking from ``base_branch`` lands the carried dirt on top of the base the
+    chain actually uses, so the checkout is a no-op base and never collides.
+    Falls back to ``HEAD`` if the spec is absent or unreadable.
+    """
+    explicit = getattr(args, "worktree_from", None)
+    if explicit:
+        return explicit
+    spec_path = getattr(args, "spec", None)
+    if spec_path:
+        try:
+            from megaplan.chain import load_spec
+
+            return load_spec(Path(spec_path)).base_branch
+        except CliError:
+            pass
+    return "HEAD"
+
+
 def _setup_chain_worktree(args: argparse.Namespace) -> None:
     """Create a shared worktree for ``megaplan chain`` and reroot the command.
 
@@ -1481,7 +1508,7 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
             "pick a different --in-worktree name",
         )
 
-    base_ref = getattr(args, "worktree_from", None) or "HEAD"
+    base_ref = _chain_worktree_base_ref(args)
     base_sha = resolve_ref(invoking_repo, base_ref)
     create_named_worktree(invoking_repo, target, base_sha, name)
 
