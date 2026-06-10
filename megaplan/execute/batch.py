@@ -246,6 +246,31 @@ def _is_codex_gpt5_family(model: str | None) -> bool:
     return isinstance(bare, str) and bare.lower().startswith("gpt-5")
 
 
+# Claude capability tiers, longest-first so "claude-opus-4-7" matches "opus".
+_CLAUDE_TIERS = ("opus", "sonnet", "haiku")
+
+
+def _claude_tier(model: str | None) -> str | None:
+    """The Claude capability tier (opus/sonnet/haiku) named by *model*, else None.
+
+    Claude pins are recorded verbatim as the spec token — a shorthand tier name
+    (``sonnet``, ``claude:sonnet``) — while the provider reports the canonical id
+    (``claude-sonnet-4-6``). Both normalise to the same tier here so a pin and the
+    provider-reported full id compare equal, including point-release differences
+    within a tier (``claude-sonnet-4-5`` vs ``-4-6``). Distinct tiers (opus vs
+    sonnet) return distinct values so a genuine wrong-tier substitution is still
+    flagged as a real degradation.
+    """
+    bare = _strip_provider_prefix(model)
+    if not isinstance(bare, str):
+        return None
+    lowered = bare.lower()
+    for tier in _CLAUDE_TIERS:
+        if tier in lowered:
+            return tier
+    return None
+
+
 def _models_match(selected: str | None, actual: str | None) -> bool:
     if not selected or not actual:
         return True
@@ -257,6 +282,13 @@ def _models_match(selected: str | None, actual: str | None) -> bool:
     # separately by the agent-level audit, so this only relaxes same-family gpt-5.x
     # point-release differences.
     if _is_codex_gpt5_family(selected) and _is_codex_gpt5_family(actual):
+        return True
+    # Same Claude tier (shorthand pin "sonnet" vs canonical "claude-sonnet-4-6",
+    # or point-release differences within a tier) is the same model for routing
+    # purposes — a pin names the tier, the provider reports the full id. A
+    # different tier (opus pinned, sonnet served) stays a real degradation.
+    selected_tier = _claude_tier(selected)
+    if selected_tier is not None and selected_tier == _claude_tier(actual):
         return True
     return False
 
