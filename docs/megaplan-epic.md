@@ -130,7 +130,7 @@ megaplan chain status --spec /path/to/chain.yaml
 
 - **`--one`** — single-step the chain. Useful when you want to inspect each milestone's output before letting the next one kick off, or when running under an external supervisor that wants tick-by-tick control.
 - **`--no-git-refresh`** — skip the automatic base-branch checkout + pull that runs before each milestone. Use this on dev checkouts where chain shouldn't stomp the currently checked-out branch.
-- **`--no-push`** — disable branch creation, PR creation, commits, and pushes. For local / no-network runs.
+- **`--no-push`** — disable milestone **branch creation, PR creation, and pushes to origin**. Milestones still **commit locally** onto the base branch as each completes (one `megaplan: <plan> done` commit per milestone), so HEAD advances and every milestone builds on the previous one's integrated tree — just as a pushed chain would, without contacting origin. Publish later with a manual `git push`. For local / no-network runs. (Historically `--no-push` also disabled commits, which silently left every milestone's output as uncommitted WIP on a frozen base; milestones did not build on each other. That data-integrity gap is now closed.)
 
 ### State and resuming
 

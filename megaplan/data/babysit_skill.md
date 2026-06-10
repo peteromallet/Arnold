@@ -102,6 +102,24 @@ every fire is self-contained.
   `stalled` from an idle-watchdog tick while the phase is genuinely working.
 - **Real stall (act):** no live worker, `latest_failure` set, `current_state`
   unchanged with a stale heartbeat, or the driver process exited non-success.
+- **GROUND TRUTH for `vendor: claude`/Shannon phases is the tmux pane, NOT
+  `events.ndjson` or a transcript file.** `tmux ls` then
+  `tmux capture-pane -p -t <session> | tail`: a working turn shows
+  `✻ …ing (Nm Ns · ↓ Nk tokens)` + live tool calls, and the token count GROWS
+  between two checks. Under native config the transcript is in `CLAUDE_CONFIG_DIR`
+  (not `~/.claude/projects`) and `events.ndjson` only flushes at turn boundaries,
+  so BOTH look falsely silent mid-turn — do not call a turn "wedged" off them.
+  Likewise a 2-7M `tokens_in` in `llm_call_end` is a normal DeepSeek/Hermes batch
+  prompt, not a Shannon context leak.
+- **DON'T CHURN — your own kill/relaunch can CAUSE the stall.** Aggressive
+  `tmux kill-session` + relaunch races the driver's Shannon startup poll and
+  produces `tmux capture-pane … no server running`, which (older engines)
+  misparse as a non-retryable `internal_error` loop. Relaunch ONLY when the
+  driver is genuinely dead (`pgrep -f 'chain start --spec'` empty); never to
+  "unstick" a healthy-but-slow turn. A milestone that completes but leaves the
+  worktree uncommitted/HEAD-frozen is often a side-effect of repeated relaunches
+  making the milestone's own files look like pre-existing dirty WIP that
+  `_commit_phase` then excludes.
 
 ### 3. Unblock — diagnose ROOT, then fix
 Get to the actual root (read `latest_failure`, grep `events.ndjson` and the
