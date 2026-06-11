@@ -22,11 +22,12 @@ import {
   buildAssetDropEdit,
   type UseAssetManagementResult,
 } from '@/tools/video-editor/hooks/useAssetManagement.ts';
+import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { AstridBridgeDataProvider } from '@/tools/video-editor/data/AstridBridgeDataProvider.ts';
 import type {
   TimelineApplyEdit,
   TimelineInvalidateAssetRegistry,
   TimelinePatchRegistry,
-  TimelineRegisterAsset,
   TimelineUploadAsset,
 } from '@/tools/video-editor/hooks/timeline-state-types.ts';
 import { type TimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
@@ -76,6 +77,8 @@ async function dispatchTimelineDrop({
   uploadImageGeneration,
   uploadVideoGeneration,
   dropAsset,
+  directAssetUploadAllFiles,
+  onAssetDropError,
   handleAddTextAt,
   shots,
   finalVideoMap,
@@ -94,6 +97,8 @@ async function dispatchTimelineDrop({
   uploadImageGeneration: UseAssetManagementResult['uploadImageGeneration'];
   uploadVideoGeneration: UseAssetManagementResult['uploadVideoGeneration'];
   dropAsset: UseAssetManagementResult['handleAssetDrop'];
+  directAssetUploadAllFiles: boolean;
+  onAssetDropError?: (error: unknown) => void;
   handleAddTextAt?: (trackId: string, time: number) => void;
   shots: Shot[] | undefined;
   finalVideoMap: Map<string, { id: string; location: string; thumbnailUrl: string | null; durationSeconds?: number | null }>;
@@ -126,6 +131,8 @@ async function dispatchTimelineDrop({
     uploadImageGeneration,
     uploadVideoGeneration,
     dropAsset,
+    directAssetUploadAllFiles,
+    onAssetDropError,
   })) {
     return;
   }
@@ -378,7 +385,6 @@ export interface UseExternalDropArgs {
   selectedTrackId: string | null;
   applyEdit: TimelineApplyEdit;
   patchRegistry: TimelinePatchRegistry;
-  registerAsset: TimelineRegisterAsset;
   uploadAsset: TimelineUploadAsset;
   invalidateAssetRegistry: TimelineInvalidateAssetRegistry;
   resolveAssetUrl: (file: string) => Promise<string>;
@@ -419,6 +425,8 @@ export function useExternalDrop({
   shots,
   finalVideoMap,
 }: UseExternalDropArgs): UseExternalDropResult {
+  const runtime = useVideoEditorRuntime();
+  const directAssetUploadAllFiles = runtime.provider instanceof AstridBridgeDataProvider;
   const externalDragFrameRef = useRef<number | null>(null);
   const autoScrollerRef = useRef<ReturnType<typeof createAutoScroller> | null>(null);
   const latestExternalDragRef = useRef<{
@@ -546,6 +554,12 @@ export function useExternalDrop({
       uploadImageGeneration,
       uploadVideoGeneration,
       dropAsset,
+      directAssetUploadAllFiles,
+      onAssetDropError: (error) => {
+        runtime.toast.error('Failed to save asset', {
+          ...(error instanceof Error && error.message ? { description: error.message } : {}),
+        });
+      },
       handleAddTextAt,
       shots,
       finalVideoMap,
@@ -562,6 +576,8 @@ export function useExternalDrop({
     invalidateAssetRegistry,
     registerGenerationAsset,
     resolveAssetUrl,
+    directAssetUploadAllFiles,
+    runtime.toast,
     shots,
     finalVideoMap,
     handleAddTextAt,

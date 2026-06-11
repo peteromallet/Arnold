@@ -53,6 +53,7 @@ import {
   planGenerationAssetRegistration,
 } from '@/tools/video-editor/lib/timeline-asset-plans.ts';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
 import type { ResolvedAssetRegistryEntry } from '@/tools/video-editor/types/index.ts';
 
 const log = import.meta.env.DEV ? (...args: Parameters<typeof console.log>) => console.log(...args) : () => {};
@@ -108,10 +109,12 @@ function InnerProvider({
   children,
   effectCatalog,
   sequenceComponentCatalog,
+  onSaveStatusChange,
 }: {
   children: React.ReactNode;
   effectCatalog?: VideoEditorEffectCatalog | null;
   sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
+  onSaveStatusChange?: (status: SaveStatus) => void;
 }) {
   useRenderDiagnostic('VideoEditorProvider');
   const runtime = useVideoEditorRuntime();
@@ -128,7 +131,10 @@ function InnerProvider({
     })),
     effectResources.effects,
   );
-  const { store, editor } = useTimelineState();
+  const { store, editor, chrome } = useTimelineState();
+  useEffect(() => {
+    onSaveStatusChange?.(chrome.saveStatus);
+  }, [chrome.saveStatus, onSaveStatusChange]);
   const [searchParams, setSearchParams] = useSearchParams();
   const pendingAddGenerationId = searchParams.get(ADD_GENERATION_QUERY_PARAM);
   const consumedAddGenerationRef = useRef<string | null>(null);
@@ -397,6 +403,18 @@ function InnerProvider({
   );
 }
 
+export interface VideoEditorProviderProps {
+  dataProvider: DataProvider;
+  projectId: string | null;
+  timelineId: string;
+  timelineName?: string | null;
+  userId: string;
+  effectCatalog?: VideoEditorEffectCatalog | null;
+  sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
+  onSaveStatusChange?: (status: SaveStatus) => void;
+  children: React.ReactNode;
+}
+
 export function VideoEditorProvider({
   dataProvider,
   projectId,
@@ -405,17 +423,9 @@ export function VideoEditorProvider({
   userId,
   effectCatalog,
   sequenceComponentCatalog,
+  onSaveStatusChange,
   children,
-}: {
-  dataProvider: DataProvider;
-  projectId: string | null;
-  timelineId: string;
-  timelineName?: string | null;
-  userId: string;
-  effectCatalog?: VideoEditorEffectCatalog | null;
-  sequenceComponentCatalog?: VideoEditorSequenceComponentCatalog | null;
-  children: React.ReactNode;
-}) {
+}: VideoEditorProviderProps) {
   const shotsHost = useReighShotsHost(projectId);
   const agentChatRegistry = useAgentChatRegistry();
   const runtimeValue = useMemo(() => ({
@@ -460,6 +470,7 @@ export function VideoEditorProvider({
       <InnerProvider
         effectCatalog={effectCatalog}
         sequenceComponentCatalog={sequenceComponentCatalog}
+        onSaveStatusChange={onSaveStatusChange}
       >
         {children}
       </InnerProvider>

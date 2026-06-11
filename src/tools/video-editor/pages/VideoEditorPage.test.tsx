@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import VideoEditorPage from '@/tools/video-editor/pages/VideoEditorPage.tsx';
@@ -29,6 +29,8 @@ const state = vi.hoisted(() => ({
   },
   providerMounts: 0,
   providerUnmounts: 0,
+  saveStatusCallback: null as null | ((status: 'saved' | 'saving' | 'dirty' | 'error') => void),
+  confirm: vi.fn(() => true),
   supabaseCtor: vi.fn(function MockSupabaseProvider(this: Record<string, unknown>, options: unknown) {
     this.kind = 'supabase';
     this.options = options;
@@ -40,7 +42,7 @@ const state = vi.hoisted(() => ({
   bridgeCtor: vi.fn(function MockBridgeProvider(this: Record<string, unknown>, options: unknown) {
     this.kind = 'bridge';
     this.options = options;
-    this.persistenceEnabled = false;
+    this.persistenceEnabled = true;
     this.resolveAssetUrl = vi.fn();
     this.loadTimeline = vi.fn();
     this.saveTimeline = vi.fn();
@@ -86,19 +88,31 @@ vi.mock('@/tools/video-editor/contexts/VideoEditorProvider.tsx', async () => {
       dataProvider,
       timelineId,
       timelineName,
+      onSaveStatusChange,
       children,
     }: {
       dataProvider: { kind?: string };
       timelineId: string;
       timelineName?: string | null;
+      onSaveStatusChange?: (status: 'saved' | 'saving' | 'dirty' | 'error') => void;
       children: React.ReactNode;
     }) => {
+      const [saveStatus, setSaveStatus] = ReactModule.useState<'saved' | 'saving' | 'dirty' | 'error'>('saved');
+      state.saveStatusCallback = onSaveStatusChange ?? null;
+
       ReactModule.useEffect(() => {
         state.providerMounts += 1;
         return () => {
           state.providerUnmounts += 1;
+          if (state.saveStatusCallback === onSaveStatusChange) {
+            state.saveStatusCallback = null;
+          }
         };
       }, []);
+
+      ReactModule.useEffect(() => {
+        onSaveStatusChange?.(saveStatus);
+      }, [onSaveStatusChange, saveStatus]);
 
       return (
         <div
@@ -107,6 +121,19 @@ vi.mock('@/tools/video-editor/contexts/VideoEditorProvider.tsx', async () => {
           data-timeline-id={timelineId}
           data-timeline-name={timelineName ?? ''}
         >
+          <button type="button" onClick={() => setSaveStatus('saving')}>
+            status-saving
+          </button>
+          <button type="button" onClick={() => setSaveStatus('dirty')}>
+            status-dirty
+          </button>
+          <button type="button" onClick={() => setSaveStatus('error')}>
+            status-error
+          </button>
+          <button type="button" onClick={() => setSaveStatus('saved')}>
+            status-saved
+          </button>
+          <span data-testid="mock-save-status">{saveStatus}</span>
           {children}
         </div>
       );
@@ -151,9 +178,14 @@ describe('VideoEditorPage', () => {
     state.timelines.deleteTimeline.mutateAsync.mockClear();
     state.providerMounts = 0;
     state.providerUnmounts = 0;
+    state.saveStatusCallback = null;
+    state.confirm.mockReset();
+    state.confirm.mockReturnValue(true);
     state.supabaseCtor.mockClear();
     state.bridgeCtor.mockClear();
     vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('confirm', state.confirm);
+    window.confirm = state.confirm;
   });
 
   afterEach(() => {
@@ -171,7 +203,7 @@ describe('VideoEditorPage', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  it('uses AstridBridgeDataProvider in Local mode with persistence disabled', async () => {
+  it('uses AstridBridgeDataProvider in Local mode with bridge persistence enabled', async () => {
     window.localStorage.setItem('dev.videoEditor.localMode', '1');
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -206,7 +238,6 @@ describe('VideoEditorPage', () => {
       projectSlug: 'ados-talks',
       timelineRef: '11111111-1111-1111-1111-111111111111',
       timelineId: '11111111-1111-1111-1111-111111111111',
-      persistenceDisabled: true,
     });
     expect(state.supabaseCtor).not.toHaveBeenCalled();
   });
@@ -252,7 +283,7 @@ describe('VideoEditorPage', () => {
     expect(state.providerMounts).toBe(1);
     expect(state.providerUnmounts).toBe(0);
 
-    fireEvent.change(screen.getByLabelText('Local timeline'), {
+    fireEvent.change(screen.getByLabelText('Timeline'), {
       target: { value: '22222222-2222-2222-2222-222222222222' },
     });
 
@@ -321,7 +352,7 @@ describe('VideoEditorPage', () => {
     expect(screen.queryByTestId('video-editor-provider')).toBeNull();
   });
 
-  it('shows read-only badge in Local mode', async () => {
+  it('removes read-only local labeling while keeping the local editor mounted', async () => {
     window.localStorage.setItem('dev.videoEditor.localMode', '1');
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -349,8 +380,10 @@ describe('VideoEditorPage', () => {
 
     renderPage('/tools/video-editor?localProject=ados-talks&localTimeline=11111111-1111-1111-1111-111111111111');
 
-    await screen.findByText('Read-only');
     await screen.findByTestId('video-editor-provider');
+    expect(screen.queryByText('Read-only')).toBeNull();
+    expect(screen.getByText('Project')).toBeInTheDocument();
+    expect(screen.getByText('Timeline')).toBeInTheDocument();
   });
 
   it('fetches health endpoint before loading projects in Local mode', async () => {
@@ -388,5 +421,289 @@ describe('VideoEditorPage', () => {
     // Health should be among the fetch calls
     const healthCalls = fetchCalls.filter(c => c.endsWith('/api/astrid/health'));
     expect(healthCalls.length).toBeGreaterThan(0);
+  });
+
+  it('passes a save-status callback into the mounted provider', async () => {
+    renderPage('/tools/video-editor?timeline=timeline-1&localProject=ados-talks&localTimeline=11111111-1111-1111-1111-111111111111');
+
+    await screen.findByTestId('video-editor-provider');
+    expect(state.saveStatusCallback).toBeTypeOf('function');
+  });
+
+  it('switches between App and Local modes while preserving per-mode selections', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/astrid/health')) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (url.endsWith('/api/astrid/projects')) {
+        return new Response(JSON.stringify({
+          projects: [{ slug: 'ados-talks', name: 'Ados Talks' }],
+        }), { status: 200 });
+      }
+      if (url.endsWith('/api/astrid/projects/ados-talks/timelines')) {
+        return new Response(JSON.stringify({
+          timelines: [{
+            timeline_id: '11111111-1111-1111-1111-111111111111',
+            timeline_ulid: '01JM4K5N7P0000000000000017',
+            slug: 'intro-cut',
+            name: 'Intro Cut',
+            is_default: true,
+          }],
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected bridge request: ${url}`);
+    }));
+
+    renderPage('/tools/video-editor?timeline=timeline-1&localProject=ados-talks&localTimeline=11111111-1111-1111-1111-111111111111');
+
+    await screen.findByTestId('video-editor-provider');
+    fireEvent.click(screen.getByRole('button', { name: 'Local' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('video-editor-provider')).toHaveAttribute('data-kind', 'bridge');
+    });
+    expect(state.bridgeCtor).toHaveBeenLastCalledWith({
+      projectSlug: 'ados-talks',
+      timelineRef: '11111111-1111-1111-1111-111111111111',
+      timelineId: '11111111-1111-1111-1111-111111111111',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'App' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('video-editor-provider')).toHaveAttribute('data-kind', 'supabase');
+    });
+    expect(screen.getByTestId('video-editor-provider')).toHaveAttribute('data-timeline-id', 'timeline-1');
+  });
+
+  it('confirms error-state local timeline remounts and cancels them when declined', async () => {
+    window.localStorage.setItem('dev.videoEditor.localMode', '1');
+    state.confirm.mockReturnValue(false);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/astrid/health')) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (url.endsWith('/api/astrid/projects')) {
+        return new Response(JSON.stringify({
+          projects: [{ slug: 'ados-talks', name: 'Ados Talks' }],
+        }), { status: 200 });
+      }
+      if (url.endsWith('/api/astrid/projects/ados-talks/timelines')) {
+        return new Response(JSON.stringify({
+          timelines: [
+            {
+              timeline_id: '11111111-1111-1111-1111-111111111111',
+              timeline_ulid: '01JM4K5N7P0000000000000017',
+              slug: 'intro-cut',
+              name: 'Intro Cut',
+              is_default: true,
+            },
+            {
+              timeline_id: '22222222-2222-2222-2222-222222222222',
+              timeline_ulid: '01JM4K5N7P0000000000000018',
+              slug: 'alt-cut',
+              name: 'Alt Cut',
+              is_default: false,
+            },
+          ],
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected bridge request: ${url}`);
+    }));
+
+    renderPage('/tools/video-editor?localProject=ados-talks&localTimeline=11111111-1111-1111-1111-111111111111');
+
+    await screen.findByTestId('video-editor-provider');
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-save-status')).toHaveTextContent('saved');
+    });
+    act(() => {
+      state.saveStatusCallback?.('error');
+    });
+    fireEvent.change(screen.getByLabelText('Timeline'), {
+      target: { value: '22222222-2222-2222-2222-222222222222' },
+    });
+
+    expect(state.confirm).toHaveBeenCalledWith('The last timeline save failed. Switch editors anyway?');
+    expect(screen.getByTestId('video-editor-provider')).toHaveAttribute('data-timeline-id', '11111111-1111-1111-1111-111111111111');
+    expect(state.providerMounts).toBe(1);
+    expect(state.providerUnmounts).toBe(0);
+  });
+
+  function setupBridgeFetch() {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/astrid/health')) {
+        return new Response(JSON.stringify({ ok: true, projects_root: '/tmp/test' }), { status: 200 });
+      }
+      if (url.endsWith('/api/astrid/projects')) {
+        return new Response(JSON.stringify({
+          projects: [{ slug: 'ados-talks', name: 'Ados Talks' }],
+        }), { status: 200 });
+      }
+      if (url.endsWith('/api/astrid/projects/ados-talks/timelines')) {
+        return new Response(JSON.stringify({
+          timelines: [
+            {
+              timeline_id: '11111111-1111-1111-1111-111111111111',
+              timeline_ulid: '01JM4K5N7P0000000000000017',
+              slug: 'intro-cut',
+              name: 'Intro Cut',
+              is_default: true,
+            },
+            {
+              timeline_id: '22222222-2222-2222-2222-222222222222',
+              timeline_ulid: '01JM4K5N7P0000000000000018',
+              slug: 'alt-cut',
+              name: 'Alt Cut',
+              is_default: false,
+            },
+          ],
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected bridge request: ${url}`);
+    }));
+  }
+
+  async function mountLocalEditor() {
+    window.localStorage.setItem('dev.videoEditor.localMode', '1');
+    setupBridgeFetch();
+    renderPage('/tools/video-editor?localProject=ados-talks&localTimeline=11111111-1111-1111-1111-111111111111');
+    const provider = await screen.findByTestId('video-editor-provider');
+    expect(provider).toHaveAttribute('data-kind', 'bridge');
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-save-status')).toHaveTextContent('saved');
+    });
+    return provider;
+  }
+
+  it('blocks Local-to-App switching while the editor is saving', async () => {
+    await mountLocalEditor();
+
+    act(() => {
+      state.saveStatusCallback?.('saving');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'App' }));
+
+    expect(screen.getByTestId('video-editor-provider')).toHaveAttribute('data-kind', 'bridge');
+    expect(state.confirm).not.toHaveBeenCalled();
+  });
+
+  it('disables mode toggle buttons while the editor is saving in local mode', async () => {
+    await mountLocalEditor();
+
+    act(() => {
+      state.saveStatusCallback?.('saving');
+    });
+
+    expect(screen.getByRole('button', { name: 'Local' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'App' })).toBeDisabled();
+  });
+
+  it('confirms dirty-state Local-to-App switches when accepted and blocks when declined', async () => {
+    await mountLocalEditor();
+
+    // Dirty + denied → switch must be blocked, provider unchanged
+    state.confirm.mockReturnValue(false);
+    fireEvent.click(screen.getByText('status-dirty'));
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-save-status')).toHaveTextContent('dirty');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'App' }));
+
+    expect(state.confirm).toHaveBeenCalledWith(
+      'You have unsaved timeline changes. Switch editors and discard them?',
+    );
+    expect(screen.getByTestId('video-editor-provider')).toHaveAttribute('data-kind', 'bridge');
+
+    // Reset to saved, then dirty + confirmed → confirm is called
+    state.confirm.mockReset();
+    state.confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByText('status-saved'));
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-save-status')).toHaveTextContent('saved');
+    });
+    fireEvent.click(screen.getByText('status-dirty'));
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-save-status')).toHaveTextContent('dirty');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'App' }));
+
+    expect(state.confirm).toHaveBeenCalledWith(
+      'You have unsaved timeline changes. Switch editors and discard them?',
+    );
+  });
+
+  it('confirms error-state Local-to-App switches and blocks when declined', async () => {
+    await mountLocalEditor();
+
+    // Error + denied → switch blocked
+    state.confirm.mockReturnValue(false);
+    act(() => {
+      state.saveStatusCallback?.('error');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'App' }));
+
+    expect(state.confirm).toHaveBeenCalledWith(
+      'The last timeline save failed. Switch editors anyway?',
+    );
+    expect(screen.getByTestId('video-editor-provider')).toHaveAttribute('data-kind', 'bridge');
+
+    // Error + confirmed → confirm was honored
+    state.confirm.mockReset();
+    state.confirm.mockReturnValue(true);
+    act(() => {
+      state.saveStatusCallback?.('saved');
+      state.saveStatusCallback?.('error');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'App' }));
+
+    expect(state.confirm).toHaveBeenCalledWith(
+      'The last timeline save failed. Switch editors anyway?',
+    );
+  });
+
+  it('blocks local project switching while the editor is saving', async () => {
+    await mountLocalEditor();
+
+    act(() => {
+      state.saveStatusCallback?.('saving');
+    });
+
+    fireEvent.change(screen.getByLabelText('Project'), {
+      target: { value: 'other-project' },
+    });
+
+    // Still on the same timeline — switch blocked without confirm
+    expect(screen.getByTestId('video-editor-provider')).toHaveAttribute(
+      'data-timeline-id',
+      '11111111-1111-1111-1111-111111111111',
+    );
+    expect(state.confirm).not.toHaveBeenCalled();
+  });
+
+  it('blocks local timeline switching while the editor is saving', async () => {
+    await mountLocalEditor();
+
+    act(() => {
+      state.saveStatusCallback?.('saving');
+    });
+
+    fireEvent.change(screen.getByLabelText('Timeline'), {
+      target: { value: '22222222-2222-2222-2222-222222222222' },
+    });
+
+    expect(screen.getByTestId('video-editor-provider')).toHaveAttribute(
+      'data-timeline-id',
+      '11111111-1111-1111-1111-111111111111',
+    );
+    expect(state.confirm).not.toHaveBeenCalled();
   });
 });

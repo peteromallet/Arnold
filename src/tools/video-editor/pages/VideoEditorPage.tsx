@@ -2,7 +2,7 @@
  * Internal Reigh route adapter for the in-app video editor page.
  * Not part of the supported public SDK surface.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Clapperboard, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -21,6 +21,7 @@ import { SupabaseDataProvider } from '@/tools/video-editor/data/SupabaseDataProv
 import { VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider.tsx';
 import { ReighVideoEditorShell } from '@/tools/video-editor/components/ReighVideoEditorShell.tsx';
 import { useTimelinesList } from '@/tools/video-editor/hooks/useTimelinesList.ts';
+import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
 import { videoEditorSettings } from '@/tools/video-editor/settings/videoEditorDefaults.ts';
 
 type VideoEditorMode = 'app' | 'local';
@@ -53,6 +54,15 @@ type ProviderSelection = {
   timelineName: string | null;
   userId: string;
   remountKey: string;
+};
+
+type AppRouteState = {
+  timelineId: string | null;
+};
+
+type LocalRouteState = {
+  projectSlug: string | null;
+  timelineId: string | null;
 };
 
 const LOCAL_MODE_STORAGE_KEY = 'dev.videoEditor.localMode';
@@ -171,7 +181,6 @@ function useVideoEditorProviderSelection({
           projectSlug: localProjectSlug,
           timelineRef: localTimelineId,
           timelineId: localTimelineId,
-          persistenceDisabled: true,
         }),
         projectId: localProjectSlug,
         timelineId: localTimelineId,
@@ -209,10 +218,12 @@ function DevModeToggle({
   localModeAvailable,
   mode,
   setMode,
+  disabled,
 }: {
   localModeAvailable: boolean;
   mode: VideoEditorMode;
   setMode: (nextMode: VideoEditorMode) => void;
+  disabled?: boolean;
 }) {
   if (!localModeAvailable) {
     return null;
@@ -228,6 +239,7 @@ function DevModeToggle({
         size="sm"
         variant={mode === 'app' ? 'default' : 'outline'}
         onClick={() => setMode('app')}
+        disabled={disabled}
       >
         App
       </Button>
@@ -236,6 +248,7 @@ function DevModeToggle({
         size="sm"
         variant={mode === 'local' ? 'default' : 'outline'}
         onClick={() => setMode('local')}
+        disabled={disabled}
       >
         Local
       </Button>
@@ -412,10 +425,16 @@ export default function VideoEditorPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { localModeAvailable, mode, setMode } = useVideoEditorModePreference();
+  const [mountedSaveStatus, setMountedSaveStatus] = useState<SaveStatus>('saved');
   const creatingRef = useRef(false);
   const appTimelineId = searchParams.get('timeline');
   const localProjectSlug = searchParams.get('localProject');
   const localTimelineId = searchParams.get('localTimeline');
+  const appRouteRef = useRef<AppRouteState>({ timelineId: appTimelineId });
+  const localRouteRef = useRef<LocalRouteState>({
+    projectSlug: localProjectSlug,
+    timelineId: localTimelineId,
+  });
   const timelines = useTimelinesList(selectedProjectId, userId);
   const bridgeHealth = useBridgeHealth(mode === 'local');
   const bridgeProjects = useBridgeProjects(mode === 'local');
@@ -440,6 +459,114 @@ export default function VideoEditorPage() {
     localTimelineId,
     localTimelineName,
   });
+
+  useEffect(() => {
+    if (appTimelineId !== null || mode === 'app') {
+      appRouteRef.current = { timelineId: appTimelineId };
+    }
+  }, [appTimelineId, mode]);
+
+  useEffect(() => {
+    if (localProjectSlug !== null || localTimelineId !== null || mode === 'local') {
+      localRouteRef.current = {
+        projectSlug: localProjectSlug,
+        timelineId: localTimelineId,
+      };
+    }
+  }, [localProjectSlug, localTimelineId, mode]);
+
+  useEffect(() => {
+    setMountedSaveStatus('saved');
+  }, [providerSelection?.remountKey]);
+
+  const isSwitchBlockedBySave = mountedSaveStatus === 'saving';
+  const confirmEditorRemount = useCallback(() => {
+    if (!providerSelection) {
+      return true;
+    }
+    if (mountedSaveStatus === 'saving') {
+      return false;
+    }
+    if (mountedSaveStatus === 'dirty') {
+      return window.confirm('You have unsaved timeline changes. Switch editors and discard them?');
+    }
+    if (mountedSaveStatus === 'error') {
+      return window.confirm('The last timeline save failed. Switch editors anyway?');
+    }
+    return true;
+  }, [mountedSaveStatus, providerSelection]);
+
+  const setModeRoute = useCallback((nextMode: VideoEditorMode) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('timeline');
+      next.delete('localProject');
+      next.delete('localTimeline');
+      if (nextMode === 'app') {
+        if (appRouteRef.current.timelineId) {
+          next.set('timeline', appRouteRef.current.timelineId);
+        }
+      } else {
+        if (localRouteRef.current.projectSlug) {
+          next.set('localProject', localRouteRef.current.projectSlug);
+        }
+        if (localRouteRef.current.timelineId) {
+          next.set('localTimeline', localRouteRef.current.timelineId);
+        }
+      }
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const handleModeChange = useCallback((nextMode: VideoEditorMode) => {
+    if (nextMode === mode) {
+      return;
+    }
+    if (!confirmEditorRemount()) {
+      return;
+    }
+    setMode(nextMode);
+    setModeRoute(nextMode);
+  }, [confirmEditorRemount, mode, setMode, setModeRoute]);
+
+  const handleLocalProjectChange = useCallback((nextProjectSlug: string) => {
+    if (nextProjectSlug === localProjectSlug) {
+      return;
+    }
+    if (!confirmEditorRemount()) {
+      return;
+    }
+    localRouteRef.current = {
+      projectSlug: nextProjectSlug,
+      timelineId: null,
+    };
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('timeline');
+      next.set('localProject', nextProjectSlug);
+      next.delete('localTimeline');
+      return next;
+    });
+  }, [confirmEditorRemount, localProjectSlug, setSearchParams]);
+
+  const handleLocalTimelineChange = useCallback((nextTimelineId: string) => {
+    if (nextTimelineId === localTimelineId) {
+      return;
+    }
+    if (!confirmEditorRemount()) {
+      return;
+    }
+    localRouteRef.current = {
+      projectSlug: localProjectSlug,
+      timelineId: nextTimelineId,
+    };
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('timeline');
+      next.set('localTimeline', nextTimelineId);
+      return next;
+    });
+  }, [confirmEditorRemount, localProjectSlug, localTimelineId, setSearchParams]);
 
   // Reconcile the URL timelineId against the live list:
   // - if it exists in the list, persist it as lastTimelineId
@@ -589,26 +716,23 @@ export default function VideoEditorPage() {
       <div className="flex h-full w-full flex-col overflow-hidden bg-background">
         <div className="border-b border-border px-4 py-3">
           <div className="flex flex-wrap items-center gap-3">
-            <DevModeToggle localModeAvailable={localModeAvailable} mode={mode} setMode={setMode} />
+            <DevModeToggle
+              localModeAvailable={localModeAvailable}
+              mode={mode}
+              setMode={handleModeChange}
+              disabled={isSwitchBlockedBySave}
+            />
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium text-muted-foreground" htmlFor="video-editor-local-project">
-                Local project
+                Project
               </label>
               <select
                 id="video-editor-local-project"
-                aria-label="Local project"
+                aria-label="Project"
                 className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                 value={localProjectSlug ?? ''}
-                onChange={(event) => {
-                  const nextProjectSlug = event.target.value;
-                  setSearchParams((current) => {
-                    const next = new URLSearchParams(current);
-                    next.set('localProject', nextProjectSlug);
-                    next.delete('localTimeline');
-                    return next;
-                  });
-                }}
-                disabled={!hasProjects}
+                onChange={(event) => handleLocalProjectChange(event.target.value)}
+                disabled={!hasProjects || isSwitchBlockedBySave}
               >
                 {bridgeProjects.data?.map((project) => (
                   <option key={project.slug} value={project.slug}>
@@ -619,21 +743,15 @@ export default function VideoEditorPage() {
             </div>
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium text-muted-foreground" htmlFor="video-editor-local-timeline">
-                Local timeline
+                Timeline
               </label>
               <select
                 id="video-editor-local-timeline"
-                aria-label="Local timeline"
+                aria-label="Timeline"
                 className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                 value={localTimelineId ?? ''}
-                onChange={(event) => {
-                  setSearchParams((current) => {
-                    const next = new URLSearchParams(current);
-                    next.set('localTimeline', event.target.value);
-                    return next;
-                  });
-                }}
-                disabled={!hasTimelines}
+                onChange={(event) => handleLocalTimelineChange(event.target.value)}
+                disabled={!hasTimelines || isSwitchBlockedBySave}
               >
                 {bridgeTimelines.data?.map((timeline) => (
                   <option key={timeline.timeline_id} value={timeline.timeline_id}>
@@ -642,7 +760,6 @@ export default function VideoEditorPage() {
                 ))}
               </select>
             </div>
-            <span className="text-xs font-medium text-muted-foreground">Read-only</span>
           </div>
         </div>
 
@@ -710,6 +827,7 @@ export default function VideoEditorPage() {
               timelineId={providerSelection.timelineId}
               timelineName={providerSelection.timelineName}
               userId={providerSelection.userId}
+              onSaveStatusChange={setMountedSaveStatus}
             >
               <ReighVideoEditorShell
                 mode="full"
@@ -727,7 +845,12 @@ export default function VideoEditorPage() {
     return (
       <div className="flex h-full w-full flex-col bg-background">
         <div className="border-b border-border px-4 py-3">
-          <DevModeToggle localModeAvailable={localModeAvailable} mode={mode} setMode={setMode} />
+          <DevModeToggle
+            localModeAvailable={localModeAvailable}
+            mode={mode}
+            setMode={handleModeChange}
+            disabled={isSwitchBlockedBySave}
+          />
         </div>
         <TimelineList
           onSelect={(nextTimelineId) => {
@@ -768,6 +891,7 @@ export default function VideoEditorPage() {
           timelineId={providerSelection.timelineId}
           timelineName={providerSelection.timelineName}
           userId={providerSelection.userId}
+          onSaveStatusChange={setMountedSaveStatus}
         >
           <ReighVideoEditorShell
             mode="full"

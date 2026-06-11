@@ -1,10 +1,6 @@
 import type { DragEvent, MutableRefObject } from 'react';
 import type { GenerationDropData } from '@/shared/lib/dnd/dragDrop.ts';
 import { getDragType } from '@/shared/lib/dnd/dragDrop.ts';
-import {
-  resolveAssetUrlWithResolver,
-  type AssetResolver,
-} from '@/tools/video-editor/data/AssetResolver.ts';
 import { createAutoScroller } from '@/tools/video-editor/lib/auto-scroll.ts';
 import { getCompatibleTrackId, updateClipOrder } from '@/tools/video-editor/lib/coordinate-utils.ts';
 import { getTrackIndex } from '@/tools/video-editor/lib/editor-utils.ts';
@@ -15,6 +11,7 @@ import {
 } from '@/tools/video-editor/lib/timeline-asset-durations.ts';
 import {
   buildAssetDropEdit,
+  estimateAssetDuration,
   getPlayableAssetKind,
   planAssetDropTarget,
   planGenerationAssetRegistration,
@@ -214,7 +211,6 @@ export function handleEffectLayerDrop({
 export async function handleFileDrop({
   files,
   dataRef,
-  timelineId,
   pendingOpsRef,
   dropPosition,
   insertAtTop,
@@ -223,15 +219,16 @@ export async function handleFileDrop({
   patchRegistry,
   uploadAsset,
   invalidateAssetRegistry,
-  assetResolver,
+  resolveAssetUrl,
   registerGenerationAsset,
   uploadImageGeneration,
   uploadVideoGeneration,
   dropAsset,
+  directAssetUploadAllFiles = false,
+  onAssetDropError,
 }: {
   files: File[];
   dataRef: MutableRefObject<TimelineData | null>;
-  timelineId: string;
   pendingOpsRef: MutableRefObject<number>;
   dropPosition: TimelineDropPosition;
   insertAtTop: boolean;
@@ -240,24 +237,64 @@ export async function handleFileDrop({
   patchRegistry: TimelinePatchRegistry;
   uploadAsset: TimelineUploadAsset;
   invalidateAssetRegistry: TimelineInvalidateAssetRegistry;
-  assetResolver: AssetResolver;
+  resolveAssetUrl: (file: string) => Promise<string>;
   registerGenerationAsset: UseAssetManagementResult['registerGenerationAsset'];
   uploadImageGeneration: UseAssetManagementResult['uploadImageGeneration'];
   uploadVideoGeneration: UseAssetManagementResult['uploadVideoGeneration'];
   dropAsset: UseAssetManagementResult['handleAssetDrop'];
+  directAssetUploadAllFiles?: boolean;
+  onAssetDropError?: (error: unknown) => void;
 }): Promise<boolean> {
   if (!files.length || !dataRef.current) {
     return false;
   }
 
   const defaultClipDuration = 5;
+  let targetTrackId = dropPosition.isNewTrack
+    ? undefined
+    : dropPosition.trackId;
+  let forceNewTrack = dropPosition.isNewTrack;
   let timeOffset = 0;
 
   for (const file of files) {
     const kind = inferFileDropKind(file);
-    let compatibleTrackId = dropPosition.isNewTrack
+    let compatibleTrackId = forceNewTrack
       ? null
-      : getCompatibleTrackId(dataRef.current.tracks, dropPosition.trackId, kind, selectedTrackId);
+      : getCompatibleTrackId(dataRef.current.tracks, targetTrackId, kind, selectedTrackId);
+
+    if (directAssetUploadAllFiles) {
+      try {
+        const result = await uploadAsset(file);
+        const sourceUrl = await resolveAssetUrl(result.entry.file);
+        patchRegistry(result.assetId, result.entry, sourceUrl);
+        dropAsset(
+          result.assetId,
+          compatibleTrackId ?? targetTrackId,
+          dropPosition.time + timeOffset,
+          forceNewTrack,
+          forceNewTrack ? insertAtTop : false,
+        );
+        void invalidateAssetRegistry();
+
+        if (!forceNewTrack || !dataRef.current) {
+          timeOffset += estimateAssetDuration(result.entry, kind);
+          continue;
+        }
+
+        const createdTrackId = compatibleTrackId
+          ?? (insertAtTop ? dataRef.current.tracks[0]?.id : dataRef.current.tracks[dataRef.current.tracks.length - 1]?.id);
+        if (createdTrackId) {
+          targetTrackId = createdTrackId;
+        }
+        forceNewTrack = false;
+        timeOffset += estimateAssetDuration(result.entry, kind);
+        continue;
+      } catch (error) {
+        console.error('[drop] Upload failed:', error);
+        onAssetDropError?.(error);
+      }
+      continue;
+    }
 
     if (!compatibleTrackId) {
       compatibleTrackId = createTrackForDrop(dataRef, kind, insertAtTop)?.trackId ?? null;
@@ -339,12 +376,7 @@ export async function handleFileDrop({
         }
 
         const result = await uploadAsset(file);
-        const sourceUrl = await resolveAssetUrlWithResolver(assetResolver, {
-          file: result.entry.file,
-          assetId: result.assetId,
-          entry: result.entry,
-          timelineId,
-        });
+        const sourceUrl = await resolveAssetUrl(result.entry.file);
         patchRegistry(result.assetId, result.entry, sourceUrl);
 
         const current = dataRef.current;
@@ -361,6 +393,7 @@ export async function handleFileDrop({
         void invalidateAssetRegistry();
       } catch (error) {
         console.error('[drop] Upload failed:', error);
+        onAssetDropError?.(error);
         const current = dataRef.current;
         if (!current) {
           return;
