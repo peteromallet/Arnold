@@ -170,7 +170,9 @@ def _raw_contains_success_result(raw: str) -> bool:
 _TMUX_DIED_MARKERS = (
     "no server running",
     "no current client",
+    "no current target",
     "can't find session",
+    "session not found",
     "lost server",
 )
 
@@ -179,10 +181,13 @@ def _raw_indicates_tmux_died(raw: str) -> bool:
     """Return True when Shannon's output reveals its tmux server/session died.
 
     The vendored Shannon launcher drives Claude inside a tmux session; when that
-    server dies — e.g. during the ``waitForPrompt`` startup poll — it surfaces a
-    line like ``tmux capture-pane -pt <id> -S -40 failed with 1: no server
-    running``. That is a transient INFRASTRUCTURE stall (the Claude session
-    crashed before producing a result), NOT a model/result error. It must be
+    server/window dies — e.g. during the ``waitForPrompt`` startup poll — it
+    surfaces a line like ``tmux capture-pane -pt <id> -S -40 failed with 1: no
+    server running`` (server gone) or ``... failed with 1: no current target``
+    (the window/session died while the private server survived — the canonical
+    "claude exited at startup under load" signature). That is a transient
+    INFRASTRUCTURE stall (the Claude session crashed before producing a result),
+    NOT a model/result error. It must be
     classified as a retryable ``worker_stall`` (which sheds the session and
     retries fresh), never misparsed as a bad result / ``internal_error`` because
     the only surviving stdout was Claude's ``system/init`` line.
@@ -193,6 +198,17 @@ def _raw_indicates_tmux_died(raw: str) -> bool:
     if "tmux" not in low and "capture-pane" not in low:
         return False
     return any(marker in low for marker in _TMUX_DIED_MARKERS)
+
+
+def _matched_tmux_died_marker(raw: str) -> str:
+    """Return the first ``_TMUX_DIED_MARKERS`` entry present in *raw* (or "")."""
+    if not raw:
+        return ""
+    low = raw.lower()
+    for marker in _TMUX_DIED_MARKERS:
+        if marker in low:
+            return marker
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1917,6 +1933,75 @@ _HEADLESS_BROKEN_MSG = (
     "MEGAPLAN_SHANNON_CLAUDE_BIN (e.g. a version that renders headlessly)."
 )
 
+# The readiness probe re-checks tmux liveness over this bounded window before
+# concluding the claude turn really died at startup. A few extra polls ride out
+# a brief startup race (the session is being (re)created while the probe fired)
+# without ever masking a genuine crash: a truly dead session stays dead and
+# the loop converges in ~2-5s. Env-tunable for slow/loaded hosts.
+_READINESS_DEAD_RECHECK_ATTEMPTS = 5
+_READINESS_DEAD_RECHECK_INTERVAL_S = 0.5
+
+
+def _readiness_session_recovered(tmux_session: "TmuxSession") -> bool:
+    """Bounded re-poll: True iff the tmux session comes back with painted output.
+
+    Called when a readiness capture failed with a dead-session signature
+    (``no current target`` / ``no server running`` / ...). A short race is
+    possible — the probe can fire in the window between session create and the
+    pane being painted — so we poll ``has-session`` + ``capture-pane`` a handful
+    of times over a couple seconds. If the session reappears with visible
+    output we treat it as recovered (let the ordinary readiness flow continue);
+    if it stays gone we return False so the caller classifies a retryable
+    dead-turn. Best-effort: any probe error is treated as "still gone".
+    """
+    attempts = max(1, _readiness_int_env(
+        "MEGAPLAN_SHANNON_READINESS_DEAD_RECHECK_ATTEMPTS",
+        _READINESS_DEAD_RECHECK_ATTEMPTS,
+    ))
+    interval = _readiness_float_env(
+        "MEGAPLAN_SHANNON_READINESS_DEAD_RECHECK_INTERVAL_S",
+        _READINESS_DEAD_RECHECK_INTERVAL_S,
+    )
+    for _ in range(attempts):
+        try:
+            if tmux_session.exists():
+                pane = _tmux_capture_pane(tmux_session.name)
+                if pane is not None and pane.strip():
+                    return True
+        except Exception:
+            pass
+        if interval > 0:
+            time.sleep(interval)
+    return False
+
+
+def _readiness_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def _readiness_float_env(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return default
+
+
+_SHANNON_READINESS_DEAD_TURN_MSG = (
+    "Shannon readiness probe: the claude tmux session died during startup "
+    "(tmux reported a dead session/window: {marker}). The claude CLI most "
+    "likely failed to start — commonly CPU-starved under concurrent load. "
+    "Retrying on a fresh session."
+)
+
 
 def _ps_children(pid: str) -> list[str]:
     """Return the direct child PIDs of *pid* via ``ps`` (portable; macOS+Linux).
@@ -2821,6 +2906,35 @@ def run_shannon_step(
                         flush=True,
                     )
                     continue
+                # Dead-session signature (``no current target`` / ``no server
+                # running`` / ...): the claude tmux session/window vanished before
+                # painting a result — the canonical "claude exited at startup,
+                # likely CPU-starved under load" failure. This is a transient
+                # INFRA stall, not an opaque worker_error. Ride out a brief startup
+                # race with a bounded re-poll first; if the session is still gone,
+                # classify it as a retryable ``worker_stall`` (mirrors the
+                # tmux-died-mid-turn guard on the main turn) so the auto loop sheds
+                # the session and retries fast/cleanly instead of looping on an
+                # un-retryable internal_error.
+                if _raw_indicates_tmux_died(pre_result.raw):
+                    if _readiness_session_recovered(ctx.tmux_session):
+                        print(
+                            "[megaplan] shannon readiness probe: tmux session "
+                            "recovered after a brief startup race; continuing.",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        continue
+                    marker = _matched_tmux_died_marker(pre_result.raw)
+                    raise CliError(
+                        "worker_stall",
+                        _SHANNON_READINESS_DEAD_TURN_MSG.format(marker=marker),
+                        extra={
+                            "raw_output": pre_result.raw,
+                            "session_id": pre_turn.session_id,
+                            "error_layer": "worker_stream_stall",
+                        },
+                    )
                 raise CliError(
                     "worker_error",
                     f"Shannon readiness probe failed with exit code {pre_result.returncode}",
