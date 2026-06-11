@@ -51,6 +51,81 @@ def _fallback_kill(proc: Any) -> None:
         pass
 
 
+def _descendant_pids(root_pid: int) -> list[int]:
+    """Return the transitive closure of *root_pid*'s descendant PIDs.
+
+    Walks parent→child links via ``pgrep -P`` (BFS), which survive
+    ``start_new_session=True`` — a child that started its own session/pgroup
+    is still reparented under *root_pid*, so ``killpg(direct_pgid)`` would miss
+    it but the parent chain still names it.  Used by :func:`kill_group` to
+    SIGKILL session-detached descendants the group signal cannot reach.
+
+    Conservative: only PIDs reachable from *root_pid* via the live parent chain
+    are returned.  *root_pid* itself is excluded.  Degrades to ``[]`` when
+    ``pgrep`` is absent.
+    """
+    descendants: list[int] = []
+    seen: set[int] = {root_pid}
+    frontier = [root_pid]
+    while frontier:
+        next_frontier: list[int] = []
+        for parent in frontier:
+            try:
+                result = subprocess.run(
+                    ["pgrep", "-P", str(parent)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+            except FileNotFoundError:
+                return descendants
+            if result.returncode not in (0, 1):
+                # 1 == no matches (expected leaf); anything else is an error.
+                continue
+            for line in result.stdout.split():
+                try:
+                    child = int(line)
+                except ValueError:
+                    continue
+                if child in seen:
+                    continue
+                seen.add(child)
+                descendants.append(child)
+                next_frontier.append(child)
+        frontier = next_frontier
+    return descendants
+
+
+def _reap_descendants(pids: list[int], tag: str) -> None:
+    """SIGKILL each PID (and its group) for descendants that survived killpg.
+
+    Iterates the snapshot taken *before* the group signal; any PID still alive
+    is a session-detached descendant the ``killpg`` could not reach, so we
+    SIGKILL it directly and also SIGKILL its (now-distinct) process group to
+    catch any further children it spawned in that session.  All errors are
+    swallowed — a PID that already exited (or was recycled) is the common case.
+    """
+    for pid in pids:
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, OSError):
+            continue  # already gone
+        logger.debug("kill_group: SIGKILL stray descendant pid=%d%s", pid, tag)
+        try:
+            pgid = os.getpgid(pid)
+        except (ProcessLookupError, OSError):
+            pgid = None
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+
+
 def _strip_setsid_collision(kw: dict[str, Any]) -> None:
     """Remove redundant preexec_fn=os.setsid when start_new_session=True (SD1).
 
@@ -165,16 +240,33 @@ def kill_group(
         _fallback_kill(proc)
         return
 
+    # Snapshot the full descendant tree BEFORE signalling, while parent links
+    # are still live.  Descendants that started their OWN session/pgroup
+    # (start_new_session=True grandchildren, e.g. a pytest the phase launched)
+    # are NOT in pgid, so killpg below cannot reach them; we SIGKILL the
+    # survivors by PID afterwards.  Parent links survive start_new_session, so
+    # this closure is the only reliable way to name them.
+    descendants = _descendant_pids(proc.pid)
+
     try:
         logger.debug("kill_group: SIGTERM pgid=%d%s", pgid, tag)
         os.killpg(pgid, signal.SIGTERM)
     except (ProcessLookupError, OSError):
+        _reap_descendants(descendants, tag)
         return
 
     if not escalate:
+        # SIGTERM-only semantics for the group; still reap session-detached
+        # descendants the group signal could not reach (SIGKILL, since they
+        # are out-of-group and a graceful TERM has no group to escalate from).
+        _reap_descendants(descendants, tag)
         return
 
     # Wait up to grace_s for the group to exit, then escalate to SIGKILL.
+    # NOTE: even when the direct group exits cleanly we must still reap
+    # session-detached descendants — a grandchild that started its own session
+    # is reparented to init when its in-group parent exits, so the clean group
+    # exit does NOT take it down.
     deadline = time.monotonic() + grace_s
     if isinstance(proc, subprocess.Popen):
         # Blocking wait in a bounded loop — correct in a sync context.
@@ -184,16 +276,19 @@ def kill_group(
                 break
             try:
                 proc.wait(timeout=min(0.1, remaining))
-                return  # exited cleanly within grace period
+                _reap_descendants(descendants, tag)  # exited cleanly within grace
+                return
             except subprocess.TimeoutExpired:
                 pass
             except (ProcessLookupError, OSError):
+                _reap_descendants(descendants, tag)
                 return
     else:
         # asyncio.subprocess.Process — poll returncode without awaiting so we
         # never yield the event loop inside this sync function.
         while time.monotonic() < deadline:
             if proc.returncode is not None:
+                _reap_descendants(descendants, tag)
                 return
             time.sleep(0.05)
 
@@ -207,6 +302,9 @@ def kill_group(
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             pass
+    # Final sweep: SIGKILL any session-detached descendant the group SIGKILL
+    # could not reach (out-of-group grandchildren).
+    _reap_descendants(descendants, tag)
 
 
 # ---------------------------------------------------------------------------
