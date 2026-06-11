@@ -1539,6 +1539,88 @@ def _codex_step_cost(
     return cost, prompt_tokens, completion_tokens, model, current
 
 
+def _emit_codex_execute_llm_start(
+    plan_dir: Path,
+    *,
+    model: str | None,
+    prompt: str,
+    json_trace: bool,
+) -> None:
+    try:
+        from megaplan.observability.events import EventKind, emit
+
+        prompt_hash = (
+            hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+            if prompt
+            else None
+        )
+        emit(
+            EventKind.LLM_CALL_START,
+            plan_dir=plan_dir,
+            phase="execute",
+            payload={
+                "provider": "codex",
+                "model": model,
+                "prompt_hash": prompt_hash,
+                "streaming": bool(json_trace),
+                "request_id": None,
+            },
+        )
+    except Exception:
+        pass
+
+
+def _emit_codex_execute_llm_end(
+    plan_dir: Path,
+    *,
+    request_id: str | None,
+    model: str | None,
+    tokens_in: int,
+    tokens_out: int,
+) -> None:
+    try:
+        from megaplan.observability.events import EventKind, emit
+
+        emit(
+            EventKind.LLM_CALL_END,
+            plan_dir=plan_dir,
+            phase="execute",
+            payload={
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "request_id": request_id,
+                "model": model,
+            },
+        )
+    except Exception:
+        pass
+
+
+def _emit_codex_execute_cost_recorded(
+    plan_dir: Path,
+    *,
+    request_id: str | None,
+    model: str | None,
+    cost_usd: float,
+) -> None:
+    try:
+        from megaplan.observability.events import EventKind, emit
+
+        emit(
+            EventKind.COST_RECORDED,
+            plan_dir=plan_dir,
+            phase="execute",
+            payload={
+                "request_id": request_id,
+                "cost_usd": float(cost_usd),
+                "provider": "codex",
+                "model": model,
+            },
+        )
+    except Exception:
+        pass
+
+
 def extract_session_id(raw: str) -> str | None:
     # Try structured JSONL first (codex --json emits {"type":"thread.started","thread_id":"..."})
     for line in raw.splitlines():
@@ -2549,6 +2631,13 @@ def run_codex_step(
             codex_idle_s = float(os.getenv("MEGAPLAN_CODEX_IDLE_TIMEOUT_S", "1200"))
         except (TypeError, ValueError):
             codex_idle_s = 1200.0
+        if step == "execute":
+            _emit_codex_execute_llm_start(
+                plan_dir,
+                model=model,
+                prompt=prompt,
+                json_trace=json_trace,
+            )
         result = run_command(
             command,
             cwd=Path.cwd(),
@@ -2862,6 +2951,22 @@ def run_codex_step(
     cost_usd, prompt_tokens, completion_tokens, model_actual, current_totals = _codex_step_cost(
         cost_session_id, session_entry
     )
+    observed_model = model_actual or model
+    if step == "execute":
+        _emit_codex_execute_llm_end(
+            plan_dir,
+            request_id=cost_session_id,
+            model=observed_model,
+            tokens_in=prompt_tokens,
+            tokens_out=completion_tokens,
+        )
+        if current_totals is not None:
+            _emit_codex_execute_cost_recorded(
+                plan_dir,
+                request_id=cost_session_id,
+                model=observed_model,
+                cost_usd=cost_usd,
+            )
     if current_totals is not None:
         # Persist the running totals so the next step in the same session
         # only bills its own delta. We mutate the existing session entry
@@ -2888,7 +2993,7 @@ def run_codex_step(
         session_id=session_id,
         trace_output=trace_output,
         rendered_prompt=prompt,
-        model_actual=model_actual or model,
+        model_actual=observed_model,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
