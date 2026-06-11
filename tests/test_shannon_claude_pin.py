@@ -15,6 +15,7 @@ import pytest
 from megaplan.types import CliError
 from megaplan.workers.shannon import (
     ShannonConfig,
+    _assert_runnable_claude_binary,
     _install_claude_pin,
     _resolve_pinned_claude,
 )
@@ -64,6 +65,53 @@ def test_pin_resolves_symlink_target_for_drift_immunity(tmp_path: Path) -> None:
     os.symlink(real, link)
     cfg = _cfg({"MEGAPLAN_SHANNON_CLAUDE_BIN": str(link)})
     assert _resolve_pinned_claude(cfg) == os.path.realpath(str(real))
+
+
+def test_self_referential_stub_rejected_loudly(tmp_path: Path) -> None:
+    # The crashed-auto-update residue: a tiny script that execs ITSELF in an
+    # infinite loop. Pinning it yields a blind readiness timeout + empty pane.
+    # The resolver must reject it with an actionable CliError, not pin it.
+    stub = tmp_path / "versions" / "2.1.165"
+    stub.parent.mkdir(parents=True)
+    stub.write_text(f'#!/bin/bash\nexec {stub} "$@"\n')
+    stub.chmod(0o755)
+    cfg = _cfg({"MEGAPLAN_SHANNON_CLAUDE_BIN": str(stub)})
+    with pytest.raises(CliError) as ei:
+        _resolve_pinned_claude(cfg)
+    assert "self-referential stub" in str(ei.value)
+
+
+def test_self_referential_stub_via_symlink_rejected(tmp_path: Path) -> None:
+    # Same stub, reached through the ~/.local/bin/claude symlink that points
+    # back at it — the validator resolves both sides to the same realpath.
+    stub = tmp_path / "versions" / "2.1.165"
+    stub.parent.mkdir(parents=True)
+    link = tmp_path / "claude"
+    os.symlink(stub, link)
+    stub.write_text(f'#!/bin/bash\nexec {link} "$@"\n')
+    stub.chmod(0o755)
+    with pytest.raises(CliError):
+        _assert_runnable_claude_binary(os.path.realpath(str(link)), origin="test")
+
+
+def test_legitimate_wrapper_shim_passes(tmp_path: Path) -> None:
+    # A real exec-wrapper shim points at a DIFFERENT target — must not trip.
+    target = tmp_path / "versions" / "2.1.173"
+    target.parent.mkdir(parents=True)
+    target.write_text("x")
+    target.chmod(0o755)
+    shim = tmp_path / "claude"
+    shim.write_text(f'#!/bin/bash\nexec {target} "$@"\n')
+    shim.chmod(0o755)
+    _assert_runnable_claude_binary(str(shim), origin="test")  # no raise
+
+
+def test_large_binary_not_sniffed(tmp_path: Path) -> None:
+    # Native builds are huge; the validator skips them without reading them in.
+    big = tmp_path / "versions" / "2.1.173"
+    big.parent.mkdir(parents=True)
+    big.write_bytes(b"\x00" * (70 * 1024))
+    _assert_runnable_claude_binary(str(big), origin="test")  # no raise
 
 
 def test_install_pin_shims_path_first(tmp_path: Path) -> None:
