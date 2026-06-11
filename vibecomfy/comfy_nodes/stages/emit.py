@@ -79,7 +79,7 @@ def _stage_validate(state: AgentEditState, _context: TurnContext) -> StageResult
 def _stage_emit(state: AgentEditState, _context: TurnContext) -> StageResult:
     from vibecomfy.porting.layout import evaluate_felt_delta
     from vibecomfy.porting.layout_store import store_from_ui_json, write_store
-    from vibecomfy.porting.ui_emitter import emit_ui_json
+    from vibecomfy.porting.emit.ui import emit_ui_json
 
     start = time.monotonic()
     recovery_report: list[dict[str, Any]] = []
@@ -135,13 +135,13 @@ def _stage_emit(state: AgentEditState, _context: TurnContext) -> StageResult:
 
 
 def _stage_apply_delta(state: AgentEditState, _context: TurnContext) -> StageResult:
-    from vibecomfy.porting.edit_apply import apply_delta
-    from vibecomfy.porting.edit_apply import (
+    from vibecomfy.porting.edit.apply import apply_delta
+    from vibecomfy.porting.edit.apply import (
         AppliedAddNodeSpec,
         ResolvedFieldRef,
         ResolvedRemoveNodePlan,
     )
-    from vibecomfy.porting.edit_ops import op_to_dict
+    from vibecomfy.porting.edit.ops import op_to_dict
 
     def _build_delta_audit(result: Any) -> dict[str, Any]:
         automatic_link_removals: list[dict[str, Any]] = []
@@ -201,7 +201,7 @@ def _stage_apply_delta(state: AgentEditState, _context: TurnContext) -> StageRes
     # ── lint gate (VIBECOMFY_AGENT_EDIT_LINT defaults ON) ──────────────────
     original_ui = state.guard_original_ui or state.graph
     if _edit_lint_enabled() and state.delta_ops:
-        from vibecomfy.porting.edit_lint import LintIndex, lint_delta
+        from vibecomfy.porting.edit.lint import LintIndex, lint_delta
 
         index = LintIndex.build(original_ui)
         lint_result = lint_delta(

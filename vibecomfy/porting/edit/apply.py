@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import time
 from typing import Any, Mapping
 
-from vibecomfy.porting.edit_ledger import EditLedger, ScopeState
+from .ledger import EditLedger, ScopeState
 from vibecomfy.porting.resolution import (
     EditLedgerBackend,
     ResolutionContext,
@@ -13,7 +13,7 @@ from vibecomfy.porting.resolution import (
     _normalize_type,
     to_port_issues,
 )
-from vibecomfy.porting.edit_ops import (
+from .ops import (
     AddNodeOp,
     AnchorRef,
     EditOp,
@@ -30,8 +30,8 @@ from vibecomfy.porting.edit_ops import (
 )
 from vibecomfy.porting.object_info.consume import output_names as cached_output_names
 from vibecomfy.porting.report import PortIssue
-from vibecomfy.porting.ui_emitter import materialize_litegraph_node
-from vibecomfy.porting.widget_schema import effective_widget_names_for_class
+from vibecomfy.porting.emit.ui import materialize_litegraph_node
+from vibecomfy.porting.widgets.schema import effective_widget_names_for_class
 from vibecomfy.schema import InputSpec, schema_for, socket_types_compatible
 
 
@@ -452,7 +452,7 @@ def _normalize_for_guard(
     original = copy.deepcopy(dict(stamped_original_ui))
     candidate = copy.deepcopy(dict(candidate_ui))
     try:
-        from vibecomfy.porting.agent_edit_normalize import is_normalize_available, normalize_ui_json
+        from .normalize import is_normalize_available, normalize_ui_json
 
         preferred_available = is_normalize_available()
         started = time.monotonic()
@@ -846,7 +846,7 @@ def _all_diffs_normalize_allowed(
     if not node_class or node_class != candidate_class:
         return False
     try:
-        from vibecomfy.porting.agent_edit_normalize import normalize_allow_list_matches
+        from .normalize import normalize_allow_list_matches
     except Exception:
         return False
     return all(normalize_allow_list_matches(node_class, field_path) is not None for field_path in diffs)

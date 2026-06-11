@@ -43,10 +43,10 @@ from vibecomfy.porting.emit_kwargs import (
     _topological_node_order,
     _ui_output_names,
 )
-from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
+from vibecomfy.porting.widgets.schema import WIDGET_SCHEMA
 
 if TYPE_CHECKING:
-    from vibecomfy.porting.emitter import EmissionDiagnostic
+    from vibecomfy.porting.emit.emitter import EmissionDiagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,7 @@ def _disambiguated_subgraph_slugs(raw_by_id: Mapping[str, Mapping[str, Any]]) ->
 
 def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str | None) -> _SubgraphDef:
     from vibecomfy.ingest.normalize import normalize_to_api
-    from vibecomfy.porting.uid import make_uid, mint_local_uid
+    from vibecomfy.porting.identity.uid import make_uid, mint_local_uid
     from vibecomfy.workflow import VibeEdge as _Edge, VibeNode as _Node
 
     subgraph_id = str(raw["id"])
@@ -497,7 +497,7 @@ def _emit_subgraph_functions(
     strict_variable_name_locks: bool = False,
 ) -> list[str]:
     # Deferred import to avoid circular dependency (emitter ↔ emit_subgraph).
-    from vibecomfy.porting.emitter import _emit_build_function  # noqa: PLC0415
+    from vibecomfy.porting.emit.emitter import _emit_build_function  # noqa: PLC0415
 
     subgraphs: dict[str, _SubgraphDef] = prepared.get("subgraph_definitions") or {}
     if not subgraphs:
@@ -763,7 +763,7 @@ def _subgraph_call_kwargs(
         else:
             kwargs.append((port.name, "None"))
             if diagnostics is not None:
-                from vibecomfy.porting.emitter import EmissionDiagnostic  # noqa: PLC0415
+                from vibecomfy.porting.emit.emitter import EmissionDiagnostic  # noqa: PLC0415
                 diagnostics.append(
                     EmissionDiagnostic(
                         code=READABILITY_WARNING_SUBGRAPH_INPUT_UNBOUND,

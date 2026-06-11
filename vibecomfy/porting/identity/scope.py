@@ -18,7 +18,7 @@ import hashlib
 import json
 from typing import Any, Callable, Mapping, Sequence
 
-from vibecomfy.porting.uid import SCOPE_CHAIN_JOIN, SCOPE_LOCAL_SEP, make_uid
+from vibecomfy.porting.identity.uid import SCOPE_CHAIN_JOIN, SCOPE_LOCAL_SEP, make_uid
 
 # Characters that must never appear inside a sanitized subgraph name, because
 # they are the uid structural separators. ':' is allowed inside an sg_key.

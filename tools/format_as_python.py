@@ -32,8 +32,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from vibecomfy.porting.widget_aliases import resolve_widget_name
-from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
+from vibecomfy.porting.widgets.aliases import resolve_widget_name
+from vibecomfy.porting.widgets.schema import WIDGET_SCHEMA
 
 
 # TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
@@ -394,7 +394,7 @@ def format_as_python(
     raw_workflow: dict | None = None,
 ) -> str:
     """Compatibility wrapper for the package ready-template emitter."""
-    from vibecomfy.porting.emitter import emit_ready_template_python
+    from vibecomfy.porting.emit.emitter import emit_ready_template_python
 
     return emit_ready_template_python(
         workflow,

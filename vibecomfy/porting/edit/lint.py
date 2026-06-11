@@ -52,8 +52,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
-from vibecomfy.porting.edit_ledger import EditLedger
-from vibecomfy.porting.edit_ops import (
+from .ledger import EditLedger
+from .ops import (
     AddNodeOp,
     EditOp,
     LinkSourceRef,

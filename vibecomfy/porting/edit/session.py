@@ -7,9 +7,9 @@ from types import MappingProxyType
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Mapping
 
-from vibecomfy.porting.edit_apply import apply_delta
-from vibecomfy.porting.edit_ledger import EditLedger
-from vibecomfy.porting.edit_ops import (
+from .apply import apply_delta
+from .ledger import EditLedger
+from .ops import (
     AddNodeOp,
     AnchorRef,
     EditOp,
@@ -24,17 +24,17 @@ from vibecomfy.porting.edit_ops import (
     SetNodeFieldOp,
     UpsertLinkOp,
 )
-from vibecomfy.porting.edit_types import FieldChange
-from vibecomfy.porting.emitter import EmissionDiagnostic, emit_agent_edit_python
-from vibecomfy.porting.edit_projection import HELPER_NODE_TYPES, MODE_LABELS
+from .types import FieldChange
+from vibecomfy.porting.emit.emitter import EmissionDiagnostic, emit_agent_edit_python
+from .projection import HELPER_NODE_TYPES, MODE_LABELS
 from vibecomfy.porting.layout.placement import (
     BatchPlacementFacts,
     InferredAnchorHint,
     build_batch_placement_facts,
     infer_add_node_anchor_hint,
 )
-from vibecomfy.porting.slot_codec import to_raw_name
-from vibecomfy.porting.widget_schema import effective_widget_names_for_class
+from vibecomfy.porting.identity.codec import to_raw_name
+from vibecomfy.porting.widgets.schema import effective_widget_names_for_class
 from vibecomfy.schema import get_schema_provider, schema_for, socket_types_compatible
 
 if TYPE_CHECKING:

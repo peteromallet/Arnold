@@ -5,9 +5,9 @@ import json
 import math
 from typing import Any, Iterable, Mapping, Sequence
 
-from vibecomfy.porting.edit_ledger import EditLedger, ScopeState
-from vibecomfy.porting.edit_ops import NodeTarget
-from vibecomfy.porting.widget_schema import effective_widget_names_for_class
+from .ledger import EditLedger, ScopeState
+from .ops import NodeTarget
+from vibecomfy.porting.widgets.schema import effective_widget_names_for_class
 from vibecomfy.schema import schema_for
 
 
