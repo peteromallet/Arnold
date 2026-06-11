@@ -58,8 +58,13 @@ _DEVIATION_BLOCKING_PHRASES: tuple[str, ...] = (
     "iteration budget",
     "context budget",
     "out of context",
-    "syntax error",
-    "syntaxerror",
+    # NOTE: "syntax error"/"syntaxerror" are deliberately NOT keyword-matched here.
+    # Matching them in deviation *prose* false-blocks a done task whenever the
+    # executor merely *describes* a syntax error it already fixed (e.g. "had a
+    # double-`as` syntax error, fixed it"). Genuine current syntax errors are
+    # detected authoritatively and evidence-based by _validate_python_file_for_task
+    # below, which ast.parse()s the task's actual changed .py files and blocks only
+    # when a file truly fails to parse. The prose keyword only ever false-positives.
 )
 
 
