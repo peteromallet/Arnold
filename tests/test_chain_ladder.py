@@ -525,3 +525,104 @@ def test_require_clean_base_ignores_megaplan_artifacts(tmp_path: Path) -> None:
     (tmp_path / ".megaplan" / "scratch.json").write_text("{}", encoding="utf-8")
 
     assert chain_module._carried_wip_paths(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# False-stall reconciliation: the chain stall-watchdog can race a slow phase
+# worker and return "stalled" while the plan goes on to reach a terminal-good
+# state. The chain must reconcile against the plan's authoritative state.json
+# before on_failure aborts — otherwise a finished, mergeable milestone is
+# abandoned (PR never merges, idx never advances).
+# ---------------------------------------------------------------------------
+
+
+def _stall_init_writing_state(current_state: str):
+    """Build a fake _init_plan that writes a plan state.json at current_state."""
+
+    def fake_init(root, idea_path, **_kw):
+        del idea_path
+        plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "plan-m1",
+                    "current_state": current_state,
+                    "iteration": 1,
+                    "config": {"project_dir": str(root)},
+                    "meta": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return "plan-m1"
+
+    return fake_init
+
+
+def test_false_stall_reconciles_to_advance_when_plan_reached_done(
+    tmp_path: Path,
+) -> None:
+    """Driver returns 'stalled' but plan state.json is 'done' → advance, not abort."""
+    idea = _touch_idea(tmp_path, "m1.txt", "idea")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+            "on_failure": {"abort": "stop_chain"},
+        },
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    def fake_drive(root, plan, spec, **_kw):
+        del root, spec
+        return _fake_outcome(plan, "stalled")
+
+    with patch(
+        "megaplan.chain._init_plan",
+        side_effect=_stall_init_writing_state("done"),
+    ), patch(
+        "megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        side_effect=fake_drive,
+    ), patch(
+        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    # The false "stalled" verdict was reconciled to a completed milestone.
+    assert result["status"] == "done"
+    saved = load_chain_state(spec_path)
+    assert [c["label"] for c in saved.completed] == ["m1"]
+
+
+def test_genuine_stall_still_aborts_when_plan_non_terminal(tmp_path: Path) -> None:
+    """A real stall (plan NOT terminal-good) must still abort under stop_chain."""
+    idea = _touch_idea(tmp_path, "m1.txt", "idea")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+            "on_failure": {"abort": "stop_chain"},
+        },
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    def fake_drive(root, plan, spec, **_kw):
+        del root, spec
+        return _fake_outcome(plan, "stalled")
+
+    with patch(
+        "megaplan.chain._init_plan",
+        side_effect=_stall_init_writing_state("planned"),
+    ), patch(
+        "megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        side_effect=fake_drive,
+    ), patch(
+        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    # Genuine stall is not papered over: the chain still stops and nothing advanced.
+    assert result["status"] == "stopped"
+    saved = load_chain_state(spec_path)
+    assert saved.completed == []
