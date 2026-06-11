@@ -3,8 +3,10 @@
  * Test helpers for building fixture timelines against the supported SDK.
  */
 export {
+  DEFAULT_OUTPUT,
   DEFAULT_VIDEO_TRACKS,
   createDefaultTimelineConfig,
+  withDefaultTimelineOutput,
 } from './lib/defaults.ts';
 export {
   AGENT_WORKFLOW_SHOT_ID,

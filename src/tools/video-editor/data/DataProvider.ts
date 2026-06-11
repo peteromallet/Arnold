@@ -42,6 +42,7 @@ export function isTimelineNotFoundError(error: unknown): error is TimelineNotFou
 }
 
 export interface DataProvider extends AssetResolver {
+  persistenceEnabled?: boolean;
   loadTimeline(timelineId: string): Promise<LoadedTimeline>;
   saveTimeline(
     timelineId: string,
@@ -52,6 +53,10 @@ export interface DataProvider extends AssetResolver {
   saveCheckpoint?(timelineId: string, checkpoint: Omit<Checkpoint, 'id'>): Promise<string>;
   loadCheckpoints?(timelineId: string): Promise<Checkpoint[]>;
   loadAssetRegistry(timelineId: string): Promise<AssetRegistry>;
+}
+
+export function isDataProviderPersistenceEnabled(provider: DataProvider | null | undefined): boolean {
+  return provider?.persistenceEnabled !== false;
 }
 
 // The persistence boundary for the headless editor core remains the existing

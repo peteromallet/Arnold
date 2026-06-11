@@ -84,6 +84,7 @@ interface TestHarness {
 
 interface SetupOptions {
   initialData?: TimelineData;
+  persistenceEnabled?: boolean;
   saveTimelineImpl?: (
     timelineId: string,
     config: TimelineData['config'],
@@ -105,6 +106,7 @@ function setup(options?: SetupOptions): TestHarness {
   );
   const loadAssetRegistry = vi.fn(options?.loadAssetRegistryImpl ?? (async () => ({ assets: {} })));
   const provider: DataProvider = {
+    persistenceEnabled: options?.persistenceEnabled,
     loadTimeline,
     saveTimeline,
     loadAssetRegistry,
@@ -282,6 +284,19 @@ describe('useTimelinePersistence — interaction gating', () => {
     });
 
     expect(harness.saveTimeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses autosave when provider persistence is disabled', async () => {
+    const harness = setup({ persistenceEnabled: false });
+
+    harness.scheduleSave(makeTimelineData('read-only'));
+
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+    });
+
+    expect(harness.saveTimeline).not.toHaveBeenCalled();
   });
 
   it('doSave passes registry to saveTimeline', async () => {

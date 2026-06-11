@@ -5,6 +5,7 @@ import {
   type TimelineCommandHistoryMetadata,
 } from '@/tools/video-editor/commands/index.ts';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import { isDataProviderPersistenceEnabled } from '@/tools/video-editor/data/DataProvider.ts';
 import type {
   CommandHistoryCommitMetadata,
   CommitDataOptions,
@@ -216,7 +217,7 @@ export function useTimelineHistory({
     editsSinceLastCheckpoint: number,
     label?: string,
   ) => {
-    if (!provider.saveCheckpoint) {
+    if (!isDataProviderPersistenceEnabled(provider) || !provider.saveCheckpoint) {
       return;
     }
 
@@ -434,7 +435,7 @@ export function useTimelineHistory({
   }, [dataRef, persistCheckpoint]);
 
   useEffect(() => {
-    if (!provider.loadCheckpoints) {
+    if (!isDataProviderPersistenceEnabled(provider) || !provider.loadCheckpoints) {
       return;
     }
 
