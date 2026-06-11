@@ -19,7 +19,7 @@ from tests._workers_helpers import _mock_state
 def test_tmux_session_create_exists_teardown_idempotent() -> None:
     """TmuxSession exists() → teardown() → exists() → second teardown() safe."""
     import uuid
-    from megaplan.runtime.process import TmuxSession
+    from megaplan.runtime.process import TmuxSession, tmux_socket_for
 
     name = f"megaplan-test-tmuxsession-{uuid.uuid4().hex[:8]}"
     session = TmuxSession(name)
@@ -27,9 +27,14 @@ def test_tmux_session_create_exists_teardown_idempotent() -> None:
     # Ensure clean starting state.
     session.teardown()
 
-    # Create a detached tmux session that sleeps for 300s.
+    # Create a detached tmux session that sleeps for 300s. It MUST be created on
+    # this session's PRIVATE -L socket (the same one exists()/pane_pids()/
+    # teardown() address since the socket-isolation change) — a bare
+    # `tmux new-session` lands on the shared default server where exists()
+    # would never find it.
+    socket = tmux_socket_for(name)
     result = subprocess.run(
-        ["tmux", "new-session", "-d", "-s", name, "sleep", "300"],
+        ["tmux", "-L", socket, "new-session", "-d", "-s", name, "sleep", "300"],
         check=True,
         capture_output=True,
         text=True,
@@ -67,21 +72,23 @@ def test_wedge_regression_teardown_reaps_orphaned_session_pids_dead() -> None:
     session, SIGKILL the subprocess that launched it, then assert TmuxSession
     teardown reaps the now-orphaned session by name and captured PIDs are dead."""
     import uuid
-    from megaplan.runtime.process import TmuxSession, pane_pids
+    from megaplan.runtime.process import TmuxSession, pane_pids, tmux_socket_for
 
     name = f"megaplan-wedge-{uuid.uuid4().hex[:8]}"
     session = TmuxSession(name)
+    socket = tmux_socket_for(name)
 
     # Clean start.
     session.teardown()
 
-    # Start a subprocess that creates a detached tmux session and then stays
+    # Start a subprocess that creates a detached tmux session on this session's
+    # PRIVATE -L socket (matching exists()/pane_pids()/teardown()) and then stays
     # alive briefly (the "wrapper").
     wrapper = subprocess.Popen(
         [
             "sh",
             "-c",
-            f"tmux new-session -d -s {name} sleep 300; sleep 60",
+            f"tmux -L {socket} new-session -d -s {name} sleep 300; sleep 60",
         ],
     )
     try:

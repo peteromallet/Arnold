@@ -272,10 +272,21 @@ class TmuxSession:
         self.socket = tmux_socket_for(name)
 
     def teardown(self) -> None:
-        """Kill the tmux session.  Idempotent — safe to call repeatedly.
+        """Kill the tmux session AND its private server.  Idempotent.
 
         Returns ``None`` unconditionally.  A missing ``tmux`` binary or an
-        already-gone session is a no-op, logged at debug level.
+        already-gone session/server is a no-op, logged at debug level.
+
+        The vendored launcher sets ``exit-empty off`` on this session's PRIVATE
+        ``-L mp-<name>`` server (defense so a transient last-session kill can't
+        strand a live turn). The consequence is that ``kill-session`` alone
+        leaves an idle tmux server daemon lingering after every turn — observed
+        live as 0-session ``mp-*`` orphans piling up in the socket dir. The
+        socket is private to THIS session, so also reaping the whole server is
+        safe (no other chain shares it) and complete. This must happen on the
+        Python side too, not only in bun's ``killTmux``: when a turn is killed
+        for timeout/stall the bun child never runs its own cleanup, so this
+        ``finally``-path teardown is the only reaper.
         """
         try:
             result = subprocess.run(
@@ -301,6 +312,17 @@ class TmuxSession:
                 self.name,
                 result.returncode,
             )
+
+        # Reap the private server so no idle daemon lingers (exit-empty off).
+        try:
+            subprocess.run(
+                ["tmux", "-L", self.socket, "kill-server"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            pass
 
     def exists(self) -> bool:
         """Return ``True`` iff the tmux session is currently live."""
