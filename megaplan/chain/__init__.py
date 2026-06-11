@@ -3200,6 +3200,32 @@ def run_chain(
             on_phase_complete=phase_callback if effective_use_pr else None,
             writer=writer,
         )
+        # Reconcile a non-terminal driver outcome against the plan's
+        # AUTHORITATIVE state.json BEFORE on_failure can abort the chain.
+        # The stall watchdog can race a slow reasoning model (e.g.
+        # deepseek-v4-pro): it returns "stalled" while the phase worker is
+        # still alive, and the plan then reaches a terminal-good state a few
+        # polls later. Aborting on that stale view abandons a finished,
+        # mergeable milestone (its PR never merges and idx never advances).
+        # If the plan actually reached its terminal-good state, treat the
+        # milestone as complete so the normal advance/merge path runs.
+        if outcome.status not in {"done", "finalized"}:
+            reconciled_state = _plan_current_state_from_payload(root, plan_name)
+            terminal_good = {"done"}
+            if effective_stop_at_finalized:
+                terminal_good.add(STATE_FINALIZED)
+            if reconciled_state in terminal_good:
+                writer(
+                    f"[chain] driver reported {outcome.status!r} for "
+                    f"{plan_name}, but plan state.json is "
+                    f"{reconciled_state!r} (terminal-good) — false stall; "
+                    f"reconciling to advance\n"
+                )
+                outcome.reason = (
+                    f"reconciled from {outcome.status} via plan "
+                    f"state.json={reconciled_state}"
+                )
+                outcome.status = "done"
         state.last_state = outcome.status
         save_chain_state(spec_path, state)
         decision = _handle_outcome(
