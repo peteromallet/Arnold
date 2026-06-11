@@ -216,3 +216,190 @@ def test_build_state_config_cli_wins_over_get_effective() -> None:
     assert config["completion_contract_mode"] == "off"
     assert config["test_command"] == "pytest -x"
     assert config["test_baseline_timeout"] == 600
+
+
+# ── Project-scoped config TOML tests (T4) ─────────────────────────────────
+
+
+def _write_project_toml(project_dir: Path, content: str) -> Path:
+    """Write a project TOML config file and return its path."""
+    cfg_dir = project_dir / ".megaplan"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = cfg_dir / "config.toml"
+    cfg_path.write_text(content, encoding="utf-8")
+    return cfg_path
+
+
+def test_build_state_config_uses_project_toml_test_command(
+    tmp_path: Path,
+) -> None:
+    """_build_state_config reads test_command from project .megaplan/config.toml
+    when CLI --test-command is absent."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_project_toml(
+        project_dir,
+        "[execution]\ntest_command = \"project-cmd\"\n",
+    )
+
+    args = Namespace(
+        project_dir=str(project_dir),
+        hermes=None,
+        profile=None,
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+        with_prep=False,
+        with_feedback=False,
+        prep_direction=None,
+        phase_model=None,
+    )
+    config, *_ = _build_state_config(
+        args,
+        project_dir=project_dir,
+        pipeline=None,
+        mode="code",
+        raw_form=None,
+        normalized_output_path=None,
+        normalized_primary_criterion=None,
+        from_doc_rel=None,
+    )
+    assert config["test_command"] == "project-cmd"
+
+
+def test_build_state_config_cli_overrides_project_toml_test_command(
+    tmp_path: Path,
+) -> None:
+    """Explicit CLI --test-command wins over project .megaplan/config.toml."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_project_toml(
+        project_dir,
+        "[execution]\ntest_command = \"project-cmd\"\n",
+    )
+
+    args = Namespace(
+        project_dir=str(project_dir),
+        hermes=None,
+        profile=None,
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+        with_prep=False,
+        with_feedback=False,
+        prep_direction=None,
+        phase_model=None,
+    )
+    args.test_command = "cli-cmd"  # type: ignore[attr-defined]
+
+    config, *_ = _build_state_config(
+        args,
+        project_dir=project_dir,
+        pipeline=None,
+        mode="code",
+        raw_form=None,
+        normalized_output_path=None,
+        normalized_primary_criterion=None,
+        from_doc_rel=None,
+    )
+    assert config["test_command"] == "cli-cmd"
+
+
+def test_project_toml_critic_model_blocks_profile_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project TOML critic_model is explicit — profile metadata is NOT consulted."""
+    import megaplan.handlers.init as init_mod
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_project_toml(
+        project_dir,
+        "[execution]\ncritic_model = \"project-model\"\n",
+    )
+
+    # Mock load_profile_metadata: if consulted, it would return a different model.
+    monkeypatch.setattr(
+        init_mod,
+        "load_profile_metadata",
+        lambda home=None, project_dir=None: {"partnered": {"critic_model": "profile-model"}},
+    )
+
+    args = Namespace(
+        project_dir=str(project_dir),
+        hermes=None,
+        profile="partnered",
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+        with_prep=False,
+        with_feedback=False,
+        prep_direction=None,
+        phase_model=None,
+    )
+
+    config, *_ = _build_state_config(
+        args,
+        project_dir=project_dir,
+        pipeline=None,
+        mode="code",
+        raw_form=None,
+        normalized_output_path=None,
+        normalized_primary_criterion=None,
+        from_doc_rel=None,
+    )
+    # Project TOML value wins — profile is never consulted.
+    assert config["critic_model"] == "project-model"
+    # Project-sourced values are treated as explicit.
+    assert config["critic_model_explicit"] is True
+
+
+def test_project_toml_adaptive_critique_blocks_profile_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project TOML adaptive_critique is explicit — profile metadata is NOT consulted."""
+    import megaplan.handlers.init as init_mod
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_project_toml(
+        project_dir,
+        "[execution]\nadaptive_critique = true\n",
+    )
+
+    # Mock load_profile_metadata: if consulted, it would return a different value.
+    monkeypatch.setattr(
+        init_mod,
+        "load_profile_metadata",
+        lambda home=None, project_dir=None: {"partnered": {"adaptive_critique": False}},
+    )
+
+    args = Namespace(
+        project_dir=str(project_dir),
+        hermes=None,
+        profile="partnered",
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+        with_prep=False,
+        with_feedback=False,
+        prep_direction=None,
+        phase_model=None,
+    )
+
+    config, *_ = _build_state_config(
+        args,
+        project_dir=project_dir,
+        pipeline=None,
+        mode="code",
+        raw_form=None,
+        normalized_output_path=None,
+        normalized_primary_criterion=None,
+        from_doc_rel=None,
+    )
+    # Project TOML value wins — profile is never consulted.
+    assert config["adaptive_critique"] is True
