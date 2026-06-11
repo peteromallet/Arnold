@@ -2343,6 +2343,75 @@ def _ensure_workspace_trusted(
         )
 
 
+def _assert_runnable_claude_binary(resolved: str, *, origin: str) -> None:
+    """Fail fast if *resolved* is not a runnable ``claude`` build.
+
+    The Claude CLI auto-updater installs each build under
+    ``~/.local/share/claude/versions/<ver>`` (a ~200 MB native executable) and
+    points ``~/.local/bin/claude`` at it. A crashed/interrupted update can leave
+    a corrupt *stub* in that slot: a tiny shell script whose only line is
+    ``exec <same path> "$@"`` — i.e. it execs ITSELF, spinning in an infinite
+    re-exec loop that burns CPU and never paints a TUI. When Shannon pins that
+    stub, the interactive readiness probe waits forever and captures an EMPTY
+    tmux pane ("Timed out waiting for Claude prompt"), with no actionable clue.
+
+    We detect that case here and raise a clear, actionable :class:`CliError`
+    instead of letting it degrade into a blind readiness timeout. A real claude
+    build is a large native binary, never a 2-line self-referential script, so
+    this is safe: it only rejects the known-broken stub shape, not legitimate
+    wrapper shims (which exec a *different* target).
+    """
+    try:
+        size = os.path.getsize(resolved)
+    except OSError:
+        size = -1
+    # Native claude builds are tens-to-hundreds of MB. Only sniff small files;
+    # never read a 200 MB binary into memory.
+    if size < 0 or size > 65536:
+        return
+    try:
+        with open(resolved, "rb") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return
+    if not head.startswith(b"#!"):
+        return  # tiny non-script (unlikely) — leave it alone
+    text = head.decode("utf-8", "replace")
+    real = os.path.realpath(resolved)
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("exec "):
+            continue
+        # The stub execs its own resolved path (directly or via the symlink that
+        # points back to it). Any exec target that resolves to *resolved* itself
+        # is the infinite-loop stub.
+        for tok in shlex.split(stripped[len("exec "):]):
+            if tok.startswith("-") or tok == '"$@"' or tok == "$@":
+                continue
+            try:
+                tok_real = os.path.realpath(os.path.expanduser(tok))
+            except OSError:
+                tok_real = tok
+            if tok_real == real:
+                raise CliError(
+                    "worker_error",
+                    f"The pinned claude binary ({origin}) at {resolved} is a "
+                    "corrupt self-referential stub (it execs itself in an "
+                    "infinite loop) — typically the residue of a crashed Claude "
+                    "CLI auto-update. Shannon would spin forever waiting for a "
+                    "prompt that never paints. Repoint your claude install at a "
+                    "real build, e.g.:\n"
+                    "  chflags -h nouchg ~/.local/bin/claude 2>/dev/null; "
+                    "rm -f ~/.local/bin/claude\n"
+                    "  ln -s \"$(ls -d ~/.local/share/claude/versions/* | "
+                    "grep -vx %s | sort -V | tail -1)\" ~/.local/bin/claude\n"
+                    "or set MEGAPLAN_SHANNON_CLAUDE_BIN to a known-good version."
+                    % shlex.quote(resolved),
+                )
+            break  # only inspect the exec's first non-flag token (the program)
+    return
+
+
 def _resolve_pinned_claude(cfg: ShannonConfig) -> str | None:
     """Resolve the claude binary to pin for this run, or None to leave PATH alone.
 
@@ -2353,6 +2422,11 @@ def _resolve_pinned_claude(cfg: ShannonConfig) -> str | None:
     a newer, headless-broken build — cannot switch the version under a running
     step. Returns None when pinning is disabled or no ``claude`` is found
     (preserves the legacy PATH-resolution behavior).
+
+    The resolved target is validated before pinning: a corrupt self-referential
+    update stub is rejected with an actionable error instead of silently pinning
+    a binary that spins forever and yields a blind readiness timeout (an empty
+    captured pane). See :func:`_assert_runnable_claude_binary`.
     """
     if cfg.claude_bin:
         resolved = os.path.realpath(os.path.expanduser(cfg.claude_bin))
@@ -2362,13 +2436,16 @@ def _resolve_pinned_claude(cfg: ShannonConfig) -> str | None:
                 f"MEGAPLAN_SHANNON_CLAUDE_BIN={cfg.claude_bin!r} is not a file "
                 f"(resolved {resolved}).",
             )
+        _assert_runnable_claude_binary(resolved, origin="MEGAPLAN_SHANNON_CLAUDE_BIN")
         return resolved
     if not cfg.pin_claude:
         return None
     found = shutil.which("claude")
     if not found:
         return None
-    return os.path.realpath(found)
+    resolved = os.path.realpath(found)
+    _assert_runnable_claude_binary(resolved, origin="claude on PATH")
+    return resolved
 
 
 def _install_claude_pin(
