@@ -509,6 +509,87 @@ def _render_user_actions_md(payload: dict[str, Any]) -> str:
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
+# Keys persisted to / restored from the per-plan baseline cache.
+_BASELINE_CACHE_KEYS = (
+    "baseline_test_failures",
+    "baseline_test_command",
+    "baseline_test_note",
+)
+
+
+def _baseline_cache_path(plan_dir: Path) -> Path:
+    return plan_dir / "baseline.json"
+
+
+def _read_cached_baseline(plan_dir: Path) -> dict[str, Any] | None:
+    """Return a previously-captured baseline for this plan, or ``None``.
+
+    Only a SUCCESSFUL baseline (``baseline_test_failures`` is a concrete list,
+    not ``None``) is treated as reusable. A poisoned/timeout/runner-error
+    baseline (``failures is None``) is intentionally NOT cached at write time,
+    so a retry under better conditions can re-establish it; should a stale
+    poisoned cache ever exist it is rejected here too.
+    """
+    path = _baseline_cache_path(plan_dir)
+    if not path.exists():
+        return None
+    try:
+        import json as _json
+
+        data = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if not isinstance(data.get("baseline_test_failures"), list):
+        return None
+    return {k: data.get(k) for k in _BASELINE_CACHE_KEYS if k in data}
+
+
+def _write_cached_baseline(plan_dir: Path, baseline: dict[str, Any]) -> None:
+    """Persist a SUCCESSFUL baseline so a finalize retry reuses it.
+
+    A baseline with ``baseline_test_failures is None`` (timeout / runner error /
+    not-applicable) is not cached — those are transient/degraded outcomes that a
+    retry should be free to re-attempt.
+    """
+    if not isinstance(baseline.get("baseline_test_failures"), list):
+        return
+    payload = {k: baseline[k] for k in _BASELINE_CACHE_KEYS if k in baseline}
+    try:
+        atomic_write_json(_baseline_cache_path(plan_dir), payload)
+    except OSError:
+        # Best-effort cache; a write failure must never fail the phase.
+        pass
+
+
+def _capture_test_baseline_for_plan(
+    plan_dir: Path, project_dir: Path, config: dict[str, Any]
+) -> dict[str, Any]:
+    """Capture the test baseline ONCE per plan, reusing a cached result on retry.
+
+    The baseline runs the whole suite (minutes of work). A finalize retry — e.g.
+    after a Shannon readiness-probe stall — has no reason to re-establish it, so
+    a successful baseline is persisted to ``<plan_dir>/baseline.json`` and reused
+    verbatim on any subsequent finalize attempt for the same plan. Mock mode and
+    degraded (null-failures) outcomes bypass the cache and fall through to a live
+    capture, preserving prior behaviour exactly for those cases.
+    """
+    if os.getenv(MOCK_ENV_VAR) != "1":
+        cached = _read_cached_baseline(plan_dir)
+        if cached is not None:
+            LOGGER.info(
+                "finalize: reusing cached test baseline from %s "
+                "(%d pre-existing failures) — skipping suite re-run",
+                _baseline_cache_path(plan_dir),
+                len(cached.get("baseline_test_failures") or []),
+            )
+            return cached
+    baseline = _capture_test_baseline(project_dir, config)
+    _write_cached_baseline(plan_dir, baseline)
+    return baseline
+
+
 def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     if os.getenv(MOCK_ENV_VAR) == "1":
         return {
@@ -686,7 +767,9 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     else:
         _config = dict(state.get("config", {}))
         _config["plan_dir"] = str(plan_dir)
-        baseline = _capture_test_baseline(Path(_config["project_dir"]), _config)
+        baseline = _capture_test_baseline_for_plan(
+            plan_dir, Path(_config["project_dir"]), _config
+        )
         payload.update(baseline)
         _ensure_user_actions_pre_gate_task(payload, state)
         _ensure_user_actions_post_gate_task(payload, state)
