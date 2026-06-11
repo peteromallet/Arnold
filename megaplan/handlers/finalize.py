@@ -655,15 +655,43 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
 
     import time as _time_mod
     from megaplan.orchestration.suite_runner import append_suite_run, run_suite
-
-    deadline = _time_mod.monotonic() + timeout
-    result = run_suite(
-        project_dir,
-        config,
-        phase="baseline",
-        deadline_seconds=deadline,
-        idle_seconds=idle_seconds,
+    from megaplan.orchestration.baseline_gate import (
+        BaselineSlot,
+        baseline_slot,
+        baseline_slot_wait_seconds,
     )
+
+    # Host-wide baseline-concurrency gate. Several megaplan chains in finalize at
+    # once would otherwise run the FULL pytest suite simultaneously and saturate
+    # the box's CPU, starving every chain's other work into timeout/retry storms.
+    # Acquire a slot BEFORE the suite starts so the queue-wait never counts
+    # against the suite's own idle/abs timeout (the `deadline` is computed after
+    # we hold the slot). If no slot frees within the bounded wait we DEGRADE
+    # gracefully — skip the baseline and proceed "baseline unavailable" — rather
+    # than re-queue a full-suite run (which is the contention we're avoiding) or
+    # hang. The per-plan baseline cache is checked upstream in
+    # `_capture_test_baseline_for_plan`, so the gate only wraps a real run.
+    with baseline_slot() as slot:
+        if slot is BaselineSlot.DEGRADED:
+            return {
+                "baseline_test_failures": None,
+                "baseline_test_command": config.get("test_command"),
+                "baseline_test_note": (
+                    "Baseline test capture skipped: could not acquire a host-wide "
+                    f"baseline slot within {baseline_slot_wait_seconds():.0f}s "
+                    "(MEGAPLAN_TEST_BASELINE_MAX_CONCURRENT) — too many chains are "
+                    "running the full suite concurrently. Proceeding without a "
+                    "baseline to avoid CPU contention."
+                ),
+            }
+        deadline = _time_mod.monotonic() + timeout
+        result = run_suite(
+            project_dir,
+            config,
+            phase="baseline",
+            deadline_seconds=deadline,
+            idle_seconds=idle_seconds,
+        )
     plan_dir_str = config.get("plan_dir")
     if plan_dir_str:
         append_suite_run(Path(plan_dir_str), result)
