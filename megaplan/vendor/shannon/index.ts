@@ -972,6 +972,7 @@ export async function runShannon(options: CliOptions) {
         prompt,
         startedAt,
         transcriptRowCount,
+        tmuxSession,
       );
       transcriptRowCount = assistant.rows.length;
       const result = toSdkResult(assistant.row, startedAt, promptCount);
@@ -1366,17 +1367,54 @@ async function nextPrompt(iterator: AsyncIterator<string>): Promise<string | und
   }
 }
 
+// Cheap liveness check: does our private tmux server still hold the session?
+// `has-session` returns exit 0 iff the session is live. Routed through
+// runCommand so it inherits the per-command timeout guard. A `false` here means
+// the Claude pane/process is gone (claude exited, crashed, or the session was
+// killed) — the turn is DEAD and no transcript reply will ever arrive.
+export async function tmuxSessionAlive(tmuxSession: string): Promise<boolean> {
+  const result = await runCommand(
+    tmuxArgs(tmuxSession, "has-session", "-t", tmuxSession),
+    false,
+  );
+  return result.exitCode === 0;
+}
+
 async function waitForAssistantReply(
   transcriptPath: string,
   prompt: string,
   startedAt: number,
   afterRowCount: number,
+  tmuxSession?: string,
 ): Promise<AssistantDiscovery> {
+  // Only treat the session as dead after it has been BOTH confirmed-gone AND
+  // stayed gone across consecutive polls — a single transient `has-session`
+  // failure (server restart race) must not abort a healthy turn.
+  let deadPolls = 0;
+  const DEAD_POLLS_TO_ABORT = 3;
   while (Date.now() - startedAt < TURN_TIMEOUT_MS) {
     const rows = await readTranscript(transcriptPath);
     const newRows = rows.slice(afterRowCount);
     const row = assistantReplyFromRows(prompt, newRows);
     if (row) return { row, rows };
+
+    // Dead-turn fast-fail: if the Claude pane is gone, no reply is coming.
+    // Bail in seconds instead of spinning the full TURN_TIMEOUT_MS (which,
+    // when nothing on stdout/stderr ever moves, the Python worker can only
+    // bound by its 2h wall clock). Disabled when tmuxSession is undefined
+    // (unit tests / non-tmux callers).
+    if (tmuxSession) {
+      const alive = await tmuxSessionAlive(tmuxSession);
+      deadPolls = alive ? 0 : deadPolls + 1;
+      if (deadPolls >= DEAD_POLLS_TO_ABORT) {
+        const pane = await capturePane(tmuxSession);
+        throw new Error(
+          `Claude tmux session ${tmuxSession} is gone before an assistant reply ` +
+            `landed in ${transcriptPath} — the turn died (claude exited/crashed).` +
+            `\n\nCaptured tmux pane:\n${pane}`,
+        );
+      }
+    }
 
     await sleep(POLL_MS);
   }
@@ -1418,10 +1456,19 @@ async function listTranscriptPaths(projectFolder: string): Promise<Set<string>> 
 
 async function killTmux(tmuxSession: string): Promise<JsonRecord> {
   const result = await runCommand(tmuxArgs(tmuxSession, "kill-session", "-t", tmuxSession), false);
+  // Then kill the whole PRIVATE server. The launcher sets `exit-empty off` on
+  // this `-L mp-<session>` socket so it survives its last session being killed
+  // — which is correct DEFENSE while the turn runs, but means kill-session
+  // ALONE leaves an idle tmux server daemon lingering after every turn (one per
+  // turn; observed live as an orphan holding nothing, pid reparented to init).
+  // The socket is private to THIS session, so tearing down the server is both
+  // safe (no other chain shares it) and complete. Best-effort; never throws.
+  const serverResult = await runCommand(tmuxArgs(tmuxSession, "kill-server"), false);
   return {
     tmux_killed: result.exitCode === 0,
     exit_code: result.exitCode,
     stderr: result.stderr.trim(),
+    server_killed: serverResult.exitCode === 0,
   };
 }
 
@@ -1438,17 +1485,69 @@ async function findExecutable(name: string) {
   return result.exitCode === 0 ? result.stdout.trim() : undefined;
 }
 
-async function runCommand(args: string[], throwOnFailure = true) {
+// Hard upper bound (ms) on ANY single child process spawned here — every tmux
+// call (new-session, capture-pane, send-keys, paste/load/delete-buffer,
+// kill-session/server, has-session, which) plus the readiness/`which` probes
+// all funnel through runCommand. A `tmux` client blocks with NO timeout of its
+// own until it can talk to its server; if that server is wedged, dying, or the
+// child otherwise hangs holding its stdout/stderr write-end, `new
+// Response(proc.stdout).text()` waits for an EOF that never comes and bun hangs
+// FOREVER inside this await. The Python worker that spawned bun then sees its
+// reader threads block on read1() with no EOF and no bytes (bun emits nothing,
+// never exits) and burns the entire 2h wall-clock `timeout` at 0% CPU holding
+// the plan lock — the exact py-spy signature this guard fixes. Capping each
+// child guarantees bun always makes progress: a stuck tmux call is killed, its
+// pipes EOF, and the error surfaces as a normal turn failure (retryable) in
+// seconds instead of hours. Generous default so a legitimately slow tmux op
+// (huge paste-buffer) is never clipped; override via SHANNON_TMUX_CMD_TIMEOUT_MS.
+// Read per-call (not cached at import) so a test/diagnostic can tune the bound
+// via SHANNON_TMUX_CMD_TIMEOUT_MS without re-importing the module.
+export function tmuxCmdTimeoutMs(): number {
+  return Math.max(1_000, Number(Bun.env.SHANNON_TMUX_CMD_TIMEOUT_MS ?? 60_000));
+}
+
+export async function runCommand(args: string[], throwOnFailure = true) {
   const proc = Bun.spawn(args, {
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  const timeoutMs = tmuxCmdTimeoutMs();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    // SIGKILL the child so the OS closes the stdout/stderr write-ends it (or a
+    // server it daemonized) holds open; the in-flight Response(...).text()
+    // reads then hit EOF and the Promise.all below resolves, unwedging bun.
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      // already exited
+    }
+  }, timeoutMs);
+
+  let stdout: string;
+  let stderr: string;
+  let exitCode: number;
+  try {
+    [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (timedOut) {
+    const message =
+      `${args.join(" ")} exceeded ${timeoutMs}ms and was killed ` +
+      `(SHANNON_TMUX_CMD_TIMEOUT_MS); tmux/child wedged.`;
+    if (throwOnFailure) {
+      throw new Error(message);
+    }
+    return { stdout, stderr, exitCode: exitCode === 0 ? 124 : exitCode };
+  }
 
   if (throwOnFailure && exitCode !== 0) {
     throw new Error(`${args.join(" ")} failed with ${exitCode}: ${stderr}`);
