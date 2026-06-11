@@ -116,12 +116,12 @@ def _build_state_config(
 
     robustness = getattr(args, "robustness", None)
     if robustness is None:
-        robustness = get_effective("execution", "robustness")
+        robustness = get_effective("execution", "robustness", project_dir=project_dir)
     robustness = normalize_robustness(robustness)
 
     auto_approve_value = getattr(args, "auto_approve", None)
     if auto_approve_value is None:
-        auto_approve_value = get_effective("execution", "auto_approve")
+        auto_approve_value = get_effective("execution", "auto_approve", project_dir=project_dir)
     auto_approve = bool(auto_approve_value)
 
     # Precedence: explicit --adaptive-critique CLI flag > explicit user-config
@@ -132,8 +132,8 @@ def _build_state_config(
     # premium evaluator key into a key-free setup.
     adaptive_critique_value = getattr(args, "adaptive_critique", None)
     if adaptive_critique_value is None:
-        if setting_is_explicit("execution", "adaptive_critique"):
-            adaptive_critique_value = get_effective("execution", "adaptive_critique")
+        if setting_is_explicit("execution", "adaptive_critique", project_dir=project_dir):
+            adaptive_critique_value = get_effective("execution", "adaptive_critique", project_dir=project_dir)
         else:
             profile_name = getattr(args, "profile", None)
             profile_default: Any = None
@@ -143,7 +143,7 @@ def _build_state_config(
             if isinstance(profile_default, bool):
                 adaptive_critique_value = profile_default
             else:
-                adaptive_critique_value = get_effective("execution", "adaptive_critique")
+                adaptive_critique_value = get_effective("execution", "adaptive_critique", project_dir=project_dir)
     adaptive_critique = bool(adaptive_critique_value)
 
     # Layered defense (May 2026 — see docs/critique.md): when adaptive critique
@@ -165,8 +165,8 @@ def _build_state_config(
     if critic_model_value is not None:
         critic_model_explicit = True
     if critic_model_value is None:
-        if setting_is_explicit("execution", "critic_model"):
-            critic_model_value = get_effective("execution", "critic_model")
+        if setting_is_explicit("execution", "critic_model", project_dir=project_dir):
+            critic_model_value = get_effective("execution", "critic_model", project_dir=project_dir)
             critic_model_explicit = True
         else:
             profile_name = getattr(args, "profile", None)
@@ -177,7 +177,7 @@ def _build_state_config(
             if isinstance(profile_critic, str) and profile_critic:
                 critic_model_value = profile_critic
             else:
-                critic_model_value = get_effective("execution", "critic_model")
+                critic_model_value = get_effective("execution", "critic_model", project_dir=project_dir)
     critic_model = str(critic_model_value or "").strip()
 
     strict_notes_arg = getattr(args, "strict_notes", None)
@@ -186,7 +186,7 @@ def _build_state_config(
         if mode == "doc":
             strict_notes_arg = True
         else:
-            strict_notes_arg = get_effective("execution", "strict_notes")
+            strict_notes_arg = get_effective("execution", "strict_notes", project_dir=project_dir)
     strict_notes = bool(strict_notes_arg)
 
     # Strict adaptive critique (PR #52, May 2026): when True AND
@@ -198,14 +198,14 @@ def _build_state_config(
     # > explicit user config > global default.
     strict_adaptive_critique_arg = getattr(args, "strict_adaptive_critique", None)
     if strict_adaptive_critique_arg is None:
-        strict_adaptive_critique_arg = get_effective("execution", "strict_adaptive_critique")
+        strict_adaptive_critique_arg = get_effective("execution", "strict_adaptive_critique", project_dir=project_dir)
     strict_adaptive_critique = bool(strict_adaptive_critique_arg)
 
     max_tasks_per_batch_arg = getattr(args, "max_tasks_per_batch", None)
     if max_tasks_per_batch_arg is not None:
         max_tasks_per_batch = int(max_tasks_per_batch_arg)
     else:
-        max_tasks_per_batch = int(get_effective("execution", "max_tasks_per_batch"))
+        max_tasks_per_batch = int(get_effective("execution", "max_tasks_per_batch", project_dir=project_dir))
         profile_name = getattr(args, "profile", None)
         if profile_name:
             profile_meta = load_profile_metadata(project_dir=project_dir).get(profile_name, {})
@@ -213,23 +213,23 @@ def _build_state_config(
             if isinstance(profile_ceiling, int) and profile_ceiling > 0:
                 max_tasks_per_batch = profile_ceiling
     if max_tasks_per_batch <= 0:
-        max_tasks_per_batch = int(get_effective("execution", "max_tasks_per_batch"))
+        max_tasks_per_batch = int(get_effective("execution", "max_tasks_per_batch", project_dir=project_dir))
 
     # Completion-verification contract mode: CLI flag > get_effective.
     # Snapshotted here so the gate never re-reads the live environment.
     completion_contract_mode = getattr(args, "completion_contract_mode", None)
     if completion_contract_mode is None:
-        completion_contract_mode = get_effective("execution", "completion_contract_mode")
+        completion_contract_mode = get_effective("execution", "completion_contract_mode", project_dir=project_dir)
 
     # Test command the harness invokes: CLI flag > get_effective.
     test_command = getattr(args, "test_command", None)
     if test_command is None:
-        test_command = get_effective("execution", "test_command")
+        test_command = get_effective("execution", "test_command", project_dir=project_dir)
 
     # Baseline / verification timeout: CLI flag > get_effective.
     test_baseline_timeout = getattr(args, "test_baseline_timeout", None)
     if test_baseline_timeout is None:
-        test_baseline_timeout = get_effective("execution", "test_baseline_timeout")
+        test_baseline_timeout = get_effective("execution", "test_baseline_timeout", project_dir=project_dir)
 
     config: dict[str, Any] = {
         "project_dir": str(project_dir),

@@ -7,9 +7,75 @@ Where megaplan reads its settings and secrets.
 | What | Path | Managed By |
 |---|---|---|
 | User config | `~/.config/megaplan/config.json` | `megaplan config set|show|reset` (CLI) |
-| User overrides (optional) | `~/.config/megaplan/config.toml` | Hand-edited; overrides JSON defaults |
+| User overrides (optional) | `~/.config/megaplan/config.toml` | Hand-edited; user-level defaults (vendor, prep_clarify) — *not* part of effective-config precedence |
+| Project config (new) | `<project>/.megaplan/config.toml` | Hand-edited; project-scoped effective-config layer — highest precedence when `project_dir` is supplied |
 | Project profiles | `.megaplan/profiles.toml` | Hand-edited or `megaplan config profiles` |
 | Project state | `.megaplan/state.json` | Megaplan runtime |
+
+## Project-Scoped Config Layer (`.megaplan/config.toml`)
+
+A project can carry its own config at `<project>/.megaplan/config.toml`. This
+is an **operator-authored** file — hand-edited, checked into the repository —
+that provides per-project effective-config overrides without requiring every
+team member to set global JSON values.
+
+### Precedence (project-aware call sites)
+
+When a call site supplies `project_dir` (currently only `_build_state_config`
+in `megaplan init`), the resolution order is:
+
+    DEFAULTS < ~/.config/megaplan/config.json < <project>/.megaplan/config.toml
+
+1. **`DEFAULTS`** (lowest) — built-in compiled defaults in `megaplan.types`.
+2. **Global JSON** — `~/.config/megaplan/config.json`, managed by
+   `megaplan config set|show|reset`.
+3. **Project TOML** (highest) — `<project>/.megaplan/config.toml`.
+
+When `project_dir` is **omitted** (the default for every call site except
+`_build_state_config`), the function behaves exactly as before: only global
+JSON and DEFAULTS are consulted. An absent project config file is a no-op —
+current behavior is fully preserved.
+
+### Minimal example
+
+```toml
+[execution]
+worker_timeout_seconds = 120
+test_command = "pytest"
+auto_approve = true
+```
+
+This would set `worker_timeout_seconds` to 120, `test_command` to `"pytest"`,
+and `auto_approve` to `true` for every plan initialized in this project,
+regardless of the user's global JSON config.
+
+### Distinction from user-level `~/.config/megaplan/config.toml`
+
+| File | Scope | Role |
+|---|---|---|
+| `~/.config/megaplan/config.toml` | User-wide | User-level defaults (`default_vendor`, `default_prep_clarify`) — loaded by `user_config.py`, *not* part of `get_effective` precedence |
+| `<project>/.megaplan/config.toml` | Project-wide | Project-scoped effective-config layer — loaded by `io.load_project_config`, participates in `get_effective` and `setting_is_explicit` when `project_dir` is passed |
+
+The user-level TOML exposes convenience defaults (e.g., which vendor to prefer
+when no `--vendor` flag is given). The project-level TOML overrides actual
+effective-config keys (`execution.test_command`, `execution.auto_approve`,
+etc.) with higher precedence than global JSON.
+
+### Explicit pin semantics
+
+Any key present in the project TOML is treated as an **explicit pin** by
+`setting_is_explicit(..., project_dir=...)`. This means profile-level
+fallbacks (e.g., a profile's `adaptive_critique` or `critic_model` metadata)
+are **not consulted** when the project config already sets the key — the
+project operator's intent is deliberate and takes priority.
+
+### Deferred non-init migration
+
+Only `_build_state_config` in `megaplan init` receives `project_dir` in this
+sprint. All other `get_effective` call sites (finalize, baseline, shannon,
+chain, gate, review, execute, workers) remain on global+DEFAULTS. A future
+targeted migration will extend `project_dir` threading to those call sites
+as needed.
 
 ## Agent Routing
 
@@ -75,9 +141,10 @@ Install with `pip install 'megaplan-harness[db]'`, then set both variables.
 ## Quick Reference: Key Paths
 
 ```
-~/.config/megaplan/config.json          # CLI-managed config
-~/.config/megaplan/config.toml          # Hand-edited overrides
+~/.config/megaplan/config.json          # CLI-managed global config
+~/.config/megaplan/config.toml          # Hand-edited user-level defaults (vendor, prep_clarify)
 ~/.hermes/.env                          # Provider keys
+.megaplan/config.toml                   # Project-scoped config layer (overrides global JSON)
 .megaplan/profiles.toml                 # Project-local profiles
 cloud.yaml                              # Cloud deployment config (secrets list)
 ```

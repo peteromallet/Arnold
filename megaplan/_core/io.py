@@ -8,11 +8,20 @@ import os
 import re
 import shutil
 import struct
+import sys
 import tempfile
 import time
 from base64 import b64decode, b64encode
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ImportError:
+        tomllib = None  # type: ignore[assignment]
 
 from megaplan.schemas import SCHEMAS, strict_schema
 from megaplan.types import KNOWN_AGENTS
@@ -746,6 +755,42 @@ def render_final_md(finalize_data: dict[str, Any], *, phase: str = "finalize") -
 # Config helpers
 # ---------------------------------------------------------------------------
 
+def project_config_path(project_dir: Path) -> Path:
+    """Return the expected path to the project-scoped TOML config file."""
+    return project_dir / ".megaplan" / "config.toml"
+
+
+def load_project_config(project_dir: Path) -> dict[str, Any]:
+    """Load the project-scoped ``.megaplan/config.toml`` file.
+
+    Returns an empty dict when the file does not exist, ``tomllib`` is
+    unavailable, or the file is malformed (warn-and-ignore semantics).
+    Does not cache — every call reads the file afresh so the function is
+    concurrency-safe and does not carry process-global project state.
+    """
+    path = project_config_path(project_dir)
+    if not path.is_file():
+        return {}
+    if tomllib is None:
+        print(
+            f"megaplan: warning: cannot read project config at {path}: "
+            f"tomllib/tomli not available (Python 3.11+ required for built-in tomllib)",
+            file=sys.stderr,
+        )
+        return {}
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, ValueError, OSError) as exc:
+        print(
+            f"megaplan: warning: ignoring malformed project config at {path}: {exc}",
+            file=sys.stderr,
+        )
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
 def config_dir(home: Path | None = None) -> Path:
     if home is None:
         xdg = os.environ.get("XDG_CONFIG_HOME")
@@ -776,27 +821,68 @@ def save_config(config: dict[str, Any], home: Path | None = None) -> Path:
     return path
 
 
-def get_effective(section: str, key: str) -> Any:
+def get_effective(section: str, key: str, *, project_dir: Path | None = None) -> Any:
+    """Return the effective value for *section*.*key* with layered resolution.
+
+    Precedence (highest to lowest):
+
+    1. **Project TOML** — ``<project_dir>/.megaplan/config.toml`` (only when
+       *project_dir* is passed; see below).
+    2. **Global JSON** — ``~/.config/megaplan/config.json``.
+    3. **DEFAULTS** — built-in compiled defaults in ``megaplan.types.DEFAULTS``.
+
+    When *project_dir* is ``None`` (default), the function behaves exactly
+    as before: only global JSON and DEFAULTS are consulted.  This preserves
+    backward compatibility for all callers that do not thread a project
+    directory, i.e. every caller except ``_build_state_config`` in this
+    sprint.
+    """
     from megaplan.types import DEFAULTS
 
     default_key = f"{section}.{key}"
     if default_key not in DEFAULTS:
         raise KeyError(default_key)
+
+    # Project layer (highest precedence) — only when opt-in project_dir.
+    if project_dir is not None:
+        project_config = load_project_config(project_dir)
+        section_config = project_config.get(section)
+        if isinstance(section_config, dict) and key in section_config:
+            return section_config[key]
+
+    # Global user config (middle precedence).
     config = load_config()
     section_config = config.get(section)
     if isinstance(section_config, dict) and key in section_config:
         return section_config[key]
+
+    # DEFAULTS (lowest precedence).
     return DEFAULTS[default_key]
 
 
-def setting_is_explicit(section: str, key: str, *, home: Path | None = None) -> bool:
-    """Return True iff ``section.key`` is explicitly present in the user config.
+def setting_is_explicit(
+    section: str,
+    key: str,
+    *,
+    home: Path | None = None,
+    project_dir: Path | None = None,
+) -> bool:
+    """Return True iff ``section.key`` is explicitly set in user or project config.
 
-    Distinguishes a user-set value (even if it equals the default) from the
-    fallback to ``DEFAULTS``. Used so a profile-level default (e.g.
-    ``adaptive_critique``) can win over the global default *only* when the
-    user has not pinned the value themselves.
+    Distinguishes a user-set or project-set value (even if it equals the
+    default) from the fallback to ``DEFAULTS``. Used so a profile-level
+    default (e.g.  ``adaptive_critique``) can win over the global default
+    *only* when the user has not pinned the value themselves.
+
+    When *project_dir* is passed, a key that is present ONLY in the project
+    TOML (and absent from the global JSON config) is still counted as
+    explicit — a project config entry is a deliberate operator pin.
     """
+    if project_dir is not None:
+        project_config = load_project_config(project_dir)
+        section_config = project_config.get(section)
+        if isinstance(section_config, dict) and key in section_config:
+            return True
     config = load_config(home)
     section_config = config.get(section)
     return isinstance(section_config, dict) and key in section_config
