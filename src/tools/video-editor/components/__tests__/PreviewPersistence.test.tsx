@@ -458,6 +458,18 @@ describe('VideoEditorShell preview persistence', () => {
     expect(screen.queryByText('Custom header')).not.toBeInTheDocument();
   });
 
+  it('keeps the shared app-mode render control labelled Render and does not advertise a local-only action', () => {
+    renderShell('full');
+
+    const renderButton = screen.getByRole('button', { name: 'Render' });
+    expect(renderButton).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Render locally' })).not.toBeInTheDocument();
+
+    fireEvent.click(renderButton);
+
+    expect(chromeValue.startRender).toHaveBeenCalledTimes(1);
+  });
+
   it('renders slot-backed fallbacks and shell section overrides through the shared runtime slot hooks', () => {
     slotRenderersValue = {
       header: () => <div>Custom header</div>,

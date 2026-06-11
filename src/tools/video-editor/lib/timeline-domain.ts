@@ -174,10 +174,16 @@ const ALLOWED_TOP_LEVEL_KEYS = new Set([
 
 const ASSET_REGISTRY_ENTRY_FIELDS = [
   'file',
+  'url',
+  'etag',
+  'content_sha256',
+  'url_expires_at',
   'type',
   'duration',
   'resolution',
   'fps',
+  'origin',
+  'derivedFrom',
   'generationId',
   'variantId',
   'thumbnailUrl',

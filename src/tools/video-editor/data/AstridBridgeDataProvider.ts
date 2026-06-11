@@ -16,6 +16,7 @@ import type {
   UploadAssetOptions,
 } from '@/tools/video-editor/data/AssetResolver.ts';
 import { extractAssetRegistryEntry } from '@/tools/video-editor/lib/mediaMetadata.ts';
+import { resolveGenerationAsset } from '@/tools/video-editor/data/generationAssetResolver.ts';
 import {
   ensurePermission,
   getDirectoryHandle,
@@ -47,6 +48,11 @@ const DEFAULT_API_BASE_URL = '/api/astrid';
 const DEFAULT_BRIDGE_PORT = '17333';
 const LOCAL_DROP_DIRECTORY_NAME = 'local-drops';
 const LOCAL_PROJECT_ROOT_HANDLE_PREFIX = 'astrid-project-root';
+const LOCAL_TIMELINES_DIRECTORY_NAME = 'timelines';
+const LOCAL_ASSETS_DIRECTORY_NAME = 'assets';
+const LOCAL_INCOMING_DIRECTORY_NAME = '.incoming';
+const ASSEMBLY_JSON_FILENAME = 'assembly.json';
+const REGISTRY_JSON_FILENAME = 'registry.json';
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -82,9 +88,11 @@ type FileSystemDirectoryHandleLike = PersistedLocalDirectoryHandle & {
     name: string,
     options?: { create?: boolean },
   ) => Promise<FileSystemFileHandleLike>;
+  removeEntry?: (name: string, options?: { recursive?: boolean }) => Promise<void>;
 };
 
 type FileSystemFileHandleLike = {
+  getFile?: () => Promise<File>;
   createWritable: () => Promise<{
     write: (data: BlobPart) => Promise<void>;
     close: () => Promise<void>;
@@ -93,6 +101,29 @@ type FileSystemFileHandleLike = {
 };
 
 type ShowDirectoryPicker = () => Promise<FileSystemDirectoryHandleLike>;
+
+type LocalTimelineFiles = {
+  projectRootHandle: FileSystemDirectoryHandleLike;
+  sourcesHandle: FileSystemDirectoryHandleLike;
+  timelineHandle: FileSystemDirectoryHandleLike;
+};
+
+export type AssetMaterializationState =
+  | { state: 'not-attempted' }
+  | { state: 'materialized'; file: string }
+  | { state: 'skipped-with-diagnostic'; diagnostic: AssetMaterializationDiagnostic };
+
+export type AssetMaterializationDiagnostic = {
+  assetId: string;
+  generationId: string;
+  reason: 'unresolvable' | 'download-failed' | 'refresh-required';
+  message: string;
+};
+
+export type AssetMaterializationSummary = {
+  states: Record<string, AssetMaterializationState>;
+  diagnostics: AssetMaterializationDiagnostic[];
+};
 
 const normalizeRegistry = (value: unknown): AssetRegistry => {
   if (!value || typeof value !== 'object' || !('assets' in value) || typeof value.assets !== 'object' || value.assets === null) {
@@ -141,6 +172,19 @@ const sanitizeFilename = (filename: string): string => {
   return sanitized.length > 0 ? sanitized : 'asset';
 };
 
+const filenameFromUrl = (url: string, fallback: string): string => {
+  try {
+    const parsed = new URL(url);
+    const lastSegment = parsed.pathname.split('/').filter(Boolean).pop();
+    if (lastSegment) {
+      return sanitizeFilename(decodeURIComponent(lastSegment));
+    }
+  } catch {
+    // Fall through to the deterministic fallback.
+  }
+  return sanitizeFilename(fallback);
+};
+
 const getProjectRootHandleStorageKey = (projectSlug: string): string => {
   return `${LOCAL_PROJECT_ROOT_HANDLE_PREFIX}:${projectSlug}`;
 };
@@ -162,6 +206,9 @@ export class AstridBridgeDataProvider implements DataProvider {
   private cachedPayload: BridgeTimelinePayload | null = null;
   private assetKeyToFile = new Map<string, string>();
   private fileToAssetKey = new Map<string, string>();
+  private localObjectUrls = new Map<string, string>();
+  private materializationStates = new Map<string, AssetMaterializationState>();
+  private localTimelineFiles: LocalTimelineFiles | null = null;
 
   constructor(options: AstridBridgeDataProviderOptions) {
     this.apiBaseUrl = trimTrailingSlash(options.apiBaseUrl ?? DEFAULT_API_BASE_URL);
@@ -188,6 +235,18 @@ export class AstridBridgeDataProvider implements DataProvider {
     return registry;
   }
 
+  getMaterializationSummary(): AssetMaterializationSummary {
+    const states: Record<string, AssetMaterializationState> = {};
+    const diagnostics: AssetMaterializationDiagnostic[] = [];
+    for (const [assetId, state] of this.materializationStates) {
+      states[assetId] = clone(state);
+      if (state.state === 'skipped-with-diagnostic') {
+        diagnostics.push(clone(state.diagnostic));
+      }
+    }
+    return { states, diagnostics };
+  }
+
   async resolveAssetUrl(file: string): Promise<string> {
     const candidate = file.trim();
     if (!candidate) {
@@ -195,6 +254,10 @@ export class AstridBridgeDataProvider implements DataProvider {
     }
     if (isHttpUrl(candidate)) {
       return candidate;
+    }
+
+    if (this.localTimelineFiles !== null) {
+      return this.resolveLocalAssetUrl(candidate);
     }
 
     const assetKey = this.fileToAssetKey.get(candidate);
@@ -206,6 +269,12 @@ export class AstridBridgeDataProvider implements DataProvider {
 
   async onResolve(request: AssetResolveRequest): Promise<string> {
     const assetKey = this.getPreferredAssetKey(request);
+    if (this.localTimelineFiles !== null) {
+      const file = request.entry?.file ?? (assetKey ? this.assetKeyToFile.get(assetKey) : undefined) ?? request.file;
+      if (file && !isHttpUrl(file)) {
+        return this.resolveLocalAssetUrl(file);
+      }
+    }
     if (assetKey) {
       return this.buildAssetUrl(assetKey);
     }
@@ -221,6 +290,19 @@ export class AstridBridgeDataProvider implements DataProvider {
     const existingPayload = await this.fetchTimelinePayload(timelineId);
     const nextRegistry = registry ?? normalizeRegistry(existingPayload.registry);
     const timelineRef = this.getTimelineRequestRef(timelineId);
+
+    if (this.localTimelineFiles !== null) {
+      const materializedRegistry = await this.materializeGenerationAssets(timelineId, nextRegistry);
+      await this.writeLocalJson(this.localTimelineFiles.timelineHandle, REGISTRY_JSON_FILENAME, materializedRegistry);
+      await this.writeLocalJson(this.localTimelineFiles.timelineHandle, ASSEMBLY_JSON_FILENAME, config);
+      this.cachePayload({
+        ...existingPayload,
+        config,
+        registry: materializedRegistry,
+        config_version: normalizeConfigVersion(existingPayload.config_version) + 1,
+      }, timelineId);
+      return normalizeConfigVersion(this.cachedPayload?.config_version);
+    }
 
     await this.putRegistry(timelineId, nextRegistry, 'save registry');
 
@@ -304,6 +386,11 @@ export class AstridBridgeDataProvider implements DataProvider {
   private async fetchTimelinePayload(timelineId: string): Promise<BridgeTimelinePayload> {
     if (this.cachedPayload !== null && (this.canonicalTimelineId === null || timelineId === this.canonicalTimelineId)) {
       return this.cachedPayload;
+    }
+
+    const localPayload = await this.fetchLocalTimelinePayload(timelineId);
+    if (localPayload !== null) {
+      return this.cachePayload(localPayload, timelineId).payload;
     }
 
     const response = await fetch(
@@ -422,6 +509,33 @@ export class AstridBridgeDataProvider implements DataProvider {
     }, timelineId);
   }
 
+  private async fetchLocalTimelinePayload(timelineId: string): Promise<BridgeTimelinePayload | null> {
+    const localFiles = await this.getLocalTimelineFiles(timelineId, { prompt: false });
+    if (localFiles === null) {
+      return null;
+    }
+
+    this.localTimelineFiles = localFiles;
+    const config = await this.readLocalJson(localFiles.timelineHandle, ASSEMBLY_JSON_FILENAME);
+    const registry = await this.readOptionalLocalJson(localFiles.timelineHandle, REGISTRY_JSON_FILENAME) ?? { assets: {} };
+    const normalizedRegistry = normalizeRegistry(registry);
+    const beforeMaterialization = JSON.stringify(normalizedRegistry);
+    const materializedRegistry = await this.materializeGenerationAssets(timelineId, normalizedRegistry);
+    if (JSON.stringify(materializedRegistry) !== beforeMaterialization) {
+      await this.writeLocalJson(localFiles.timelineHandle, REGISTRY_JSON_FILENAME, materializedRegistry);
+    }
+
+    return {
+      timeline_id: timelineId,
+      timeline_ulid: timelineId,
+      slug: this.selectedTimelineRef,
+      name: this.selectedTimelineRef,
+      config,
+      registry: materializedRegistry,
+      config_version: 1,
+    };
+  }
+
   private rebuildAssetMaps(registry: AssetRegistry): void {
     this.assetKeyToFile.clear();
     this.fileToAssetKey.clear();
@@ -433,6 +547,57 @@ export class AstridBridgeDataProvider implements DataProvider {
       if (!this.fileToAssetKey.has(entry.file)) {
         this.fileToAssetKey.set(entry.file, assetKey);
       }
+    }
+  }
+
+  private async resolveLocalAssetUrl(file: string): Promise<string> {
+    if (this.localTimelineFiles === null) {
+      return file;
+    }
+
+    const cached = this.localObjectUrls.get(file);
+    if (cached) {
+      return cached;
+    }
+
+    const fileHandle = await this.resolveLocalAssetFileHandle(file);
+    if (!fileHandle || typeof fileHandle.getFile !== 'function') {
+      return file;
+    }
+
+    const blob = await fileHandle.getFile();
+    const url = URL.createObjectURL(blob);
+    this.localObjectUrls.set(file, url);
+    return url;
+  }
+
+  private async resolveLocalAssetFileHandle(file: string): Promise<FileSystemFileHandleLike | null> {
+    if (this.localTimelineFiles === null) {
+      return null;
+    }
+
+    const segments = file.split('/').filter(Boolean);
+    if (
+      segments.length === 0
+      || file.startsWith('/')
+      || segments.some((segment) => segment === '.' || segment === '..')
+    ) {
+      return null;
+    }
+
+    let directoryHandle = this.localTimelineFiles.sourcesHandle;
+    for (const segment of segments.slice(0, -1)) {
+      try {
+        directoryHandle = await directoryHandle.getDirectoryHandle(segment);
+      } catch {
+        return null;
+      }
+    }
+
+    try {
+      return await directoryHandle.getFileHandle(segments[segments.length - 1]);
+    } catch {
+      return null;
     }
   }
 
@@ -460,6 +625,18 @@ export class AstridBridgeDataProvider implements DataProvider {
   }
 
   private async getProjectRootHandle(): Promise<FileSystemDirectoryHandleLike> {
+    const handle = await this.getProjectRootHandleOptional({ prompt: true });
+    if (handle === null) {
+      throw new Error('Local asset drop requires a browser with File System Access support');
+    }
+    return handle;
+  }
+
+  private async getProjectRootHandleOptional({
+    prompt,
+  }: {
+    prompt: boolean;
+  }): Promise<FileSystemDirectoryHandleLike | null> {
     const storageKey = getProjectRootHandleStorageKey(this.projectSlug);
     const persistedHandle = await getDirectoryHandle(storageKey);
 
@@ -472,9 +649,13 @@ export class AstridBridgeDataProvider implements DataProvider {
       }
     }
 
+    if (!prompt) {
+      return null;
+    }
+
     const showDirectoryPicker = getShowDirectoryPicker();
     if (!showDirectoryPicker) {
-      throw new Error('Local asset drop requires a browser with File System Access support');
+      return null;
     }
 
     const pickedHandle = await showDirectoryPicker();
@@ -502,6 +683,234 @@ export class AstridBridgeDataProvider implements DataProvider {
     } catch {
       throw new Error('Selected Astrid project root is missing its sources directory');
     }
+  }
+
+  private async getLocalTimelineFiles(
+    timelineId: string,
+    options: { prompt: boolean },
+  ): Promise<LocalTimelineFiles | null> {
+    const projectRootHandle = await this.getProjectRootHandleOptional(options);
+    if (projectRootHandle === null) {
+      return null;
+    }
+
+    const sourcesHandle = await this.requireProjectSourcesDirectory(projectRootHandle);
+    const timelinesHandle = await projectRootHandle.getDirectoryHandle(LOCAL_TIMELINES_DIRECTORY_NAME);
+    const timelineHandle = await timelinesHandle.getDirectoryHandle(this.getTimelineRequestRef(timelineId));
+    return { projectRootHandle, sourcesHandle, timelineHandle };
+  }
+
+  private async readLocalJson(
+    directoryHandle: FileSystemDirectoryHandleLike,
+    filename: string,
+  ): Promise<unknown> {
+    const fileHandle = await directoryHandle.getFileHandle(filename);
+    if (typeof fileHandle.getFile !== 'function') {
+      throw new Error(`Local timeline file ${filename} cannot be read in this browser`);
+    }
+
+    const file = await fileHandle.getFile();
+    return JSON.parse(await file.text());
+  }
+
+  private async readOptionalLocalJson(
+    directoryHandle: FileSystemDirectoryHandleLike,
+    filename: string,
+  ): Promise<unknown | null> {
+    try {
+      return await this.readLocalJson(directoryHandle, filename);
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeLocalJson(
+    directoryHandle: FileSystemDirectoryHandleLike,
+    filename: string,
+    value: unknown,
+  ): Promise<void> {
+    const tempFilename = `.${filename}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+    const bytes = JSON.stringify(value, null, 2);
+
+    await this.writeFile(directoryHandle, tempFilename, bytes);
+    try {
+      await this.writeFile(directoryHandle, filename, bytes);
+    } catch (error) {
+      await this.removeEntryBestEffort(directoryHandle, tempFilename);
+      throw error;
+    }
+    await this.removeEntryBestEffort(directoryHandle, tempFilename);
+  }
+
+  private async writeFile(
+    directoryHandle: FileSystemDirectoryHandleLike,
+    filename: string,
+    data: BlobPart,
+  ): Promise<void> {
+    const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    try {
+      await writable.write(data);
+      await writable.close();
+    } catch (error) {
+      if (typeof writable.abort === 'function') {
+        try {
+          await writable.abort();
+        } catch {
+          // Ignore abort failures and surface the original write error.
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async removeEntryBestEffort(
+    directoryHandle: FileSystemDirectoryHandleLike,
+    name: string,
+  ): Promise<void> {
+    if (typeof directoryHandle.removeEntry !== 'function') {
+      return;
+    }
+    try {
+      await directoryHandle.removeEntry(name, { recursive: true });
+    } catch {
+      // Temp cleanup is best effort.
+    }
+  }
+
+  private async materializeGenerationAssets(
+    timelineId: string,
+    registry: AssetRegistry,
+  ): Promise<AssetRegistry> {
+    if (this.localTimelineFiles === null) {
+      return registry;
+    }
+
+    const nextRegistry = clone(registry);
+    let changed = false;
+
+    for (const [assetId, entry] of Object.entries(nextRegistry.assets ?? {})) {
+      if (!entry?.generationId || this.hasLocalFile(entry) || this.materializationStates.get(assetId)?.state === 'skipped-with-diagnostic') {
+        if (!this.materializationStates.has(assetId)) {
+          this.materializationStates.set(assetId, { state: 'not-attempted' });
+        }
+        continue;
+      }
+
+      this.materializationStates.set(assetId, { state: 'not-attempted' });
+      const result = await this.materializeGenerationAsset(timelineId, assetId, entry);
+      if (result.ok) {
+        nextRegistry.assets[assetId] = result.entry;
+        this.materializationStates.set(assetId, { state: 'materialized', file: result.entry.file });
+        changed = true;
+      } else {
+        this.materializationStates.set(assetId, {
+          state: 'skipped-with-diagnostic',
+          diagnostic: result.diagnostic,
+        });
+      }
+    }
+
+    return changed ? nextRegistry : registry;
+  }
+
+  private hasLocalFile(entry: AssetRegistryEntry): boolean {
+    const file = entry.file?.trim();
+    return Boolean(file && !isHttpUrl(file));
+  }
+
+  private async materializeGenerationAsset(
+    timelineId: string,
+    assetId: string,
+    entry: AssetRegistryEntry,
+  ): Promise<
+    | { ok: true; entry: AssetRegistryEntry }
+    | { ok: false; diagnostic: AssetMaterializationDiagnostic }
+  > {
+    if (this.localTimelineFiles === null || !entry.generationId) {
+      throw new Error('Generation materialization requires local timeline files and a generationId');
+    }
+
+    const resolved = await resolveGenerationAsset({
+      generationId: entry.generationId,
+      assetId,
+      entry,
+      refresh: 'if-stale',
+    });
+
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        diagnostic: {
+          assetId,
+          generationId: entry.generationId,
+          reason: resolved.diagnostic.code === 'refresh-required' ? 'refresh-required' : 'unresolvable',
+          message: resolved.diagnostic.message,
+        },
+      };
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(resolved.asset.url);
+    } catch (error) {
+      return {
+        ok: false,
+        diagnostic: {
+          assetId,
+          generationId: entry.generationId,
+          reason: 'download-failed',
+          message: error instanceof Error ? error.message : `Failed to download generation ${entry.generationId}`,
+        },
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        diagnostic: {
+          assetId,
+          generationId: entry.generationId,
+          reason: 'download-failed',
+          message: `Generation download failed with ${response.status} ${response.statusText}`,
+        },
+      };
+    }
+
+    const blob = await response.blob();
+    if (blob.size <= 0) {
+      return {
+        ok: false,
+        diagnostic: {
+          assetId,
+          generationId: entry.generationId,
+          reason: 'download-failed',
+          message: 'Generation download returned an empty file',
+        },
+      };
+    }
+
+    const assetsHandle = await this.localTimelineFiles.sourcesHandle.getDirectoryHandle(LOCAL_ASSETS_DIRECTORY_NAME, { create: true });
+    const incomingHandle = await assetsHandle.getDirectoryHandle(LOCAL_INCOMING_DIRECTORY_NAME, { create: true });
+    const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const stageHandle = await incomingHandle.getDirectoryHandle(nonce, { create: true });
+    const filename = await this.getUniqueLocalDropFilename(
+      assetsHandle,
+      filenameFromUrl(resolved.asset.url, `${assetId}.bin`),
+    );
+
+    await this.writeFile(stageHandle, filename, blob);
+    await this.writeFile(assetsHandle, filename, blob);
+    await this.removeEntryBestEffort(incomingHandle, nonce);
+
+    return {
+      ok: true,
+      entry: {
+        ...resolved.asset.entry,
+        file: `${LOCAL_ASSETS_DIRECTORY_NAME}/${filename}`,
+        url: resolved.asset.url,
+      },
+    };
   }
 
   private async writeLocalDropFile(

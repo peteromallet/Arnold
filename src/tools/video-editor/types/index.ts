@@ -242,10 +242,20 @@ export type TimelineConfig = {
 
 export type AssetRegistryEntry = {
   file: string;
+  url?: string;
+  etag?: string;
+  content_sha256?: string;
+  url_expires_at?: string;
   type?: string;
   duration?: number;
   resolution?: string;
   fps?: number;
+  origin?: 'immutable-public' | 'refreshable-from-generation' | 'opaque-foreign';
+  derivedFrom?: {
+    assetId?: string;
+    content_sha256?: string;
+    role: 'thumbnail' | 'proxy' | 'render-output';
+  };
   generationId?: string;
   variantId?: string;
   thumbnailUrl?: string;

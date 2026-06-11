@@ -242,6 +242,42 @@ describe('VideoEditorPage', () => {
     expect(state.supabaseCtor).not.toHaveBeenCalled();
   });
 
+  it('does not advertise a local render action when the Astrid render bridge is descoped', async () => {
+    window.localStorage.setItem('dev.videoEditor.localMode', '1');
+    const fetchCalls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      fetchCalls.push(url);
+      if (url.endsWith('/api/astrid/health')) {
+        return new Response(JSON.stringify({ ok: true, projects_root: '/tmp/test' }), { status: 200 });
+      }
+      if (url.endsWith('/api/astrid/projects')) {
+        return new Response(JSON.stringify({
+          projects: [{ slug: 'ados-talks', name: 'Ados Talks' }],
+        }), { status: 200 });
+      }
+      if (url.endsWith('/api/astrid/projects/ados-talks/timelines')) {
+        return new Response(JSON.stringify({
+          timelines: [{
+            timeline_id: '11111111-1111-1111-1111-111111111111',
+            timeline_ulid: '01JM4K5N7P0000000000000017',
+            slug: 'intro-cut',
+            name: 'Intro Cut',
+            is_default: true,
+          }],
+        }), { status: 200 });
+      }
+      throw new Error(`Unexpected bridge request: ${url}`);
+    }));
+
+    renderPage('/tools/video-editor?localProject=ados-talks&localTimeline=11111111-1111-1111-1111-111111111111');
+
+    await screen.findByTestId('video-editor-provider');
+
+    expect(screen.queryByRole('button', { name: /render locally/i })).toBeNull();
+    expect(fetchCalls.every((url) => !url.includes('/render'))).toBe(true);
+  });
+
   it('remounts the editor when the Local timeline selection changes', async () => {
     window.localStorage.setItem('dev.videoEditor.localMode', '1');
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {

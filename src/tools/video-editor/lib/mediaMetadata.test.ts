@@ -58,6 +58,7 @@ describe('extractAssetRegistryEntry', () => {
       duration: 8,
       resolution: '1920x1080',
       fps: 30,
+      origin: 'immutable-public',
     });
   });
 
@@ -70,6 +71,7 @@ describe('extractAssetRegistryEntry', () => {
       file: 'uploads/test.mp3',
       type: 'audio/mpeg',
       duration: 12,
+      origin: 'immutable-public',
     });
   });
 });
