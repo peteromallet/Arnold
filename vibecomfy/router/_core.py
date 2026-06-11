@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from vibecomfy.patches.registry import find_applicable
 from vibecomfy.patches.types import Patch
-from vibecomfy.router_rules import rules
+from ._rules import rules
 from vibecomfy.workflow import VibeWorkflow
 
 
