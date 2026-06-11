@@ -76,6 +76,34 @@ const SEND_DELAY_MIN_MS = Number(Bun.env.SHANNON_SEND_DELAY_MIN_MS ?? 350);
 const SEND_DELAY_MAX_MS = Number(Bun.env.SHANNON_SEND_DELAY_MAX_MS ?? 2500);
 const TYPE_PROMPT_MAX_CHARS = Number(Bun.env.SHANNON_TYPE_PROMPT_MAX_CHARS ?? 0);
 
+// Per-session PRIVATE tmux server socket. Every Shannon turn must run on its
+// OWN tmux server (a dedicated control socket) instead of the shared default
+// server at $TMUX_TMPDIR/default. On a host running multiple concurrent
+// megaplan chains (the common case) every Shannon session, plus any operator/
+// agent interactive tmux, otherwise lands on that one shared server. tmux's
+// default `exit-empty on` destroys the server the instant its LAST session is
+// killed — so when ANY chain tears down what happens to be the last session
+// (a finished readiness/clear op, a completed turn), or anything calls
+// `tmux kill-server`, EVERY other chain's live Claude pane dies with it. The
+// victim then sees `tmux capture-pane ... failed: no server running`, its
+// Claude process is gone, and the worker hangs holding the plan lock with no
+// result. Isolating each session onto a private `-L` socket makes the only
+// thing that can collapse a server be that session's OWN teardown — which is
+// exactly correct. The socket name is a deterministic function of the session
+// name so the Python side (TmuxSession reap/exists/pane_pids) targets the same
+// server. SHANNON_TMUX_SOCKET overrides for tests/diagnostics.
+export function megaplanTmuxSocket(tmuxSession: string): string {
+  return Bun.env.SHANNON_TMUX_SOCKET ?? `mp-${tmuxSession}`;
+}
+
+// Build a tmux argv pinned to this session's private server. Every `tmux`
+// invocation in this file MUST go through here so reads (capture-pane),
+// writes (send-keys, paste-buffer) and lifecycle (new-session, kill-session)
+// all address the same isolated server.
+export function tmuxArgs(tmuxSession: string, ...rest: string[]): string[] {
+  return ["tmux", "-L", megaplanTmuxSocket(tmuxSession), ...rest];
+}
+
 type ModelPricing = {
   inputPerMTok: number;
   outputPerMTok: number;
@@ -306,19 +334,19 @@ async function maybeSendStartupEnterKeys(tmuxSession: string) {
   const delayMs = Number(Bun.env.MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_DELAY_MS ?? 1000);
   for (let index = 0; index < count; index += 1) {
     await sleep(Math.max(100, delayMs));
-    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"], false);
+    await runCommand(tmuxArgs(tmuxSession, "send-keys", "-t", tmuxSession, "C-m"), false);
   }
 }
 
 async function acceptBypassPermissionsPrompt(tmuxSession: string) {
-  await runCommand(["tmux", "send-keys", "-t", tmuxSession, "Down"], false);
+  await runCommand(tmuxArgs(tmuxSession, "send-keys", "-t", tmuxSession, "Down"), false);
   await sleep(100);
-  await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"], false);
+  await runCommand(tmuxArgs(tmuxSession, "send-keys", "-t", tmuxSession, "C-m"), false);
   await sleep(POLL_MS);
 }
 
 async function confirmBypassPermissionsPrompt(tmuxSession: string) {
-  await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"], false);
+  await runCommand(tmuxArgs(tmuxSession, "send-keys", "-t", tmuxSession, "C-m"), false);
   await sleep(POLL_MS);
 }
 
@@ -871,8 +899,8 @@ export async function runShannon(options: CliOptions) {
       "claude",
       ...(isRootProcess() ? rootSafeClaudeArgs(options.claudeArgs) : options.claudeArgs),
     ];
-    await runCommand([
-      "tmux",
+    await runCommand(tmuxArgs(
+      tmuxSession,
       "new-session",
       "-d",
       "-s",
@@ -880,7 +908,12 @@ export async function runShannon(options: CliOptions) {
       "-c",
       options.cwd,
       ...claudeLaunchArgs,
-    ]);
+    ));
+    // Defense-in-depth: keep this private server alive even if its last
+    // session is ever transiently killed, so a single Claude exit can't strand
+    // the server. The `-L` socket already isolates us from other chains; this
+    // just removes the auto-exit-on-empty edge for our own server.
+    await runCommand(tmuxArgs(tmuxSession, "set-option", "-g", "exit-empty", "off"), false);
 
     void maybeSendStartupEnterKeys(tmuxSession);
 
@@ -1121,7 +1154,7 @@ async function waitForPrompt(tmuxSession: string) {
   let bypassPermissionsPromptAcceptAttempts = 0;
 
   while (Date.now() - startedAt < START_TIMEOUT_MS) {
-    const pane = await runCommand(["tmux", "capture-pane", "-pt", tmuxSession, "-S", "-40"]);
+    const pane = await runCommand(tmuxArgs(tmuxSession, "capture-pane", "-pt", tmuxSession, "-S", "-40"));
     if (dbg) {
       const ready = paneLooksReadyForUserMessage(pane.stdout);
       await Bun.write(dbg, `[${Date.now() - startedAt}ms] exit=${pane.exitCode} ready=${ready} len=${pane.stdout.length}\n--PANE--\n${pane.stdout}\n--END--\n`, { createPath: true });
@@ -1261,28 +1294,28 @@ function randomSendDelayMs() {
 
 async function sendPrompt(tmuxSession: string, prompt: string) {
   if (canTypePromptLiterally(prompt)) {
-    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "-l", prompt]);
-    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+    await runCommand(tmuxArgs(tmuxSession, "send-keys", "-t", tmuxSession, "-l", prompt));
+    await runCommand(tmuxArgs(tmuxSession, "send-keys", "-t", tmuxSession, "C-m"));
     return;
   }
 
   const _mpBuf = randomUUID();
   let primaryError: unknown;
   try {
-    const _mpLoad = Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const _mpLoad = Bun.spawn(tmuxArgs(tmuxSession, "load-buffer", "-b", _mpBuf, "-"), { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     _mpLoad.stdin.write(prompt);
     await _mpLoad.stdin.end();
     if ((await _mpLoad.exited) !== 0) {
       throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);
     }
-    await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);
+    await runCommand(tmuxArgs(tmuxSession, "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession));
     await submitAfterPaste(tmuxSession);
   } catch (error) {
     primaryError = error;
     throw error;
   } finally {
     try {
-      await runCommand(["tmux", "delete-buffer", "-b", _mpBuf]);
+      await runCommand(tmuxArgs(tmuxSession, "delete-buffer", "-b", _mpBuf));
     } catch (deleteError) {
       if (primaryError === undefined) {
         throw deleteError;
@@ -1307,7 +1340,7 @@ async function submitAfterPaste(tmuxSession: string) {
   );
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await Bun.sleep(settleMs);
-    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"]);
+    await runCommand(tmuxArgs(tmuxSession, "send-keys", "-t", tmuxSession, "C-m"));
     await Bun.sleep(settleMs);
     const pane = await capturePane(tmuxSession);
     if (!/\[Pasted text/i.test(pane)) {
@@ -1384,7 +1417,7 @@ async function listTranscriptPaths(projectFolder: string): Promise<Set<string>> 
 }
 
 async function killTmux(tmuxSession: string): Promise<JsonRecord> {
-  const result = await runCommand(["tmux", "kill-session", "-t", tmuxSession], false);
+  const result = await runCommand(tmuxArgs(tmuxSession, "kill-session", "-t", tmuxSession), false);
   return {
     tmux_killed: result.exitCode === 0,
     exit_code: result.exitCode,
@@ -1394,7 +1427,7 @@ async function killTmux(tmuxSession: string): Promise<JsonRecord> {
 
 async function capturePane(tmuxSession: string) {
   const result = await runCommand(
-    ["tmux", "capture-pane", "-pt", tmuxSession, "-S", "-80"],
+    tmuxArgs(tmuxSession, "capture-pane", "-pt", tmuxSession, "-S", "-80"),
     false,
   );
   return result.stdout.trimEnd() || result.stderr.trimEnd();

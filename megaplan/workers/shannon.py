@@ -55,7 +55,12 @@ VENDORED_SHANNON_PATH = (
     Path(__file__).resolve().parents[1] / "vendor" / "shannon" / "index.ts"
 ).resolve()
 
-from megaplan.runtime.process import OrphanDetectedError, TmuxSession, pane_pids
+from megaplan.runtime.process import (
+    OrphanDetectedError,
+    TmuxSession,
+    pane_pids,
+    tmux_socket_for,
+)
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from megaplan._core import creative_form_id, read_json, schemas_root
 from megaplan.prompts import create_claude_prompt
@@ -1855,10 +1860,17 @@ def _read_turn_ndjson_from_transcript(
 
 
 def _tmux_capture_pane(session_name: str) -> str | None:
-    """Return the captured pane text for *session_name*, or ``None`` on failure."""
+    """Return the captured pane text for *session_name*, or ``None`` on failure.
+
+    Pinned to the session's PRIVATE tmux server (``-L``) so it reads the same
+    isolated server the vendored launcher created — querying the shared default
+    server would mis-report the live pane as empty/gone (see
+    :func:`megaplan.runtime.process.tmux_socket_for`).
+    """
     try:
         result = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", session_name],
+            ["tmux", "-L", tmux_socket_for(session_name),
+             "capture-pane", "-p", "-t", session_name],
             check=False,
             capture_output=True,
             text=True,

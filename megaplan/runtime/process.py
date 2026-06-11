@@ -237,16 +237,39 @@ class OrphanDetectedError(Exception):
         self.remediation = remediation
 
 
+def tmux_socket_for(session_name: str) -> str:
+    """Private tmux control-socket name for a Shannon session.
+
+    MUST mirror ``megaplanTmuxSocket`` in ``vendor/shannon/index.ts``: every
+    Shannon session runs on its OWN tmux server (``tmux -L mp-<session>``) so a
+    concurrent chain's last-session teardown — or any ``tmux kill-server`` —
+    cannot collapse the shared default server out from under a live Claude pane
+    (the "no server running" finalize hang). The Python-side reap/exists/
+    pane_pids helpers must therefore address the SAME ``-L`` socket the launcher
+    used, or they would query the empty default server and mis-report the
+    isolated session as gone. ``SHANNON_TMUX_SOCKET`` overrides (kept in lockstep
+    with the launcher's env read) for tests/diagnostics.
+    """
+    override = os.environ.get("SHANNON_TMUX_SOCKET")
+    if override:
+        return override
+    return f"mp-{session_name}"
+
+
 class TmuxSession:
     """Handle for a single tmux session, keyed by name.
 
     Provides idempotent teardown and a lightweight liveness check.  All
     tmux CLI calls degrade gracefully when ``tmux`` is not installed or
-    the session has already been torn down by another actor.
+    the session has already been torn down by another actor. Every call is
+    pinned to this session's PRIVATE tmux server via ``-L`` (see
+    :func:`tmux_socket_for`) so it addresses the same isolated server the
+    vendored launcher created.
     """
 
     def __init__(self, name: str) -> None:
         self.name = name
+        self.socket = tmux_socket_for(name)
 
     def teardown(self) -> None:
         """Kill the tmux session.  Idempotent — safe to call repeatedly.
@@ -256,7 +279,7 @@ class TmuxSession:
         """
         try:
             result = subprocess.run(
-                ["tmux", "kill-session", "-t", self.name],
+                ["tmux", "-L", self.socket, "kill-session", "-t", self.name],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -283,7 +306,7 @@ class TmuxSession:
         """Return ``True`` iff the tmux session is currently live."""
         try:
             result = subprocess.run(
-                ["tmux", "has-session", "-t", self.name],
+                ["tmux", "-L", self.socket, "has-session", "-t", self.name],
                 check=False,
                 capture_output=True,
             )
@@ -329,7 +352,8 @@ def pane_pids(session_name: str) -> list[str]:
     """
     try:
         result = subprocess.run(
-            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
+            ["tmux", "-L", tmux_socket_for(session_name),
+             "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
             check=False,
             capture_output=True,
             text=True,
