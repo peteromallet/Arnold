@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// MEGAPLAN_SHANNON_VENDORED v1 — patches: P1..P15
+// MEGAPLAN_SHANNON_VENDORED v1 — patches: P1..P17
 
 import { randomUUID } from "node:crypto";
 import { basename, join, resolve } from "node:path";
@@ -840,7 +840,22 @@ export async function runShannon(options: CliOptions) {
       throw new Error("Expected at least one user message on stdin for --input-format=stream-json");
     }
 
-    const _mpScrubKeys = Object.keys(Bun.env).filter((k) => /^(MEGAPLAN_|SHANNON_)/.test(k));
+    // P17: strip nested-Claude-session markers before launching the tmux
+    // Claude. When megaplan itself is started from inside a Claude Code
+    // session (the common autonomous case — a wakeup-loop, an agent, a chain
+    // kicked off from a `claude` shell), the environment carries CLAUDECODE=1
+    // and CLAUDE_CODE_* markers. claude >=2.1.170 keys off these to treat
+    // itself as a *nested/child* session and SUPPRESSES live conversation-
+    // transcript persistence: the top-level <sessionId>.jsonl then receives
+    // ONLY a single {"type":"ai-title"} row and never the user/assistant
+    // rows. Shannon polls that file (waitForSessionWithPrompt /
+    // waitForAssistantReply) for the submitted prompt + reply, never finds
+    // them, and the turn dies with "Timed out waiting for Claude transcript"
+    // — an instant phase failure with no llm_call_start even though the TUI
+    // ran the turn fine. Scrubbing these markers restores normal top-level
+    // transcript writes. Harmless on older builds (they ignore the vars).
+    // Keep CLAUDE_CONFIG_DIR — that's an isolation knob, not a nesting marker.
+    const _mpScrubKeys = Object.keys(Bun.env).filter(shouldScrubEnvKeyBeforeLaunch);
     // tmux spawns the command with the SERVER's environment (not this
     // process's) when a server already exists, so CLAUDE_CONFIG_DIR silently
     // vanishes: Claude then writes transcripts to ~/.claude while we poll the
@@ -1195,6 +1210,19 @@ export function classifyClaudeStartupBlocker(pane: string): StartupBlocker | und
   }
 
   return undefined;
+}
+
+// P17: which inherited env keys must be stripped (`env -u`) from the tmux
+// Claude launch. megaplan/shannon control vars, plus the nested-Claude-session
+// markers (CLAUDECODE / CLAUDE_CODE_*) that make claude >=2.1.170 suppress
+// live transcript persistence. CLAUDE_CODE_MAX_OUTPUT_TOKENS is a deliberate
+// config knob (set by shannon.py), not a nesting marker — keep it.
+export function shouldScrubEnvKeyBeforeLaunch(key: string): boolean {
+  if (/^(MEGAPLAN_|SHANNON_)/.test(key)) return true;
+  if (key === "CLAUDECODE") return true;
+  if (key === "CLAUDE_CODE_MAX_OUTPUT_TOKENS") return false;
+  if (/^CLAUDE_CODE_/.test(key)) return true;
+  return false;
 }
 
 export function paneLooksReadyForUserMessage(pane: string) {
