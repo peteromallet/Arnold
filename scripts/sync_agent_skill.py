@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Sync local agent skill files from the canonical CLAUDE.md."""
+"""Sync and optionally install agent skill files from the canonical CLAUDE.md."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -16,6 +17,15 @@ LOCAL_COPY_TARGETS = (
     ROOT / ".claude" / "skills" / "vibecomfy" / "SKILL.md",
 )
 SYMLINK_TARGETS = {}
+USER_SKILL_SOURCE = ROOT / ".claude" / "skills" / "vibecomfy"
+USER_SKILL_TARGET_DIRS = (
+    Path.home() / ".claude" / "skills",
+    Path.home() / ".codex" / "skills",
+    Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))) / "skills",
+)
+CODEX_AGENTS = Path.home() / ".codex" / "AGENTS.md"
+SKILLSINKER_BEGIN = "<!-- vibecomfy:skillsinker:begin -->"
+SKILLSINKER_END = "<!-- vibecomfy:skillsinker:end -->"
 METADATA = ROOT / "agents" / "openai.yaml"
 EXPECTED_METADATA = """interface:
   display_name: "VibeComfy"
@@ -107,10 +117,85 @@ def apply() -> int:
     return check()
 
 
+class SkillSinker:
+    """Install the VibeComfy skill into local agent harness surfaces."""
+
+    def __init__(self, source: Path, codex_agents: Path) -> None:
+        self.source = source
+        self.codex_agents = codex_agents
+
+    def install(self) -> None:
+        self._link_skill_dirs()
+        self._rewrite_codex_agents()
+
+    def _link_skill_dirs(self) -> None:
+        if not self.source.exists():
+            raise SystemExit(f"{_relative(self.source)} is missing")
+        for target_dir in USER_SKILL_TARGET_DIRS:
+            if not target_dir.exists():
+                print(f"skipped {target_dir} (parent missing)")
+                continue
+            target = target_dir / "vibecomfy"
+            if target.is_symlink() and target.resolve() == self.source.resolve():
+                print(f"kept {target} -> {self.source}")
+                continue
+            if target.exists() or target.is_symlink():
+                raise SystemExit(f"{target} exists; remove it or install manually")
+            target.symlink_to(self.source, target_is_directory=True)
+            print(f"linked {target} -> {self.source}")
+
+    def _rewrite_codex_agents(self) -> None:
+        if not self.codex_agents.parent.exists():
+            print(f"skipped {self.codex_agents} (parent missing)")
+            return
+        block = self._render_codex_block()
+        existing = self.codex_agents.read_text(encoding="utf-8") if self.codex_agents.exists() else ""
+        updated = self._merge_block(existing, block)
+        if updated == existing:
+            print(f"kept {self.codex_agents} SkillSinker block")
+            return
+        self.codex_agents.write_text(updated, encoding="utf-8")
+        print(f"updated {self.codex_agents} SkillSinker block")
+
+    def _render_codex_block(self) -> str:
+        return (
+            f"{SKILLSINKER_BEGIN}\n"
+            "# VibeComfy skill\n\n"
+            f"- `vibecomfy` ({self.source}): Use VibeComfy to load, edit, validate, port, and run ComfyUI workflows through Python ready templates.\n"
+            f"{SKILLSINKER_END}"
+        )
+
+    @staticmethod
+    def _merge_block(existing: str, block: str) -> str:
+        if SKILLSINKER_BEGIN in existing and SKILLSINKER_END in existing:
+            before, _, rest = existing.partition(SKILLSINKER_BEGIN)
+            _, _, after = rest.partition(SKILLSINKER_END)
+            return f"{before}{block}{after}"
+        if not existing:
+            return block + "\n"
+        suffix = "" if existing.endswith("\n") else "\n"
+        return f"{existing}{suffix}\n{block}\n"
+
+
+def install_user() -> int:
+    apply_result = apply()
+    if apply_result != 0:
+        return apply_result
+    SkillSinker(USER_SKILL_SOURCE, CODEX_AGENTS).install()
+    return check()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="update mirrored skill files")
+    parser.add_argument(
+        "--install-user",
+        action="store_true",
+        help="use SkillSinker to symlink the local skill into detected harnesses and update Codex AGENTS.md",
+    )
     args = parser.parse_args(argv)
+    if args.install_user:
+        return install_user()
     return apply() if args.apply else check()
 
 
