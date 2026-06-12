@@ -1,7 +1,7 @@
 # Why Python, Not JSON?
 
-The core question is: what is the best way to represent Comfy workflows as
-text?
+The core question is: what text representation is best for agents working
+with Comfy workflows?
 
 Earlier versions of VibeComfy tried to give agents better tools for working
 directly with ComfyUI JSON. That helped in narrow cases, but it still forced the
@@ -12,35 +12,11 @@ This version uses Python as the authoring surface instead. JSON remains the
 import/export and runtime format; Python is the translation layer where agents
 read, edit, validate, and compose workflows.
 
-## Why Python Works Better
+## What Text Representation Is Best For Agents?
 
-The important difference is not JSON syntax versus Python syntax in the
-abstract. It is ComfyUI's graph-specific JSON versus ordinary Python code with
-named calls, explicit metadata, and a compiler back to ComfyUI's API format.
-
-LLMs have extensive general competence with Python code. ComfyUI workflow JSON
-is a narrower schema: graph ids, link arrays, widgets, node-specific
-conventions, editor state, and custom-node quirks all matter at once.
-
-- **Better comprehension.** Named variables, functions, kwargs, imports, and
-  metadata declarations give the agent clues about intent, not just graph ids.
-- **Lower reasoning overhead.** The agent can use its existing code-editing
-  patterns instead of reconstructing meaning from nested JSON and link arrays.
-- **Fewer clarification loops.** A readable Python workflow carries intent
-  beside structure, so agents need less extra explanation to know what they are
-  allowed to change.
-- **Local-model accessibility.** We expect smaller local models to benefit from
-  leaning on general Python competence instead of learning ComfyUI's graph
-  schema from scratch; that still needs systematic evaluation.
-- **Universal composition.** Once the workflow is Python, ordinary Python can
-  wrap it: recipes, parameter sweeps, validation, tests, and higher-level
-  orchestration all become straightforward.
-
-## What Text Should Agents Read?
-
-Imagine you are not looking at the ComfyUI canvas. You are an agent reading text
-and trying to answer: what does this workflow load, what can I change, what does
-it output, and what custom nodes does it need?
+For example, imagine you are not looking at the ComfyUI canvas. You are an
+agent reading text and trying to answer: what does this workflow load, what can
+I change, what does it output, and what custom nodes does it need?
 
 A typical exported ComfyUI workflow gives you nodes like this:
 
@@ -110,6 +86,30 @@ Both representations compile to the same runtime graph. But if the task is to
 work in text, the Python version gives the agent names, call sites, public
 inputs, dependencies, and output contracts in one view.
 
+## Why Python Probably Works Better
+
+The important difference is not JSON syntax versus Python syntax in the
+abstract. It is ComfyUI's graph-specific JSON versus ordinary Python code with
+named calls, explicit metadata, and a compiler back to ComfyUI's API format.
+
+LLMs have extensive general competence with Python code. ComfyUI workflow JSON
+is a narrower schema: graph ids, link arrays, widgets, node-specific
+conventions, editor state, and custom-node quirks all matter at once.
+
+- **Better comprehension.** Named variables, functions, kwargs, imports, and
+  metadata declarations give the agent clues about intent, not just graph ids.
+- **Lower reasoning overhead.** The agent can use its existing code-editing
+  patterns instead of reconstructing meaning from nested JSON and link arrays.
+- **Fewer clarification loops.** A readable Python workflow carries intent
+  beside structure, so agents need less extra explanation to know what they are
+  allowed to change.
+- **Local-model accessibility.** We expect smaller local models to benefit from
+  leaning on general Python competence instead of learning ComfyUI's graph
+  schema from scratch; that still needs systematic evaluation.
+- **Universal composition.** Once the workflow is Python, ordinary Python can
+  wrap it: recipes, parameter sweeps, validation, tests, and higher-level
+  orchestration all become straightforward.
+
 ## Why Not Enrich The JSON?
 
 JSON is the shape ComfyUI ultimately needs at queue time. But it is a poor
@@ -157,13 +157,13 @@ VibeComfy takes the opposite route: translate the graph into ordinary Python,
 let the agent work there, then compile back to the API JSON that ComfyUI already
 accepts.
 
-## Translation Must Stay Faithful
+## Challenge: The Representation Must Stay Faithful
 
-The translation has to preserve the graph semantics needed for execution.
-VibeComfy is designed to carry nodes, edges, widget values, public inputs,
-outputs, custom-node requirements, model assets, subgraphs, and provenance
-through the Python layer. For UI round-trips, editor layout is preserved where it
-is available.
+The real challenge for the Python approach is faithful translation. It has to
+preserve the graph semantics needed for execution. VibeComfy is designed to
+carry nodes, edges, widget values, public inputs, outputs, custom-node
+requirements, model assets, subgraphs, and provenance through the Python layer.
+For UI round-trips, editor layout is preserved where it is available.
 
 That is the core bet: do not make agents become native ComfyUI JSON editors.
 Give them a translation layer in the programming language where they already
