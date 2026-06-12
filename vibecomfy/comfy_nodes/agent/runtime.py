@@ -246,14 +246,19 @@ def _run_worker(
             env["DEEPSEEK_API_KEY"] = key
         # Don't leak ComfyUI's cwd/path into the child (it is what causes the
         # `utils` collision); run from a neutral directory.
-        proc = subprocess.run(
-            [sys.executable, _WORKER_PATH, req_path, res_path],
-            cwd=tmp,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=_TURN_TIMEOUT_SECONDS,
-        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, _WORKER_PATH, req_path, res_path],
+                cwd=tmp,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=_TURN_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(
+                f"Agent worker timed out after {_TURN_TIMEOUT_SECONDS:g} seconds."
+            ) from exc
         try:
             with open(res_path, encoding="utf-8") as fh:
                 return json.load(fh)

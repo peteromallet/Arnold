@@ -570,6 +570,13 @@ def _resolve_route_and_model(
     return route_descriptor, selected_route, selected_model
 
 
+def _runtime_dispatch_route(route_descriptor: AgentRouteDescriptor, selected_route: str) -> str:
+    requested = route_descriptor.requested_route
+    if requested in {"deepseek", "anthropic", "openai-codex"}:
+        return requested
+    return selected_route
+
+
 def _provider_status_metadata(
     *,
     route_descriptor: AgentRouteDescriptor,
@@ -747,6 +754,7 @@ def run_agent_turn(
 ) -> AgentTurnResult:
     route_descriptor = _resolve_agent_route(route)
     selected_route = route_descriptor.normalized_route
+    dispatch_route = _runtime_dispatch_route(route_descriptor, selected_route)
     selected_model = model or os.getenv("VIBECOMFY_AGENT_MODEL", DEFAULT_MODEL)
     runtime = _load_arnold_runtime()
     try:
@@ -754,7 +762,7 @@ def run_agent_turn(
             runtime,
             task=task,
             python_source=python_source,
-            route=selected_route,
+            route=dispatch_route,
             model=selected_model,
         )
     except PermissionError as exc:
@@ -772,7 +780,7 @@ def run_agent_turn(
         raise ProviderError(str(exc)) from exc
     return _normalize_agent_response(
         response,
-        route=selected_route,
+        route=dispatch_route,
         model=selected_model,
         audit_metadata={
             "provider": "arnold",
@@ -800,6 +808,7 @@ def run_agent_turn_delta(
 
     route_descriptor = _resolve_agent_route(route)
     selected_route = route_descriptor.normalized_route
+    dispatch_route = _runtime_dispatch_route(route_descriptor, selected_route)
     selected_model = model or os.getenv("VIBECOMFY_AGENT_MODEL", DEFAULT_MODEL)
     schema = op_schema or EDIT_OP_RESPONSE_SCHEMA_V2
     runtime = _load_arnold_runtime()
@@ -809,7 +818,7 @@ def run_agent_turn_delta(
             task=task,
             projection=projection,
             op_schema=schema,
-            route=selected_route,
+            route=dispatch_route,
             model=selected_model,
         )
     except PermissionError as exc:
@@ -828,7 +837,7 @@ def run_agent_turn_delta(
     try:
         return normalize_delta_agent_response(
             response,
-            route=selected_route,
+            route=dispatch_route,
             model=selected_model,
             audit_metadata={
                 "provider": "arnold",
@@ -961,6 +970,7 @@ def run_agent_turn_batch(
     """
     route_descriptor = _resolve_agent_route(route)
     selected_route = route_descriptor.normalized_route
+    dispatch_route = _runtime_dispatch_route(route_descriptor, selected_route)
     selected_model = model or os.getenv("VIBECOMFY_AGENT_MODEL", DEFAULT_MODEL)
     runtime = _load_arnold_runtime()
     audit_metadata: dict[str, Any] = {
@@ -982,7 +992,7 @@ def run_agent_turn_batch(
                 runtime,
                 task=task,
                 messages=attempt_messages,
-                route=selected_route,
+                route=dispatch_route,
                 model=selected_model,
             )
             metadata = dict(audit_metadata)
@@ -993,7 +1003,7 @@ def run_agent_turn_batch(
                 }
             return _normalize_batch_response(
                 response,
-                route=selected_route,
+                route=dispatch_route,
                 model=selected_model,
                 audit_metadata=metadata,
             )

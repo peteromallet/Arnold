@@ -296,6 +296,7 @@ const LOWERED_BADGE = "lowered";
 // ── localStorage helpers (safe wrappers — tolerate missing/throwing storage) ─
 const LS_ACTIVE_SESSION_KEY = "vibecomfy_active_session_id";
 const LS_AGENT_PROVIDER_KEY = "vibecomfy_agent_provider";
+const VIBECOMFY_LOGO_URL = new URL("./astrid_logo.png", import.meta.url).href;
 
 function _lsGet(key) {
   try {
@@ -3484,7 +3485,7 @@ function createAgentPanelShell() {
     letterSpacing: "0.02em",
   });
   const titleLogo = el("img");
-  titleLogo.src = "/extensions/vibecomfy/astrid_logo.png";
+  titleLogo.src = VIBECOMFY_LOGO_URL;
   titleLogo.alt = "VibeComfy";
   Object.assign(titleLogo.style, { width: "20px", height: "20px", display: "block", flexShrink: "0" });
   title.appendChild(titleLogo);
@@ -9686,7 +9687,7 @@ function ensureAgentLauncher() {
   btn.type = "button";
   btn.title = "Open the VibeComfy agent edit panel";
   const launcherLogo = document.createElement("img");
-  launcherLogo.src = "/extensions/vibecomfy/astrid_logo.png";
+  launcherLogo.src = VIBECOMFY_LOGO_URL;
   launcherLogo.alt = "";
   Object.assign(launcherLogo.style, { width: "14px", height: "14px", display: "block", flexShrink: "0" });
   const launcherText = document.createElement("span");
@@ -9877,7 +9878,7 @@ function openChooseEngineOverlay(panel, { onResolved }) {
     marginBottom: "2px",
   });
   const titleLogo = el("img");
-  titleLogo.src = "/extensions/vibecomfy/astrid_logo.png";
+  titleLogo.src = VIBECOMFY_LOGO_URL;
   titleLogo.alt = "VibeComfy";
   Object.assign(titleLogo.style, { width: "20px", height: "20px", display: "block", flexShrink: "0" });
   titleRow.appendChild(titleLogo);

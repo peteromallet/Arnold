@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import threading
 import warnings
 from pathlib import Path
@@ -3083,8 +3084,8 @@ def test_agent_provider_lazy_loads_arnold_and_normalizes_response(monkeypatch) -
 
     assert result.python == "print('ok')"
     assert result.message == "done"
-    assert result.route == "arnold"
-    assert calls[0]["route"] == "arnold"
+    assert result.route == "anthropic"
+    assert calls[0]["route"] == "anthropic"
     assert calls[0]["messages"][0]["role"] == "system"
     assert "Return only JSON with keys `python` and `message`." in calls[0]["messages"][0]["content"]
     assert "Prefer direct static graph edits first." in calls[0]["messages"][0]["content"]
@@ -3887,6 +3888,35 @@ def test_run_agent_turn_batch_uses_runtime_batch_entrypoint(monkeypatch) -> None
     assert calls[0]["model"] == "deepseek-chat"
 
 
+def test_run_agent_turn_batch_preserves_requested_provider_route(monkeypatch) -> None:
+    """Provider submit dispatch keeps Claude/Codex distinct from Arnold metadata."""
+    calls: list[dict[str, object]] = []
+
+    class BatchRuntime:
+        @staticmethod
+        def run_agent_turn_batch(**kwargs):
+            calls.append(kwargs)
+            return {
+                "content": "No changes needed.\n\n```batch\ndone()\n```"
+            }
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: BatchRuntime)
+
+    for route in ("anthropic", "openai-codex"):
+        calls.clear()
+        result = agent_provider.run_agent_turn_batch(
+            task="noop",
+            messages=[{"role": "user", "content": "noop"}],
+            route=route,
+            model="agent-edit",
+        )
+
+        assert calls[0]["route"] == route
+        assert result.route == route
+        assert result.audit_metadata["requested_route"] == route
+        assert result.audit_metadata["route_metadata"]["normalized_route"] == "arnold"
+
+
 def test_run_agent_turn_batch_empty_content_is_malformed(monkeypatch) -> None:
     """Initial empty response plus two retry nudges still fail as malformed model output."""
     calls: list[dict[str, object]] = []
@@ -3980,6 +4010,23 @@ def test_runtime_batch_turn_uses_batch_repl_worker_contract(monkeypatch) -> None
     assert calls[0]["system_msg"] == "system batch prompt"
     assert calls[0]["user_msg"] == "user batch prompt"
     assert calls[0]["agent_kwargs"]["model"] == "deepseek-v4-pro"
+
+
+def test_runtime_worker_timeout_raises_builtin_timeout(monkeypatch) -> None:
+    """Subprocess timeout is classified upstream as TimeoutError, not a raw hang."""
+    def _timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["worker"], timeout=2)
+
+    monkeypatch.setattr(runtime.subprocess, "run", _timeout)
+    monkeypatch.setattr(runtime, "_resolve_deepseek_key", lambda: "test-key")
+    monkeypatch.setattr(runtime, "_TURN_TIMEOUT_SECONDS", 2)
+
+    with pytest.raises(TimeoutError, match="Agent worker timed out after 2 seconds"):
+        runtime.run_agent_turn_batch(
+            task="noop",
+            route="deepseek",
+            messages=[{"role": "user", "content": "noop"}],
+        )
 
 
 def test_runtime_readiness_normalizes_route_and_status_wraps_it(
