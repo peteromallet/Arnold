@@ -73,6 +73,7 @@ from megaplan.types import (
 )
 from megaplan.blocker_recovery import evaluate_quality_blockers
 from megaplan.workers import WorkerResult
+from megaplan.workers.result_metadata import aggregate_rate_limits
 
 log = logging.getLogger(__name__)
 
@@ -770,6 +771,7 @@ def handle_execute_one_batch(
             prompt_tokens=result.worker.prompt_tokens,
             completion_tokens=result.worker.completion_tokens,
             total_tokens=result.worker.total_tokens,
+            rate_limit=result.worker.rate_limit,
         )
         receipt_metrics = execute_metrics(aggregate_payload, drift)
         receipt_metrics["batches"] = batch_payloads
@@ -1439,6 +1441,7 @@ def handle_execute_auto_loop(
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_total_tokens = 0
+    rate_limits: list[dict[str, Any] | None] = []
     timeout_error: CliError | None = None
     latest_session_id: str | None = None
     blocking_reasons: list[str] = []
@@ -1618,6 +1621,7 @@ def handle_execute_auto_loop(
         total_prompt_tokens += int(result.worker.prompt_tokens or 0)
         total_completion_tokens += int(result.worker.completion_tokens or 0)
         total_total_tokens += int(result.worker.total_tokens or 0)
+        rate_limits.append(result.worker.rate_limit)
         latest_session_id = result.worker.session_id
         apply_session_update(
             state,
@@ -1834,6 +1838,7 @@ def handle_execute_auto_loop(
         prompt_tokens=total_prompt_tokens,
         completion_tokens=total_completion_tokens,
         total_tokens=total_total_tokens,
+        rate_limit=aggregate_rate_limits(rate_limits),
     )
     receipt_metrics = execute_metrics(aggregate_payload, drift)
     receipt_metrics["batches"] = batch_payloads

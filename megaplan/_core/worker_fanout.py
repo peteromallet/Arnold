@@ -78,6 +78,7 @@ class WorkerUnitResult:
     rendered_prompt: str | None = None
     model_actual: str | None = None
     shannon_plan: dict[str, Any] | None = None
+    rate_limit: dict[str, Any] | None = None
     step: str | None = None
     output_path: str | None = None
     read_only: bool = True
@@ -104,6 +105,7 @@ class WorkerUnitResult:
             rendered_prompt=worker.rendered_prompt,
             model_actual=worker.model_actual,
             shannon_plan=worker.shannon_plan,
+            rate_limit=worker.rate_limit,
             step=unit.step,
             output_path=str(unit.output_path),
             read_only=unit.read_only,

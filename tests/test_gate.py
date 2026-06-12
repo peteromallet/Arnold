@@ -11,6 +11,7 @@ import megaplan.handlers
 import megaplan.workers
 from megaplan._core import load_plan
 from megaplan.workers import WorkerResult
+from megaplan.handlers.gate import _merge_gate_worker_attempt
 from tests.conftest import (
     PlanFixture,
     debt_registry_path,
@@ -607,6 +608,51 @@ def test_gate_retry_does_not_duplicate_weighted_scores(plan_fixture: PlanFixture
     state = load_state(plan_fixture.plan_dir)
 
     assert len(state["meta"]["weighted_scores"]) == 1
+
+
+def test_gate_retry_merge_prefers_retry_rate_limit_when_present() -> None:
+    base = WorkerResult(
+        payload={"recommendation": "ESCALATE"},
+        raw_output="base",
+        duration_ms=1,
+        cost_usd=0.1,
+        session_id="base",
+        rate_limit={"provider": "base", "remaining": 1},
+    )
+    retry = WorkerResult(
+        payload={"recommendation": "PROCEED"},
+        raw_output="retry",
+        duration_ms=2,
+        cost_usd=0.2,
+        session_id="retry",
+        rate_limit={"provider": "retry", "remaining": 9},
+    )
+
+    merged = _merge_gate_worker_attempt(base, retry)
+
+    assert merged.payload == {"recommendation": "PROCEED"}
+    assert merged.rate_limit == {"provider": "retry", "remaining": 9}
+
+
+def test_gate_retry_merge_keeps_base_rate_limit_when_retry_has_none() -> None:
+    base = WorkerResult(
+        payload={"recommendation": "ESCALATE"},
+        raw_output="base",
+        duration_ms=1,
+        cost_usd=0.1,
+        rate_limit={"provider": "base", "remaining": 1},
+    )
+    retry = WorkerResult(
+        payload={"recommendation": "PROCEED"},
+        raw_output="retry",
+        duration_ms=2,
+        cost_usd=0.2,
+    )
+
+    merged = _merge_gate_worker_attempt(base, retry)
+
+    assert merged.payload == {"recommendation": "PROCEED"}
+    assert merged.rate_limit == {"provider": "base", "remaining": 1}
 
 
 def test_gate_proceed_partial_resolutions_triggers_reprompt(

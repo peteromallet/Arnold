@@ -26,6 +26,7 @@ from megaplan.prompts.review import (
 )
 from megaplan.types import AgentMode, CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
+from megaplan.workers.result_metadata import aggregate_rate_limits
 
 from megaplan.runtime.key_pool import (
     resolve_model as _resolve_model,
@@ -104,7 +105,7 @@ def _parse_parallel_review_result(
     index: int,
     item: WorkerUnitResult,
     unit: WorkerUnit,
-) -> tuple[int, dict[str, Any], list[str], list[str], float, int, int, int]:
+) -> tuple[int, dict[str, Any], list[str], list[str], float, int, int, int, dict[str, Any] | None]:
     del index
     payload = item.payload
     if not isinstance(payload, dict):
@@ -129,6 +130,7 @@ def _parse_parallel_review_result(
         item.prompt_tokens,
         item.completion_tokens,
         item.total_tokens,
+        item.rate_limit,
     )
 
 
@@ -136,7 +138,7 @@ def _parse_parallel_review_side_result(
     index: int,
     item: WorkerUnitResult,
     unit: WorkerUnit,
-) -> tuple[dict[str, Any], float, int, int, int]:
+) -> tuple[dict[str, Any], float, int, int, int, dict[str, Any] | None]:
     del index, unit
     payload = item.payload
     if not isinstance(payload, dict):
@@ -147,6 +149,7 @@ def _parse_parallel_review_side_result(
         item.prompt_tokens,
         item.completion_tokens,
         item.total_tokens,
+        item.rate_limit,
     )
 
 
@@ -234,11 +237,14 @@ def run_parallel_review(
     ordered_checks: list[dict[str, Any]] = []
     verified_groups: list[list[str]] = []
     disputed_groups: list[list[str]] = []
+    rate_limits: list[dict[str, Any] | None] = []
     for item in sr.ordered_results:
         _index, check_payload, verified_ids, disputed_ids, *_metrics = item
         ordered_checks.append(check_payload)
         verified_groups.append(verified_ids)
         disputed_groups.append(disputed_ids)
+        rate_limits.append(item[-1])
+    rate_limits.append(sr.side_results[0][-1])
     disputed_flag_ids = _merge_unique(disputed_groups)
     disputed_set = set(disputed_flag_ids)
     verified_flag_ids = [
@@ -259,4 +265,5 @@ def run_parallel_review(
         prompt_tokens=sr.total_prompt_tokens,
         completion_tokens=sr.total_completion_tokens,
         total_tokens=sr.total_tokens,
+        rate_limit=aggregate_rate_limits(rate_limits),
     )

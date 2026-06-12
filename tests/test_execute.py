@@ -958,6 +958,118 @@ def test_auto_loop_aggregates_worker_tokens_into_receipt(
     assert receipt["completion_tokens"] == 678, receipt
 
 
+def test_auto_loop_aggregates_worker_rate_limits_neutrally_for_receipt(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_capture_git_status_snapshot",
+        lambda *_: ({}, None),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.aggregation,
+        "_capture_git_status_snapshot",
+        lambda *_: ({}, None),
+    )
+    captured_rate_limits: list[dict[str, object] | None] = []
+    real_build_receipt = megaplan.execute.batch.build_receipt
+
+    def capture_build_receipt(**kwargs):
+        captured_rate_limits.append(kwargs["worker"].rate_limit)
+        return real_build_receipt(**kwargs)
+
+    def batch_worker(
+        step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None
+    ):
+        assert prompt_override is not None
+        if "[T1]" in prompt_override:
+            payload = {
+                "output": "Batch one complete.",
+                "files_changed": ["batch1.py"],
+                "commands_run": ["pytest -k batch1"],
+                "deviations": [],
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "executor_notes": "Completed batch one.",
+                        "files_changed": ["batch1.py"],
+                        "commands_run": ["pytest -k batch1"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC1", "executor_note": "Confirmed batch one."}
+                ],
+            }
+            return (
+                WorkerResult(
+                    payload=payload,
+                    raw_output="batch1",
+                    duration_ms=2,
+                    cost_usd=0.1,
+                    session_id="batch-1",
+                    rate_limit={"provider": "hermes", "remaining": 7},
+                ),
+                "codex",
+                "persistent",
+                False,
+            )
+        if "[T2]" in prompt_override:
+            payload = {
+                "output": "Batch two complete.",
+                "files_changed": ["batch2.py"],
+                "commands_run": ["pytest -k batch2"],
+                "deviations": [],
+                "task_updates": [
+                    {
+                        "task_id": "T2",
+                        "status": "done",
+                        "executor_notes": "Completed batch two.",
+                        "files_changed": ["batch2.py"],
+                        "commands_run": ["pytest -k batch2"],
+                    }
+                ],
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC2", "executor_note": "Confirmed batch two."}
+                ],
+            }
+            return (
+                WorkerResult(
+                    payload=payload,
+                    raw_output="batch2",
+                    duration_ms=3,
+                    cost_usd=0.2,
+                    session_id="batch-2",
+                    rate_limit=None,
+                ),
+                "codex",
+                "persistent",
+                False,
+            )
+        raise AssertionError(f"Unexpected batch prompt: {prompt_override}")
+
+    monkeypatch.setattr(megaplan.execute.batch, "build_receipt", capture_build_receipt)
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", batch_worker)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+        ),
+    )
+
+    assert response["success"] is True
+    assert captured_rate_limits == [
+        {"values": [{"provider": "hermes", "remaining": 7}]}
+    ]
+    receipt = read_json(plan_fixture.plan_dir / "step_receipt_execute_v1.json")
+    assert "rate_limit" not in receipt
+
+
 def test_auto_attribute_robust_auto_loop_avoids_scope_drift_blocker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2845,7 +2957,9 @@ def test_batch_1_on_single_batch_plan_transitions_to_executed(
     monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
     monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
 
-    def single_batch_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+    def single_batch_worker(
+        step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None
+    ):
         payload = {
             "output": "All tasks complete.",
             "files_changed": ["batch1.py", "batch2.py"],
@@ -2874,6 +2988,98 @@ def test_batch_1_on_single_batch_plan_transitions_to_executed(
     assert response["next_step"] == "review"
     assert (plan_fixture.plan_dir / "execution_batch_1.json").exists()
     assert (plan_fixture.plan_dir / "execution.json").exists()
+
+
+def test_one_batch_receipt_worker_preserves_rate_limit_without_receipt_field(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["tasks"][1]["depends_on"] = []
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        megaplan.execute.batch,
+        "_capture_git_status_snapshot",
+        lambda *_: ({}, None),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.aggregation,
+        "_capture_git_status_snapshot",
+        lambda *_: ({}, None),
+    )
+    captured_rate_limits: list[dict[str, object] | None] = []
+    real_build_receipt = megaplan.execute.batch.build_receipt
+
+    def capture_build_receipt(**kwargs):
+        captured_rate_limits.append(kwargs["worker"].rate_limit)
+        return real_build_receipt(**kwargs)
+
+    def single_batch_worker(
+        step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None
+    ):
+        payload = {
+            "output": "All tasks complete.",
+            "files_changed": ["batch1.py", "batch2.py"],
+            "commands_run": ["pytest"],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": "done",
+                    "executor_notes": "Done T1.",
+                    "files_changed": ["batch1.py"],
+                    "commands_run": ["pytest"],
+                },
+                {
+                    "task_id": "T2",
+                    "status": "done",
+                    "executor_notes": "Done T2.",
+                    "files_changed": ["batch2.py"],
+                    "commands_run": ["pytest"],
+                },
+            ],
+            "sense_check_acknowledgments": [
+                {"sense_check_id": "SC1", "executor_note": "Confirmed."},
+                {"sense_check_id": "SC2", "executor_note": "Confirmed."},
+            ],
+        }
+        return (
+            WorkerResult(
+                payload=payload,
+                raw_output="all",
+                duration_ms=1,
+                cost_usd=0.1,
+                session_id="single",
+                rate_limit={"provider": "codex", "reset_at": "2026-06-12T00:00:00Z"},
+            ),
+            "codex",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.execute.batch, "build_receipt", capture_build_receipt)
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", single_batch_worker)
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+    )
+
+    assert response["state"] == megaplan.STATE_EXECUTED
+    assert captured_rate_limits == [
+        {"provider": "codex", "reset_at": "2026-06-12T00:00:00Z"}
+    ]
+    receipt = read_json(plan_fixture.plan_dir / "step_receipt_execute_v1.json")
+    assert "rate_limit" not in receipt
+
 
 def test_light_batch_1_on_single_batch_plan_transitions_to_done(
     tmp_path: Path,

@@ -21,6 +21,7 @@ from megaplan._core import (
     schemas_root,
     _merge_unique,
     WorkerUnit,
+    WorkerUnitResult,
     scatter_worker_units,
 )
 from megaplan.orchestration.critique_status import (
@@ -32,6 +33,7 @@ from megaplan.prompts.critique import single_check_critique_prompt, write_single
 from megaplan.pipelines.creative.prompts.critique_joke import single_check_critique_joke_prompt
 from megaplan.types import CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
+from megaplan.workers.result_metadata import aggregate_rate_limits
 
 
 _CRITIQUE_WORKER_SHAPE_RETRIES = 2
@@ -390,6 +392,7 @@ def run_parallel_critique(
             plan_dir=plan_dir,
             root=root,
             args=_args,
+            parse_result=lambda _idx, item, _unit: item,
             max_concurrent=max_concurrent,
         )
 
@@ -408,12 +411,15 @@ def run_parallel_critique(
     _total_completion_tokens = 0
     _total_tokens = 0
     _parsed_results: list[tuple[dict[str, Any], list[str], list[str]] | None] = [None] * len(units)
+    _rate_limits: list[dict[str, Any] | None] = []
 
     _sr = _scatter_raw(units)
     _accumulate_scatter_totals(_sr)
 
     _failures: dict[int, _RetryableCritiqueShapeError] = {}
-    for _idx, _payload in enumerate(_sr.ordered_results):
+    for _idx, _item in enumerate(_sr.ordered_results):
+        _payload = _item.payload if isinstance(_item, WorkerUnitResult) else _item
+        _rate_limits.append(_item.rate_limit if isinstance(_item, WorkerUnitResult) else None)
         try:
             _parsed_results[_idx] = _parse_result(_idx, _payload, units[_idx])
         except _RetryableCritiqueShapeError as exc:
@@ -439,9 +445,11 @@ def run_parallel_critique(
         _accumulate_scatter_totals(_retry_sr)
 
         _next_failures: dict[int, _RetryableCritiqueShapeError] = {}
-        for _subset_pos, _payload in enumerate(_retry_sr.ordered_results):
+        for _subset_pos, _item in enumerate(_retry_sr.ordered_results):
             _original_idx = _retry_indices[_subset_pos]
             _unit = _retry_units_by_index[_original_idx]
+            _payload = _item.payload if isinstance(_item, WorkerUnitResult) else _item
+            _rate_limits.append(_item.rate_limit if isinstance(_item, WorkerUnitResult) else None)
             try:
                 _parsed_results[_original_idx] = _parse_result(_original_idx, _payload, _unit)
             except _RetryableCritiqueShapeError as exc:
@@ -504,4 +512,5 @@ def run_parallel_critique(
         prompt_tokens=_total_prompt_tokens,
         completion_tokens=_total_completion_tokens,
         total_tokens=_total_tokens,
+        rate_limit=aggregate_rate_limits(_rate_limits),
     )

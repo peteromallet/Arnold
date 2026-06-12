@@ -221,6 +221,23 @@ def _merge_review_verdicts(
     return verdict_count, total_tasks, check_count, total_checks, missing_evidence
 
 
+def _wrap_parallel_review_worker(
+    merged_payload: dict[str, Any],
+    parallel_result: WorkerResult,
+) -> WorkerResult:
+    return WorkerResult(
+        payload=merged_payload,
+        raw_output=parallel_result.raw_output,
+        duration_ms=parallel_result.duration_ms,
+        cost_usd=parallel_result.cost_usd,
+        session_id=None,
+        prompt_tokens=parallel_result.prompt_tokens,
+        completion_tokens=parallel_result.completion_tokens,
+        total_tokens=parallel_result.total_tokens,
+        rate_limit=parallel_result.rate_limit,
+    )
+
+
 def _maker_requested_stop(plan_dir: Path) -> dict[str, str] | None:
     finalize_path = plan_dir / "finalize.json"
     if not finalize_path.exists():
@@ -654,16 +671,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 validate_payload("review", merged_payload)
                 atomic_write_json(plan_dir / "review.json", merged_payload)
                 _pkg.update_flags_after_review(plan_dir, merged_payload, iteration=state["iteration"])
-                worker = WorkerResult(
-                    payload=merged_payload,
-                    raw_output=parallel_result.raw_output,
-                    duration_ms=parallel_result.duration_ms,
-                    cost_usd=parallel_result.cost_usd,
-                    session_id=None,
-                    prompt_tokens=parallel_result.prompt_tokens,
-                    completion_tokens=parallel_result.completion_tokens,
-                    total_tokens=parallel_result.total_tokens,
-                )
+                worker = _wrap_parallel_review_worker(merged_payload, parallel_result)
                 agent, mode, refreshed = "hermes", "persistent", True
             except CliError as error:
                 clear_active_step(state, run_id=run_id)

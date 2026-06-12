@@ -95,6 +95,7 @@ def test_worker_result_round_trips_agent_result_losslessly() -> None:
         completion_tokens=13,
         total_tokens=24,
         shannon_plan={"kind": "resume", "session_id": "shannon-1"},
+        rate_limit={"window": "1h", "remaining": 42},
     )
 
     result = worker.to_agent_result()
@@ -110,6 +111,7 @@ def test_worker_result_round_trips_agent_result_losslessly() -> None:
     assert result.completion_tokens == worker.completion_tokens
     assert result.total_tokens == worker.total_tokens
     assert result.shannon_plan == worker.shannon_plan
+    assert result.rate_limit == worker.rate_limit
 
     round_tripped = WorkerResult.from_agent_result(result)
     assert round_tripped == worker

@@ -254,6 +254,7 @@ class WorkerResult:
     # session plan (kind, session_id, voice, pre-turn kinds + pre_sleep_s).
     # ``None`` for non-Shannon workers.
     shannon_plan: dict[str, Any] | None = None
+    rate_limit: dict[str, Any] | None = None
 
     @classmethod
     def from_agent_result(cls, agent_result: Any) -> WorkerResult:
@@ -271,6 +272,7 @@ class WorkerResult:
             completion_tokens=agent_result.completion_tokens,
             total_tokens=agent_result.total_tokens,
             shannon_plan=agent_result.shannon_plan,
+            rate_limit=agent_result.rate_limit,
         )
 
     def to_agent_result(self) -> Any:
@@ -290,6 +292,7 @@ class WorkerResult:
             completion_tokens=self.completion_tokens,
             total_tokens=self.total_tokens,
             shannon_plan=self.shannon_plan,
+            rate_limit=self.rate_limit,
         )
 
 
@@ -2798,6 +2801,9 @@ def run_step_with_worker(
                         ):
                             raise
                         attempted_retry = True
+                        # Deliberate contained engine-aware exception:
+                        # Shannon self-cleans with a fresh session, while
+                        # Codex records a stale session explicitly below before retrying.
                         # Retry on a fresh session so a wedged stream is not
                         # resumed back into the same stall.
                         effective_refreshed = True

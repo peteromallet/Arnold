@@ -8,6 +8,7 @@ import megaplan
 import megaplan.handlers
 import megaplan.workers
 from megaplan._core import load_plan
+from megaplan.handlers.critique import _rebuild_recovered_critique_worker
 from megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import PlanFixture, _make_plan_fixture_with_robustness, load_state
 
@@ -25,6 +26,27 @@ def test_tiny_critique_is_rejected(
 
     with pytest.raises(CliError, match="bare robustness skips critique"):
         megaplan.handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
+
+
+def test_recovered_critique_worker_preserves_rate_limit_metadata() -> None:
+    worker = WorkerResult(
+        payload={"checks": []},
+        raw_output="raw",
+        duration_ms=7,
+        cost_usd=0.5,
+        session_id="critique-session",
+        rate_limit={"provider": "test", "remaining": 3},
+    )
+
+    recovered = _rebuild_recovered_critique_worker(
+        worker,
+        {"checks": [{"id": "correctness"}]},
+        ["correctness"],
+    )
+
+    assert recovered.payload == {"checks": [{"id": "correctness"}]}
+    assert recovered.rate_limit == {"provider": "test", "remaining": 3}
+    assert "recovered critique payload" in recovered.raw_output
 
 
 def test_light_critique_routes_to_revise(

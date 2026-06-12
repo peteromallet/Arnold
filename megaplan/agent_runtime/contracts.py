@@ -63,6 +63,7 @@ class AgentResult:
     completion_tokens: int = 0
     total_tokens: int = 0
     shannon_plan: dict[str, Any] | None = None
+    rate_limit: dict[str, Any] | None = None
     provenance: ResultProvenance | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

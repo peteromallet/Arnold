@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
+from megaplan._core import WorkerUnitResult
 from megaplan._core.hermes_fanout import GenericScatterResult
 from megaplan.audits.robustness import checks_for_robustness
 from megaplan.workers.hermes import parse_agent_output
@@ -171,6 +172,58 @@ def test_run_parallel_critique_merges_in_original_order(monkeypatch: pytest.Monk
     assert result.payload["disputed_flag_ids"] == []
     # No session mutation
     assert result.session_id is None
+
+
+def test_run_parallel_critique_preserves_aggregate_rate_limits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks[:2])
+
+    def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
+        ordered_results: list[Any] = []
+        for index, unit in enumerate(kwargs["units"]):
+            payload = _raw_critique_payload(
+                _check_payload(enriched[index], f"Checked {enriched[index]['id']} with rate metadata.", flagged=False),
+                verified=[f"FLAG-{index}"],
+            )
+            ordered_results.append(
+                kwargs["parse_result"](
+                    index,
+                    WorkerUnitResult(
+                        payload=payload,
+                        raw_output="{}",
+                        duration_ms=1,
+                        cost_usd=0.1,
+                        rate_limit={"provider": f"check-{index}", "remaining": index},
+                    ),
+                    unit,
+                )
+            )
+        return GenericScatterResult(
+            ordered_results=ordered_results,
+            total_cost=0.2,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert result.rate_limit == {
+        "values": [
+            {"provider": "check-0", "remaining": 0},
+            {"provider": "check-1", "remaining": 1},
+        ]
+    }
 
 
 def test_run_parallel_critique_accepts_multi_check_payload_when_one_matches_unit(

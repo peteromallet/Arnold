@@ -66,6 +66,27 @@ def _critique_check_validator() -> Any:
     return validate_critique_checks
 
 
+def _rebuild_recovered_critique_worker(
+    worker: WorkerResult,
+    recovered_payload: dict[str, Any],
+    invalid_checks: list[str],
+) -> WorkerResult:
+    return WorkerResult(
+        payload=recovered_payload,
+        raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json; original worker failed validation for checks: " + ", ".join(invalid_checks),
+        duration_ms=worker.duration_ms,
+        cost_usd=worker.cost_usd,
+        session_id=worker.session_id,
+        trace_output=worker.trace_output,
+        rendered_prompt=worker.rendered_prompt,
+        model_actual=worker.model_actual,
+        prompt_tokens=worker.prompt_tokens,
+        completion_tokens=worker.completion_tokens,
+        total_tokens=worker.total_tokens,
+        rate_limit=worker.rate_limit,
+    )
+
+
 def _apply_adaptive_critique_routing(
     state: PlanState,
     args: argparse.Namespace,
@@ -533,19 +554,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             if recovered_payload is None:
                 _raise_step_validation_error(plan_dir=plan_dir, state=state, step="critique", iteration=iteration, worker=worker, code="invalid_critique", message="Critique output failed check validation: " + ", ".join(invalid_checks))
             _append_to_meta(state, "critique_validation_warnings", {"iteration": iteration, "invalid_checks": invalid_checks})
-            worker = WorkerResult(
-                payload=recovered_payload,
-                raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json; original worker failed validation for checks: " + ", ".join(invalid_checks),
-                duration_ms=worker.duration_ms,
-                cost_usd=worker.cost_usd,
-                session_id=worker.session_id,
-                trace_output=worker.trace_output,
-                rendered_prompt=worker.rendered_prompt,
-                model_actual=worker.model_actual,
-                prompt_tokens=worker.prompt_tokens,
-                completion_tokens=worker.completion_tokens,
-                total_tokens=worker.total_tokens,
-            )
+            worker = _rebuild_recovered_critique_worker(worker, recovered_payload, invalid_checks)
 
         unverifiable_checks = annotate_unverifiable_checks(
             worker.payload,
