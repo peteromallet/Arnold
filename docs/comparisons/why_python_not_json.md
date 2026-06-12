@@ -1,7 +1,7 @@
 # Why Python, Not JSON?
 
-The core question is: what text representation is best for agents working
-with Comfy workflows?
+The core question here is: what text representation of a Comfy workflow is best
+for agents to understand and actually work with?
 
 Earlier versions of VibeComfy tried to give agents better tools for working
 directly with ComfyUI JSON. That helped in narrow cases, but it still forced the
