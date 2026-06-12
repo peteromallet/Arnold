@@ -82,7 +82,9 @@ every fire is self-contained.
   `cd <project> && megaplan chain status --spec <spec>` — note completed vs
   pending milestones and `Last state`.
 - Check the current plan's `state.json`: `current_state`, `latest_failure`, and
-  the **freshness of `state.json` (heartbeat) vs `events.ndjson`**.
+  the worker channel in use. For Shannon stream-json runs, treat the stream
+  artifacts as the primary evidence: captured stream-json stdout, the current
+  `phase_result.json`, `events.ndjson`, and the transcript tail.
 - Is a worker process actually alive? (`pgrep -f "chain start"`, a `shannon`/
   `megaplan <phase>` child, etc.)
 - **Verify cumulative INTEGRATION, not just liveness — is HEAD advancing per
@@ -91,19 +93,45 @@ every fire is self-contained.
   worktree mid-epic is a RED FLAG that work is being stashed/lost (the classic
   `--no-push` + `require_clean_base` trap), not a benign `--no-push` artifact.
 
+#### Stream-json ground truth
+
+For the default Shannon stream-json worker, inspect the structured artifacts
+first:
+
+- **Stream-json stdout** shows the live event stream emitted by the native
+  worker turn and is the first place to check for progress, refusal metadata,
+  tool results, and terminal messages.
+- **`phase_result.json`** is the normalized phase outcome: exit kind,
+  retryability, worker metadata, landed-diff evidence, and completion status.
+- **`events.ndjson`** is the durable driver timeline: sampling decisions,
+  retries, errors, state transitions, and handoff points.
+- **Transcript tail** is the human-readable recent conversation context; use it
+  to understand what the worker was doing immediately before a stall or exit.
+
 ### 2. Distinguish a REAL stall from a false one
-- **False stall (do nothing):** `state.json` heartbeat is fresh (seconds) and
-  artifacts/worktree-files/batch-count are still climbing, even if
-  `events.ndjson` is minutes stale. Long Opus/execute turns log infrequently —
-  the heartbeat and file count are the truth. `megaplan chain status` may print
-  `stalled` from an idle-watchdog tick while the phase is genuinely working.
+- **False stall (do nothing):** for stream-json runs, stream-json stdout or the
+  transcript tail is still advancing, `phase_result.json` has not recorded a
+  terminal failure, and `state.json` heartbeat/artifact counts are fresh even if
+  `events.ndjson` is quiet. Long Opus/execute turns can log infrequently;
+  structured stream artifacts plus fresh heartbeat are the truth.
 - **Real stall (act):** no live worker, `latest_failure` set, `current_state`
-  unchanged with a stale heartbeat, or the driver process exited non-success.
+  unchanged with a stale heartbeat, `phase_result.json` records a terminal
+  failure, or the driver process exited non-success.
+
+#### Tmux fallback ground truth
+
+Tmux remains a maintained fallback when
+`MEGAPLAN_SHANNON_STREAM_WORKER=0`/`false`/`off`/`no` selects the legacy Shannon
+tmux worker. Only in that fallback mode, the tmux pane and its transcript tail
+are operational ground truth for the live turn. Continue to cross-check
+`state.json`, `events.ndjson`, and `phase_result.json` before acting, because
+driver state still determines whether a phase completed, failed, or will retry.
 
 ### 3. Unblock — diagnose ROOT, then fix
 Get to the actual root (read `latest_failure`, grep `events.ndjson` and the
-drive log for `429|auth|trust|worker_timeout|Traceback|Error|stall`). Don't
-patch a symptom. Common blockers + fixes (megaplan + Shannon/DeepSeek):
+stream-json stdout, `phase_result.json`, transcript tail, and drive log for
+`429|auth|trust|worker_timeout|Traceback|Error|stall`). Don't patch a symptom.
+Common blockers + fixes (megaplan + Shannon/DeepSeek):
 - **No/wrong model keys** → the spawned subprocess does NOT inherit the parent
   harness's auth. Find the real key source (e.g. megaplan's
   `auto_improve/api_keys.json`); route Claude via **Shannon** (uses the local

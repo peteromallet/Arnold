@@ -60,6 +60,7 @@ from megaplan.runtime.process import TmuxSession, kill_group, spawn
 
 
 from megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
+from megaplan.workers.turn_cap import acquire_turn_slot
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _CODEX_TEMPLATE_WRITE_STEPS = {"critique", "review"}
@@ -258,6 +259,9 @@ class WorkerResult:
     # ``None`` for non-Shannon workers.
     shannon_plan: dict[str, Any] | None = None
     rate_limit: dict[str, Any] | None = None
+    worker_channel: str | None = None
+    auth_channel: str | None = None
+    auth_metadata: dict[str, Any] | None = None
 
     @classmethod
     def from_agent_result(cls, agent_result: Any) -> WorkerResult:
@@ -276,6 +280,9 @@ class WorkerResult:
             total_tokens=agent_result.total_tokens,
             shannon_plan=agent_result.shannon_plan,
             rate_limit=agent_result.rate_limit,
+            worker_channel=(getattr(agent_result, "metadata", {}) or {}).get("worker_channel"),
+            auth_channel=(getattr(agent_result, "metadata", {}) or {}).get("auth_channel"),
+            auth_metadata=(getattr(agent_result, "metadata", {}) or {}).get("auth_metadata"),
         )
 
     def to_agent_result(self) -> Any:
@@ -296,6 +303,15 @@ class WorkerResult:
             total_tokens=self.total_tokens,
             shannon_plan=self.shannon_plan,
             rate_limit=self.rate_limit,
+            metadata={
+                key: value
+                for key, value in {
+                    "worker_channel": self.worker_channel,
+                    "auth_channel": self.auth_channel,
+                    "auth_metadata": self.auth_metadata,
+                }.items()
+                if value is not None
+            },
         )
 
 
@@ -1946,7 +1962,58 @@ def mock_worker_output(
     return result
 
 
-def session_key_for(step: str, agent: str, model: str | None = None) -> str:
+def _normalize_shannon_session_channel(worker_channel: str | None) -> str | None:
+    if worker_channel in {None, ""}:
+        return None
+    normalized = str(worker_channel).strip().lower().replace("-", "_")
+    if normalized in {"shannon_stream", "stream", "stream_json", "native_stream"}:
+        return "stream_json"
+    if normalized in {"shannon", "tmux", "interactive_tmux"}:
+        return "tmux"
+    return normalized
+
+
+def _shannon_session_identity_suffix(
+    *,
+    worker_channel: str | None,
+    auth_channel: str | None,
+    auth_metadata: dict[str, Any] | None,
+) -> str | None:
+    channel = _normalize_shannon_session_channel(worker_channel)
+    if channel is None:
+        return None
+    metadata = auth_metadata if isinstance(auth_metadata, dict) else {}
+    auth = str(auth_channel or metadata.get("auth_channel") or "subscription")
+    auth = auth.strip().lower().replace("-", "_")
+    if auth in {"", "oauth"}:
+        auth = "subscription"
+
+    # Historical Shannon session keys were tmux/subscription keys. Keep that
+    # exact spelling as the compatibility/migration path; all other Shannon
+    # channel identities get an explicit suffix so stream/tmux cannot cross-resume.
+    if channel == "tmux" and auth == "subscription":
+        return None
+
+    parts = [channel, auth]
+    if auth == "api_key":
+        dry_run = bool(metadata.get("dry_run"))
+        source = metadata.get("api_key_source")
+        parts.append("dry_run" if dry_run else "live")
+        if source:
+            digest = hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:8]
+            parts.append(digest)
+    return "_".join(parts)
+
+
+def session_key_for(
+    step: str,
+    agent: str,
+    model: str | None = None,
+    *,
+    worker_channel: str | None = None,
+    auth_channel: str | None = None,
+    auth_metadata: dict[str, Any] | None = None,
+) -> str:
     if step in {"plan", "revise"}:
         key = f"{agent}_planner"
     elif step == "critique":
@@ -1961,12 +2028,32 @@ def session_key_for(step: str, agent: str, model: str | None = None) -> str:
         key = f"{agent}_reviewer"
     else:
         key = f"{agent}_{step}"
+    if agent in {"shannon", "claude"}:
+        channel_suffix = _shannon_session_identity_suffix(
+            worker_channel=worker_channel,
+            auth_channel=auth_channel,
+            auth_metadata=auth_metadata,
+        )
+        if channel_suffix:
+            key += f"_{channel_suffix}"
     if model:
         key += f"_{hashlib.sha256(model.encode()).hexdigest()[:8]}"
     return key
 
 
-def update_session_state(step: str, agent: str, session_id: str | None, *, mode: str, refreshed: bool, model: str | None = None, existing_sessions: dict[str, Any] | None = None) -> tuple[str, SessionInfo] | None:
+def update_session_state(
+    step: str,
+    agent: str,
+    session_id: str | None,
+    *,
+    mode: str,
+    refreshed: bool,
+    model: str | None = None,
+    existing_sessions: dict[str, Any] | None = None,
+    worker_channel: str | None = None,
+    auth_channel: str | None = None,
+    auth_metadata: dict[str, Any] | None = None,
+) -> tuple[str, SessionInfo] | None:
     """Build a session entry for the given step.
 
     Returns ``(key, entry)`` so the caller can store it on the state dict,
@@ -1974,7 +2061,14 @@ def update_session_state(step: str, agent: str, session_id: str | None, *, mode:
     """
     if not session_id:
         return None
-    key = session_key_for(step, agent, model=model)
+    key = session_key_for(
+        step,
+        agent,
+        model=model,
+        worker_channel=worker_channel,
+        auth_channel=auth_channel,
+        auth_metadata=auth_metadata,
+    )
     if existing_sessions is None:
         existing_sessions = {}
     entry = {
@@ -1984,6 +2078,12 @@ def update_session_state(step: str, agent: str, session_id: str | None, *, mode:
         "last_used_at": now_utc(),
         "refreshed": refreshed,
     }
+    if worker_channel is not None:
+        entry["worker_channel"] = _normalize_shannon_session_channel(worker_channel) or worker_channel
+    if auth_channel is not None:
+        entry["auth_channel"] = str(auth_channel).strip().lower().replace("-", "_")
+    if auth_metadata is not None:
+        entry["auth_metadata"] = dict(auth_metadata)
     existing_entry = existing_sessions.get(key, {})
     if (
         isinstance(existing_entry, dict)
@@ -1997,6 +2097,30 @@ def update_session_state(step: str, agent: str, session_id: str | None, *, mode:
 _VALID_CLAUDE_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 _VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high")
 _CODEX_EFFORT_ALIASES = {"xhigh": "high", "max": "high"}
+
+
+def _turn_cap_channel_for_agent(agent: str) -> str:
+    if agent == "codex":
+        return "cli"
+    if agent == "claude":
+        return "shannon"
+    return agent
+
+
+def _run_with_turn_cap(
+    func: Callable[[], WorkerResult],
+    *,
+    engine: str,
+    step: str,
+    plan_dir: Path,
+) -> WorkerResult:
+    with acquire_turn_slot(
+        engine=engine,
+        channel=_turn_cap_channel_for_agent(engine),
+        step=step,
+        plan=plan_dir,
+    ):
+        return func()
 
 
 def _normalize_codex_effort(effort: str | None) -> str | None:
@@ -2031,7 +2155,7 @@ def _codex_model_flag(model: str | None) -> list[str]:
     return ["-c", f"model='{model}'"]
 
 
-def run_claude_step(
+def _run_claude_step_uncapped(
     step: str,
     state: PlanState,
     plan_dir: Path,
@@ -2064,7 +2188,34 @@ def run_claude_step(
     )
 
 
-def run_codex_step(
+def run_claude_step(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    root: Path,
+    fresh: bool,
+    prompt_override: str | None = None,
+    prompt_kwargs: dict[str, Any] | None = None,
+    effort: str | None = None,
+    model: str | None = None,
+    output_path: Path | None = None,
+) -> WorkerResult:
+    return _run_claude_step_uncapped(
+        step,
+        state,
+        plan_dir,
+        root=root,
+        fresh=fresh,
+        prompt_override=prompt_override,
+        prompt_kwargs=prompt_kwargs,
+        effort=effort,
+        model=model,
+        output_path=output_path,
+    )
+
+
+def _run_codex_step_uncapped(
     step: str,
     state: PlanState,
     plan_dir: Path,
@@ -2581,6 +2732,46 @@ def run_codex_step(
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
     )
+
+
+def run_codex_step(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    root: Path,
+    persistent: bool,
+    fresh: bool = False,
+    json_trace: bool = False,
+    prompt_override: str | None = None,
+    prompt_kwargs: dict[str, Any] | None = None,
+    effort: str | None = None,
+    model: str | None = None,
+    read_only: bool = False,
+    output_path: Path | None = None,
+) -> WorkerResult:
+    return _run_with_turn_cap(
+        lambda: _run_codex_step_uncapped(
+            step,
+            state,
+            plan_dir,
+            root=root,
+            persistent=persistent,
+            fresh=fresh,
+            json_trace=json_trace,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+            effort=effort,
+            model=model,
+            read_only=read_only,
+            output_path=output_path,
+        ),
+        engine="codex",
+        step=step,
+        plan_dir=plan_dir,
+    )
+
+
 def _is_agent_available(agent: str) -> bool:
     """Check if an agent is available (CLI binary or vendored for hermes)."""
     if agent == "hermes":
@@ -2881,7 +3072,7 @@ def run_step_with_worker(
                 # stall retries (fresh session) rather than failing the plan.
                 from megaplan._core.io import _shannon_stream_worker_enabled
 
-                if _shannon_stream_worker_enabled():
+                if _shannon_stream_worker_enabled(root=root, plan_id=str(state.get("name") or "")):
                     from megaplan.workers.shannon_stream import (
                         run_shannon_stream_step as run_shannon_worker_step,
                     )

@@ -628,6 +628,38 @@ class TestExternalError:
         assert result.external_error.error_kind == "rate_limit"
         assert result.external_error.retry_after_s == 9.0
 
+    def test_phase_result_guard_classifies_host_turn_cap_rate_limit(self, tmp_path: Path) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "meta": {"current_invocation_id": "inv"},
+                    "active_step": {"phase": "critique"},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(CliError):
+            with phase_result_guard(plan_dir):
+                raise CliError(
+                    "rate_limit",
+                    "Host premium-turn cap exhausted (3/3 slots active).",
+                    extra={"source": "host_turn_cap", "retryable": True},
+                )
+
+        result = read_phase_result(plan_dir)
+        assert result is not None
+        assert result.exit_kind == ExitKind.external_error.value
+        assert result.exit_kind != ExitKind.success.value
+        assert result.external_error is not None
+        assert result.external_error.provider == "host_turn_cap"
+        assert result.external_error.error_kind == "rate_limit"
+        assert result.external_error.source == "host_turn_cap"
+        assert result.external_error.provider_error_code == "host_turn_cap"
+        assert result.external_error.error_layer == "host_turn_cap"
+
     def test_phase_result_guard_classifies_shannon_worker_stall(self, tmp_path: Path) -> None:
         plan_dir = tmp_path / "plan"
         plan_dir.mkdir()

@@ -129,6 +129,7 @@ class ExternalError:
     request_id: str | None = None
     provider_error_code: str | None = None
     error_layer: str | None = None
+    source: str | None = None
     stall_timeout_s: float | None = None
     elapsed_s: float | None = None
     content_chunk_count: int | None = None
@@ -150,6 +151,8 @@ class ExternalError:
             payload["provider_error_code"] = self.provider_error_code
         if self.error_layer is not None:
             payload["error_layer"] = self.error_layer
+        if self.source is not None:
+            payload["source"] = self.source
         if self.stall_timeout_s is not None:
             payload["stall_timeout_s"] = self.stall_timeout_s
         if self.elapsed_s is not None:
@@ -193,6 +196,9 @@ class ExternalError:
                 str(payload["error_layer"])
                 if payload.get("error_layer") is not None
                 else None
+            ),
+            source=(
+                str(payload["source"]) if payload.get("source") is not None else None
             ),
             stall_timeout_s=(
                 float(payload["stall_timeout_s"])

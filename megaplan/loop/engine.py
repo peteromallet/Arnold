@@ -532,6 +532,9 @@ def run_loop_worker(
         mode=mode,
         refreshed=refreshed,
         model=resolved[3],
+        worker_channel=worker.worker_channel,
+        auth_channel=worker.auth_channel,
+        auth_metadata=worker.auth_metadata,
         existing_sessions=state["sessions"],
     )
     if session_update is not None:

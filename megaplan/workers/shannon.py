@@ -86,6 +86,7 @@ from megaplan.workers.shannon_session import (
     _shannon_run_nonce,
     plan_session as _shared_plan_session,
 )
+from megaplan.workers.turn_cap import acquire_turn_slot
 
 
 # Sentinel marker the vendored fork carries on line 2 of index.ts. Mirrors
@@ -510,6 +511,7 @@ class TurnContext:
     env: dict[str, str]
     work_dir: Path
     plan_dir: Path
+    step: str
     run_dir: Path
     tmux_session: TmuxSession
     state: PlanState
@@ -656,22 +658,28 @@ def run_turn(turn: Turn, ctx: TurnContext) -> TurnResult:
         launch_command = command
 
     try:
-        result = run_command(
-            launch_command,
-            cwd=ctx.work_dir,
-            stdin_text=stdin_text,
-            env=ctx.env,
-            timeout=turn.timeout,
-            activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
-            idle_timeout=_worker_stream_idle_timeout_seconds(),
-            liveness_probe=_make_shannon_liveness_probe(
-                ctx.tmux_session,
-                turn.session_id,
-                ctx.work_dir,
-                claude_config_dir=str(ctx.run_dir / "claude_config"),
-            ),
-            tmux_session=ctx.tmux_session,
-        )
+        with acquire_turn_slot(
+            engine="claude",
+            channel="shannon_tmux",
+            step=ctx.step,
+            plan=ctx.plan_dir,
+        ):
+            result = run_command(
+                launch_command,
+                cwd=ctx.work_dir,
+                stdin_text=stdin_text,
+                env=ctx.env,
+                timeout=turn.timeout,
+                activity_callback=_activity_callback_for_state(ctx.state, ctx.plan_dir),
+                idle_timeout=_worker_stream_idle_timeout_seconds(),
+                liveness_probe=_make_shannon_liveness_probe(
+                    ctx.tmux_session,
+                    turn.session_id,
+                    ctx.work_dir,
+                    claude_config_dir=str(ctx.run_dir / "claude_config"),
+                ),
+                tmux_session=ctx.tmux_session,
+            )
     except CliError as error:
         if error.code in {"worker_stall", "worker_timeout", "connection_error"}:
             error.extra["session_id"] = turn.session_id
@@ -1580,8 +1588,28 @@ def run_shannon_step(
             extra={"sessions": e.sessions, "pids": e.pids},
         ) from e
 
-    session_key = session_key_for(step, session_agent, model=model)
+    auth_metadata = {
+        "worker_channel": "tmux",
+        "auth_channel": "subscription",
+    }
+    session_key = session_key_for(
+        step,
+        session_agent,
+        model=model,
+        worker_channel=auth_metadata["worker_channel"],
+        auth_channel=auth_metadata["auth_channel"],
+        auth_metadata=auth_metadata,
+    )
     session = state["sessions"].get(session_key, {})
+    if not session:
+        stream_prefix = session_key_for(
+            step,
+            session_agent,
+            worker_channel="shannon_stream",
+            auth_channel="subscription",
+        )
+        if any(str(key).startswith(stream_prefix) for key in state["sessions"]):
+            fresh = True
     stored_session_id: str | None = session.get("id")
     # The id currently persisted in state["sessions"]. A /clear op rotates the
     # live id mid-run, so the stall/timeout handler must clear the entry whose
@@ -1700,6 +1728,7 @@ def run_shannon_step(
         env=env,
         work_dir=work_dir,
         plan_dir=plan_dir,
+        step=step,
         run_dir=run_dir,
         tmux_session=tmux_session,
         state=state,
@@ -1905,6 +1934,10 @@ def run_shannon_step(
             ) from repair_error
         raw = repaired_raw
 
+    shannon_plan = _serialize_session_plan(plan)
+    shannon_plan["worker_channel"] = auth_metadata["worker_channel"]
+    shannon_plan["auth_channel"] = auth_metadata["auth_channel"]
+    shannon_plan["auth_metadata"] = auth_metadata
     return WorkerResult(
         payload=payload,
         raw_output=raw,
@@ -1915,5 +1948,8 @@ def run_shannon_step(
         prompt_tokens=_extract_claude_usage(envelope)[0],
         completion_tokens=_extract_claude_usage(envelope)[1],
         total_tokens=sum(_extract_claude_usage(envelope)),
-        shannon_plan=_serialize_session_plan(plan),
+        shannon_plan=shannon_plan,
+        worker_channel=auth_metadata["worker_channel"],
+        auth_channel=auth_metadata["auth_channel"],
+        auth_metadata=auth_metadata,
     )

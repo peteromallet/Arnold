@@ -72,6 +72,7 @@ from megaplan.types import (
     StepResponse,
 )
 from megaplan.blocker_recovery import evaluate_quality_blockers
+from megaplan.bakeoff.channel_shadow import maybe_run_channel_shadow
 from megaplan.workers import WorkerResult
 from megaplan.workers.result_metadata import aggregate_rate_limits
 
@@ -373,6 +374,18 @@ def _run_and_merge_batch(
         resolved=am_for_worker,
         prompt_override=prompt_override,
     )
+    maybe_run_channel_shadow(
+        root=root,
+        plan_dir=plan_dir,
+        state=state,
+        args=args,
+        step="execute",
+        primary_worker=worker,
+        primary_agent=agent,
+        prompt_override=prompt_override,
+        sample_key=f"{state.get('name') or plan_dir.name}:execute:{batch_number}",
+        resolved=am_for_worker,
+    )
     payload = dict(worker.payload)
     deviations = list(payload.get("deviations", []))
     batch_task_id_set = set(batch_task_ids)
@@ -662,6 +675,9 @@ def handle_execute_one_batch(
         result.worker.session_id,
         mode=result.mode,
         refreshed=result.refreshed,
+        worker_channel=result.worker.worker_channel,
+        auth_channel=result.worker.auth_channel,
+        auth_metadata=result.worker.auth_metadata,
     )
     trace_written = _append_trace_output(plan_dir, result.worker.trace_output)
     blocking_reasons = build_blocking_reasons(
@@ -1630,6 +1646,9 @@ def handle_execute_auto_loop(
             result.worker.session_id,
             mode=result.mode,
             refreshed=result.refreshed,
+            worker_channel=result.worker.worker_channel,
+            auth_channel=result.worker.auth_channel,
+            auth_metadata=result.worker.auth_metadata,
         )
         # Track the actual tier-selected model identity for the next batch's
         # freshness comparison (timeout recovery paths read this same tracking).

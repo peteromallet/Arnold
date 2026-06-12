@@ -41,6 +41,7 @@ from megaplan.workers.shannon_session import (
     _shannon_run_nonce,
     plan_session,
 )
+from megaplan.workers.turn_cap import acquire_turn_slot
 
 
 _SHANNON_STREAM_READ_ONLY_ALLOWED_TOOLS = (
@@ -182,6 +183,8 @@ class ShannonStreamConfig:
     readiness_timeout_seconds: int
     readiness_probe_forced: bool
     voice: str
+    auth_channel: str
+    api_key_dry_run: bool
 
     @classmethod
     def load(cls, env: dict[str, str] | None = None) -> "ShannonStreamConfig":
@@ -226,6 +229,11 @@ class ShannonStreamConfig:
                 return default
 
         roulette = _truthy("MEGAPLAN_SHANNON_STREAM_SESSION_ROULETTE")
+        auth_channel = _get("MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL").lower()
+        if auth_channel in {"api-key", "api"}:
+            auth_channel = "api_key"
+        if auth_channel not in {"", "subscription", "api_key"}:
+            auth_channel = "subscription"
         return cls(
             execute_timeout_seconds=_int_pos(
                 "MEGAPLAN_SHANNON_STREAM_EXECUTE_TIMEOUT_SECONDS",
@@ -269,6 +277,10 @@ class ShannonStreamConfig:
             readiness_timeout_seconds=60,
             readiness_probe_forced=False,
             voice="native_stream",
+            auth_channel=auth_channel or "subscription",
+            api_key_dry_run=(
+                _truthy("MEGAPLAN_SHANNON_STREAM_API_DRY_RUN") is True
+            ),
         )
 
 
@@ -367,6 +379,27 @@ def _scrub_claude_code_env(env: dict[str, str]) -> None:
             env.pop(name, None)
 
 
+def _resolve_shannon_stream_api_key() -> tuple[str | None, str | None]:
+    narrow_key = os.environ.get("MEGAPLAN_SHANNON_STREAM_API_KEY", "").strip()
+    if narrow_key:
+        return narrow_key, "MEGAPLAN_SHANNON_STREAM_API_KEY"
+    inherited_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if inherited_key:
+        return inherited_key, "ANTHROPIC_API_KEY"
+    return None, None
+
+
+def _shannon_stream_auth_metadata(config: ShannonStreamConfig) -> dict[str, Any]:
+    key, source = _resolve_shannon_stream_api_key()
+    return {
+        "worker_channel": "shannon_stream",
+        "auth_channel": config.auth_channel,
+        "api_key_present": config.auth_channel == "api_key" and bool(key),
+        "api_key_source": source if config.auth_channel == "api_key" else None,
+        "dry_run": config.auth_channel == "api_key" and config.api_key_dry_run and not key,
+    }
+
+
 def build_shannon_stream_env(
     *,
     plan_dir: Path,
@@ -379,8 +412,9 @@ def build_shannon_stream_env(
 
     The base is the shared external-worker env so progress/session isolation
     stays aligned with the other workers. Stream-specific policy is layered on
-    top: Claude Code parent env is scrubbed, OAuth is preserved by forcing an
-    empty API key, and Claude's config/state is isolated under run artifacts.
+    top: Claude Code parent env is scrubbed, subscription OAuth is preserved by
+    forcing an empty API key only in subscription mode, and Claude's
+    config/state is isolated under run artifacts.
     """
     cfg = config or ShannonStreamConfig.load()
     plan_id = str(state.get("name", ""))
@@ -391,7 +425,39 @@ def build_shannon_stream_env(
 
     env = _external_worker_env(turn_id=turn_id or f"plan_worker_{plan_id}")
     _scrub_claude_code_env(env)
-    env["ANTHROPIC_API_KEY"] = ""
+    if cfg.auth_channel == "subscription":
+        env["ANTHROPIC_API_KEY"] = ""
+    elif cfg.auth_channel == "api_key":
+        api_key, _source = _resolve_shannon_stream_api_key()
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+        elif cfg.api_key_dry_run:
+            env["ANTHROPIC_API_KEY"] = ""
+        else:
+            raise CliError(
+                "auth_error",
+                "Shannon stream API-key auth requires ANTHROPIC_API_KEY or "
+                "MEGAPLAN_SHANNON_STREAM_API_KEY. Set "
+                "MEGAPLAN_SHANNON_STREAM_API_DRY_RUN=1 only for adapter "
+                "plumbing proof without live API billing.",
+                extra={
+                    "worker_channel": "shannon_stream",
+                    "auth_channel": "api_key",
+                    "source": "shannon_stream_auth",
+                },
+            )
+    else:
+        raise CliError(
+            "auth_error",
+            f"Unsupported Shannon stream auth channel: {cfg.auth_channel}",
+            extra={"worker_channel": "shannon_stream", "auth_channel": cfg.auth_channel},
+        )
+    auth_metadata = _shannon_stream_auth_metadata(cfg)
+    env["MEGAPLAN_WORKER_CHANNEL"] = auth_metadata["worker_channel"]
+    env["MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL"] = auth_metadata["auth_channel"]
+    env["MEGAPLAN_SHANNON_STREAM_API_DRY_RUN_ACTIVE"] = (
+        "1" if auth_metadata["dry_run"] else "0"
+    )
     env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
     env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", str(cfg.max_output_tokens))
     env["DISABLE_AUTOUPDATER"] = "1"
@@ -733,6 +799,7 @@ def parse_shannon_stream_output(
     *,
     duration_ms: int = 0,
     max_unknown_events: int | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> WorkerResult:
     """Parse native Claude ``stream-json`` NDJSON into a ``WorkerResult``.
 
@@ -830,11 +897,13 @@ def parse_shannon_stream_output(
     total_tokens = usage["total_tokens"] or total_tokens
     session_id = _extract_session_id(final_result) or session_id
 
+    trace_metadata = dict(metadata or {})
     trace_output = json.dumps(
         {
             "stream_event_count": len(lines),
             "unknown_events": unknown_events,
             "assistant_event_count": len(assistant_events),
+            **({"metadata": trace_metadata} if trace_metadata else {}),
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -851,6 +920,9 @@ def parse_shannon_stream_output(
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
         rate_limit=_pack_rate_limit(rate_limit_windows),
+        worker_channel=trace_metadata.get("worker_channel"),
+        auth_channel=trace_metadata.get("auth_channel"),
+        auth_metadata=trace_metadata or None,
     )
 
 
@@ -910,6 +982,7 @@ def _raise_for_native_stream_failure(
 def _run_native_stream_turn(
     turn: Turn,
     *,
+    step: str,
     state: PlanState,
     plan_dir: Path,
     config: ShannonStreamConfig,
@@ -934,18 +1007,24 @@ def _run_native_stream_turn(
         work_dir=launch.cwd,
         session_id=turn.session_id,
     )
-    return run_command(
-        launch.command,
-        cwd=launch.cwd,
-        stdin_text=launch.stdin_text,
-        env=env,
-        timeout=turn.timeout,
-        activity_callback=_activity_callback_for_state(state, plan_dir),
-        activity_guard=liveness.activity_guard,
-        idle_timeout=config.stream_idle_timeout_seconds,
-        progress_liveness_probe=liveness.probe,
-        progress_liveness_grace_timeout=config.stream_idle_timeout_seconds,
-    )
+    with acquire_turn_slot(
+        engine="claude",
+        channel="shannon_stream",
+        step=step,
+        plan=plan_dir,
+    ):
+        return run_command(
+            launch.command,
+            cwd=launch.cwd,
+            stdin_text=launch.stdin_text,
+            env=env,
+            timeout=turn.timeout,
+            activity_callback=_activity_callback_for_state(state, plan_dir),
+            activity_guard=liveness.activity_guard,
+            idle_timeout=config.stream_idle_timeout_seconds,
+            progress_liveness_probe=liveness.probe,
+            progress_liveness_grace_timeout=config.stream_idle_timeout_seconds,
+        )
 
 
 def run_shannon_stream_step(
@@ -1009,8 +1088,25 @@ def run_shannon_stream_step(
         config=config,
         turn_id=f'plan_worker_{state["name"]}',
     )
-    session_key = session_key_for(step, session_agent, model=model)
-    session = state.get("sessions", {}).get(session_key, {})
+    auth_metadata = _shannon_stream_auth_metadata(config)
+    session_key = session_key_for(
+        step,
+        session_agent,
+        model=model,
+        worker_channel=auth_metadata["worker_channel"],
+        auth_channel=auth_metadata["auth_channel"],
+        auth_metadata=auth_metadata,
+    )
+    sessions = state.get("sessions", {})
+    session = sessions.get(session_key, {}) if isinstance(sessions, dict) else {}
+    legacy_key = session_key_for(step, session_agent, model=model)
+    if (
+        not session
+        and isinstance(sessions, dict)
+        and session_key != legacy_key
+        and legacy_key in sessions
+    ):
+        fresh = True
     stored_session_id = session.get("id") if isinstance(session, dict) else None
     persisted_session_id = stored_session_id
     session_nonce = _shannon_run_nonce(state, step)
@@ -1032,6 +1128,7 @@ def run_shannon_stream_step(
         try:
             pre_result = _run_native_stream_turn(
                 pre_turn,
+                step=step,
                 state=state,
                 plan_dir=plan_dir,
                 config=config,
@@ -1083,6 +1180,7 @@ def run_shannon_stream_step(
     try:
         command_result = _run_native_stream_turn(
             main_turn,
+            step=step,
             state=state,
             plan_dir=plan_dir,
             config=config,
@@ -1117,6 +1215,7 @@ def run_shannon_stream_step(
                 raw_stdout,
                 duration_ms=command_result.duration_ms,
                 max_unknown_events=config.parser_max_unknown_events,
+                metadata=auth_metadata,
             )
         except CliError as error:
             raise _with_failure_context(
@@ -1135,6 +1234,7 @@ def run_shannon_stream_step(
             raw_stdout,
             duration_ms=command_result.duration_ms,
             max_unknown_events=config.parser_max_unknown_events,
+            metadata=auth_metadata,
         )
     except CliError as error:
         raise _with_failure_context(
@@ -1156,7 +1256,13 @@ def run_shannon_stream_step(
     result.payload = payload
     result.raw_output = raw_output
     result.rendered_prompt = prompt
+    shannon_plan["worker_channel"] = auth_metadata["worker_channel"]
+    shannon_plan["auth_channel"] = auth_metadata["auth_channel"]
+    shannon_plan["auth_metadata"] = auth_metadata
     result.shannon_plan = shannon_plan
+    result.worker_channel = auth_metadata["worker_channel"]
+    result.auth_channel = auth_metadata["auth_channel"]
+    result.auth_metadata = auth_metadata
     if result.session_id is None:
         result.session_id = main_turn.session_id
     if result.session_id is not None:

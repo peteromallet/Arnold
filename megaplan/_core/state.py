@@ -809,6 +809,9 @@ def apply_session_update(
     mode: str,
     refreshed: bool,
     model: str | None = None,
+    worker_channel: str | None = None,
+    auth_channel: str | None = None,
+    auth_metadata: dict[str, Any] | None = None,
 ) -> None:
     from megaplan.workers import update_session_state
 
@@ -819,6 +822,9 @@ def apply_session_update(
         mode=mode,
         refreshed=refreshed,
         model=model,
+        worker_channel=worker_channel,
+        auth_channel=auth_channel,
+        auth_metadata=auth_metadata,
         existing_sessions=state["sessions"],
     )
     if result is not None:

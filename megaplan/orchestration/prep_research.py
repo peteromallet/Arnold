@@ -434,6 +434,9 @@ def _run_prep_worker_step(
         mode=mode,
         refreshed=refreshed,
         model=resolved.resolved_model,
+        worker_channel=worker.worker_channel,
+        auth_channel=worker.auth_channel,
+        auth_metadata=worker.auth_metadata,
         existing_sessions=state.get("sessions"),
     )
     if session_update is not None and isinstance(state.get("sessions"), dict):

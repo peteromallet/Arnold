@@ -498,7 +498,17 @@ def _finalize_review_outcome(
     state["current_state"] = next_state
 
     clear_active_step(state)
-    apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
+    apply_session_update(
+        state,
+        "review",
+        agent,
+        worker.session_id,
+        mode=mode,
+        refreshed=refreshed,
+        worker_channel=worker.worker_channel,
+        auth_channel=worker.auth_channel,
+        auth_metadata=worker.auth_metadata,
+    )
     append_history(
         state,
         make_history_entry(

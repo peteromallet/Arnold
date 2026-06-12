@@ -2628,6 +2628,92 @@ def test_drive_auto_retries_stream_stall_once_for_non_execute_phase(tmp_path: Pa
     assert any(event.get("provider_error_code") == "timeout" for event in outcome.events)
 
 
+def test_drive_auto_retries_host_turn_cap_rate_limit(tmp_path: Path) -> None:
+    from megaplan.orchestration.phase_result import (
+        ExitKind,
+        PhaseResult,
+        atomic_write_phase_result,
+        phase_result_guard,
+        read_phase_result,
+    )
+
+    plan = "critique-host-cap-recovers"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    statuses = [_phase_status(plan, state="planned", next_step="critique"), _done_status(plan)]
+    run_calls: list[list[str]] = []
+    seen_external_errors: list[object] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        assert plan_name == plan
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        if len(run_calls) == 1:
+            (plan_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "name": plan,
+                        "current_state": "planned",
+                        "meta": {"current_invocation_id": "critique-attempt-1"},
+                        "active_step": {"phase": "critique"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with pytest.raises(CliError):
+                with phase_result_guard(plan_dir):
+                    raise CliError(
+                        "rate_limit",
+                        "Host premium-turn cap exhausted (3/3 slots active).",
+                        extra={"source": "host_turn_cap", "retryable": True},
+                    )
+            result = read_phase_result(plan_dir)
+            assert result is not None
+            assert result.exit_kind == ExitKind.external_error.value
+            assert result.external_error is not None
+            seen_external_errors.append(result.external_error)
+            return 1, "", "Host premium-turn cap exhausted."
+
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="critique",
+                invocation_id="critique-attempt-2",
+                exit_kind=ExitKind.success.value,
+            ),
+        )
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto,
+        "_run_megaplan",
+        side_effect=fake_run,
+    ):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            poll_sleep=0,
+            writer=lambda _message: None,
+        )
+
+    assert outcome.status == "done"
+    assert outcome.external_retries_used == 1
+    assert len(run_calls) == 2
+    assert run_calls[0] == ["critique", "--plan", plan]
+    assert run_calls[1] == ["critique", "--plan", plan, "--fresh"]
+    external_error = seen_external_errors[0]
+    assert getattr(external_error, "provider") == "host_turn_cap"
+    assert getattr(external_error, "source") == "host_turn_cap"
+    assert getattr(external_error, "error_kind") == "rate_limit"
+    assert any(
+        event.get("provider") == "host_turn_cap"
+        and event.get("error_kind") == "rate_limit"
+        for event in outcome.events
+    )
+
+
 def test_drive_blocks_after_retryable_external_error_fails_twice(tmp_path: Path) -> None:
     from megaplan.orchestration.phase_result import ExternalError
     from tests.conftest import make_fake_phase_result

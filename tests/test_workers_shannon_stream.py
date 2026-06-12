@@ -5,11 +5,38 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from megaplan.types import CliError
+from megaplan.workers._impl import session_key_for
+from megaplan.workers.turn_cap import HOST_TURN_CAP_SOURCE, acquire_turn_slot
 from tests._workers_helpers import _mock_state
+
+
+def _stream_session_metadata(
+    *, auth_channel: str = "subscription", dry_run: bool = False
+) -> dict[str, object]:
+    return {
+        "worker_channel": "shannon_stream",
+        "auth_channel": auth_channel,
+        "api_key_present": auth_channel == "api_key" and not dry_run,
+        "api_key_source": "MEGAPLAN_SHANNON_STREAM_API_KEY" if auth_channel == "api_key" and not dry_run else None,
+        "dry_run": dry_run,
+    }
+
+
+def _stream_session_key(step: str = "execute", *, model: str | None = "claude-opus-test") -> str:
+    metadata = _stream_session_metadata()
+    return session_key_for(
+        step,
+        "shannon",
+        model=model,
+        worker_channel=str(metadata["worker_channel"]),
+        auth_channel=str(metadata["auth_channel"]),
+        auth_metadata=metadata,
+    )
 
 
 def test_shannon_stream_config_is_limited_to_stream_knobs() -> None:
@@ -32,6 +59,8 @@ def test_shannon_stream_config_is_limited_to_stream_knobs() -> None:
         "readiness_timeout_seconds",
         "readiness_probe_forced",
         "voice",
+        "auth_channel",
+        "api_key_dry_run",
     }
 
 
@@ -65,6 +94,8 @@ def test_shannon_stream_config_loads_stream_env_with_shannon_fallbacks() -> None
     assert cfg.context_op_delay_max_seconds == 2.5
     assert cfg.handshake_probability == 0.0
     assert cfg.voice == "native_stream"
+    assert cfg.auth_channel == "subscription"
+    assert cfg.api_key_dry_run is False
 
 
 def test_build_shannon_stream_env_isolates_claude_and_locks_updates(
@@ -90,6 +121,9 @@ def test_build_shannon_stream_env_isolates_claude_and_locks_updates(
     assert "CLAUDE_CODE_SESSION_ID" not in env
     assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "777"
     assert env["ANTHROPIC_API_KEY"] == ""
+    assert env["MEGAPLAN_WORKER_CHANNEL"] == "shannon_stream"
+    assert env["MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL"] == "subscription"
+    assert env["MEGAPLAN_SHANNON_STREAM_API_DRY_RUN_ACTIVE"] == "0"
     assert env["CLAUDE_CONFIG_DIR"] == str(claude_config_dir)
     assert claude_config_dir.is_dir()
     assert claude_config_dir.is_relative_to(plan_dir / ".megaplan" / "runs")
@@ -101,6 +135,85 @@ def test_build_shannon_stream_env_isolates_claude_and_locks_updates(
         (claude_config_dir / "settings.json").read_text(encoding="utf-8")
     )
     assert settings["autoUpdates"] is False
+
+
+def test_build_shannon_stream_env_api_key_preserves_or_injects_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.workers.shannon_stream import (
+        ShannonStreamConfig,
+        build_shannon_stream_env,
+    )
+
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-inherited")
+
+    env, _ = build_shannon_stream_env(
+        plan_dir=plan_dir,
+        state=state,
+        step="execute",
+        config=ShannonStreamConfig.load(
+            {"MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL": "api_key"}
+        ),
+    )
+
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-inherited"
+    assert env["MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL"] == "api_key"
+
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_API_KEY", "sk-ant-narrow")
+    env, _ = build_shannon_stream_env(
+        plan_dir=plan_dir,
+        state=state,
+        step="execute",
+        config=ShannonStreamConfig.load(
+            {"MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL": "api_key"}
+        ),
+    )
+
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-narrow"
+
+
+def test_build_shannon_stream_env_api_key_requires_key_unless_dry_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.workers.shannon_stream import (
+        ShannonStreamConfig,
+        build_shannon_stream_env,
+    )
+
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("MEGAPLAN_SHANNON_STREAM_API_KEY", raising=False)
+
+    with pytest.raises(CliError) as exc_info:
+        build_shannon_stream_env(
+            plan_dir=plan_dir,
+            state=state,
+            step="execute",
+            config=ShannonStreamConfig.load(
+                {"MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL": "api_key"}
+            ),
+        )
+
+    assert exc_info.value.code == "auth_error"
+    assert exc_info.value.extra["auth_channel"] == "api_key"
+
+    env, _ = build_shannon_stream_env(
+        plan_dir=plan_dir,
+        state=state,
+        step="execute",
+        config=ShannonStreamConfig.load(
+            {
+                "MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL": "api_key",
+                "MEGAPLAN_SHANNON_STREAM_API_DRY_RUN": "1",
+            }
+        ),
+    )
+
+    assert env["ANTHROPIC_API_KEY"] == ""
+    assert env["MEGAPLAN_SHANNON_STREAM_API_DRY_RUN_ACTIVE"] == "1"
 
 
 def test_build_shannon_stream_env_sets_default_max_output_when_not_inherited(
@@ -493,10 +606,9 @@ def test_run_shannon_stream_step_launches_native_claude_and_builds_worker_result
 ) -> None:
     import megaplan.workers.shannon_stream as shannon_stream
     from megaplan.workers._impl import CommandResult
-    from megaplan.workers._impl import session_key_for
 
     plan_dir, state = _mock_state(tmp_path)
-    state["sessions"][session_key_for("execute", "shannon", model="claude-opus-test")] = {
+    state["sessions"][_stream_session_key()] = {
         "id": "existing-session"
     }
     monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_SESSION_ROULETTE", "off")
@@ -603,7 +715,369 @@ def test_run_shannon_stream_step_launches_native_claude_and_builds_worker_result
         "voice": "native_stream",
         "pre_turns": [],
         "main": {"delivery": "stdin", "resume": True, "pre_sleep_s": 0.0},
+        "worker_channel": "shannon_stream",
+        "auth_channel": "subscription",
+        "auth_metadata": {
+            "worker_channel": "shannon_stream",
+            "auth_channel": "subscription",
+            "api_key_present": False,
+            "api_key_source": None,
+            "dry_run": False,
+        },
     }
+    assert result.worker_channel == "shannon_stream"
+    assert result.auth_channel == "subscription"
+    assert result.auth_metadata == result.shannon_plan["auth_metadata"]
+    trace = json.loads(result.trace_output or "{}")
+    assert trace["metadata"] == result.auth_metadata
+
+
+def test_run_shannon_stream_step_does_not_resume_legacy_tmux_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import megaplan.workers.shannon_stream as shannon_stream
+    from megaplan.workers._impl import CommandResult
+
+    plan_dir, state = _mock_state(tmp_path)
+    state["sessions"][session_key_for("execute", "shannon", model="claude-opus-test")] = {
+        "id": "legacy-tmux-session"
+    }
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_SESSION_ROULETTE", "off")
+    calls: list[list[str]] = []
+    stdout = _ndjson(
+        {"type": "init", "session_id": "stream-session"},
+        {
+            "type": "result",
+            "status": "success",
+            "session_id": "stream-session",
+            "result": {"task_updates": [], "sense_check_acknowledgments": []},
+        },
+    )
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        return CommandResult(
+            command=command,
+            cwd=Path(kwargs["cwd"]),
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+            duration_ms=1,
+        )
+
+    monkeypatch.setattr(shannon_stream, "run_command", fake_run_command)
+
+    result = shannon_stream.run_shannon_stream_step(
+        "execute",
+        state,
+        plan_dir,
+        root=Path.cwd(),
+        fresh=False,
+        prompt_override="return execute json",
+        model="claude-opus-test",
+    )
+
+    assert len(calls) == 1
+    assert "--resume" not in calls[0]
+    assert calls[0][calls[0].index("--session-id") + 1] != "legacy-tmux-session"
+    assert result.session_id == "stream-session"
+
+
+def test_run_shannon_stream_step_records_api_auth_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import megaplan.workers.shannon_stream as shannon_stream
+    from megaplan.workers._impl import CommandResult
+
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL", "api_key")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_SESSION_ROULETTE", "off")
+    stdout = _ndjson(
+        {"type": "init", "session_id": "api-session", "model": "claude-test"},
+        {
+            "type": "result",
+            "status": "success",
+            "session_id": "api-session",
+            "result": {
+                "task_updates": [
+                    {
+                        "task_id": "T9",
+                        "status": "done",
+                        "executor_notes": "Recorded API auth metadata.",
+                        "files_changed": [],
+                        "commands_run": [],
+                    }
+                ],
+                "sense_check_acknowledgments": [],
+            },
+        },
+    )
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        assert env["ANTHROPIC_API_KEY"] == "sk-ant-test"
+        assert env["MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL"] == "api_key"
+        return CommandResult(
+            command=command,
+            cwd=Path(kwargs["cwd"]),
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+            duration_ms=9,
+        )
+
+    monkeypatch.setattr(shannon_stream, "run_command", fake_run_command)
+
+    result = shannon_stream.run_shannon_stream_step(
+        "execute",
+        state,
+        plan_dir,
+        root=Path.cwd(),
+        fresh=True,
+        prompt_override="Only produce `task_updates` for these tasks: ['T9']",
+        model="claude-opus-test",
+    )
+
+    assert result.worker_channel == "shannon_stream"
+    assert result.auth_channel == "api_key"
+    assert result.auth_metadata == {
+        "worker_channel": "shannon_stream",
+        "auth_channel": "api_key",
+        "api_key_present": True,
+        "api_key_source": "MEGAPLAN_SHANNON_STREAM_API_KEY",
+        "dry_run": False,
+    }
+    assert result.shannon_plan is not None
+    assert result.shannon_plan["auth_metadata"] == result.auth_metadata
+    trace = json.loads(result.trace_output or "{}")
+    assert trace["metadata"] == result.auth_metadata
+
+
+def test_shannon_stream_receipt_includes_auth_and_worker_channel_metadata(
+    tmp_path: Path,
+) -> None:
+    from megaplan.receipts import build_receipt
+    from megaplan.workers._impl import WorkerResult
+
+    plan_dir, state = _mock_state(tmp_path)
+    worker = WorkerResult(
+        payload={},
+        raw_output="",
+        duration_ms=12,
+        cost_usd=0.01,
+        session_id="sid",
+        shannon_plan={
+            "worker_channel": "shannon_stream",
+            "auth_channel": "api_key",
+        },
+        worker_channel="shannon_stream",
+        auth_channel="api_key",
+        auth_metadata={
+            "worker_channel": "shannon_stream",
+            "auth_channel": "api_key",
+            "api_key_present": True,
+            "api_key_source": "ANTHROPIC_API_KEY",
+            "dry_run": False,
+        },
+    )
+
+    receipt = build_receipt(
+        phase="execute",
+        state=state,
+        plan_dir=plan_dir,
+        args=SimpleNamespace(phase_model=[], profile=None, agent=None),
+        worker=worker,
+        agent="shannon",
+        mode="persistent",
+        output_file="execution.json",
+        artifact_hash="sha256:test",
+        verdict="success",
+    )
+
+    assert receipt["worker_channel"] == "shannon_stream"
+    assert receipt["auth_channel"] == "api_key"
+    assert receipt["auth_metadata"] == worker.auth_metadata
+
+
+def test_m3_api_adapter_proof_record_distinguishes_dry_run_from_live_proof() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    record_path = repo_root / "docs" / "shannon-stream-api-proof-record.json"
+    docs_path = repo_root / "docs" / "shannon-stream-channel-plan.md"
+
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    docs_text = docs_path.read_text(encoding="utf-8")
+
+    assert record["proof_kind"] in {"dry_run", "live"}
+    assert record["worker_channel"] == "shannon_stream"
+    assert record["auth_channel"] == "api_key"
+    assert record["phase"]
+    assert "cost_usd" in record
+    assert set(record["token_usage"]) == {
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+    }
+    assert "quota_rate_limit_evidence" in record
+    assert record["permission_mode"] == "bypassPermissions"
+    assert "payload_schema_validity" in record
+    assert record["migration_triggers"]
+
+    if record["proof_kind"] == "dry_run":
+        assert record["live_api_phase_completed"] is False
+        assert record["dry_run"]["validates"]
+        blocked_claims = set(record["dry_run"]["does_not_validate"])
+        assert "API-channel shadow parity" in blocked_claims
+        assert "stream-json default cutover" in blocked_claims
+        assert record["parity_evidence"]["status"] == "deferred"
+
+    assert "dry-run only" in docs_text
+    assert "validates adapter plumbing only" in docs_text
+    assert "does **not** validate live API billing" in docs_text
+    assert "downstream shadow/cutover work may only claim subscription" in docs_text
+
+
+def test_native_stream_turn_pre_sleep_does_not_hold_host_turn_slot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import megaplan.workers.shannon_stream as shannon_stream
+    from megaplan.workers._impl import CommandResult
+    from megaplan.workers.shannon_session import Turn
+
+    lock_dir = tmp_path / "turn-cap"
+    monkeypatch.setenv("MEGAPLAN_WORKER_TURN_CAP", "1")
+    monkeypatch.setenv("MEGAPLAN_WORKER_TURN_CAP_DIR", str(lock_dir))
+    plan_dir, state = _mock_state(tmp_path)
+    env, claude_config_dir = shannon_stream.build_shannon_stream_env(
+        plan_dir=plan_dir,
+        state=state,
+        step="execute",
+        config=shannon_stream.ShannonStreamConfig.load({}),
+        turn_id="plan_worker_test",
+    )
+    sleep_checked = False
+    subprocess_checked = False
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal sleep_checked
+        assert seconds == 1.5
+        with acquire_turn_slot(
+            engine="claude",
+            channel="probe",
+            step="sleep",
+            plan=plan_dir,
+            cap=1,
+            lock_dir=lock_dir,
+        ):
+            sleep_checked = True
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        nonlocal subprocess_checked
+        with pytest.raises(CliError) as exc_info:
+            with acquire_turn_slot(
+                engine="claude",
+                channel="probe",
+                step="subprocess",
+                plan=plan_dir,
+                cap=1,
+                lock_dir=lock_dir,
+            ):
+                pass
+        assert exc_info.value.code == "rate_limit"
+        assert exc_info.value.extra["source"] == HOST_TURN_CAP_SOURCE
+        subprocess_checked = True
+        return CommandResult(
+            command=command,
+            cwd=Path(kwargs["cwd"]),
+            returncode=0,
+            stdout='{"type":"result","status":"success","session_id":"sid"}\n',
+            stderr="",
+            duration_ms=8,
+        )
+
+    monkeypatch.setattr(shannon_stream.time, "sleep", fake_sleep)
+    monkeypatch.setattr(shannon_stream, "run_command", fake_run_command)
+
+    result = shannon_stream._run_native_stream_turn(
+        Turn(
+            session_id="sid",
+            resume=False,
+            body="hello",
+            delivery="stdin",
+            expect="envelope",
+            timeout=30,
+            pre_sleep_s=1.5,
+        ),
+        step="execute",
+        state=state,
+        plan_dir=plan_dir,
+        config=shannon_stream.ShannonStreamConfig.load({}),
+        env=env,
+        claude_config_dir=claude_config_dir,
+        model="claude-test",
+        read_only=False,
+        prompt="hello",
+    )
+
+    assert sleep_checked is True
+    assert subprocess_checked is True
+    assert result.returncode == 0
+
+
+def test_native_stream_turn_refuses_when_host_turn_cap_full(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import megaplan.workers.shannon_stream as shannon_stream
+    from megaplan.workers.shannon_session import Turn
+
+    lock_dir = tmp_path / "turn-cap"
+    monkeypatch.setenv("MEGAPLAN_WORKER_TURN_CAP", "1")
+    monkeypatch.setenv("MEGAPLAN_WORKER_TURN_CAP_DIR", str(lock_dir))
+    plan_dir, state = _mock_state(tmp_path)
+    config = shannon_stream.ShannonStreamConfig.load({})
+    env, claude_config_dir = shannon_stream.build_shannon_stream_env(
+        plan_dir=plan_dir,
+        state=state,
+        step="execute",
+        config=config,
+        turn_id="plan_worker_test",
+    )
+    monkeypatch.setattr(
+        shannon_stream,
+        "run_command",
+        lambda *args, **kwargs: pytest.fail("run_command must not launch when cap is full"),
+    )
+
+    with acquire_turn_slot(engine="codex", step="other", plan=plan_dir, cap=1, lock_dir=lock_dir):
+        with pytest.raises(CliError) as exc_info:
+            shannon_stream._run_native_stream_turn(
+                Turn(
+                    session_id="sid",
+                    resume=False,
+                    body="hello",
+                    delivery="stdin",
+                    expect="envelope",
+                    timeout=30,
+                    pre_sleep_s=0.0,
+                ),
+                step="execute",
+                state=state,
+                plan_dir=plan_dir,
+                config=config,
+                env=env,
+                claude_config_dir=claude_config_dir,
+                model="claude-test",
+                read_only=False,
+                prompt="hello",
+            )
+
+    assert exc_info.value.code == "rate_limit"
+    assert exc_info.value.extra["source"] == HOST_TURN_CAP_SOURCE
 
 
 def test_run_shannon_stream_step_preserves_raw_context_on_parse_failure(
@@ -648,10 +1122,9 @@ def test_run_shannon_stream_step_uses_clear_plan_and_resumes_landed_session(
 ) -> None:
     import megaplan.workers.shannon_stream as shannon_stream
     from megaplan.workers._impl import CommandResult
-    from megaplan.workers._impl import session_key_for
 
     plan_dir, state = _mock_state(tmp_path)
-    state["sessions"][session_key_for("execute", "shannon", model="claude-opus-test")] = {
+    state["sessions"][_stream_session_key()] = {
         "id": "stale-session"
     }
     monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_SESSION_COMPACT_PROBABILITY", "0")
@@ -718,10 +1191,9 @@ def test_run_shannon_stream_step_context_op_failure_starts_fresh_session(
 ) -> None:
     import megaplan.workers.shannon_stream as shannon_stream
     from megaplan.workers._impl import CommandResult
-    from megaplan.workers._impl import session_key_for
 
     plan_dir, state = _mock_state(tmp_path)
-    state["sessions"][session_key_for("execute", "shannon", model="claude-opus-test")] = {
+    state["sessions"][_stream_session_key()] = {
         "id": "stale-session"
     }
     monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_SESSION_COMPACT_PROBABILITY", "0")

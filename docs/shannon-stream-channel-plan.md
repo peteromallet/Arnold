@@ -109,6 +109,21 @@ semantics break, (b) sustained utilization structurally exceeds a set ceiling, (
 multi-tenant/commercial, or (d) any policy signal appears. The subscription channel is a *bounded tenant*
 of the seam; the API channel is the destination, wired and tested, not yet walked.
 
+**M3 API-adapter proof record (2026-06-12).** The current implementation environment has no live
+`ANTHROPIC_API_KEY` or `MEGAPLAN_SHANNON_STREAM_API_KEY`, so the recorded proof is **dry-run only**:
+`docs/shannon-stream-api-proof-record.json`. This validates adapter plumbing only: `api_key` auth-channel
+selection reaches `ShannonStreamWorker`, missing-key handling stays explicit, and non-secret auth metadata
+is present in traces and receipts. It does **not** validate live API billing, API quota/rate-limit
+behavior, API tool-permission parity, API-channel shadow parity, or stream-json default cutover. Until a
+live API-key-backed phase completes and writes cost, token, quota/rate-limit, permission-mode, and payload
+schema evidence into this record, downstream shadow/cutover work may only claim subscription
+stream-vs-tmux parity.
+
+Migration triggers remain the same whether this record is dry-run or live: switch the auth axis to API
+when the subscription stream path's rate-event schema or permission semantics break, sustained utilization
+exceeds the host-wide cap's safe operating envelope, megaplan becomes multi-tenant or commercial, or
+provider policy/billing guidance requires API-key usage.
+
 **4.4 Drift defense (always-on).** Today's "stream-json" is the vendored wrapper's *synthesized* events;
 the plan moves to Anthropic's **native** `--print` schema — a different, undocumented-stability surface,
 and the vendor has broken this surface twice (2.1.169 transcripts, 2.1.170 env behavior). So:
