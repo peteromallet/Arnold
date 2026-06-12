@@ -34,7 +34,7 @@ export interface VideoEditorRuntimeContextValue {
   extensions: VideoEditorExtensionRuntimeConfig;
 }
 
-const DataProviderContext = createContext<VideoEditorRuntimeContextValue | null>(null);
+export const DataProviderContext = createContext<VideoEditorRuntimeContextValue | null>(null);
 
 export function DataProviderWrapper({
   value,

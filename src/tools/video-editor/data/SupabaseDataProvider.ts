@@ -17,6 +17,13 @@ import {
   type LoadedTimeline,
   type UploadAssetOptions,
 } from '@/tools/video-editor/data/DataProvider.ts';
+import {
+  loadSyncBookmark,
+  saveKeepBothArtifact,
+  saveSyncBookmark,
+  type KeepBothArtifactRecord,
+  type SyncBookmarkRecord,
+} from '@/tools/video-editor/data/syncLedgerIndexedDb.ts';
 import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 import type { Checkpoint } from '@/tools/video-editor/types/history.ts';
 
@@ -27,6 +34,11 @@ const APPEND_SERVICE_URL_ENV = 'VITE_REIGH_APPEND_SERVICE_URL';
 
 type AppendServiceSuccess = {
   config_version?: unknown;
+  db_head?: {
+    version?: unknown;
+    hash?: unknown;
+    event_id?: unknown;
+  };
 };
 
 type AppendServiceFailure = {
@@ -34,6 +46,50 @@ type AppendServiceFailure = {
   detail?: unknown;
   details?: unknown;
 };
+
+type DbHeadSnapshot = {
+  version: number;
+  hash: string | null;
+  event_id: string | null;
+};
+
+type HeadRelation = 'equal' | 'advanced' | 'behind' | 'conflict';
+
+export type AppSyncState =
+  | 'up_to_date'
+  | 'source_only'
+  | 'destination_only'
+  | 'both_advanced'
+  | 'bookmark_missing'
+  | 'bookmark_incompatible';
+
+export type SyncTimelineAction =
+  | 'none'
+  | 'saved'
+  | 'reload_required'
+  | 'bookmark_bootstrapped'
+  | 'divergence_recorded';
+
+export interface SyncTimelineOptions {
+  timelineId: string;
+  config: TimelineConfig;
+  currentConfigVersion: number;
+  hasUnsavedEdits: boolean;
+  registry?: AssetRegistry;
+}
+
+export interface SyncTimelineResult {
+  state: AppSyncState;
+  action: SyncTimelineAction;
+  configVersion: number;
+  dbHead: DbHeadSnapshot;
+  bookmark: SyncBookmarkRecord | null;
+  keepBothArtifact?: {
+    id: string;
+    created_at: string;
+    remote_entry_id: string | null;
+  };
+}
 
 
 type TimelineCheckpointRow = {
@@ -44,6 +100,29 @@ type TimelineCheckpointRow = {
   trigger_type: Checkpoint['triggerType'];
   label: string;
   edits_since_last_checkpoint: number;
+};
+
+type SyncBookmarkRow = {
+  timeline_id?: unknown;
+  spoke?: unknown;
+  spoke_version?: unknown;
+  spoke_hash?: unknown;
+  spoke_event_id?: unknown;
+  hub_version?: unknown;
+  hub_hash?: unknown;
+  hub_event_id?: unknown;
+  synced_at?: unknown;
+};
+
+type AppBookmarkResponse = {
+  bookmark?: unknown;
+};
+
+type AppDivergenceResponse = {
+  divergence?: {
+    id?: unknown;
+    created_at?: unknown;
+  };
 };
 
 function mapCheckpointRow(row: TimelineCheckpointRow): Checkpoint {
@@ -116,6 +195,89 @@ function getAppendServiceErrorDetail(payload: unknown): string | null {
   return null;
 }
 
+function parseDbHead(value: unknown, label: string): DbHeadSnapshot {
+  if (!value || typeof value !== 'object') {
+    throw new Error(`${label} is required`);
+  }
+  const head = value as { version?: unknown; hash?: unknown; event_id?: unknown };
+  const version = head.version;
+  if (!Number.isInteger(version) || (version as number) < 0) {
+    throw new Error(`${label}.version must be a non-negative integer`);
+  }
+  if ((version as number) === 0) {
+    return { version: 0, hash: null, event_id: null };
+  }
+  if (typeof head.hash !== 'string' || head.hash.length === 0) {
+    throw new Error(`${label}.hash is required when version is non-zero`);
+  }
+  if (typeof head.event_id !== 'string' || head.event_id.length === 0) {
+    throw new Error(`${label}.event_id is required when version is non-zero`);
+  }
+  return {
+    version: version as number,
+    hash: head.hash,
+    event_id: head.event_id,
+  };
+}
+
+function normalizeSyncBookmark(value: unknown): SyncBookmarkRecord | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const row = value as SyncBookmarkRow;
+  if (typeof row.timeline_id !== 'string' || (row.spoke !== 'local' && row.spoke !== 'app')) {
+    return null;
+  }
+  const spokeVersion = row.spoke_version;
+  const hubVersion = row.hub_version;
+  if (!Number.isInteger(spokeVersion) || !Number.isInteger(hubVersion)) {
+    return null;
+  }
+  const bookmark: SyncBookmarkRecord = {
+    timeline_id: row.timeline_id,
+    spoke: row.spoke,
+    spoke_version: spokeVersion as number,
+    spoke_hash: typeof row.spoke_hash === 'string' ? row.spoke_hash : null,
+    spoke_event_id: typeof row.spoke_event_id === 'string' ? row.spoke_event_id : null,
+    hub_version: hubVersion as number,
+    hub_hash: typeof row.hub_hash === 'string' ? row.hub_hash : null,
+    hub_event_id: typeof row.hub_event_id === 'string' ? row.hub_event_id : null,
+    synced_at: typeof row.synced_at === 'string' ? row.synced_at : new Date(0).toISOString(),
+  };
+  return bookmark;
+}
+
+function buildBookmarkFromDbHead(timelineId: string, head: DbHeadSnapshot, syncedAt = new Date().toISOString()): SyncBookmarkRecord {
+  return {
+    timeline_id: timelineId,
+    spoke: 'app',
+    spoke_version: head.version,
+    spoke_hash: head.hash,
+    spoke_event_id: head.event_id,
+    hub_version: head.version,
+    hub_hash: head.hash,
+    hub_event_id: head.event_id,
+    synced_at: syncedAt,
+  };
+}
+
+function bookmarksEqual(left: SyncBookmarkRecord | null, right: SyncBookmarkRecord | null): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function compareDbHeadToBookmarkHead(head: DbHeadSnapshot, bookmark: SyncBookmarkRecord): HeadRelation {
+  if (head.version === bookmark.hub_version) {
+    return head.hash === bookmark.hub_hash && head.event_id === bookmark.hub_event_id ? 'equal' : 'conflict';
+  }
+  return head.version > bookmark.hub_version ? 'advanced' : 'behind';
+}
+
 export class SupabaseDataProvider implements DataProvider {
   constructor(
     private readonly options: {
@@ -124,13 +286,176 @@ export class SupabaseDataProvider implements DataProvider {
     },
   ) {}
 
-  async loadTimeline(timelineId: string): Promise<LoadedTimeline> {
+  private async loadDbHead(timelineId: string): Promise<DbHeadSnapshot> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('timeline_events')
+      .select('version, hash, event_id')
+      .eq('timeline_id', timelineId)
+      .order('version', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data) {
+      return { version: 0, hash: null, event_id: null };
+    }
+
+    return parseDbHead(data, 'db_head');
+  }
+
+  private async loadDbAppBookmark(timelineId: string): Promise<SyncBookmarkRecord | null> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('sync_bookmarks')
+      .select('timeline_id, spoke, spoke_version, spoke_hash, spoke_event_id, hub_version, hub_hash, hub_event_id, synced_at')
+      .eq('timeline_id', timelineId)
+      .eq('spoke', 'app')
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    return normalizeSyncBookmark(data);
+  }
+
+  private async saveLocalBookmark(bookmark: SyncBookmarkRecord): Promise<void> {
+    await saveSyncBookmark(bookmark);
+  }
+
+  private async recordRemoteAppBookmark(timelineId: string, dbHead: DbHeadSnapshot): Promise<SyncBookmarkRecord> {
+    const response = await fetch(
+      `${getAppendServiceBaseUrl()}/v1/timelines/${encodeURIComponent(timelineId)}/app-bookmark`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getUserJwt()}`,
+        },
+        body: JSON.stringify({ db_head: dbHead }),
+      },
+    );
+    const payload = await parseJsonIfPresent(response);
+    if (!response.ok) {
+      const detail = getAppendServiceErrorDetail(payload);
+      throw new Error(detail ? `Append service app bookmark failed: ${detail}` : `Append service app bookmark failed with status ${response.status}`);
+    }
+    const bookmark = normalizeSyncBookmark((payload as AppBookmarkResponse | null)?.bookmark);
+    if (!bookmark) {
+      throw new Error('Append service app bookmark returned an invalid bookmark');
+    }
+    await this.saveLocalBookmark(bookmark);
+    return bookmark;
+  }
+
+  private async createKeepBothArtifact(
+    timelineId: string,
+    config: TimelineConfig,
+    currentConfigVersion: number,
+    registry: AssetRegistry | undefined,
+    dbHead: DbHeadSnapshot,
+    bookmark: SyncBookmarkRecord | null,
+  ): Promise<KeepBothArtifactRecord> {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('timelines')
-      .select('config, config_version')
+      .select('config, config_version, asset_registry')
       .eq('id', timelineId)
       .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    const remoteConfig = serializeTimelineConfigSnapshot(
+      ((data as { config?: TimelineConfig | null } | null)?.config ?? createDefaultTimelineConfig()) as TimelineConfig,
+    ).config;
+    const remoteConfigVersion = typeof (data as { config_version?: unknown } | null)?.config_version === 'number'
+      ? (data as { config_version: number }).config_version
+      : 1;
+    const remoteRegistry = ((data as { asset_registry?: AssetRegistry | null } | null)?.asset_registry ?? { assets: {} }) as AssetRegistry;
+    const createdAt = new Date().toISOString();
+    const artifact: KeepBothArtifactRecord = {
+      id: `keep-both-${Date.now()}-${generateUUID()}`,
+      timeline_id: timelineId,
+      spoke: 'app',
+      created_at: createdAt,
+      artifact: {
+        kind: 'app_sync_divergence',
+        timeline_id: timelineId,
+        created_at: createdAt,
+        bookmark,
+        db_head: dbHead,
+        app_draft: {
+          config,
+          asset_registry: registry ?? null,
+          config_version: currentConfigVersion,
+        },
+        remote_timeline: {
+          config: remoteConfig,
+          asset_registry: remoteRegistry,
+          config_version: remoteConfigVersion,
+        },
+      },
+    };
+    await saveKeepBothArtifact(artifact);
+    return artifact;
+  }
+
+  private async recordRemoteDivergence(
+    timelineId: string,
+    config: TimelineConfig,
+    registry: AssetRegistry | undefined,
+    dbHead: DbHeadSnapshot,
+    artifact: KeepBothArtifactRecord,
+  ): Promise<{ id: string | null; created_at: string } | null> {
+    const response = await fetch(
+      `${getAppendServiceBaseUrl()}/v1/timelines/${encodeURIComponent(timelineId)}/app-divergence`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getUserJwt()}`,
+        },
+        body: JSON.stringify({
+          config,
+          asset_registry: registry,
+          db_head: dbHead,
+          source: 'editor_sync',
+          artifact_pointer: {
+            kind: 'indexeddb',
+            id: artifact.id,
+            created_at: artifact.created_at,
+          },
+        }),
+      },
+    );
+    if (response.status === 404) {
+      return null;
+    }
+    const payload = await parseJsonIfPresent(response);
+    if (!response.ok) {
+      return null;
+    }
+    const divergence = (payload as AppDivergenceResponse | null)?.divergence;
+    return {
+      id: typeof divergence?.id === 'string' ? divergence.id : null,
+      created_at: typeof divergence?.created_at === 'string' ? divergence.created_at : artifact.created_at,
+    };
+  }
+
+  async loadTimeline(timelineId: string): Promise<LoadedTimeline> {
+    const supabase = getSupabaseClient();
+    const [{ data, error }, dbHead] = await Promise.all([
+      supabase
+        .from('timelines')
+        .select('config, config_version')
+        .eq('id', timelineId)
+        .maybeSingle(),
+      this.loadDbHead(timelineId),
+    ]);
 
     if (error) {
       throw error;
@@ -139,12 +464,14 @@ export class SupabaseDataProvider implements DataProvider {
     const config = (data?.config ?? createDefaultTimelineConfig()) as TimelineConfig;
     const serialized = serializeTimelineConfigSnapshot(config);
 
-    return {
+    const loadedTimeline = {
       config: serialized.config,
       configVersion: typeof (data as { config_version?: unknown } | null)?.config_version === 'number'
         ? (data as { config_version: number }).config_version
         : 1,
     };
+    await this.saveLocalBookmark(buildBookmarkFromDbHead(timelineId, dbHead));
+    return loadedTimeline;
   }
 
   async saveTimeline(
@@ -188,7 +515,136 @@ export class SupabaseDataProvider implements DataProvider {
       throw new Error('Append service save returned an invalid config_version');
     }
 
+    const dbHead = parseDbHead((payload as AppendServiceSuccess).db_head, 'db_head');
+    await this.saveLocalBookmark(buildBookmarkFromDbHead(timelineId, dbHead));
     return (payload as AppendServiceSuccess).config_version as number;
+  }
+
+  async syncTimeline(options: SyncTimelineOptions): Promise<SyncTimelineResult> {
+    const { timelineId, config, currentConfigVersion, hasUnsavedEdits, registry } = options;
+    const [dbHead, localBookmark, remoteBookmark] = await Promise.all([
+      this.loadDbHead(timelineId),
+      loadSyncBookmark(timelineId, 'app'),
+      this.loadDbAppBookmark(timelineId),
+    ]);
+
+    if (localBookmark && remoteBookmark && !bookmarksEqual(localBookmark, remoteBookmark)) {
+      return {
+        state: 'bookmark_incompatible',
+        action: 'none',
+        configVersion: currentConfigVersion,
+        dbHead,
+        bookmark: localBookmark,
+      };
+    }
+
+    const bookmark = localBookmark ?? remoteBookmark;
+    if (!bookmark) {
+      if (!hasUnsavedEdits && currentConfigVersion === dbHead.version) {
+        const bootstrappedBookmark = await this.recordRemoteAppBookmark(timelineId, dbHead);
+        return {
+          state: 'bookmark_missing',
+          action: 'bookmark_bootstrapped',
+          configVersion: currentConfigVersion,
+          dbHead,
+          bookmark: bootstrappedBookmark,
+        };
+      }
+      if (hasUnsavedEdits && currentConfigVersion === dbHead.version) {
+        const nextVersion = await this.saveTimeline(timelineId, config, currentConfigVersion, registry);
+        return {
+          state: 'source_only',
+          action: 'saved',
+          configVersion: nextVersion,
+          dbHead: await this.loadDbHead(timelineId),
+          bookmark: await loadSyncBookmark(timelineId, 'app'),
+        };
+      }
+      if (!hasUnsavedEdits && currentConfigVersion < dbHead.version) {
+        return {
+          state: 'destination_only',
+          action: 'reload_required',
+          configVersion: currentConfigVersion,
+          dbHead,
+          bookmark: null,
+        };
+      }
+      return {
+        state: 'bookmark_incompatible',
+        action: 'none',
+        configVersion: currentConfigVersion,
+        dbHead,
+        bookmark: null,
+      };
+    }
+
+    const relation = compareDbHeadToBookmarkHead(dbHead, bookmark);
+    if (relation === 'equal') {
+      if (!localBookmark) {
+        await this.saveLocalBookmark(bookmark);
+      }
+      if (!remoteBookmark) {
+        await this.recordRemoteAppBookmark(timelineId, dbHead);
+      }
+      if (hasUnsavedEdits) {
+        const nextVersion = await this.saveTimeline(timelineId, config, currentConfigVersion, registry);
+        return {
+          state: 'source_only',
+          action: 'saved',
+          configVersion: nextVersion,
+          dbHead: await this.loadDbHead(timelineId),
+          bookmark: await loadSyncBookmark(timelineId, 'app'),
+        };
+      }
+      return {
+        state: 'up_to_date',
+        action: 'none',
+        configVersion: currentConfigVersion,
+        dbHead,
+        bookmark: await loadSyncBookmark(timelineId, 'app'),
+      };
+    }
+
+    if (relation === 'advanced') {
+      if (!hasUnsavedEdits) {
+        return {
+          state: 'destination_only',
+          action: 'reload_required',
+          configVersion: currentConfigVersion,
+          dbHead,
+          bookmark,
+        };
+      }
+      const artifact = await this.createKeepBothArtifact(
+        timelineId,
+        config,
+        currentConfigVersion,
+        registry,
+        dbHead,
+        bookmark,
+      );
+      const remoteDivergence = await this.recordRemoteDivergence(timelineId, config, registry, dbHead, artifact);
+      return {
+        state: 'both_advanced',
+        action: 'divergence_recorded',
+        configVersion: currentConfigVersion,
+        dbHead,
+        bookmark,
+        keepBothArtifact: {
+          id: artifact.id,
+          created_at: remoteDivergence?.created_at ?? artifact.created_at,
+          remote_entry_id: remoteDivergence?.id ?? null,
+        },
+      };
+    }
+
+    return {
+      state: 'bookmark_incompatible',
+      action: 'none',
+      configVersion: currentConfigVersion,
+      dbHead,
+      bookmark,
+    };
   }
 
   async saveCheckpoint(timelineId: string, checkpoint: Omit<Checkpoint, 'id'>): Promise<string> {

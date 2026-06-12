@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { Download, Eye, GripHorizontal, History, Maximize2, Minimize2, Redo2, Settings, SlidersHorizontal, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Download, Eye, GripHorizontal, History, Maximize2, Minimize2, Redo2, RefreshCw, Settings, SlidersHorizontal, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/shared/components/ui/alert-dialog.tsx';
 import { Badge } from '@/shared/components/ui/badge.tsx';
 import { Button } from '@/shared/components/ui/button.tsx';
@@ -38,6 +38,7 @@ import {
 } from '@/tools/video-editor/lib/mobile-interaction-model.ts';
 import { bootDiagnostics, MemoryPressureDetector } from '@/tools/video-editor/lib/perf-diagnostics.ts';
 import { useRenderDiagnostic } from '@/tools/video-editor/hooks/usePerfDiagnostics.ts';
+import { useEditorSync } from '@/tools/video-editor/hooks/useEditorSync.ts';
 import { dispatchAppEvent } from '@/shared/lib/typedEvents.ts';
 
 const MIN_TIMELINE_HEIGHT = 140;
@@ -129,6 +130,44 @@ function TimelineEditorShellCoreComponent({
     onKeepLocalChanges: chrome.retrySaveAfterConflict,
     onDiscardRemoteChanges: chrome.reloadFromServer,
   });
+  const sync = useEditorSync();
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [syncResultMessage, setSyncResultMessage] = useState<string | null>(null);
+
+  // Show sync result feedback and auto-clear
+  useEffect(() => {
+    if (sync.syncState === 'idle' || sync.syncState === 'syncing') {
+      return;
+    }
+    let message: string | null = null;
+    switch (sync.syncState) {
+      case 'up_to_date':
+        message = 'Timeline is up to date';
+        break;
+      case 'source_only_saved':
+        message = 'Local changes synced';
+        break;
+      case 'destination_only_reloaded':
+        message = 'Loaded latest from server';
+        break;
+      case 'both_advanced':
+        message = 'Divergence detected — both versions preserved';
+        setSyncDialogOpen(true);
+        break;
+      case 'bookmark_incompatible':
+        message = 'Sync bookmarks are incompatible';
+        break;
+      case 'error':
+        message = sync.syncError ?? 'Sync failed';
+        break;
+    }
+    setSyncResultMessage(message);
+    if (message && sync.syncState !== 'both_advanced') {
+      const timer = setTimeout(() => setSyncResultMessage(null), 4000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [sync.syncState, sync.syncError]);
 
   useEffect(() => {
     bootDiagnostics();
@@ -384,6 +423,33 @@ function TimelineEditorShellCoreComponent({
       {chrome.saveStatus}
     </Badge>
   );
+  const syncButton = sync.isSyncAvailable ? (
+    <div className="flex items-center gap-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className={cn(
+          toolbarButtonSizeClass,
+          sync.syncState === 'syncing' && 'animate-spin',
+          sync.syncState === 'source_only_saved' && 'text-green-400',
+          sync.syncState === 'both_advanced' && 'text-amber-400',
+          sync.syncState === 'bookmark_incompatible' && 'text-red-400',
+          sync.syncState === 'error' && 'text-red-400',
+        )}
+        onClick={() => void sync.performSync()}
+        disabled={sync.syncState === 'syncing'}
+        title="Sync timeline with database"
+      >
+        <RefreshCw className="h-3.5 w-3.5" />
+      </Button>
+      {syncResultMessage && sync.syncState !== 'both_advanced' && (
+        <span className="max-w-[140px] truncate text-[10px] text-muted-foreground">
+          {syncResultMessage}
+        </span>
+      )}
+    </div>
+  ) : null;
   const historyControls = (
     <>
       <Button
@@ -467,6 +533,7 @@ function TimelineEditorShellCoreComponent({
           </button>
         )}
         {saveBadge}
+        {syncButton}
         {historyControls}
       </div>
       {!condensed && (
@@ -766,6 +833,66 @@ function TimelineEditorShellCoreComponent({
           onOpenChange={setIsSequenceCreatorOpen}
         />
       )}
+
+      <AlertDialog open={syncDialogOpen} onOpenChange={setSyncDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Timeline divergence detected</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3 text-sm">
+              <p>
+                Both your local draft and the database version have advanced since the last sync.
+                Your local edits have been preserved in a keep-both artifact.
+              </p>
+              {sync.lastSyncResult?.keepBothArtifact && (
+                <div className="rounded-md border border-border bg-muted/50 p-3">
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                    Local artifact (IndexedDB)
+                  </div>
+                  <div className="font-mono text-[11px] text-foreground">
+                    ID: {sync.lastSyncResult.keepBothArtifact.id}
+                  </div>
+                  <div className="font-mono text-[11px] text-muted-foreground">
+                    Created: {sync.lastSyncResult.keepBothArtifact.created_at}
+                  </div>
+                  {sync.lastSyncResult.keepBothArtifact.remote_entry_id && (
+                    <>
+                      <div className="mt-2 mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                        Database divergence record
+                      </div>
+                      <div className="font-mono text-[11px] text-foreground">
+                        Entry ID: {sync.lastSyncResult.keepBothArtifact.remote_entry_id}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              {sync.lastSyncResult?.dbHead && (
+                <div className="text-[11px] text-muted-foreground">
+                  DB head: version {sync.lastSyncResult.dbHead.version}
+                  {sync.lastSyncResult.dbHead.hash && (
+                    <span className="font-mono"> — {sync.lastSyncResult.dbHead.hash.slice(0, 12)}&hellip;</span>
+                  )}
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                To resolve, load the latest from the database and reapply your changes, or continue editing
+                with your local version. Both versions are safely stored.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setSyncDialogOpen(false)}>Continue editing</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setSyncDialogOpen(false);
+                void chrome.reloadFromServer();
+              }}
+            >
+              Load latest from DB
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={conflict.isOpen} onOpenChange={conflict.setOpen}>
         <AlertDialogContent>
