@@ -5,6 +5,7 @@ VibeComfy makes ComfyUI workflows usable by agents.
 Its core job is translation: import a ComfyUI workflow, represent it as editable
 Python, validate the result, and compile it back to the API JSON that ComfyUI queues.
 JSON is the import/export format. Python is the authoring surface.
+See [Why Python, Not JSON?](docs/comparisons/why_python_not_json.md).
 
 The generated Python is intentionally ordinary code because Python is the
 language even small local agents tend to understand best. A ready template is a
@@ -183,6 +184,7 @@ evidence; do not make compiled API JSON the reusable source of truth.
 - [Porting workbench](docs/templates/porting_workbench.md)
 - [Adding templates and models](docs/templates/adding_templates_models.md)
 - [Testing user code](docs/testing/user_code.md)
+- [Why Python, not JSON?](docs/comparisons/why_python_not_json.md)
 - [ComfyScript comparison](docs/comparisons/comfyscript.md)
 
 ## Repository Layout
