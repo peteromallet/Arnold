@@ -1004,6 +1004,112 @@ def _load_contract_for_completed_record(root: Path, record: dict[str, Any]) -> d
     return None
 
 
+def _plan_dir_for_completed_record(root: Path, record: dict[str, Any]) -> Path | None:
+    plan_name = record.get("plan")
+    if not isinstance(plan_name, str) or not plan_name.strip():
+        return None
+    try:
+        return resolve_plan_dir(root, plan_name)
+    except CliError:
+        return root / ".megaplan" / "plans" / plan_name
+
+
+def _project_dir_from_plan_state(root: Path, state: dict[str, Any]) -> Path:
+    config = state.get("config") if isinstance(state.get("config"), dict) else {}
+    project_dir_str = config.get("project_dir") if isinstance(config, dict) else None
+    if isinstance(project_dir_str, str) and project_dir_str.strip():
+        return Path(project_dir_str)
+    return root
+
+
+def _verify_completed_chain(
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    chain_state: ChainState,
+) -> dict[str, Any]:
+    """Replay landed-diff-only completion verdicts for completed milestones.
+
+    This path is intentionally read-only: it uses only ``LandedDiffProvider``
+    (never ``DEFAULT_PROVIDERS``), does not write ``completion_verdict.json``,
+    and does not mutate chain state or plan artifacts.
+    """
+    from megaplan.orchestration.completion_contract import (
+        LandedDiffProvider,
+        CompletionSubject,
+        compute_verdict,
+        normalize_contract_mode,
+    )
+
+    verify_mode = normalize_contract_mode(chain_state.completion_contract_mode)
+    completed_records = _completed_records_by_label(chain_state)
+    milestones_payload: list[dict[str, Any]] = []
+    divergence_count = 0
+
+    for milestone in spec.milestones:
+        record = completed_records.get(milestone.label)
+        if not isinstance(record, dict):
+            continue
+        status = record.get("status")
+        if status not in {"done", "finalized"}:
+            continue
+
+        plan_dir = _plan_dir_for_completed_record(root, record)
+        plan_name = record.get("plan")
+        if plan_dir is None or not isinstance(plan_name, str) or not plan_name.strip():
+            continue
+
+        state = _read_plan_state_payload(root, plan_name) or {}
+        project_dir = _project_dir_from_plan_state(root, state)
+        milestone_base_sha = (
+            state.get("meta", {}).get("chain_policy", {}).get("milestone_base_sha")
+        )
+        verdict = compute_verdict(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state,
+            subject=CompletionSubject(
+                kind="milestone",
+                name=milestone.label,
+                to_state="done",
+                plan_name=plan_name,
+                milestone_label=milestone.label,
+            ),
+            mode=verify_mode,
+            providers=(LandedDiffProvider(),),
+            git_base_ref=milestone_base_sha,
+        )
+
+        landed_diff = next((ref for ref in verdict.evidence if ref.kind == "landed_diff"), None)
+        details = landed_diff.details if landed_diff is not None else {}
+        if not verdict.accepted:
+            divergence_count += 1
+        milestones_payload.append(
+            {
+                "label": milestone.label,
+                "plan": plan_name,
+                "status": status,
+                "accepted": verdict.accepted,
+                "would_block": verdict.would_block,
+                "failures": list(verdict.failures),
+                "files_claimed": list(details.get("files_claimed") or []),
+                "files_in_diff": list(details.get("files_in_diff") or []),
+                "evidence_window": dict(details.get("evidence_window") or {}),
+                "diff_source": details.get("diff_source"),
+            }
+        )
+
+    return {
+        "success": True,
+        "spec": str(spec_path),
+        "mode": verify_mode,
+        "milestone_count": len(spec.milestones),
+        "verified_count": len(milestones_payload),
+        "divergence_count": divergence_count,
+        "milestones": milestones_payload,
+    }
+
+
 def _contract_context_for_plan_only_milestone(
     root: Path,
     milestone: MilestoneSpec,
@@ -2171,18 +2277,48 @@ def _shadow_milestone_completion_verdict(
             newly_failing = delta_dict.get("newly_failing") or []
             deleted_tests = delta_dict.get("deleted_tests") or []
 
-            if not newly_failing and not deleted_tests:
-                return False
+            # Block when green-suite regressions exist OR verdict.would_block is true.
+            # This covers non-green-suite evidence failures (e.g. landed_diff
+            # unsatisfied under an authoritative declared window) that flip
+            # would_block independently of the delta nodeid sets.
+            if newly_failing or deleted_tests or verdict.would_block:
+                # Gather failing evidence refs for diagnostic logging.
+                failing_refs: list[dict[str, str]] = []
+                for ref in verdict.evidence:
+                    ev_status = getattr(ref.status, "value", str(ref.status))
+                    if ev_status in ("unsatisfied", "blocked"):
+                        failing_refs.append({"kind": ref.kind, "summary": ref.summary})
+                log.warning(
+                    "completion_contract_mode=enforce: blocking milestone %r; "
+                    "newly_failing=%r deleted_tests=%r would_block=%r "
+                    "failures=%r failing_evidence=%r "
+                    "delta_fields={newly_passing=%r still_red=%r still_green=%r "
+                    "added_tests=%r flakes=%r computable=%r}",
+                    milestone_label,
+                    list(newly_failing),
+                    list(deleted_tests),
+                    verdict.would_block,
+                    list(verdict.failures),
+                    failing_refs,
+                    delta_dict.get("newly_passing", []) or [],
+                    delta_dict.get("still_red", []) or [],
+                    delta_dict.get("still_green", []) or [],
+                    delta_dict.get("added_tests", []) or [],
+                    delta_dict.get("flakes", []) or [],
+                    delta_dict.get("computable"),
+                )
+                return True
 
-            # Blocking: newly_failing or deleted_tests present.
-            log.warning(
-                "completion_contract_mode=enforce: blocking milestone %r; "
-                "newly_failing=%r deleted_tests=%r",
+            # No green-suite regressions and verdict.would_block is False: pass through.
+            log.info(
+                "completion_contract_mode=enforce: milestone %r passes verification; "
+                "newly_failing=%r deleted_tests=%r would_block=%r",
                 milestone_label,
                 list(newly_failing),
                 list(deleted_tests),
+                verdict.would_block,
             )
-            return True
+            return False
 
         return False
     except Exception as exc:  # fail-open: never break a chain
@@ -3674,6 +3810,16 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Read chain state from this project directory instead of discovering from CWD.",
     )
 
+    verify_parser = chain_sub.add_parser(
+        "verify", help="Replay landed-diff completion evidence for completed milestones"
+    )
+    verify_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    verify_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Read chain plans from this project directory instead of discovering from CWD.",
+    )
+
     override_parser = chain_sub.add_parser(
         "override", help="Set runtime policy overrides without editing chain.yaml"
     )
@@ -3848,7 +3994,23 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0
 
-    if action not in (None, "start", "plan", "execute"):
+    if action == "verify":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        try:
+            spec = load_spec(spec_path)
+            chain_state = load_chain_state(spec_path)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(_verify_completed_chain(project_root, spec_path, spec, chain_state), indent=2)
+            + "\n"
+        )
+        return 0
+
+    if action not in (None, "start", "plan", "execute", "verify"):
         return _emit_error(CliError("invalid_args", f"Unknown chain action: {action}"))
 
     no_git_refresh = bool(getattr(args, "no_git_refresh", False))

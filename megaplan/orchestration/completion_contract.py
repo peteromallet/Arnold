@@ -68,11 +68,13 @@ def _resolve_test_idle_timeout(config: dict[str, Any]) -> int:
 #: Documented TODOs for the warn/enforce rollout. Kept as data so tests and
 #: tooling can assert the foundation is honest about what it does not yet do.
 SHADOW_TODOS: tuple[str, ...] = (
-    "landed_diff: capture a per-milestone base-ref checkpoint "
-    "(milestone_base_sha = git rev-parse HEAD at milestone start) and diff "
-    "<base>..HEAD instead of relying on working-tree `git status`. "
-    "validate_execution_evidence reads working-tree status only, which "
-    "mis-attributes carried WIP in a chain (the m5a worktree-carry false-pass).",
+    "landed_diff: formalize per-milestone base-ref checkpoint capture "
+    "(milestone_base_sha = git rev-parse HEAD at milestone start, stored "
+    "durably rather than passed ad-hoc by the chain driver). The evidence "
+    "window now uses a union of working-tree status and committed range "
+    "(base..HEAD when declared), but findings do not yet distinguish "
+    "committed-range paths from working-tree-only paths, so dirty-tree "
+    "noise can still mix into the unclaimed-change signal.",
     "worker_did_work: surface delegate tool_trace into a durable per-phase "
     "activity record; today shadow reads execution_batch_*.json commands_run/"
     "files_changed and marks 'unknown' when neither is present.",
@@ -491,13 +493,32 @@ class LandedDiffProvider:
 
         findings = result.get("findings") or []
         files_in_diff = result.get("files_in_diff") or []
+        evidence_window = result.get("evidence_window") or {}
+
+        # Derive diff_source from evidence_window per settled labels (SD1, SD2).
+        # Labels account for source provenance AND whether the committed range
+        # actually resolved, not merely the raw evidence_window.source string.
+        _ew_source = evidence_window.get("source", "")
+        if _ew_source == "declared":
+            diff_source = (
+                "declared_authoritative"
+                if evidence_window.get("base_sha") is not None
+                else "declared_unresolved"
+            )
+        elif _ew_source == "heuristic_merge_base":
+            diff_source = "heuristic"
+        else:
+            diff_source = "status_only"
+
         details = {
             "findings": findings,
             "files_in_diff": files_in_diff,
             "files_claimed": result.get("files_claimed") or [],
+            "committed_range_files": result.get("committed_range_files") or [],
             "skipped": bool(result.get("skipped")),
             "skip_reason": result.get("reason") or "",
-            "diff_source": "working_tree_git_status",
+            "diff_source": diff_source,
+            "evidence_window": evidence_window,
         }
 
         if result.get("skipped"):
@@ -514,16 +535,46 @@ class LandedDiffProvider:
         except Exception:
             prose = False
 
-        # Without a base..HEAD ref (see SHADOW_TODOS), the "unclaimed working-tree
-        # changes" finding is unreliable noise on a dirty/carried tree (the m5a
-        # carry case), so it is advisory-only in shadow. Real signals — phantom
-        # claims, hollow-done, pending/blocked-without-reason, perfunctory notes —
-        # still drive unsatisfied.
+        # Advisory-to-blocking narrowing (SD2): the "Git status shows changed
+        # files not claimed" finding is advisory-only for legacy/heuristic/
+        # unresolved windows (diff_source in {heuristic, declared_unresolved,
+        # status_only}) because the working-tree union can include dirty-tree
+        # noise and carried WIP from prior chain milestones.  When the declared
+        # milestone_base_sha..HEAD window actually resolved
+        # (diff_source=declared_authoritative), the committed-range portion of
+        # the union makes unclaimed changes a real signal — promote the finding
+        # to blocking.  Other findings (phantom claims, hollow-done,
+        # pending/blocked-without-reason, perfunctory notes) are always real.
         _advisory_prefix = "Git status shows changed files not claimed"
-        real_findings = [f for f in findings if not str(f).startswith(_advisory_prefix)]
-        details["advisory_findings"] = [
-            f for f in findings if str(f).startswith(_advisory_prefix)
-        ]
+
+        # Authoritative committed-range check: when the declared base resolves
+        # (diff_source=declared_authoritative), claimed files MUST be present
+        # in the committed base..HEAD range — working-tree-only uncommitted
+        # work is not sufficient evidence of "landed" work.  Files that appear
+        # in the union (files_in_diff) via git status but are absent from the
+        # committed range are flagged as unlanded claims.
+        if diff_source == "declared_authoritative":
+            # Resolved declared window → unclaimed changes are blocking.
+            real_findings = list(findings)
+            details["advisory_findings"] = []
+
+            committed_range_files = result.get("committed_range_files") or []
+            files_claimed = result.get("files_claimed") or []
+            committed_set = set(committed_range_files)
+            claimed_set = set(files_claimed)
+            unlanded_claims = sorted(claimed_set - committed_set)
+            if unlanded_claims:
+                real_findings.append(
+                    "Claimed files not present in committed base..HEAD range"
+                    " (working-tree only, not landed): "
+                    + ", ".join(unlanded_claims)
+                )
+        else:
+            # Heuristic, declared_unresolved, or status_only → advisory-only.
+            real_findings = [f for f in findings if not str(f).startswith(_advisory_prefix)]
+            details["advisory_findings"] = [
+                f for f in findings if str(f).startswith(_advisory_prefix)
+            ]
 
         # Empty diff in code mode == abandonment signal (unless a waiver exists,
         # which the driver folds in separately). Prose mode tracks sections.
@@ -538,7 +589,7 @@ class LandedDiffProvider:
             return EvidenceRef(
                 self.kind,
                 EvidenceStatus.unsatisfied,
-                "no files in working-tree diff (possible abandonment / zero-diff)",
+                "no files in diff (possible abandonment / zero-diff)",
                 details,
             )
         return EvidenceRef(

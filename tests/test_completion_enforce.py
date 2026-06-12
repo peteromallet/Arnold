@@ -15,6 +15,10 @@ from typing import Any
 import pytest
 
 from megaplan.orchestration.completion_contract import (
+    CompletionSubject,
+    CompletionVerdict,
+    EvidenceRef,
+    EvidenceStatus,
     extract_green_suite_info,
     normalize_contract_mode,
 )
@@ -562,6 +566,255 @@ def test_chain_enforce_runner_error_not_blocking(tmp_path, monkeypatch, caplog):
     assert blocked is False, "runner_error must not block chain milestone"
     assert any("runner_error" in r.message or "not blocking" in r.message or "not computable" in r.message
                 for r in caplog.records), "expected structured warning for runner_error"
+
+
+def test_chain_enforce_blocks_on_declared_committed_range_landed_diff(
+    tmp_path, monkeypatch, caplog
+):
+    """Declared committed-range landed_diff failures block in enforce mode."""
+    from megaplan.chain import _shadow_milestone_completion_verdict
+
+    root = tmp_path
+    plan_name = "declared-landed-diff-plan"
+    _make_chain_plan_dir(root, plan_name, mode="enforce")
+
+    verdict = CompletionVerdict(
+        mode="enforce",
+        subject=CompletionSubject(
+            kind="milestone",
+            name="milestone-1",
+            to_state="done",
+            plan_name=plan_name,
+            milestone_label="milestone-1",
+        ),
+        evidence=(
+            EvidenceRef(
+                "landed_diff",
+                EvidenceStatus.unsatisfied,
+                "execution evidence findings: claimed file missing from committed range",
+                {
+                    "diff_source": "committed_range",
+                    "evidence_window": {"source": "declared"},
+                },
+            ),
+            EvidenceRef(
+                "green_suite",
+                EvidenceStatus.satisfied,
+                "verification passed",
+                {"status": "passed", "delta": {"computable": True, "newly_failing": [], "deleted_tests": []}},
+            ),
+        ),
+        accepted=False,
+        failures=("landed_diff: execution evidence findings: claimed file missing from committed range",),
+    )
+    monkeypatch.setattr(
+        "megaplan.orchestration.completion_contract.compute_verdict",
+        lambda **kwargs: verdict,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="megaplan"):
+        blocked = _shadow_milestone_completion_verdict(
+            root, plan_name, "milestone-1", "done", "enforce", log_fn=lambda m: None
+        )
+
+    assert blocked is True
+    assert any(
+        "would_block=True" in r.message
+        or "landed_diff" in r.message
+        for r in caplog.records
+    )
+
+
+def test_chain_enforce_does_not_block_fallback_landed_diff(tmp_path, monkeypatch):
+    """Fallback working-tree/status landed_diff findings remain advisory in enforce."""
+    from megaplan.chain import _shadow_milestone_completion_verdict
+
+    root = tmp_path
+    plan_name = "fallback-landed-diff-plan"
+    _make_chain_plan_dir(root, plan_name, mode="enforce")
+
+    # Non-authoritative sources (status_only, unresolved) filter advisory findings
+    # and return satisfied — the enforcement trusts the verdict's would_block signal.
+    verdict = CompletionVerdict(
+        mode="enforce",
+        subject=CompletionSubject(
+            kind="milestone",
+            name="milestone-1",
+            to_state="done",
+            plan_name=plan_name,
+            milestone_label="milestone-1",
+        ),
+        evidence=(
+            EvidenceRef(
+                "landed_diff",
+                EvidenceStatus.satisfied,
+                "diff present and claim-consistent (advisory findings filtered)",
+                {
+                    "diff_source": "status_only",
+                    "evidence_window": {"source": "declared", "base_sha": None},
+                    "advisory_findings": [
+                        "Git status shows changed files not claimed by any task: unclaimed.py"
+                    ],
+                },
+            ),
+            EvidenceRef(
+                "green_suite",
+                EvidenceStatus.satisfied,
+                "verification passed",
+                {"status": "passed", "delta": {"computable": True, "newly_failing": [], "deleted_tests": []}},
+            ),
+        ),
+        accepted=True,
+        failures=(),
+    )
+    monkeypatch.setattr(
+        "megaplan.orchestration.completion_contract.compute_verdict",
+        lambda **kwargs: verdict,
+    )
+
+    blocked = _shadow_milestone_completion_verdict(
+        root, plan_name, "milestone-1", "done", "enforce", log_fn=lambda m: None
+    )
+
+    assert blocked is False
+
+
+def test_chain_enforce_does_not_block_heuristic_committed_range_landed_diff(
+    tmp_path, monkeypatch
+):
+    """Committed-range landed_diff with non-declared source falls through (not blocked)."""
+    from megaplan.chain import _shadow_milestone_completion_verdict
+
+    root = tmp_path
+    plan_name = "heuristic-landed-diff-plan"
+    _make_chain_plan_dir(root, plan_name, mode="enforce")
+
+    # Heuristic source filters advisory findings — landed_diff is satisfied.
+    verdict = CompletionVerdict(
+        mode="enforce",
+        subject=CompletionSubject(
+            kind="milestone",
+            name="milestone-1",
+            to_state="done",
+            plan_name=plan_name,
+            milestone_label="milestone-1",
+        ),
+        evidence=(
+            EvidenceRef(
+                "landed_diff",
+                EvidenceStatus.satisfied,
+                "diff present and claim-consistent (advisory findings filtered)",
+                {
+                    "diff_source": "heuristic",
+                    "evidence_window": {"source": "heuristic_merge_base"},
+                    "advisory_findings": [
+                        "Git status shows changed files not claimed by any task: unclaimed.py"
+                    ],
+                },
+            ),
+            EvidenceRef(
+                "green_suite",
+                EvidenceStatus.satisfied,
+                "verification passed",
+                {"status": "passed", "delta": {"computable": True, "newly_failing": [], "deleted_tests": []}},
+            ),
+        ),
+        accepted=True,
+        failures=(),
+    )
+    monkeypatch.setattr(
+        "megaplan.orchestration.completion_contract.compute_verdict",
+        lambda **kwargs: verdict,
+    )
+
+    blocked = _shadow_milestone_completion_verdict(
+        root, plan_name, "milestone-1", "done", "enforce", log_fn=lambda m: None
+    )
+
+    assert blocked is False
+
+
+def test_chain_enforce_does_not_block_satisfied_committed_range_landed_diff(
+    tmp_path, monkeypatch
+):
+    """Satisfied committed-range landed_diff with declared source does not block."""
+    from megaplan.chain import _shadow_milestone_completion_verdict
+
+    root = tmp_path
+    plan_name = "satisfied-landed-diff-plan"
+    _make_chain_plan_dir(root, plan_name, mode="enforce")
+
+    verdict = CompletionVerdict(
+        mode="enforce",
+        subject=CompletionSubject(
+            kind="milestone",
+            name="milestone-1",
+            to_state="done",
+            plan_name=plan_name,
+            milestone_label="milestone-1",
+        ),
+        evidence=(
+            EvidenceRef(
+                "landed_diff",
+                EvidenceStatus.satisfied,
+                "all claimed files present in committed range",
+                {
+                    "diff_source": "committed_range",
+                    "evidence_window": {"source": "declared"},
+                },
+            ),
+            EvidenceRef(
+                "green_suite",
+                EvidenceStatus.satisfied,
+                "verification passed",
+                {"status": "passed", "delta": {"computable": True, "newly_failing": [], "deleted_tests": []}},
+            ),
+        ),
+        accepted=True,
+        failures=(),
+    )
+    monkeypatch.setattr(
+        "megaplan.orchestration.completion_contract.compute_verdict",
+        lambda **kwargs: verdict,
+    )
+
+    blocked = _shadow_milestone_completion_verdict(
+        root, plan_name, "milestone-1", "done", "enforce", log_fn=lambda m: None
+    )
+
+    assert blocked is False
+
+
+def test_chain_enforce_blocks_on_deleted_tests(tmp_path, monkeypatch):
+    """Chain enforce mode + deleted_tests (baseline collected test missing from verification) → blocks."""
+    from megaplan.chain import _shadow_milestone_completion_verdict
+
+    root = tmp_path
+    plan_name = "deleted-tests-plan"
+    _make_chain_plan_dir(
+        root,
+        plan_name,
+        mode="enforce",
+        baseline_ids=["tests/test_foo.py::test_a", "tests/test_foo.py::test_b"],
+        baseline_failures=[],
+    )
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: _make_run_result(
+            failures=[],
+            passes=["tests/test_foo.py::test_a"],
+            collected_ids=["tests/test_foo.py::test_a"],
+            status="passed",
+            exit_code=0,
+        ),
+    )
+
+    blocked = _shadow_milestone_completion_verdict(
+        root, plan_name, "milestone-1", "done", "enforce", log_fn=lambda m: None
+    )
+
+    assert blocked is True, "deleted_tests must block chain milestone in enforce mode"
 
 
 def test_chain_enforce_revise_retry_cap(tmp_path, monkeypatch):

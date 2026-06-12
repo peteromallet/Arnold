@@ -1572,57 +1572,92 @@ def _shadow_completion_verdict(
             newly_failing = delta_dict.get("newly_failing") or []
             deleted_tests = delta_dict.get("deleted_tests") or []
 
-            if not newly_failing and not deleted_tests:
-                # No regressions: proceed.
-                return "done"
+            # Block when green-suite regressions exist OR verdict.would_block is true.
+            # This covers non-green-suite evidence failures (e.g. landed_diff
+            # unsatisfied under an authoritative declared window) that flip
+            # would_block independently of the delta nodeid sets.
+            if newly_failing or deleted_tests or verdict.would_block:
+                # Gather failing evidence refs for diagnostic logging.
+                failing_refs: list[dict[str, str]] = []
+                for ref in verdict.evidence:
+                    ev_status = getattr(ref.status, "value", str(ref.status))
+                    if ev_status in ("unsatisfied", "blocked"):
+                        failing_refs.append({"kind": ref.kind, "summary": ref.summary})
 
-            # Blocking: newly_failing or deleted_tests present.
-            max_retries = int(config.get("enforce_revise_max_retries", 2))
-            retry_count = int(state.get("enforce_revise_count", 0))
-
-            if retry_count >= max_retries:
                 _log.warning(
-                    "completion_contract_mode=enforce: plan %r blocked; revise retry cap %d "
-                    "exhausted — operator action required; newly_failing=%r deleted_tests=%r",
+                    "completion_contract_mode=enforce: blocking plan %r; "
+                    "newly_failing=%r deleted_tests=%r would_block=%r "
+                    "failures=%r failing_evidence=%r "
+                    "delta_fields={newly_passing=%r still_red=%r still_green=%r "
+                    "added_tests=%r flakes=%r computable=%r}",
                     plan,
-                    max_retries,
                     list(newly_failing),
                     list(deleted_tests),
+                    verdict.would_block,
+                    list(verdict.failures),
+                    failing_refs,
+                    delta_dict.get("newly_passing", []) or [],
+                    delta_dict.get("still_red", []) or [],
+                    delta_dict.get("still_green", []) or [],
+                    delta_dict.get("added_tests", []) or [],
+                    delta_dict.get("flakes", []) or [],
+                    delta_dict.get("computable"),
+                )
+
+                max_retries = int(config.get("enforce_revise_max_retries", 2))
+                retry_count = int(state.get("enforce_revise_count", 0))
+
+                if retry_count >= max_retries:
+                    _log.warning(
+                        "completion_contract_mode=enforce: plan %r blocked; revise retry cap %d "
+                        "exhausted — operator action required",
+                        plan,
+                        max_retries,
+                    )
+                    try:
+                        write_plan_state(
+                            plan_dir,
+                            mode="patch-many",
+                            patch={"current_state": STATE_BLOCKED},
+                        )
+                    except Exception:
+                        pass
+                    return "operator_required"
+
+                log(
+                    f"completion_contract_mode=enforce: blocking plan {plan!r} — "
+                    f"routing to revise (retry {retry_count + 1}/{max_retries})"
                 )
                 try:
                     write_plan_state(
                         plan_dir,
                         mode="patch-many",
-                        patch={"current_state": STATE_BLOCKED},
+                        patch={
+                            "current_state": STATE_CRITIQUED,
+                            "last_gate": {"recommendation": "ITERATE"},
+                            "enforce_revise_count": retry_count + 1,
+                        },
                     )
-                except Exception:
-                    pass
-                return "operator_required"
+                except Exception as exc:
+                    _log.warning(
+                        "completion_contract_mode=enforce: failed to patch state for plan %r — "
+                        "failing open: %s",
+                        plan,
+                        exc,
+                    )
+                    return "done"
+                return "routed"
 
-            log(
-                f"completion_contract_mode=enforce: blocking plan {plan!r} — "
-                f"routing to revise (retry {retry_count + 1}/{max_retries}); "
-                f"newly_failing={list(newly_failing)!r} deleted_tests={list(deleted_tests)!r}"
+            # No green-suite regressions and verdict.would_block is False: pass through.
+            _log.info(
+                "completion_contract_mode=enforce: plan %r passes verification; "
+                "newly_failing=%r deleted_tests=%r would_block=%r",
+                plan,
+                list(newly_failing),
+                list(deleted_tests),
+                verdict.would_block,
             )
-            try:
-                write_plan_state(
-                    plan_dir,
-                    mode="patch-many",
-                    patch={
-                        "current_state": STATE_CRITIQUED,
-                        "last_gate": {"recommendation": "ITERATE"},
-                        "enforce_revise_count": retry_count + 1,
-                    },
-                )
-            except Exception as exc:
-                _log.warning(
-                    "completion_contract_mode=enforce: failed to patch state for plan %r — "
-                    "failing open: %s",
-                    plan,
-                    exc,
-                )
-                return "done"
-            return "routed"
+            return "done"
 
         return "done"
     except Exception as exc:  # fail-open: a verdict bug must never break a run

@@ -8,7 +8,11 @@ from typing import Any
 
 from megaplan.types import PlanState
 from megaplan._core import is_prose_mode
-from megaplan.loop.git import _collect_git_status_paths_with_nested_repos, _normalize_repo_path
+from megaplan.loop.git import (
+    _collect_committed_range_paths,
+    _collect_git_status_paths_with_nested_repos,
+    _normalize_repo_path,
+)
 
 from .rubber_stamp import _is_perfunctory_ack, is_rubber_stamp
 
@@ -153,6 +157,7 @@ def _validate_execution_evidence_code(
             "findings": findings,
             "files_in_diff": [],
             "files_claimed": files_claimed,
+            "committed_range_files": [],
             "skipped": True,
             "reason": "Project directory is not a git repository.",
             "evidence_window": {
@@ -170,6 +175,15 @@ def _validate_execution_evidence_code(
         "source": "declared" if base_ref is not None else "heuristic_merge_base",
     }
 
+    # Collect committed-range-only paths separately so callers can distinguish
+    # landed (committed base..HEAD) work from working-tree-only noise when the
+    # declared milestone base resolves.
+    committed_range_files: list[str] = []
+    if base_ref is not None and base_sha is not None:
+        committed_range_files = sorted(
+            _collect_committed_range_paths(project_dir, base_ref=base_ref)
+        )
+
     files_in_diff_set, status_error = _collect_git_status_paths_with_nested_repos(
         project_dir,
         claimed_paths=set(files_claimed),
@@ -185,6 +199,7 @@ def _validate_execution_evidence_code(
             "findings": findings,
             "files_in_diff": [],
             "files_claimed": files_claimed,
+            "committed_range_files": committed_range_files,
             "skipped": True,
             "reason": status_error,
             "evidence_window": evidence_window,
@@ -289,6 +304,7 @@ def _validate_execution_evidence_code(
         "findings": findings,
         "files_in_diff": files_in_diff,
         "files_claimed": files_claimed,
+        "committed_range_files": committed_range_files,
         "skipped": False,
         "reason": "",
         "evidence_window": evidence_window,

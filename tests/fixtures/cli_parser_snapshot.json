@@ -1345,7 +1345,7 @@
               "const": true,
               "default": false,
               "dest": "no_push",
-              "help": "Disable milestone branch creation, PR creation, commits, and pushes. Also enabled by MEGAPLAN_CHAIN_NO_PUSH=1; intended for local/no-network tests.",
+              "help": "Disable milestone branch creation, PR creation, and pushes to origin. Milestones still commit LOCALLY onto the base branch as they complete, so HEAD advances and each builds on the previous one's integrated tree (publish later with a manual git push). Also enabled by MEGAPLAN_CHAIN_NO_PUSH=1; intended for local/no-network runs.",
               "metavar": null,
               "nargs": "0",
               "option_strings": [
@@ -2039,6 +2039,59 @@
                   "default": null,
                   "dest": "project_dir",
                   "help": "Read chain state from this project directory instead of discovering from CWD.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "verify": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": "Path to the chain spec YAML",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": "Read chain plans from this project directory instead of discovering from CWD.",
                   "metavar": null,
                   "nargs": null,
                   "option_strings": [
@@ -4872,6 +4925,21 @@
               "nargs": "0",
               "option_strings": [
                 "--with-feedback"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreFalseAction",
+              "choices": null,
+              "const": false,
+              "default": true,
+              "dest": "prep_clarify",
+              "help": "Disable the prep clarify gate so the prep phase never halts at awaiting_human_verify to ask a clarifying question (it proceeds with its best understanding instead). Only effective when prep runs. Used by chain milestones with prep_clarify: false for unattended runs.",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--no-prep-clarify"
               ],
               "required": false,
               "type": null
