@@ -125,12 +125,13 @@ setup is documented in
 
 ### Use VibeComfy Through Astrid
 
-Astrid is the higher-level agentic art harness one level above this repo. Use
-VibeComfy for workflow translation and execution; use Astrid for agent/human
-creative runs around image, video, and audio assets.
+[Astrid](https://github.com/peteromallet/Astrid) is the higher-level agentic
+art harness one level above this repo. Use VibeComfy for workflow translation
+and execution; use Astrid for agent/human creative runs around image, video, and
+audio assets.
 
 ```text
-Clone https://github.com/banodoco/Astrid, install it editable with `cd Astrid && python -m pip install -e .`, run `python3 -m astrid skills install --all`, then run `python3 -m astrid skills doctor`.
+Clone https://github.com/peteromallet/Astrid, install it editable with `cd Astrid && python -m pip install -e .`, run `python3 -m astrid skills install --all`, then run `python3 -m astrid skills doctor`.
 Use `python3 -m astrid --help`, `python3 -m astrid status`, and `python3 -m astrid next` to attach or create the working project; treat `astrid next` as the canonical next-action oracle.
 Explain how Astrid can use VibeComfy-backed image, video, or audio workflows inside an agent/human creative run. Start with one small demo plan, use VibeComfy for workflow translation/execution, and validate before any GPU run.
 ```
