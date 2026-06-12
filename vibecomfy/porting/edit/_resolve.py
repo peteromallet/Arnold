@@ -362,7 +362,7 @@ class _ResolveMixin:
                 _unsafe(
                     func,
                     "intent_class_construction_not_allowed",
-                    "Editor-only vibecomfy.* intent classes cannot be constructed from the Python edit surface.",
+                    "Editor-only vibecomfy.* intent classes cannot be constructed from the Python edit surface. Use vibecomfy.exec for executable Python code nodes.",
                 )
             ]
         if class_type is None:
@@ -372,7 +372,7 @@ class _ResolveMixin:
                 _unsafe(
                     func,
                     "intent_class_construction_not_allowed",
-                    "Editor-only vibecomfy.* intent classes cannot be constructed from the Python edit surface.",
+                    "Editor-only vibecomfy.* intent classes cannot be constructed from the Python edit surface. Use vibecomfy.exec for executable Python code nodes.",
                 )
             ]
 

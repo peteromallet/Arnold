@@ -89,7 +89,10 @@ export function submitReadinessState(panel, deps = {}) {
   };
 }
 
-export function syncComposerButtons(panel, { submitting = false, showUndo = false } = {}) {
+export function syncComposerButtons(
+  panel,
+  { submitting = false, applying = false, reviewing = false, showUndo = false } = {},
+) {
   const row = panel?.composerButtons;
   if (!row) {
     return;
@@ -107,11 +110,13 @@ export function syncComposerButtons(panel, { submitting = false, showUndo = fals
       row.appendChild(btn);
     }
   }
+  const processing = submitting || applying;
   panel.buttons.stop.style.display = submitting ? "inline-flex" : "none";
-  panel.buttons.undo.style.display = showUndo ? "inline-flex" : "none";
-  // Hide "New conversation" entirely while a turn is submitting; Stop is the
-  // in-flight escape hatch and the button returns once submitting ends.
-  panel.buttons.newConversation.style.display = submitting ? "none" : "inline-flex";
+  panel.buttons.undo.style.display = showUndo && !processing && !reviewing ? "inline-flex" : "none";
+  // Hide conversation reset while processing or reviewing a candidate. During
+  // submit, Stop is the in-flight escape hatch; during review, Apply/Reject own
+  // the next transition.
+  panel.buttons.newConversation.style.display = processing || reviewing ? "none" : "inline-flex";
 }
 
 export function renderComposerNotice(panel, readinessState, deps = {}) {
@@ -253,6 +258,8 @@ export function renderComposerActions(panel, deps = {}) {
 
   syncComposerButtonsImpl(panel, {
     submitting,
+    applying,
+    reviewing,
     showUndo: panel.state.undoStack.length > 0,
   });
 

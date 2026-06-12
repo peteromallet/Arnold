@@ -226,6 +226,16 @@ def build_batch_messages(
         "Known limits:\n"
         "- `attr = None` disconnects a wire (not a null literal)\n"
         "- List-socket inputs, reorder/group, cross-subgraph: out of scope\n\n"
+        "Code node rule:\n"
+        "For requests that ask for a code node, Python logic, PIL, or custom image "
+        "processing, construct exactly `vibecomfy.exec` — never `vibecomfy.code`, "
+        "`ImageCode`, `PythonCode`, or another guessed class. Search "
+        "`search(focus_types=[\"vibecomfy.exec\"])` for its exact signature before "
+        "constructing it. Declare typed `io` as JSON lists like "
+        "`io={\"inputs\": [[\"image\", \"IMAGE\"]], \"outputs\": [[\"image\", \"IMAGE\"]]}`, "
+        "connect the decoded image through `in_0`, return a dict keyed by the output "
+        "name from `source` (for example `return {\"image\": processed}`), and wire "
+        "the node's `out_0` IMAGE output into the downstream image consumer.\n\n"
         "Use the graph's real names:\n"
         "Reference EXISTING nodes by the EXACT variable names shown in the Current\n"
         "scratchpad Python above (e.g. its decode and save nodes). NEVER invent a\n"
@@ -243,7 +253,7 @@ def build_batch_messages(
         "block — the prose is required. No JSON. One batch per turn.\n"
         "`clarify(\"...\")` is an alternate terminal when intent is\n"
         "genuinely missing.\n\n"
-        f"Budget: {budget_remaining} batch(es) remaining out of {max_batches}.\n\n"
+        f"Budget: {budget_remaining} turn(s) remaining out of {max_batches}.\n\n"
         "Worked example (PLACEHOLDER names — substitute your graph's real ones):\n"
         "Add 2x upscale after the decode node, feed the existing save node:\n"
         "```batch\n"
@@ -355,7 +365,7 @@ def build_batch_messages(
             f"{previous_message_block}"
             f"{diff_block}"
             f"{report_block}"
-            f"\n\nBudget: {budget_remaining} batch(es) remaining out of {max_batches}."
+            f"\n\nBudget: {budget_remaining} turn(s) remaining out of {max_batches}."
         )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -631,6 +641,7 @@ def _normalize_readiness_payload(
 def _load_arnold_runtime() -> Any:
     module_name = os.getenv("VIBECOMFY_ARNOLD_RUNTIME_MODULE")
     candidates = [module_name] if module_name else [
+        "vibecomfy.comfy_nodes.agent.runtime",
         "arnold.hermes",
         "hermes_agent",
         "arnold",
@@ -640,12 +651,26 @@ def _load_arnold_runtime() -> Any:
         if not candidate:
             continue
         try:
-            return importlib.import_module(candidate)
+            runtime = importlib.import_module(candidate)
         except ImportError as exc:
             errors.append(f"{candidate}: {exc}")
+            continue
+        if _runtime_has_execution_entrypoint(runtime):
+            return runtime
+        errors.append(
+            f"{candidate}: imported but does not expose run_agent_turn_batch, "
+            "run_agent_turn, or run"
+        )
     raise ProviderError(
         "Arnold/Hermes runtime is unavailable. Install/configure Arnold or set "
         "VIBECOMFY_ARNOLD_RUNTIME_MODULE. Import attempts: " + "; ".join(errors)
+    )
+
+
+def _runtime_has_execution_entrypoint(runtime: Any) -> bool:
+    return any(
+        callable(getattr(runtime, name, None))
+        for name in ("run_agent_turn_batch", "run_agent_turn", "run")
     )
 
 
@@ -685,16 +710,18 @@ def _normalize_agent_response(
 
 def _call_runtime(runtime: Any, *, task: str, python_source: str, route: str, model: str | None) -> Any:
     messages = build_messages(task=task, python_source=python_source, execution_mode="sandboxed_loose")
-    if hasattr(runtime, "run_agent_turn"):
-        return runtime.run_agent_turn(
+    run_agent_turn_fn: Callable[..., Any] | None = getattr(runtime, "run_agent_turn", None)
+    if callable(run_agent_turn_fn):
+        return run_agent_turn_fn(
             task=task,
             python_source=python_source,
             route=route,
             model=model,
             messages=messages,
         )
-    if hasattr(runtime, "run"):
-        return runtime.run(
+    run_fn: Callable[..., Any] | None = getattr(runtime, "run", None)
+    if callable(run_fn):
+        return run_fn(
             task=task,
             python_source=python_source,
             route=route,
@@ -714,8 +741,9 @@ def _call_delta_runtime(
     model: str | None,
 ) -> Any:
     messages = build_delta_messages(task=task, projection=projection, op_schema=op_schema)
-    if hasattr(runtime, "run_agent_turn_delta"):
-        return runtime.run_agent_turn_delta(
+    run_agent_turn_delta_fn: Callable[..., Any] | None = getattr(runtime, "run_agent_turn_delta", None)
+    if callable(run_agent_turn_delta_fn):
+        return run_agent_turn_delta_fn(
             task=task,
             projection=projection,
             op_schema=op_schema,
@@ -723,8 +751,9 @@ def _call_delta_runtime(
             model=model,
             messages=messages,
         )
-    if hasattr(runtime, "run_delta_agent_turn"):
-        return runtime.run_delta_agent_turn(
+    run_delta_agent_turn_fn: Callable[..., Any] | None = getattr(runtime, "run_delta_agent_turn", None)
+    if callable(run_delta_agent_turn_fn):
+        return run_delta_agent_turn_fn(
             task=task,
             projection=projection,
             op_schema=op_schema,
@@ -732,8 +761,9 @@ def _call_delta_runtime(
             model=model,
             messages=messages,
         )
-    if hasattr(runtime, "run"):
-        return runtime.run(
+    run_fn: Callable[..., Any] | None = getattr(runtime, "run", None)
+    if callable(run_fn):
+        return run_fn(
             task=task,
             projection=projection,
             op_schema=op_schema,
@@ -914,23 +944,26 @@ def _call_batch_runtime(
     model: str | None,
 ) -> Any:
     """Call the Arnold/Hermes runtime for a batch-REPL turn."""
-    if hasattr(runtime, "run_agent_turn_batch"):
-        return runtime.run_agent_turn_batch(
+    run_agent_turn_batch_fn: Callable[..., Any] | None = getattr(runtime, "run_agent_turn_batch", None)
+    if callable(run_agent_turn_batch_fn):
+        return run_agent_turn_batch_fn(
             task=task,
             route=route,
             model=model,
             messages=messages,
         )
-    if hasattr(runtime, "run_agent_turn"):
-        return runtime.run_agent_turn(
+    run_agent_turn_fn: Callable[..., Any] | None = getattr(runtime, "run_agent_turn", None)
+    if callable(run_agent_turn_fn):
+        return run_agent_turn_fn(
             task=task,
             python_source="",
             route=route,
             model=model,
             messages=messages,
         )
-    if hasattr(runtime, "run"):
-        return runtime.run(
+    run_fn: Callable[..., Any] | None = getattr(runtime, "run", None)
+    if callable(run_fn):
+        return run_fn(
             task=task,
             route=route,
             model=model,
@@ -1062,12 +1095,19 @@ def readiness(*, route: str | None = None, model: str | None = None) -> dict[str
         raw_status = status_fn(route=probe_route, model=selected_model) if status_fn else {}
     if not isinstance(raw_status, Mapping):
         raw_status = {}
+    explicit_ready = raw_status.get("ready")
+    if explicit_ready is None:
+        explicit_ready = raw_status.get("ok")
 
     return {
         **_normalize_readiness_payload(
             raw_status,
             provider_available=True,
-            default_reason="Provider ready." if raw_status.get("ok", True) else "Provider is unavailable.",
+            default_reason=(
+                "Provider ready."
+                if explicit_ready is True
+                else "Provider readiness probe did not report ready=true."
+            ),
         ),
         **_provider_status_metadata(
             route_descriptor=route_descriptor,

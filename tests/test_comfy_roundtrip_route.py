@@ -272,6 +272,9 @@ def test_exec_roundtrip_preserves_source_and_io() -> None:
         assert isinstance(wv, list) and len(wv) >= 2
         assert wv[0] == source
         assert wv[1] == io_spec
+    assert exec_node["properties"]["vibecomfy"]["kind"] == "code"
+    assert exec_node["properties"]["vibecomfy"]["io"] == io_spec
+    assert exec_node["properties"]["vibecomfy"]["intent"]["source"] == source
 
 
 def test_exec_roundtrip_preserves_linked_in_references() -> None:
@@ -346,13 +349,7 @@ def test_exec_roundtrip_preserves_downstream_out_references() -> None:
 
 
 def test_exec_roundtrip_preserves_dynamic_socket_counts() -> None:
-    """Exec node in the emitted UI graph preserves linked socket slots from the workflow.
-
-    When the schema provider has the builtin schema, the emit produces exactly 16
-    input and 16 output slots.  Without a schema, it emits best-effort slots
-    (what the IR actually tracks).  This test verifies that linked in_N / out_N
-    slots survive the engine round-trip regardless.
-    """
+    """Exec node in the emitted UI graph preserves only declared dynamic sockets."""
     from vibecomfy.ingest.normalize import convert_to_vibe_format
     from vibecomfy.porting.emit.ui import emit_ui_json
     from vibecomfy.schema import get_schema_provider
@@ -383,15 +380,125 @@ def test_exec_roundtrip_preserves_dynamic_socket_counts() -> None:
     inputs = exec_node.get("inputs", [])
     outputs = exec_node.get("outputs", [])
 
-    # At minimum, linked slots from upstream/downstream must be present.
-    # Without a schema, the emit may use generic output_N names.
-    input_names = {s.get("name") for s in inputs}
-    output_names = {s.get("name") for s in outputs}
-    assert "in_0" in input_names, f"missing linked in_0 in {input_names}"
-    # Schema-less fallback may name slots output_N instead of out_N
-    assert ("out_0" in output_names or "output_0" in output_names), (
-        f"missing linked out_0/output_0 in {output_names}"
-    )
+    assert inputs == [{"name": "in_0", "label": "image: IMAGE", "type": "IMAGE", "link": 1}]
+    assert outputs == [
+        {"name": "out_0", "label": "image: IMAGE", "type": "IMAGE", "links": [2], "slot_index": 0}
+    ]
+    assert exec_node["properties"]["vibecomfy"]["io"] == io_spec
+    assert exec_node["properties"]["vibecomfy"]["intent"]["source"] == source
+
+
+def test_exec_emit_ignores_generic_builtin_port_pool_when_io_declares_shape() -> None:
+    """Schema-backed exec emit uses dynamic io, not the runtime node's 16-slot pool."""
+    from vibecomfy.ingest.normalize import convert_to_vibe_format
+    from vibecomfy.porting.emit.ui import emit_ui_json
+    from vibecomfy.schema.provider import InputSpec, NodeSchema, OutputSpec
+
+    class GenericExecProvider:
+        def get_schema(self, class_type: str):
+            if class_type != "vibecomfy.exec":
+                return None
+            return NodeSchema(
+                class_type="vibecomfy.exec",
+                pack="vibecomfy",
+                inputs={
+                    "source": InputSpec("STRING", required=True),
+                    "io": InputSpec("JSON", required=True),
+                    **{f"in_{index}": InputSpec("*", required=False) for index in range(16)},
+                },
+                outputs=[OutputSpec("*", f"out_{index}") for index in range(16)],
+                source_provider="vibecomfy_builtin",
+            )
+
+    source = "return {'image': in_0}"
+    io_spec = {"inputs": [["image", "IMAGE"]], "outputs": [["image", "IMAGE"]]}
+    api = {
+        "2": {"class_type": "LoadImage", "inputs": {"image": "example.png"}},
+        "1": {
+            "class_type": "vibecomfy.exec",
+            "inputs": {"source": source, "io": io_spec, "in_0": ["2", 0]},
+        },
+        "3": {
+            "class_type": "SaveImage",
+            "inputs": {"images": ["1", 0], "filename_prefix": "out/"},
+        },
+    }
+
+    wf = convert_to_vibe_format(api)
+    emitted = emit_ui_json(wf, schema_provider=GenericExecProvider())
+    exec_node = next(n for n in emitted["nodes"] if n["type"] == "vibecomfy.exec")
+    in_link = next(link[0] for link in emitted["links"] if link[3] == exec_node["id"])
+    out_link = next(link[0] for link in emitted["links"] if link[1] == exec_node["id"])
+
+    assert exec_node["inputs"] == [{"name": "in_0", "label": "image: IMAGE", "type": "IMAGE", "link": in_link}]
+    assert exec_node["outputs"] == [
+        {"name": "out_0", "label": "image: IMAGE", "type": "IMAGE", "links": [out_link], "slot_index": 0}
+    ]
+    assert len(exec_node["inputs"]) == 1
+    assert len(exec_node["outputs"]) == 1
+    assert exec_node["properties"]["_vibecomfy_schema_provider"] == "vibecomfy_builtin"
+    assert exec_node["properties"]["vibecomfy"]["io"] == io_spec
+
+
+def test_exec_emit_rebuilds_raw_ui_generic_port_pool_from_widgets_io() -> None:
+    """Refresh path does not pin a stale raw exec UI payload with 16 generic outputs."""
+    from vibecomfy.ingest.normalize import convert_to_vibe_format
+    from vibecomfy.porting.emit.ui import emit_ui_json
+    from vibecomfy.schema.provider import InputSpec, NodeSchema, OutputSpec
+
+    class GenericExecProvider:
+        def get_schema(self, class_type: str):
+            if class_type != "vibecomfy.exec":
+                return None
+            return NodeSchema(
+                class_type="vibecomfy.exec",
+                pack="vibecomfy",
+                inputs={
+                    "source": InputSpec("STRING", required=True),
+                    "io": InputSpec("JSON", required=True),
+                    **{f"in_{index}": InputSpec("*", required=False) for index in range(16)},
+                },
+                outputs=[OutputSpec("*", f"out_{index}") for index in range(16)],
+                source_provider="vibecomfy_builtin",
+            )
+
+    source = "return {'image': in_0}"
+    io_spec = {"inputs": [["image", "IMAGE"]], "outputs": [["image", "IMAGE"]]}
+    raw_ui = {
+        "nodes": [
+            {"id": 2, "type": "LoadImage", "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": [1]}]},
+            {
+                "id": 1,
+                "type": "vibecomfy.exec",
+                "inputs": [{"name": "in_0", "type": "*", "link": 1}],
+                "outputs": [
+                    {
+                        "name": f"out_{index}",
+                        "type": "*",
+                        "links": [2] if index == 0 else None,
+                        "slot_index": index,
+                    }
+                    for index in range(16)
+                ],
+                "widgets_values": [source, io_spec],
+                "properties": {"Node name for S&R": "vibecomfy.exec", "vibecomfy_uid": "exec-1"},
+            },
+            {"id": 3, "type": "SaveImage", "inputs": [{"name": "images", "type": "IMAGE", "link": 2}]},
+        ],
+        "links": [[1, 2, 0, 1, 0, "IMAGE"], [2, 1, 0, 3, 0, "IMAGE"]],
+    }
+
+    wf = convert_to_vibe_format(raw_ui)
+    emitted = emit_ui_json(wf, schema_provider=GenericExecProvider())
+    exec_node = next(n for n in emitted["nodes"] if n["type"] == "vibecomfy.exec")
+    in_link = next(link[0] for link in emitted["links"] if link[3] == exec_node["id"])
+    out_link = next(link[0] for link in emitted["links"] if link[1] == exec_node["id"])
+
+    assert exec_node["inputs"] == [{"name": "in_0", "label": "image: IMAGE", "type": "IMAGE", "link": in_link}]
+    assert exec_node["outputs"] == [
+        {"name": "out_0", "label": "image: IMAGE", "type": "IMAGE", "links": [out_link], "slot_index": 0}
+    ]
+    assert exec_node["properties"]["vibecomfy"]["io"] == io_spec
 
 
 def test_exec_api_reload_without_ui_metadata_restores_derived_io() -> None:

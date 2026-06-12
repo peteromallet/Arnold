@@ -259,7 +259,7 @@ _TEACHING_HINTS: dict[str, str] = {
     "scope_escape_not_allowed": "Nested attribute chains are not allowed. Use a flat name or single attribute like node.slot.",
     "original_virtual_node_immutable": "Original virtual substrate nodes cannot be mutated or deleted. Route around them instead.",
     "raw_coordinate_kwarg_not_allowed": "Use near=..., relation=..., and group=... instead of raw x/y coordinates.",
-    "intent_class_construction_not_allowed": "vibecomfy.* intent classes are editor-only. Use a concrete node class type instead.",
+    "intent_class_construction_not_allowed": "vibecomfy.* intent classes are editor-only. For executable Python use vibecomfy.exec, not vibecomfy.code.",
     "anchor_target_missing": "When using relation=, include near=... or group=... to anchor placement.",
     "cross_scope_add_node_unsupported": "All link and anchor references must be in the same scope. Use nodes from a single subgraph.",
 }

@@ -421,7 +421,7 @@ test("VibeComfy beforeRegisterNodeDef decorates intent node prototypes and degra
     assert.equal(intentNode.color, "#2d2643");
     assert.equal(intentNode.bgcolor, "#171229");
     assert.equal(intentNode.boxcolor, "#e39cff");
-    assert.equal(intentNode.properties["VibeComfy Intent Badge"], "Python · sandboxed_loose");
+    assert.equal(intentNode.properties["VibeComfy Intent Badge"], "sandboxed_loose");
     assert.equal(intentNode.properties["VibeComfy Intent Source"], "value = image");
     assert.equal(intentNode.properties["VibeComfy Intent Spec"], "inspect image value");
     // Dynamic-IO: slot.name preserved (serialization key), slot.label carries the type annotation.
@@ -442,7 +442,7 @@ test("VibeComfy beforeRegisterNodeDef decorates intent node prototypes and degra
       },
     };
     nodeType.prototype.onDrawForeground.call(intentNode, ctx);
-    assert(drawOps.some((entry) => entry[0] === "text" && entry[1] === "Python · sandboxed_loose"));
+    assert(drawOps.some((entry) => entry[0] === "text" && entry[1] === "sandboxed_loose"));
 
     const degradedNode = {
       type: "vibecomfy.code",
@@ -4080,7 +4080,7 @@ test("VibeComfy in-place apply decorates intent nodes with persistent styling, t
     assert.equal(codeNode.color, "#2d2643");
     assert.equal(codeNode.bgcolor, "#171229");
     assert.equal(codeNode.boxcolor, "#e39cff");
-    assert.equal(codeNode.properties["VibeComfy Intent Badge"], "Python · sandboxed_loose");
+    assert.equal(codeNode.properties["VibeComfy Intent Badge"], "sandboxed_loose");
     assert.equal(codeNode.properties["VibeComfy Intent Source"], "value = image");
     assert.equal(codeNode.properties["VibeComfy Intent Spec"], "inspect the input image before lowering");
     // Dynamic-IO: slot.name preserved (serialization key), slot.label carries the type annotation.
@@ -4099,7 +4099,7 @@ test("VibeComfy in-place apply decorates intent nodes with persistent styling, t
     assert.equal(liveIntentNodes.length, 2);
     const liveCodeNode = liveIntentNodes.find((node) => node.type === "vibecomfy.code");
     assert.equal(liveCodeNode.boxcolor, "#e39cff");
-    assert.equal(liveCodeNode.properties["VibeComfy Intent Badge"], "Python · sandboxed_loose");
+    assert.equal(liveCodeNode.properties["VibeComfy Intent Badge"], "sandboxed_loose");
     // Dynamic-IO: slot.name preserved (serialization key), slot.label carries the type annotation.
     assert.equal(liveCodeNode.inputs[0].name, "value");
     assert.equal(liveCodeNode.inputs[0].label, "image: IMAGE");

@@ -587,6 +587,23 @@ class TestAgentEditPythonEmitter:
         assert "setnode = SetNode(" in rendered
         assert "uid:set-uid [virtual]" in rendered
 
+    def test_agent_edit_python_renders_exec_as_edit_dsl_call(self) -> None:
+        from vibecomfy.porting.emitter import emit_agent_edit_python
+
+        wf = VibeWorkflow("exec", WorkflowSource("exec"))
+        wf.add_node(
+            "vibecomfy.exec",
+            uid="exec-uid",
+            source='return {"image": image}',
+            io={"inputs": [["image", "IMAGE"]], "outputs": [["image", "IMAGE"]]},
+        )
+        rendered = emit_agent_edit_python(wf)
+
+        ast.parse(rendered)
+        assert "vibecomfy_exec = vibecomfy.exec(" in rendered
+        assert "node('vibecomfy.exec'" not in rendered
+        assert "io={'inputs': [['image', 'IMAGE']], 'outputs': [['image', 'IMAGE']]}" in rendered
+
 
 # ---------------------------------------------------------------------------
 # Lean render tests: title-drop + string elision
@@ -2456,6 +2473,41 @@ sampler = KSampler(
         dst = session.ledger.resolve_node("", "dst")
         assert dst is not None
         assert isinstance(dst["inputs"][0]["link"], int)
+
+    def test_apply_batch_upsert_link_removes_stale_duplicate_target_links(self) -> None:
+        from vibecomfy.porting import EditSession
+
+        session = self._primitive_session()
+        raw = session.working_ui
+        nodes = {node["id"]: node for node in raw["nodes"]}
+        nodes[1]["outputs"][0]["links"] = [10, 11, 12]
+        nodes[3]["inputs"][0]["link"] = 11
+        raw["links"] = [
+            [10, 1, 0, 4, 0, "IMAGE"],
+            [11, 1, 0, 3, 0, "IMAGE"],
+            [12, 1, 0, 3, 0, "IMAGE"],
+        ]
+        session = EditSession(raw, schema_provider=self._schema_provider())
+        session.uid_by_name.update(
+            {"src": "src", "widget": "widget", "dst": "dst", "helper": "helper"}
+        )
+        session.name_by_uid.update(
+            {"src": "src", "widget": "widget", "dst": "dst", "helper": "helper"}
+        )
+
+        result = session.apply_batch("dst.value = src.in_\n")
+
+        assert result.ok is True
+        after_links = {link[0]: link for link in session.working_ui["links"]}
+        dst = session.ledger.resolve_node("", "dst")
+        assert dst is not None
+        new_link_id = dst["inputs"][0]["link"]
+        assert new_link_id not in {10, 11, 12}
+        assert 10 in after_links
+        assert {11, 12}.isdisjoint(after_links)
+        assert after_links[new_link_id][3:5] == [3, 0]
+        after_nodes = {node["id"]: node for node in session.working_ui["nodes"]}
+        assert sorted(after_nodes[1]["outputs"][0]["links"]) == [10, new_link_id]
 
     def test_apply_batch_lowers_none_link_assignment_to_remove_link_op(self) -> None:
         from vibecomfy.porting.edit.ops import RemoveLinkOp

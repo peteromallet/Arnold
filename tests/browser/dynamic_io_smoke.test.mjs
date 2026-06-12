@@ -3,6 +3,72 @@ import assert from "node:assert/strict";
 
 import { createBrowserHarness } from "./harness.mjs";
 
+test("VibeComfy sanitizes dangling and duplicate serialized links before agent handoff", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    const sanitize = extensionModule.sanitizeSerializedGraphLinks;
+    assert.equal(typeof sanitize, "function");
+
+    const graph = {
+      nodes: [
+        {
+          id: 8,
+          type: "VAEDecode",
+          outputs: [{ name: "IMAGE", links: [15, 17, 18] }],
+        },
+        {
+          id: 9,
+          type: "SaveImage",
+          inputs: [{ name: "images", link: 21 }],
+          outputs: [],
+        },
+        {
+          id: 12,
+          type: "vibecomfy.exec",
+          inputs: [{ name: "in_0", link: 18 }],
+          outputs: [
+            { name: "out_0", links: [21] },
+            { name: "out_1", links: null },
+          ],
+          widgets_values: [
+            "return {\"image\": image}",
+            { inputs: [["image", "IMAGE"]], outputs: [["image", "IMAGE"]] },
+          ],
+        },
+      ],
+      links: [
+        [15, 8, 0, 11, 0, "IMAGE"],
+        [16, 11, 0, 9, 0, "IMAGE"],
+        [17, 8, 0, 9, 0, "IMAGE"],
+        [18, 8, 0, 12, 0, "IMAGE"],
+        [21, 12, 0, 9, 0, "IMAGE"],
+      ],
+    };
+
+    sanitize(graph);
+
+    const sortedLinks = graph.links.slice().sort((left, right) => left[0] - right[0]);
+    assert.deepEqual(sortedLinks, [
+      [18, 8, 0, 12, 0, "IMAGE"],
+      [21, 12, 0, 9, 0, "IMAGE"],
+    ]);
+    assert.deepEqual(graph.nodes[0].outputs[0].links, [18]);
+    assert.equal(graph.nodes[1].inputs[0].link, 21);
+    assert.deepEqual(graph.nodes[2].outputs[0].links, [21]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
 // ── Test 1: applyTypedSocketLabelsLabelOnly preserves slot.name (in_i) ────
 test("VibeComfy applyTypedSocketLabelsLabelOnly writes slot.label but preserves slot.name (in_i for serialization)", async () => {
   const harness = await createBrowserHarness({
@@ -229,7 +295,7 @@ test("VibeComfy dynamic-IO code node decoration preserves in_i/out_i names, sets
     assert.equal(node.bgcolor, "#171229");
     assert.equal(node.boxcolor, "#e39cff");
     assert.equal(node.properties["VibeComfy Intent Kind"], "code");
-    assert.equal(node.properties["VibeComfy Intent Badge"], "Python · sandboxed_loose");
+    assert.equal(node.properties["VibeComfy Intent Badge"], "sandboxed_loose");
     assert.equal(node.properties["VibeComfy Intent Source"], "result = image");
     assert.equal(node.properties["VibeComfy Intent Spec"], "passthrough with mask");
 
@@ -399,7 +465,413 @@ test("VibeComfy dynamic-IO detection uses class_type (vibecomfy.code) — all co
     assert.equal(codeNodeNoComfyClass.outputs[0].label, "y: INT");
 
     // Badge is set correctly.
-    assert.equal(codeNodeNoComfyClass.properties["VibeComfy Intent Badge"], "Python · sandboxed_loose");
+    assert.equal(codeNodeNoComfyClass.properties["VibeComfy Intent Badge"], "sandboxed_loose");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy exec nodes derive dynamic IO from widgets_values and hide unused pool slots", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    const extension = harness.getExtension();
+
+    const nodeType = { prototype: {} };
+    await extension.beforeRegisterNodeDef(nodeType, { name: "vibecomfy.exec" });
+
+    const removedInputs = [];
+    const removedOutputs = [];
+    const execNode = {
+      type: "vibecomfy.exec",
+      properties: {
+        vibecomfy_uid: "exec-1",
+        "Node name for S&R": "vibecomfy.exec",
+      },
+      widgets_values: [
+        "return {\"image\": image}",
+        { inputs: [["image", "IMAGE"]], outputs: [["image", "IMAGE"]] },
+      ],
+      inputs: Array.from({ length: 16 }, (_, i) => ({ name: `in_${i}`, label: "", type: "*" })),
+      outputs: Array.from({ length: 16 }, (_, i) => ({ name: `out_${i}`, label: "", type: "*" })),
+      removeInput(index) {
+        const removed = this.inputs.splice(index, 1)[0];
+        removedInputs.push({ index, name: removed?.name });
+      },
+      removeOutput(index) {
+        const removed = this.outputs.splice(index, 1)[0];
+        removedOutputs.push({ index, name: removed?.name });
+      },
+    };
+
+    nodeType.prototype.onNodeCreated.call(execNode);
+
+    assert.equal(execNode.inputs.length, 1);
+    assert.equal(execNode.inputs[0].name, "in_0");
+    assert.equal(execNode.inputs[0].label, "image: IMAGE");
+    assert.equal(execNode.inputs[0].type, "IMAGE");
+    assert.equal(execNode.outputs.length, 1);
+    assert.equal(execNode.outputs[0].name, "out_0");
+    assert.equal(execNode.outputs[0].label, "image: IMAGE");
+    assert.equal(execNode.outputs[0].type, "IMAGE");
+    assert.equal(removedInputs.length, 15);
+    assert.equal(removedOutputs.length, 15);
+    assert.equal(execNode.__vibecomfyIntentMeta.classType, "vibecomfy.exec");
+    assert.deepEqual(execNode.__vibecomfyIntentMeta.typedInputs, [{ name: "image", type: "IMAGE" }]);
+    assert.deepEqual(execNode.__vibecomfyIntentMeta.typedOutputs, [{ name: "image", type: "IMAGE" }]);
+
+    const previewPayloadNode = {
+      type: "vibecomfy.exec",
+      properties: {
+        vibecomfy_uid: "exec-preview-1",
+        "Node name for S&R": "vibecomfy.exec",
+      },
+      widgets_values: [
+        "return {\"image\": image}",
+        { inputs: [["image", "IMAGE"]], outputs: [["image", "IMAGE"]] },
+      ],
+      inputs: Array.from({ length: 16 }, (_, i) => ({ name: `in_${i}`, label: "", type: "*" })),
+      outputs: Array.from({ length: 16 }, (_, i) => ({ name: `out_${i}`, label: "", type: "*" })),
+    };
+
+    nodeType.prototype.onNodeCreated.call(previewPayloadNode);
+
+    assert.equal(previewPayloadNode.inputs.length, 1);
+    assert.equal(previewPayloadNode.inputs[0].type, "IMAGE");
+    assert.equal(previewPayloadNode.outputs.length, 1);
+    assert.equal(previewPayloadNode.outputs[0].name, "out_0");
+    assert.equal(previewPayloadNode.outputs[0].label, "image: IMAGE");
+    assert.equal(previewPayloadNode.outputs[0].type, "IMAGE");
+
+    const earlyHydrationNode = {
+      type: "vibecomfy.exec",
+      properties: {
+        vibecomfy_uid: "exec-early-1",
+        "Node name for S&R": "vibecomfy.exec",
+      },
+      inputs: Array.from({ length: 16 }, (_, i) => ({ name: `in_${i}`, label: "", type: "*", link: i === 0 ? 42 : null })),
+      outputs: Array.from({ length: 16 }, (_, i) => ({ name: `out_${i}`, label: "", type: "*", links: i === 0 ? [43] : null })),
+      removeInput(index) {
+        this.inputs.splice(index, 1);
+      },
+      removeOutput(index) {
+        this.outputs.splice(index, 1);
+      },
+    };
+
+    nodeType.prototype.onNodeCreated.call(earlyHydrationNode);
+
+    assert.equal(earlyHydrationNode.inputs.length, 16);
+    assert.equal(earlyHydrationNode.outputs.length, 16);
+    assert.equal(earlyHydrationNode.inputs[0].link, 42);
+    assert.deepEqual(earlyHydrationNode.outputs[0].links, [43]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy exec serialization repair restores missing io from typed socket labels", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    const repairExec = extensionModule.normalizeExecNodeForSerialization;
+    assert.equal(typeof repairExec, "function");
+
+    const execNode = {
+      type: "vibecomfy.exec",
+      properties: {
+        vibecomfy_uid: "exec-lost-io",
+        "Node name for S&R": "vibecomfy.exec",
+        "VibeComfy Intent Source": "return {\"image\": processed}",
+      },
+      widgets_values: ["return {\"image\": processed}"],
+      inputs: [{ name: "in_0", label: "image: IMAGE", type: "*", link: 15 }],
+      outputs: [{ name: "out_0", label: "image: IMAGE", type: "*", links: [16] }],
+    };
+
+    assert.equal(repairExec(execNode), true);
+
+    assert.deepEqual(execNode.widgets_values, [
+      "return {\"image\": processed}",
+      { inputs: [["image", "IMAGE"]], outputs: [["image", "IMAGE"]] },
+    ]);
+    assert.deepEqual(execNode.properties.vibecomfy.io, {
+      inputs: [["image", "IMAGE"]],
+      outputs: [["image", "IMAGE"]],
+    });
+    assert.equal(execNode.properties.vibecomfy.kind, "code");
+    assert.equal(execNode.properties.vibecomfy.intent.source, "return {\"image\": processed}");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy candidate graph preparation trims stale exec port pools before preview", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    const prepareCandidateGraph = extensionModule.prepareCandidateGraphForPanel;
+    assert.equal(typeof prepareCandidateGraph, "function");
+
+    const source = "return {\"image\": in_0}";
+    const graph = {
+      nodes: [
+        { id: 2, type: "VAEDecode", outputs: [{ name: "IMAGE", type: "IMAGE", links: [1] }] },
+        {
+          id: 1,
+          type: "vibecomfy.exec",
+          inputs: [{ name: "in_0", type: "*", link: 1 }],
+          outputs: Array.from({ length: 16 }, (_, index) => ({
+            name: `out_${index}`,
+            type: "*",
+            links: index === 0 ? [2] : null,
+            slot_index: index,
+          })),
+          widgets_values: [
+            source,
+            { inputs: [["image", "IMAGE"]], outputs: [["image", "IMAGE"]] },
+          ],
+          properties: {
+            "Node name for S&R": "vibecomfy.exec",
+            vibecomfy_uid: "exec-1",
+          },
+        },
+        { id: 3, type: "SaveImage", inputs: [{ name: "images", type: "IMAGE", link: 2 }] },
+      ],
+      links: [[1, 2, 0, 1, 0, "IMAGE"], [2, 1, 0, 3, 0, "IMAGE"]],
+    };
+
+    const prepared = prepareCandidateGraph(graph);
+    const execNode = prepared.nodes.find((node) => node.type === "vibecomfy.exec");
+
+    assert.equal(execNode.inputs.length, 1);
+    assert.equal(execNode.inputs[0].name, "in_0");
+    assert.equal(execNode.inputs[0].label, "image: IMAGE");
+    assert.equal(execNode.inputs[0].type, "IMAGE");
+    assert.equal(execNode.inputs[0].link, 1);
+    assert.equal(execNode.outputs.length, 1);
+    assert.equal(execNode.outputs[0].name, "out_0");
+    assert.equal(execNode.outputs[0].label, "image: IMAGE");
+    assert.equal(execNode.outputs[0].type, "IMAGE");
+    assert.deepEqual(execNode.outputs[0].links, [2]);
+    assert.equal(execNode.properties.vibecomfy_intent_badge, "sandboxed_loose");
+    assert.deepEqual(execNode.properties.vibecomfy.io, {
+      inputs: [["image", "IMAGE"]],
+      outputs: [["image", "IMAGE"]],
+    });
+    assert.equal(graph.nodes[1].outputs.length, 16, "preparation should not mutate the raw response graph");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy live graph repair restores exec input links dropped by ComfyUI configure", async () => {
+  const harness = await createBrowserHarness({
+    withGraphMutation: true,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    const prepareCandidateGraph = extensionModule.prepareCandidateGraphForPanel;
+    const repairLive = extensionModule.repairLiveIntentNodesFromCandidate;
+    assert.equal(typeof prepareCandidateGraph, "function");
+    assert.equal(typeof repairLive, "function");
+
+    const source = "return {\"image\": in_0}";
+    const rawCandidate = {
+      nodes: [
+        {
+          id: 8,
+          type: "VAEDecode",
+          outputs: [{ name: "IMAGE", type: "IMAGE", links: [43] }],
+        },
+        {
+          id: 19,
+          type: "vibecomfy.exec",
+          inputs: [{ name: "in_0", type: "*", link: 43 }],
+          outputs: Array.from({ length: 16 }, (_, index) => ({
+            name: `out_${index}`,
+            type: "*",
+            links: index === 0 ? [44] : null,
+          })),
+          widgets_values: [
+            source,
+            { inputs: [["image", "IMAGE"]], outputs: [["image", "IMAGE"]] },
+          ],
+          properties: {
+            "Node name for S&R": "vibecomfy.exec",
+            vibecomfy_uid: "pilprocess",
+          },
+        },
+        {
+          id: 9,
+          type: "SaveImage",
+          inputs: [{ name: "images", type: "IMAGE", link: 44 }],
+        },
+      ],
+      links: [[43, 8, 0, 19, 0, "IMAGE"], [44, 19, 0, 9, 0, "IMAGE"]],
+    };
+    const candidate = prepareCandidateGraph(rawCandidate);
+
+    harness.setCurrentGraph({
+      nodes: [
+        {
+          id: 8,
+          type: "VAEDecode",
+          outputs: [{ name: "IMAGE", type: "IMAGE", links: null }],
+        },
+        {
+          id: 19,
+          type: "vibecomfy.exec",
+          inputs: [{ name: "io", label: "image: IMAGE", type: "IMAGE", link: null }],
+          outputs: [{ name: "out_0", label: "image: IMAGE", type: "IMAGE", links: [44] }],
+          widgets_values: [source],
+          properties: {
+            "Node name for S&R": "vibecomfy.exec",
+            vibecomfy_uid: "pilprocess",
+            vibecomfy: {
+              kind: "code",
+              io: { inputs: [["image", "IMAGE"]], outputs: [["image", "IMAGE"]] },
+              intent: { source },
+            },
+          },
+        },
+        {
+          id: 9,
+          type: "SaveImage",
+          inputs: [{ name: "images", type: "IMAGE", link: 44 }],
+        },
+      ],
+      links: [{ id: 44, origin_id: 19, origin_slot: 0, target_id: 9, target_slot: 0, type: "IMAGE" }],
+    });
+
+    repairLive(candidate);
+
+    const execNode = harness.getLiveNodes().find((node) => node.type === "vibecomfy.exec");
+    assert.equal(execNode.inputs.length, 1);
+    assert.equal(execNode.inputs[0].name, "in_0");
+    assert.equal(execNode.inputs[0].label, "image: IMAGE");
+    assert.equal(execNode.inputs[0].type, "IMAGE");
+    assert.equal(execNode.inputs[0].link, 43);
+    assert.equal(execNode.outputs.length, 1);
+    assert.deepEqual(execNode.outputs[0].links, [44]);
+
+    const liveLinks = harness.getLiveLinks();
+    assert.deepEqual(liveLinks["43"], {
+      id: 43,
+      origin_id: 8,
+      origin_slot: 0,
+      target_id: 19,
+      target_slot: 0,
+      type: "IMAGE",
+    });
+    assert.deepEqual(harness.getLiveNodes()[0].outputs[0].links, [43]);
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy loadGraphData fallback repairs dynamic exec links after async ComfyUI import", async () => {
+  const harness = await createBrowserHarness({
+    withGraphMutation: true,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const source = "return {\"image\": in_0}";
+    const candidate = {
+      nodes: [
+        { id: 8, type: "VAEDecode", outputs: [{ name: "IMAGE", type: "IMAGE", links: [43] }] },
+        {
+          id: 19,
+          type: "vibecomfy.exec",
+          inputs: [{ name: "in_0", type: "IMAGE", label: "image: IMAGE", link: 43 }],
+          outputs: [{ name: "out_0", type: "IMAGE", label: "image: IMAGE", links: [44], slot_index: 0 }],
+          widgets_values: [
+            source,
+            { inputs: [["image", "IMAGE"]], outputs: [["image", "IMAGE"]] },
+          ],
+          properties: {
+            "Node name for S&R": "vibecomfy.exec",
+            vibecomfy_uid: "pilprocess",
+          },
+        },
+        { id: 9, type: "SaveImage", inputs: [{ name: "images", type: "IMAGE", link: 44 }] },
+      ],
+      links: [[43, 8, 0, 19, 0, "IMAGE"], [44, 19, 0, 9, 0, "IMAGE"]],
+    };
+    const badImportedGraph = {
+      nodes: [
+        { id: 8, type: "VAEDecode", outputs: [{ name: "IMAGE", type: "IMAGE", links: null }] },
+        {
+          id: 19,
+          type: "vibecomfy.exec",
+          inputs: [{ name: "io", type: "IMAGE", label: "image: IMAGE", link: null }],
+          outputs: [{ name: "out_0", type: "IMAGE", label: "image: IMAGE", links: [44], slot_index: 0 }],
+          widgets_values: [source],
+          properties: {
+            "Node name for S&R": "vibecomfy.exec",
+            vibecomfy_uid: "pilprocess",
+            vibecomfy: {
+              kind: "code",
+              io: { inputs: [["image", "IMAGE"]], outputs: [["image", "IMAGE"]] },
+              intent: { source },
+            },
+          },
+        },
+        { id: 9, type: "SaveImage", inputs: [{ name: "images", type: "IMAGE", link: 44 }] },
+      ],
+      links: [{ id: 44, origin_id: 19, origin_slot: 0, target_id: 9, target_slot: 0, type: "IMAGE" }],
+    };
+
+    harness.app.loadGraphData = async function asyncBadComfyImport() {
+      await Promise.resolve();
+      harness.setCurrentGraph(badImportedGraph);
+    };
+
+    await harness.loadExtension();
+    await harness.setup();
+    await harness.app.loadGraphData(candidate);
+
+    const execNode = harness.getLiveNodes().find((node) => node.type === "vibecomfy.exec");
+    assert.equal(execNode.inputs[0].name, "in_0");
+    assert.equal(execNode.inputs[0].link, 43);
+    assert.deepEqual(harness.getLiveLinks()["43"].asSerialisable(), [43, 8, 0, 19, 0, "IMAGE"]);
   } finally {
     await harness.dispose();
   }

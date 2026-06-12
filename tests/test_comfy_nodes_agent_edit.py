@@ -569,6 +569,13 @@ def test_agent_edit_route_extracts_only_non_empty_string_client_id(
     routes = importlib.reload(routes)
 
     captured: list[tuple[dict, str | None]] = []
+    to_thread_calls: list[str] = []
+
+    async def _fake_to_thread(fn, /, *args, **kwargs):
+        to_thread_calls.append(getattr(fn, "__name__", repr(fn)))
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(routes.asyncio, "to_thread", _fake_to_thread)
     monkeypatch.setattr(
         routes,
         "_handle_agent_edit",
@@ -586,14 +593,17 @@ def test_agent_edit_route_extracts_only_non_empty_string_client_id(
         response = asyncio.run(routes.agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": "client-123"})))
         assert response["status"] == 200
         assert captured[-1][1] == "client-123"
+        assert to_thread_calls[-1] == "<lambda>"
 
         response = asyncio.run(routes.agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": 99})))
         assert response["status"] == 200
         assert captured[-1][1] is None
+        assert to_thread_calls[-1] == "<lambda>"
 
         response = asyncio.run(routes.agent_edit_route(_Request({"graph": {}, "task": "x", "client_id": "   "})))
         assert response["status"] == 200
         assert captured[-1][1] is None
+        assert to_thread_calls[-1] == "<lambda>"
     finally:
         if real_aiohttp is not None:
             sys.modules["aiohttp"] = real_aiohttp
@@ -633,6 +643,7 @@ def test_agent_edit_state_exposes_explicit_lowering_fields(tmp_path: Path) -> No
     assert state.original_intent_workflow is None
     assert state.lowering_evidence == []
     assert state.lowering_recovery_entries == []
+    assert state.batch_max_turns == 50
 
 
 # ── gate context fixture ──────────────────────────────────────────────────
@@ -1925,7 +1936,7 @@ def test_handle_agent_edit_batch_repl_reports_partial_success_hints_dependency_c
     issue = result["agent_failure_context"]["issues"][0]
     assert issue["code"] == "batch_budget_exhausted"
     assert result["message"] == (
-        "Applied 1 edit. I ran out of batch budget before completing the remaining changes."
+        "Applied 1 edit. I ran out of turn budget before completing the remaining changes."
     )
     assert issue["detail"]["turn_count"] == 1
     assert issue["detail"]["budget_state"]["consecutive_errors"] == 1
@@ -1936,8 +1947,8 @@ def test_handle_agent_edit_batch_repl_reports_partial_success_hints_dependency_c
     assert batch_meta["budget_state"]["remaining_batches"] == 3
     assert batch_meta["budget_state"]["consecutive_errors"] == 1
     assert batch_meta["exit_mode"] == "budget"
-    assert batch_meta["final_summary"] == "Stopped after 1 batch turn(s); 3 batch(es) remaining."
-    assert "Batch summary: 1 landed, 3 failed, 3 batch diagnostic(s), 3 batch(es) remaining, 1 consecutive error turn(s)." in batch_meta["feedback"]
+    assert batch_meta["final_summary"] == "Stopped after 1 turn(s); 3 turn(s) remaining."
+    assert "Turn summary: 1 landed, 3 failed, 3 diagnostic(s), 3 turn(s) remaining, 1 consecutive error turn(s)." in batch_meta["feedback"]
     assert "✓ Statement 1: set_node_field" in batch_meta["feedback"]
     assert "✗ Statement 2: set_node_field" in batch_meta["feedback"]
     assert "cause: Statement depends on graph name 'extra' whose add-node statement did not land." in batch_meta["feedback"]
@@ -2781,7 +2792,7 @@ def test_handle_agent_edit_batch_repl_scripted_transcript_commits_structurally_c
     assert "saveimage = SaveImage" in captured_messages[1][1]["content"]
     assert "Previous agent message:" in captured_messages[1][1]["content"]
     assert "Bypassed the passthrough output." in captured_messages[1][1]["content"]
-    assert captured_messages[1][1]["content"].count("Budget: 4 batch(es) remaining out of 5.") == 1
+    assert captured_messages[1][1]["content"].count("Budget: 4 turn(s) remaining out of 5.") == 1
     assert "Teaching report from previous turn:" in captured_messages[2][1]["content"]
     assert "unknown_target_field: SaveImage has no editable field or input named 'not_a_field'." in captured_messages[2][1]["content"]
 
@@ -2885,7 +2896,7 @@ def test_handle_agent_edit_batch_repl_reincludes_render_after_search_only_turn(
     assert "Node variable index:" in second_user
     assert "Previous agent message:" in second_user
     assert "I checked the SaveImage signature." in second_user
-    assert second_user.count("Budget: 1 batch(es) remaining out of 2.") == 1
+    assert second_user.count("Budget: 1 turn(s) remaining out of 2.") == 1
 
 
 def test_handle_agent_edit_batch_repl_repeated_search_only_turns_keep_render_previous_message_and_index(
@@ -2963,12 +2974,12 @@ def test_handle_agent_edit_batch_repl_repeated_search_only_turns_keep_render_pre
         (
             second_user,
             "I checked the SaveImage signature.",
-            "Budget: 2 batch(es) remaining out of 3.",
+            "Budget: 2 turn(s) remaining out of 3.",
         ),
         (
             third_user,
             "I checked the ImageScaleBy signature next.",
-            "Budget: 1 batch(es) remaining out of 3.",
+            "Budget: 1 turn(s) remaining out of 3.",
         ),
     ):
         assert "Current scratchpad Python (full render):" in user_msg
@@ -3038,8 +3049,8 @@ def test_handle_agent_edit_batch_repl_budget_exhaustion_reports_final_status_met
         audit_ref_expected=True,
     )
     assert len(captured_messages) == 2
-    assert "Budget: 2 batch(es) remaining out of 2." in captured_messages[0][0]["content"]
-    assert "Budget: 1 batch(es) remaining out of 2." in captured_messages[1][1]["content"]
+    assert "Budget: 2 turn(s) remaining out of 2." in captured_messages[0][0]["content"]
+    assert "Budget: 1 turn(s) remaining out of 2." in captured_messages[1][1]["content"]
     assert [payload["status"] for _, payload, _ in events] == [
         "in_progress",
         "in_progress",
@@ -3056,7 +3067,7 @@ def test_handle_agent_edit_batch_repl_budget_exhaustion_reports_final_status_met
     batch_meta = audit["metadata"]["batch_repl"]
     assert batch_meta["turn_count"] == 2
     assert batch_meta["exit_mode"] == "budget"
-    assert batch_meta["final_summary"] == "Stopped after 2 batch turn(s); 0 batch(es) remaining."
+    assert batch_meta["final_summary"] == "Stopped after 2 turn(s); 0 turn(s) remaining."
     assert batch_meta["budget_state"]["remaining_batches"] == 0
     assert batch_meta["budget_state"]["consecutive_errors"] == 0
     request_turns = json.loads(

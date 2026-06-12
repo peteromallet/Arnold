@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 from pathlib import Path
@@ -129,6 +130,16 @@ def _promote_accept_rebaseline_recovery(response: dict[str, Any]) -> None:
         "action": "rebaseline",
         "endpoint": "/vibecomfy/agent-edit/rebaseline",
         "reason": reason if isinstance(reason, str) and reason else "stale_state_recovery",
+        "last_known_baseline_graph_hash": context.get("expected_baseline_graph_hash")
+        if isinstance(context.get("expected_baseline_graph_hash"), str)
+        else (
+            context.get("baseline_graph_hash")
+            if isinstance(context.get("baseline_graph_hash"), str)
+            else None
+        ),
+        "submit_structural_graph_hash": context.get("submit_structural_graph_hash")
+        if isinstance(context.get("submit_structural_graph_hash"), str)
+        else None,
     }
     issue = {
         "code": "stale_state_mismatch",
@@ -622,7 +633,7 @@ try:
                 status=400,
             )
         client_id = payload.get("client_id") if isinstance(payload.get("client_id"), str) and payload.get("client_id").strip() else None
-        result = _handle_agent_edit(payload, client_id=client_id)
+        result = await asyncio.to_thread(_handle_agent_edit, payload, client_id=client_id)
         if result.get("ok") is False:
             status = 500 if result.get("stage") == "route" else 400
             return _web.json_response(result, status=status)

@@ -66,7 +66,13 @@ export {
   markAllAgentPanelDirty,
   scheduleRenderAgentPanel,
 };
-export { applyTypedSocketLabelsLabelOnly };
+export {
+  applyTypedSocketLabelsLabelOnly,
+  normalizeExecNodeForSerialization,
+  prepareCandidateGraphForPanel,
+  repairLiveIntentNodesFromCandidate,
+  sanitizeSerializedGraphLinks,
+};
 
 // ── VibeComfy Contract (S2 — Durable Frontend Panel) ─────────────────────
 // This file captures the frontend↔backend contract before feature work.
@@ -265,9 +271,10 @@ const ROUTE_STATUS_KIND = Object.freeze({
   UNAVAILABLE: "status_unavailable",
 });
 
-const INTENT_NODE_CLASS_TYPES = new Set(["vibecomfy.code", "vibecomfy.loop"]);
+const INTENT_NODE_CLASS_TYPES = new Set(["vibecomfy.code", "vibecomfy.exec", "vibecomfy.loop"]);
 const INTENT_KIND_BY_CLASS_TYPE = Object.freeze({
   "vibecomfy.code": "code",
+  "vibecomfy.exec": "code",
   "vibecomfy.loop": "loop",
 });
 const INTENT_PREVIEW_MAX = 120;
@@ -296,7 +303,19 @@ const LOWERED_BADGE = "lowered";
 // ── localStorage helpers (safe wrappers — tolerate missing/throwing storage) ─
 const LS_ACTIVE_SESSION_KEY = "vibecomfy_active_session_id";
 const LS_AGENT_PROVIDER_KEY = "vibecomfy_agent_provider";
-const VIBECOMFY_LOGO_URL = new URL("./astrid_logo.png", import.meta.url).href;
+
+function resolveModuleAssetUrl(path) {
+  try {
+    if (typeof URL === "function") {
+      return new URL(path, import.meta.url).href;
+    }
+  } catch (_e) {
+    // Test harnesses may provide a partial browser global without URL.
+  }
+  return path;
+}
+
+const VIBECOMFY_LOGO_URL = resolveModuleAssetUrl("./vibecomfy_agent_icon_cream.png");
 
 function _lsGet(key) {
   try {
@@ -465,24 +484,325 @@ function normalizeIntentTypedIo(io, key) {
     .filter(Boolean);
 }
 
+function readExecWidgetValue(node, key) {
+  const widgetsValues = node?.widgets_values;
+  if (widgetsValues && typeof widgetsValues === "object" && !Array.isArray(widgetsValues)) {
+    if (Object.prototype.hasOwnProperty.call(widgetsValues, key)) {
+      return widgetsValues[key];
+    }
+  }
+  if (Array.isArray(widgetsValues)) {
+    if (key === "source") {
+      return widgetsValues[0];
+    }
+    if (key === "io") {
+      return widgetsValues[1];
+    }
+  }
+  const widgets = Array.isArray(node?.widgets) ? node.widgets : [];
+  for (const widget of widgets) {
+    if (widget?.name === key) {
+      return widget.value;
+    }
+  }
+  return undefined;
+}
+
+function normalizeExecIoValue(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function normalizeExecIoEntries(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+  return entries
+    .map((entry) => {
+      if (Array.isArray(entry) && entry.length >= 2) {
+        const name = String(entry[0] || "").trim();
+        const type = String(entry[1] || "").trim();
+        return name && type ? [name, type] : null;
+      }
+      if (entry && typeof entry === "object") {
+        const name = String(entry.name || "").trim();
+        const type = String(entry.type || "").trim();
+        return name && type ? [name, type] : null;
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function normalizeExecIoObject(io) {
+  const normalized = normalizeExecIoValue(io);
+  if (!normalized) {
+    return null;
+  }
+  const inputs = normalizeExecIoEntries(normalized.inputs);
+  const outputs = normalizeExecIoEntries(normalized.outputs);
+  if (!inputs.length && !outputs.length) {
+    return null;
+  }
+  return { inputs, outputs };
+}
+
+function parseTypedSocketLabel(slot) {
+  const text = String(slot?.label || slot?.name || "").trim();
+  const match = /^(.+?)\s*:\s*([^:]+)$/.exec(text);
+  if (!match) {
+    return null;
+  }
+  const name = match[1].trim();
+  const type = match[2].trim();
+  return name && type ? [name, type] : null;
+}
+
+function deriveExecIoFromSocketLabels(node) {
+  const inputs = Array.isArray(node?.inputs)
+    ? node.inputs.map(parseTypedSocketLabel).filter(Boolean)
+    : [];
+  const outputs = Array.isArray(node?.outputs)
+    ? node.outputs.map(parseTypedSocketLabel).filter(Boolean)
+    : [];
+  if (!inputs.length && !outputs.length) {
+    return null;
+  }
+  return { inputs, outputs };
+}
+
+function readExecIoFromMetadata(node) {
+  const payload = node?.properties?.vibecomfy;
+  const fromPayload = normalizeExecIoObject(payload?.io);
+  if (fromPayload) {
+    return fromPayload;
+  }
+  const meta = node?.__vibecomfyIntentMeta;
+  const fromMeta = {
+    inputs: normalizeExecIoEntries(meta?.typedInputs),
+    outputs: normalizeExecIoEntries(meta?.typedOutputs),
+  };
+  return fromMeta.inputs.length || fromMeta.outputs.length ? fromMeta : null;
+}
+
+function setExecWidgetValue(node, key, value) {
+  if (!node || typeof node !== "object") {
+    return;
+  }
+  const widgets = Array.isArray(node.widgets) ? node.widgets : [];
+  for (const widget of widgets) {
+    if (widget?.name === key) {
+      widget.value = value;
+    }
+  }
+  const current = node.widgets_values;
+  if (current && typeof current === "object" && !Array.isArray(current)) {
+    current[key] = value;
+    return;
+  }
+  const values = Array.isArray(current) ? current : [];
+  if (key === "source") {
+    values[0] = value;
+  } else if (key === "io") {
+    values[1] = value;
+  }
+  node.widgets_values = values;
+}
+
+function normalizeExecNodeForSerialization(node, fallbackClassType = null) {
+  if (getIntentClassType(node, fallbackClassType) !== "vibecomfy.exec") {
+    return false;
+  }
+  const io =
+    normalizeExecIoObject(readExecWidgetValue(node, "io"))
+    || readExecIoFromMetadata(node)
+    || deriveExecIoFromSocketLabels(node);
+  if (!io) {
+    return false;
+  }
+  const source = readExecWidgetValue(node, "source");
+  setExecWidgetValue(node, "io", io);
+  if (source !== undefined) {
+    setExecWidgetValue(node, "source", source);
+  }
+  node.properties = node?.properties && typeof node.properties === "object" ? node.properties : {};
+  const payload = node.properties.vibecomfy && typeof node.properties.vibecomfy === "object"
+    ? node.properties.vibecomfy
+    : {};
+  const intent = payload.intent && typeof payload.intent === "object" ? payload.intent : {};
+  node.properties.vibecomfy = {
+    ...payload,
+    kind: payload.kind || "code",
+    io,
+    intent: {
+      ...intent,
+      ...(typeof source === "string" ? { source } : {}),
+    },
+  };
+  return true;
+}
+
+function normalizeGraphExecNodesForSerialization(graph) {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  for (const node of nodes) {
+    normalizeExecNodeForSerialization(node);
+  }
+}
+
+function sanitizeSerializedGraphLinks(graph) {
+  if (!graph || typeof graph !== "object") {
+    return graph;
+  }
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const nodeById = new Map();
+  for (const node of nodes) {
+    if (node?.id !== null && node?.id !== undefined) {
+      nodeById.set(String(node.id), node);
+    }
+  }
+  const rawLinks = Array.isArray(graph.links)
+    ? graph.links
+    : Object.values(graph.links || {});
+  const normalized = rawLinks
+    .map((link) => ({ raw: link, normalized: normalizeSerializedLinkRecord(link) }))
+    .filter((entry) => {
+      const link = entry.normalized;
+      if (!link) {
+        return false;
+      }
+      const sourceNode = nodeById.get(String(link.origin_id));
+      const targetNode = nodeById.get(String(link.target_id));
+      if (!sourceNode || !targetNode) {
+        return false;
+      }
+      if (!Array.isArray(sourceNode.outputs) || !sourceNode.outputs[link.origin_slot]) {
+        return false;
+      }
+      if (!Array.isArray(targetNode.inputs) || !targetNode.inputs[link.target_slot]) {
+        return false;
+      }
+      return true;
+    });
+
+  const byTarget = new Map();
+  for (const entry of normalized) {
+    const link = entry.normalized;
+    const key = `${String(link.target_id)}:${Number(link.target_slot)}`;
+    const targetNode = nodeById.get(String(link.target_id));
+    const targetInput = Array.isArray(targetNode?.inputs) ? targetNode.inputs[link.target_slot] : null;
+    const preferred = targetInput && String(targetInput.link) === String(link.id);
+    const current = byTarget.get(key);
+    if (!current || preferred || !current.preferred) {
+      byTarget.set(key, { ...entry, preferred });
+    }
+  }
+
+  const kept = Array.from(byTarget.values()).map((entry) => entry.normalized);
+  const keptIds = new Set(kept.map((link) => String(link.id)));
+  const outputLinks = new Map();
+  const inputLinks = new Map();
+  for (const link of kept) {
+    const outKey = `${String(link.origin_id)}:${Number(link.origin_slot)}`;
+    if (!outputLinks.has(outKey)) {
+      outputLinks.set(outKey, []);
+    }
+    outputLinks.get(outKey).push(link.id);
+    inputLinks.set(`${String(link.target_id)}:${Number(link.target_slot)}`, link.id);
+  }
+
+  for (const node of nodes) {
+    if (Array.isArray(node.inputs)) {
+      node.inputs.forEach((input, index) => {
+        if (!input || typeof input !== "object") {
+          return;
+        }
+        const key = `${String(node.id)}:${index}`;
+        if (inputLinks.has(key)) {
+          input.link = inputLinks.get(key);
+        } else if (input.link !== null && input.link !== undefined && !keptIds.has(String(input.link))) {
+          input.link = null;
+        }
+      });
+    }
+    if (Array.isArray(node.outputs)) {
+      node.outputs.forEach((output, index) => {
+        if (!output || typeof output !== "object") {
+          return;
+        }
+        const links = outputLinks.get(`${String(node.id)}:${index}`) || [];
+        if (Array.isArray(output.links) || output.links !== undefined) {
+          output.links = links.length ? links : null;
+        }
+      });
+    }
+  }
+  graph.links = Array.isArray(graph.links)
+    ? kept.map((link) => [
+        link.id,
+        link.origin_id,
+        link.origin_slot,
+        link.target_id,
+        link.target_slot,
+        link.type,
+      ])
+    : Object.fromEntries(kept.map((link) => [String(link.id), { ...link }]));
+  return graph;
+}
+
+function normalizeLiveExecNodesForSerialization() {
+  const nodes = Array.isArray(app?.canvas?.graph?._nodes)
+    ? app.canvas.graph._nodes
+    : (Array.isArray(app?.canvas?.graph?.nodes) ? app.canvas.graph.nodes : []);
+  for (const node of nodes) {
+    normalizeExecNodeForSerialization(node);
+  }
+}
+
+function captureSerializedGraphForAgent() {
+  normalizeLiveExecNodesForSerialization();
+  const graph = app.canvas.graph.serialize();
+  normalizeGraphExecNodesForSerialization(graph);
+  sanitizeSerializedGraphLinks(graph);
+  return graph;
+}
+
 function readIntentMetadata(node, fallbackClassType = null) {
   const properties = node?.properties && typeof node.properties === "object" ? node.properties : {};
   const classType = getIntentClassType(node, fallbackClassType);
   const payload = properties?.vibecomfy && typeof properties.vibecomfy === "object"
     ? properties.vibecomfy
     : null;
-  const typedInputs = normalizeIntentTypedIo(payload?.io, "inputs");
-  const typedOutputs = normalizeIntentTypedIo(payload?.io, "outputs");
+  const execIo = classType === "vibecomfy.exec"
+    ? normalizeExecIoValue(readExecWidgetValue(node, "io"))
+    : null;
+  const ioPayload = payload?.io || execIo;
+  const typedInputs = normalizeIntentTypedIo(ioPayload, "inputs");
+  const typedOutputs = normalizeIntentTypedIo(ioPayload, "outputs");
   const kind = typeof payload?.kind === "string" && payload.kind
     ? payload.kind
     : INTENT_KIND_BY_CLASS_TYPE[classType] || "intent";
-  const sourcePreview = truncateIntentPreview(payload?.intent?.source);
+  const execSource = classType === "vibecomfy.exec" ? readExecWidgetValue(node, "source") : "";
+  const sourcePreview = truncateIntentPreview(payload?.intent?.source || execSource);
   const specPreview = truncateIntentPreview(payload?.intent?.spec);
   const valid = Boolean(
-    payload
-      && typeof payload === "object"
-      && payload.intent
-      && typeof payload.intent === "object",
+    classType === "vibecomfy.exec"
+      ? ioPayload
+      : (
+        payload
+        && typeof payload === "object"
+        && payload.intent
+        && typeof payload.intent === "object"
+      ),
   );
   // Resolve execution mode: widget → properties.vibecomfy.execution_mode → default
   const widgetExecMode = typeof properties.execution_mode === "string" && properties.execution_mode
@@ -517,7 +837,7 @@ function buildIntentBadge(meta) {
   }
   if (meta.kind === "code") {
     const mode = meta.executionMode || "sandboxed_loose";
-    return `Python · ${mode}`;
+    return mode;
   }
   return `${meta.kind} · ${meta.badgeStatus}`;
 }
@@ -567,12 +887,24 @@ function applyTypedSocketLabelsLabelOnly(slots, typedEntries) {
   }
 }
 
+function applyTypedSocketTypesOnly(slots, typedEntries) {
+  if (!Array.isArray(slots) || !Array.isArray(typedEntries) || !typedEntries.length) {
+    return;
+  }
+  const count = Math.min(slots.length, typedEntries.length);
+  for (let index = 0; index < count; index += 1) {
+    const slot = slots[index];
+    const typed = typedEntries[index];
+    if (!slot || !typed || typeof typed.type !== "string" || !typed.type) {
+      continue;
+    }
+    slot.type = typed.type;
+  }
+}
+
 function _isDynamicIoCodeNode(node) {
-  // The node's class_type (LiteGraph type / comfyClass) is the registry key
-  // "vibecomfy.code" — NOT the Python class name "VibeComfyCodeIntent", which
-  // never reaches the frontend. Resolve via the canonical class_type helper so
-  // the dynamic-IO relabel+trim path actually fires for real editor nodes.
-  return getIntentClassType(node) === "vibecomfy.code";
+  const classType = getIntentClassType(node);
+  return classType === "vibecomfy.code" || classType === "vibecomfy.exec";
 }
 
 function decorateIntentNode(node, fallbackClassType = null) {
@@ -600,6 +932,16 @@ function decorateIntentNode(node, fallbackClassType = null) {
     // Dynamic-IO code node: label-only (preserve in_i slot names for serialization).
     applyTypedSocketLabelsLabelOnly(node.inputs, meta.typedInputs);
     applyTypedSocketLabelsLabelOnly(node.outputs, meta.typedOutputs);
+    // Preserve in_i/out_i names for serialization, but make the actual
+    // LiteGraph socket types match the declared dynamic IO contract so manual
+    // connections and graph.configure() compatibility checks see IMAGE, LATENT,
+    // etc. instead of the fixed runtime pool's wildcard.
+    applyTypedSocketTypesOnly(node.inputs, meta.typedInputs);
+    applyTypedSocketTypesOnly(node.outputs, meta.typedOutputs);
+    if (!meta.valid) {
+      node.__vibecomfyIntentMeta = meta;
+      return true;
+    }
     // Hide unused trailing pool slots via removeInput/removeOutput.
     // We walk backwards so indices stay stable.
     const activeInputCount = Math.min(
@@ -610,6 +952,8 @@ function decorateIntentNode(node, fallbackClassType = null) {
       for (let i = node.inputs.length - 1; i >= activeInputCount; i -= 1) {
         if (typeof node.removeInput === "function") {
           try { node.removeInput(i); } catch (_e) { /* best-effort */ }
+        } else {
+          node.inputs.splice(i, 1);
         }
       }
     }
@@ -621,6 +965,8 @@ function decorateIntentNode(node, fallbackClassType = null) {
       for (let i = node.outputs.length - 1; i >= activeOutputCount; i -= 1) {
         if (typeof node.removeOutput === "function") {
           try { node.removeOutput(i); } catch (_e) { /* best-effort */ }
+        } else {
+          node.outputs.splice(i, 1);
         }
       }
     }
@@ -747,12 +1093,242 @@ function patchIntentNodePrototype(nodeType, nodeData) {
 function decorateIntentGraphPayload(graph) {
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   for (const node of nodes) {
+    normalizeExecNodeForSerialization(node);
     decorateIntentNode(node);
   }
+  sanitizeSerializedGraphLinks(graph);
 }
 
-function decorateLiveIntentNodes() {
+function prepareCandidateGraphForPanel(graph) {
+  if (!graph || typeof graph !== "object") {
+    return graph;
+  }
+  const candidate = clonePlainData(graph);
+  decorateIntentGraphPayload(candidate);
+  return candidate;
+}
+
+function liveGraphNodeIndex(graph) {
+  const byUid = new Map();
+  const byId = new Map();
+  for (const node of getLiveGraphNodes(graph)) {
+    const uid = canonicalNodeUid(node);
+    if (uid && !byUid.has(uid)) {
+      byUid.set(uid, node);
+    }
+    if (node?.id !== null && node?.id !== undefined) {
+      const idKey = String(node.id);
+      if (!byId.has(idKey)) {
+        byId.set(idKey, node);
+      }
+    }
+  }
+  return { byUid, byId };
+}
+
+function resolveLiveNodeFromCandidate(liveIndex, candidateNode) {
+  if (!candidateNode) {
+    return null;
+  }
+  const uid = canonicalNodeUid(candidateNode);
+  if (uid && liveIndex.byUid.has(uid)) {
+    return liveIndex.byUid.get(uid);
+  }
+  if (candidateNode.id !== null && candidateNode.id !== undefined) {
+    return liveIndex.byId.get(String(candidateNode.id)) || null;
+  }
+  return null;
+}
+
+function cloneDynamicSlot(slot, index, direction) {
+  const cloned = clonePlainData(slot) || {};
+  cloned.name = cloned.name || `${direction}_${index}`;
+  if (typeof cloned.serialize !== "function") {
+    Object.defineProperty(cloned, "serialize", {
+      enumerable: false,
+      configurable: true,
+      value() {
+        const out = {};
+        for (const [key, value] of Object.entries(this)) {
+          if (typeof value !== "function") {
+            out[key] = value;
+          }
+        }
+        return out;
+      },
+    });
+  }
+  return cloned;
+}
+
+function replaceDynamicExecSlotsFromCandidate(liveNode, candidateNode) {
+  if (!liveNode || !candidateNode || getIntentClassType(candidateNode) !== "vibecomfy.exec") {
+    return false;
+  }
+  normalizeExecNodeForSerialization(candidateNode);
+  decorateIntentNode(candidateNode);
+  const candidateInputs = Array.isArray(candidateNode.inputs) ? candidateNode.inputs : [];
+  const candidateOutputs = Array.isArray(candidateNode.outputs) ? candidateNode.outputs : [];
+  if (!candidateInputs.length && !candidateOutputs.length) {
+    return false;
+  }
+  liveNode.inputs = candidateInputs.map((slot, index) => cloneDynamicSlot(slot, index, "in"));
+  liveNode.outputs = candidateOutputs.map((slot, index) => cloneDynamicSlot(slot, index, "out"));
+  liveNode.widgets_values = clonePlainData(candidateNode.widgets_values || liveNode.widgets_values || []);
+  liveNode.properties = {
+    ...(liveNode.properties && typeof liveNode.properties === "object" ? liveNode.properties : {}),
+    ...(clonePlainData(candidateNode.properties || {})),
+  };
+  decorateIntentNode(liveNode);
+  return true;
+}
+
+function ensureLiveGraphLinkStore(graph) {
+  if (!graph) {
+    return null;
+  }
+  if (!graph.links || Array.isArray(graph.links) || typeof graph.links !== "object") {
+    const rawLinks = Array.isArray(graph.links) ? graph.links : Object.values(graph.links || graph._links || {});
+    graph.links = Object.fromEntries(
+      rawLinks
+        .map((link) => normalizeSerializedLinkRecord(link))
+        .filter(Boolean)
+        .map((link) => [String(link.id), { ...link }]),
+    );
+  }
+  return graph.links;
+}
+
+function liveLinkRecord(link) {
+  const record = {
+    id: link.id,
+    origin_id: link.origin_id,
+    origin_slot: Number(link.origin_slot),
+    target_id: link.target_id,
+    target_slot: Number(link.target_slot),
+    type: link.type ?? null,
+  };
+  if (typeof record.asSerialisable !== "function") {
+    Object.defineProperty(record, "asSerialisable", {
+      enumerable: false,
+      configurable: true,
+      value() {
+        return [
+          this.id,
+          this.origin_id,
+          this.origin_slot,
+          this.target_id,
+          this.target_slot,
+          this.type,
+        ];
+      },
+    });
+  }
+  if (typeof record.serialize !== "function") {
+    Object.defineProperty(record, "serialize", {
+      enumerable: false,
+      configurable: true,
+      value() {
+        return this.asSerialisable();
+      },
+    });
+  }
+  return record;
+}
+
+function restoreCandidateLinksOnLiveGraph(graph, candidateGraph) {
+  const linkStore = ensureLiveGraphLinkStore(graph);
+  if (!linkStore) {
+    return 0;
+  }
+  const liveIndex = liveGraphNodeIndex(graph);
+  const candidateIndex = buildGraphNodeIndex(candidateGraph);
+  const restoredIds = new Set();
+  let restored = 0;
+  for (const link of normalizedSerializedLinks(candidateGraph)) {
+    const candidateSource = candidateIndex.byId.get(String(link.origin_id));
+    const candidateTarget = candidateIndex.byId.get(String(link.target_id));
+    const sourceNode = resolveLiveNodeFromCandidate(liveIndex, candidateSource);
+    const targetNode = resolveLiveNodeFromCandidate(liveIndex, candidateTarget);
+    if (!sourceNode || !targetNode) {
+      continue;
+    }
+    const sourceSlot = Array.isArray(sourceNode.outputs) ? sourceNode.outputs[link.origin_slot] : null;
+    const targetSlot = Array.isArray(targetNode.inputs) ? targetNode.inputs[link.target_slot] : null;
+    if (!sourceSlot || !targetSlot) {
+      continue;
+    }
+    const idKey = String(link.id);
+    const existing = linkStore[idKey];
+    if (
+      existing
+      && String(existing.origin_id) === String(sourceNode.id)
+      && Number(existing.origin_slot) === Number(link.origin_slot)
+      && String(existing.target_id) === String(targetNode.id)
+      && Number(existing.target_slot) === Number(link.target_slot)
+    ) {
+      if (typeof existing.asSerialisable !== "function") {
+        linkStore[idKey] = liveLinkRecord(existing);
+      }
+      restoredIds.add(idKey);
+      continue;
+    }
+    linkStore[idKey] = liveLinkRecord({
+      id: link.id,
+      origin_id: sourceNode.id,
+      origin_slot: Number(link.origin_slot),
+      target_id: targetNode.id,
+      target_slot: Number(link.target_slot),
+      type: link.type ?? targetSlot.type ?? sourceSlot.type ?? null,
+    });
+    restoredIds.add(idKey);
+    restored += 1;
+  }
+
+  const activeIds = new Set(Object.keys(linkStore));
+  for (const node of getLiveGraphNodes(graph)) {
+    if (Array.isArray(node.inputs)) {
+      node.inputs.forEach((input, index) => {
+        const link = Object.values(linkStore).find(
+          (entry) => String(entry.target_id) === String(node.id) && Number(entry.target_slot) === index,
+        );
+        input.link = link ? link.id : null;
+      });
+    }
+    if (Array.isArray(node.outputs)) {
+      node.outputs.forEach((output, index) => {
+        const links = Object.values(linkStore)
+          .filter((entry) => String(entry.origin_id) === String(node.id) && Number(entry.origin_slot) === index)
+          .map((entry) => entry.id)
+          .filter((id) => activeIds.has(String(id)));
+        output.links = links.length ? links : null;
+      });
+    }
+  }
+  const maxLinkId = Object.keys(linkStore)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id))
+    .reduce((max, id) => Math.max(max, id), 0);
+  if (maxLinkId && (!Number.isFinite(Number(graph.last_link_id)) || Number(graph.last_link_id) < maxLinkId)) {
+    graph.last_link_id = maxLinkId;
+  }
+  return restored;
+}
+
+function repairLiveIntentNodesFromCandidate(candidateGraph = null) {
   const graph = getLiveGraph();
+  if (candidateGraph && typeof candidateGraph === "object") {
+    const liveIndex = liveGraphNodeIndex(graph);
+    const candidateNodes = Array.isArray(candidateGraph.nodes) ? candidateGraph.nodes : [];
+    for (const candidateNode of candidateNodes) {
+      if (getIntentClassType(candidateNode) !== "vibecomfy.exec") {
+        continue;
+      }
+      const liveNode = resolveLiveNodeFromCandidate(liveIndex, candidateNode);
+      replaceDynamicExecSlotsFromCandidate(liveNode, candidateNode);
+    }
+    restoreCandidateLinksOnLiveGraph(graph, candidateGraph);
+  }
   for (const node of getLiveGraphNodes(graph)) {
     decorateIntentNode(node);
   }
@@ -760,12 +1336,14 @@ function decorateLiveIntentNodes() {
 
 function applyGraphInPlaceWithIntentDecoration(candidate) {
   try {
+    let repairCandidate = null;
     applyGraphCandidateInPlace(app, candidate, {
       beforeConfigure(nextCandidate) {
         decorateIntentGraphPayload(nextCandidate);
+        repairCandidate = clonePlainData(nextCandidate);
       },
-      afterConfigure() {
-        decorateLiveIntentNodes();
+      afterConfigure(_graph, nextCandidate) {
+        repairLiveIntentNodesFromCandidate(repairCandidate || nextCandidate);
       },
     });
   } catch (e) {
@@ -1316,11 +1894,37 @@ function installIntentNodeFallback() {
   }
   app.loadGraphData = function vibecomfyIntentLoadGraphData(nextGraph, ...args) {
     decorateIntentGraphPayload(nextGraph);
+    const repairCandidate = clonePlainData(nextGraph);
     const result = originalLoadGraphData.call(this, nextGraph, ...args);
-    decorateLiveIntentNodes();
+    if (result && typeof result.then === "function") {
+      return result.then((value) => {
+        repairLiveIntentNodesFromCandidate(repairCandidate);
+        return value;
+      });
+    }
+    repairLiveIntentNodesFromCandidate(repairCandidate);
     return result;
   };
   app.__vibecomfyIntentFallbackInstalled = true;
+}
+
+function installGraphConfigureIntentFallback() {
+  const graph = getLiveGraph();
+  if (!graph || graph.__vibecomfyIntentConfigureFallbackInstalled) {
+    return;
+  }
+  const originalConfigure = graph.configure;
+  if (typeof originalConfigure !== "function") {
+    return;
+  }
+  graph.configure = function vibecomfyIntentGraphConfigure(nextGraph, ...args) {
+    decorateIntentGraphPayload(nextGraph);
+    const repairCandidate = clonePlainData(nextGraph);
+    const result = originalConfigure.call(this, nextGraph, ...args);
+    repairLiveIntentNodesFromCandidate(repairCandidate);
+    return result;
+  };
+  graph.__vibecomfyIntentConfigureFallbackInstalled = true;
 }
 
 function installAgentPreviewOverlay() {
@@ -3395,7 +3999,7 @@ function candidateActionState(panel, message = null, snapshot = null) {
 }
 
 async function buildSubmitSnapshot(panel) {
-  const graph = app.canvas.graph.serialize();
+  const graph = captureSerializedGraphForAgent();
   const graphJson = canonicalJsonString(graph);
   const graphHash = await sha256HexUtf8(graphJson);
   const structuralHash = await structuralGraphHash(graph);
@@ -3412,7 +4016,7 @@ async function buildSubmitSnapshot(panel) {
 }
 
 async function buildCanvasSnapshot() {
-  const graph = app.canvas.graph.serialize();
+  const graph = captureSerializedGraphForAgent();
   const graphJson = canonicalJsonString(graph);
   const graphHash = await sha256HexUtf8(graphJson);
   const structuralHash = await structuralGraphHash(graph);
@@ -3487,7 +4091,7 @@ function createAgentPanelShell() {
   const titleLogo = el("img");
   titleLogo.src = VIBECOMFY_LOGO_URL;
   titleLogo.alt = "VibeComfy";
-  Object.assign(titleLogo.style, { width: "20px", height: "20px", display: "block", flexShrink: "0" });
+  Object.assign(titleLogo.style, { width: "24px", height: "24px", display: "block", flexShrink: "0" });
   title.appendChild(titleLogo);
   title.appendChild(el("span", "VibeComfy"));
   headerLeft.appendChild(title);
@@ -4200,7 +4804,7 @@ function restoreLatestCandidateFromChat(panel, payload) {
     default:
       return;
   }
-  const candidateGraph = latest.candidateGraph;
+  const candidateGraph = prepareCandidateGraphForPanel(latest.candidateGraph);
   if (!candidateGraph || typeof candidateGraph !== "object") {
     return;
   }
@@ -4501,12 +5105,12 @@ function normalizeChatMessagePayload(message) {
       },
     ).outcome
     : response?.outcome || null;
-  const candidateGraph = message.candidateGraph
+  const candidateGraph = prepareCandidateGraphForPanel(message.candidateGraph
     || message.candidate?.graph
     || message.candidate_graph
     || message.graph
     || response?.candidateGraph
-    || null;
+    || null);
   const eligibility = message.eligibility
     || message.apply_eligibility
     || response?.eligibility
@@ -4723,6 +5327,7 @@ function normalizeBatchTurn(payload, { source = "response", sessionId = null, st
   const outcome = payload.outcome && typeof payload.outcome === "object" ? payload.outcome : null;
   const normalizedStatus =
     status
+    || (typeof payload.status === "string" && payload.status === "progress" ? "in_progress" : null)
     || (typeof payload.status === "string" && payload.status)
     || (outcomeRequiresClarification(outcome) ? "clarify" : "in_progress");
   const clarificationMessage = clarificationMessageFromOutcome(outcome);
@@ -5139,7 +5744,14 @@ function shouldAcceptAgentTurnEvent(panel, payload) {
   if (batchSessionIds.size > 0) {
     return batchSessionIds.size === 1 && batchSessionIds.has(payloadSessionId);
   }
-  return false;
+  const hasPendingTurn = Array.isArray(panel.state.turns)
+    && panel.state.turns.some((entry) => entry?.entry_type === "durable" && entry.status === "pending");
+  const isSubmitting = panel.state.phase === PANEL_STATE.SUBMITTING;
+  // First submit in a fresh browser session has no session_id until the server
+  // allocates it. Accept the server-pushed progress event only while this panel
+  // is actively waiting on its own submit response; later events are filtered by
+  // the now-bound session_id above.
+  return Boolean(isSubmitting && hasPendingTurn);
 }
 
 function handleAgentTurnEvent(event) {
@@ -5332,6 +5944,11 @@ function installAgentPanelDebugHook() {
     return;
   }
   targetWindow.__vibecomfyPanelDebug = () => buildAgentPanelDebugSnapshot(currentAgentPanel());
+  targetWindow.__vibecomfyRoundtripDebug = {
+    applyGraphInPlaceWithIntentDecoration,
+    prepareCandidateGraphForPanel,
+    repairLiveIntentNodesFromCandidate,
+  };
 }
 
 function populateAgentBubbleDetail(target, panel, message, snapshot = null) {
@@ -7285,6 +7902,7 @@ const BATCH_STATEMENT_CAP = 5;
 
 const _BATCH_STATUS_COLORS = Object.freeze({
   in_progress: VC_COLORS.active,
+  progress: VC_COLORS.active,
   clarify: VC_COLORS.warning,
   done: VC_COLORS.success,
   budget_exhausted: VC_COLORS.warning,
@@ -7733,8 +8351,13 @@ function renderSettings(panel) {
   }
 }
 
-function syncComposerButtons(panel, { submitting = false, showUndo = false } = {}) {
-  return syncComposerButtonsImpl(panel, { submitting, showUndo });
+function syncComposerButtons(panel, {
+  submitting = false,
+  applying = false,
+  reviewing = false,
+  showUndo = false,
+} = {}) {
+  return syncComposerButtonsImpl(panel, { submitting, applying, reviewing, showUndo });
 }
 
 function renderComposerNotice(panel, readinessState) {
@@ -8380,7 +9003,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         throw result.raw || { kind: "RequestError", message: res.statusText };
       }
       const outcome = result.outcome;
-      const candidateGraph = result.candidateGraph;
+      const candidateGraph = prepareCandidateGraphForPanel(result.candidateGraph);
       if (!isSubmitResponseValid(outcome, candidateGraph)) {
         throw agentPanelFailure("MalformedResponse", "The backend returned an incomplete candidate envelope.", {
           stage: result.raw?.stage || "agent-edit",
@@ -8473,7 +9096,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
     // no-op/unchanged graph. Instead surface the question and leave the prompt open
     // so the user can answer in the same session.
     const outcome = result.outcome;
-    const candidateGraph = result.candidateGraph;
+    const candidateGraph = prepareCandidateGraphForPanel(result.candidateGraph);
     const eligibility = result.eligibility;
     if (outcomeRequiresClarification(outcome) && !candidateGraph) {
       const fallbackMessage =
@@ -9649,7 +10272,7 @@ async function undoLastApply(panel) {
 async function openRoundtrip() {
   let graph;
   try {
-    graph = app.canvas.graph.serialize();
+    graph = captureSerializedGraphForAgent();
   } catch (e) {
     return errorModal({ kind: "SerializeError", message: String(e) });
   }
@@ -9689,12 +10312,8 @@ function ensureAgentLauncher() {
   const launcherLogo = document.createElement("img");
   launcherLogo.src = VIBECOMFY_LOGO_URL;
   launcherLogo.alt = "";
-  Object.assign(launcherLogo.style, { width: "14px", height: "14px", display: "block", flexShrink: "0" });
-  const launcherText = document.createElement("span");
-  launcherText.textContent = "VibeComfy";
-  launcherText.style.writingMode = "vertical-rl";
+  Object.assign(launcherLogo.style, { width: "32px", height: "32px", display: "block", flexShrink: "0" });
   btn.appendChild(launcherLogo);
-  btn.appendChild(launcherText);
   Object.assign(btn.style, {
     position: "fixed",
     right: "0px",
@@ -9703,8 +10322,8 @@ function ensureAgentLauncher() {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: "6px",
-    padding: "10px 7px",
+    gap: "0",
+    padding: "8px 6px",
     background: "#1b1d22",
     color: "#f47f18",
     border: "1px solid #f47f18",
@@ -9880,7 +10499,7 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   const titleLogo = el("img");
   titleLogo.src = VIBECOMFY_LOGO_URL;
   titleLogo.alt = "VibeComfy";
-  Object.assign(titleLogo.style, { width: "20px", height: "20px", display: "block", flexShrink: "0" });
+  Object.assign(titleLogo.style, { width: "24px", height: "24px", display: "block", flexShrink: "0" });
   titleRow.appendChild(titleLogo);
   const title = el("div", "Choose Your Engine");
   Object.assign(title.style, {
@@ -10609,9 +11228,10 @@ app.registerExtension({
   async setup() {
     await checkFrontendVersion();
     registerDefaultExecutionModeSetting();
+    installGraphConfigureIntentFallback();
     installIntentNodeFallback();
     installAgentPreviewOverlay();
-    decorateLiveIntentNodes();
+    repairLiveIntentNodesFromCandidate();
     installQueueGuard();
     ensureAgentTurnListener();
     installAgentPanelDebugHook();

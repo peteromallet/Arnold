@@ -848,6 +848,7 @@ const VC_COLORS = Object.freeze({
 
 const BATCH_STATUS_COLORS = Object.freeze({
   in_progress: "#f47f18",
+  progress: "#f47f18",
   clarify: "#ffc107",
   done: "#4caf50",
   budget_exhausted: "#ffc107",
@@ -916,6 +917,187 @@ function _safeSummaryText(entry) {
 }
 
 const BATCH_STATEMENT_CAP = 5;
+
+function _batchTurnDisplayStatus(entry) {
+  const status = typeof entry?.status === "string" ? entry.status : "";
+  if (status === "done") {
+    return "turn done";
+  }
+  if (status === "clarify") {
+    return "needs input";
+  }
+  if (status === "budget_exhausted") {
+    return "stopped";
+  }
+  if (status === "in_progress" || status === "progress") {
+    return "working";
+  }
+  return status || "working";
+}
+
+function _latestLiveBatchTurn(panel, sessionId = null) {
+  const turns = Array.isArray(panel?.state?.turns) ? panel.state.turns : [];
+  const currentSessionId =
+    (typeof sessionId === "string" && sessionId)
+    || (typeof panel?.state?.sessionId === "string" && panel.state.sessionId)
+    || null;
+  for (const entry of turns) {
+    if (entry?.entry_type !== "batch") {
+      continue;
+    }
+    if (currentSessionId && entry.session_id && entry.session_id !== currentSessionId) {
+      continue;
+    }
+    if (ACTIVITY_TERMINAL_STATUSES.has(entry.status)) {
+      continue;
+    }
+    return entry;
+  }
+  return null;
+}
+
+function _compactStatementStatus(stmt) {
+  if (!stmt || typeof stmt !== "object") {
+    return null;
+  }
+  const source = _truncateMessage(
+    typeof stmt.source === "string" && stmt.source ? stmt.source : null,
+    96,
+  );
+  const diagnostics = Array.isArray(stmt.diagnostics) ? stmt.diagnostics : [];
+  let result = null;
+  if (diagnostics.length) {
+    const first = diagnostics[0];
+    if (first && typeof first === "object") {
+      result = _truncateMessage(first.message || first.code || null, 80);
+    }
+  } else if (stmt?.detail && typeof stmt.detail === "object") {
+    const queryOutput = typeof stmt.detail.query_output === "string" ? stmt.detail.query_output.trim() : "";
+    if (stmt.op_kind === "query" && !queryOutput) {
+      result = "no matches";
+    }
+  }
+  if (!result) {
+    if (stmt.landed === true) {
+      result = "landed";
+    } else if (stmt.ok === false) {
+      result = "failed";
+    } else if (stmt.landed === false) {
+      result = "not landed";
+    }
+  }
+  return { source, result };
+}
+
+function _renderLiveTurnSummary(panel, entry, deps = {}) {
+  const { el } = deps;
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const turnKey = entry.turn_key;
+  const expanded = !!(turnKey && panelStateExpanded(panel, entry));
+  const statusColor = _statusColor(entry.status);
+  const turnLabel = Number.isFinite(entry.turn_number)
+    ? `Turn ${entry.turn_number + 1}`
+    : "Turn";
+
+  const box = el("div");
+  Object.assign(box.style, {
+    display: "grid",
+    gap: "4px",
+    padding: "5px 6px",
+    borderLeft: "2px solid #282a32",
+    background: "#151820",
+    cursor: "pointer",
+  });
+  box.onclick = function (event) {
+    event.stopPropagation();
+    toggleExpandedTurnKey(panel, entry, deps);
+  };
+
+  const header = el("div");
+  Object.assign(header.style, {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    fontSize: "12px",
+  });
+  const chevron = el("span", expanded ? "\u25bc" : "\u25b6");
+  chevron.style.color = "#8d93a1";
+  chevron.style.fontSize = "9px";
+  header.appendChild(chevron);
+  const label = el("span", turnLabel);
+  label.style.color = statusColor;
+  label.style.fontWeight = "700";
+  header.appendChild(label);
+  box.appendChild(header);
+
+  if (!expanded) {
+    return box;
+  }
+
+  const statements = Array.isArray(entry.statements) ? entry.statements : [];
+  const latestStatement = statements.length ? statements[statements.length - 1] : null;
+  const statementStatus = _compactStatementStatus(latestStatement);
+  if (statementStatus?.source) {
+    const sourceLine = el("div", `latest: ${statementStatus.source}`);
+    sourceLine.style.fontSize = "11px";
+    sourceLine.style.color = "#c4ccd6";
+    sourceLine.style.overflowWrap = "anywhere";
+    box.appendChild(sourceLine);
+  }
+  const active = entry.status === "in_progress" || entry.status === "progress";
+  if (!active && statementStatus?.result) {
+    const resultLine = el("div", `status: ${statementStatus.result}`);
+    resultLine.style.fontSize = "10px";
+    resultLine.style.color = "#8d93a1";
+    box.appendChild(resultLine);
+  }
+  const summary = _safeSummaryText(entry);
+  if (summary) {
+    const summaryLine = el("div", summary);
+    summaryLine.style.fontSize = "11px";
+    summaryLine.style.color = "#c4ccd6";
+    summaryLine.style.whiteSpace = "pre-wrap";
+    summaryLine.style.wordBreak = "break-word";
+    box.appendChild(summaryLine);
+  }
+  const showStmts = statements.slice(0, BATCH_STATEMENT_CAP);
+  if (showStmts.length) {
+    const stmtsHeader = el("div", "Turn details:");
+    stmtsHeader.style.fontSize = "10px";
+    stmtsHeader.style.color = "#9da1ac";
+    stmtsHeader.style.textTransform = "uppercase";
+    stmtsHeader.style.letterSpacing = "0.04em";
+    box.appendChild(stmtsHeader);
+    for (let index = 0; index < showStmts.length; index += 1) {
+      box.appendChild(_statementBullet(showStmts[index], index, deps));
+    }
+  }
+  return box;
+}
+
+function panelStateExpanded(panel, entry) {
+  const turnKey = entry?.turn_key;
+  return Boolean(turnKey && panel?.state?.expandedTurnKeys?.[turnKey]);
+}
+
+function toggleExpandedTurnKey(panel, entry, deps = {}) {
+  const turnKey = entry?.turn_key;
+  if (!panel?.state || !turnKey) {
+    return;
+  }
+  if (!panel.state.expandedTurnKeys || typeof panel.state.expandedTurnKeys !== "object") {
+    panel.state.expandedTurnKeys = {};
+  }
+  if (panel.state.expandedTurnKeys[turnKey]) {
+    delete panel.state.expandedTurnKeys[turnKey];
+  } else {
+    panel.state.expandedTurnKeys[turnKey] = true;
+  }
+  renderHistory(panel, deps);
+  renderActivityRows(panel, deps);
+}
 
 function _statementBullet(stmt, index, deps = {}) {
   const { el } = deps;
@@ -988,7 +1170,7 @@ function _renderOutcomeFooter(entry, deps = {}) {
   }
   if (entry.budget && typeof entry.budget === "object") {
     if (Number.isFinite(entry.budget.remaining_batches)) {
-      parts.push(`budget: ${entry.budget.remaining_batches} left`);
+      parts.push(`${entry.budget.remaining_batches} turn${entry.budget.remaining_batches === 1 ? "" : "s"} left`);
     } else if (Number.isFinite(entry.budget.consecutive_errors)) {
       parts.push(`errors: ${entry.budget.consecutive_errors}`);
     }
@@ -1082,11 +1264,11 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
   const { button, el, downloadTurnAudit } = deps;
   const turnKey = entry.turn_key;
   const expanded = !!(panel.state.expandedTurnKeys && panel.state.expandedTurnKeys[turnKey]);
-  const isInProgress = entry.status === "in_progress";
+  const isInProgress = entry.status === "in_progress" || entry.status === "progress";
   const statusColor = _statusColor(entry.status);
   const turnLabel = Number.isFinite(entry.turn_number)
     ? `Turn ${entry.turn_number + 1}`
-    : (typeof entry.turn_id === "string" && entry.turn_id ? `turn ${entry.turn_id}` : "batch turn");
+    : (typeof entry.turn_id === "string" && entry.turn_id ? `turn ${entry.turn_id}` : "turn");
 
   const row = el("div");
   row.className = "vibecomfy-batch-row";
@@ -1131,7 +1313,7 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
   labelEl.style.fontWeight = "700";
   collapsedLine.appendChild(labelEl);
 
-  const statusEl = el("span", entry.status || "unknown");
+  const statusEl = el("span", _batchTurnDisplayStatus(entry));
   Object.assign(statusEl.style, {
     color: statusColor,
     fontSize: "9px",
@@ -1163,12 +1345,28 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
     collapsedLine.appendChild(msgEl);
   }
 
+  const statements = Array.isArray(entry.statements) ? entry.statements : [];
+  const latestStatement = statements.length ? statements[statements.length - 1] : null;
+  const latestSource = _truncateMessage(
+    typeof latestStatement?.source === "string" ? latestStatement.source : null,
+    96,
+  );
   const chevron = el("span", expanded ? "\u25bc" : "\u25b6");
   chevron.style.color = "#8d93a1";
   chevron.style.fontSize = "9px";
   collapsedLine.appendChild(chevron);
 
   row.appendChild(collapsedLine);
+  if (latestSource) {
+    const latestEl = el("div", `latest: ${latestSource}`);
+    Object.assign(latestEl.style, {
+      color: "#c4ccd6",
+      fontSize: "11px",
+      overflowWrap: "anywhere",
+      paddingLeft: isInProgress ? "16px" : "0",
+    });
+    row.appendChild(latestEl);
+  }
 
   // ── Expanded view ────────────────────────────────────────────────────
   if (expanded) {
@@ -1228,11 +1426,10 @@ function _renderBatchTurnRow(body, panel, entry, index, deps = {}) {
       expandedBox.appendChild(reasoningRow);
     }
 
-    const stmts = Array.isArray(entry.statements) ? entry.statements : [];
-    const showStmts = stmts.slice(0, BATCH_STATEMENT_CAP);
-    const moreCount = stmts.length - BATCH_STATEMENT_CAP;
+    const showStmts = statements.slice(0, BATCH_STATEMENT_CAP);
+    const moreCount = statements.length - BATCH_STATEMENT_CAP;
     if (showStmts.length) {
-      const stmtsHeader = el("div", "Statements:");
+      const stmtsHeader = el("div", "Turn details:");
       stmtsHeader.style.fontSize = "10px";
       stmtsHeader.style.color = "#9da1ac";
       stmtsHeader.style.textTransform = "uppercase";
@@ -1350,7 +1547,7 @@ function _renderDurableTurnRow(body, panel, entry, index, deps = {}) {
 
   turnCard.appendChild(headerRow);
 
-  if (entry.turn_id) {
+  if (entry.turn_id && !isPending) {
     appendTextLine(turnCard, `turn ${entry.turn_id}`, "#8d93a1");
   }
   // While a turn is in progress the user's own message bubble is shown directly
@@ -1368,6 +1565,16 @@ function _renderDurableTurnRow(body, panel, entry, index, deps = {}) {
     && /^\s*submitting:/i.test(entry.message);
   if (entry.message && !isSubmittingEcho) {
     appendTextLine(turnCard, entry.message, "#9da1ac");
+  }
+  if (isPending) {
+    const liveSummary = _renderLiveTurnSummary(
+      panel,
+      _latestLiveBatchTurn(panel, entry.session_id),
+      deps,
+    );
+    if (liveSummary) {
+      turnCard.appendChild(liveSummary);
+    }
   }
   if (entry.audit_ref?.path) {
     appendCodeLine(turnCard, `audit: ${entry.audit_ref.path}`, "#9ed0ff");
@@ -1391,12 +1598,22 @@ export function populateActivityRows(body, panel, opts = {}, deps = {}) {
   const { sessionId = null } = opts;
   clearNode(body);
 
+  const hasPendingDurable = Array.isArray(panel?.state?.turns)
+    ? panel.state.turns.some((entry) => (
+      entry?.entry_type === "durable"
+      && entry.status === "pending"
+      && (!sessionId || !entry.session_id || entry.session_id === sessionId)
+    ))
+    : false;
   const relevantTurns = Array.isArray(panel?.state?.turns)
     ? panel.state.turns.filter((entry) => {
       if (!entry) {
         return false;
       }
       if (sessionId && entry.session_id && entry.session_id !== sessionId) {
+        return false;
+      }
+      if (hasPendingDurable && entry.entry_type === "batch") {
         return false;
       }
       return isLiveActivityTurn(entry);

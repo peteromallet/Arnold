@@ -19,7 +19,7 @@ STATE_SCHEMA_VERSION = 1
 # stored by an older version is recomputed from the on-disk accepted graph on
 # read, so a projection change never strands an open session on a stale baseline
 # it can no longer match (the StaleStateMismatch-on-every-submit failure mode).
-STRUCTURAL_PROJECTION_VERSION = 2
+STRUCTURAL_PROJECTION_VERSION = 3
 DEFAULT_LOCK_TIMEOUT_SECONDS = 10.0
 LOCK_POLL_SECONDS = 0.025
 
@@ -395,6 +395,29 @@ def _normalize_structural_widget_value(value: Any) -> Any:
     return value
 
 
+def _normalize_node_structural_widget_values(node: Mapping[str, Any]) -> Any:
+    values = node.get("widgets_values", [])
+    if node.get("type") != "vibecomfy.exec":
+        return _normalize_structural_widget_value(values)
+    if isinstance(values, Mapping):
+        return {
+            key: _normalize_structural_widget_value(entry)
+            for key, entry in sorted(values.items(), key=lambda item: str(item[0]))
+            if key != "io" and not _is_preview_like_key(key)
+        }
+    if isinstance(values, list):
+        # ComfyUI does not reliably preserve the `io` widget for dynamic-IO
+        # exec nodes after configure/decorate. Socket topology and labels carry
+        # the actual graph shape; keeping this duplicate widget in the baseline
+        # hash turns a representation round-trip into a false stale-state edit.
+        return [
+            _normalize_structural_widget_value(entry)
+            for index, entry in enumerate(values)
+            if index != 1
+        ]
+    return _normalize_structural_widget_value(values)
+
+
 def _normalize_structural_link(value: Any) -> Any:
     if isinstance(value, list):
         return [_normalize_structural_link(entry) for entry in value]
@@ -453,9 +476,7 @@ def structural_graph_projection(graph: Any) -> dict[str, Any]:
                 "mode": node.get("mode"),
                 "inputs": wired_inputs,
                 "outputs": live_outputs,
-                "widgets_values": _normalize_structural_widget_value(
-                    node.get("widgets_values", [])
-                ),
+                "widgets_values": _normalize_node_structural_widget_values(node),
             }
         )
     nodes.sort(
@@ -613,6 +634,8 @@ def _stale_state_recovery_evidence(
             "action": "rebaseline",
             "endpoint": "/vibecomfy/agent-edit/rebaseline",
             "reason": reason,
+            "last_known_baseline_graph_hash": expected_baseline_graph_hash,
+            "submit_structural_graph_hash": submit_structural_graph_hash,
         },
     }
 

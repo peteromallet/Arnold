@@ -266,7 +266,7 @@ def _validate_call(
             _unsafe(
                 node.func,
                 "intent_class_construction_not_allowed",
-                "Editor-only vibecomfy.* intent classes cannot be constructed from the Python edit surface.",
+                "Editor-only vibecomfy.* intent classes cannot be constructed from the Python edit surface. Use vibecomfy.exec for executable Python code nodes.",
             )
         ]
     if name is None:

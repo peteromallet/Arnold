@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 import os
 import subprocess
 import threading
@@ -702,7 +703,7 @@ def test_allocate_turn_captures_submitted_baseline_snapshot(tmp_path: Path) -> N
     second_record = state["turns"][second_id]
     assert second_record["submitted_baseline_graph_hash"] == structural_graph_hash(first_candidate)
     assert second_record["submitted_baseline_graph_hash_kind"] == "structural"
-    assert second_record["submitted_baseline_graph_hash_version"] == 2
+    assert second_record["submitted_baseline_graph_hash_version"] == STRUCTURAL_PROJECTION_VERSION
     assert second_record["submitted_baseline_source"] == "turn"
     assert second_record["submitted_baseline_turn_id"] == first_id
 
@@ -1070,7 +1071,7 @@ def test_accept_structural_cas_mismatch_fails_without_action_writes(
         {"nodes": [{"id": 77, "type": "PreviewImage"}], "links": []}
     )
     state["baseline_graph_hash_kind"] = "structural"
-    state["baseline_graph_hash_version"] = 2
+    state["baseline_graph_hash_version"] = STRUCTURAL_PROJECTION_VERSION
     state["baseline_source"] = "rebaseline"
     state["baseline_rebaseline_id"] = "manual-cas-drift"
     state["baseline_graph_source_path"] = "_rebaseline/manual-cas-drift/graph.ui.json"
@@ -3322,6 +3323,55 @@ def test_agent_provider_readiness_prefers_runtime_readiness_and_status_derives_o
     assert status["readiness"] == "unavailable"
 
 
+def test_agent_provider_readiness_stays_unavailable_when_runtime_omits_ready(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class Runtime:
+        @staticmethod
+        def readiness(**kwargs):
+            calls.append(("readiness", kwargs))
+            return {}
+
+    monkeypatch.setattr(agent_provider, "_load_arnold_runtime", lambda: Runtime)
+
+    readiness = agent_provider.readiness(route="openai-codex", model="m1")
+    status = agent_provider.get_agent_status(route="openai-codex", model="m1")
+
+    assert calls == [
+        ("readiness", {"route": "openai-codex", "model": "m1"}),
+        ("readiness", {"route": "openai-codex", "model": "m1"}),
+    ]
+    assert readiness["ready"] is False
+    assert readiness["reason"] == "Provider readiness probe did not report ready=true."
+    assert readiness["provider_available"] is True
+    assert readiness["route"] == "arnold"
+    assert readiness["requested_route"] == "openai-codex"
+    assert status["ok"] is False
+    assert status["ready"] is False
+    assert status["readiness"] == "unavailable"
+
+
+def test_agent_provider_load_runtime_rejects_module_without_execution_contract(monkeypatch) -> None:
+    def fake_import(name: str):
+        assert name == "empty_runtime"
+        return SimpleNamespace(readiness=lambda **_kwargs: {"ready": True})
+
+    monkeypatch.setenv("VIBECOMFY_ARNOLD_RUNTIME_MODULE", "empty_runtime")
+    monkeypatch.setattr(agent_provider.importlib, "import_module", fake_import)
+
+    with pytest.raises(agent_provider.ProviderError, match="does not expose run_agent_turn_batch"):
+        agent_provider._load_arnold_runtime()
+
+
+def test_agent_provider_default_runtime_is_vibecomfy_adapter(monkeypatch) -> None:
+    monkeypatch.delenv("VIBECOMFY_ARNOLD_RUNTIME_MODULE", raising=False)
+
+    runtime = agent_provider._load_arnold_runtime()
+
+    assert getattr(runtime, "__name__", "") == "vibecomfy.comfy_nodes.agent.runtime"
+    assert callable(getattr(runtime, "run_agent_turn_batch", None))
+
+
 def test_agent_provider_status_redacts_runtime_status_secret_fields(monkeypatch) -> None:
     class Runtime:
         @staticmethod
@@ -3648,7 +3698,7 @@ def test_build_batch_messages_later_turn_can_reinclude_full_render_previous_mess
     assert "I inspected the graph and did not apply any edit yet." in user
     assert "Teaching report from previous turn:" in user
     assert "No statements landed on the previous turn." in user
-    assert "Budget: 1 batch(es) remaining out of 3." in user
+    assert "Budget: 1 turn(s) remaining out of 3." in user
 
 
 def test_build_batch_messages_no_json_delta_wording() -> None:
@@ -3702,6 +3752,22 @@ def test_build_batch_messages_system_prompt_contains_all_four_privileged_calls()
     assert "search(" in system
     assert "done()" in system
     assert "clarify(" in system
+
+
+def test_build_batch_messages_system_prompt_names_real_code_node_class() -> None:
+    """Code/PIL requests should steer to the edit-surface executable node."""
+    messages = agent_provider.build_batch_messages(
+        task="Add a code node that processes images with PIL",
+        python_source="vaedecode = VAEDecode()\nsaveimage = SaveImage(images=vaedecode.image)",
+    )
+    system = messages[0]["content"]
+    assert "Code node rule:" in system
+    assert "exactly `vibecomfy.exec`" in system
+    assert "never `vibecomfy.code`" in system
+    assert "`ImageCode`" in system
+    assert 'search(focus_types=["vibecomfy.exec"])' in system
+    assert "out_0" in system
+    assert "PIL" in system
 
 
 def test_build_batch_messages_system_prompt_no_execution_semantics() -> None:
@@ -6294,7 +6360,7 @@ def test_v2_accept_unrelated_whole_graph_drift_succeeds_with_diagnostic_mismatch
         {"nodes": [{"id": 77, "type": "PreviewImage"}], "links": []}
     )
     state["baseline_graph_hash_kind"] = "structural"
-    state["baseline_graph_hash_version"] = 2
+    state["baseline_graph_hash_version"] = STRUCTURAL_PROJECTION_VERSION
     state["baseline_source"] = "rebaseline"
     state["baseline_rebaseline_id"] = "manual-shift"
     state["baseline_graph_source_path"] = "_rebaseline/manual-shift/graph.ui.json"
@@ -6467,7 +6533,7 @@ def test_v2_accept_touched_region_drift_fails_with_scoped_issue_details(
         {"nodes": [{"id": 99, "type": "Note"}], "links": []}
     )
     state["baseline_graph_hash_kind"] = "structural"
-    state["baseline_graph_hash_version"] = 2
+    state["baseline_graph_hash_version"] = STRUCTURAL_PROJECTION_VERSION
     state["baseline_source"] = "rebaseline"
     state["baseline_rebaseline_id"] = "manual-shift-touched"
     state["baseline_graph_source_path"] = (
@@ -6797,7 +6863,7 @@ def test_v1_accept_structural_cas_drift_blocks_as_before(
         {"nodes": [{"id": 77, "type": "PreviewImage"}], "links": []}
     )
     state["baseline_graph_hash_kind"] = "structural"
-    state["baseline_graph_hash_version"] = 2
+    state["baseline_graph_hash_version"] = STRUCTURAL_PROJECTION_VERSION
     state["baseline_source"] = "rebaseline"
     state["baseline_rebaseline_id"] = "manual-v1-drift"
     state["baseline_graph_source_path"] = "_rebaseline/manual-v1-drift/graph.ui.json"
@@ -7490,8 +7556,10 @@ def test_exec_structural_projection_uses_stable_wire_keys() -> None:
     exec_proj = next(n for n in proj["nodes"] if n["id"] == 2)
     assert exec_proj["inputs"] == ["in_0"], f"Expected [in_0], got {exec_proj['inputs']}"
     assert exec_proj["outputs"] == ["out_0"], f"Expected [out_0], got {exec_proj['outputs']}"
-    # widgets_values still present (source, io — real signature edits matter)
-    assert len(exec_proj["widgets_values"]) == 2
+    # The executable source is structural. The dynamic-IO widget is deliberately
+    # omitted because ComfyUI may drop it after configure/decorate while the
+    # actual socket topology remains encoded by inputs/outputs/links.
+    assert exec_proj["widgets_values"] == ["def fn(img):\n    return dict(result=img)"]
 
     # Hash should be deterministic.
     h1 = structural_graph_hash(graph)
@@ -7559,9 +7627,9 @@ def test_exec_structural_hash_stable_after_display_label_change() -> None:
     assert h1 == h2, "Structural hash must be stable when only display labels change"
 
 
-def test_exec_structural_hash_changes_on_io_signature_edit() -> None:
-    """Real io widget value changes (input/output key edits) DO change the
-    structural hash because widgets_values is included in the projection."""
+def test_exec_structural_hash_ignores_duplicate_io_widget_after_roundtrip() -> None:
+    """The io widget is a dynamic-IO construction hint, not a stable canvas
+    baseline field. The graph's real socket/link shape remains structural."""
     from vibecomfy.comfy_nodes.agent.session import structural_graph_hash
 
     base = {
@@ -7589,6 +7657,61 @@ def test_exec_structural_hash_changes_on_io_signature_edit() -> None:
             [2, 1, 0, 100, 0, "IMAGE"],
         ],
     }
+    reserialized = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "vibecomfy.exec",
+                "inputs": [
+                    {"name": "in_0", "link": 1, "type": "*", "label": "a: IMAGE"},
+                ],
+                "outputs": [
+                    {"name": "out_0", "links": [2], "type": "*", "label": "x: IMAGE"},
+                ],
+                "widgets_values": [
+                    "def fn(a): return dict(x=a)",
+                ],
+            },
+        ],
+        "links": [
+            [1, 99, 0, 1, 0, "IMAGE"],
+            [2, 1, 0, 100, 0, "IMAGE"],
+        ],
+    }
+    h1 = structural_graph_hash(base)
+    h2 = structural_graph_hash(reserialized)
+    assert h1 == h2, "Structural hash must survive an exec io widget round-trip loss"
+
+
+def test_exec_structural_hash_changes_on_socket_shape_edit() -> None:
+    """Real dynamic-IO shape edits still change the structural hash through
+    actual slots and links, even though the duplicate io widget is ignored."""
+    from vibecomfy.comfy_nodes.agent.session import structural_graph_hash
+
+    base = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "vibecomfy.exec",
+                "inputs": [
+                    {"name": "source", "type": "STRING"},
+                    {"name": "io", "type": "JSON"},
+                    {"name": "in_0", "link": 1, "type": "*"},
+                ],
+                "outputs": [
+                    {"name": "out_0", "links": [2], "type": "*"},
+                ],
+                "widgets_values": [
+                    "def fn(a): return dict(x=a)",
+                    '{"inputs":["a"],"outputs":["x"]}',
+                ],
+            },
+        ],
+        "links": [
+            [1, 99, 0, 1, 2, "IMAGE"],
+            [2, 1, 0, 100, 0, "IMAGE"],
+        ],
+    }
     changed = {
         "nodes": [
             {
@@ -7598,26 +7721,24 @@ def test_exec_structural_hash_changes_on_io_signature_edit() -> None:
                     {"name": "source", "type": "STRING"},
                     {"name": "io", "type": "JSON"},
                     {"name": "in_0", "link": 1, "type": "*"},
-                    {"name": "in_1", "link": None, "type": "*"},
+                    {"name": "in_1", "link": 3, "type": "*"},
                 ],
                 "outputs": [
                     {"name": "out_0", "links": [2], "type": "*"},
-                    {"name": "out_1", "links": [], "type": "*"},
                 ],
                 "widgets_values": [
-                    "def fn(a,b): return dict(x=a, y=b)",
-                    '{"inputs":["a","b"],"outputs":["x","y"]}',
+                    "def fn(a,b): return dict(x=a)",
+                    '{"inputs":["a","b"],"outputs":["x"]}',
                 ],
             },
         ],
         "links": [
             [1, 99, 0, 1, 2, "IMAGE"],
             [2, 1, 0, 100, 0, "IMAGE"],
+            [3, 98, 0, 1, 3, "IMAGE"],
         ],
     }
-    h1 = structural_graph_hash(base)
-    h2 = structural_graph_hash(changed)
-    assert h1 != h2, "Structural hash must change when io widget value changes"
+    assert structural_graph_hash(base) != structural_graph_hash(changed)
 
 
 def test_exec_structural_hash_same_after_reload_reconcile() -> None:

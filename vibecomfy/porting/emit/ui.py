@@ -883,6 +883,98 @@ def _schema_outputs_for_unwired_node(schema: Any | None) -> list[dict[str, Any]]
     ]
 
 
+def _exec_node_field(node: Any, key: str) -> Any:
+    """Return a vibecomfy.exec field from widgets first, then inputs."""
+    node_widgets = getattr(node, "widgets", None)
+    if isinstance(node_widgets, Mapping) and key in node_widgets:
+        return node_widgets[key]
+    node_inputs = getattr(node, "inputs", None)
+    if isinstance(node_inputs, Mapping) and key in node_inputs:
+        return node_inputs[key]
+    return None
+
+
+def _normalize_exec_io_entries(value: Any) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    if not isinstance(value, list):
+        return entries
+    for index, item in enumerate(value):
+        name: Any
+        socket_type: Any
+        if isinstance(item, Mapping):
+            name = item.get("name")
+            socket_type = item.get("type")
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            name, socket_type = item[0], item[1]
+        else:
+            continue
+        clean_name = str(name or f"value_{index}").strip() or f"value_{index}"
+        clean_type = str(socket_type or "*").strip() or "*"
+        entries.append((clean_name, clean_type))
+    return entries
+
+
+def _normalize_exec_io(value: Any) -> dict[str, list[tuple[str, str]]] | None:
+    if not isinstance(value, Mapping):
+        return None
+    inputs = _normalize_exec_io_entries(value.get("inputs"))
+    outputs = _normalize_exec_io_entries(value.get("outputs"))
+    if not inputs and not outputs:
+        return None
+    return {"inputs": inputs, "outputs": outputs}
+
+
+def _exec_io_for_node(node: Any) -> dict[str, list[tuple[str, str]]] | None:
+    if getattr(node, "class_type", None) != "vibecomfy.exec":
+        return None
+    return _normalize_exec_io(_exec_node_field(node, "io"))
+
+
+def _exec_io_properties_payload(io: dict[str, list[tuple[str, str]]]) -> dict[str, list[list[str]]]:
+    return {
+        "inputs": [[name, socket_type] for name, socket_type in io["inputs"]],
+        "outputs": [[name, socket_type] for name, socket_type in io["outputs"]],
+    }
+
+
+def _exec_dynamic_inputs(
+    io: dict[str, list[tuple[str, str]]],
+    incoming_by_input: Mapping[str, list[int]],
+) -> list[dict[str, Any]]:
+    inputs: list[dict[str, Any]] = []
+    for slot_idx, (name, socket_type) in enumerate(io["inputs"]):
+        slot_name = f"in_{slot_idx}"
+        link_ids = sorted(incoming_by_input.get(slot_name, []))
+        entry: dict[str, Any] = {
+            "name": slot_name,
+            "label": f"{name}: {socket_type}",
+            "type": socket_type,
+        }
+        if link_ids:
+            entry["link"] = link_ids[0]
+        inputs.append(entry)
+    return inputs
+
+
+def _exec_dynamic_outputs(
+    io: dict[str, list[tuple[str, str]]],
+    output_links_by_slot: Mapping[int, list[int]],
+) -> list[dict[str, Any]]:
+    outputs: list[dict[str, Any]] = []
+    for slot_idx, (name, socket_type) in enumerate(io["outputs"]):
+        link_list = sorted(output_links_by_slot.get(slot_idx, []))
+        outputs.append(
+            {
+                "name": f"out_{slot_idx}",
+                "label": f"{name}: {socket_type}",
+                "type": socket_type,
+                "links": link_list if link_list else None,
+                "slot_index": slot_idx,
+            }
+        )
+    return outputs
+
+
 def _emit_litegraph_node_dict(
     node: Any,
     *,
@@ -917,6 +1009,23 @@ def _emit_litegraph_node_dict(
 
     if node.uid:
         properties["vibecomfy_uid"] = node.uid
+
+    if node.class_type == "vibecomfy.exec":
+        exec_io = _exec_io_for_node(node)
+        exec_source = _exec_node_field(node, "source")
+        if exec_io is not None:
+            vibecomfy_props = properties.get("vibecomfy")
+            if not isinstance(vibecomfy_props, dict):
+                vibecomfy_props = {}
+                properties["vibecomfy"] = vibecomfy_props
+            vibecomfy_props["kind"] = "code"
+            vibecomfy_props["io"] = _exec_io_properties_payload(exec_io)
+            intent_props = vibecomfy_props.get("intent")
+            if not isinstance(intent_props, dict):
+                intent_props = {}
+                vibecomfy_props["intent"] = intent_props
+            if isinstance(exec_source, str):
+                intent_props["source"] = exec_source
 
     node_dict: dict[str, Any] = {
         "id": litegraph_node_id,
@@ -1875,7 +1984,7 @@ def emit_ui_json(
         node = wf.nodes[node_id]
         key = _node_key(node_id)
         verdict = widget_shape_verdicts[node_id]
-        if verdict.pin_opaque:
+        if verdict.pin_opaque and _exec_io_for_node(node) is None:
             incoming_link_ids_by_input: dict[str, list[int]] = defaultdict(list)
             for edge in edges_to[node_id]:
                 lid = link_id_map[(edge.from_node, edge.from_output, edge.to_node, edge.to_input)]
@@ -1921,6 +2030,7 @@ def emit_ui_json(
             furniture = _resolve_furniture(node, None)
         schema = schema_cache.get(node.class_type)
         schema_outputs = list(getattr(schema, "outputs", None) or []) if schema else []
+        exec_io = _exec_io_for_node(node)
 
         # --- outputs list ---
         outputs: list[dict[str, Any]] = []
@@ -1931,7 +2041,9 @@ def emit_ui_json(
             eid = link_id_map[(edge.from_node, edge.from_output, edge.to_node, edge.to_input)]
             output_links_by_slot[slot].append(eid)
 
-        if schema_outputs:
+        if exec_io is not None:
+            outputs = _exec_dynamic_outputs(exec_io, output_links_by_slot)
+        elif schema_outputs:
             for slot_idx, out_spec in enumerate(schema_outputs):
                 link_list = sorted(output_links_by_slot.get(slot_idx, []))
                 outputs.append({
@@ -1972,19 +2084,26 @@ def emit_ui_json(
         # Only LINKED inputs get an input-slot entry; a linked input whose name is a
         # widget-type input additionally carries widget:{name:...} (widget→link).
         incoming_sorted = sorted(edges_to[node_id], key=lambda e: e.to_input)
-        inputs: list[dict[str, Any]] = []
+        incoming_link_ids_by_input: dict[str, list[int]] = defaultdict(list)
         for edge in incoming_sorted:
-            from_class = wf.nodes[edge.from_node].class_type if edge.from_node in wf.nodes else ""
-            _, socket_type = _resolve_output_slot_and_type(edge.from_output, from_class, schema_cache)
             lid = link_id_map[(edge.from_node, edge.from_output, edge.to_node, edge.to_input)]
-            slot: dict[str, Any] = {
-                "name": edge.to_input,
-                "type": socket_type or "UNKNOWN",
-                "link": lid,
-            }
-            if edge.to_input in widget_name_set:
-                slot["widget"] = {"name": edge.to_input}
-            inputs.append(slot)
+            incoming_link_ids_by_input[edge.to_input].append(lid)
+        inputs: list[dict[str, Any]] = []
+        if exec_io is not None:
+            inputs = _exec_dynamic_inputs(exec_io, incoming_link_ids_by_input)
+        else:
+            for edge in incoming_sorted:
+                from_class = wf.nodes[edge.from_node].class_type if edge.from_node in wf.nodes else ""
+                _, socket_type = _resolve_output_slot_and_type(edge.from_output, from_class, schema_cache)
+                lid = link_id_map[(edge.from_node, edge.from_output, edge.to_node, edge.to_input)]
+                slot: dict[str, Any] = {
+                    "name": edge.to_input,
+                    "type": socket_type or "UNKNOWN",
+                    "link": lid,
+                }
+                if edge.to_input in widget_name_set:
+                    slot["widget"] = {"name": edge.to_input}
+                inputs.append(slot)
 
         nodes.append(
             _emit_litegraph_node_dict(
@@ -2005,18 +2124,40 @@ def emit_ui_json(
     for edge in sorted_edges:
         from_class = wf.nodes[edge.from_node].class_type if edge.from_node in wf.nodes else ""
         from_slot, socket_type = _resolve_output_slot_and_type(edge.from_output, from_class, schema_cache)
+        from_exec_io = _exec_io_for_node(wf.nodes[edge.from_node]) if edge.from_node in wf.nodes else None
+        if from_exec_io is not None:
+            try:
+                candidate_slot = int(edge.from_output.split("_", 1)[1]) if edge.from_output.startswith("out_") else int(edge.from_output)
+            except (TypeError, ValueError):
+                candidate_slot = from_slot
+            if 0 <= candidate_slot < len(from_exec_io["outputs"]):
+                from_slot = candidate_slot
+                socket_type = from_exec_io["outputs"][candidate_slot][1]
         # to_slot = index of this input in the to-node's sorted inputs array
-        incoming_sorted = sorted(edges_to[edge.to_node], key=lambda e: e.to_input)
-        to_slot = next(
-            (
-                i
-                for i, e in enumerate(incoming_sorted)
-                if e.to_input == edge.to_input
-                and e.from_node == edge.from_node
-                and e.from_output == edge.from_output
-            ),
-            0,
-        )
+        to_exec_io = _exec_io_for_node(wf.nodes[edge.to_node]) if edge.to_node in wf.nodes else None
+        if to_exec_io is not None and edge.to_input.startswith("in_"):
+            try:
+                to_slot = int(edge.to_input.split("_", 1)[1])
+            except ValueError:
+                to_slot = 0
+        else:
+            incoming_sorted = sorted(edges_to[edge.to_node], key=lambda e: e.to_input)
+            to_slot = next(
+                (
+                    i
+                    for i, e in enumerate(incoming_sorted)
+                    if e.to_input == edge.to_input
+                    and e.from_node == edge.from_node
+                    and e.from_output == edge.from_output
+                ),
+                0,
+            )
+        if (
+            to_exec_io is not None
+            and 0 <= to_slot < len(to_exec_io["inputs"])
+            and (not socket_type or socket_type in {"*", "UNKNOWN"})
+        ):
+            socket_type = to_exec_io["inputs"][to_slot][1]
         lid = link_id_map[(edge.from_node, edge.from_output, edge.to_node, edge.to_input)]
         links.append(
             [lid, id_remap[edge.from_node], from_slot, id_remap[edge.to_node], to_slot, socket_type or ""]

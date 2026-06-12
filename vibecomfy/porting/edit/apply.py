@@ -555,6 +555,24 @@ def _guard_attribution(
             original_target = original_ledger.resolve_node(op.target.scope_path, op.target.uid)
             if isinstance(original_target, Mapping):
                 original_input = _find_named_slot(original_target.get("inputs"), target.slot_name)
+                original_scope = original_ledger.scopes.get(op.target.scope_path)
+                original_node_id = original_target.get("id")
+                original_target_slot = _find_named_slot_index(
+                    original_target.get("inputs"),
+                    target.slot_name,
+                )
+                if (
+                    original_scope is not None
+                    and isinstance(original_node_id, int)
+                    and isinstance(original_target_slot, int)
+                ):
+                    for old_link_id in _link_ids_targeting_input(
+                        original_scope,
+                        original_node_id,
+                        original_target_slot,
+                    ):
+                        removed_links.add((op.target.scope_path, old_link_id))
+                        allow_link_endpoint_paths(op.target.scope_path, old_link_id)
                 if isinstance(original_input, Mapping) and isinstance(original_input.get("link"), int):
                     old_link_id = original_input["link"]
                     removed_links.add((op.target.scope_path, old_link_id))
@@ -2078,26 +2096,47 @@ def _apply_upsert_link(
     scope_path = source.ref.scope_path
     scope = ledger.scopes[scope_path]
     diagnostics: list[PortIssue] = []
+    target_slot = _ensure_input_slot(target.node, target.slot_name, target.socket_type)
     existing = _find_named_slot(target.node.get("inputs"), target.slot_name)
+    duplicate_link_ids = (
+        _link_ids_targeting_input(scope, target.node_id, target_slot)
+        if isinstance(target.node_id, int)
+        else []
+    )
     if isinstance(existing, dict) and isinstance(existing.get("link"), int):
-        old_link_id = existing["link"]
+        duplicate_link_ids.append(existing["link"])
+    removed_link_ids: list[int] = []
+    for old_link_id in dict.fromkeys(duplicate_link_ids):
         if _remove_link_from_scope(ledger, scope_path=scope_path, link_id=old_link_id):
+            removed_link_ids.append(old_link_id)
+    if removed_link_ids:
+        detail: dict[str, Any] = {
+            "scope_path": scope_path,
+            "to_uid": target.ref.uid,
+            "to_input": target.slot_name,
+            "removed_link_id": removed_link_ids[0],
+            "removed_link_ids": removed_link_ids,
+        }
+        if len(removed_link_ids) == 1:
             diagnostics.append(
                 _issue(
                     "upsert_link_replaced_existing",
                     "upsert_link removed the previous incoming link for the target input.",
                     severity="info",
-                    detail={
-                        "scope_path": scope_path,
-                        "to_uid": target.ref.uid,
-                        "to_input": target.slot_name,
-                        "removed_link_id": old_link_id,
-                    },
+                    detail=detail,
+                )
+            )
+        else:
+            diagnostics.append(
+                _issue(
+                    "upsert_link_replaced_existing",
+                    "upsert_link removed previous incoming links for the target input.",
+                    severity="info",
+                    detail=detail,
                 )
             )
 
     link_id = ledger.mint_link_id(scope_path)
-    target_slot = _ensure_input_slot(target.node, target.slot_name, target.socket_type)
     link_type = source.socket_type or target.socket_type or "*"
     link = _new_link_for_scope(
         scope,
@@ -2569,6 +2608,27 @@ def _remove_link_from_scope(ledger: EditLedger, *, scope_path: str, link_id: int
         ledger.link_index.pop((scope_path, link_id), None)
         return True
     return False
+
+
+def _link_ids_targeting_input(
+    scope: ScopeState,
+    target_node_id: int,
+    target_slot: int,
+) -> list[int]:
+    links = scope.graph.get("links")
+    if not isinstance(links, list):
+        return []
+    link_ids: list[int] = []
+    for link in links:
+        link_id = _link_id(link)
+        _, _, found_target_id, found_target_slot = _link_endpoints(link)
+        if (
+            isinstance(link_id, int)
+            and found_target_id == target_node_id
+            and found_target_slot == target_slot
+        ):
+            link_ids.append(link_id)
+    return link_ids
 
 
 def _rewire_link_origin(

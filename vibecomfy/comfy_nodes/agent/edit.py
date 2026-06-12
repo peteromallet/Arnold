@@ -132,7 +132,7 @@ class AgentEditState:
     batch_noop_field_changes: tuple[FieldChange, ...] = ()
     batch_budget_state: dict[str, Any] = field(default_factory=dict)
     batch_turn_count: int = 0
-    batch_max_turns: int = 20
+    batch_max_turns: int = 50
     batch_max_consecutive_errors: int = 3
     batch_feedback: str = ""
     batch_final_summary: str = ""
@@ -743,7 +743,7 @@ def _batch_warning_sentence(
             )
         if state.batch_exit_mode == _BATCH_EXIT_BUDGET:
             return ensure_sentence_message(
-                "I ran out of batch budget before completing the remaining changes",
+                "I ran out of turn budget before completing the remaining changes",
                 fallback=state.batch_final_summary or failure.message,
             )
         return ensure_sentence_message(
@@ -786,7 +786,7 @@ def _synthesize_batch_repl_message(
         )
     if outcome.kind == "budget":
         return ensure_sentence_message(
-            "I ran out of batch budget before completing the requested changes",
+            "I ran out of turn budget before completing the requested changes",
             fallback=state.batch_final_summary or state.user_message,
         )
     if outcome.kind == "noop":
@@ -1002,10 +1002,10 @@ def _format_batch_report(
         else ""
     )
     summary = (
-        f"Batch summary: {landed_count} landed, {failed_count} failed, "
-        f"{len(batch_result.diagnostics)} batch diagnostic(s)"
+        f"Turn summary: {landed_count} landed, {failed_count} failed, "
+        f"{len(batch_result.diagnostics)} diagnostic(s)"
         f"{lint_note}, "
-        f"{budget_remaining} batch(es) remaining, "
+        f"{budget_remaining} turn(s) remaining, "
         f"{consecutive_errors} consecutive error turn(s)."
     )
     lines = [summary, *statement_lines, *diagnostic_lines]
@@ -3081,8 +3081,8 @@ def _stage_agent_batch_repl(
     failure_kind = _batch_budget_failure_kind(state.batch_turns)
     state.batch_exit_mode = _BATCH_EXIT_BUDGET
     state.batch_final_summary = (
-        f"Stopped after {state.batch_turn_count} batch turn(s); "
-        f"{state.batch_budget_state.get('remaining_batches', 0)} batch(es) remaining."
+        f"Stopped after {state.batch_turn_count} turn(s); "
+        f"{state.batch_budget_state.get('remaining_batches', 0)} turn(s) remaining."
     )
     if state.batch_turns:
         _emit_agent_edit_turn_event(

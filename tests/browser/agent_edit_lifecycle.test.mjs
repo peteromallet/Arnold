@@ -10,6 +10,7 @@ import {
   normalizeObligationDirtySections,
   normalizeDeltaOpsFromSubmit,
 } from "../../vibecomfy/comfy_nodes/web/agent_edit_lifecycle.js";
+import { syncComposerButtons } from "../../vibecomfy/comfy_nodes/web/panel_composer.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,30 @@ function assertCandidateDefaults(state) {
   assert.equal(state.applyEligibilityWarningKey, null);
   assert.equal(state.changeDetails, null);
   assert.equal(state.deltaOps, null);
+}
+
+function makeComposerButtonPanel() {
+  const row = {
+    children: [],
+    appendChild(button) {
+      if (!this.children.includes(button)) {
+        this.children.push(button);
+      }
+      button.parentNode = this;
+    },
+  };
+  const makeButton = () => ({ style: {}, parentNode: null });
+  return {
+    composerButtons: row,
+    buttons: {
+      submit: makeButton(),
+      stop: makeButton(),
+      apply: makeButton(),
+      reject: makeButton(),
+      undo: makeButton(),
+      newConversation: makeButton(),
+    },
+  };
 }
 
 const ALL_RENDER_DIRTY_SECTIONS = Object.freeze(Object.values(RENDER_SECTIONS));
@@ -76,6 +101,30 @@ test("PANEL_STATE exports frozen phase taxonomy with 6 phases matching the contr
   assert.equal(PANEL_STATE.AWAITING_REVIEW, "AWAITING_REVIEW");
   assert.equal(PANEL_STATE.APPLYING, "APPLYING");
   assert.equal(PANEL_STATE.ERROR, "ERROR");
+});
+
+test("composer buttons hide undo while processing and hide reset controls while reviewing", () => {
+  const panel = makeComposerButtonPanel();
+
+  syncComposerButtons(panel, { submitting: true, showUndo: true });
+  assert.equal(panel.buttons.stop.style.display, "inline-flex");
+  assert.equal(panel.buttons.undo.style.display, "none");
+  assert.equal(panel.buttons.newConversation.style.display, "none");
+
+  syncComposerButtons(panel, { applying: true, showUndo: true });
+  assert.equal(panel.buttons.stop.style.display, "none");
+  assert.equal(panel.buttons.undo.style.display, "none");
+  assert.equal(panel.buttons.newConversation.style.display, "none");
+
+  syncComposerButtons(panel, { reviewing: true, showUndo: true });
+  assert.equal(panel.buttons.stop.style.display, "none");
+  assert.equal(panel.buttons.undo.style.display, "none");
+  assert.equal(panel.buttons.newConversation.style.display, "none");
+
+  syncComposerButtons(panel, { showUndo: true });
+  assert.equal(panel.buttons.stop.style.display, "none");
+  assert.equal(panel.buttons.undo.style.display, "inline-flex");
+  assert.equal(panel.buttons.newConversation.style.display, "inline-flex");
 });
 
 // ── LIFECYCLE_STATE_FIELDS ──────────────────────────────────────────────────

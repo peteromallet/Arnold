@@ -1914,7 +1914,15 @@ def _emit_agent_edit_lines(prepared: dict[str, Any]) -> list[str]:
 
         comment = _agent_edit_comment(nid, node, output_aliases.get(nid, {}), var_name=var)
         call_name = str(node.class_type)
-        if call_name.isidentifier() and not keyword.iskeyword(call_name):
+        dotted_parts = call_name.split(".")
+        dotted_callable = (
+            len(dotted_parts) > 1
+            and all(part.isidentifier() and not keyword.iskeyword(part) for part in dotted_parts)
+        )
+        if (
+            call_name.isidentifier()
+            and not keyword.iskeyword(call_name)
+        ) or dotted_callable:
             call_head = f"{var} = {call_name}("
             positional: list[str] = []
         else:
