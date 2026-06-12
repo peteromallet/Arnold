@@ -172,19 +172,27 @@ def _collect_committed_range_paths(
     *,
     base_ref: str | None = None,
 ) -> set[str]:
-    """Paths changed in the committed milestone range ``base...HEAD``.
+    """Paths changed in the committed milestone range.
 
-    Chain milestones commit their work *before* review, so a working-tree
-    ``git status`` check alone sees a clean tree and falsely concludes the
-    implementation is absent. Including the committed range makes committed
-    milestone work count as present. Returns an empty set on ``main``/``master``
-    or when no base ref resolves — single-plan runs that leave work uncommitted
-    in the working tree keep their status-only behavior unchanged.
+    When a declared milestone base is provided via ``base_ref`` the range is
+    ``base..HEAD`` (exact two-dot): every commit reachable from HEAD but not
+    from ``base``, making the git tree authoritative for "milestone done".
+    Declared bases are expected to be resolved before this function is called
+    — if resolution fails (e.g. shallow clone, GC) the caller should already
+    have determined the base cannot be trusted and should not pass it.
 
-    If ``base_ref`` is provided it is used as-is; otherwise the heuristic
-    merge-base resolver (``_branch_diff_base``) is consulted.
+    When no ``base_ref`` is given (single-plan runs, backwards-compat) the
+    heuristic merge-base resolver ``_branch_diff_base`` is consulted and the
+    range is ``base...HEAD`` (three-dot symmetric-difference): commits
+    reachable from either side but not both. This preserves the existing
+    no-base behaviour where merged-in mainline changes are excluded and
+    uncommitted work in the working tree is covered by the status union.
+
+    Returns an empty set when no base resolves — the caller's status-only
+    path remains unchanged.
     """
-    if base_ref is not None:
+    declared_base: bool = base_ref is not None
+    if declared_base:
         base = base_ref
     else:
         # Lazy import: reuse the canonical merge-base resolver without a
@@ -193,9 +201,10 @@ def _collect_committed_range_paths(
         base = _branch_diff_base(repo_dir)
     if not base:
         return set()
+    range_op = ".." if declared_base else "..."
     try:
         proc = subprocess.run(
-            ["git", "diff", "--name-only", f"{base}...HEAD"],
+            ["git", "diff", "--name-only", f"{base}{range_op}HEAD"],
             cwd=str(repo_dir),
             text=True,
             capture_output=True,

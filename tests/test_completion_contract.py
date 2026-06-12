@@ -19,8 +19,10 @@ import pytest
 
 from megaplan.orchestration.completion_contract import (
     CONTRACT_MODE_SHADOW,
+    CompletionContext,
     CompletionSubject,
     EvidenceStatus,
+    LandedDiffProvider,
     compute_verdict,
     normalize_contract_mode,
 )
@@ -408,3 +410,347 @@ def test_chain_state_roundtrips_completion_mode():
     # Unknown values normalize to the shadow default.
     bad = ChainState.from_dict({"completion_contract_mode": "garbage"})
     assert bad.completion_contract_mode == "shadow"
+
+
+# ---------------------------------------------------------------------------
+# T8: Landed-diff provider behaviour — authoritative vs advisory gating
+# ---------------------------------------------------------------------------
+
+
+def _init_git_repo_with_commit(path: Path) -> str:
+    """git init + config + seed commit. Returns the seed commit SHA."""
+    _init_git_repo(path)
+    (path / "seed.txt").write_text("seed\n")
+    subprocess.run(
+        ["git", "add", "seed.txt"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "seed"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(path),
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+
+
+def _resolve_head(project_dir: Path) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(project_dir),
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+
+
+def test_landed_diff_phantom_claims_blocking_with_resolved_base(
+    tmp_path: Path,
+) -> None:
+    """Claims for files absent from the committed range are blocking when the
+    declared base resolves (``declared_authoritative`` diff_source)."""
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    base_sha = _init_git_repo_with_commit(project_dir)
+
+    # Commit a real file so the committed range is non-empty.
+    (project_dir / "real.py").write_text("real\n")
+    subprocess.run(
+        ["git", "add", "real.py"],
+        cwd=str(project_dir),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "real"],
+        cwd=str(project_dir),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "status": "done",
+                    "files_changed": ["real.py", "phantom.py"],
+                    "commands_run": ["pytest"],
+                }
+            ],
+            "sense_checks": [],
+        },
+    )
+
+    provider = LandedDiffProvider()
+    ctx = CompletionContext(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state={"config": {"mode": "code", "project_dir": str(project_dir)}},
+        subject=_subject(),
+        git_base_ref=base_sha,
+    )
+    ref = provider.collect(ctx)
+
+    assert ref.status == EvidenceStatus.unsatisfied, (
+        f"expected unsatisfied for phantom claim, got {ref.status}: {ref.summary}"
+    )
+    assert ref.details.get("diff_source") == "declared_authoritative"
+    findings = ref.details.get("findings") or []
+    assert any("phantom.py" in f for f in findings), (
+        f"phantom.py should appear in findings: {findings}"
+    )
+
+
+def test_landed_diff_unclaimed_committed_blocking_with_resolved_base(
+    tmp_path: Path,
+) -> None:
+    """Unclaimed files in the committed range are blocking when the declared
+    base resolves (``declared_authoritative`` diff_source).
+
+    With a resolved base the finding *\"Git status shows changed files not
+    claimed by any task\"* stays in ``real_findings`` rather than being moved
+    to ``advisory_findings``.
+    """
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    base_sha = _init_git_repo_with_commit(project_dir)
+
+    # Commit a file that no task claims.
+    (project_dir / "unclaimed.py").write_text("unclaimed\n")
+    subprocess.run(
+        ["git", "add", "unclaimed.py"],
+        cwd=str(project_dir),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "unclaimed"],
+        cwd=str(project_dir),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "status": "done",
+                    "files_changed": [],
+                    "commands_run": ["echo done"],
+                }
+            ],
+            "sense_checks": [],
+        },
+    )
+
+    provider = LandedDiffProvider()
+    ctx = CompletionContext(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state={"config": {"mode": "code", "project_dir": str(project_dir)}},
+        subject=_subject(),
+        git_base_ref=base_sha,
+    )
+    ref = provider.collect(ctx)
+
+    assert ref.status == EvidenceStatus.unsatisfied, (
+        f"expected unsatisfied for unclaimed committed file, got {ref.status}"
+    )
+    assert ref.details.get("diff_source") == "declared_authoritative"
+    # With declared_authoritative the unclaimed-changes finding stays in
+    # real_findings (the advisory_findings list is empty).
+    advisory = ref.details.get("advisory_findings") or []
+    assert advisory == [], (
+        f"declared_authoritative must not relegate unclaimed changes to advisory: {advisory}"
+    )
+    findings = ref.details.get("findings") or []
+    assert any("unclaimed.py" in f for f in findings), (
+        f"unclaimed.py should appear in real findings: {findings}"
+    )
+
+
+def test_landed_diff_unresolved_base_advisory_unclaimed(tmp_path: Path) -> None:
+    """When base_ref is declared but does not resolve, unclaimed-change
+    findings remain advisory-only (``declared_unresolved`` diff_source).
+
+    The working-tree status union can include dirty-tree noise and WIP from
+    prior milestones, so without a resolved committed window the signal is
+    too weak to block.
+    """
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    _init_git_repo_with_commit(project_dir)  # need HEAD to resolve
+
+    # Leave an uncommitted file in the working tree.
+    (project_dir / "unclaimed.py").write_text("dirty\n")
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "status": "done",
+                    "files_changed": [],
+                    "commands_run": ["echo done"],
+                }
+            ],
+            "sense_checks": [],
+        },
+    )
+
+    provider = LandedDiffProvider()
+    ctx = CompletionContext(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state={"config": {"mode": "code", "project_dir": str(project_dir)}},
+        subject=_subject(),
+        git_base_ref="refs/heads/does-not-exist",
+    )
+    ref = provider.collect(ctx)
+
+    assert ref.details.get("diff_source") == "declared_unresolved"
+    # With declared_unresolved the unclaimed-changes finding is advisory-only,
+    # so real_findings should be empty and the ref satisfied (or at worst
+    # unknown, not unsatisfied for the no-diff case).
+    advisory = ref.details.get("advisory_findings") or []
+    assert any("unclaimed.py" in str(f) for f in advisory), (
+        f"unclaimed.py should be in advisory findings: {advisory}"
+    )
+    # The landed diff should NOT be unsatisfied due to the advisory finding.
+    if ref.status == EvidenceStatus.unsatisfied:
+        # Only acceptable if due to something other than the unclaimed finding.
+        findings = ref.details.get("findings") or []
+        assert not any("unclaimed" in f for f in findings), (
+            f"unclaimed finding leaked into real findings: {findings}"
+        )
+
+
+def test_landed_diff_uncommitted_only_claims_unsatisfied(tmp_path: Path) -> None:
+    """When a declared milestone base resolves, claimed work must be present in
+    the committed base..HEAD range.  Working-tree-only (uncommitted) claimed
+    files are NOT sufficient — they produce an unsatisfied landed_diff finding.
+
+    This covers the ``local_commit_sha=None`` / zero-divergence scenario
+    where the committed range is empty and only ``git status`` paths are
+    available — the claimed work has not landed.
+    """
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    head_sha = _init_git_repo_with_commit(project_dir)
+
+    # Uncommitted working-tree change.
+    (project_dir / "wip.py").write_text("wip\n")
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "status": "done",
+                    "files_changed": ["wip.py"],
+                    "commands_run": ["pytest"],
+                }
+            ],
+            "sense_checks": [],
+        },
+    )
+
+    provider = LandedDiffProvider()
+    ctx = CompletionContext(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state={"config": {"mode": "code", "project_dir": str(project_dir)}},
+        subject=_subject(),
+        git_base_ref=head_sha,  # base == HEAD → committed range empty
+    )
+    ref = provider.collect(ctx)
+
+    assert ref.details.get("diff_source") == "declared_authoritative"
+    # wip.py is in the working-tree status → files_in_diff includes it.
+    assert "wip.py" in ref.details.get("files_in_diff", [])
+    # But it is NOT in the committed range → unsatisfied.
+    assert ref.status == EvidenceStatus.unsatisfied, (
+        f"uncommitted-only claims should NOT satisfy landed_diff with resolved base,"
+        f" got {ref.status}: {ref.summary}"
+    )
+    # The unlanded-claim finding is in ref.summary (real_findings), not in
+    # details.findings (which holds the raw validate_execution_evidence findings).
+    assert "wip.py" in ref.summary, (
+        f"wip.py should appear in summary as unlanded claim: {ref.summary}"
+    )
+
+
+def test_landed_diff_heuristic_no_base_ref_advisory(tmp_path: Path) -> None:
+    """Without any base_ref, the diff_source is ``heuristic`` and unclaimed
+    changes are advisory — preserving legacy fallback behaviour."""
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    _init_git_repo_with_commit(project_dir)  # need a commit for merge-base to resolve
+
+    # Uncommitted change.
+    (project_dir / "noise.py").write_text("noise\n")
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "status": "done",
+                    "files_changed": [],
+                    "commands_run": ["echo done"],
+                }
+            ],
+            "sense_checks": [],
+        },
+    )
+
+    provider = LandedDiffProvider()
+    ctx = CompletionContext(
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state={"config": {"mode": "code", "project_dir": str(project_dir)}},
+        subject=_subject(),
+        git_base_ref=None,  # no base → heuristic merge-base
+    )
+    ref = provider.collect(ctx)
+
+    assert ref.details.get("diff_source") == "heuristic"
+    advisory = ref.details.get("advisory_findings") or []
+    assert any("noise.py" in str(f) for f in advisory), (
+        f"unclaimed changes should be advisory in heuristic mode: {advisory}"
+    )
+    # Must not be unsatisfied because of advisory-only findings.
+    if ref.status == EvidenceStatus.unsatisfied:
+        findings = ref.details.get("findings") or []
+        assert not any("noise" in f for f in findings), (
+            f"advisory finding leaked into real findings: {findings}"
+        )
