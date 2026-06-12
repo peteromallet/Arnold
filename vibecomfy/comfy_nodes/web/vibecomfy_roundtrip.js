@@ -3485,10 +3485,10 @@ function createAgentPanelShell() {
   });
   const titleLogo = el("img");
   titleLogo.src = "/extensions/vibecomfy/astrid_logo.png";
-  titleLogo.alt = "vibe comfy";
+  titleLogo.alt = "VibeComfy";
   Object.assign(titleLogo.style, { width: "20px", height: "20px", display: "block", flexShrink: "0" });
   title.appendChild(titleLogo);
-  title.appendChild(el("span", "vibe comfy"));
+  title.appendChild(el("span", "VibeComfy"));
   headerLeft.appendChild(title);
   header.appendChild(headerLeft);
 
@@ -9684,13 +9684,13 @@ function ensureAgentLauncher() {
   const btn = document.createElement("button");
   btn.id = "vibecomfy-agent-launcher";
   btn.type = "button";
-  btn.title = "Open the vibe comfy agent edit panel";
+  btn.title = "Open the VibeComfy agent edit panel";
   const launcherLogo = document.createElement("img");
   launcherLogo.src = "/extensions/vibecomfy/astrid_logo.png";
   launcherLogo.alt = "";
   Object.assign(launcherLogo.style, { width: "14px", height: "14px", display: "block", flexShrink: "0" });
   const launcherText = document.createElement("span");
-  launcherText.textContent = "vibe comfy";
+  launcherText.textContent = "VibeComfy";
   launcherText.style.writingMode = "vertical-rl";
   btn.appendChild(launcherLogo);
   btn.appendChild(launcherText);
@@ -9740,8 +9740,8 @@ function ensureAgentSidebarTab() {
   }
   const tab = {
     id: AGENT_SIDEBAR_TAB_ID,
-    title: "vibe comfy",
-    tooltip: "Open the vibe comfy agent edit panel",
+    title: "VibeComfy",
+    tooltip: "Open the VibeComfy agent edit panel",
     icon: "pi pi-sparkles",
     type: "custom",
     render: mountAgentSidebarPanel,
@@ -9755,7 +9755,7 @@ function ensureAgentSidebarTab() {
     try {
       manager.registerSidebarTab(
         AGENT_SIDEBAR_TAB_ID,
-        "vibe comfy",
+        "VibeComfy",
         "pi pi-sparkles",
         mountAgentSidebarPanel,
       );
@@ -9878,7 +9878,7 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   });
   const titleLogo = el("img");
   titleLogo.src = "/extensions/vibecomfy/astrid_logo.png";
-  titleLogo.alt = "vibe comfy";
+  titleLogo.alt = "VibeComfy";
   Object.assign(titleLogo.style, { width: "20px", height: "20px", display: "block", flexShrink: "0" });
   titleRow.appendChild(titleLogo);
   const title = el("div", "Choose Your Engine");
@@ -10033,7 +10033,7 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   // ── Claude revealed content: ToS warning (no buttons) ──
   const claudeWarning = el(
     "div",
-    "vibe comfy drives your local `claude` CLI in headless mode. Anthropic’s terms don’t explicitly sanction automated CLI use — use at your own risk.",
+    "VibeComfy drives your local `claude` CLI in headless mode. Anthropic’s terms don’t explicitly sanction automated CLI use — use at your own risk.",
   );
   Object.assign(claudeWarning.style, {
     fontSize: "11px",

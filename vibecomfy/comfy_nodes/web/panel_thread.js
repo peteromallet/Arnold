@@ -253,7 +253,7 @@ export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageInde
     minWidth: "0",
   });
 
-  const label = el("span", isUser ? "You" : "vibe comfy");
+  const label = el("span", isUser ? "You" : "VibeComfy");
   Object.assign(label.style, {
     fontSize: "9px",
     fontWeight: "700",
