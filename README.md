@@ -110,6 +110,11 @@ COMFY_PYTHON="$COMFYUI/venv/bin/python"  # replace with the Python that runs Com
 ln -sfn "$PWD/vibecomfy/comfy_nodes" "$COMFYUI/custom_nodes/vibecomfy"
 ```
 
+The `pip install -e .` step installs the VibeComfy Python package and
+dependencies into ComfyUI's interpreter. The symlink is what makes ComfyUI load
+`vibecomfy/comfy_nodes/__init__.py`, which registers the node classes and serves
+the bundled `web/` extension assets.
+
 After restart, look for nodes under `vibecomfy/exec`, `vibecomfy/intent`, and
 `conditioning/vibecomfy`.
 
