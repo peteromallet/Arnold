@@ -65,7 +65,8 @@ VibeComfy preserves a workflow contract for agents. See
 
 ## Getting Started
 
-Each path below is meant to be copied directly into an agent.
+Each path below is meant to be copied directly into an agent. The ComfyUI path
+also includes a manual install block because it is a normal custom-node install.
 
 ### Use VibeComfy Directly
 
@@ -97,6 +98,16 @@ panel is still a development surface.
 
 ```text
 Install VibeComfy into my ComfyUI checkout. Use the same Python that runs ComfyUI, install VibeComfy editable, symlink `vibecomfy/comfy_nodes` into `ComfyUI/custom_nodes/vibecomfy`, restart ComfyUI, and verify that the VibeComfy node categories appear.
+```
+
+Manual install:
+
+```bash
+cd /path/to/VibeComfy
+COMFYUI=/path/to/ComfyUI
+COMFY_PYTHON="$COMFYUI/venv/bin/python"  # replace with the Python that runs ComfyUI
+"$COMFY_PYTHON" -m pip install -e .
+ln -sfn "$PWD/vibecomfy/comfy_nodes" "$COMFYUI/custom_nodes/vibecomfy"
 ```
 
 After restart, look for nodes under `vibecomfy/exec`, `vibecomfy/intent`, and
