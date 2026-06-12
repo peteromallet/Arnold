@@ -811,6 +811,23 @@ _VENDORED_SHANNON_PATH = (
 ).resolve()
 
 
+def _shannon_stream_worker_enabled() -> bool:
+    """Return True when the experimental Shannon stream worker is env-enabled."""
+    return os.getenv("MEGAPLAN_SHANNON_STREAM_WORKER", "").strip().lower() in {
+        "1",
+        "true",
+        "on",
+        "yes",
+    }
+
+
+def is_claude_stream_available(*, shutil_ref: Any = None) -> bool:
+    """Return True iff the Claude CLI is on PATH for the headless stream worker."""
+    if shutil_ref is None:
+        shutil_ref = shutil
+    return bool(shutil_ref.which("claude"))
+
+
 def is_shannon_available(*, shutil_ref: Any = None) -> bool:
     """Return True iff bun + claude + tmux are on PATH and the vendored
     Shannon fork is present at ``megaplan/vendor/shannon/index.ts``.

@@ -86,6 +86,49 @@ def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
     assert "--effort" in invoked_cmd
     assert invoked_cmd[invoked_cmd.index("--effort") + 1] == "low"
 
+
+def test_run_claude_step_ignores_stream_worker_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_claude_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", "1")
+    claude_output = json.dumps({
+        "structured_output": {
+            "plan": "# Plan\nDo it.",
+            "questions": [],
+            "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+            "assumptions": [],
+        },
+        "session_id": "tmux-shannon-session",
+    })
+    fake_result = CommandResult(
+        command=["claude"],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=claude_output,
+        stderr="",
+        duration_ms=10,
+    )
+    with (
+        patch("megaplan.workers.shannon_stream.run_shannon_stream_step") as run_stream,
+        patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    run_stream.assert_not_called()
+    assert run_command.call_count >= 1
+    for call in run_command.call_args_list:
+        command = call.args[0]
+        assert command[0] == "bun"
+        assert str(command[1]).endswith("vendor/shannon/index.ts")
+    assert result.session_id == "tmux-shannon-session"
+
+
 def test_run_claude_step_rejects_invalid_effort(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers import run_claude_step

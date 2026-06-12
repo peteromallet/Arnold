@@ -19,7 +19,7 @@ import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from megaplan.audits.robustness import build_empty_template
 from megaplan.forms.provocations import select_active_checks
@@ -101,6 +101,9 @@ class CommandResult:
     stdout: str
     stderr: str
     duration_ms: int
+
+
+ProgressLivenessState = Literal["progressing", "alive_only", "stalled", "unknown"]
 
 
 # Inter-event idle bound for the shannon worker (Claude via the shannon CLI).
@@ -424,15 +427,18 @@ def run_command(
     env: dict[str, str] | None = None,
     timeout: int | None = None,
     activity_callback: Callable[[str, str], None] | None = None,
+    activity_guard: Callable[[str, str], None] | None = None,
     idle_timeout: float | None = None,
     pre_first_byte_timeout: float | None = None,
     liveness_probe: Callable[[], bool] | None = None,
+    progress_liveness_probe: Callable[[], ProgressLivenessState] | None = None,
+    progress_liveness_grace_timeout: float | None = None,
     tmux_session: TmuxSession | None = None,
 ) -> CommandResult:
     try:
         started = time.monotonic()
         timeout = timeout or get_effective("execution", "worker_timeout_seconds")
-        if activity_callback is None:
+        if activity_callback is None and activity_guard is None:
             try:
                 process = subprocess.run(
                     command,
@@ -507,6 +513,9 @@ def run_command(
             # bug, exception) still dies within a hard multiple of the idle bound
             # instead of running to the 2h wall-clock ``timeout``.
             last_real_output = [time.monotonic()]
+            last_progress_signal = [last_real_output[0]]
+            guard_triggered = threading.Event()
+            guard_error: list[CliError] = []
 
             def _reader(stream: Any, parts: list[bytes], kind: str) -> None:
                 if stream is None:
@@ -526,10 +535,28 @@ def run_command(
                         break
                     last_output[0] = time.monotonic()
                     last_real_output[0] = time.monotonic()
+                    last_progress_signal[0] = time.monotonic()
                     first_byte_seen[0] = True
                     parts.append(chunk)
+                    text = chunk.decode("utf-8", errors="replace")
+                    if activity_guard is not None:
+                        try:
+                            activity_guard(kind, text)
+                        except CliError as exc:
+                            guard_error.append(exc)
+                            guard_triggered.set()
+                            return
+                        except Exception as exc:
+                            guard_error.append(
+                                CliError(
+                                    "activity_guard_error",
+                                    f"Worker activity guard failed: {exc}",
+                                )
+                            )
+                            guard_triggered.set()
+                            return
                     if activity_callback is not None:
-                        activity_callback(kind, chunk.decode("utf-8", errors="replace"))
+                        activity_callback(kind, text)
 
             threads = [
                 threading.Thread(target=_reader, args=(process.stdout, stdout_parts, "stdout"), daemon=True),
@@ -552,6 +579,8 @@ def run_command(
                 while not heartbeat_stop.wait(5.0):
                     if process.poll() is not None:
                         return
+                    if activity_callback is None:
+                        continue
                     try:
                         activity_callback("liveness", "worker subprocess alive")
                     except Exception:
@@ -567,6 +596,20 @@ def run_command(
             def _coerce_timeout_output(parts: list[bytes]) -> str:
                 return b"".join(parts).decode("utf-8", errors="replace")
 
+            def _combined_raw_output() -> str:
+                return _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)
+
+            def _raise_guard_error() -> None:
+                error = guard_error[0] if guard_error else CliError(
+                    "activity_guard_error",
+                    "Worker activity guard stopped the subprocess.",
+                )
+                raw = _combined_raw_output()
+                if raw:
+                    existing = str(error.extra.get("raw_output", ""))
+                    error.extra["raw_output"] = existing + raw if existing else raw
+                raise error
+
             # When the caller opts in to the idle-output watchdog (e.g. the shannon
             # worker) OR the pre-first-byte watchdog (e.g. the codex worker), poll
             # process.wait() in short slices so we can also enforce those bounds
@@ -578,15 +621,27 @@ def run_command(
                 if pre_first_byte_timeout is not None
                 else None
             )
-            if idle_timeout is not None or first_byte_deadline is not None:
+            if (
+                idle_timeout is not None
+                or first_byte_deadline is not None
+                or activity_guard is not None
+                or progress_liveness_probe is not None
+            ):
                 deadline = started + timeout
                 try:
                     while True:
+                        if guard_triggered.is_set():
+                            kill_group(process)
+                            heartbeat_stop.set()
+                            for thread in threads:
+                                thread.join(timeout=1)
+                            _raise_guard_error()
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
                             raise subprocess.TimeoutExpired(command, timeout)
-                        # Poll on at most a 1s slice so both watchdogs fire promptly.
-                        wait_slice = min(1.0, remaining)
+                        # Poll on short slices so watchdogs and guard failures
+                        # fire promptly while reader threads keep collecting output.
+                        wait_slice = min(0.1 if activity_guard is not None else 1.0, remaining)
                         try:
                             returncode = process.wait(timeout=wait_slice)
                             break
@@ -644,7 +699,46 @@ def run_command(
                                 # which still catches a genuinely hung/dead turn. The
                                 # wall-clock ``timeout`` (worker_timeout_seconds)
                                 # remains the hard upper bound.
-                                if liveness_probe is not None:
+                                if progress_liveness_probe is not None:
+                                    try:
+                                        liveness_state = progress_liveness_probe()
+                                    except Exception:
+                                        liveness_state = "unknown"
+                                    if liveness_state == "progressing":
+                                        if activity_callback is not None:
+                                            try:
+                                                activity_callback(
+                                                    "liveness",
+                                                    "worker progressing (probe); idle clock reset",
+                                                )
+                                            except Exception:
+                                                pass
+                                        now = time.monotonic()
+                                        last_output[0] = now
+                                        last_progress_signal[0] = now
+                                        continue
+                                    if liveness_state in {"alive_only", "unknown"}:
+                                        grace = (
+                                            progress_liveness_grace_timeout
+                                            if progress_liveness_grace_timeout is not None
+                                            else _probe_rescue_cap_seconds()
+                                        )
+                                        if time.monotonic() - last_progress_signal[0] <= grace:
+                                            if activity_callback is not None:
+                                                try:
+                                                    activity_callback(
+                                                        "liveness",
+                                                        f"worker {liveness_state} (probe); "
+                                                        "idle clock reset within grace",
+                                                    )
+                                                except Exception:
+                                                    pass
+                                            last_output[0] = time.monotonic()
+                                            continue
+                                    # "stalled" or expired alive_only/unknown
+                                    # grace falls through to the centralized
+                                    # worker_stall kill path below.
+                                elif liveness_probe is not None:
                                     # Hard backstop: cap how long a stdout-SILENT
                                     # turn may be rescued by the probe alone. The
                                     # probe's "progress" signal (transcript mtime)
@@ -734,6 +828,12 @@ def run_command(
                         f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
                         extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
                     ) from exc
+            if guard_triggered.is_set():
+                kill_group(process)
+                heartbeat_stop.set()
+                for thread in threads:
+                    thread.join(timeout=1)
+                _raise_guard_error()
             heartbeat_stop.set()
             for thread in threads:
                 thread.join(timeout=1)
@@ -2520,7 +2620,13 @@ def _is_agent_available(agent: str) -> bool:
             return False
         return True
     if agent in {"claude", "shannon"}:
-        from megaplan._core.io import is_shannon_available
+        from megaplan._core.io import (
+            _shannon_stream_worker_enabled,
+            is_claude_stream_available,
+            is_shannon_available,
+        )
+        if _shannon_stream_worker_enabled():
+            return is_claude_stream_available()
         return is_shannon_available()
     return bool(shutil.which(agent))
 
@@ -2764,13 +2870,26 @@ def run_step_with_worker(
             elif agent in ("claude", "shannon"):
                 # Both the ``claude`` agent (Claude via the shannon CLI, e.g.
                 # the ``partnered`` profile) and the explicit ``shannon`` agent
-                # run through run_shannon_step. A stalled SSE stream now surfaces
+                # run through Shannon by default. The experimental headless
+                # stream worker is opt-in at this dispatch seam only; the
+                # public run_claude_step compatibility wrapper remains tmux-
+                # Shannon backed. A stalled SSE stream now surfaces
                 # promptly as a retryable ``worker_stall`` (idle-output watchdog
                 # in run_command) instead of hanging until the coarse phase
                 # wall-clock ``worker_timeout``. Give it the same bounded one-shot
                 # retry the codex branch grants transient failures so a single
                 # stall retries (fresh session) rather than failing the plan.
-                from megaplan.workers.shannon import run_shannon_step
+                from megaplan._core.io import _shannon_stream_worker_enabled
+
+                if _shannon_stream_worker_enabled():
+                    from megaplan.workers.shannon_stream import (
+                        run_shannon_stream_step as run_shannon_worker_step,
+                    )
+                else:
+                    from megaplan.workers.shannon import (
+                        run_shannon_step as run_shannon_worker_step,
+                    )
+
                 shannon_kwargs: dict[str, Any] = dict(
                     root=root,
                     prompt_override=prompt_override,
@@ -2785,7 +2904,7 @@ def run_step_with_worker(
                 attempted_retry = False
                 while True:
                     try:
-                        worker = run_shannon_step(
+                        worker = run_shannon_worker_step(
                             step,
                             state,
                             plan_dir,

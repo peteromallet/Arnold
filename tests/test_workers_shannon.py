@@ -46,6 +46,27 @@ def test_is_shannon_available_missing_bun() -> None:
     fake = FakeShutil("tmux", "claude")
     assert is_shannon_available(shutil_ref=fake) is False
 
+def test_shannon_stream_worker_enabled_is_env_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    from megaplan._core.io import _shannon_stream_worker_enabled
+    from megaplan.types import DEFAULTS
+
+    monkeypatch.delenv("MEGAPLAN_SHANNON_STREAM_WORKER", raising=False)
+    assert _shannon_stream_worker_enabled() is False
+
+    for raw in ("1", "true", "on", "yes", " TRUE "):
+        monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", raw)
+        assert _shannon_stream_worker_enabled() is True
+
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", "0")
+    assert _shannon_stream_worker_enabled() is False
+    assert not any("shannon_stream" in key for key in DEFAULTS)
+
+def test_is_claude_stream_available_requires_only_claude() -> None:
+    from megaplan._core.io import is_claude_stream_available
+
+    assert is_claude_stream_available(shutil_ref=FakeShutil("claude")) is True
+    assert is_claude_stream_available(shutil_ref=FakeShutil("bun", "tmux")) is False
+
 def test_shannon_missing_deps_lists_missing() -> None:
     from megaplan._core.io import shannon_missing_deps
     fake = FakeShutil("claude")  # missing bun and tmux
@@ -81,6 +102,19 @@ def test_is_agent_available_shannon_agrees_with_is_shannon_available() -> None:
         patch("megaplan._core.shutil", FakeShutil("claude")),
     ):
         assert _is_agent_available("shannon") is False
+
+def test_is_agent_available_stream_flag_accepts_claude_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.workers import _is_agent_available
+
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", "yes")
+    with patch("megaplan._core.io.shutil", FakeShutil("claude")):
+        assert _is_agent_available("shannon") is True
+        assert _is_agent_available("claude") is True
+    with patch("megaplan._core.io.shutil", FakeShutil("bun", "tmux")):
+        assert _is_agent_available("shannon") is False
+        assert _is_agent_available("claude") is False
 
 def test_is_agent_available_claude_routes_through_shannon_deps() -> None:
     """The public 'claude' agent now means Shannon-backed Claude."""

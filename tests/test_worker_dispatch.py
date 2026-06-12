@@ -90,6 +90,45 @@ def test_dispatches_claude_through_shannon_with_claude_session_agent(
     assert run_shannon.call_args.kwargs["model"] == "claude-sonnet-4"
 
 
+def test_stream_flag_dispatches_claude_to_stream_worker_with_read_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan_dir, state = _mock_state(tmp_path)
+    worker = _worker(session_id="claude-via-stream")
+
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", "1")
+    with (
+        patch("megaplan.workers.shannon_stream.run_shannon_stream_step", return_value=worker) as run_stream,
+        patch("megaplan.workers.shannon.run_shannon_step") as run_shannon,
+    ):
+        result, agent, mode, refreshed = run_step_with_worker(
+            "critique",
+            state,
+            plan_dir,
+            _args(),
+            root=tmp_path,
+            resolved=AgentMode(
+                agent="claude",
+                mode="persistent",
+                refreshed=False,
+                model=None,
+                resolved_model="claude-sonnet-4",
+            ),
+            read_only=True,
+        )
+
+    assert result is worker
+    assert agent == "claude"
+    assert mode == "persistent"
+    assert refreshed is True
+    run_stream.assert_called_once()
+    run_shannon.assert_not_called()
+    assert run_stream.call_args.kwargs["session_agent"] == "claude"
+    assert run_stream.call_args.kwargs["model"] == "claude-sonnet-4"
+    assert run_stream.call_args.kwargs["read_only"] is True
+
+
 def test_dispatches_plain_shannon_without_claude_session_agent(tmp_path: Path) -> None:
     plan_dir, state = _mock_state(tmp_path)
     worker = _worker(session_id="plain-shannon")
@@ -117,6 +156,43 @@ def test_dispatches_plain_shannon_without_claude_session_agent(tmp_path: Path) -
     run_shannon.assert_called_once()
     assert "session_agent" not in run_shannon.call_args.kwargs
     assert run_shannon.call_args.kwargs["model"] == "claude-opus-4-1"
+
+
+def test_stream_flag_dispatches_plain_shannon_to_stream_worker(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan_dir, state = _mock_state(tmp_path)
+    worker = _worker(session_id="plain-stream-shannon")
+
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", "yes")
+    with (
+        patch("megaplan.workers.shannon_stream.run_shannon_stream_step", return_value=worker) as run_stream,
+        patch("megaplan.workers.shannon.run_shannon_step") as run_shannon,
+    ):
+        result, agent, mode, refreshed = run_step_with_worker(
+            "plan",
+            state,
+            plan_dir,
+            _args(),
+            root=tmp_path,
+            resolved=AgentMode(
+                agent="shannon",
+                mode="persistent",
+                refreshed=False,
+                model="claude-opus-4-1",
+                resolved_model="claude-opus-4-1",
+            ),
+        )
+
+    assert result is worker
+    assert agent == "shannon"
+    assert mode == "persistent"
+    assert refreshed is True
+    run_stream.assert_called_once()
+    run_shannon.assert_not_called()
+    assert "session_agent" not in run_stream.call_args.kwargs
+    assert run_stream.call_args.kwargs["model"] == "claude-opus-4-1"
 
 
 def test_dispatches_codex_with_resolved_model_and_worker_metadata(
