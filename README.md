@@ -1,6 +1,4 @@
-# VibeComfy
-
-VibeComfy aims to make agents first-class citizens in the ComfyUI ecosystem.
+VibeComfy makes agents first-class citizens in the ComfyUI ecosystem.
 
 Its core job is translation: import a ComfyUI workflow, represent it as editable
 Python, validate the result, and compile it back to the API JSON that ComfyUI queues.
