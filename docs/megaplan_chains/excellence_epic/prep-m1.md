@@ -64,8 +64,8 @@ The `_subgraph_instance_widget_values()` function also builds values independent
 
 | Template ID | Fields | Status | Source JSON exists? |
 |-------------|--------|--------|---------------------|
-| `image/z_image` | `steps`, `cfg` | **Already fixed** in working tree | ✅ `workflow_corpus/official/image/z_image.json` |
-| `video/ltx2_3_runexx_talking_avatar_qwen_tts` | `voice`, `unload_models`, `seed` | **Still corrupted** (lines 244-246) | ✅ `workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` |
+| `image/z_image` | `steps`, `cfg` | **Already fixed** in working tree | ✅ `ready_templates/sources/official/image/z_image.json` |
+| `video/ltx2_3_runexx_talking_avatar_qwen_tts` | `voice`, `unload_models`, `seed` | **Still corrupted** (lines 244-246) | ✅ `ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` |
 
 ### All templates with `widget_n_fields > 0` (potential leak carriers)
 
@@ -73,37 +73,37 @@ From the pre-fix inventory at `evidence/pre_fix_inventory_20260528.json` (captur
 
 | Template ID | widget_n_fields | Source JSON | Source exists? |
 |-------------|-----------------|-------------|----------------|
-| `audio/ace_step_1_5_t2a_song` | 1 | `workflow_corpus/official/audio/ace_step_1_5_t2a_song.json` | ✅ |
-| `audio/qwen3_tts_voice_clone` | 1 | `workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json` | ✅ |
-| `edit/qwen_image_edit` | 1 | `workflow_corpus/official/edit/qwen_image_edit.json` | ✅ |
-| `video/ltx2_3_i2v` | 8 | `workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json` | ✅ |
-| `video/ltx2_3_iamccs_audio_extend_low_ram` | 181 | `workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json` | ✅ |
-| `video/ltx2_3_iamccs_audio_image_to_video` | 194 | `workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_AU_IMG2V.json` | ✅ |
-| `video/ltx2_3_iamccs_long_i2v` | 119 | `workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json` | ✅ |
-| `video/ltx2_3_lightricks_iclora_hdr` | 2 | `workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json` | ✅ |
-| `video/ltx2_3_lightricks_iclora_motion_track` | 9 | `workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json` | ✅ |
-| `video/ltx2_3_lightricks_iclora_union_control` | 7 | `workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Union_Control_Distilled.json` | ✅ |
-| `video/ltx2_3_lightricks_two_stage` | 2 | `workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json` | ✅ |
-| `video/ltx2_3_runexx_first_last_frame` | 2 | `workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json` | ✅ |
+| `audio/ace_step_1_5_t2a_song` | 1 | `ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json` | ✅ |
+| `audio/qwen3_tts_voice_clone` | 1 | `ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json` | ✅ |
+| `edit/qwen_image_edit` | 1 | `ready_templates/sources/official/edit/qwen_image_edit.json` | ✅ |
+| `video/ltx2_3_i2v` | 8 | `ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json` | ✅ |
+| `video/ltx2_3_iamccs_audio_extend_low_ram` | 181 | `ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json` | ✅ |
+| `video/ltx2_3_iamccs_audio_image_to_video` | 194 | `ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_AU_IMG2V.json` | ✅ |
+| `video/ltx2_3_iamccs_long_i2v` | 119 | `ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json` | ✅ |
+| `video/ltx2_3_lightricks_iclora_hdr` | 2 | `ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json` | ✅ |
+| `video/ltx2_3_lightricks_iclora_motion_track` | 9 | `ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json` | ✅ |
+| `video/ltx2_3_lightricks_iclora_union_control` | 7 | `ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Union_Control_Distilled.json` | ✅ |
+| `video/ltx2_3_lightricks_two_stage` | 2 | `ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json` | ✅ |
+| `video/ltx2_3_runexx_first_last_frame` | 2 | `ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json` | ✅ |
 | `video/ltx2_3_runexx_first_last_raw_video_guide` | 2 | `null` | ❌ No source |
-| `video/ltx2_3_runexx_first_middle_last_frame` | 12 | `workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FML2V_First_Middle_Last_Frame_guider.json` | ✅ |
-| `video/ltx2_3_runexx_talking_avatar_qwen_tts` | 6 | `workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` | ✅ |
-| `video/ltx2_3_runexx_video_to_video_extend` | 1 | `workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json` | ✅ |
-| `video/ltx2_3_t2v` | 8 | `workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json` | ✅ |
-| `video/wan_i2v` | 4 | `workflow_corpus/official/video/wan_i2v.json` | ✅ |
-| `video/wanvideo_wrapper_13b_control_lora` | 2 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json` | ✅ |
-| `video/wanvideo_wrapper_13b_recammaster` | 15 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_recammaster.json` | ✅ |
-| `video/wanvideo_wrapper_21_14b_fun_control` | 1 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control.json` | ✅ |
-| `video/wanvideo_wrapper_21_14b_fun_control_camera` | 6 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json` | ✅ |
-| `video/wanvideo_wrapper_21_14b_t2v` | 1 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_t2v.json` | ✅ |
-| `video/wanvideo_wrapper_21_14b_v2v_infinitetalk` | 10 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json` | ✅ |
-| `video/wanvideo_wrapper_21_14b_wanmove_i2v` | 8 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json` | ✅ |
+| `video/ltx2_3_runexx_first_middle_last_frame` | 12 | `ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_FML2V_First_Middle_Last_Frame_guider.json` | ✅ |
+| `video/ltx2_3_runexx_talking_avatar_qwen_tts` | 6 | `ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` | ✅ |
+| `video/ltx2_3_runexx_video_to_video_extend` | 1 | `ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json` | ✅ |
+| `video/ltx2_3_t2v` | 8 | `ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json` | ✅ |
+| `video/wan_i2v` | 4 | `ready_templates/sources/official/video/wan_i2v.json` | ✅ |
+| `video/wanvideo_wrapper_13b_control_lora` | 2 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json` | ✅ |
+| `video/wanvideo_wrapper_13b_recammaster` | 15 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_recammaster.json` | ✅ |
+| `video/wanvideo_wrapper_21_14b_fun_control` | 1 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control.json` | ✅ |
+| `video/wanvideo_wrapper_21_14b_fun_control_camera` | 6 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json` | ✅ |
+| `video/wanvideo_wrapper_21_14b_t2v` | 1 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_t2v.json` | ✅ |
+| `video/wanvideo_wrapper_21_14b_v2v_infinitetalk` | 10 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json` | ✅ |
+| `video/wanvideo_wrapper_21_14b_wanmove_i2v` | 8 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json` | ✅ |
 | `video/wanvideo_wrapper_22_14b_t2i` | 5 | `ready_templates/video/wanvideo_wrapper_22_14b_t2i.py` (self-referential) | ✅ |
-| `video/wanvideo_wrapper_22_5b_ovi_audio_i2v` | 1 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json` | ✅ |
-| `video/wanvideo_wrapper_22_s2v_context_window` | 11 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_context_window.json` | ✅ |
-| `video/wanvideo_wrapper_22_s2v_framepack_pose` | 4 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_framepack_pose.json` | ✅ |
+| `video/wanvideo_wrapper_22_5b_ovi_audio_i2v` | 1 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json` | ✅ |
+| `video/wanvideo_wrapper_22_s2v_context_window` | 11 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_context_window.json` | ✅ |
+| `video/wanvideo_wrapper_22_s2v_framepack_pose` | 4 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_framepack_pose.json` | ✅ |
 | `video/wanvideo_wrapper_22_wan_animate_preprocess_kijai` | 9 | `null` | ❌ No source |
-| `video/wanvideo_wrapper_wan_animate` | 9 | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan_animate.json` | ✅ |
+| `video/wanvideo_wrapper_wan_animate` | 9 | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan_animate.json` | ✅ |
 
 **Inventory summary:** 64 templates, 37 with issues (widget_n_fields > 0), 636 total widget_n_fields, 6 with missing source provenance. All source JSON files that exist in the inventory are verified present on disk at the time of this prep.
 

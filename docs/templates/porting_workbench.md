@@ -58,7 +58,7 @@ Helper/UI classes are never treated as installable missing packs. They produce h
 Scratchpad mode is the default and is the right choice while investigating a workflow:
 
 ```bash
-python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
+python -m vibecomfy.cli port convert ready_templates/sources/community/example.json \
   --out out/scratchpads/example.py \
   --json
 ```
@@ -66,7 +66,7 @@ python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
 Ready-template mode is explicit because it creates a curated candidate with template identity:
 
 ```bash
-python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
+python -m vibecomfy.cli port convert ready_templates/sources/community/example.json \
   --ready-id image/example \
   --out ready_templates/image/example.py \
   --json
@@ -93,7 +93,7 @@ Ready-template candidates also run strict-ready validation with the target `read
 Use `--dry-run` to inspect conversion output and parity evidence without touching the filesystem:
 
 ```bash
-python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
+python -m vibecomfy.cli port convert ready_templates/sources/community/example.json \
   --out out/scratchpads/example.py \
   --dry-run --json
 ```
@@ -101,7 +101,7 @@ python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
 Use `--diff` to get a unified diff and JSON diff metadata alongside the write:
 
 ```bash
-python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
+python -m vibecomfy.cli port convert ready_templates/sources/community/example.json \
   --out out/scratchpads/example.py \
   --diff --json
 ```
@@ -133,11 +133,11 @@ paths. The JSON output is deterministic and versioned.
 
 Use this path for workflows that should become reusable templates:
 
-1. Keep the raw JSON in `workflow_corpus/.../<id>.json` when it is useful source material.
+1. Keep the raw JSON in `ready_templates/sources/.../<id>.json` when it is useful source material.
 2. Run `port check <json> --json` and resolve hard diagnostics before conversion.
 3. Convert to an editable scratchpad first when the graph needs investigation.
 4. Convert with `--ready-id <kind>/<id>` or hand-author `ready_templates/<kind>/<id>.py` when the workflow becomes reusable.
-5. Add or update the `workflow_corpus/manifests/coverage.json` row with `id`, `path`, `media`, `task`, `coverage_tier`, and `ready_template: true`.
+5. Add or update the `ready_templates/sources/manifests/coverage.json` row with `id`, `path`, `media`, `task`, `coverage_tier`, and `ready_template: true`.
 6. Refresh the static discovery index:
 
 ```bash
@@ -205,7 +205,7 @@ The identity scheme uses the `vibecomfy_uid` stamped in each node's `properties`
 
 Furniture coverage: groups, notes (via `extra.notes`), reroutes, GetNode/SetNode broadcast pairs, bypass edges, and subgraph inner-node definitions are all preserved through the sidecar envelope and re-emitted in the UI JSON.
 
-Gate guarantees: the offline gate (wiring + object_info) catches structural problems; the ComfyUI/RunPod gate validates editor-faithfulness by round-tripping the emitted UI JSON through the vendored ComfyUI converter. When the converter produces a byte-different result, the refusal-spine raises `RefusedEmit` and the CLI prints the diff to stderr (exit code 3).
+Gate guarantees: the offline gate (wiring + object_info) catches structural problems; the ComfyUI/RunPod gate validates editor-faithfulness by round-tripping the emitted UI JSON through the installed ComfyUI converter. When the converter produces a byte-different result, the refusal-spine raises `RefusedEmit` and the CLI prints the diff to stderr (exit code 3).
 
 Caveats: the round-trip depends on uid stability. If a node's uid changes between emits (e.g., after a hand-edit that regenerated the graph), its prior position is lost and the node receives a new engine-placed position.
 

@@ -37,11 +37,11 @@ if str(_REPO_ROOT) not in sys.path:
 # -- constants defined locally so dry-run never needs runpod_runner/artifacts --
 ROOT: Path = _REPO_ROOT
 REMOTE_ROOT: str = "/workspace/vibecomfy"
-REGENERATABLE_MANIFEST: str = "workflow_corpus/manifests/coverage.json"
+REGENERATABLE_MANIFEST: str = "ready_templates/sources/manifests/coverage.json"
 ESTIMATED_COST_PER_TEMPLATE: float = 0.25
 DEFAULT_UPLOAD_EXCLUDES: set[str] = {
     ".git", ".venv", "__pycache__", ".pytest_cache", ".desloppify", ".megaplan",
-    "out", "output", "vendor", "workflow_corpus", "custom_nodes", "input",
+    "out", "output", "vendor", "ready_templates/sources", "custom_nodes", "input",
     "node_modules", ".mypy_cache", ".ruff_cache", ".DS_Store",
 }
 

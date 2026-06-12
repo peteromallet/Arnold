@@ -16,8 +16,9 @@ the plan calls for (roadmap §11.3 / Phase 0). Run from the repo root:
 
     PYENV_VERSION=3.11.11 python scripts/roundtrip_fidelity_spike.py
 
-Requires the vendored vendor/ComfyUI submodule initialized and a running ComfyUI on :8188 for
-object_info (or adapt _object_info()). NOTE: works around the pyproject `comfy_nodes` packaging
+Requires VibeComfy installed with the pinned `[comfy]` extra and a running
+ComfyUI on :8188 for object_info (or adapt _object_info()). NOTE: works around
+the pyproject `comfy_nodes` packaging
 bug (it is registered as a comfyui.custom_nodes *package* but is a module) via a __path__ shim;
 fix that bug for real so this shim is unnecessary.
 """
@@ -34,7 +35,7 @@ def _boot_oracle():
     except Exception:
         pass
     from vibecomfy import comfy_backend as cb
-    assert cb.ensure_nodes(), "vendored vendor/ComfyUI not initialized"
+    assert cb.ensure_nodes(), "install VibeComfy with the pinned [comfy] extra"
     from comfy.component_model.workflow_convert import convert_ui_to_api
 
     def oracle(ui):
@@ -81,7 +82,7 @@ def replay(cap):
 
 
 def _find(key):
-    for p in glob.glob("workflow_corpus/**/*.json", recursive=True):
+    for p in glob.glob("ready_templates/sources/**/*.json", recursive=True):
         try:
             d = json.load(open(p))
         except Exception:

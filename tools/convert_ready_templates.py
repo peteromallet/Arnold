@@ -30,7 +30,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 READY_ROOT = REPO_ROOT / "ready_templates"
 OUT_PREVIEW_ROOT = REPO_ROOT / "out" / "converted"
 SNAPSHOT_ROOT = REPO_ROOT / "tests" / "snapshots"
-VENDOR_COMFY = REPO_ROOT / "vendor" / "ComfyUI"
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -39,14 +38,11 @@ if str(REPO_ROOT) not in sys.path:
 from vibecomfy.porting.convert import _check_manual_refusal, ManualTemplateRefusal  # noqa: E402
 
 
-# --- bootstrap: make vendor/ComfyUI importable so normalize_to_api works -----
+# --- bootstrap: make installed ComfyUI importable so normalize_to_api works ---
 
 
 def _bootstrap_comfy_runtime() -> None:
     """Ensure `comfy.component_model.workflow_convert` is callable."""
-    sys_path_str = str(VENDOR_COMFY)
-    if sys_path_str not in sys.path:
-        sys.path.insert(0, sys_path_str)
     try:
         from comfy.nodes.package import import_all_nodes_in_workspace
     except Exception as exc:  # pragma: no cover - environment-dependent

@@ -11,7 +11,7 @@ from vibecomfy.node_packs import LockEntry, write_lockfile
 def _write_template(root: Path, *, source_sha: str | None, commit: str = "abc") -> Path:
     template = root / "ready_templates" / "image" / "example.py"
     template.parent.mkdir(parents=True)
-    sha_line = f"# ported from workflow_corpus/official/image/example.json (sha256: {source_sha})\n" if source_sha else ""
+    sha_line = f"# ported from ready_templates/sources/official/image/example.json (sha256: {source_sha})\n" if source_sha else ""
     template.write_text(
         sha_line
         + f"""
@@ -35,7 +35,7 @@ READY_METADATA = ReadyMetadata.build(
     models=MODELS,
     output_prefix="image/example",
     requirements={{"custom_nodes": ["ExamplePack"], "custom_node_refs": [{{"slug": "ExamplePack", "source": "git", "commit": "{commit}"}}]}},
-    provenance={{"source_workflow": "workflow_corpus/official/image/example.json"}},
+    provenance={{"source_workflow": "ready_templates/sources/official/image/example.json"}},
     vibecomfy_version="0.1.0",
     comfy_core={{"status": "discovered", "version": "unknown", "commit": "unknown", "min_version": "unknown", "tested_at": "2026-05-20T00:00:00+00:00"}},
 )
@@ -51,7 +51,7 @@ def build():
 
 def _write_project_files(tmp_path: Path, *, source_body: bytes = b"{}", template_commit: str = "abc") -> tuple[Path, Path, Path]:
     (tmp_path / "pyproject.toml").write_text("[project]\nversion = \"0.1.0\"\n", encoding="utf-8")
-    source = tmp_path / "workflow_corpus" / "official" / "image" / "example.json"
+    source = tmp_path / "ready_templates/sources" / "official" / "image" / "example.json"
     source.parent.mkdir(parents=True)
     source.write_bytes(source_body)
     template = _write_template(tmp_path, source_sha=hashlib.sha256(source_body).hexdigest(), commit=template_commit)
@@ -63,7 +63,7 @@ def _write_project_files(tmp_path: Path, *, source_body: bytes = b"{}", template
                     {
                         "id": "image/example",
                         "path": "ready_templates/image/example.py",
-                        "source_workflow": "workflow_corpus/official/image/example.json",
+                        "source_workflow": "ready_templates/sources/official/image/example.json",
                     }
                 ]
             }
@@ -119,7 +119,7 @@ models:
 
 def test_source_sha_mismatch_is_unallowlisted(monkeypatch, tmp_path: Path) -> None:
     _template, index, lockfile = _write_project_files(tmp_path, source_body=b"old")
-    (tmp_path / "workflow_corpus" / "official" / "image" / "example.json").write_bytes(b"new")
+    (tmp_path / "ready_templates/sources" / "official" / "image" / "example.json").write_bytes(b"new")
     registry = tmp_path / "models.yaml"
     registry.write_text("models: []\n", encoding="utf-8")
     monkeypatch.setattr(traceability, "REPO_ROOT", tmp_path)
@@ -195,7 +195,7 @@ models:
 
 def test_cli_strict_exits_nonzero_for_unallowlisted_errors(monkeypatch, tmp_path: Path, capsys) -> None:
     _template, index, lockfile = _write_project_files(tmp_path, source_body=b"old")
-    (tmp_path / "workflow_corpus" / "official" / "image" / "example.json").write_bytes(b"new")
+    (tmp_path / "ready_templates/sources" / "official" / "image" / "example.json").write_bytes(b"new")
     registry = tmp_path / "models.yaml"
     registry.write_text("models: []\n", encoding="utf-8")
     monkeypatch.setattr(traceability, "REPO_ROOT", tmp_path)

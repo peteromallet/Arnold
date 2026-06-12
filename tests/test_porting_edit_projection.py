@@ -152,7 +152,7 @@ def test_projection_sparse_focus_keeps_neighbors_detailed_and_summarizes_elsewhe
 
 
 def test_projection_large_graph_stays_within_token_budget_when_available() -> None:
-    path = Path("workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json")
+    path = Path("ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json")
     graph = json.loads(path.read_text(encoding="utf-8"))
 
     result = render_edit_projection(

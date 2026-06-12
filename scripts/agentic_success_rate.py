@@ -141,7 +141,7 @@ TASKS: list[TaskConfig] = [
         description="Create a workflow from a ComfyUI API JSON file",
         prompt=(
             "You have access to the vibecomfy CLI.  "
-            "Run 'vibecomfy port check workflow_corpus/official/video/wan_i2v.json' "
+            "Run 'vibecomfy port check ready_templates/sources/official/video/wan_i2v.json' "
             "to validate the JSON, then use the port convert workflow to create "
             "a Python scratchpad.  Return a JSON object with key 'workflow' "
             "(containing node_count and class_types) and 'source' (the path used)."
@@ -155,7 +155,7 @@ TASKS: list[TaskConfig] = [
         description="Debug a failing template with port doctor-all",
         prompt=(
             "You have access to the vibecomfy CLI.  "
-            "Run 'vibecomfy port doctor-all workflow_corpus/official/video/wan_i2v.json --json' "
+            "Run 'vibecomfy port doctor-all ready_templates/sources/official/video/wan_i2v.json --json' "
             "and capture the output.  Return the parsed JSON result (the full report)."
         ),
         success_metric="Doctor-all ran without crashing and produced diagnostic sections",
@@ -305,7 +305,7 @@ def _dry_run_dummy_result(task: TaskConfig) -> dict[str, Any]:
     elif task.id == "json_to_template":
         return {
             "workflow": {"node_count": 5, "class_types": ["KSampler"]},
-            "source": "workflow_corpus/official/video/wan_i2v.json",
+            "source": "ready_templates/sources/official/video/wan_i2v.json",
         }
     elif task.id == "doctor_all":
         return {

@@ -1,6 +1,6 @@
 {
   "id": "cal_wrong_03_denoise_for_lowvram",
-  "pre_workflow_path": "../../../../workflow_corpus/official/image/qwen_image_2512.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
   "nl_intent": "Enable low VRAM mode so the workflow can run on a GPU with only 8 GB of memory",
   "post_edit_ir_patch": {
     "node_id": "238:230",

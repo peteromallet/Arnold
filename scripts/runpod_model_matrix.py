@@ -7,18 +7,18 @@ from scripts.runpod_runner import REMOTE_ROOT, run_pod
 EXCLUDE_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", "out/runs", "output"}
 
 OFFICIAL_CANDIDATES = [
-    "workflow_corpus/official/image/z_image.json",
-    "workflow_corpus/official/image/flux2_klein_4b_t2i.json",
-    "workflow_corpus/official/image/flux2_klein_9b_t2i.json",
-    "workflow_corpus/official/edit/qwen_image_edit.json",
-    "workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json",
-    "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
-    "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",
-    "workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json",
-    "workflow_corpus/official/video/wan_t2v.json",
-    "workflow_corpus/official/video/wan_i2v.json",
-    "workflow_corpus/official/video/ltx2_3_t2v.json",
-    "workflow_corpus/official/video/ltx2_3_i2v.json",
+    "ready_templates/sources/official/image/z_image.json",
+    "ready_templates/sources/official/image/flux2_klein_4b_t2i.json",
+    "ready_templates/sources/official/image/flux2_klein_9b_t2i.json",
+    "ready_templates/sources/official/edit/qwen_image_edit.json",
+    "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json",
+    "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json",
+    "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json",
+    "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json",
+    "ready_templates/sources/official/video/wan_t2v.json",
+    "ready_templates/sources/official/video/wan_i2v.json",
+    "ready_templates/sources/official/video/ltx2_3_t2v.json",
+    "ready_templates/sources/official/video/ltx2_3_i2v.json",
 ]
 
 EXTERNAL_CANDIDATES = [

@@ -21,7 +21,7 @@ and the existing ``extra_model_paths_config`` injection in session.py will
 cause ``load_extra_path_config`` to register the directory.  No option-(b)
 ``folder_paths.add_model_folder_path`` fallback is needed.
 
-This test invokes the real vendored ComfyUI loader (when available) and asserts
+This test invokes the real ComfyUI loader (when available) and asserts
 that a ``custom_nodes:`` key in a temp YAML is registered as a folder path.
 """
 
@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 # ---------------------------------------------------------------------------
-# When the HiddenSwitch vendored ComfyUI is present under vendor/ComfyUI,
+# When a HiddenSwitch ComfyUI checkout is available,
 # add it to sys.path so the import below resolves.
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vendor" / "ComfyUI"))

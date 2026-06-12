@@ -10,7 +10,7 @@ from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 
 def test_materialized_subgraph_contract_includes_call_site_and_source_hash() -> None:
-    path = "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json"
+    path = "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json"
     text = _emit_ready_from_ui_json(path, "edit/flux2_klein_9b_image_edit_base")
 
     assert "def image_edit_flux2_klein_9b(" in text
@@ -20,7 +20,7 @@ def test_materialized_subgraph_contract_includes_call_site_and_source_hash() -> 
 
 
 def test_subgraph_freshness_detects_hash_drift(tmp_path: Path) -> None:
-    path = "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json"
+    path = "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json"
     text = _emit_ready_from_ui_json(path, "edit/flux2_klein_9b_image_edit_base")
     template = tmp_path / "template.py"
     template.write_text(text.replace("# vibecomfy source hash: sha256:", "# vibecomfy source hash: sha256:" + "0" * 64 + "X", 1), encoding="utf-8")

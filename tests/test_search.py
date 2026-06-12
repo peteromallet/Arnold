@@ -215,7 +215,7 @@ def test_build_search_corpus_warns_when_explicit_schema_provider_fails(
     (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
     (tmp_path / "workflow_index.json").write_text("[]", encoding="utf-8")
     (tmp_path / "external_workflow_index.json").write_text("[]", encoding="utf-8")
-    coverage = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    coverage = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     coverage.parent.mkdir(parents=True)
     coverage.write_text('{"workflows": []}', encoding="utf-8")
     monkeypatch.chdir(tmp_path)

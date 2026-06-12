@@ -1,6 +1,6 @@
 {
   "id": "image_05_prompt_removal_for_creative",
-  "pre_workflow_path": "../../../../workflow_corpus/official/image/qwen_image_2512.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
   "nl_intent": "Make the image more creative and open-ended, less constrained",
   "post_edit_ir_patch": {
     "node_id": "238:227",

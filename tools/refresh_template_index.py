@@ -23,7 +23,7 @@ from vibecomfy.registry.static_contract import extract_ready_template_contract
 # script-mode import path is package-import-safe.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = REPO_ROOT / "template_index.json"
-DEFAULT_COVERAGE = REPO_ROOT / "workflow_corpus" / "manifests" / "coverage.json"
+DEFAULT_COVERAGE = REPO_ROOT / "ready_templates/sources" / "manifests" / "coverage.json"
 CONTRACT_SHAPE = "workflow_runtime_contract.v1.public_descriptors.v2"
 
 

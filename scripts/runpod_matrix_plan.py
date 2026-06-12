@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-MANIFEST = "workflow_corpus/manifests/coverage.json"
+MANIFEST = "ready_templates/sources/manifests/coverage.json"
 
 
 @dataclass(frozen=True, slots=True)

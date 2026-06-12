@@ -147,7 +147,7 @@ def test_virtual_wire_round_trip_vace_corpus(tmp_path: Path):
     from vibecomfy.porting.convert import _capture_virtual_wires
     from vibecomfy.porting.workbench import load_port_source
 
-    corpus_path = "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json"
+    corpus_path = "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json"
     source = load_port_source(corpus_path)
     wf = source.workflow
 
@@ -222,7 +222,7 @@ def test_coord_canonicalization_no_float_drift(tmp_path: Path):
     import json
 
     source = load_port_source(
-        "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json"
+        "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json"
     )
     wf = source.workflow
     raw = source.raw_workflow or {}

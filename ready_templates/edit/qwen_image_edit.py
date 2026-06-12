@@ -14,7 +14,7 @@ PUBLIC_INPUT_METADATA = {
 READY_METADATA = ReadyMetadata.build(
     capability='image',
     inputs=PUBLIC_INPUT_METADATA,
-    provenance={'source_path': 'workflow_corpus/official/edit/qwen_image_edit.json', 'source_id': 'qwen_image_edit', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/edit/qwen_image_edit.json', 'output_mode': 'ready_template', 'ready_id': 'edit/qwen_image_edit'},
+    provenance={'source_path': 'ready_templates/sources/official/edit/qwen_image_edit.json', 'source_id': 'qwen_image_edit', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/official/edit/qwen_image_edit.json', 'output_mode': 'ready_template', 'ready_id': 'edit/qwen_image_edit'},
 )
 
 # === Subgraph functions ===
@@ -31,7 +31,7 @@ def qwen_image_edit(
 ):
     """Qwen-Image-Edit - single-image variant.
 
-    Materialized from subgraph 74a8e1e2-9cb8-4112-978e-06ce1b5793f1 in workflow_corpus/official/edit/qwen_image_edit.json.
+    Materialized from subgraph 74a8e1e2-9cb8-4112-978e-06ce1b5793f1 in ready_templates/sources/official/edit/qwen_image_edit.json.
     # vibecomfy source hash: sha256:b7fc773a3b338bd4ce58cdc36f425635b40eb71bc0eb73b9f007ec3160c52b36
     Inner nodes: VAELoader, TextEncodeQwenImageEditx2, CFGNorm, ModelSamplingAuraFlow, VAEDecode, CLIPLoader, VAEEncode, LoraLoaderModelOnly, UNETLoader, KSampler, ComfySwitchNodex3.
     """

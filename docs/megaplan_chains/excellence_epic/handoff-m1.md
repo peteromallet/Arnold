@@ -97,8 +97,8 @@ This matches the known broad pre-existing red harness state. The 3 passing templ
 **Contents:** Two audited templates, both red:
 | Template | Diffs | Source | Source Reason | Verdict |
 |----------|-------|--------|---------------|---------|
-| `image/z_image` | node class multiset differs, normalized edge semantics differ, non-link values or exact Python value types differ | `workflow_corpus/official/image/z_image.json` | index_metadata | red |
-| `video/ltx2_3_runexx_talking_avatar_qwen_tts` | node class multiset differs, normalized edge semantics differ, non-link values or exact Python value types differ | `workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` | index_metadata | red |
+| `image/z_image` | node class multiset differs, normalized edge semantics differ, non-link values or exact Python value types differ | `ready_templates/sources/official/image/z_image.json` | index_metadata | red |
+| `video/ltx2_3_runexx_talking_avatar_qwen_tts` | node class multiset differs, normalized edge semantics differ, non-link values or exact Python value types differ | `ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` | index_metadata | red |
 
 **Capture command:**
 ```bash
@@ -114,10 +114,10 @@ VIBECOMFY_WRITE_M1_FIXTURE=1 python -m pytest tests/test_template_roundtrip.py::
 
 | Template ID | Reason | Source |
 |-------------|--------|--------|
-| `image/z_image` | failing-first fixture, audited seed mapping | `workflow_corpus/official/image/z_image.json` |
-| `video/ltx2_3_runexx_talking_avatar_qwen_tts` | failing-first fixture, audited seed mapping | `workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` |
-| `audio/qwen3_tts_voice_clone` | pre-fix inventory-proven resolvable leak | `workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json` |
-| `video/wanvideo_wrapper_21_14b_wanmove_i2v` | pre-fix inventory-proven resolvable leak | `workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json` |
+| `image/z_image` | failing-first fixture, audited seed mapping | `ready_templates/sources/official/image/z_image.json` |
+| `video/ltx2_3_runexx_talking_avatar_qwen_tts` | failing-first fixture, audited seed mapping | `ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` |
+| `audio/qwen3_tts_voice_clone` | pre-fix inventory-proven resolvable leak | `ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json` |
+| `video/wanvideo_wrapper_21_14b_wanmove_i2v` | pre-fix inventory-proven resolvable leak | `ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json` |
 | `video/ltx2_3_runexx_first_last_raw_video_guide` | pre-fix inventory-proven resolvable leak, self-referential source | `ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py` |
 | `video/wanvideo_wrapper_22_14b_t2i` | pre-fix inventory-proven resolvable leak, self-referential source | `ready_templates/video/wanvideo_wrapper_22_14b_t2i.py` |
 
@@ -169,7 +169,7 @@ The following templates had alias-resolvable `widget_N` leaks cleaned up via sch
 ## 6. Golden Wan I2V Provenance and Semantic Review Notes
 
 ### Provenance
-- **Source file:** `workflow_corpus/official/video/wan_i2v.json` (NOT from emitted template output)
+- **Source file:** `ready_templates/sources/official/video/wan_i2v.json` (NOT from emitted template output)
 - **Fixtures file:** `tests/fixtures/golden_api_video_wan_i2v.json`
 - **SHA256:** `efbc72ada7564b846dc95d743e18fad035752e12ca074d55bad88c22b428cac4`
 - **Size:** 19,701 bytes (818 lines)
@@ -246,10 +246,10 @@ Widgets from opaque/unknown custom node types where no resolution path (proxyWid
 - **Status:** **Critique claim was factually wrong.** The plan correctly rejected this critique.
 - **Related action (T14):** The stale CI comment at `.github/workflows/ci.yml` claiming the script "has never landed on main" was removed. The CI workflow now runs `.venv/bin/python scripts/regenerate_snapshots.py --check` as a snapshot freshness step.
 
-### Fact #2: `workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` EXISTS
+### Fact #2: `ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` EXISTS
 - **Critique claim:** The talking-avatar source workflow JSON does not exist (flagged as `issue_hints-8` in earlier critique cycles).
 - **Local verification:** The file exists at 181,355 bytes.
-- **Verification command:** `ls -la workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` → `-rw-r--r-- 181355 May 27 15:21`
+- **Verification command:** `ls -la ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` → `-rw-r--r-- 181355 May 27 15:21`
 - **Provenance chain verified:**
   - Ready template `ready_templates/video/ltx2_3_runexx_talking_avatar_qwen_tts.py` (395 lines, `# vibecomfy: generated`) references it at line 45.
   - `coverage.json` manifest maps this path at lines 407-408.

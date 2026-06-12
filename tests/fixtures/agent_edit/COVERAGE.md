@@ -16,7 +16,7 @@ link references, as found in `canonical_parity_baseline.json`) is explicitly
 | Fixture | File | Graph Type | Nodes | Subgraphs | Notes |
 |---------|------|-----------|-------|-----------|-------|
 | flat | `flat.json` | Standard flat text-to-image | 7 | No | Simple prompt-edit target; copied from `tests/fixtures/walking_skeleton/flat.json` |
-| subgraphed_wan_i2v | `subgraphed_wan_i2v.json` | Wan 2.2 I2V workflow | ~40 root + subgraph | Yes (`definitions.subgraphs`) | Copied from `vendor/direct_templates/03_video_wan2_2_14B_i2v_subgraphed.json`. Covers scope-addressing and subgraph link formats. |
+| subgraphed_wan_i2v | `subgraphed_wan_i2v.json` | Wan 2.2 I2V workflow | ~40 root + subgraph | Yes (`definitions.subgraphs`) | Covers scope-addressing and subgraph link formats. |
 
 ## Coverage Gaps (block default-on cut-over only)
 

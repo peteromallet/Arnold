@@ -4,7 +4,7 @@ This module is the single source of truth for the small input fixtures (audio
 clips, guide videos) used by the runpod corpus matrix. Two paths are exposed:
 
 * ``copy_smoke_fixtures(target)`` -- the primary path. Copies the committed
-  fixtures from ``workflow_corpus/input/`` into ``target``. Idempotent.
+  fixtures from ``ready_templates/sources/input/`` into ``target``. Idempotent.
 * ``regenerate_smoke_fixtures(target)`` -- the fallback path. Generates
   synthetic fixtures (sine-wave WAV, audio-bearing 256x256 H.264 videos) using
   ``pyav``, ``Pillow`` and the stdlib ``wave`` module. Used only when the
@@ -42,7 +42,7 @@ __all__ = [
 
 
 # Resolve the committed fixture root relative to the repository checkout.
-FIXTURE_ROOT: Path = (find_repo_root() / "workflow_corpus" / "input").resolve()
+FIXTURE_ROOT: Path = (find_repo_root() / "ready_templates/sources" / "input").resolve()
 
 
 # Names of the committed video fixtures expected to carry an audio stream.

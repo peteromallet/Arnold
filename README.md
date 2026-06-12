@@ -54,8 +54,8 @@ def build():
 ```
 
 Generated files in `ready_templates/` are annotated `# vibecomfy: generated`.
-Treat them as read-only; copy one to `recipes/` with `copy-to-recipe` before
-editing.
+Treat them as read-only; copy one to a local `recipes/` workspace with
+`copy-to-recipe` before editing. That workspace is gitignored.
 
 Unlike ComfyScript-style exports that flatten a graph into Python calls,
 VibeComfy preserves a workflow contract for agents. See
@@ -160,7 +160,7 @@ The main artifact types are:
 |---|---|
 | Workflow | Any graph, whether it came from ComfyUI JSON, a ready template, or a scratchpad. |
 | Ready template | A curated Python starting point in `ready_templates/`, addressed by ids like `image/z_image`. |
-| Recipe | User code in `recipes/` that loads templates, applies patches, adds blocks, and runs or exports the result. |
+| Recipe | Local user code in gitignored `recipes/` that loads templates, applies patches, adds blocks, and runs or exports the result. |
 | API JSON | The runtime dict produced by `wf.compile("api")`; ComfyUI queues this, but agents should not hand-edit it. |
 
 Agents should edit the Python workflow surface. Use patches when a change
@@ -210,20 +210,18 @@ evidence; do not make compiled API JSON the reusable source of truth.
 |---|---|
 | `vibecomfy/` | Package, CLI, workflow IR, porting code, runtime helpers, and ComfyUI nodes. |
 | `ready_templates/` | Curated Python templates intended as starting points. |
-| `recipes/` | User code that composes templates, patches, blocks, and runtime calls. |
-| `workflow_corpus/` | Source ComfyUI workflows used for indexing, conversion, and coverage. |
+| `ready_templates/sources/` | Source ComfyUI workflows used for indexing, conversion, and coverage. |
 | `tests/agentic_harness/` | Sisypy-style agentic test harness: briefs, scenarios, actors, and runner. |
 | `docs/` | Authoring, porting, runtime, testing, architecture, and migration docs. |
 | `docs/agent-skill/` | The single authored VibeComfy agent skill source. |
 | `scripts/` | Direct-run operational scripts, RunPod harnesses, sync helpers, and maintenance commands. |
 | `tools/` | Importable developer tools intended to run with `python -m tools.<name>`. |
 | `tests/` | Unit, integration, browser, parity, and agentic harness tests. |
-| `vendor/` | Pinned or vendored external code and submodules, including ComfyUI. |
 | `.github/` | GitHub Actions workflows. |
 | `pyproject.toml`, `uv.lock` | Python package metadata and locked dependencies. |
 | `cloud.yaml` | Megaplan cloud workspace config. |
 | `custom_nodes.lock` | Custom-node pack lockfile used by node install/restore flows. |
-| `template_index.json`, `external_workflow_index.json`, `workflow_index.json` | Tracked repository indexes consumed by template, source, and runtime validation. |
+| `template_index.json` | Tracked ready-template index consumed by fast discovery and strict-ready validation. |
 | `out/`, `input/`, `output/`, `temp/` | Generated local runtime data; gitignored. |
 
 ## Thanks

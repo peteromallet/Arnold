@@ -1,7 +1,7 @@
 {
   "captured_at": "2026-05-20T09:19:32.302139+00:00",
   "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-  "install_dir": "/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vendor/ComfyUI",
+  "install_dir": "vibecomfy[comfy]",
   "status": "discovered",
   "tested_at": "2026-05-20T09:19:32.302139+00:00",
   "version": "0.18.2"

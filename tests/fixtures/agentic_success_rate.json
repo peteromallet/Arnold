@@ -23,7 +23,7 @@
     {
       "category": "json_to_template",
       "description": "Create a workflow from a ComfyUI API JSON file",
-      "detail": "Workflow created from JSON source: workflow_corpus/official/video/wan_i2v.json, 5 nodes",
+      "detail": "Workflow created from JSON source: ready_templates/sources/official/video/wan_i2v.json, 5 nodes",
       "dry_run": true,
       "duration_ms": 0.0,
       "status": "ok",

@@ -27,7 +27,7 @@ READY_METADATA = ReadyMetadata.build(
     capability='image',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors', 'qwen_2.5_vl_7b_fp8_scaled.safetensors', 'qwen_image_2512_fp8_e4m3fn.safetensors', 'qwen_image_vae.safetensors']},
-    provenance={'source_path': 'workflow_corpus/official/image/qwen_image_2512.json', 'source_id': 'qwen_image_2512', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/image/qwen_image_2512.json', 'output_mode': 'ready_template', 'ready_id': 'image/qwen_image_2512'},
+    provenance={'source_path': 'ready_templates/sources/official/image/qwen_image_2512.json', 'source_id': 'qwen_image_2512', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/official/image/qwen_image_2512.json', 'output_mode': 'ready_template', 'ready_id': 'image/qwen_image_2512'},
 )
 
 def build() -> VibeWorkflow:

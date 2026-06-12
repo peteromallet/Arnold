@@ -1,6 +1,6 @@
 {
   "id": "video_04_width_only_half",
-  "pre_workflow_path": "../../../../workflow_corpus/official/video/wan_t2v.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
   "nl_intent": "Reduce the video resolution by half to speed up generation",
   "post_edit_ir_patch": {
     "node_id": "40",

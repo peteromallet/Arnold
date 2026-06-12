@@ -10,8 +10,8 @@ The intended browser/LiteGraph mechanism::
 
     serialize -> configure -> serialize
 
-When LiteGraph/browser utilities are available (i.e. the vendored ComfyUI
-is importable), ``normalize_ui_json`` round-trips through the real
+When LiteGraph/browser utilities are available (i.e. installed ComfyUI is
+importable), ``normalize_ui_json`` round-trips through the real
 ``LGraph.serialize()`` / ``LGraph.configure()`` cycle.  This is the only
 path that is guaranteed to match the live browser's normal form.
 
@@ -288,7 +288,7 @@ def normalize_ui_json(
 ) -> dict[str, Any]:
     """Normalize a browser UI JSON dict for byte-comparison.
 
-    When the vendored ComfyUI/LiteGraph runtime is available
+    When the installed ComfyUI/LiteGraph runtime is available
     (``_lgraph_available=True``), this round-trips through the real
     ``serialize → configure → serialize`` cycle.  The ``timeout_ms``
     parameter gates this path; if it times out, the raw-dict fallback
@@ -307,7 +307,7 @@ def normalize_ui_json(
         falling back to raw-dict normalization.  Ignored when
         ``_lgraph_available`` is ``False``.
     _lgraph_available:
-        Set to ``True`` when the vendored ComfyUI is importable and
+        Set to ``True`` when ComfyUI is importable and
         ``LGraph`` is available.  Test code should pass ``False``
         (the default) for deterministic offline behavior.
 
@@ -368,7 +368,7 @@ def _normalize_via_litegraph(
 
 
 def is_normalize_available() -> bool:
-    """Return ``True`` if the vendored ComfyUI/LiteGraph is importable."""
+    """Return ``True`` if ComfyUI/LiteGraph is importable."""
     try:
         from vibecomfy.comfy_backend import ensure_nodes as _ensure_nodes
         _ensure_nodes()

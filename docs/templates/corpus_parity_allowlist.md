@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-26  
 **Milestone:** M1 — Foundation (T12), updated 2026-05-31 for S2 dynamic-widget fence taxonomy  
-**Purpose:** Classify every `ready_templates/**/*.py` (64 files) and `workflow_corpus/**/*.json` (16 files) by their compatibility with the M1 offline parity gate (`offline_emitter_normalizer_self_consistency_check`). Produce the documented allowlist of entries the gate is permitted to skip, with per-entry reasons. All 80 entries are enumerated.
+**Purpose:** Classify every `ready_templates/**/*.py` (64 files) and `ready_templates/sources/**/*.json` (16 files) by their compatibility with the M1 offline parity gate (`offline_emitter_normalizer_self_consistency_check`). Produce the documented allowlist of entries the gate is permitted to skip, with per-entry reasons. All 80 entries are enumerated.
 
 ---
 
@@ -65,19 +65,19 @@ These 25 entries use the parity gate without a skip.
 
 | Path | Bucket | Parity |
 |---|---|---|
-| `workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/edit/qwen_image_edit.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/image/flux2_klein_4b_t2i.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/image/flux2_klein_9b_t2i.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/image/z_image.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/video/ltx2_3_i2v.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/video/ltx2_3_t2v.json` | `subgraph_uuid` | `(True, [])` |
-| `workflow_corpus/official/video/wan_i2v.json` | `schema_less` | `(True, [])` |
-| `workflow_corpus/official/video/wan_t2v.json` | `control_after_generate_default` | `(True, [])` |
-| `workflow_corpus/official/audio/ace_step_1_5_t2a_song.json` | `schema_less` | `(True, [])` |
+| `ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/edit/qwen_image_edit.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/image/flux2_klein_4b_t2i.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/image/flux2_klein_9b_t2i.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/image/z_image.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/video/ltx2_3_i2v.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/video/ltx2_3_t2v.json` | `subgraph_uuid` | `(True, [])` |
+| `ready_templates/sources/official/video/wan_i2v.json` | `schema_less` | `(True, [])` |
+| `ready_templates/sources/official/video/wan_t2v.json` | `control_after_generate_default` | `(True, [])` |
+| `ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json` | `schema_less` | `(True, [])` |
 
 ---
 
@@ -102,8 +102,8 @@ The gate MUST be skipped for these entries. Automated test harnesses asserting `
 
 | Entry | Bucket | Reason code | Per-entry reason |
 |---|---|---|---|
-| `workflow_corpus/manifests/coverage.json` | `not_a_workflow` | `NOT_A_WORKFLOW` | Coverage manifest, not a workflow. `workflow_from_file` raises "Unsupported workflow shape: unknown". |
-| `workflow_corpus/manifests/ready_regeneration.json` | `not_a_workflow` | `NOT_A_WORKFLOW` | Regeneration manifest, not a workflow. `workflow_from_file` raises "Unsupported workflow shape: unknown". |
+| `ready_templates/sources/manifests/coverage.json` | `not_a_workflow` | `NOT_A_WORKFLOW` | Coverage manifest, not a workflow. `workflow_from_file` raises "Unsupported workflow shape: unknown". |
+| `ready_templates/sources/manifests/ready_regeneration.json` | `not_a_workflow` | `NOT_A_WORKFLOW` | Regeneration manifest, not a workflow. `workflow_from_file` raises "Unsupported workflow shape: unknown". |
 
 ---
 
@@ -111,7 +111,7 @@ The gate MUST be skipped for these entries. Automated test harnesses asserting `
 
 | Entry | Bucket | Reason code | Parity | Per-entry reason |
 |---|---|---|---|---|
-| `workflow_corpus/official/image/qwen_image_2512.json` | `schema_less` | `PARITY_FAIL_TOPOLOGY` | `(False, [...])` | `ComfySwitchNode` is schema-less. On round-trip, topology diverges: `KSampler` loses its `model`, `cfg`, `latent_image`, `steps`, and conditioning connections that flow through `ComfySwitchNode`. Best-effort slot emission produces an incorrect topology; parity=False confirmed at audit time. |
+| `ready_templates/sources/official/image/qwen_image_2512.json` | `schema_less` | `PARITY_FAIL_TOPOLOGY` | `(False, [...])` | `ComfySwitchNode` is schema-less. On round-trip, topology diverges: `KSampler` loses its `model`, `cfg`, `latent_image`, `steps`, and conditioning connections that flow through `ComfySwitchNode`. Best-effort slot emission produces an incorrect topology; parity=False confirmed at audit time. |
 
 ---
 
@@ -236,11 +236,11 @@ The following 45 paths are on the parity gate allowlist. A test asserting `offli
 
 ```
 # Manifests — NOT_A_WORKFLOW
-workflow_corpus/manifests/coverage.json
-workflow_corpus/manifests/ready_regeneration.json
+ready_templates/sources/manifests/coverage.json
+ready_templates/sources/manifests/ready_regeneration.json
 
 # Corpus JSON — PARITY_FAIL_TOPOLOGY
-workflow_corpus/official/image/qwen_image_2512.json
+ready_templates/sources/official/image/qwen_image_2512.json
 
 # Ready templates — PIN_OPAQUE_WIDGET_SHAPE / REFUSED_WIDGET_SHAPE
 ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py

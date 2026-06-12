@@ -15,7 +15,7 @@ WIDGET__NAME_4 = 'flux-2-klein-4b.safetensors'
 
 READY_METADATA = ReadyMetadata.build(
     capability='image',
-    provenance={'source_path': 'workflow_corpus/official/image/flux2_klein_4b_t2i.json', 'source_id': 'flux2_klein_4b_t2i', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/image/flux2_klein_4b_t2i.json', 'output_mode': 'ready_template', 'ready_id': 'image/flux2_klein_4b_t2i'},
+    provenance={'source_path': 'ready_templates/sources/official/image/flux2_klein_4b_t2i.json', 'source_id': 'flux2_klein_4b_t2i', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/official/image/flux2_klein_4b_t2i.json', 'output_mode': 'ready_template', 'ready_id': 'image/flux2_klein_4b_t2i'},
 )
 
 # === Subgraph functions ===
@@ -31,7 +31,7 @@ def text_to_image_flux2_klein_4b(
 ):
     """Text to Image (Flux.2 Klein 4B).
 
-    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/official/image/flux2_klein_4b_t2i.json.
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in ready_templates/sources/official/image/flux2_klein_4b_t2i.json.
     # vibecomfy source hash: sha256:629ead7cab536eafae6292fca730a3374e922bb025849d25e36fe6857fd92c58
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, CLIPTextEncodex2, RandomNoise, UNETLoader, CLIPLoader, VAELoader.
     """
@@ -77,7 +77,7 @@ def text_to_image_flux2_klein_4b_distilled(
 ):
     """Text to Image (Flux.2 Klein 4B Distilled).
 
-    Materialized from subgraph a67caa28-5f85-4917-8396-36004960dd30 in workflow_corpus/official/image/flux2_klein_4b_t2i.json.
+    Materialized from subgraph a67caa28-5f85-4917-8396-36004960dd30 in ready_templates/sources/official/image/flux2_klein_4b_t2i.json.
     # vibecomfy source hash: sha256:be70dd108a908bd4271722bf059d5c2d25e56e38bfe5f286b86df90c8692ac10
     Inner nodes: KSamplerSelect, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, RandomNoise, UNETLoader, CLIPLoader, VAELoader, CFGGuider, ConditioningZeroOut, CLIPTextEncode, Flux2Scheduler.
     """

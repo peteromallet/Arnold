@@ -1,4 +1,4 @@
-"""Tests for ``vibecomfy.comfy_backend`` version-matrix loading and commit reading.
+"""Tests for ``vibecomfy.comfy_backend`` version-matrix loading.
 
 Covers:
 - Loading the checked-in ComfyUI version matrix with all expected fields.
@@ -7,7 +7,7 @@ Covers:
 - Missing required string fields → ``ValueError``.
 - Wrong field types → ``TypeError``.
 - Memoization behaviour.
-- ``read_vendored_commit()`` graceful-degradation paths.
+- ``read_vendored_commit()`` compatibility shim.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ _VALID_MATRIX: dict = {
     "schema_version": "1.0",
     "supported_comfyui_version": "hiddenswitch-pinned",
     "pinned_comfyui_commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
-    "vendor_path": "vendor/ComfyUI",
+    "vendor_path": "vibecomfy[comfy]",
     "object_info_fingerprint": None,
 }
 
@@ -63,7 +63,7 @@ def test_load_checked_in_version_matrix() -> None:
     assert matrix.schema_version == "1.0"
     assert matrix.supported_comfyui_version == "hiddenswitch-pinned"
     assert matrix.pinned_comfyui_commit == "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68"
-    assert matrix.vendor_path == "vendor/ComfyUI"
+    assert matrix.vendor_path == "vibecomfy[comfy]"
     assert matrix.object_info_fingerprint is None
 
 
@@ -295,67 +295,13 @@ def test_dict_fingerprint_is_accepted(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# read_vendored_commit() graceful degradation
+# read_vendored_commit() compatibility shim
 # ---------------------------------------------------------------------------
 
 
-def test_read_vendored_commit_no_vendor_dir(monkeypatch) -> None:
-    """When no vendored ComfyUI directory exists, return ``None``."""
-    import vibecomfy.comfy_backend as cb
-
-    monkeypatch.setattr(cb, "_find_vendored_comfy_dir", lambda: None)
+def test_read_vendored_commit_returns_none_after_submodule_removal() -> None:
+    """The removed tracked ComfyUI submodule no longer supplies a commit SHA."""
     assert read_vendored_commit() is None
-
-
-def test_read_vendored_commit_not_a_git_repo(monkeypatch, tmp_path) -> None:
-    """When the directory exists but has no ``.git``, return ``None``."""
-    import vibecomfy.comfy_backend as cb
-
-    # Create an empty non-git directory
-    fake_vendor = tmp_path / "ComfyUI"
-    fake_vendor.mkdir()
-    monkeypatch.setattr(cb, "_find_vendored_comfy_dir", lambda: fake_vendor.resolve())
-
-    # git should fail inside a non-repo directory
-    result = read_vendored_commit()
-    assert result is None
-
-
-def test_read_vendored_commit_real_repo(monkeypatch, tmp_path) -> None:
-    """When a real git repo exists, return its HEAD SHA."""
-    import subprocess
-
-    import vibecomfy.comfy_backend as cb
-
-    # Create a real git repo with one commit
-    repo = tmp_path / "ComfyUI"
-    repo.mkdir()
-    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test"], cwd=str(repo), capture_output=True
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"], cwd=str(repo), capture_output=True
-    )
-    (repo / "README.md").write_text("# test")
-    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True, check=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True, check=True
-    )
-
-    expected_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=str(repo),
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-
-    monkeypatch.setattr(cb, "_find_vendored_comfy_dir", lambda: repo.resolve())
-
-    result = read_vendored_commit()
-    assert result == expected_sha
-    assert len(result) == 40  # full SHA
 
 
 # ---------------------------------------------------------------------------

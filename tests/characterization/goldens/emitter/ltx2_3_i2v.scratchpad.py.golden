@@ -11,7 +11,7 @@ def build() -> VibeWorkflow:
         'video/ltx2_3_i2v',
         WorkflowSource(
             id='video/ltx2_3_i2v',
-            path='workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json',
+            path='ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json',
             source_type='scratchpad',
             provenance={},
         ),

@@ -2,7 +2,7 @@
 
 Ready templates are VibeComfy Python scratchpads that are intended to run end to end.
 
-They are deliberately separate from `workflow_corpus/`, which stores source ComfyUI JSON. A workflow graduates here only after it is part of the RunPod corpus matrix and either runs directly or has an explicit, documented runtime adaptation in the scratchpad.
+They are deliberately separate from `ready_templates/sources/`, which stores source ComfyUI JSON. A workflow graduates here only after it is part of the RunPod corpus matrix and either runs directly or has an explicit, documented runtime adaptation in the scratchpad.
 
 Templates are organized by category (`audio/`, `edit/`, `image/`, `video/`) plus
 `smoke/` for small structural templates, and expose category-qualified ids such
@@ -34,7 +34,7 @@ raw Comfy JSON -> normalize_to_api -> VibeWorkflow -> ready Python template
 
 Use `vibecomfy nodes install-plan <template.py>` when a ready template fails on missing custom nodes. The generated `READY_REQUIREMENTS` block is derived from the custom-node catalog where possible.
 
-Ready templates change handles. Recipes in `recipes/` decorate handles for specific runs by applying patches, seeds, or extra placeholder chains.
+Ready templates change handles. Local recipes in gitignored `recipes/` decorate handles for specific runs by applying patches, seeds, or extra placeholder chains.
 
 After adding, moving, or deleting a ready template, update the manifest row and refresh the static index:
 

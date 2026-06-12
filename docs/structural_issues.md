@@ -22,7 +22,7 @@ Structural issue:
 
 Policy:
 
-- Keep raw JSON under `workflow_corpus/` or `vendor/`.
+- Keep raw JSON under `ready_templates/sources/` or `vendor/`.
 - Keep generated scratchpads under `out/`.
 - Keep curated reusable Python templates under `ready_templates/`.
 - Record runtime-green evidence in RunPod artifacts and coverage docs.

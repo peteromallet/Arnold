@@ -9,7 +9,7 @@ outcome. This document records it.
 
 ## What was investigated
 
-Reference workflow: `workflow_corpus/official/image/flux2_klein_4b_t2i.json` (chosen in
+Reference workflow: `ready_templates/sources/official/image/flux2_klein_4b_t2i.json` (chosen in
 T1; it carries two real subgraph definitions). Two layers were inspected:
 
 1. The raw litegraph source JSON — `definitions.subgraphs[].nodes[]`.

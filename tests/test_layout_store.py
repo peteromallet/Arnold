@@ -643,7 +643,7 @@ def _load_with_furniture(corpus_path: str, tmp_path: Path, tmp_suffix: str = "wf
 def test_corpus_vace_cnr_id_ver_properties_survive(tmp_path: Path):
     """wan13b_vace.json: cnr_id/ver properties, pos/size, flags survive ingest→store (C9)."""
     wf, store, entries = _load_with_furniture(
-        "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json",
+        "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json",
         tmp_path,
         "vace",
     )
@@ -699,7 +699,7 @@ def test_corpus_vace_cnr_id_ver_properties_survive(tmp_path: Path):
 def test_corpus_recammaster_note_partial_props_survive(tmp_path: Path):
     """wan13b_recammaster.json: Note nodes and partial-props nodes survive ingest→store (C9)."""
     wf, store, entries = _load_with_furniture(
-        "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_recammaster.json",
+        "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_recammaster.json",
         tmp_path,
         "recammaster",
     )

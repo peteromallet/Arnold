@@ -255,7 +255,6 @@ def _nodepack_dir(name: str) -> Path | None:
         [
         Path("vendor") / name,
         Path("custom_nodes") / name,
-        Path("vendor") / "ComfyUI" / "custom_nodes" / name,
         ]
     )
     for candidate in candidates:
@@ -280,11 +279,7 @@ def _git_head(pack_dir: Path) -> str | None:
 
 def _comfyui_git_head() -> str | None:
     """Return the git HEAD SHA of the installed ComfyUI, or ``None``."""
-    # Try common ComfyUI locations
-    candidates = (
-        Path("vendor/ComfyUI"),
-        Path("ComfyUI"),
-    )
+    candidates = (Path("ComfyUI"),)
     for candidate in candidates:
         if (candidate / ".git").is_dir():
             return _git_head(candidate)

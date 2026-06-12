@@ -64,17 +64,17 @@ DEFAULT_MIGRATION_ALLOWLIST: tuple[AllowlistEntry, ...] = (
         target="ready_templates/**/*.py",
         code="template_source_workflow_missing_file",
         owner="v2.4-migration",
-        reason="Some older templates cite source files that have not yet been checked into workflow_corpus.",
+        reason="Some older templates cite source files that have not yet been checked into ready_templates/sources.",
         expires="2026-09-01",
-        removal_condition="Every source_workflow path resolves to a checked workflow_corpus JSON file.",
+        removal_condition="Every source_workflow path resolves to a checked ready_templates/sources JSON file.",
     ),
     AllowlistEntry(
         target="ready_templates/**/*.py",
         code="template_source_workflow_not_checkable",
         owner="v2.4-migration",
-        reason="Some older/manual templates cite a descriptive or vendor source instead of workflow_corpus JSON.",
+        reason="Some older/manual templates cite a descriptive or vendor source instead of ready_templates/sources JSON.",
         expires="2026-09-01",
-        removal_condition="Move source JSON into workflow_corpus or add a precise legacy exception.",
+        removal_condition="Move source JSON into ready_templates/sources or add a precise legacy exception.",
     ),
     AllowlistEntry(
         target="ready_templates/**/*.py",
@@ -241,7 +241,7 @@ def _source_sha_diagnostics(
         return [
             _diagnostic(
                 "template_source_workflow_not_checkable",
-                f"Source workflow {source_workflow!r} is not a checked workflow_corpus JSON path.",
+                f"Source workflow {source_workflow!r} is not a checked ready_templates/sources JSON path.",
                 ready_id,
                 target,
                 {"source_workflow": source_workflow},
@@ -513,7 +513,7 @@ def _source_sha_from_comment(path: Path) -> str | None:
 
 def _is_checkable_source_path(source_workflow: str, source_path: Path) -> bool:
     return (
-        source_workflow.startswith("workflow_corpus/")
+        source_workflow.startswith("ready_templates/sources/")
         and not any(part in source_path.parts for part in ("*", "?"))
         and source_path.suffix.lower() == ".json"
     )

@@ -1,6 +1,6 @@
 {
   "id": "image_04_width_only_720p",
-  "pre_workflow_path": "../../../../workflow_corpus/official/image/qwen_image_2512.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
   "nl_intent": "Change the output resolution to 720p (1280x720)",
   "post_edit_ir_patch": {
     "node_id": "238:232",

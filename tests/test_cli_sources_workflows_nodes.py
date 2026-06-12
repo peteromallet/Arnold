@@ -279,7 +279,7 @@ def test_nodes_spec_uuid_reads_subgraph_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     uuid = "7b34ab90-36f9-45ba-a665-71d418f0df18"
-    corpus_dir = tmp_path / "workflow_corpus" / "official" / "edit"
+    corpus_dir = tmp_path / "ready_templates/sources" / "official" / "edit"
     corpus_dir.mkdir(parents=True)
     workflow = corpus_dir / "workflow.json"
     workflow.write_text(

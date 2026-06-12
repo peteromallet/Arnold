@@ -1,6 +1,6 @@
 {
   "id": "image_03_cfg_for_smaller_seed",
-  "pre_workflow_path": "../../../../workflow_corpus/official/image/qwen_image_2512.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
   "nl_intent": "Use a smaller seed value for a different composition",
   "post_edit_ir_patch": {
     "node_id": "238:223",

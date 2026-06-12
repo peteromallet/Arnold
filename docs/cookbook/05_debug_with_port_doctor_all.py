@@ -103,7 +103,7 @@ if __name__ == "__main__":
     explain_doctor_all()
 
     # Try to doctor the wan_i2v corpus workflow if available
-    corpus = Path(__file__).resolve().parents[2] / "workflow_corpus" / "official" / "video" / "wan_i2v.json"
+    corpus = Path(__file__).resolve().parents[2] / "ready_templates/sources" / "official" / "video" / "wan_i2v.json"
     if corpus.exists():
         print(f"\nRunning doctor-all on: {corpus}")
         report = run_doctor_all(str(corpus))

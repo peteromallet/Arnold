@@ -1,6 +1,6 @@
 # Sprint 1 — Safety net + correctness (`premium/thorough/high +prep`)
 
-Shared context: read `docs/structural_audit_2026-05.md` (both parts) for the full findings this epic addresses. This is sprint 1 of 7 in the "make VibeComfy excellent" epic. VibeComfy is a Python package that drives ComfyUI from Python: an editable IR (`VibeWorkflow`) compiles to ComfyUI API JSON; raw JSON workflows under `workflow_corpus/` are converted by the emitter (`vibecomfy/porting/`) into curated Python "ready templates" under `ready_templates/`.
+Shared context: read `docs/structural_audit_2026-05.md` (both parts) for the full findings this epic addresses. This is sprint 1 of 7 in the "make VibeComfy excellent" epic. VibeComfy is a Python package that drives ComfyUI from Python: an editable IR (`VibeWorkflow`) compiles to ComfyUI API JSON; raw JSON workflows under `ready_templates/sources/` are converted by the emitter (`vibecomfy/porting/`) into curated Python "ready templates" under `ready_templates/`.
 
 ## Outcome
 Fix the emitter's value-corruption bug at its root, re-emit every affected ready-template correctly, and stand up the safety net — a differential round-trip test harness plus an *armed* parity gate — so emitter-fidelity regressions can never ship silently again.

@@ -9,7 +9,7 @@ Covers:
   - Edge and node cleanup: only surviving-endpoint edges kept, all helper nodes deleted
   - Return type: ResolveDiagnostics
   - Runexx oracle regression: nodes 1862/1865/1871/1919/1929 from
-    workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json
+    ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json
 """
 
 from __future__ import annotations
@@ -583,7 +583,7 @@ class TestReturnValue:
 
 class TestRunexxOracle:
     """Regression fixtures from the runexx oracle (T1 audit):
-    workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json.
+    ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json.
 
     Oracle nodes verified in T1:
       1862 — PrimitiveBoolean(False) → SetNode(1861, 't2v_mode')

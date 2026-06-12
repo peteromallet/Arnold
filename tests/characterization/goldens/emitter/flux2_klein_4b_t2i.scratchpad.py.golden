@@ -11,7 +11,7 @@ def build() -> VibeWorkflow:
         'image/flux2_klein_4b_t2i',
         WorkflowSource(
             id='image/flux2_klein_4b_t2i',
-            path='workflow_corpus/official/image/flux2_klein_4b_t2i.json',
+            path='ready_templates/sources/official/image/flux2_klein_4b_t2i.json',
             source_type='scratchpad',
             provenance={},
         ),

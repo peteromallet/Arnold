@@ -31,7 +31,7 @@ from tests.support.corpus_schema import (
 _FIXTURE_DIR = Path("tests/fixtures/agent_edit")
 _FLAT_PATH = _FIXTURE_DIR / "flat.json"
 _SUBGRAPHED_WAN_PATH = _FIXTURE_DIR / "subgraphed_wan_i2v.json"
-_CORPUS_ROOT = Path("workflow_corpus/official/video")
+_CORPUS_ROOT = Path("ready_templates/sources/official/video")
 _LTX_T2V_PATH = _CORPUS_ROOT / "ltx2_3_t2v.json"
 _LTX_I2V_PATH = _CORPUS_ROOT / "ltx2_3_i2v.json"
 

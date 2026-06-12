@@ -7,7 +7,7 @@
 # Prereqs (one-time):
 #   * ComfyUI checkout at $COMFYUI_DIR (default below).
 #   * megaplan/arnold installed into the SAME python that runs ComfyUI:
-#         pip install -e /Users/peteromalley/Documents/megaplan   # github.com/peteromallet/arnold
+#         pip install -e "${HOME}/Documents/megaplan"   # github.com/peteromallet/arnold
 #   * A DeepSeek key, either exported as DEEPSEEK_API_KEY or stored in
 #     ~/.hermes/.env (the VibeComfy browser credential route writes it there).
 #
@@ -17,8 +17,9 @@
 #
 set -euo pipefail
 
-REPO_ROOT="${REPO_ROOT:-/Users/peteromalley/Documents/reigh-workspace/vibecomfy}"
-COMFYUI_DIR="${COMFYUI_DIR:-/Users/peteromalley/Documents/reigh-workspace/ComfyUI}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
+COMFYUI_DIR="${COMFYUI_DIR:-$(cd -- "${REPO_ROOT}/.." && pwd)/ComfyUI}"
 PORT="${PORT:-8190}"
 PYBIN="${PYBIN:-python}"
 

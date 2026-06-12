@@ -15,4 +15,4 @@ material.
 
 For source workflow coverage and corpus organization, see
 [Workflow coverage](../workflow-coverage/) and the
-[workflow corpus README](../../workflow_corpus/README.md).
+[workflow corpus README](../../ready_templates/sources/README.md).

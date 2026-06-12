@@ -758,7 +758,7 @@ def test_duplicate_safety_twin_randomnoise():
     from vibecomfy.porting.layout.reconcile import legacy_hash
 
     corpus_path = _os.path.join(
-        _os.path.dirname(__file__), "..", "workflow_corpus",
+        _os.path.dirname(__file__), "..", "ready_templates/sources",
         "official", "image", "z_image.json",
     )
     if not _os.path.exists(corpus_path):
@@ -972,7 +972,7 @@ def test_legacy_pre_uid_file_bridges_then_exact():
 
 
 def test_editor_roundtrip_pixel_for_pixel():
-    """Start from a real ``workflow_corpus/`` JSON, hand-edit a position, convert
+    """Start from a real ``ready_templates/sources/`` JSON, hand-edit a position, convert
     + re-emit, and assert positions / groups / notes / bypass state are preserved
     via ``layout_drift(...).max_pos_delta == 0 and max_size_delta == 0``.
 
@@ -996,7 +996,7 @@ def test_editor_roundtrip_pixel_for_pixel():
 
     # ── 1. Load corpus fixture ──
     corpus_path = _os.path.join(
-        _os.path.dirname(__file__), "..", "workflow_corpus",
+        _os.path.dirname(__file__), "..", "ready_templates/sources",
         "official", "image", "z_image.json",
     )
     if not _os.path.exists(corpus_path):
@@ -1024,8 +1024,8 @@ def test_editor_roundtrip_pixel_for_pixel():
 
     # ── 3. Convert to VibeWorkflow ──
     # Force the offline-normalize path (use_comfy_converter=False) so the test is
-    # deterministic regardless of whether the vendored ComfyUI converter is
-    # importable in the current test-session environment.  The vendored converter
+    # deterministic regardless of whether the ComfyUI converter is importable in
+    # the current test-session environment. The converter
     # expands UUID subgraphs and drops MarkdownNote nodes, which changes the node
     # set and defeats the "notes preserved" part of this pixel-for-pixel gate.
     with warnings.catch_warnings():

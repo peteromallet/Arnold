@@ -997,7 +997,7 @@ Scope (all completed):
 - ✅ Explicit refusal to overwrite `# vibecomfy: manual` templates (`ManualTemplateRefusal`);
 - ✅ Golden tests for legacy `vibecomfy convert` behavior;
 - ✅ Legacy converter removed — exits non-zero with migration message pointing to `port check` / `port convert`;
-- ✅ Regeneration manifest schema (`workflow_corpus/manifests/ready_regeneration.json`);
+- ✅ Regeneration manifest schema (`ready_templates/sources/manifests/ready_regeneration.json`);
 - ✅ All docs updated: README, AGENTS, authoring, porting workbench, adding templates/models, cleanup plan.
 
 Representative fixtures:

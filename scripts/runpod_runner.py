@@ -24,7 +24,7 @@ MiB = 1024 * 1024
 
 DEFAULT_UPLOAD_EXCLUDES: set[str] = {
     ".git", ".venv", "__pycache__", ".pytest_cache", ".desloppify", ".megaplan",
-    "out", "output", "vendor", "workflow_corpus", "custom_nodes", "input",
+    "out", "output", "vendor", "ready_templates/sources", "custom_nodes", "input",
     "node_modules", ".mypy_cache", ".ruff_cache", ".DS_Store",
 }
 

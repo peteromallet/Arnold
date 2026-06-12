@@ -1,6 +1,6 @@
 {
   "id": "image_02_sampler_for_more_steps",
-  "pre_workflow_path": "../../../../workflow_corpus/official/image/qwen_image_2512.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
   "nl_intent": "Run with more sampling steps for better quality",
   "post_edit_ir_patch": {
     "node_id": "238:230",

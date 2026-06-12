@@ -48,13 +48,10 @@ an additive safety net for layout/scroll/geometry regressions.
   Playwright run on Node.
 - **Python** — the same Python that can boot ComfyUI (≥ 3.10).  Set via
   `PYBIN` env var or `--python`.
-- **ComfyUI checkout** — a local ComfyUI worktree with `main.py`.  The
+- **ComfyUI checkout** — a local ComfyUI worktree with `main.py`. The
   launcher auto-discovers:
   1. `--comfyui-dir` / `COMFYUI_DIR` (explicit).
-  2. `/Users/peteromalley/Documents/reigh-workspace/ComfyUI` (default macOS
-     path — edit the `DEFAULT_EXTERNAL_COMFYUI_DIR` constant in `run.mjs` if
-     yours differs).
-  3. `vendor/ComfyUI/` inside this repo (vendored fallback).
+  2. The default external ComfyUI path configured in `run.mjs`.
 - **Playwright + Chromium** — install once:
   ```bash
   cd tests/e2e
@@ -375,6 +372,5 @@ changes that touch agent panel layout, scroll, lifecycle, or overlay code.
   in this tier.  Real LLM calls are never made.  If you need to test
   provider-routing logic, use the jsdom harness or run the live server manually
   with `VIBECOMFY_ARNOLD_RUNTIME_MODULE=vibecomfy.comfy_nodes.agent.runtime`.
-- **ComfyUI path:** The default external ComfyUI path is hardcoded to
-  `/Users/peteromalley/Documents/reigh-workspace/ComfyUI`.  Override it with
+- **ComfyUI path:** Override the configured external ComfyUI checkout with
   `COMFYUI_DIR` or `--comfyui-dir` if your checkout lives elsewhere.

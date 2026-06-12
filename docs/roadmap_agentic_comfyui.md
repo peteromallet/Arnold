@@ -268,7 +268,7 @@ already has `docs/comfy_version_support.md` + `docs/migration/v25_to_v27.md`):
 
 - **Pin a ComfyUI version per VibeComfy release** (`supported_comfyui_version`); the CI gate
   runs against the *vendored* pin → reproducible numbers.
-- **Oracle-upgrade gate:** bumping the vendored ComfyUI re-runs the full corpus and diffs vs
+- **Oracle-upgrade gate:** bumping the pinned ComfyUI dependency re-runs the full corpus and diffs vs
   the prior pin; a fidelity drop blocks the bump until the codec adapts.
 - **Version matrix** (committed JSON): fidelity per supported ComfyUI version; at startup
   VibeComfy compares the user's live version and fences to known-safe families on skew.
@@ -451,8 +451,8 @@ property test.
   workhorse* (replay sidesteps injection for every ingested node; #2's wrinkle is contained to
   agent-*created* nodes of those classes).
 - **Oracle (#3) bootstrap:** `convert_ui_to_api` is reached via
-  `comfy_backend.ensure_nodes()` (puts `vendor/ComfyUI` on `sys.path`) → `import
-  comfy.component_model.workflow_convert`. Standable, but requires the vendored submodule
+  `comfy_backend.ensure_nodes()` → `import
+  comfy.component_model.workflow_convert`. Standable, but requires the pinned ComfyUI dependency
   initialized (+ the `pyproject` entry-point fix from `python_on_the_graph.md` §12). Real but
   bounded setup.
 

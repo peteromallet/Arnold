@@ -1,6 +1,6 @@
 {
   "id": "cal_correct_03_video_steps",
-  "pre_workflow_path": "../../../../workflow_corpus/official/video/wan_t2v.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
   "nl_intent": "Increase sampling steps for the video generator to improve output detail",
   "post_edit_ir_patch": {
     "node_id": "3",

@@ -14,7 +14,7 @@ PUBLIC_INPUT_METADATA = {
 READY_METADATA = ReadyMetadata.build(
     capability='image',
     inputs=PUBLIC_INPUT_METADATA,
-    provenance={'source_path': 'workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json', 'source_id': 'flux2_klein_4b_image_edit_base', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json', 'output_mode': 'ready_template', 'ready_id': 'edit/flux2_klein_4b_image_edit_base'},
+    provenance={'source_path': 'ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json', 'source_id': 'flux2_klein_4b_image_edit_base', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json', 'output_mode': 'ready_template', 'ready_id': 'edit/flux2_klein_4b_image_edit_base'},
 )
 
 # === Subgraph functions ===
@@ -29,7 +29,7 @@ def image_edit_flux2_klein_4b(
 ):
     """Image Edit (Flux.2 Klein 4B) - single-image variant.
 
-    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json.
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json.
     # vibecomfy source hash: sha256:93485ad599c8953cdc6bfb19a765b319305d8f31faef9dea11b21cf8d0d61953
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, CLIPTextEncodex2, VAELoader, EmptyFlux2LatentImage, ImageScaleToTotalPixels, GetImageSize, ReferenceLatentx2, VAEEncode.
     """
@@ -89,7 +89,7 @@ def image_edit_flux2_klein_9b(
 ):
     """Image Edit (Flux.2 Klein 9B) - two-image variant.
 
-    Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json.
+    Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json.
     # vibecomfy source hash: sha256:9865b964bc214fb9bbe16fb67ea685334baa13e88d122a7abc41e3eee75af6a3
     Inner nodes: KSamplerSelect, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, VAELoader, GetImageSize, EmptyFlux2LatentImage, ImageScaleToTotalPixelsx2, CLIPLoader, CLIPTextEncodex2, CFGGuider, Flux2Scheduler, ReferenceLatentx4, VAEEncodex2.
     """

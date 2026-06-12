@@ -1,6 +1,6 @@
 {
   "id": "image_01_denoise_for_sharper",
-  "pre_workflow_path": "../../../../workflow_corpus/official/image/qwen_image_2512.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
   "nl_intent": "Make the image sharper and more defined",
   "post_edit_ir_patch": {
     "node_id": "238:230",

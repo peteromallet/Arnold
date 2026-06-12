@@ -14,7 +14,7 @@ getnode_2 = raw_call('GetNode',   '1919', _outputs=('INT',),   name='frames_seco
 reroute   = raw_call('Reroute',   '1932', _outputs=('',))
 ```
 
-Per the agent skill: helper/UI nodes are supposed to be stripped during conversion and not survive roundtrip. The helper-resolver `_resolve_helper_nodes_for_emission()` in `vibecomfy/porting/emitter.py` walks the broadcast graph (`SetNode('fps')` -> `GetNode('fps')` -> consumer edge rewrite), but gives up silently and emits `raw_call` when it can't trace a pattern it recognizes. Phase 3.5's Block A was the explicit fix for this: enumerate the helper shapes actually present in `workflow_corpus/community/runexx/*.json` and `workflow_corpus/community/kijai/*.json`, then extend the resolver. **That work was completed (Phase 3.5 v5 plan `done`/`approved`) but the diff sits uncommitted on the `phase-3-5` worktree.** Until it lands, runexx templates ship with these raw_call helper leaks.
+Per the agent skill: helper/UI nodes are supposed to be stripped during conversion and not survive roundtrip. The helper-resolver `_resolve_helper_nodes_for_emission()` in `vibecomfy/porting/emitter.py` walks the broadcast graph (`SetNode('fps')` -> `GetNode('fps')` -> consumer edge rewrite), but gives up silently and emits `raw_call` when it can't trace a pattern it recognizes. Phase 3.5's Block A was the explicit fix for this: enumerate the helper shapes actually present in `ready_templates/sources/community/runexx/*.json` and `ready_templates/sources/community/kijai/*.json`, then extend the resolver. **That work was completed (Phase 3.5 v5 plan `done`/`approved`) but the diff sits uncommitted on the `phase-3-5` worktree.** Until it lands, runexx templates ship with these raw_call helper leaks.
 
 ### Category B — community-node classes with positional `widget_N`
 
@@ -35,7 +35,7 @@ The `WIDGET_SCHEMA` doesn't have a curated entry for the class, the schema-provi
 
 ### Sweep 1 — Land Phase 3.5 (Category A)
 
-**Worktree:** `/Users/peteromalley/Documents/.megaplan-worktrees/phase-3-5/`
+**Worktree:** `phase-3-5 worktree`
 **Branch:** `phase-3-5` (uncommitted modifications — verified by `git status`)
 **Plan state:** `done` / `approved` (review verdict `approved` with a known-false-positive `DIFF_SIZE_SANITY` pre-check)
 

@@ -50,7 +50,7 @@ READY_METADATA = ReadyMetadata.build(
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['LTX-2-dev-Q5_K_S.gguf', 'LTX2_audio_vae_bf16.safetensors', 'LTX2_video_vae_2_bf16.safetensors', 'ltx-2-19b-distilled.safetensors', 'ltx-2-spatial-upscaler-x2-1.0.safetensors']},
     custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['LTXVAudioVAELoader', 'LTXVConditioning', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'discovered'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['Any Switch (rgthree)'], 'pip_packages': [], 'status': 'discovered'}},
-    provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json', 'source_id': 'IAMCCS_LTX2_I2V_LONG_LENGTH', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_iamccs_long_i2v'},
+    provenance={'source_path': 'ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json', 'source_id': 'IAMCCS_LTX2_I2V_LONG_LENGTH', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_iamccs_long_i2v'},
 )
 
 # === Subgraph functions ===
@@ -73,7 +73,7 @@ def samplers(
 ):
     """Samplers - two-image variant.
 
-    Materialized from subgraph 3eaa20c4-5842-4fe4-87df-c0a7e83a6a78 in workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json.
+    Materialized from subgraph 3eaa20c4-5842-4fe4-87df-c0a7e83a6a78 in ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json.
     # vibecomfy source hash: sha256:132873f8db6ceceb9df7e74e4bd80f2edde60e8e3fd082d58446d6fc14478012
     Inner nodes: LTXVSeparateAVLatentx2, LTXVConcatAVLatentx2, SamplerCustomAdvancedx2, ManualSigmasx2, KSamplerSelectx2, CFGGuiderx2, LTXVEmptyLatentAudio, GetImageSize, EmptyLTXVLatentVideo, ResizeImagesByLongerEdge, LTXVPreprocess, ImageScaleBy, LTXVImgToVideoInplacex2, RandomNoisex2, ImpactExecutionOrderController, LTXVLatentUpsampler, LTXVSpatioTemporalTiledVAEDecode, LTXVAudioVAEDecode, IAMCCS_LTX2_EnsureFrames8nPlus1x2.
     """
@@ -238,7 +238,7 @@ def samplers_8b36a85a(
 ):
     """Samplers - two-image variant.
 
-    Materialized from subgraph 8b36a85a-087e-4ee5-85ca-cccc69c5c5d0 in workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json.
+    Materialized from subgraph 8b36a85a-087e-4ee5-85ca-cccc69c5c5d0 in ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json.
     # vibecomfy source hash: sha256:9699ebdbc68e61e199aafc96b7d4231d6e992f903cb707c2f2df005f82d14801
     Inner nodes: LTXVSeparateAVLatentx2, LTXVConcatAVLatentx2, SamplerCustomAdvancedx2, ManualSigmasx2, KSamplerSelectx2, CFGGuiderx2, LTXVEmptyLatentAudio, GetImageSize, EmptyLTXVLatentVideo, ResizeImagesByLongerEdge, LTXVPreprocess, ImageScaleBy, LTXVImgToVideoInplacex2, RandomNoisex2, ImpactExecutionOrderController, LTXVLatentUpsampler, LTXVSpatioTemporalTiledVAEDecode, LTXVAudioVAEDecode, IAMCCS_LTX2_EnsureFrames8nPlus1x2.
     """

@@ -1,19 +1,19 @@
 """Refusal-spine for re-emit (M5 Step 16).
 
 ``guard_emit(original_ui, candidate_ui, snapshot_delta)`` is the safety gate
-applied on APPLIED re-emit: it runs both UI JSONs through the vendored
-ComfyUI ``convert_ui_to_api`` and refuses the emit whenever the *candidate*
+applied on APPLIED re-emit: it runs both UI JSONs through ComfyUI's
+``convert_ui_to_api`` and refuses the emit whenever the *candidate*
 diverges from the *original* on a uid-matched, snapshot-present node in any
 field NOT named in ``snapshot_delta``.
 
-The ComfyUI converter is resolved lazily on the first ``guard_emit`` call.  If
-the vendored ComfyUI is not importable (e.g. ``vendor/ComfyUI`` submodule
-uninitialized), the failure is captured and re-raised from that ``guard_emit``
-call with a clear diagnostic, rather than silently degrading to a no-op gate.
+The ComfyUI converter is resolved lazily on the first ``guard_emit`` call. If
+the pinned optional dependency is not importable, the failure is captured and
+re-raised from that ``guard_emit`` call with a clear diagnostic, rather than
+silently degrading to a no-op gate.
 
 Spec: ``vibecomfy/porting/refuse.py`` is torch-free, no Node, no HTTP. All
-schema needs are served from the vendored ComfyUI on ``sys.path`` (via
-``vibecomfy.comfy_backend.ensure_nodes``).
+schema needs are served from the installed ComfyUI package via
+``vibecomfy.comfy_backend.ensure_nodes``.
 """
 from __future__ import annotations
 
@@ -33,9 +33,9 @@ def _load_convert_ui_to_api() -> _ConvertUiToApi:
         return _convert_ui_to_api
     if _IMPORT_ERROR is not None:
         raise ImportError(
-            "vibecomfy.porting.refuse: vendored ComfyUI convert_ui_to_api is "
-            f"unavailable ({_IMPORT_ERROR!r}). Ensure the vendor/ComfyUI "
-            "submodule is initialized and importable."
+            "vibecomfy.porting.refuse: ComfyUI convert_ui_to_api is "
+            f"unavailable ({_IMPORT_ERROR!r}). Install VibeComfy with the "
+            "pinned [comfy] extra."
         )
     from vibecomfy.comfy_backend import ensure_nodes as _ensure_nodes
 
@@ -47,9 +47,9 @@ def _load_convert_ui_to_api() -> _ConvertUiToApi:
     except Exception as exc:  # pragma: no cover - exercised when vendor absent
         _IMPORT_ERROR = exc
         raise ImportError(
-            "vibecomfy.porting.refuse: vendored ComfyUI convert_ui_to_api is "
-            f"unavailable ({exc!r}). Ensure the vendor/ComfyUI submodule is "
-            "initialized and importable."
+            "vibecomfy.porting.refuse: ComfyUI convert_ui_to_api is "
+            f"unavailable ({exc!r}). Install VibeComfy with the pinned "
+            "[comfy] extra."
         ) from exc
     _convert_ui_to_api = _loaded_convert_ui_to_api
     return _convert_ui_to_api
@@ -256,7 +256,7 @@ def guard_emit(
     RefusedEmit
         When a uid in the scope set differs on a field not in ``snapshot_delta``.
     ImportError
-        When the vendored ComfyUI ``convert_ui_to_api`` is unavailable.
+        When ComfyUI ``convert_ui_to_api`` is unavailable.
     """
     delta: Mapping[str, Mapping[str, tuple]] = snapshot_delta or {}
 

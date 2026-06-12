@@ -121,4 +121,4 @@ Both routes use the same canonicalizer (`vibecomfy.testing.snapshot.canonicalize
 
 - [Internal testing contract](overview.md) — coverage gate, CI, RunPod budget cap.
 - [Three worked examples](user_code_examples/) — a single-template recipe, a dual-pass with an `ignore-field` directive, a pytest-plugin demo.
-- [`recipes/example_tested_recipe.py`](../recipes/example_tested_recipe.py) and its committed `.snapshot.json` baseline — `vibecomfy test verify recipes/` exits 0 against it.
+- [`tests/fixtures/recipes/example_tested_recipe.py`](../../tests/fixtures/recipes/example_tested_recipe.py) and its committed `.snapshot.json` baseline — `vibecomfy test verify tests/fixtures/recipes/` exits 0 against it.

@@ -223,7 +223,7 @@ def test_lastRerouteId_preserved():
 def test_round_trip_corpus_workflow():
     """Build envelope from a real corpus workflow; no crash, entries keyed."""
     import glob
-    paths = glob.glob("workflow_corpus/**/*.json", recursive=True)
+    paths = glob.glob("ready_templates/sources/**/*.json", recursive=True)
     assert paths, "no corpus files found"
     path = paths[0]
     import json as _json

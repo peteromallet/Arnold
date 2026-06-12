@@ -30,14 +30,14 @@ Expected `xfail`:
 
 ```text
 tests/test_model_assets.py::test_real_flux2_subgraph_extracts_pre_policy_assets
-FileNotFoundError: workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json
+FileNotFoundError: ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json
 ```
 
 Verification that the missing corpus file is absent:
 
 ```bash
-git ls-files workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json
-test -e workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json || echo absent
+git ls-files ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json
+test -e ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json || echo absent
 ```
 
 Observed: `git ls-files` produced no tracked path; direct filesystem check printed `absent`. The test is marked with a narrow conditional `xfail` only when this exact corpus path is absent, with `raises=FileNotFoundError`.
@@ -271,4 +271,4 @@ Observed: one M1 safety-gate `xfail` marker in `tests/test_model_assets.py`:
 tests/test_model_assets.py:164:@pytest.mark.xfail(
 ```
 
-Tracking note: this is a narrow conditional `xfail` for `tests/test_model_assets.py::test_real_flux2_subgraph_extracts_pre_policy_assets`, active only when `workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json` is absent and constrained with `raises=FileNotFoundError`. It documents the missing pre-policy Flux2 corpus workflow without restoring corpus content or broad-skipping model asset coverage.
+Tracking note: this is a narrow conditional `xfail` for `tests/test_model_assets.py::test_real_flux2_subgraph_extracts_pre_policy_assets`, active only when `ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json` is absent and constrained with `raises=FileNotFoundError`. It documents the missing pre-policy Flux2 corpus workflow without restoring corpus content or broad-skipping model asset coverage.

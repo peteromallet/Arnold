@@ -17,14 +17,14 @@ from vibecomfy.workflow_context import _CURRENT_WORKFLOW
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_INDEX = REPO_ROOT / "template_index.json"
-CORPUS_ROOT = REPO_ROOT / "workflow_corpus"
+CORPUS_ROOT = REPO_ROOT / "ready_templates/sources"
 WAN_I2V_GOLDEN_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "golden_api_video_wan_i2v.json"
 STRICT_ROUNDTRIP_TEMPLATE_IDS = {"video/wan_i2v"}
 
 AUDITED_SOURCE_MAPPINGS = {
-    "image/z_image": "workflow_corpus/official/image/z_image.json",
+    "image/z_image": "ready_templates/sources/official/image/z_image.json",
     "video/ltx2_3_runexx_talking_avatar_qwen_tts": (
-        "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json"
+        "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json"
     ),
 }
 
@@ -405,7 +405,7 @@ def test_wan_i2v_matches_independent_golden_api_fixture() -> None:
     comparison = _explicit_api_comparison(
         template_id="video/wan_i2v",
         source_api=source_api,
-        source="workflow_corpus/official/video/wan_i2v.json",
+        source="ready_templates/sources/official/video/wan_i2v.json",
         source_reason="independent_golden_fixture",
     )
     assert comparison["ok"], comparison

@@ -37,7 +37,7 @@ def build_search_corpus(
     warnings: list[SearchWarning] | None = None,
     node_index_path: str | Path = "node_index.json",
     custom_nodes_root: str | Path = "custom_nodes",
-    coverage_path: str | Path = "workflow_corpus/manifests/coverage.json",
+    coverage_path: str | Path = "ready_templates/sources/manifests/coverage.json",
 ) -> list[SearchEntry]:
     ensure_indexes(auto_sync=auto_sync)
     entries: list[SearchEntry] = []

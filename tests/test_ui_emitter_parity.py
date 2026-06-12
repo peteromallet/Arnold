@@ -6,7 +6,7 @@ corpus-wide gate over :mod:`vibecomfy.porting.emit.ui` and the T2 ingest change.
 It covers, in one file:
 
 - (a) offline parity green on a starter set (>=5 spanning image/video/edit) AND across
-  the full ``workflow_corpus`` minus the T12 documented allowlist
+  the full ``ready_templates/sources`` minus the T12 documented allowlist
   (``docs/templates/corpus_parity_allowlist.md``);
 - (b) structural-validation green corpus-wide (schema-less assertions skipped + reported);
 - (c) uid or display-id present on every node (ir_node_id demoted in M5);
@@ -43,29 +43,29 @@ from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 # Starter set: >=5 entries spanning image / video / edit, all in the "gate passes"
 # section of docs/templates/corpus_parity_allowlist.md.
 _STARTER_SET = [
-    "workflow_corpus/official/image/z_image.json",
-    "workflow_corpus/official/image/flux2_klein_4b_t2i.json",
-    "workflow_corpus/official/video/wan_t2v.json",
-    "workflow_corpus/official/video/wan_i2v.json",
-    "workflow_corpus/official/edit/qwen_image_edit.json",
-    "workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json",
+    "ready_templates/sources/official/image/z_image.json",
+    "ready_templates/sources/official/image/flux2_klein_4b_t2i.json",
+    "ready_templates/sources/official/video/wan_t2v.json",
+    "ready_templates/sources/official/video/wan_i2v.json",
+    "ready_templates/sources/official/edit/qwen_image_edit.json",
+    "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json",
 ]
 
 # The T12 documented allowlist (docs/templates/corpus_parity_allowlist.md, "Complete allowlist
-# index"). The parity gate is permitted to skip these. For workflow_corpus/**/*.json
+# index"). The parity gate is permitted to skip these. For ready_templates/sources/**/*.json
 # the relevant entries are the two manifests (NOT_A_WORKFLOW) and the one corpus JSON
 # with a confirmed parity failure (PARITY_FAIL_TOPOLOGY). The remaining 45 allowlist
 # paths are ready_templates/*.py (widget-shape pin/refusal, NAMED_CAG_DIVERGENCE,
 # SCHEMA_LESS), which this corpus-glob gate does not enumerate.
 _PARITY_ALLOWLIST = {
-    "workflow_corpus/manifests/coverage.json",
-    "workflow_corpus/manifests/ready_regeneration.json",
-    "workflow_corpus/official/image/qwen_image_2512.json",
+    "ready_templates/sources/manifests/coverage.json",
+    "ready_templates/sources/manifests/ready_regeneration.json",
+    "ready_templates/sources/official/image/qwen_image_2512.json",
 }
 
 
 def _corpus_json_paths() -> list[str]:
-    return sorted(glob.glob("workflow_corpus/**/*.json", recursive=True))
+    return sorted(glob.glob("ready_templates/sources/**/*.json", recursive=True))
 
 
 def _wf_from_json(path: str) -> VibeWorkflow:
@@ -135,7 +135,7 @@ def test_allowlist_documents_widget_shape_taxonomy() -> None:
     "path", [p for p in _corpus_json_paths() if p not in _PARITY_ALLOWLIST]
 )
 def test_parity_corpus_minus_allowlist(path: str) -> None:
-    """Every workflow_corpus JSON NOT on the T12 allowlist passes the parity gate."""
+    """Every ready_templates/sources JSON NOT on the T12 allowlist passes the parity gate."""
     wf = _wf_from_json(path)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -147,7 +147,7 @@ def test_parity_gate_never_imports_comfy() -> None:
     """The offline parity gate must never import a ComfyUI module."""
     import builtins
 
-    wf = _wf_from_json("workflow_corpus/official/video/wan_t2v.json")
+    wf = _wf_from_json("ready_templates/sources/official/video/wan_t2v.json")
     provider = _local_provider()
     real_import = builtins.__import__
 
@@ -174,8 +174,8 @@ def test_parity_gate_never_imports_comfy() -> None:
     [
         p
         for p in _corpus_json_paths()
-        if p not in {"workflow_corpus/manifests/coverage.json",
-                     "workflow_corpus/manifests/ready_regeneration.json"}
+        if p not in {"ready_templates/sources/manifests/coverage.json",
+                     "ready_templates/sources/manifests/ready_regeneration.json"}
     ],
 )
 def test_structural_validation_corpus_wide(path: str) -> None:

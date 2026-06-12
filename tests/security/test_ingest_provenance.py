@@ -1,6 +1,6 @@
 """S4 ingest provenance — every ingested node tagged untrusted_source.
 
-Synthetic in-test ComfyUI API JSON; no dependency on workflow_corpus/.
+Synthetic in-test ComfyUI API JSON; no dependency on ready_templates/sources/.
 """
 
 from __future__ import annotations

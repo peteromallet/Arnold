@@ -5,8 +5,8 @@ asserts that dropping the ``control_after_generate`` slot from a KSampler
 ``widgets_values`` array — producing a 6-element list that left-shifts every
 following widget — is detected and refused.
 
-These tests need the vendored ComfyUI node mappings to drive
-``convert_ui_to_api``.  When the vendored backend is not available, the suite
+These tests need ComfyUI node mappings to drive ``convert_ui_to_api``. When the
+pinned optional dependency is not available, the suite
 skips rather than fails — matching the existing convention used by the M3
 ``test_layer3_corpus_wide`` gate.
 """
@@ -56,7 +56,7 @@ def _comfy_available() -> bool:
 
 def _require_comfy() -> None:
     if not _comfy_available():
-        pytest.skip("vendored ComfyUI nodes not available for guard_emit oracle")
+        pytest.skip("ComfyUI nodes not available for guard_emit oracle")
 
 
 def test_refused_emit_import_and_construction_are_side_effect_light(monkeypatch) -> None:

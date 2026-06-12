@@ -1,7 +1,7 @@
 """Falsification test: every wrong-but-faithful fixture must ALLOW through the refusal spine.
 
-Marked with the ``comfy`` marker — requires vendor/ComfyUI on sys.path and
-VIBECOMFY_COMFY_SMOKE=1 to run.
+Marked with the ``comfy`` marker — requires the pinned ``[comfy]`` optional
+dependency and VIBECOMFY_COMFY_SMOKE=1 to run.
 
 Run:
     VIBECOMFY_COMFY_SMOKE=1 pytest -m comfy tests/intent/test_falsification.py

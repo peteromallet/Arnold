@@ -1,6 +1,6 @@
 {
   "id": "edit_05_latent_size_no_upscaler",
-  "pre_workflow_path": "../../../../workflow_corpus/official/edit/qwen_image_edit.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/edit/qwen_image_edit.json",
   "nl_intent": "Output a higher resolution image at 2048x2048",
   "post_edit_ir_patch": {
     "node_id": "93",

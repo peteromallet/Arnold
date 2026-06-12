@@ -7,7 +7,7 @@
         "non-link values or exact Python value types differ"
       ],
       "ok": false,
-      "source": "workflow_corpus/official/image/z_image.json",
+      "source": "ready_templates/sources/official/image/z_image.json",
       "source_reason": "index_metadata",
       "status": "comparable",
       "verdict": "red"
@@ -19,7 +19,7 @@
         "non-link values or exact Python value types differ"
       ],
       "ok": false,
-      "source": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json",
+      "source": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json",
       "source_reason": "index_metadata",
       "status": "comparable",
       "verdict": "red"

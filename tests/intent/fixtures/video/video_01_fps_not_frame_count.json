@@ -1,6 +1,6 @@
 {
   "id": "video_01_fps_not_frame_count",
-  "pre_workflow_path": "../../../../workflow_corpus/official/video/wan_t2v.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
   "nl_intent": "Make the video longer, at least 5 seconds",
   "post_edit_ir_patch": {
     "node_id": "49",

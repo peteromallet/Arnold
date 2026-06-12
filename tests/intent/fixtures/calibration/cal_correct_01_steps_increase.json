@@ -1,6 +1,6 @@
 {
   "id": "cal_correct_01_steps_increase",
-  "pre_workflow_path": "../../../../workflow_corpus/official/image/qwen_image_2512.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
   "nl_intent": "Increase the number of sampling steps to improve output quality",
   "post_edit_ir_patch": {
     "node_id": "238:223",

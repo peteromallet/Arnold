@@ -1,4 +1,4 @@
-# Workflow Corpus
+# Ready Template Sources
 
 This directory stores source ComfyUI workflow JSON. These files are import
 material for indexing, conversion, coverage analysis, and ready-template
@@ -15,7 +15,7 @@ regeneration. They are workflows, not curated Python templates.
 
 ## Path Contracts
 
-Workflow IDs and paths are index-backed. Moving or renaming a corpus JSON file
+Workflow IDs and paths are index-backed. Moving or renaming a source JSON file
 can change its indexed path and break coverage manifests, regeneration records,
 tests, or docs that point at the old location.
 
@@ -31,7 +31,7 @@ Coordinated changes:
 - renaming JSON workflow files
 - moving `manifests/` or `input/`
 
-After corpus changes, refresh and check the generated indexes:
+After source changes, refresh and check the generated indexes:
 
 ```bash
 python -m vibecomfy.cli sources sync

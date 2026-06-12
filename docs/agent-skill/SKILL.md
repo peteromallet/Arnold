@@ -5,13 +5,13 @@ description: 'Drive the VibeComfy package to discover ComfyUI workflows, load re
 
 # VibeComfy
 
-VibeComfy is a Python package at `/Users/peteromalley/Documents/reigh-workspace/vibecomfy/` for driving ComfyUI from real Python instead of JSON. Everything funnels through one editable IR — `VibeWorkflow` — and one execution path — `wf.compile("api") -> queue_prompt(dict)` against an embedded or remote ComfyUI runtime.
+VibeComfy is a Python package at `` for driving ComfyUI from real Python instead of JSON. Everything funnels through one editable IR — `VibeWorkflow` — and one execution path — `wf.compile("api") -> queue_prompt(dict)` against an embedded or remote ComfyUI runtime.
 
 This skill teaches an agent how to use it. The user wants to: **grab a template, write code on top, combine it with other templates / patches / custom Python, then execute** (locally or on RunPod).
 
 ## Repository rules
 
-- Work from the repository root: `/Users/peteromalley/Documents/reigh-workspace/vibecomfy`.
+- Work from the repository root.
 - Treat the worktree as shared. Do not revert, overwrite, or clean up edits you did not make.
 - Keep changes scoped to the requested task. Avoid unrelated refactors, generated-output churn, and broad formatting changes.
 - Prefer explicit, local registries and small modules over implicit discovery unless a task specifically asks for discovery.
@@ -48,7 +48,7 @@ This skill teaches an agent how to use it. The user wants to: **grab a template,
 
 VibeComfy uses ComfyUI's two-word distinction precisely:
 
-- **Workflow** = any graph. The thing in your editor right now is a workflow. The 47 JSON files under `workflow_corpus/` are workflows. A `VibeWorkflow` is the editable IR for one workflow.
+- **Workflow** = any graph. The thing in your editor right now is a workflow. The 47 JSON files under `ready_templates/sources/` are workflows. A `VibeWorkflow` is the editable IR for one workflow.
 - **Template** = a workflow specifically curated as a **starting point you clone-and-edit**. ComfyUI itself has a "Browse Templates" feature for exactly this concept. In VibeComfy these live in `ready_templates/` and are addressable by id (`image/z_image`, `video/wan_t2v`).
 
 Use "workflow" when referring to any graph; use "template" only when you mean a starting-point workflow from `ready_templates/`.
@@ -97,7 +97,7 @@ VibeComfy has two distinct authoring layers. Pick the right one before doing any
 | 2 | **Patches** (decorate) | `vibecomfy/patches/*.py` (`seed`, `resolution`, `save_prefix`, `gguf_unet`, `controlnet`, `ltx_lowvram`) | A `Patch(name, applies_to, apply, rationale)` that **decorates** an existing graph: tweaks a widget, splices a node into an edge, swaps a class. | `VibeWorkflow` (mutated) |
 | 3 | **Blocks** (extend) | `vibecomfy/blocks/*.py` (`encoding`, `sampling`, `decode`, `save`, `latent`, `loaders`, `subgraph`, `video`) | A function that mutates a workflow and returns typed `Handles`. Use when the call **changes** what handles are available (loader → `model/clip/vae`; sampler → `samples`; decode → `images`). | `Handles({"image": Handle(...)})` |
 | 4 | **Ops (verb-native)** | `vibecomfy/ops/{image,video}.py` | Lazy one-call entries: `image.t2i(prompt)`, `video.t2v(prompt)`, `video.i2v(image, prompt)`. Internally call `router.pick(...)` to choose a workflow + patches. Audio and image-edit verbs are not yet wired up — for those, `load_workflow_any("audio/...")` or `load_workflow_any("edit/...")` and edit the IR directly. | `Artifact` (`Image` / `Video`) |
-| 5 | **Recipes** (compose) | `recipes/*.py` | Runnable Python that combines workflows + patches + blocks + ops + custom logic for one concrete result. The natural place to write user logic that spans multiple workflows. | usually a `VibeWorkflow` |
+| 5 | **Recipes** (compose) | local `recipes/*.py` | Runnable Python that combines workflows + patches + blocks + ops + custom logic for one concrete result. The natural place to write user logic that spans multiple workflows. The root `recipes/` workspace is gitignored. | usually a `VibeWorkflow` |
 
 Layer 1 rule: *changes-handles → block; decorates-handles → patch.*
 Layer 2 rule: *changes-handles → new ready workflow; decorates-handles → recipe.*
@@ -112,7 +112,7 @@ Every step has one or two canonical entry points. Use them rather than improvisi
 
 ### 1. Discover
 
-Run from the repo root: `cd /Users/peteromalley/Documents/reigh-workspace/vibecomfy`.
+Run from the repo root.
 
 ```bash
 python -m vibecomfy.cli sources sync                  # build/refresh indexes
@@ -135,7 +135,7 @@ There is **one loader** to remember: `load_workflow_any`. It accepts ready ids, 
 from vibecomfy import load_workflow_any
 wf = load_workflow_any("image/z_image")              # ready id (preferred starting point)
 wf = load_workflow_any("video/wan_t2v")
-wf = load_workflow_any("workflow_corpus/official/image/z_image.json")  # raw JSON
+wf = load_workflow_any("ready_templates/sources/official/image/z_image.json")  # raw JSON
 wf = load_workflow_any("out/scratchpads/my_thing.py")                  # scratchpad
 ```
 
@@ -145,7 +145,7 @@ To **convert** an arbitrary JSON workflow into an editable Python scratchpad you
 ```bash
 python -m vibecomfy.cli port convert <workflow_id_or_path> --out out/scratchpads/<name>.py --json
 ```
-To fork an existing ready template into `recipes/` for hand-editing:
+To fork an existing ready template into local `recipes/` for hand-editing:
 ```bash
 python -m vibecomfy.cli copy-to-recipe <id> --out recipes/<name>.py
 ```
@@ -335,7 +335,7 @@ result = router.pick("video", "i2v", model="ltx")    # RouterResult(template_id,
 | "Tweak a workflow's prompt/seed/steps/resolution" | Load + setters/patches; flow 1 or 2 |
 | "Splice ControlNet / IP-Adapter / etc. into a workflow" | `vibecomfy.patches.controlnet` — flow 2 (topological patch) |
 | "Combine two workflows / chain image→video" | Recipe file — flow 5 |
-| "New repeatable composition" | Add a recipe in `recipes/` |
+| "New repeatable composition" | Add a local recipe in `recipes/` |
 | "New full graph for a new model" | Add a ready workflow under `ready_templates/<kind>/...` (see "Adding a new workflow") |
 | "Run on a GPU I don't have locally" | `scripts/runpod_validate.py` or the `--runpod` pytest markers |
 | "Inspect why something doesn't run" | `inspect`, `doctor`, `analyze info/trace/path/values`, then `validate` |
@@ -345,17 +345,17 @@ result = router.pick("video", "i2v", model="ltx")    # RouterResult(template_id,
 The full operating path lives in **`docs/templates/adding_templates_models.md`**. Read it before adding a new family. The short version:
 
 1. **Pick a stable id** in lower snake case encoding model + capability: `qwen3_tts_voice_clone`, `wanvideo_wrapper_21_14b_t2v`. The id becomes the manifest id, file name, RunPod matrix row, artifact path, and CLI handle.
-2. **Drop the source JSON** under `workflow_corpus/official/<media>/<id>.json`, `workflow_corpus/custom_nodes/<pack>/<source>/<id>.json`, or `workflow_corpus/community/<source>/<id>.json`. Keep it close to upstream.
+2. **Drop the source JSON** under `ready_templates/sources/official/<media>/<id>.json`, `ready_templates/sources/custom_nodes/<pack>/<source>/<id>.json`, or `ready_templates/sources/community/<source>/<id>.json`. Keep it close to upstream.
 3. **Declare custom nodes** in `vibecomfy/node_packs.py` (a `CustomNodePack(name, repo, classes, pip_packages)` entry) and pin in `custom_nodes.lock`.
 4. **Declare models**: workflow-embedded URLs go in workflow metadata; node-pack-specific layouts go in `vibecomfy/registry/models.yaml`.
-5. **Add a manifest row** in `workflow_corpus/manifests/coverage.json` with `id`, `path`, `media`, `task`, `coverage_tier`, `ready_template: true`.
-6. **Run port preflight**: `python -m vibecomfy.cli port check workflow_corpus/.../<id>.json --json`. Resolve hard errors (helper nodes, missing packs, model asset issues, widget alias drift) before hand-editing or RunPod.
-7. **Convert to a ready template** with `python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --ready-id <media>/<id> --out ready_templates/<media>/<id>.py --json`, or hand-author it under `ready_templates/<media>/<id>.py` for full control (see `ready_templates/image/z_image.py` for the canonical hand-authored shape). To fork a generated template into `recipes/` for hand-editing, use `python -m vibecomfy.cli copy-to-recipe <id> --out recipes/<name>.py`.
+5. **Add a manifest row** in `ready_templates/sources/manifests/coverage.json` with `id`, `path`, `media`, `task`, `coverage_tier`, `ready_template: true`.
+6. **Run port preflight**: `python -m vibecomfy.cli port check ready_templates/sources/.../<id>.json --json`. Resolve hard errors (helper nodes, missing packs, model asset issues, widget alias drift) before hand-editing or RunPod.
+7. **Convert to a ready template** with `python -m vibecomfy.cli port convert ready_templates/sources/.../<id>.json --ready-id <media>/<id> --out ready_templates/<media>/<id>.py --json`, or hand-author it under `ready_templates/<media>/<id>.py` for full control (see `ready_templates/image/z_image.py` for the canonical hand-authored shape). To fork a generated template into local `recipes/` for hand-editing, use `python -m vibecomfy.cli copy-to-recipe <id> --out recipes/<name>.py`.
 8. **Validate locally**: `vibecomfy validate ready_templates/<media>/<id>.py`, then targeted tests `pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli.py`.
 9. **Validate on RunPod** with a focused scope: `VIBECOMFY_MATRIX_SCOPE=<family> uv run python scripts/runpod_corpus_matrix.py`. Don't run the full matrix while iterating.
 10. **Document failures** in `docs/runtime/incompatibilities.md`, `docs/structural_issues.md`, or a family coverage doc — never leave fixes only in chat history or pod logs.
 
-For a one-off composition (combining existing workflows), prefer a **recipe** under `recipes/` — that's flow 5 and doesn't need a manifest entry.
+For a one-off composition (combining existing workflows), prefer a local **recipe** under `recipes/` — that's flow 5 and doesn't need a manifest entry.
 
 ## Reference docs (in-repo)
 

@@ -1,6 +1,6 @@
 {
   "id": "cal_correct_02_sampler_switch",
-  "pre_workflow_path": "../../../../workflow_corpus/official/image/qwen_image_2512.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/image/qwen_image_2512.json",
   "nl_intent": "Switch to the DPM++ 2M sampler for higher quality output",
   "post_edit_ir_patch": {
     "node_id": "238:230",

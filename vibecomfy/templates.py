@@ -828,7 +828,7 @@ def _derive_template_id(template_id: str | None, source_path: Path | None) -> st
 
 
 def _coverage_manifest_row(template_id: str) -> dict[str, Any]:
-    path = _repo_root() / "workflow_corpus" / "manifests" / "coverage.json"
+    path = _repo_root() / "ready_templates/sources" / "manifests" / "coverage.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

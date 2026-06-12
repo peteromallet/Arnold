@@ -8,7 +8,7 @@ from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, EmptyFlu
 
 READY_METADATA = ReadyMetadata.build(
     capability='image',
-    provenance={'source_path': 'workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'source_id': 'flux2_klein_9b_gguf_t2i', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'output_mode': 'ready_template', 'ready_id': 'image/flux2_klein_9b_gguf_t2i'},
+    provenance={'source_path': 'ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'source_id': 'flux2_klein_9b_gguf_t2i', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'output_mode': 'ready_template', 'ready_id': 'image/flux2_klein_9b_gguf_t2i'},
 )
 
 # === Subgraph functions ===
@@ -24,7 +24,7 @@ def text_to_image_flux2_klein_9b(
 ):
     """Text to Image (Flux.2 Klein 9B).
 
-    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json.
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json.
     # vibecomfy source hash: sha256:24b6e274da9a4dc9cb71344032bb8cb28886bd7cf1d2a89d8ae9939a306b8739
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, CLIPTextEncodex2, RandomNoise, UNETLoader, CLIPLoader, VAELoader.
     """

@@ -76,7 +76,7 @@ Observed failures:
 
 - Several community graphs depend on node packs that are not present by default in the HiddenSwitch pip environment.
 - After installing the node packs and normalizing model names, the workflows still hit runtime incompatibilities or stalls under the smoke budget.
-- `LTXVLatentUpsampler` path crashed with `AttributeError: 'LatentUpscaleModelManageable' object has no attribute 'model_mmap_residency'`. Originally attributed to a KJNodes/HiddenSwitch object mismatch — investigation showed it is a HiddenSwitch-internal Protocol/runtime asymmetry, not a KJNodes bug. KJNodes' `LTXVLatentUpsampler` loads its model through HiddenSwitch's `LatentUpscaleModelLoader`, which wraps it in `LatentUpscaleModelManageable` (`comfy_extras/nodes/nodes_latent_upscaler.py:15`); that class extends `ModelManageableStub`, which lacked `model_mmap_residency`/`pinned_memory_size`/`partially_unload_ram` — three methods `load_models_gpu` invokes on every loaded model. Fixed in vendored fork branch and submitted upstream.
+- `LTXVLatentUpsampler` path crashed with `AttributeError: 'LatentUpscaleModelManageable' object has no attribute 'model_mmap_residency'`. Originally attributed to a KJNodes/HiddenSwitch object mismatch — investigation showed it is a HiddenSwitch-internal Protocol/runtime asymmetry, not a KJNodes bug. KJNodes' `LTXVLatentUpsampler` loads its model through HiddenSwitch's `LatentUpscaleModelLoader`, which wraps it in `LatentUpscaleModelManageable` (`comfy_extras/nodes/nodes_latent_upscaler.py:15`); that class extends `ModelManageableStub`, which lacked `model_mmap_residency`/`pinned_memory_size`/`partially_unload_ram` — three methods `load_models_gpu` invokes on every loaded model. Fixed in the pinned ComfyUI fork branch and submitted upstream.
 
 Current VibeComfy mitigation:
 
@@ -84,13 +84,13 @@ Current VibeComfy mitigation:
 - Convert Runexx workflows into ready templates but do not claim runtime-green until the fork mismatch is resolved.
 - Bypass `LTXVLatentUpsampler` in smoke runs and remove unreferenced latent-upscale loader nodes.
 - Failed runs now produce a `vibecomfy/runtime/watchdog.py` report (`out/runs/<run>/watchdog.json`) naming the active node, class type, elapsed-in-node, recent progress events, and recent VRAM samples. This converts mid-sampler stalls and contract-gap crashes into actionable diagnoses rather than opaque "no output before timeout" failures.
-- Local fork at `vendor/ComfyUI/` on branch `fix/latentupscale-model-mmap-residency` (commit `15c739ff`) carries the `ModelManageableStub` fix. Verified end-to-end on RTX 4090: vanilla HiddenSwitch `c5ed9402` reproduces the AttributeError; the patched build runs `load_models_gpu([LatentUpscaleModelManageable(...)])` to completion.
+- The pinned `vibecomfy[comfy]` dependency uses branch `fix/latentupscale-model-mmap-residency` and carries the `ModelManageableStub` fix. Verified end-to-end on RTX 4090: vanilla HiddenSwitch `c5ed9402` reproduces the AttributeError; the patched build runs `load_models_gpu([LatentUpscaleModelManageable(...)])` to completion.
 - Upstream PR: https://github.com/hiddenswitch/pip-and-uv-installable-ComfyUI/pull/60
 
 Candidate root fixes:
 
 - ~~Patch or pin a KJNodes version whose latent upscaler object contract matches HiddenSwitch.~~ Not the right layer — KJNodes is innocent. Fixed at `ModelManageableStub` instead.
-- Wait for upstream PR #60 to merge, then drop `vendor/ComfyUI/` and pin the released HiddenSwitch version that includes the fix.
+- Wait for upstream PR #60 to merge, then pin the released HiddenSwitch version that includes the fix.
 - Once the contract gap is closed, re-enable `LTXVLatentUpsampler` in smoke runs and use the watchdog to triage any remaining stalls behind a larger timeout / stronger model-cache policy.
 
 ## Mitigated
@@ -169,12 +169,12 @@ Minimal repro:
 
 ```python
 import json, sys
-sys.path.insert(0, "vendor/ComfyUI")
+python -m pip install -e ".[comfy]"
 from vibecomfy.comfy_backend import ensure_nodes; ensure_nodes()
 from comfy.component_model.workflow_convert import convert_ui_to_api
 from vibecomfy.ingest.normalize import convert_to_vibe_format
 
-raw = json.loads(open("workflow_corpus/official/image/z_image.json").read())
+raw = json.loads(open("ready_templates/sources/official/image/z_image.json").read())
 wf = convert_to_vibe_format(raw)
 vc_node = wf.compile("api")["6"]
 comfy_node = convert_ui_to_api(raw)["6"]
@@ -238,7 +238,7 @@ Policy:
 The following entries were closed by structural fixes that landed on 2026-04-26. Kept as a one-line history rather than full entries; see the named modules and `git log` for the implementation. If any of these regress, re-open with a new entry rather than reanimating the old one.
 
 - **ACE Step audio prompt/runtime path** (was `local_bug, fork_behavior`). Caught by validator (`value_out_of_range` for `bpm=2`, `missing_required_input` for omitted ACE API fields) and by family-aware overrides (refuses to wire `--prompt` into `TextEncodeAceStepAudio1.5`). Files: `vibecomfy/schema/validate.py`, `vibecomfy/metadata.py`.
-- **LTX Runexx audio extraction and audio-shape assumptions** (was `fixture_gap`). Real `speech_smoke.wav` (~94KB, mono 16kHz, ~2.94s) plus four audio-bearing guide videos shipped under `workflow_corpus/input/`. Bootstrap unified in `vibecomfy/fixtures.py` with `python -m vibecomfy.fixtures copy --target input`. See `workflow_corpus/input/FIXTURES.md`. Remaining gap: workflows requiring specific speech *content* (talking-head / lip-sync, music-conditioned) are still unverified — re-open as a new entry if a specific workflow needs more than the generic clip.
+- **LTX Runexx audio extraction and audio-shape assumptions** (was `fixture_gap`). Real `speech_smoke.wav` (~94KB, mono 16kHz, ~2.94s) plus four audio-bearing guide videos shipped under `ready_templates/sources/input/`. Bootstrap unified in `vibecomfy/fixtures.py` with `python -m vibecomfy.fixtures copy --target input`. See `ready_templates/sources/input/FIXTURES.md`. Remaining gap: workflows requiring specific speech *content* (talking-head / lip-sync, music-conditioned) are still unverified — re-open as a new entry if a specific workflow needs more than the generic clip.
 - **Long-running LTX community graphs do not fail cleanly** (was `runtime_observability`). WebSocket-based execution watchdog with diagnoses (`completed | errored | slow_node | stalled_runtime | oom_ish | missing_event_stream | crashed | in_progress`) wired into both session backends. File: `vibecomfy/runtime/watchdog.py`. Opt-out via `VIBECOMFY_WATCHDOG=0`. The workflows themselves still stall — those stalls now roll up into `LTX Runexx 22B runtime path` and are diagnosable per-incident.
 - **Generic prompt and step overrides assume mainline image nodes** (was `local_bug`). Class-type allowlists in `_register_common_inputs` (`PROMPT_NODE_CLASSES`, `STEPS_NODE_CLASSES`); CLI errors loudly when `--prompt`/`--steps` has no eligible target. Matrix-level workaround removed. Reversibility: `VIBECOMFY_LEGACY_OVERRIDES=1`. Files: `vibecomfy/metadata.py`, `vibecomfy/commands/run.py`, `scripts/runpod_corpus_matrix.py`.
 - **UI JSON to API JSON link representation** (was `local_bug`). Validator catches `invalid_link_shape` structurally — dict-shaped link payloads on inputs whose schema isn't `DICT`/`*` now fail at submit. File: `vibecomfy/schema/validate.py`.
@@ -256,7 +256,7 @@ Before calling a workflow `runtime_green` on HiddenSwitch:
 - Required custom nodes are installed or intentionally absent (validator's `unknown_class_type` covers this).
 - Required model files are declared in `vibecomfy/registry/models.yaml` and present at every `(node_pack, target_path)` the registry lists. `vibecomfy models stage --dry-run` reports zero missing.
 - CLI overrides (`--prompt`, `--steps`) only invoked against workflows whose nodes match the allowlists — if they don't, the CLI now errors loudly rather than misrouting.
-- Audio-extraction workflows pull from a `workflow_corpus/input/` guide video (all four committed guides carry an AAC audio track) or an explicit `LoadAudio("speech_smoke.wav")`.
+- Audio-extraction workflows pull from a `ready_templates/sources/input/` guide video (all four committed guides carry an AAC audio track) or an explicit `LoadAudio("speech_smoke.wav")`.
 - Preview/server-only nodes are disabled, removed, or patched.
 - UI JSON subgraphs have been materialized into a full API-compatible graph (validator's `invalid_link_shape` catches dict-shaped link regressions).
 - Failure logs and watchdog dumps are archived under `out/runpod_artifacts/<run>/` and `out/runs/<run>/watchdog.json`.

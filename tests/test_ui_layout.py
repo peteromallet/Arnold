@@ -1797,13 +1797,13 @@ class TestCorpusWideInvariants:
 
 
 # ---------------------------------------------------------------------------
-# T10 (Phase 4 Step 8b) — vendored-ComfyUI smoke (env-gated)
+# T10 (Phase 4 Step 8b) — ComfyUI converter smoke (env-gated)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.comfy
 def test_opens_clean_vendored_comfyui() -> None:
-    """Phase 4 Step 8b: emit_ui_json output accepted by vendored ComfyUI convert_ui_to_api.
+    """Phase 4 Step 8b: emit_ui_json output accepted by ComfyUI convert_ui_to_api.
 
     Runs against four representative ready templates:
       - image/flux2_klein_9b_t2i
@@ -1811,8 +1811,8 @@ def test_opens_clean_vendored_comfyui() -> None:
       - edit/qwen_image_edit (resolved dynamically)
       - video/ltx2_3_runexx_lipsync_custom_audio (heaviest music-video monster)
 
-    Uses the ``vibecomfy.comfy_backend`` sys.path oracle to make vendored
-    ComfyUI importable.  Gated behind ``VIBECOMFY_COMFY_SMOKE=1``.
+    Uses the ``vibecomfy.comfy_backend`` oracle to make ComfyUI importable.
+    Gated behind ``VIBECOMFY_COMFY_SMOKE=1``.
     """
     import logging
     import os
@@ -1821,11 +1821,11 @@ def test_opens_clean_vendored_comfyui() -> None:
     import glob as _glob
 
     if os.environ.get("VIBECOMFY_COMFY_SMOKE") != "1":
-        pytest.skip("comfy vendored smoke gate is opt-in (set VIBECOMFY_COMFY_SMOKE=1)")
+        pytest.skip("comfy smoke gate is opt-in (set VIBECOMFY_COMFY_SMOKE=1)")
 
     from vibecomfy.comfy_backend import ensure_nodes
     if not ensure_nodes():
-        pytest.skip("vendored ComfyUI not available (vendor/ComfyUI submodule uninitialized)")
+        pytest.skip("ComfyUI converter not available; install the pinned [comfy] extra")
 
     comfy_convert = pytest.importorskip(
         "comfy.component_model.workflow_convert"
@@ -1875,13 +1875,13 @@ def test_opens_clean_vendored_comfyui() -> None:
 
             converted = comfy_convert(ui)
         except Exception as exc:
-            # If the vendored ComfyUI environment is not fully operational
+            # If the ComfyUI environment is not fully operational
             # (e.g. ``vibecomfy.comfy_nodes`` conflicts with node discovery),
             # skip the entire test rather than failing — this is a pre-existing
             # environment concern, not a regression under test.
             if "comfy_nodes" in str(exc) and "__path__" in str(exc):
                 pytest.skip(
-                    f"vendored ComfyUI environment not fully operational "
+                    f"ComfyUI environment not fully operational "
                     f"(vibecomfy.comfy_nodes package conflict)"
                 )
             raise AssertionError(

@@ -20,11 +20,11 @@ from tests._cli_helpers import (
 
 
 def _comfy_available() -> bool:
-    """True when the vendored ComfyUI ``convert_ui_to_api`` oracle is importable.
+    """True when the ComfyUI ``convert_ui_to_api`` oracle is importable.
 
     The refusal-spine driven export paths (``--from`` / breadcrumb-recovered
-    re-emit) run the candidate through the vendored ComfyUI backend. When the
-    ``[comfy]`` extra / vendored dependency closure is not installed, those tests
+    re-emit) run the candidate through the installed ComfyUI backend. When the
+    pinned ``[comfy]`` extra is not installed, those tests
     skip rather than fail — matching the convention in ``tests/test_refuse.py``.
     """
     try:
@@ -43,7 +43,7 @@ def _comfy_available() -> bool:
 
 _requires_comfy_oracle = pytest.mark.skipif(
     not _comfy_available(),
-    reason="vendored ComfyUI convert_ui_to_api not available for refusal-spine export",
+    reason="ComfyUI convert_ui_to_api not available for refusal-spine export",
 )
 
 

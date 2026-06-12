@@ -1,6 +1,6 @@
 {
   "id": "edit_03_cfg_zero_for_faithful",
-  "pre_workflow_path": "../../../../workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json",
   "nl_intent": "Make the edit more faithful to the original image",
   "post_edit_ir_patch": {
     "node_id": "63",

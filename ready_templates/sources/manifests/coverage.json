@@ -4,7 +4,7 @@
   "workflows": [
     {
       "id": "qwen_image_edit",
-      "path": "workflow_corpus/official/edit/qwen_image_edit.json",
+      "path": "ready_templates/sources/official/edit/qwen_image_edit.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "qwen-image-edit",
       "task": "image_edit",
@@ -14,7 +14,7 @@
     },
     {
       "id": "qwen_image_2512",
-      "path": "workflow_corpus/official/image/qwen_image_2512.json",
+      "path": "ready_templates/sources/official/image/qwen_image_2512.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "qwen-image-2512",
       "task": "text_to_image",
@@ -25,7 +25,7 @@
     },
     {
       "id": "z_image",
-      "path": "workflow_corpus/official/image/z_image.json",
+      "path": "ready_templates/sources/official/image/z_image.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "z-image",
       "task": "text_to_image",
@@ -35,7 +35,7 @@
     },
     {
       "id": "wan_t2v",
-      "path": "workflow_corpus/official/video/wan_t2v.json",
+      "path": "ready_templates/sources/official/video/wan_t2v.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "wan",
       "task": "text_to_video",
@@ -45,7 +45,7 @@
     },
     {
       "id": "wan_i2v",
-      "path": "workflow_corpus/official/video/wan_i2v.json",
+      "path": "ready_templates/sources/official/video/wan_i2v.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "wan",
       "task": "image_to_video",
@@ -55,7 +55,7 @@
     },
     {
       "id": "wanvideo_wrapper_21_14b_t2v",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_t2v.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_t2v.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.1-14b",
       "task": "text_to_video",
@@ -66,7 +66,7 @@
     },
     {
       "id": "wanvideo_wrapper_21_14b_i2v",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_i2v.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_i2v.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.1-14b",
       "task": "image_to_video",
@@ -77,7 +77,7 @@
     },
     {
       "id": "wanvideo_wrapper_21_14b_flf2v",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_flf2v.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_flf2v.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.1-14b",
       "task": "first_last_frame_video",
@@ -88,7 +88,7 @@
     },
     {
       "id": "wanvideo_wrapper_22_5b_t2v_controlnet",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_t2v_controlnet.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_t2v_controlnet.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.2-5b",
       "task": "text_to_video_controlnet",
@@ -99,7 +99,7 @@
     },
     {
       "id": "wanvideo_wrapper_22_5b_i2v",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.2-5b",
       "task": "image_to_video",
@@ -110,7 +110,7 @@
     },
     {
       "id": "wanvideo_wrapper_22_5b_i2v_controlnet",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v_controlnet.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v_controlnet.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.2-5b",
       "task": "image_to_video_controlnet",
@@ -121,7 +121,7 @@
     },
     {
       "id": "wanvideo_wrapper_22_5b_ovi_audio_i2v",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.2-5b-ovi",
       "task": "audio_image_to_video",
@@ -132,7 +132,7 @@
     },
     {
       "id": "wanvideo_wrapper_13b_control_lora",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-1.3b",
       "task": "control_lora_video",
@@ -143,7 +143,7 @@
     },
     {
       "id": "wanvideo_wrapper_13b_vace",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-1.3b-vace",
       "task": "vace_video_control",
@@ -154,7 +154,7 @@
     },
     {
       "id": "wanvideo_wrapper_13b_recammaster",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_recammaster.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_recammaster.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-1.3b-recammaster",
       "task": "camera_control_video",
@@ -165,7 +165,7 @@
     },
     {
       "id": "wanvideo_wrapper_21_14b_fun_control",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.1-14b-fun-control",
       "task": "fun_control_video",
@@ -176,7 +176,7 @@
     },
     {
       "id": "wanvideo_wrapper_21_14b_fun_control_camera",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.1-14b-fun-control",
       "task": "camera_control_video",
@@ -187,7 +187,7 @@
     },
     {
       "id": "wanvideo_wrapper_21_14b_wanmove_i2v",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.1-14b-wanmove",
       "task": "motion_track_i2v",
@@ -198,7 +198,7 @@
     },
     {
       "id": "wanvideo_wrapper_21_14b_v2v_infinitetalk",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.1-14b-infinitetalk",
       "task": "video_to_video_talking_avatar",
@@ -209,7 +209,7 @@
     },
     {
       "id": "wanvideo_wrapper_wan_animate",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan_animate.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan_animate.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-animate",
       "task": "animate_reference_video",
@@ -220,7 +220,7 @@
     },
     {
       "id": "wanvideo_wrapper_22_s2v_context_window",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_context_window.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_context_window.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.2-s2v",
       "task": "speech_to_video_context_window",
@@ -231,7 +231,7 @@
     },
     {
       "id": "wanvideo_wrapper_22_s2v_framepack_pose",
-      "path": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_framepack_pose.json",
+      "path": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_framepack_pose.json",
       "source": "kijai/ComfyUI-WanVideoWrapper",
       "model_family": "wan-2.2-s2v",
       "task": "speech_to_video_pose_control",
@@ -242,7 +242,7 @@
     },
     {
       "id": "ltx2_3_t2v",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
       "source": "Lightricks/ComfyUI-LTXVideo",
       "model_family": "ltx-2.3",
       "task": "text_to_video",
@@ -253,7 +253,7 @@
     },
     {
       "id": "ltx2_3_i2v",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
       "source": "Lightricks/ComfyUI-LTXVideo",
       "model_family": "ltx-2.3",
       "task": "image_to_video",
@@ -264,7 +264,7 @@
     },
     {
       "id": "ltx2_3_lightricks_single_stage",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
       "source": "Lightricks/ComfyUI-LTXVideo",
       "model_family": "ltx-2.3",
       "task": "text_or_image_to_video",
@@ -279,7 +279,7 @@
     },
     {
       "id": "ltx2_3_lightricks_two_stage",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json",
       "source": "Lightricks/ComfyUI-LTXVideo",
       "model_family": "ltx-2.3",
       "task": "text_or_image_to_video_upscale",
@@ -291,7 +291,7 @@
     },
     {
       "id": "ltx2_3_lightricks_iclora_hdr",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json",
       "source": "Lightricks/ComfyUI-LTXVideo",
       "model_family": "ltx-2.3",
       "task": "video_guided_hdr",
@@ -303,7 +303,7 @@
     },
     {
       "id": "ltx2_3_lightricks_iclora_motion_track",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json",
       "source": "Lightricks/ComfyUI-LTXVideo",
       "model_family": "ltx-2.3",
       "task": "motion_track_control",
@@ -315,7 +315,7 @@
     },
     {
       "id": "ltx2_3_lightricks_iclora_union_control",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Union_Control_Distilled.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Union_Control_Distilled.json",
       "source": "Lightricks/ComfyUI-LTXVideo",
       "model_family": "ltx-2.3",
       "task": "union_control_video_guided_i2v",
@@ -339,7 +339,7 @@
     },
     {
       "id": "ltx2_3_runexx_first_last_frame",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json",
       "source": "RuneXX/LTX-2.3-Workflows",
       "model_family": "ltx-2.3",
       "task": "first_last_frame_video",
@@ -350,7 +350,7 @@
     },
     {
       "id": "ltx2_3_runexx_first_middle_last_frame",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FML2V_First_Middle_Last_Frame_guider.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_FML2V_First_Middle_Last_Frame_guider.json",
       "source": "RuneXX/LTX-2.3-Workflows",
       "model_family": "ltx-2.3",
       "task": "first_middle_last_frame_video",
@@ -361,7 +361,7 @@
     },
     {
       "id": "ltx2_3_runexx_custom_audio",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Custom_Audio.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Custom_Audio.json",
       "source": "RuneXX/LTX-2.3-Workflows",
       "model_family": "ltx-2.3",
       "task": "custom_audio_to_video",
@@ -372,7 +372,7 @@
     },
     {
       "id": "ltx2_3_runexx_video_to_video_extend",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json",
       "source": "RuneXX/LTX-2.3-Workflows",
       "model_family": "ltx-2.3",
       "task": "video_to_video_extend",
@@ -383,7 +383,7 @@
     },
     {
       "id": "ltx2_3_runexx_lipsync_custom_audio",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Just_Talk_custom_audio_lipsync.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Just_Talk_custom_audio_lipsync.json",
       "source": "RuneXX/LTX-2.3-Workflows",
       "model_family": "ltx-2.3",
       "task": "voice_to_lipsync_video",
@@ -394,7 +394,7 @@
     },
     {
       "id": "ltx2_3_runexx_motion_transfer_dwpose",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Motion_Transfer_DWPose.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Motion_Transfer_DWPose.json",
       "source": "RuneXX/LTX-2.3-Workflows",
       "model_family": "ltx-2.3",
       "task": "dwpose_motion_transfer",
@@ -405,7 +405,7 @@
     },
     {
       "id": "ltx2_3_runexx_talking_avatar_qwen_tts",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json",
       "source": "RuneXX/LTX-2.3-Workflows",
       "model_family": "ltx-2.3",
       "task": "tts_talking_avatar",
@@ -416,7 +416,7 @@
     },
     {
       "id": "ltx2_3_runexx_music_video_low_ram",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json",
       "source": "RuneXX/LTX-2.3-Workflows",
       "model_family": "ltx-2.3",
       "task": "music_video_multiscene",
@@ -427,7 +427,7 @@
     },
     {
       "id": "ltx2_3_iamccs_audio_image_to_video",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_AU_IMG2V.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_AU_IMG2V.json",
       "source": "IAMCCS/comfyui-iamccs-workflows",
       "model_family": "ltx-2.3",
       "task": "audio_image_to_video",
@@ -438,7 +438,7 @@
     },
     {
       "id": "ltx2_3_iamccs_long_i2v",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json",
       "source": "IAMCCS/comfyui-iamccs-workflows",
       "model_family": "ltx-2.3",
       "task": "long_image_to_video",
@@ -449,7 +449,7 @@
     },
     {
       "id": "ltx2_3_iamccs_audio_extend_low_ram",
-      "path": "workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json",
+      "path": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json",
       "source": "IAMCCS/comfyui-iamccs-workflows",
       "model_family": "ltx-2.3",
       "task": "audio_extended_multisegment_video",
@@ -460,7 +460,7 @@
     },
     {
       "id": "flux2_klein_4b_t2i",
-      "path": "workflow_corpus/official/image/flux2_klein_4b_t2i.json",
+      "path": "ready_templates/sources/official/image/flux2_klein_4b_t2i.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "flux2-klein-4b",
       "task": "text_to_image",
@@ -470,7 +470,7 @@
     },
     {
       "id": "flux2_klein_9b_t2i",
-      "path": "workflow_corpus/official/image/flux2_klein_9b_t2i.json",
+      "path": "ready_templates/sources/official/image/flux2_klein_9b_t2i.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "flux2-klein-9b",
       "task": "text_to_image",
@@ -481,7 +481,7 @@
     },
     {
       "id": "flux2_klein_4b_image_edit_base",
-      "path": "workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json",
+      "path": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "flux2-klein-4b",
       "task": "image_edit",
@@ -492,7 +492,7 @@
     },
     {
       "id": "flux2_klein_4b_image_edit_distilled",
-      "path": "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
+      "path": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "flux2-klein-4b",
       "task": "image_edit",
@@ -502,7 +502,7 @@
     },
     {
       "id": "flux2_klein_9b_image_edit_base",
-      "path": "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",
+      "path": "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "flux2-klein-9b",
       "task": "image_edit",
@@ -513,7 +513,7 @@
     },
     {
       "id": "flux2_klein_9b_image_edit_distilled",
-      "path": "workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json",
+      "path": "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json",
       "source": "Comfy-Org/workflow_templates",
       "model_family": "flux2-klein-9b",
       "task": "image_edit",
@@ -524,7 +524,7 @@
     },
     {
       "id": "flux2_klein_9b_gguf_t2i",
-      "path": "workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json",
+      "path": "ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json",
       "source": "Comfy-Org/workflow_templates + city96/ComfyUI-GGUF + unsloth/FLUX.2-klein-9B-GGUF",
       "model_family": "flux2-klein-9b-gguf",
       "task": "text_to_image",
@@ -535,7 +535,7 @@
     },
     {
       "id": "ace_step_1_5_t2a_song",
-      "path": "workflow_corpus/official/audio/ace_step_1_5_t2a_song.json",
+      "path": "ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json",
       "model_family": "ace-step-1.5",
       "media": "audio",
       "task": "text_to_audio_song",
@@ -547,7 +547,7 @@
     },
     {
       "id": "qwen3_tts_custom_voice",
-      "path": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_custom_voice.json",
+      "path": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_custom_voice.json",
       "source": "1038lab/ComfyUI-QwenTTS distilled API smoke template",
       "model_family": "qwen3-tts",
       "media": "audio",
@@ -559,7 +559,7 @@
     },
     {
       "id": "qwen3_tts_voice_design",
-      "path": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_design.json",
+      "path": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_design.json",
       "source": "1038lab/ComfyUI-QwenTTS distilled API smoke template",
       "model_family": "qwen3-tts",
       "media": "audio",
@@ -571,7 +571,7 @@
     },
     {
       "id": "qwen3_tts_voice_clone",
-      "path": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json",
+      "path": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json",
       "source": "1038lab/ComfyUI-QwenTTS distilled API smoke template",
       "model_family": "qwen3-tts",
       "media": "audio",
@@ -579,7 +579,7 @@
       "coverage_tier": "supplemental",
       "ready_template": true,
       "approach": "reference-audio voice cloning with a bundled smoke fixture",
-      "runtime_note": "Uses workflow_corpus/input/speech_smoke.wav as the reference clip for repeatable validation."
+      "runtime_note": "Uses ready_templates/sources/input/speech_smoke.wav as the reference clip for repeatable validation."
     },
     {
       "id": "basic_image_upscale",

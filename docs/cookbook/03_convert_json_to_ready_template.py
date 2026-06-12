@@ -71,11 +71,11 @@ if __name__ == "__main__":
     import json
     from pathlib import Path
 
-    corpus_path = Path(__file__).resolve().parents[2] / "workflow_corpus" / "official" / "video" / "wan_i2v.json"
+    corpus_path = Path(__file__).resolve().parents[2] / "ready_templates/sources" / "official" / "video" / "wan_i2v.json"
     if corpus_path.exists():
         info = load_and_inspect_json(str(corpus_path))
         print(f"\nExample: {info['path']}")
         print(f"  Nodes: {info['node_count']}")
         print(f"  Class types: {', '.join(info['class_types'])}")
     else:
-        print("\n(workflow_corpus not found — clone the repo to see a real example)")
+        print("\n(ready_templates/sources not found — clone the repo to see a real example)")

@@ -6,7 +6,7 @@ This is the operating path for adding, fixing, forking, or promoting a model fam
 
 The same gates apply from four starting points:
 
-- **Raw Comfy JSON**: save the upstream source under `workflow_corpus/...`, run `port check`, then convert or hand-author.
+- **Raw Comfy JSON**: save the upstream source under `ready_templates/sources/...`, run `port check`, then convert or hand-author.
 - **Existing ready template**: inspect current metadata, requirements, outputs, and patch points before editing; rerun strict readiness before RunPod.
 - **Fork of a ready template**: use a recipe or patch for run-specific decoration; create a new ready template only when graph shape, model family, required inputs, output semantics, custom nodes, or app capability changes.
 - **From-scratch Python workflow**: author with `VibeWorkflow`, blocks, or patches, then promote only after the same model/node/output/index/test/live-evidence gates.
@@ -21,10 +21,10 @@ Every runnable template should move through this pipeline:
 
 ```text
 raw Comfy workflow JSON
-  -> workflow_corpus/... source file
+  -> ready_templates/sources/... source file
   -> port check report
   -> port-converted Python scratchpad
-  -> workflow_corpus/manifests/coverage.json entry
+  -> ready_templates/sources/manifests/coverage.json entry
   -> port-converted or hand-authored ready_templates/<media>/<id>.py
   -> tools.refresh_template_index
   -> local validate
@@ -39,9 +39,9 @@ Default ready-template discovery is repo-only and index-backed. `workflows list 
 Run the porting workbench before manual edits and before RunPod validation:
 
 ```bash
-python -m vibecomfy.cli port check workflow_corpus/.../<id>.json --json
-python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out out/scratchpads/<id>.py --json
-python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out ready_templates/<kind>/<id>.py --ready-id <kind>/<id> --json
+python -m vibecomfy.cli port check ready_templates/sources/.../<id>.json --json
+python -m vibecomfy.cli port convert ready_templates/sources/.../<id>.json --out out/scratchpads/<id>.py --json
+python -m vibecomfy.cli port convert ready_templates/sources/.../<id>.json --out ready_templates/<kind>/<id>.py --ready-id <kind>/<id> --json
 python -m vibecomfy.cli port check ready_templates/<media>/<id>.py --strict-ready-template --json
 python -m vibecomfy.cli port inventory --ready --json
 ```
@@ -64,7 +64,7 @@ Use `--head-check-models` only when you intentionally want model URL HEAD checks
 ## Checklist
 
 1. Pick a stable template id.
-2. Add the raw source workflow under `workflow_corpus/`.
+2. Add the raw source workflow under `ready_templates/sources/`.
 3. Run `port check` and inspect the report before editing.
 4. Add or update custom-node catalog entries.
 5. Add model registry entries or workflow metadata for model staging.
@@ -113,9 +113,9 @@ The id should be stable because it becomes the manifest id, ready template filen
 Put imported source JSON where its ownership is clear:
 
 ```text
-workflow_corpus/official/<media>/<id>.json
-workflow_corpus/custom_nodes/<node_pack>/<source>/<id>.json
-workflow_corpus/community/<source>/<id>.json
+ready_templates/sources/official/<media>/<id>.json
+ready_templates/sources/custom_nodes/<node_pack>/<source>/<id>.json
+ready_templates/sources/community/<source>/<id>.json
 ```
 
 Prefer official Comfy templates when they exist. Use custom-node examples when the capability only exists there. Keep the raw JSON as close to upstream as possible; runtime-smoke edits belong in the ready template, not in the source file, unless the source is a small hand-authored API smoke fixture.
@@ -138,9 +138,9 @@ Then update `custom_nodes.lock` when the pack should be pinned. Pinning by commi
 Run:
 
 ```bash
-uv run python -m vibecomfy.cli port check workflow_corpus/custom_nodes/.../<id>.json --json
-uv run python -m vibecomfy.cli nodes install-plan workflow_corpus/custom_nodes/.../<id>.json
-uv run python -m vibecomfy.cli doctor workflow_corpus/custom_nodes/.../<id>.json
+uv run python -m vibecomfy.cli port check ready_templates/sources/custom_nodes/.../<id>.json --json
+uv run python -m vibecomfy.cli nodes install-plan ready_templates/sources/custom_nodes/.../<id>.json
+uv run python -m vibecomfy.cli doctor ready_templates/sources/custom_nodes/.../<id>.json
 ```
 
 ## 4. Models
@@ -166,12 +166,12 @@ Use the registry when a model has aliases, multiple target directories, custom-n
 
 ## 5. Manifest Row
 
-Add a row to `workflow_corpus/manifests/coverage.json`:
+Add a row to `ready_templates/sources/manifests/coverage.json`:
 
 ```json
 {
   "id": "qwen3_tts_voice_clone",
-  "path": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json",
+  "path": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json",
   "source": "1038lab/ComfyUI-QwenTTS distilled API smoke template",
   "model_family": "qwen3-tts",
   "media": "audio",
@@ -179,7 +179,7 @@ Add a row to `workflow_corpus/manifests/coverage.json`:
   "coverage_tier": "supplemental",
   "ready_template": true,
   "approach": "reference-audio voice cloning with a bundled smoke fixture",
-  "runtime_note": "Uses workflow_corpus/input/speech_smoke.wav as the reference clip."
+  "runtime_note": "Uses ready_templates/sources/input/speech_smoke.wav as the reference clip."
 }
 ```
 
@@ -193,7 +193,7 @@ hand-authoring a `VibeWorkflow` builder.
 Use conversion when the raw workflow is already close to executable:
 
 ```bash
-uv run python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json \
+uv run python -m vibecomfy.cli port convert ready_templates/sources/.../<id>.json \
   --ready-id <media>/<id> \
   --out ready_templates/<media>/<id>.py \
   --json
@@ -225,8 +225,8 @@ uv run python -m tools.refresh_template_index --check
 First confirm the port report is clean enough to edit and convert:
 
 ```bash
-uv run python -m vibecomfy.cli port check workflow_corpus/.../<id>.json --json
-uv run python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --out out/scratchpads/<id>.py --json
+uv run python -m vibecomfy.cli port check ready_templates/sources/.../<id>.json --json
+uv run python -m vibecomfy.cli port convert ready_templates/sources/.../<id>.json --out out/scratchpads/<id>.py --json
 ```
 
 Run validation on the generated ready template:
@@ -306,7 +306,7 @@ and expected location are all known before RunPod work starts.
 
 Prebuilt is not a second source of workflow truth. The reusable workflow source
 still lives in `ready_templates/<media>/<id>.py`; raw JSON belongs in
-`workflow_corpus/` as source/corpus/import material only. A ready template is
+`ready_templates/sources/` as source/corpus/import material only. A ready template is
 not app-parity ready until source classification, schema validation, asset
 resolution, a cheap prebuilt health check, a smoke run, and the relevant matrix
 evidence are recorded.
@@ -318,7 +318,7 @@ That means the machine should not require hand setup for a checked-in matrix sco
 - workflow patching: `scripts/runpod_matrix_remote.py`;
 - ready-template conversion: `python -m vibecomfy.cli port convert ... --ready-id ...`;
 - ready-template index: `python -m tools.refresh_template_index`;
-- fixtures: `workflow_corpus/input/` and `vibecomfy.fixtures`;
+- fixtures: `ready_templates/sources/input/` and `vibecomfy.fixtures`;
 - override behavior: matrix scope policy or the family-aware override layer.
 
 ## 9. What Is Automatic Today

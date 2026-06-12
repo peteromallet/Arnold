@@ -14,7 +14,7 @@ from vibecomfy.porting.report import (
 
 def test_port_report_serializes_stable_analysis_shape() -> None:
     report = PortReport(
-        source="workflow_corpus/official/image/example.json",
+        source="ready_templates/sources/official/image/example.json",
         provenance={"source_type": "raw_json", "original_path": "example.json"},
         source_hash="sha256:abc123",
         workflow_id="image/example",
@@ -80,7 +80,7 @@ def test_port_report_serializes_stable_analysis_shape() -> None:
     payload = report.to_json()
 
     assert payload["ok"] is False
-    assert payload["source"] == "workflow_corpus/official/image/example.json"
+    assert payload["source"] == "ready_templates/sources/official/image/example.json"
     assert payload["provenance"]["source_type"] == "raw_json"
     assert payload["source_hash"] == "sha256:abc123"
     assert payload["workflow_shape"] == {"nodes": 2, "edges": 1, "outputs": 1}

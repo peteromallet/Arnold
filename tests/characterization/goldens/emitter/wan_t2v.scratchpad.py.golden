@@ -11,7 +11,7 @@ def build() -> VibeWorkflow:
         'video/wan_t2v',
         WorkflowSource(
             id='video/wan_t2v',
-            path='workflow_corpus/official/video/wan_t2v.json',
+            path='ready_templates/sources/official/video/wan_t2v.json',
             source_type='scratchpad',
             provenance={},
         ),

@@ -370,7 +370,7 @@ def test_ensure_env_real_wan_t2v_reports_low_confidence_without_installing() -> 
             preflight=PipPreflightResult(ok=True),
         )
 
-    result = ensure_env("workflow_corpus/official/video/wan_t2v.json", known_packs=(), installer=installer)
+    result = ensure_env("ready_templates/sources/official/video/wan_t2v.json", known_packs=(), installer=installer)
 
     assert result.ok is True
     assert install_calls == []

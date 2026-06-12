@@ -21,14 +21,14 @@ from vibecomfy.schema import NodeSchema, socket_types_compatible
 
 # ── corpus paths ─────────────────────────────────────────────────────────
 
-_CORPUS_ROOT = Path("workflow_corpus/official/video")
+_CORPUS_ROOT = Path("ready_templates/sources/official/video")
 
 _LTX_T2V_PATH = _CORPUS_ROOT / "ltx2_3_t2v.json"
 _LTX_I2V_PATH = _CORPUS_ROOT / "ltx2_3_i2v.json"
 _WAN_T2V_PATH = _CORPUS_ROOT / "wan_t2v.json"
 _WAN_I2V_PATH = _CORPUS_ROOT / "wan_i2v.json"
 
-_RUNEXX_PATH = Path("workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json")
+_RUNEXX_PATH = Path("ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json")
 
 
 def _load_json(path: Path) -> dict[str, Any]:

@@ -13,7 +13,7 @@ WIDGET__NAME_3 = 'ae.safetensors'
 
 READY_METADATA = ReadyMetadata.build(
     capability='image',
-    provenance={'source_path': 'workflow_corpus/official/image/z_image.json', 'source_id': 'z_image', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/image/z_image.json', 'output_mode': 'ready_template', 'ready_id': 'image/z_image'},
+    provenance={'source_path': 'ready_templates/sources/official/image/z_image.json', 'source_id': 'z_image', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/official/image/z_image.json', 'output_mode': 'ready_template', 'ready_id': 'image/z_image'},
 )
 
 # === Subgraph functions ===
@@ -31,7 +31,7 @@ def text_to_image_z_image_base(
 ):
     """Text to Image(Z-Image-Base).
 
-    Materialized from subgraph 9b9009e4-2d3d-445f-9be5-6063f465757e in workflow_corpus/official/image/z_image.json.
+    Materialized from subgraph 9b9009e4-2d3d-445f-9be5-6063f465757e in ready_templates/sources/official/image/z_image.json.
     # vibecomfy source hash: sha256:5093fca1fcee6f4d6df426c85d09324e14882805513ee68a85b0c3a84b5aa42b
     Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler.
     """

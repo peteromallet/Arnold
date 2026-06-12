@@ -205,11 +205,11 @@ Why it is gated OFF (the findings that define Phase 2 + the env work):
    returns `ok=False`. This is the guard doing its job; it is unsafe to enable
    until **Phase 2 (verbatim-preserve)** makes the candidate faithful, and until
    `snapshot_delta` reliably captures the edited fields.
-2. **Guard needs the vendored converter on path.** `guard_emit` →
+2. **Guard needs the ComfyUI converter importable.** `guard_emit` →
    `_load_convert_ui_to_api()` imports `comfy.component_model.workflow_convert`
-   (torch-free, from `vendor/ComfyUI`). In the live ComfyUI server it is NOT
+   (torch-free, from the pinned `vibecomfy[comfy]` dependency). In the live ComfyUI server it is NOT
    importable (`ModuleNotFoundError: comfy.component_model`) even though
-   `vendor/ComfyUI` exists — it needs `vendor/ComfyUI` on `PYTHONPATH`. **Launcher
+   enough that a local checkout exists — it needs the converter importable in the active Python. **Launcher
    fix required** (`scripts/run_local_agent_comfy.sh`) before the guard can run in
    the server.
 3. **LTX-class workflows block upstream of the guard.** They fail at the *convert*

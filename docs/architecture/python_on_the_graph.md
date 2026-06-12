@@ -10,7 +10,7 @@ on the IR contract hardened by the excellence epic (M3 seams + IR purity).
 **Validation provenance:** this doc was pressure-tested by a 10-agent technical
 sense-check (identity, emitter determinism, diff/patch, state-sync, sandboxing,
 metadata-carriage, transactionality, schema-drift, perf, parity-gate) plus two empirical
-gates run against the live ComfyUI + the vendored ComfyUI oracle. Findings are woven in
+gates run against the live ComfyUI + the installed ComfyUI oracle. Findings are woven in
 below and tagged **[verified]** (checked in code or a live run) vs **[claimed]** (asserted
 by an agent, not yet independently confirmed). The two load-bearing surprises — the parity
 gate is self-referential, and build-time `exec` is an RCE channel — are both **[verified]**
@@ -458,7 +458,7 @@ long-deferred `VibeFlow`.
   governs the *in-graph* boundary; principle 6 covers the *build-time* `exec` hole SD-005
   never addresses.
 - **Native-subgraph stability.** Subgraphs are recent; serialization shape may drift —
-  pin a tested frontend range and validate via the vendored ComfyUI oracle.
+  pin a tested frontend range and validate via the installed ComfyUI oracle.
 - **Diff-noise from variable renumbering.** Inserting one node renumbers downstream emitted
   var names (`KSampler_2`→`KSampler_3`) even though `vibecomfy_uid` is stable — text-keyed
   diffs/caching will be noisy. Key diffs on uid, not source text.

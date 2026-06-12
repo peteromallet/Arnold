@@ -900,7 +900,7 @@
   "groups": [],
   "config": {},
   "extra": {
-    "source": "vendor/direct_templates/05_audio_ace_step_1_t2a_song_subgraphed.json",
+    "source": "ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json",
     "note": "Subgraph materialized for VibeComfy runtime smoke."
   },
   "version": 0.4

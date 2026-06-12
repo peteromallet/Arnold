@@ -13,8 +13,8 @@
       "app_active": true,
       "capability": "text_to_audio_song",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/official/audio/ace_step_1_5_t2a_song.json",
-      "resolved_source_path": "workflow_corpus/official/audio/ace_step_1_5_t2a_song.json",
+      "source_workflow": "ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json",
+      "resolved_source_path": "ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json",
       "source_sha256": "6cbab4f5679824d0c33518953582613dea10e21dfe9ab8e66ff1d4e5d7a6c7ba",
       "source_resolution_status": "resolved",
       "remediation_state": "manual_promoted_parity_preserved",
@@ -38,8 +38,8 @@
       "app_active": true,
       "capability": "image_edit",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/official/edit/qwen_image_edit.json",
-      "resolved_source_path": "workflow_corpus/official/edit/qwen_image_edit.json",
+      "source_workflow": "ready_templates/sources/official/edit/qwen_image_edit.json",
+      "resolved_source_path": "ready_templates/sources/official/edit/qwen_image_edit.json",
       "source_sha256": "34d4a94e9a60c9e60ccd96b965834eee92d0428288cbe000cea6837d9b2f9a94",
       "source_resolution_status": "resolved",
       "remediation_state": "manual_promoted_parity_preserved",
@@ -63,8 +63,8 @@
       "app_active": true,
       "capability": "image_edit",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
-      "resolved_source_path": "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json",
+      "resolved_source_path": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json",
       "source_sha256": "0f80c2530a50fad061dea855c55c50f586a331c5f2d3f37efe7fea59b4ab9610",
       "source_resolution_status": "resolved",
       "remediation_state": "manual_promoted_parity_preserved",
@@ -88,8 +88,8 @@
       "app_active": true,
       "capability": "text_to_image",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/official/image/qwen_image_2512.json",
-      "resolved_source_path": "workflow_corpus/official/image/qwen_image_2512.json",
+      "source_workflow": "ready_templates/sources/official/image/qwen_image_2512.json",
+      "resolved_source_path": "ready_templates/sources/official/image/qwen_image_2512.json",
       "source_sha256": "1825da34e2124e9d6d54c8fbcf5b9f1ab901d2fe39be03b358130bb30f06fbdb",
       "source_resolution_status": "resolved",
       "remediation_state": "manual_promoted_parity_preserved",
@@ -113,8 +113,8 @@
       "app_active": true,
       "capability": "text_to_image",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/official/image/flux2_klein_4b_t2i.json",
-      "resolved_source_path": "workflow_corpus/official/image/flux2_klein_4b_t2i.json",
+      "source_workflow": "ready_templates/sources/official/image/flux2_klein_4b_t2i.json",
+      "resolved_source_path": "ready_templates/sources/official/image/flux2_klein_4b_t2i.json",
       "source_sha256": "237b436e577cdd2a97527766637e87af162b4c14fb293c9c269b470b7a2d0166",
       "source_resolution_status": "resolved",
       "remediation_state": "manual_promoted_parity_preserved",
@@ -138,7 +138,7 @@
       "app_active": true,
       "capability": "text_to_image",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json",
+      "source_workflow": "ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json",
       "resolved_source_path": null,
       "source_sha256": null,
       "source_resolution_status": "unresolved",
@@ -149,7 +149,7 @@
           "severity": "warning",
           "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
           "detail": {
-            "source_workflow": "workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json"
+            "source_workflow": "ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json"
           }
         }
       ],
@@ -172,8 +172,8 @@
       "app_active": true,
       "capability": "text_to_video",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/official/video/wan_t2v.json",
-      "resolved_source_path": "workflow_corpus/official/video/wan_t2v.json",
+      "source_workflow": "ready_templates/sources/official/video/wan_t2v.json",
+      "resolved_source_path": "ready_templates/sources/official/video/wan_t2v.json",
       "source_sha256": "6cfcb2bcc842926d462667f1858651a7a73d698591013e4d0370bdc2984a6fea",
       "source_resolution_status": "resolved",
       "remediation_state": "manual_promoted_parity_preserved",
@@ -197,8 +197,8 @@
       "app_active": true,
       "capability": "image_to_video",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/official/video/wan_i2v.json",
-      "resolved_source_path": "workflow_corpus/official/video/wan_i2v.json",
+      "source_workflow": "ready_templates/sources/official/video/wan_i2v.json",
+      "resolved_source_path": "ready_templates/sources/official/video/wan_i2v.json",
       "source_sha256": "e455b28ec1eb5c2312ec4bb65dd2e2e69e9193ee766bdfc251a9c001a15edee4",
       "source_resolution_status": "resolved",
       "remediation_state": "manual_promoted_parity_preserved",
@@ -222,7 +222,7 @@
       "app_active": true,
       "capability": "text_to_video",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
       "resolved_source_path": null,
       "source_sha256": null,
       "source_resolution_status": "unresolved",
@@ -233,7 +233,7 @@
           "severity": "warning",
           "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
           "detail": {
-            "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
           }
         }
       ],
@@ -256,7 +256,7 @@
       "app_active": true,
       "capability": "image_to_video",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json",
       "resolved_source_path": null,
       "source_sha256": null,
       "source_resolution_status": "unresolved",
@@ -267,7 +267,7 @@
           "severity": "warning",
           "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
           "detail": {
-            "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
           }
         }
       ],
@@ -290,7 +290,7 @@
       "app_active": true,
       "capability": "text_or_image_to_video_upscale",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json",
       "resolved_source_path": null,
       "source_sha256": null,
       "source_resolution_status": "unresolved",
@@ -301,7 +301,7 @@
           "severity": "warning",
           "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
           "detail": {
-            "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json"
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json"
           }
         }
       ],
@@ -324,7 +324,7 @@
       "app_active": true,
       "capability": "video_guided_hdr",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json",
       "resolved_source_path": null,
       "source_sha256": null,
       "source_resolution_status": "unresolved",
@@ -335,7 +335,7 @@
           "severity": "warning",
           "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
           "detail": {
-            "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json"
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json"
           }
         }
       ],
@@ -358,7 +358,7 @@
       "app_active": true,
       "capability": "motion_track_control",
       "source_role": "materialized_ready_python_template",
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json",
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json",
       "resolved_source_path": null,
       "source_sha256": null,
       "source_resolution_status": "unresolved",
@@ -369,7 +369,7 @@
           "severity": "warning",
           "message": "No existing source workflow file found; template was promoted to manual and public contracts were curated in place.",
           "detail": {
-            "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json"
+            "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json"
           }
         }
       ],

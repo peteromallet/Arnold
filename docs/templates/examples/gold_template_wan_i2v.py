@@ -238,7 +238,7 @@ READY_METADATA = ReadyMetadata.build(
     inputs=PUBLIC_INPUTS,
     models=MODELS,
     output_prefix="video/ComfyUI",
-    provenance={"source_workflow": "workflow_corpus/official/video/wan_i2v.json"},
+    provenance={"source_workflow": "ready_templates/sources/official/video/wan_i2v.json"},
 )
 
 

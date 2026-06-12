@@ -53,7 +53,7 @@ A single offline `vibecomfy check` command + CI gate makes drift immediately det
 - `handoff-m2a.md` satisfies the shared handoff contract and names sprint-2b prerequisites.
 
 ## Touchpoints
-`tools/refresh_template_index.py`, new `vibecomfy/commands/check.py`, `vibecomfy/commands/__init__.py`, `workflow_corpus/manifests/coverage.json`, `vibecomfy/registry/models_loader.py`, `vibecomfy/registry/models.yaml`, `asset_manifest.json`, `vibecomfy/model_assets.py`, `vibecomfy/node_packs.py`, `vibecomfy/commands/sources.py`, `.github/workflows/consistency.yml`, `.pre-commit-config.yaml`.
+`tools/refresh_template_index.py`, new `vibecomfy/commands/check.py`, `vibecomfy/commands/__init__.py`, `ready_templates/sources/manifests/coverage.json`, `vibecomfy/registry/models_loader.py`, `vibecomfy/registry/models.yaml`, `asset_manifest.json`, `vibecomfy/model_assets.py`, `vibecomfy/node_packs.py`, `vibecomfy/commands/sources.py`, `.github/workflows/consistency.yml`, `.pre-commit-config.yaml`.
 
 ## Anti-scope
 Do NOT delete stale node-spec files. Do NOT define the schema-provider handoff for classification beyond noting current degraded/off-machine behavior. Do NOT change registry collision behavior.

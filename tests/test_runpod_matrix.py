@@ -76,7 +76,7 @@ def test_wanvideo_wrapper_patch_preserves_sageattn_for_sage_profile() -> None:
 
 
 def test_corpus_matrix_plan_splits_required_workflows(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -110,7 +110,7 @@ def test_corpus_matrix_plan_splits_required_workflows(tmp_path: Path) -> None:
 
 
 def test_coverage_manifest_ready_template_rows_resolve_to_checked_in_python() -> None:
-    manifest = json.loads(Path("workflow_corpus/manifests/coverage.json").read_text(encoding="utf-8"))
+    manifest = json.loads(Path("ready_templates/sources/manifests/coverage.json").read_text(encoding="utf-8"))
     ready_ids = {
         path.relative_to("ready_templates").with_suffix("").as_posix()
         for path in Path("ready_templates").rglob("*.py")
@@ -137,7 +137,7 @@ def test_coverage_manifest_ready_template_rows_resolve_to_checked_in_python() ->
 
 
 def test_corpus_matrix_plan_scope_can_skip_core_rows(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -158,7 +158,7 @@ def test_corpus_matrix_plan_scope_can_skip_core_rows(tmp_path: Path) -> None:
 
 
 def test_corpus_matrix_plan_can_select_wan_5b_only(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -196,7 +196,7 @@ def test_corpus_matrix_plan_can_select_wan_5b_only(tmp_path: Path) -> None:
 
 
 def test_corpus_matrix_plan_has_z_flux_scope(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -221,7 +221,7 @@ def test_corpus_matrix_plan_has_z_flux_scope(tmp_path: Path) -> None:
 
 
 def test_corpus_matrix_plan_has_qwen_image_2512_scope(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -242,7 +242,7 @@ def test_corpus_matrix_plan_has_qwen_image_2512_scope(tmp_path: Path) -> None:
 
 
 def test_corpus_matrix_plan_includes_flux_ready_supplementals(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -305,7 +305,7 @@ def test_corpus_matrix_plan_includes_flux_ready_supplementals(tmp_path: Path) ->
 
 
 def test_corpus_matrix_plan_has_audio_scope(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -331,7 +331,7 @@ def test_corpus_matrix_plan_has_audio_scope(tmp_path: Path) -> None:
 
 
 def test_corpus_matrix_plan_has_qwen_tts_scope(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     ready_dir = tmp_path / "ready_templates" / "audio"
     manifest.parent.mkdir(parents=True)
     ready_dir.mkdir(parents=True)
@@ -377,7 +377,7 @@ def test_corpus_matrix_plan_has_qwen_tts_scope(tmp_path: Path) -> None:
 
 
 def test_corpus_matrix_plan_has_public_ltx_iclora_scope(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -422,7 +422,7 @@ def test_corpus_matrix_plan_has_public_ltx_iclora_scope(tmp_path: Path) -> None:
 
 
 def test_corpus_matrix_plan_has_public_official_ltx_scope(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -480,7 +480,7 @@ def test_corpus_matrix_plan_has_public_official_ltx_scope(tmp_path: Path) -> Non
 
 
 def test_corpus_matrix_plan_has_creation_type_scopes(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -539,7 +539,7 @@ def test_corpus_matrix_plan_has_creation_type_scopes(tmp_path: Path) -> None:
 
 
 def test_corpus_matrix_plan_can_resume_ltx_creation_remainder(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(
@@ -644,7 +644,7 @@ def test_corpus_matrix_handles_flux_custom_scheduler_overrides_and_assets() -> N
 
 
 def test_corpus_matrix_plan_has_wan_infinitetalk_scope(tmp_path: Path) -> None:
-    manifest = tmp_path / "workflow_corpus" / "manifests" / "coverage.json"
+    manifest = tmp_path / "ready_templates/sources" / "manifests" / "coverage.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(
         json.dumps(

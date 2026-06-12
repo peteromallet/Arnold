@@ -163,7 +163,7 @@ def _cmd_nodes_spec_subgraph(args: argparse.Namespace) -> int:
     if source:
         candidates.append(Path(source))
     else:
-        candidates.extend(Path("workflow_corpus").rglob("*.json"))
+        candidates.extend(Path("ready_templates/sources").rglob("*.json"))
     for path in candidates:
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))

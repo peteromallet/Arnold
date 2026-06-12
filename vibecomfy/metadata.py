@@ -27,10 +27,10 @@ MODEL_FILE_EXTENSIONS = ('.safetensors', '.ckpt', '.pt', '.pth', '.gguf', '.onnx
 # Sourced by grepping the runtime-green image/edit corpus for nodes that pair
 # a textual `text`/`prompt` field with downstream image-conditioning use:
 #
-#   workflow_corpus/official/image/{flux2_klein_4b_t2i,flux2_klein_9b_t2i,z_image}.json
-#   workflow_corpus/official/edit/{flux2_klein_4b_image_edit_*,flux2_klein_9b_image_edit_*,qwen_image_edit}.json
-#   workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json
-#   workflow_corpus/official/video/{wan_t2v,wan_i2v,ltx2_3_t2v,ltx2_3_i2v}.json
+#   ready_templates/sources/official/image/{flux2_klein_4b_t2i,flux2_klein_9b_t2i,z_image}.json
+#   ready_templates/sources/official/edit/{flux2_klein_4b_image_edit_*,flux2_klein_9b_image_edit_*,qwen_image_edit}.json
+#   ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json
+#   ready_templates/sources/official/video/{wan_t2v,wan_i2v,ltx2_3_t2v,ltx2_3_i2v}.json
 #
 # Custom-node prompt classes (WanVideoTextEncode, TextEncodeAceStepAudio1.5,
 # LoadWanVideoT5TextEncoder, etc.) are intentionally excluded because they

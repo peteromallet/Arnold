@@ -20,9 +20,9 @@ Official templates already checked in:
 - `image/z_image`: official Z-Image text-to-image.
 - `image/flux2_klein_4b_t2i`: official Flux.2 Klein 4B text-to-image.
 - `edit/flux2_klein_4b_image_edit_distilled`: official Flux.2 Klein 4B distilled image edit.
-- `workflow_corpus/official/image/flux2_klein_9b_t2i.json`: official Flux.2 Klein 9B text-to-image raw source.
-- `workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json`: official Flux.2 Klein 9B image edit raw source.
-- `workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json`: official Flux.2 Klein 9B distilled image edit raw source.
+- `ready_templates/sources/official/image/flux2_klein_9b_t2i.json`: official Flux.2 Klein 9B text-to-image raw source.
+- `ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json`: official Flux.2 Klein 9B image edit raw source.
+- `ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json`: official Flux.2 Klein 9B distilled image edit raw source.
 - `image/flux2_klein_9b_gguf_t2i`: public GGUF fallback for 9B text-to-image because the official 9B safetensors can be gated.
 
 ## Runtime Plan

@@ -33,7 +33,7 @@ not rot** — the system grew faster than its guardrails.
 These appeared in *multiple* independent lenses, which makes them structural rather than local.
 
 ### Theme 1 — Hand-maintained data shadows that drift from code/disk/runtime (5 lenses)
-- `workflow_corpus/manifests/coverage.json` trails disk by 5 templates (lens 7)
+- `ready_templates/sources/manifests/coverage.json` trails disk by 5 templates (lens 7)
 - `_ROLE_CLASSIFICATION` dict hand-maintained, missing custom-node classes → no section comments on LTX templates (lens 3)
 - `KNOWN_NODE_PACKS` computed at import time, stale if the lockfile changes afterward (lens 10)
 - `router_rules.py` — every model is a hand-edited code entry (lens 6)

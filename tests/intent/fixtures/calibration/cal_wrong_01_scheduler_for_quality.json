@@ -1,6 +1,6 @@
 {
   "id": "cal_wrong_01_scheduler_for_quality",
-  "pre_workflow_path": "../../../../workflow_corpus/official/video/wan_t2v.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
   "nl_intent": "Significantly improve the quality of the generated video output",
   "post_edit_ir_patch": {
     "node_id": "3",

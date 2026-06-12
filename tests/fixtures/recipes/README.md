@@ -1,13 +1,14 @@
-# Recipes
+# Recipe Fixtures
 
-Recipes are runnable compositions built from ready templates plus patches or small placeholder chains.
+These recipes are committed fixtures for `vibecomfy test verify` coverage.
+User recipes belong in the local, gitignored root `recipes/` workspace.
 
 Ready templates change handles by defining a reusable graph. Recipes decorate handles by loading a ready graph and applying patches, seeds, or extra nodes for a concrete run.
 
-Run a recipe with:
+Run a fixture recipe with:
 
 ```bash
-python recipes/wan_t2v_long.py
+python tests/fixtures/recipes/wan_t2v_long.py
 ```
 
 ## Current Recipes
@@ -32,6 +33,6 @@ under `out/`.
 
 Useful references:
 
-- [Authoring guide](../docs/authoring.md)
-- [User-code testing](../docs/testing/user_code.md)
-- [Ready templates](../ready_templates/README.md)
+- [Authoring guide](../../../docs/authoring.md)
+- [User-code testing](../../../docs/testing/user_code.md)
+- [Ready templates](../../../ready_templates/README.md)

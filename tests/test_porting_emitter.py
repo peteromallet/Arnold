@@ -71,7 +71,7 @@ def test_emit_scratchpad_python_preserves_ids_extras_inputs_and_provenance() -> 
     text = emit_scratchpad_python(
         _sample_workflow(),
         workflow_id="scratch/sample",
-        source_path="workflow_corpus/source.json",
+        source_path="ready_templates/sources/source.json",
         provenance={"source_hash": "sha256:abc"},
         registered_inputs={"prefix": ("20", "filename_prefix")},
     )
@@ -88,7 +88,7 @@ def test_emit_scratchpad_python_preserves_ids_extras_inputs_and_provenance() -> 
     assert isinstance(workflow, VibeWorkflow)
     assert workflow.id == "scratch/sample"
     assert workflow.source.source_type == "scratchpad"
-    assert workflow.source.path == "workflow_corpus/source.json"
+    assert workflow.source.path == "ready_templates/sources/source.json"
     assert workflow.source.provenance == {"source_hash": "sha256:abc"}
     assert sorted(workflow.nodes) == ["10", "20"]
     assert workflow.nodes["20"].inputs["resize_type.multiple"] == 3
@@ -99,7 +99,7 @@ def test_emit_scratchpad_python_preserves_ids_extras_inputs_and_provenance() -> 
 def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     text = emit_ready_template_python(
         _sample_workflow(),
-        ready_metadata={"ready_template": "image/sample", "source_workflow": "workflow_corpus/source.json"},
+        ready_metadata={"ready_template": "image/sample", "source_workflow": "ready_templates/sources/source.json"},
         ready_requirements={"models": [], "custom_nodes": []},
         template_id="image/sample",
         registered_inputs={"prefix": ("20", "filename_prefix")},
@@ -141,7 +141,7 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
 
 
 def test_ready_template_provenance_paths_are_repo_relative() -> None:
-    source_path = find_repo_root() / "workflow_corpus" / "source.json"
+    source_path = find_repo_root() / "ready_templates/sources" / "source.json"
     text = emit_ready_template_python(
         _sample_workflow(),
         ready_metadata={
@@ -158,9 +158,9 @@ def test_ready_template_provenance_paths_are_repo_relative() -> None:
     )
 
     assert str(source_path) not in text
-    assert "'source_path': 'workflow_corpus/source.json'" in text
-    assert "'source_workflow_path': 'workflow_corpus/source.json'" in text
-    assert "'source_workflow': 'workflow_corpus/source.json'" in text
+    assert "'source_path': 'ready_templates/sources/source.json'" in text
+    assert "'source_workflow_path': 'ready_templates/sources/source.json'" in text
+    assert "'source_workflow': 'ready_templates/sources/source.json'" in text
 
 
 def test_emit_ready_template_omits_empty_model_and_input_boilerplate() -> None:
@@ -188,7 +188,7 @@ def test_emit_ready_template_omits_empty_model_and_input_boilerplate() -> None:
 def test_ready_template_public_inputs_bind_actual_node_objects() -> None:
     text = emit_ready_template_python(
         _sample_workflow(),
-        ready_metadata={"ready_template": "image/sample", "source_workflow": "workflow_corpus/source.json"},
+        ready_metadata={"ready_template": "image/sample", "source_workflow": "ready_templates/sources/source.json"},
         ready_requirements={"models": [], "custom_nodes": []},
         template_id="image/sample",
         registered_inputs={"prefix": ("20", "filename_prefix")},
@@ -477,7 +477,7 @@ def test_model_block_emits_gated_model_assets() -> None:
 
 def test_subgraph_materialized_as_bare_function() -> None:
     text = _emit_ready_from_ui_json(
-        "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",
+        "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json",
         "edit/flux2_klein_9b_image_edit_base",
     )
 
@@ -496,7 +496,7 @@ def test_subgraph_materialized_as_bare_function() -> None:
 
 def test_subgraph_multi_output_returns_tuple() -> None:
     text = _emit_ready_from_ui_json(
-        "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
+        "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json",
         "edit/flux2_klein_4b_image_edit_distilled",
     )
 
@@ -507,7 +507,7 @@ def test_subgraph_multi_output_returns_tuple() -> None:
 
 def test_subgraph_call_site_replaces_raw_call() -> None:
     text = _emit_ready_from_ui_json(
-        "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",
+        "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json",
         "edit/flux2_klein_9b_image_edit_base",
     )
 
@@ -530,7 +530,7 @@ def test_subgraph_call_site_replaces_raw_call() -> None:
 
 def test_subgraph_call_site_uses_widget_fed_literals() -> None:
     text = _emit_ready_from_ui_json(
-        "workflow_corpus/official/image/flux2_klein_9b_t2i.json",
+        "ready_templates/sources/official/image/flux2_klein_9b_t2i.json",
         "image/flux2_klein_9b_t2i",
     )
 
@@ -548,7 +548,7 @@ def test_subgraph_call_site_uses_widget_fed_literals() -> None:
 
 def test_subgraph_call_site_uses_proxy_widget_order_for_z_image() -> None:
     text = _emit_ready_from_ui_json(
-        "workflow_corpus/official/image/z_image.json",
+        "ready_templates/sources/official/image/z_image.json",
         "image/z_image",
     )
 
@@ -567,7 +567,7 @@ def test_subgraph_call_site_uses_proxy_widget_order_for_z_image() -> None:
 
 def test_subgraph_signature_prefers_meaningful_labels_and_cleans_widgets() -> None:
     text = _emit_ready_from_ui_json(
-        "workflow_corpus/official/image/flux2_klein_9b_t2i.json",
+        "ready_templates/sources/official/image/flux2_klein_9b_t2i.json",
         "image/flux2_klein_9b_t2i",
     )
 
@@ -728,7 +728,7 @@ def test_subgraph_widget_values_ignore_curated_ui_only_positions() -> None:
 
 def test_subgraph_slug_collision_disambiguated() -> None:
     text = _emit_ready_from_ui_json(
-        "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",
+        "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json",
         "edit/flux2_klein_9b_image_edit_base",
     )
 
@@ -738,7 +738,7 @@ def test_subgraph_slug_collision_disambiguated() -> None:
 
 def test_nested_subgraph_emits_function_call() -> None:
     text = _emit_ready_from_ui_json(
-        "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
+        "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json",
         "edit/flux2_klein_4b_image_edit_distilled",
     )
 
@@ -751,7 +751,7 @@ def test_nested_subgraph_emits_function_call() -> None:
 
 def test_nested_subgraph_topological_order() -> None:
     text = _emit_ready_from_ui_json(
-        "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
+        "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json",
         "edit/flux2_klein_4b_image_edit_distilled",
     )
 
@@ -796,7 +796,7 @@ def test_nested_subgraph_circular_raises() -> None:
 
 def test_tools_format_as_python_remains_ready_template_wrapper() -> None:
     kwargs = {
-        "ready_metadata": {"ready_template": "image/sample", "source_workflow": "workflow_corpus/source.json"},
+        "ready_metadata": {"ready_template": "image/sample", "source_workflow": "ready_templates/sources/source.json"},
         "ready_requirements": {"models": [], "custom_nodes": []},
         "template_id": "image/sample",
         "registered_inputs": {"prefix": ("20", "filename_prefix")},
@@ -839,7 +839,7 @@ def test_ready_template_id_map_contract_for_representative_emissions() -> None:
 def test_ready_template_ltx_tail_lines_are_inside_workflow_context() -> None:
     text = emit_ready_template_python(
         _sample_workflow(),
-        ready_metadata={"ready_template": "video/ltx2_3_i2v", "source_workflow": "workflow_corpus/source.json"},
+        ready_metadata={"ready_template": "video/ltx2_3_i2v", "source_workflow": "ready_templates/sources/source.json"},
         ready_requirements={"models": [], "custom_nodes": []},
         template_id="video/ltx2_3_i2v",
         registered_inputs={"prefix": ("20", "filename_prefix")},
@@ -1381,7 +1381,7 @@ def test_ideogram_fixture_ports_from_cache_without_live_introspection(
         _fail_live_object_info_async,
     )
 
-    result = port_convert_workflow(wf, raw_workflow=raw, source_path="workflow_corpus/cache_only.json")
+    result = port_convert_workflow(wf, raw_workflow=raw, source_path="ready_templates/sources/cache_only.json")
 
     assert result.validation is not None
     assert result.validation.compile_ok, result.validation.error
@@ -2396,7 +2396,7 @@ def test_emit_scratchpad_python_with_identity_map_does_not_crash(
     text = emit_scratchpad_python(
         workflow,
         workflow_id="scratch_id",
-        source_path="workflow_corpus/source.json",
+        source_path="ready_templates/sources/source.json",
     )
     assert "build" in text
     compile(text, "<scratchpad_id_test>", "exec")

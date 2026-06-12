@@ -8,7 +8,6 @@ __pycache__/
 
 # Generated indexes and runtime artifacts
 workflow_index.json
-template_index.json
 external_workflow_index.json
 node_index.json
 out/
@@ -18,6 +17,8 @@ input/
 input/.DS_Store
 
 # Large local runtime/vendor checkouts
+recipes/
+vendor/ComfyUI/
 vendor/workflow_templates/
 vendor/external_workflows/
 custom_nodes/

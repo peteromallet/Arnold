@@ -26,13 +26,13 @@ READY_METADATA = ReadyMetadata.build(
     capability='image',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['ae.safetensors', 'qwen_3_4b.safetensors', 'z_image_bf16.safetensors']},
-    source_path='workflow_corpus/official/image/z_image.json',
+    source_path='ready_templates/sources/official/image/z_image.json',
     source_id='z_image',
     source_type='api',
-    source_workflow_path='workflow_corpus/official/image/z_image.json',
+    source_workflow_path='ready_templates/sources/official/image/z_image.json',
     output_mode='ready_template',
     ready_id='image/z_image',
-    provenance={'source_path': 'workflow_corpus/official/image/z_image.json', 'source_id': 'z_image', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/image/z_image.json', 'output_mode': 'ready_template', 'ready_id': 'image/z_image', 'source_workflow': 'workflow_corpus/official/image/z_image.json'},
+    provenance={'source_path': 'ready_templates/sources/official/image/z_image.json', 'source_id': 'z_image', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/official/image/z_image.json', 'output_mode': 'ready_template', 'ready_id': 'image/z_image', 'source_workflow': 'ready_templates/sources/official/image/z_image.json'},
 )
 
 # === Subgraph functions ===
@@ -50,7 +50,7 @@ def text_to_image_z_image_base(
 ):
     """Text to Image(Z-Image-Base).
 
-    Materialized from subgraph 9b9009e4-2d3d-445f-9be5-6063f465757e in workflow_corpus/official/image/z_image.json.
+    Materialized from subgraph 9b9009e4-2d3d-445f-9be5-6063f465757e in ready_templates/sources/official/image/z_image.json.
     # vibecomfy source hash: sha256:7842e3e22849fa5c2ae13b65bf3256da47a6b3e242e0b4ca4d9221a0002dc54e
     Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler.
     """

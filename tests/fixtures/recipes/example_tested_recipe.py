@@ -1,4 +1,4 @@
-"""A canonical 'tested' example recipe for `vibecomfy test verify recipes/` exits 0.
+"""A canonical tested recipe fixture for `vibecomfy test verify`.
 
 Build a tiny synthetic VibeWorkflow that doesn't depend on heavy models, so
 the snapshot baseline stays stable across environments.

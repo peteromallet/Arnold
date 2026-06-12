@@ -46,7 +46,7 @@ def test_regenerate_snapshots_check_exits_zero():
 
 def test_vibecomfy_test_verify_recipes_passes():
     result = subprocess.run(
-        [sys.executable, "-m", "vibecomfy.cli", "test", "verify", str(REPO_ROOT / "recipes"), "--json"],
+        [sys.executable, "-m", "vibecomfy.cli", "test", "verify", str(REPO_ROOT / "tests" / "fixtures" / "recipes"), "--json"],
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),

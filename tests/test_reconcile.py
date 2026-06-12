@@ -23,7 +23,7 @@ from vibecomfy.porting.layout.reconcile import (
 )
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
-_CORPUS_ROOT = os.path.join(os.path.dirname(__file__), "..", "workflow_corpus")
+_CORPUS_ROOT = os.path.join(os.path.dirname(__file__), "..", "ready_templates/sources")
 
 
 # ---------------------------------------------------------------------------

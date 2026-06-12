@@ -47,11 +47,11 @@ READY_METADATA = ReadyMetadata.build(
     capability='image_to_video',
     inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
-    source_path='vendor/ComfyUI/tests/unit/playwright_cache/1.43.1+t0.9.45/03_video_wan2_2_14B_i2v_subgraphed.json',
+    source_path='ready_templates/video/wan22_i2v_comfy_lightx2v.py',
     source_id='03_video_wan2_2_14B_i2v_subgraphed',
-    source_type='api',
-    source_workflow_path='vendor/ComfyUI/tests/unit/playwright_cache/1.43.1+t0.9.45/03_video_wan2_2_14B_i2v_subgraphed.json',
-    source_ref='vendor/ComfyUI/tests/unit/playwright_cache/1.43.1+t0.9.45/03_video_wan2_2_14B_i2v_subgraphed.json',
+    source_type='ready_template',
+    source_workflow_path='ready_templates/video/wan22_i2v_comfy_lightx2v.py',
+    source_ref='ready_templates/video/wan22_i2v_comfy_lightx2v.py',
     source_kind='raw_json',
     workflow_source_id='03_video_wan2_2_14B_i2v_subgraphed',
     workflow_source_type='api',
@@ -63,7 +63,7 @@ READY_METADATA = ReadyMetadata.build(
     approach='Native ComfyUI WanImageToVideo Wan 2.2 A14B I2V with fp8_scaled high/low diffusion models and official Lightx2v 4-step LoRAs.',
     runtime_note='Candidate for comparing against the Kijai WanVideoWrapper Wan 2.2 I2V path; uses only Comfy core/runtime node classes after component expansion.',
     smoke_resolution='720x720x81_frames',
-    source_component_workflow='vendor/direct_templates/03_video_wan2_2_14B_i2v_subgraphed.json',
+    source_component_workflow='ready_templates/video/wan22_i2v_comfy_lightx2v.py',
 )
 
 def build() -> VibeWorkflow:
@@ -166,4 +166,3 @@ def build() -> VibeWorkflow:
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/Wan2.2_image_to_video')
-

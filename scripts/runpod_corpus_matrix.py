@@ -125,7 +125,7 @@ if line not in text:
     path.write_text(text.replace(marker, marker + line))
 PY
 mkdir -p input custom_nodes out/corpus_matrix/comfyui out/corpus_matrix/logs
-cp -a workflow_corpus/input/. input/
+cp -a ready_templates/sources/input/. input/
 # Smoke audio + audio-bearing guide videos (speech_smoke.wav + ltx_smoke_guide.mp4 etc.)
 # come from committed fixtures via vibecomfy.fixtures. Falls back to synthetic
 # fixtures if any committed asset is missing or if VIBECOMFY_FIXTURES_REGENERATE=1.
@@ -135,7 +135,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-# Synthetic image fixtures that are not (yet) committed to workflow_corpus/input/.
+# Synthetic image fixtures that are not (yet) committed to ready_templates/sources/input/.
 # Audio + guide videos are handled by `python -m vibecomfy.fixtures copy` above.
 input_dir = Path("input")
 input_dir.mkdir(exist_ok=True)
@@ -157,7 +157,7 @@ mirrored = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
 mirrored.save(pasted_dir / "image (853).png")
 PY
 $PY -m pytest -q tests/test_ready_templates.py tests/test_scratchpad_loader.py tests/test_workflow_core.py -k 'not graphbuilder'
-$PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
+$PY -m vibecomfy.cli sources sync --official ready_templates/sources/official --external ready_templates/sources/custom_nodes --custom-nodes custom_nodes
 cat > out/corpus_matrix/core_workflows.tsv <<'EOF'
 {core_rows}
 EOF
@@ -465,7 +465,7 @@ for repo in [
     local_dir = root / repo.rsplit("/", 1)[-1]
     snapshot_download(repo_id=repo, local_dir=local_dir)
 PY
-$PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
+$PY -m vibecomfy.cli sources sync --official ready_templates/sources/official --external ready_templates/sources/custom_nodes --custom-nodes custom_nodes
 else
 {_legacy_or_registry_block(core_stage_phase)}
 "$PY" - <<'PY'
@@ -582,7 +582,7 @@ for repo, filename, targets, min_size in downloads:
     materialize_model(repo, filename, targets, min_size)
 PY
 {_registry_staging_fallback("gguf")}
-$PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
+$PY -m vibecomfy.cli sources sync --official ready_templates/sources/official --external ready_templates/sources/custom_nodes --custom-nodes custom_nodes
 run_workflow_set out/corpus_matrix/gguf_workflows.tsv
 fi
 if grep -q '[^[:space:]]' out/corpus_matrix/ltx_workflows.tsv; then
@@ -703,7 +703,7 @@ for repo, filename, targets, min_size in downloads:
     materialize_model(repo, filename, targets, min_size)
 PY
 {_registry_staging_fallback("ltx")}
-$PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
+$PY -m vibecomfy.cli sources sync --official ready_templates/sources/official --external ready_templates/sources/custom_nodes --custom-nodes custom_nodes
 if [ "{scope}" = "ltx_official" ] || [ "{scope}" = "ltx_official_public" ] || [ "{scope}" = "ltx_lightricks" ] || [ "{scope}" = "ltx_iclora" ] || [ "{scope}" = "ltx_iclora_public" ]; then
   echo "skipping_remote_ready_materialization_for_lean_ltx_scope={scope}" >> out/corpus_matrix/live.log
 else
@@ -839,7 +839,7 @@ for repo, filename, targets, min_size in downloads:
     materialize_model(repo, filename, targets, min_size)
 PY
 {_registry_staging_fallback("wan_wrapper")}
-$PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
+$PY -m vibecomfy.cli sources sync --official ready_templates/sources/official --external ready_templates/sources/custom_nodes --custom-nodes custom_nodes
 $PY -m tools.refresh_template_index --check
 validate_ready_set out/corpus_matrix/ready_workflows.tsv
 run_workflow_set out/corpus_matrix/wan_wrapper_workflows.tsv

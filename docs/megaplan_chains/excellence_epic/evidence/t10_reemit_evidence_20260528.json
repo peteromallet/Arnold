@@ -28,7 +28,7 @@
         "failing-first fixture",
         "audited seed mapping"
       ],
-      "source": "workflow_corpus/official/image/z_image.json"
+      "source": "ready_templates/sources/official/image/z_image.json"
     },
     {
       "check_artifact": "/private/tmp/vibecomfy_t10/video_ltx2_3_runexx_talking_avatar_qwen_tts.check.json",
@@ -58,7 +58,7 @@
         "failing-first fixture",
         "audited seed mapping"
       ],
-      "source": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json"
+      "source": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json"
     },
     {
       "check_artifact": "/private/tmp/vibecomfy_t10/audio_qwen3_tts_voice_clone.check.json",
@@ -87,7 +87,7 @@
       "reason": [
         "pre-fix inventory-proven resolvable leak"
       ],
-      "source": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json"
+      "source": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json"
     },
     {
       "check_artifact": "/private/tmp/vibecomfy_t10/video_wanvideo_wrapper_21_14b_wanmove_i2v.check.json",
@@ -116,7 +116,7 @@
       "reason": [
         "pre-fix inventory-proven resolvable leak"
       ],
-      "source": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json"
+      "source": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json"
     },
     {
       "check_artifact": "/private/tmp/vibecomfy_t10/video_ltx2_3_runexx_first_last_raw_video_guide.check.json",

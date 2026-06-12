@@ -11,7 +11,7 @@ def build() -> VibeWorkflow:
         'image/z_image',
         WorkflowSource(
             id='image/z_image',
-            path='workflow_corpus/official/image/z_image.json',
+            path='ready_templates/sources/official/image/z_image.json',
             source_type='scratchpad',
             provenance={},
         ),

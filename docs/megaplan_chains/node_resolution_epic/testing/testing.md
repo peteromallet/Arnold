@@ -67,7 +67,7 @@ Each row is one acceptance test. "Gate" = the sprint that must make it pass.
 |---|---|
 | `fixtures/ideogram4_t2i.json` | **Headline.** Real Ideogram-4 workflow — `io.Schema` arity skew + subgraphs + multi-pack. Drives scenarios 1, 8, 12. |
 | `fixtures/ideogram4_t2i.expected_emit.py` | Golden reference: the compiling emit from the 0.24.0.1 run. |
-| `workflow_corpus/official/video/wan_t2v.json` *(referenced, in-repo)* | Provenance-less + multi-pack. Drives scenarios 3, 10. |
+| `ready_templates/sources/official/video/wan_t2v.json` *(referenced, in-repo)* | Provenance-less + multi-pack. Drives scenarios 3, 10. |
 | `evidence/object_info_comfyui_0.24.0.1.json` *(referenced)* | The correct 0.24 schema dump — input for the "current cache" / merge tests (scenarios 2, 3). |
 
 Sprints add: a minimal `io.Schema` single-node fixture (scenario 4), a

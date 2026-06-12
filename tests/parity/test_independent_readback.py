@@ -203,7 +203,7 @@ def _resolve_broadcast_source(
 
 
 def _corpus_json_paths() -> list[str]:
-    return sorted(glob.glob("workflow_corpus/**/*.json", recursive=True))
+    return sorted(glob.glob("ready_templates/sources/**/*.json", recursive=True))
 
 
 def _provider():
@@ -219,8 +219,8 @@ def _local_schema_provider():
 
 # Known non-workflow JSON files in the corpus directory.
 _EXCLUDE_PATHS = {
-    "workflow_corpus/manifests/coverage.json",
-    "workflow_corpus/manifests/ready_regeneration.json",
+    "ready_templates/sources/manifests/coverage.json",
+    "ready_templates/sources/manifests/ready_regeneration.json",
 }
 
 
@@ -295,7 +295,7 @@ def test_independent_readback_multi_edge() -> None:
 def test_independent_readback_corpus() -> None:
     """Layer-1 read-back == compile('api') up to isomorphism for the offline corpus.
 
-    Iterates every UI-shaped JSON workflow in ``workflow_corpus/``, emits UI JSON,
+    Iterates every UI-shaped JSON workflow in ``ready_templates/sources/``, emits UI JSON,
     reconstructs the API graph from links[] + object_info widget order, and compares
     to ``compile('api')`` via ``compile_equivalent``.  The read-back NEVER calls
     ``_normalize_ui_to_api``.

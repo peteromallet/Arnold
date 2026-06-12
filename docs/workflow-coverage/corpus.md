@@ -1,11 +1,11 @@
 # Workflow Corpus
 
-`workflow_corpus/` is the repo-local template set VibeComfy must be able to convert and run. It is intentionally task/model-family focused rather than a random dump of Comfy JSON files.
+`ready_templates/sources/` is the repo-local template set VibeComfy must be able to convert and run. It is intentionally task/model-family focused rather than a random dump of Comfy JSON files.
 
 The required manifest is:
 
 ```text
-workflow_corpus/manifests/coverage.json
+ready_templates/sources/manifests/coverage.json
 ```
 
 Each entry defines:

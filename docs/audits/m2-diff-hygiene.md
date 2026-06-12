@@ -80,8 +80,8 @@ The M2 success criterion is that the helper migration does not churn generated
 or unrelated runtime/template assets. The relevant checks are:
 
 ```bash
-git diff --name-only -- ready_templates tests/snapshots tests/fixtures workflow_corpus
-git ls-files --others --exclude-standard ready_templates tests/snapshots tests/fixtures workflow_corpus
+git diff --name-only -- ready_templates tests/snapshots tests/fixtures ready_templates/sources
+git ls-files --others --exclude-standard ready_templates tests/snapshots tests/fixtures ready_templates/sources
 ```
 
 Both should produce no paths for M2. The parity fixtures under
@@ -91,8 +91,8 @@ negative check because they are M1 baseline test fixtures, not M2 outputs.
 The expanded audit check for review visibility is:
 
 ```bash
-git diff --name-only -- ready_templates tests/snapshots tests/fixtures tests/parity workflow_corpus docs scripts tests/test_testing_api.py vibecomfy/testing
-git ls-files --others --exclude-standard ready_templates tests/snapshots tests/fixtures tests/parity/fixtures workflow_corpus docs scripts tests/test_testing_api.py vibecomfy/testing
+git diff --name-only -- ready_templates tests/snapshots tests/fixtures tests/parity ready_templates/sources docs scripts tests/test_testing_api.py vibecomfy/testing
+git ls-files --others --exclude-standard ready_templates tests/snapshots tests/fixtures tests/parity/fixtures ready_templates/sources docs scripts tests/test_testing_api.py vibecomfy/testing
 ```
 
 Those commands are expected to show chain setup and M1 baseline paths in this

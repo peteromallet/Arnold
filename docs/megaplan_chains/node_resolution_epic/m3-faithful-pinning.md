@@ -37,7 +37,7 @@ Grounded in STRATEGY §5 (item 5, the version-pinned resolution half) + §4.4 (s
 Maps to testing.md scenarios **9, 10, 11** + **12 (faithful)** (Definition of done → Sprint C). The runnable gate:
 - `pytest -m sprint_c docs/megaplan_chains/node_resolution_epic/testing` goes **green** (un-skip scenarios 9, 10, 11, 12-faithful; wire shipped form into `tests/`).
   - **9** Faithful version pinning: resolves + installs the **authored** commit (git-checkout SHA from `ver`), not latest; `aux_id` (owner/repo) handled as a distinct path; local-first git resolution offline.
-  - **10** Provenance-less fallback: `workflow_corpus/official/video/wan_t2v.json` resolves by class→pack with an **explicit warning** (not silent latest); run marked low-confidence.
+  - **10** Provenance-less fallback: `ready_templates/sources/official/video/wan_t2v.json` resolves by class→pack with an **explicit warning** (not silent latest); run marked low-confidence.
   - **11** Snapshot demotion / auto-gen: core schema regenerable from a pinned pip-installable ComfyUI; per-pack versioned files; no hand-captured monolith.
   - **12 (faithful)** Porting `ideogram4_t2i.json` pins each node to its `cnr_id`/`ver` commit.
 - **Headline behavior (AFTER C** in testing.md's NOW/AFTER table): `ideogram4_t2i.json` ports against the **authored** pack versions (from each node's `cnr_id`/`ver`), not "latest".

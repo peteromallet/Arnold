@@ -17,7 +17,7 @@
       "path": "ready_templates/audio/ace_step_1_5_t2a_song.py",
       "ready_id": "audio/ace_step_1_5_t2a_song",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/audio/ace_step_1_5_t2a_song.json"
+      "source_workflow": "ready_templates/sources/official/audio/ace_step_1_5_t2a_song.json"
     },
     {
       "app_active": false,
@@ -36,7 +36,7 @@
       "path": "ready_templates/audio/qwen3_tts_custom_voice.py",
       "ready_id": "audio/qwen3_tts_custom_voice",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_custom_voice.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_custom_voice.json"
     },
     {
       "app_active": false,
@@ -55,7 +55,7 @@
       "path": "ready_templates/audio/qwen3_tts_voice_clone.py",
       "ready_id": "audio/qwen3_tts_voice_clone",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_clone.json"
     },
     {
       "app_active": false,
@@ -74,7 +74,7 @@
       "path": "ready_templates/audio/qwen3_tts_voice_design.py",
       "ready_id": "audio/qwen3_tts_voice_design",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_design.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_design.json"
     },
     {
       "app_active": false,
@@ -93,7 +93,7 @@
       "path": "ready_templates/edit/flux2_klein_4b_image_edit_base.py",
       "ready_id": "edit/flux2_klein_4b_image_edit_base",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json"
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json"
     },
     {
       "app_active": false,
@@ -112,7 +112,7 @@
       "path": "ready_templates/edit/flux2_klein_4b_image_edit_distilled.py",
       "ready_id": "edit/flux2_klein_4b_image_edit_distilled",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json"
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_distilled.json"
     },
     {
       "app_active": false,
@@ -131,7 +131,7 @@
       "path": "ready_templates/edit/flux2_klein_9b_image_edit_base.py",
       "ready_id": "edit/flux2_klein_9b_image_edit_base",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json"
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_base.json"
     },
     {
       "app_active": false,
@@ -150,7 +150,7 @@
       "path": "ready_templates/edit/flux2_klein_9b_image_edit_distilled.py",
       "ready_id": "edit/flux2_klein_9b_image_edit_distilled",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json"
+      "source_workflow": "ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json"
     },
     {
       "app_active": false,
@@ -169,7 +169,7 @@
       "path": "ready_templates/edit/qwen_image_edit.py",
       "ready_id": "edit/qwen_image_edit",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/edit/qwen_image_edit.json"
+      "source_workflow": "ready_templates/sources/official/edit/qwen_image_edit.json"
     },
     {
       "app_active": false,
@@ -207,7 +207,7 @@
       "path": "ready_templates/image/flux2_klein_4b_t2i.py",
       "ready_id": "image/flux2_klein_4b_t2i",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/image/flux2_klein_4b_t2i.json"
+      "source_workflow": "ready_templates/sources/official/image/flux2_klein_4b_t2i.json"
     },
     {
       "app_active": false,
@@ -226,7 +226,7 @@
       "path": "ready_templates/image/flux2_klein_9b_gguf_t2i.py",
       "ready_id": "image/flux2_klein_9b_gguf_t2i",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json"
     },
     {
       "app_active": false,
@@ -245,7 +245,7 @@
       "path": "ready_templates/image/flux2_klein_9b_t2i.py",
       "ready_id": "image/flux2_klein_9b_t2i",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/image/flux2_klein_9b_t2i.json"
+      "source_workflow": "ready_templates/sources/official/image/flux2_klein_9b_t2i.json"
     },
     {
       "app_active": false,
@@ -264,7 +264,7 @@
       "path": "ready_templates/image/qwen_image_2512.py",
       "ready_id": "image/qwen_image_2512",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/image/qwen_image_2512.json"
+      "source_workflow": "ready_templates/sources/official/image/qwen_image_2512.json"
     },
     {
       "app_active": false,
@@ -283,7 +283,7 @@
       "path": "ready_templates/image/z_image.py",
       "ready_id": "image/z_image",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/image/z_image.json"
+      "source_workflow": "ready_templates/sources/official/image/z_image.json"
     },
     {
       "app_active": false,
@@ -378,7 +378,7 @@
       "path": "ready_templates/video/ltx2_3_i2v.py",
       "ready_id": "video/ltx2_3_i2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
     },
     {
       "app_active": false,
@@ -397,7 +397,7 @@
       "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
       "ready_id": "video/ltx2_3_iamccs_audio_extend_low_ram",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json"
     },
     {
       "app_active": false,
@@ -416,7 +416,7 @@
       "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
       "ready_id": "video/ltx2_3_iamccs_audio_image_to_video",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_AU_IMG2V.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_AU_IMG2V.json"
     },
     {
       "app_active": false,
@@ -435,7 +435,7 @@
       "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
       "ready_id": "video/ltx2_3_iamccs_long_i2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json"
     },
     {
       "app_active": false,
@@ -492,7 +492,7 @@
       "path": "ready_templates/video/ltx2_3_lightricks_iclora_hdr.py",
       "ready_id": "video/ltx2_3_lightricks_iclora_hdr",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json"
     },
     {
       "app_active": false,
@@ -511,7 +511,7 @@
       "path": "ready_templates/video/ltx2_3_lightricks_iclora_motion_track.py",
       "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json"
     },
     {
       "app_active": false,
@@ -530,7 +530,7 @@
       "path": "ready_templates/video/ltx2_3_lightricks_iclora_union_control.py",
       "ready_id": "video/ltx2_3_lightricks_iclora_union_control",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Union_Control_Distilled.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Union_Control_Distilled.json"
     },
     {
       "app_active": false,
@@ -549,7 +549,7 @@
       "path": "ready_templates/video/ltx2_3_lightricks_two_stage.py",
       "ready_id": "video/ltx2_3_lightricks_two_stage",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json"
     },
     {
       "app_active": false,
@@ -568,7 +568,7 @@
       "path": "ready_templates/video/ltx2_3_runexx_custom_audio.py",
       "ready_id": "video/ltx2_3_runexx_custom_audio",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Custom_Audio.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Custom_Audio.json"
     },
     {
       "app_active": false,
@@ -587,7 +587,7 @@
       "path": "ready_templates/video/ltx2_3_runexx_first_last_frame.py",
       "ready_id": "video/ltx2_3_runexx_first_last_frame",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json"
     },
     {
       "app_active": false,
@@ -625,7 +625,7 @@
       "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
       "ready_id": "video/ltx2_3_runexx_first_middle_last_frame",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FML2V_First_Middle_Last_Frame_guider.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_FML2V_First_Middle_Last_Frame_guider.json"
     },
     {
       "app_active": false,
@@ -644,7 +644,7 @@
       "path": "ready_templates/video/ltx2_3_runexx_lipsync_custom_audio.py",
       "ready_id": "video/ltx2_3_runexx_lipsync_custom_audio",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Just_Talk_custom_audio_lipsync.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Just_Talk_custom_audio_lipsync.json"
     },
     {
       "app_active": false,
@@ -663,7 +663,7 @@
       "path": "ready_templates/video/ltx2_3_runexx_motion_transfer_dwpose.py",
       "ready_id": "video/ltx2_3_runexx_motion_transfer_dwpose",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Motion_Transfer_DWPose.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Motion_Transfer_DWPose.json"
     },
     {
       "app_active": false,
@@ -682,7 +682,7 @@
       "path": "ready_templates/video/ltx2_3_runexx_music_video_low_ram.py",
       "ready_id": "video/ltx2_3_runexx_music_video_low_ram",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json"
     },
     {
       "app_active": false,
@@ -701,7 +701,7 @@
       "path": "ready_templates/video/ltx2_3_runexx_talking_avatar_qwen_tts.py",
       "ready_id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json"
     },
     {
       "app_active": false,
@@ -720,7 +720,7 @@
       "path": "ready_templates/video/ltx2_3_runexx_video_to_video_extend.py",
       "ready_id": "video/ltx2_3_runexx_video_to_video_extend",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json"
     },
     {
       "app_active": false,
@@ -739,7 +739,7 @@
       "path": "ready_templates/video/ltx2_3_t2v.py",
       "ready_id": "video/ltx2_3_t2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json"
     },
     {
       "app_active": false,
@@ -796,7 +796,7 @@
       "path": "ready_templates/video/wan_i2v.py",
       "ready_id": "video/wan_i2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/video/wan_i2v.json"
+      "source_workflow": "ready_templates/sources/official/video/wan_i2v.json"
     },
     {
       "app_active": false,
@@ -815,7 +815,7 @@
       "path": "ready_templates/video/wan_t2v.py",
       "ready_id": "video/wan_t2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/official/video/wan_t2v.json"
+      "source_workflow": "ready_templates/sources/official/video/wan_t2v.json"
     },
     {
       "app_active": false,
@@ -834,7 +834,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_13b_control_lora.py",
       "ready_id": "video/wanvideo_wrapper_13b_control_lora",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json"
     },
     {
       "app_active": false,
@@ -853,7 +853,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
       "ready_id": "video/wanvideo_wrapper_13b_recammaster",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_recammaster.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_recammaster.json"
     },
     {
       "app_active": false,
@@ -872,7 +872,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_13b_vace.py",
       "ready_id": "video/wanvideo_wrapper_13b_vace",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json"
     },
     {
       "app_active": false,
@@ -891,7 +891,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_flf2v.py",
       "ready_id": "video/wanvideo_wrapper_21_14b_flf2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_flf2v.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_flf2v.json"
     },
     {
       "app_active": false,
@@ -910,7 +910,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control.py",
       "ready_id": "video/wanvideo_wrapper_21_14b_fun_control",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control.json"
     },
     {
       "app_active": false,
@@ -929,7 +929,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control_camera.py",
       "ready_id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json"
     },
     {
       "app_active": false,
@@ -948,7 +948,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_i2v.py",
       "ready_id": "video/wanvideo_wrapper_21_14b_i2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_i2v.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_i2v.json"
     },
     {
       "app_active": false,
@@ -967,7 +967,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_t2v.py",
       "ready_id": "video/wanvideo_wrapper_21_14b_t2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_t2v.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_t2v.json"
     },
     {
       "app_active": false,
@@ -986,7 +986,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
       "ready_id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json"
     },
     {
       "app_active": false,
@@ -1005,7 +1005,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
       "ready_id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json"
     },
     {
       "app_active": false,
@@ -1081,7 +1081,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_22_5b_i2v.py",
       "ready_id": "video/wanvideo_wrapper_22_5b_i2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v.json"
     },
     {
       "app_active": false,
@@ -1100,7 +1100,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_22_5b_i2v_controlnet.py",
       "ready_id": "video/wanvideo_wrapper_22_5b_i2v_controlnet",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v_controlnet.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_i2v_controlnet.json"
     },
     {
       "app_active": false,
@@ -1119,7 +1119,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_22_5b_ovi_audio_i2v.py",
       "ready_id": "video/wanvideo_wrapper_22_5b_ovi_audio_i2v",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json"
     },
     {
       "app_active": false,
@@ -1138,7 +1138,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_22_5b_t2v_controlnet.py",
       "ready_id": "video/wanvideo_wrapper_22_5b_t2v_controlnet",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_t2v_controlnet.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_t2v_controlnet.json"
     },
     {
       "app_active": false,
@@ -1157,7 +1157,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
       "ready_id": "video/wanvideo_wrapper_22_s2v_context_window",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_context_window.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_context_window.json"
     },
     {
       "app_active": false,
@@ -1176,7 +1176,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_22_s2v_framepack_pose.py",
       "ready_id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_framepack_pose.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_framepack_pose.json"
     },
     {
       "app_active": false,
@@ -1214,7 +1214,7 @@
       "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
       "ready_id": "video/wanvideo_wrapper_wan_animate",
       "source_role": null,
-      "source_workflow": "workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan_animate.json"
+      "source_workflow": "ready_templates/sources/custom_nodes/wanvideo_wrapper/kijai/wan_animate.json"
     }
   ],
   "exclude_rule": "exclude __init__.py and files whose basename starts with '_'",

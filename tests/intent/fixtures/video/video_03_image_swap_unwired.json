@@ -1,6 +1,6 @@
 {
   "id": "video_03_image_swap_unwired",
-  "pre_workflow_path": "../../../../workflow_corpus/official/video/wan_i2v.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_i2v.json",
   "nl_intent": "Use a different starting image for the video",
   "post_edit_ir_patch": {
     "node_id": "52",

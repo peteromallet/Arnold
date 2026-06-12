@@ -45,26 +45,21 @@ def _schema(class_type: str, outputs: list[OutputSpec], *, confidence: float = 1
 
 
 def _require_comfy_import():
-    """Set up the vendored ComfyUI path and hard-import the converter.
+    """Hard-import the installed ComfyUI converter.
 
     When ``VIBECOMFY_COMFY_SMOKE=1`` the oracle gate MUST NOT silently skip
-    if the submodule is absent — return the converter callable on success or
+    if the optional dependency is absent — return the converter callable on success or
     raise a loud diagnostic on failure.
     """
-    from vibecomfy.comfy_backend import _find_vendored_comfy_dir, _vendor_on_path
+    from vibecomfy.comfy_backend import ensure_nodes
 
-    _vendor_on_path()
-    vendored_dir = _find_vendored_comfy_dir()
+    ensure_nodes()
     try:
         from comfy.component_model.workflow_convert import convert_ui_to_api  # noqa: F811
     except ImportError as exc:
-        info = (
-            f"vendor/ComfyUI dir {'found at ' + str(vendored_dir) if vendored_dir else 'NOT FOUND'}; "
-            f"sys.path prefix: {[p for p in __import__('sys').path if 'Comfy' in str(p)]}"
-        )
         raise ImportError(
             f"Cannot import comfy.component_model.workflow_convert. "
-            f"Is vendor/ComfyUI initialised? ({info})"
+            "Install VibeComfy with the pinned [comfy] extra."
         ) from exc
     _install_comfy_nodes_context_stub()
     return convert_ui_to_api
@@ -457,7 +452,7 @@ def test_corpus_roundtrip_parity_with_compile_api() -> None:
     from vibecomfy.ingest.normalize import _normalize_ui_to_api, convert_to_vibe_format
     from vibecomfy.porting.parity import compile_equivalent
 
-    paths = sorted(glob.glob("workflow_corpus/official/**/*.json", recursive=True))
+    paths = sorted(glob.glob("ready_templates/sources/official/**/*.json", recursive=True))
     checked = 0
     for path in paths:
         with open(path) as handle:
@@ -485,7 +480,7 @@ def test_corpus_compile_api_byte_identity() -> None:
     byte-identical and independent of display-side changes (virtual wires etc.).
 
     The execution graph MUST be unchanged by the helper re-emit introduced in T6.
-    This test loads every UI-shaped JSON workflow in workflow_corpus/ (excluding
+    This test loads every UI-shaped JSON workflow in ready_templates/sources/ (excluding
     manifests), calls ``wf.compile('api')``, and verifies:
     1. The output is a valid API dict with ``class_type`` + ``inputs`` per node.
     2. The deterministic JSON serialization is stable (same in → same out).
@@ -497,7 +492,7 @@ def test_corpus_compile_api_byte_identity() -> None:
 
     from vibecomfy.ingest.normalize import convert_to_vibe_format
 
-    corpus_root = Path("workflow_corpus")
+    corpus_root = Path("ready_templates/sources")
     exclude = {
         "manifests/coverage.json",
         "manifests/ready_regeneration.json",
@@ -591,7 +586,7 @@ def test_corpus_mode_zero_compile_byte_identity() -> None:
     from vibecomfy.ingest.normalize import convert_to_vibe_format
     from vibecomfy.workflow import _get_node_mode
 
-    corpus_root = Path("workflow_corpus")
+    corpus_root = Path("ready_templates/sources")
     exclude = {
         "manifests/coverage.json",
         "manifests/ready_regeneration.json",
@@ -824,12 +819,12 @@ def test_no_definitions_omits_definitions_and_state() -> None:
 # ---------------------------------------------------------------------------
 
 _STARTER_SET = [
-    "workflow_corpus/official/image/z_image.json",
-    "workflow_corpus/official/image/flux2_klein_4b_t2i.json",
-    "workflow_corpus/official/video/wan_t2v.json",
-    "workflow_corpus/official/video/wan_i2v.json",
-    "workflow_corpus/official/edit/qwen_image_edit.json",
-    "workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json",
+    "ready_templates/sources/official/image/z_image.json",
+    "ready_templates/sources/official/image/flux2_klein_4b_t2i.json",
+    "ready_templates/sources/official/video/wan_t2v.json",
+    "ready_templates/sources/official/video/wan_i2v.json",
+    "ready_templates/sources/official/edit/qwen_image_edit.json",
+    "ready_templates/sources/official/edit/flux2_klein_4b_image_edit_base.json",
 ]
 
 
@@ -862,7 +857,7 @@ def test_offline_parity_never_imports_comfy() -> None:
     from vibecomfy.ingest.normalize import convert_to_vibe_format
     from vibecomfy.porting.emit.ui import offline_emitter_normalizer_self_consistency_check
 
-    with open("workflow_corpus/official/video/wan_t2v.json") as handle:
+    with open("ready_templates/sources/official/video/wan_t2v.json") as handle:
         raw = json.load(handle)
     wf = convert_to_vibe_format(raw)
     provider = _local_provider()
@@ -1050,7 +1045,7 @@ def test_comfy_release_smoke_convert_ui_to_api() -> None:
 
 # Custom-node families whose schema-less nodes cause known parity failures in
 # the Layer-3 gate.  Each entry is a path substring matched against the corpus
-# workflow path relative to workflow_corpus/.  Failures from these families are
+# workflow path relative to ready_templates/sources/.  Failures from these families are
 # counted but do NOT fail the gate — only a rising count outside the allowlist
 # is treated as a regression.
 #
@@ -1089,7 +1084,7 @@ def test_layer3_corpus_wide_convert_ui_to_api_gate() -> None:
     """Step 14b (T20): Layer-3 GATE OF RECORD for corpus-wide convert_ui_to_api.
 
     Deepens the single-workflow smoke test to the entire real corpus.
-    For every UI-shaped JSON workflow in workflow_corpus/ (excluding manifests):
+    For every UI-shaped JSON workflow in ready_templates/sources/ (excluding manifests):
 
     1. emit_ui_json(wf) → ComfyUI's convert_ui_to_api → canonical_equal vs
        wf.compile('api'), confirming the emitter + Comfy converter produce the
@@ -1121,7 +1116,7 @@ def test_layer3_corpus_wide_convert_ui_to_api_gate() -> None:
     from vibecomfy.ingest.normalize import normalize_to_api
     from vibecomfy.testing.canonical import canonical_equal
 
-    corpus_root = Path("workflow_corpus")
+    corpus_root = Path("ready_templates/sources")
     exclude = {
         "manifests/coverage.json",
         "manifests/ready_regeneration.json",
@@ -1459,9 +1454,9 @@ def test_default_output_path_from_source_name() -> None:
     from vibecomfy.ingest.normalize import convert_to_vibe_format
     from vibecomfy.porting.emit.ui import default_output_path
 
-    with open("workflow_corpus/official/video/wan_t2v.json") as handle:
+    with open("ready_templates/sources/official/video/wan_t2v.json") as handle:
         raw = json.load(handle)
-    wf = convert_to_vibe_format(raw, source_path="workflow_corpus/official/video/wan_t2v.json")
+    wf = convert_to_vibe_format(raw, source_path="ready_templates/sources/official/video/wan_t2v.json")
     assert default_output_path(wf).as_posix() == "out/ui_export/wan_t2v.json"
 
 

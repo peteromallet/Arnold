@@ -16,8 +16,8 @@ class SourceSyncResult:
 
 def sync_sources(
     *,
-    official: str | Path = "workflow_corpus/official",
-    external: str | Path = "workflow_corpus/custom_nodes",
+    official: str | Path = "ready_templates/sources/official",
+    external: str | Path = "ready_templates/sources/custom_nodes",
     custom_nodes: str | Path = "custom_nodes",
 ) -> SourceSyncResult:
     official_rows = index_workflows(official)

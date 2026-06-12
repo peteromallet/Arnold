@@ -21,7 +21,7 @@ from vibecomfy.utils import find_repo_root
 
 REPO_ROOT = find_repo_root()
 READY_ROOT = REPO_ROOT / "ready_templates"
-COVERAGE_PATH = REPO_ROOT / "workflow_corpus" / "manifests" / "coverage.json"
+COVERAGE_PATH = REPO_ROOT / "ready_templates/sources" / "manifests" / "coverage.json"
 TEMPLATE_INDEX_PATH = REPO_ROOT / "template_index.json"
 
 # ---------------------------------------------------------------------------

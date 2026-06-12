@@ -1,53 +1,37 @@
 """Optional ComfyUI backend adoption hook (M2 Step 7, SD2).
 
 This module is an OPTIONAL optimization, never a hard dependency. M2's identity
-derivation is pure-Python (see ``vibecomfy.porting.identity.scope.sg_key``); nothing in
-the M2 feature set requires a real ComfyUI node catalog. ``ensure_nodes()`` lets
-a caller *adopt* the real catalog when it happens to be available — either via
-the ``[comfy]`` optional-dependency extra or the vendored ``vendor/ComfyUI``
-submodule — and otherwise returns ``False`` so callers fall back to the
-pure-Python path without error.
+derivation is pure-Python (see ``vibecomfy.porting.identity.scope.sg_key``);
+nothing in the M2 feature set requires a real ComfyUI node catalog.
+``ensure_nodes()`` lets a caller *adopt* the real catalog when it happens to be
+available via the ``[comfy]`` optional-dependency extra, and otherwise returns
+``False`` so callers fall back to the pure-Python path without error.
 
 The import is guarded by ``try/except`` and memoized so it is attempted at most
-once per process. When the extra is not installed AND the submodule is
-uninitialized, ``ensure_nodes()`` returns ``False`` and never raises.
+once per process. When the extra is not installed, ``ensure_nodes()`` returns
+``False`` and never raises.
 
 
 Compatibility matrix (S1 oracle-durability)
 -------------------------------------------
-Also provides a checked-in ComfyUI version matrix loader and vendored-commit
-reader so the S1 skew fence can compare the running ComfyUI against the pinned
-oracle without importing the full dependency tree. ``load_version_matrix()``
-returns a typed ``VersionMatrix`` record; callers use
-``read_vendored_commit()`` to get the *actual* commit from the submodule
-checkout (or ``None`` when the submodule is absent / uninitialised). In
-pip-installed contexts where no ``.git`` directory exists,
-``read_vendored_commit()`` returns ``None`` and callers should fall back to
-``VersionMatrix.pinned_comfyui_commit``.
+Also provides a checked-in ComfyUI version matrix loader so the S1 skew fence
+can compare the running ComfyUI against the pinned oracle without importing the
+full dependency tree. ``load_version_matrix()`` returns a typed
+``VersionMatrix`` record. ``read_vendored_commit()`` remains as a compatibility
+shim for older callers, but tracked vendored ComfyUI checkouts are no longer
+part of this repository.
 """
 from __future__ import annotations
 
 import json
 from importlib import metadata as importlib_metadata
-import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from vibecomfy.errors import DriftError
 
-# Anchor the vendored-checkout lookup to the repo root (the package's parent),
-# NOT the process CWD. ``vibecomfy/comfy_backend.py`` lives one level below the
-# repo root, so ``parent.parent`` is the checkout that holds ``vendor/ComfyUI``.
-# A CWD-relative path silently failed whenever a caller (e.g. the ``port export``
-# CLI subprocess) ran from a tmp dir, which tripped the refuse.py hard import
-# check. We keep the CWD-relative path as a fallback for unusual layouts.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_VENDOR_COMFY_CANDIDATES = (
-    _REPO_ROOT / "vendor" / "ComfyUI",
-    Path("vendor") / "ComfyUI",
-)
 
 # Memoized result of ensure_nodes(); ``None`` means "not yet computed".
 _ENSURE_CACHE: bool | None = None
@@ -70,7 +54,7 @@ _MISSING = _MissingSentinel()
 
 @dataclass(frozen=True)
 class VersionMatrix:
-    """Checked-in version pin for the vendored ComfyUI oracle.
+    """Checked-in version pin for the installed ComfyUI oracle.
 
     Loaded from ``vibecomfy/registry/comfy_version_matrix.json`` at most once per process.
     All fields are required; missing / malformed JSON raises immediately
@@ -109,7 +93,7 @@ class ComfyCompatibilityError(DriftError):
                 f"{compatibility.actual.get('version')!r}"
             ),
             next_action=(
-                "Use the pinned vendor/ComfyUI checkout or a matching installed "
+                "Install the pinned `vibecomfy[comfy]` extra or a matching "
                 "ComfyUI build before running strict converter-backed paths."
             ),
         )
@@ -212,61 +196,19 @@ def reset_matrix_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Vendored ComfyUI commit / version reading
+# ComfyUI commit / version reading
 # ---------------------------------------------------------------------------
 
 
-def _find_vendored_comfy_dir() -> Path | None:
-    """Return the first *populated* vendored ComfyUI directory, or ``None``.
-
-    An empty directory (submodule not initialised) is treated as absent
-    so ``read_vendored_commit()`` returns ``None`` instead of escaping
-    into a parent repo.
-    """
-    for candidate in _VENDOR_COMFY_CANDIDATES:
-        resolved = candidate.resolve()
-        if not resolved.is_dir():
-            continue
-        # Must contain at least one entry beyond '.' and '..'
-        try:
-            next(resolved.iterdir())
-        except StopIteration:
-            continue  # empty directory — submodule not initialised
-        return resolved
-    return None
-
-
 def read_vendored_commit() -> str | None:
-    """Read the *actual* commit SHA of the vendored ComfyUI submodule.
+    """Compatibility shim for the removed tracked ComfyUI submodule.
 
-    Uses ``git rev-parse HEAD`` inside the checkout so it reflects the
-    on-disk state.  Returns ``None`` when:
-
-    * The ``vendor/ComfyUI`` directory does not exist (submodule not
-      initialised).
-    * The directory exists but is not a git repository (e.g. pip-installed
-      package with only the matrix file).
-    * ``git`` is not available on ``PATH``.
-
-    Callers should fall back to
-    :attr:`VersionMatrix.pinned_comfyui_commit` when this returns ``None``.
+    Strict paths now use the installed ``comfyui`` package from the ``[comfy]``
+    optional dependency. Pip installs generally do not expose a source checkout
+    SHA, so callers should compare :func:`read_live_comfy_version` when this
+    returns ``None``.
     """
-    vendor_dir = _find_vendored_comfy_dir()
-    if vendor_dir is None:
-        return None
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(vendor_dir),
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
+    return None
 
 
 def read_live_comfy_version() -> str | None:
@@ -362,34 +304,18 @@ def require_comfy_compatibility(
 # ---------------------------------------------------------------------------
 
 
-def _vendor_on_path() -> None:
-    """Best-effort: prepend the vendored ComfyUI checkout to ``sys.path``.
-
-    No-op when the submodule directory is absent (uninitialized submodule), so
-    the subsequent import simply fails and the caller falls back.
-    """
-    vendor_dir = _find_vendored_comfy_dir()
-    if vendor_dir is None:
-        return
-    resolved = str(vendor_dir)
-    if resolved not in sys.path:
-        sys.path.insert(0, resolved)
-
-
 def ensure_nodes() -> bool:
     """Idempotently attempt to make the ComfyUI node catalog importable.
 
     Returns ``True`` when the comfy backend imported successfully, ``False``
     otherwise. Memoized: the import is attempted at most once per process, so
-    repeated calls are cheap. Never raises — an absent ``[comfy]`` extra or an
-    uninitialized ``vendor/ComfyUI`` submodule yields ``False`` and the caller
-    proceeds on the pure-Python path.
+    repeated calls are cheap. Never raises — an absent ``[comfy]`` extra yields
+    ``False`` and the caller proceeds on the pure-Python path.
     """
     global _ENSURE_CACHE
     if _ENSURE_CACHE is not None:
         return _ENSURE_CACHE
     try:
-        _vendor_on_path()
         import comfy.component_model.workflow_convert  # noqa: F401
     except Exception:
         _ENSURE_CACHE = False

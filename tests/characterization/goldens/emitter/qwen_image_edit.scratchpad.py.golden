@@ -11,7 +11,7 @@ def build() -> VibeWorkflow:
         'edit/qwen_image_edit',
         WorkflowSource(
             id='edit/qwen_image_edit',
-            path='workflow_corpus/official/edit/qwen_image_edit.json',
+            path='ready_templates/sources/official/edit/qwen_image_edit.json',
             source_type='scratchpad',
             provenance={},
         ),

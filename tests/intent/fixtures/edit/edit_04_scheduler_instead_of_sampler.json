@@ -1,6 +1,6 @@
 {
   "id": "edit_04_scheduler_instead_of_sampler",
-  "pre_workflow_path": "../../../../workflow_corpus/official/edit/qwen_image_edit.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/edit/qwen_image_edit.json",
   "nl_intent": "Switch to a higher-quality sampler for the edit",
   "post_edit_ir_patch": {
     "node_id": "93",

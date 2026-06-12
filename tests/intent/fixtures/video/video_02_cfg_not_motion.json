@@ -1,6 +1,6 @@
 {
   "id": "video_02_cfg_not_motion",
-  "pre_workflow_path": "../../../../workflow_corpus/official/video/wan_t2v.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/wan_t2v.json",
   "nl_intent": "Add more motion and dynamic movement to the video",
   "post_edit_ir_patch": {
     "node_id": "3",

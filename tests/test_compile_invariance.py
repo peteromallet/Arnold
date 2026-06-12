@@ -131,12 +131,12 @@ def _compare_api_dicts(vc_api: dict, comfy_api: dict) -> list[str]:
     [
         # mode 4 (bypass): flux2_klein_4b_t2i has 2 bypass nodes (ids 77, 78)
         (
-            "workflow_corpus/official/image/flux2_klein_4b_t2i.json",
+            "ready_templates/sources/official/image/flux2_klein_4b_t2i.json",
             "bypass_mode4",
         ),
         # mode 2 (mute): z_image with first non-note node set to mode 2
         (
-            "workflow_corpus/official/image/z_image.json",
+            "ready_templates/sources/official/image/z_image.json",
             "mute_mode2",
         ),
     ],
@@ -161,7 +161,7 @@ def test_bypass_equivalence_against_convert_ui_to_api(
 
     from vibecomfy.comfy_backend import ensure_nodes
     if not ensure_nodes():
-        pytest.skip("vendored ComfyUI not available (vendor/ComfyUI submodule uninitialized)")
+        pytest.skip("ComfyUI converter not available; install the pinned [comfy] extra")
 
     comfy_convert = pytest.importorskip(
         "comfy.component_model.workflow_convert"

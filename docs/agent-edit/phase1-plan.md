@@ -40,8 +40,7 @@ The single owner of identity and id allocation; everything downstream mints from
   graph root's `last_node_id`/`last_link_id` (`ui_emitter.py:2023`) **and per-subgraph
   definition** `state.lastNodeId`/`lastLinkId`. `add_node`/`upsert_link` mint from the
   right scope's counter and always advance the **root** counter for global uniqueness
-  (the vendored backend dedupes subgraph ids against root `last_node_id` —
-  `vendor/ComfyUI/comfy/component_model/workflow_convert.py:721`). Without this,
+  (the ComfyUI converter dedupes subgraph ids against root `last_node_id`). Without this,
   applying the candidate collides ids or drops links, and the per-node C5 assert can't
   catch it (root/scope counters aren't per-node fields).
 - Touch: `agent_edit.py::_stage_ingest`; new `porting/edit_ledger.py` (scope-aware uid

@@ -19,7 +19,7 @@ declared in `INPUT_TYPES`?** **A: YES (for linked inputs), and validation does
 not reject it.** Verified by reading this fork's execution path, not a black-box
 queue:
 - `validate_inputs` loops only over the node's *declared* `required`+`optional`
-  keys (`vendor/ComfyUI/comfy/cmd/execution.py:1037`) — an undeclared prompt key
+  keys (`comfy/cmd/execution.py`) — an undeclared prompt key
   is never examined → never rejected.
 - `get_input_data`'s `is_link` branch (`execution.py:204-212`) delivers a wired
   input regardless of declaration (`get_input_info` returns `(None,None,None)`

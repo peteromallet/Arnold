@@ -14,7 +14,7 @@ PUBLIC_INPUT_METADATA = {
 READY_METADATA = ReadyMetadata.build(
     capability='image',
     inputs=PUBLIC_INPUT_METADATA,
-    provenance={'source_path': 'workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json', 'source_id': 'flux2_klein_9b_image_edit_distilled', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json', 'output_mode': 'ready_template', 'ready_id': 'edit/flux2_klein_9b_image_edit_distilled'},
+    provenance={'source_path': 'ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json', 'source_id': 'flux2_klein_9b_image_edit_distilled', 'source_type': 'api', 'source_workflow_path': 'ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json', 'output_mode': 'ready_template', 'ready_id': 'edit/flux2_klein_9b_image_edit_distilled'},
 )
 
 # === Subgraph functions ===
@@ -29,7 +29,7 @@ def image_edit_flux2_klein_9b_distilled(
 ):
     """Image Edit (Flux.2 Klein 9B Distilled) - single-image variant.
 
-    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json.
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json.
     # vibecomfy source hash: sha256:0b7a93c4ebae73fabb58354865af446dc745929583f3fafe5b72376fa5da1df4
     Inner nodes: KSamplerSelect, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, EmptyFlux2LatentImage, CFGGuider, Flux2Scheduler, GetImageSize, ReferenceLatentx2, ImageScaleToTotalPixels, VAELoader, CLIPTextEncode, ConditioningZeroOut, VAEEncode.
     """
@@ -93,7 +93,7 @@ def image_edit_flux2_klein_9b_distilled_dual(
 ):
     """Image Edit (Flux.2 Klein 9B Distilled) - two-image variant.
 
-    Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json.
+    Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in ready_templates/sources/official/edit/flux2_klein_9b_image_edit_distilled.json.
     # vibecomfy source hash: sha256:e3e88715b6dc65b2dda2734513ba272914a1375e81ddf783dc057743d63912c3
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, CLIPTextEncode, ConditioningZeroOut, EmptyFlux2LatentImage, GetImageSize, VAEEncodex2, ReferenceLatentx4, VAELoader, ImageScaleToTotalPixelsx2.
     """

@@ -208,7 +208,7 @@ def test_entries_from_scratchpad_path_respects_explicit_subdir_for_non_split_ass
 
 
 def test_real_wan_t2v_extracts_three_assets() -> None:
-    entries = extract_from_raw_workflow(load_workflow_json("workflow_corpus/official/video/wan_t2v.json"))
+    entries = extract_from_raw_workflow(load_workflow_json("ready_templates/sources/official/video/wan_t2v.json"))
 
     assert [(entry["name"], entry["subdir"]) for entry in entries] == [
         ("wan2.1_t2v_1.3B_fp16.safetensors", "diffusion_models"),
@@ -219,7 +219,7 @@ def test_real_wan_t2v_extracts_three_assets() -> None:
 
 
 def test_real_flux2_subgraph_extracts_pre_policy_assets() -> None:
-    entries = extract_from_raw_workflow(load_workflow_json("workflow_corpus/official/image/flux2_klein_9b_t2i.json"))
+    entries = extract_from_raw_workflow(load_workflow_json("ready_templates/sources/official/image/flux2_klein_9b_t2i.json"))
 
     assert [(entry["name"], entry["subdir"]) for entry in entries] == [
         ("flux-2-klein-base-9b-fp8.safetensors", "diffusion_models"),

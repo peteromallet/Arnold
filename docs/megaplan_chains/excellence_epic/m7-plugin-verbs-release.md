@@ -44,7 +44,7 @@ The v2.8 release note must state plainly what users get from the epic: corrupted
 - Canonical release note under `docs/release_notes/`, migration docs, README/AGENTS.md/CLAUDE.md updates, and `handoff-m7.md` are committed.
 
 ## Touchpoints
-`ops/{image,video,audio}.py`, `ops/registry.py`, `router.py`, `router_rules.py`, `blocks/__init__.py`, `patches/registry.py`, `registry/ready.py`, `ready_templates/**`, `workflow_corpus/manifests/coverage.json`, `pyproject.toml`, `vibecomfy/__init__.py`, `tests/`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/`.
+`ops/{image,video,audio}.py`, `ops/registry.py`, `router.py`, `router_rules.py`, `blocks/__init__.py`, `patches/registry.py`, `registry/ready.py`, `ready_templates/**`, `ready_templates/sources/manifests/coverage.json`, `pyproject.toml`, `vibecomfy/__init__.py`, `tests/`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/`.
 
 ## Anti-scope
 Do NOT redesign the runtime factory (sprint 6a) or RunPod session boundary (sprint 6b). Do NOT re-decompose modules (sprint 5). Do NOT change IR-core or emitter semantics (sprints 1/3 own those). Do NOT turn the deferred user-testing idea into a separate framework unless the required acceptance tests force a tiny helper extraction. Do NOT attempt full plugin sandboxing, pip hash enforcement, git signature verification, or run-history UX in this sprint; name those as follow-up work with owners/severity.

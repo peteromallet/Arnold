@@ -248,8 +248,8 @@ READY_METADATA = ReadyMetadata.build(
     capability='text_to_image',
     inputs=PUBLIC_INPUTS,
     models=MODELS,
-    source_workflow='workflow_corpus/official/image/example.json',
-    provenance={'source_workflow': 'workflow_corpus/official/image/example.json'},
+    source_workflow='ready_templates/sources/official/image/example.json',
+    provenance={'source_workflow': 'ready_templates/sources/official/image/example.json'},
 )
 
 def build():

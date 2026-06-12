@@ -1,6 +1,6 @@
 {
   "id": "video_05_sampler_euler_ancestral_ltx",
-  "pre_workflow_path": "../../../../workflow_corpus/official/video/ltx2_3_t2v.json",
+  "pre_workflow_path": "../../../../ready_templates/sources/official/video/ltx2_3_t2v.json",
   "nl_intent": "Switch to a more stochastic sampler for more varied outputs",
   "post_edit_ir_patch": {
     "node_id": "209",
