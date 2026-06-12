@@ -144,8 +144,6 @@ Python starts with a practical advantage: it is one of the world's most widely
 used programming languages, and agents already demonstrate strong general
 competence at reading and changing ordinary Python code.
 
-## What Python Buys
-
 - **Better comprehension.** Named variables, functions, kwargs, imports, and
   metadata declarations give the agent handles for intent, not just graph ids.
 - **Lower reasoning overhead.** The agent can use its existing code-editing
