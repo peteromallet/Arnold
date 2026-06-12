@@ -66,6 +66,7 @@ export {
   markAllAgentPanelDirty,
   scheduleRenderAgentPanel,
 };
+export { applyTypedSocketLabelsLabelOnly };
 
 // ── VibeComfy Contract (S2 — Durable Frontend Panel) ─────────────────────
 // This file captures the frontend↔backend contract before feature work.
@@ -270,6 +271,7 @@ const INTENT_KIND_BY_CLASS_TYPE = Object.freeze({
   "vibecomfy.loop": "loop",
 });
 const INTENT_PREVIEW_MAX = 120;
+const _MAX_DYNAMIC_PORTS = 16;
 const INTENT_STYLE_BY_KIND = Object.freeze({
   code: {
     color: "#2d2643",
@@ -343,6 +345,42 @@ function setPersistedAgentProvider(value) {
     return;
   }
   _lsSet(LS_AGENT_PROVIDER_KEY, String(value));
+}
+
+// ── Default execution mode (settings combo + localStorage fallback) ─────────
+const DEFAULT_EXECUTION_MODE_LS_KEY = "vibecomfy.defaultExecutionMode";
+const DEFAULT_EXECUTION_MODE_VALUES = Object.freeze(["sandboxed_loose", "sandboxed_strict", "unrestricted"]);
+const DEFAULT_EXECUTION_MODE_FALLBACK = "sandboxed_loose";
+
+function getDefaultExecutionMode() {
+  const stored = _lsGet(DEFAULT_EXECUTION_MODE_LS_KEY);
+  if (stored && DEFAULT_EXECUTION_MODE_VALUES.includes(stored)) {
+    return stored;
+  }
+  return DEFAULT_EXECUTION_MODE_FALLBACK;
+}
+
+function registerDefaultExecutionModeSetting() {
+  if (typeof app?.ui?.settings?.addSetting === "function") {
+    try {
+      app.ui.settings.addSetting({
+        id: "VibeComfy.DefaultExecutionMode",
+        name: "VibeComfy — Default Execution Mode",
+        type: "combo",
+        defaultValue: DEFAULT_EXECUTION_MODE_FALLBACK,
+        options: [
+          { value: "sandboxed_loose", text: "Sandboxed — Loose" },
+          { value: "sandboxed_strict", text: "Sandboxed — Strict" },
+          { value: "unrestricted", text: "⚠️ DANGEROUS — Unrestricted" },
+        ],
+        onChange: (value) => {
+          _lsSet(DEFAULT_EXECUTION_MODE_LS_KEY, value);
+        },
+      });
+    } catch (_e) {
+      // Settings registration failed; localStorage fallback already works.
+    }
+  }
 }
 
 // ── Shared VibeComfy palette ────────────────────────────────────────────────
@@ -445,6 +483,17 @@ function readIntentMetadata(node, fallbackClassType = null) {
       && payload.intent
       && typeof payload.intent === "object",
   );
+  // Resolve execution mode: widget → properties.vibecomfy.execution_mode → default
+  const widgetExecMode = typeof properties.execution_mode === "string" && properties.execution_mode
+    ? properties.execution_mode
+    : "";
+  const vibecomfyExecMode = typeof payload?.execution_mode === "string" && payload.execution_mode
+    ? payload.execution_mode
+    : "";
+  const runtimeExecMode = typeof payload?.runtime?.execution_mode === "string" && payload.runtime.execution_mode
+    ? payload.runtime.execution_mode
+    : "";
+  const executionMode = widgetExecMode || vibecomfyExecMode || runtimeExecMode || "sandboxed_loose";
   return {
     classType,
     kind,
@@ -454,10 +503,21 @@ function readIntentMetadata(node, fallbackClassType = null) {
     typedOutputs,
     sourcePreview,
     specPreview,
+    executionMode,
   };
 }
 
 function buildIntentBadge(meta) {
+  if (!meta.valid) {
+    return `${meta.kind} · ${meta.badgeStatus}`;
+  }
+  if (meta.kind === "loop") {
+    return "loop · expand to run";
+  }
+  if (meta.kind === "code") {
+    const mode = meta.executionMode || "sandboxed_loose";
+    return `Python · ${mode}`;
+  }
   return `${meta.kind} · ${meta.badgeStatus}`;
 }
 
@@ -487,6 +547,33 @@ function applyTypedSocketLabels(slots, typedEntries) {
   }
 }
 
+function applyTypedSocketLabelsLabelOnly(slots, typedEntries) {
+  if (!Array.isArray(slots) || !Array.isArray(typedEntries) || !typedEntries.length) {
+    return;
+  }
+  const count = Math.min(slots.length, typedEntries.length);
+  for (let index = 0; index < count; index += 1) {
+    const slot = slots[index];
+    const typed = typedEntries[index];
+    if (!slot || !typed) {
+      continue;
+    }
+    const label = `${typed.name}: ${typed.type}`;
+    // Write ONLY slot.label; leave slot.name unchanged (in_i for serialization).
+    if ("label" in slot || typeof slot === "object") {
+      slot.label = label;
+    }
+  }
+}
+
+function _isDynamicIoCodeNode(node) {
+  // The node's class_type (LiteGraph type / comfyClass) is the registry key
+  // "vibecomfy.code" — NOT the Python class name "VibeComfyCodeIntent", which
+  // never reaches the frontend. Resolve via the canonical class_type helper so
+  // the dynamic-IO relabel+trim path actually fires for real editor nodes.
+  return getIntentClassType(node) === "vibecomfy.code";
+}
+
 function decorateIntentNode(node, fallbackClassType = null) {
   const classType = getIntentClassType(node, fallbackClassType);
   if (!classType) {
@@ -507,8 +594,39 @@ function decorateIntentNode(node, fallbackClassType = null) {
   if (meta.specPreview) {
     node.properties["VibeComfy Intent Spec"] = meta.specPreview;
   }
-  applyTypedSocketLabels(node.inputs, meta.typedInputs);
-  applyTypedSocketLabels(node.outputs, meta.typedOutputs);
+  const dynamicIo = _isDynamicIoCodeNode(node);
+  if (dynamicIo) {
+    // Dynamic-IO code node: label-only (preserve in_i slot names for serialization).
+    applyTypedSocketLabelsLabelOnly(node.inputs, meta.typedInputs);
+    applyTypedSocketLabelsLabelOnly(node.outputs, meta.typedOutputs);
+    // Hide unused trailing pool slots via removeInput/removeOutput.
+    // We walk backwards so indices stay stable.
+    const activeInputCount = Math.min(
+      Array.isArray(meta.typedInputs) ? meta.typedInputs.length : 0,
+      _MAX_DYNAMIC_PORTS,
+    );
+    if (Array.isArray(node.inputs)) {
+      for (let i = node.inputs.length - 1; i >= activeInputCount; i -= 1) {
+        if (typeof node.removeInput === "function") {
+          try { node.removeInput(i); } catch (_e) { /* best-effort */ }
+        }
+      }
+    }
+    const activeOutputCount = Math.min(
+      Array.isArray(meta.typedOutputs) ? meta.typedOutputs.length : 0,
+      _MAX_DYNAMIC_PORTS,
+    );
+    if (Array.isArray(node.outputs)) {
+      for (let i = node.outputs.length - 1; i >= activeOutputCount; i -= 1) {
+        if (typeof node.removeOutput === "function") {
+          try { node.removeOutput(i); } catch (_e) { /* best-effort */ }
+        }
+      }
+    }
+  } else {
+    applyTypedSocketLabels(node.inputs, meta.typedInputs);
+    applyTypedSocketLabels(node.outputs, meta.typedOutputs);
+  }
   node.__vibecomfyIntentMeta = meta;
   return true;
 }
@@ -521,20 +639,43 @@ function drawIntentBadge(ctx, node) {
   if (!meta.classType) {
     return;
   }
+  if (node?.flags?.collapsed) {
+    // Title bar is rendered differently when collapsed; skip to avoid clutter.
+    return;
+  }
   const badge = buildIntentBadge(meta);
   const width = readNodeSize(node, 180, 100).w;
   const style = styleForIntentMeta(meta);
+  const titleHeight = (typeof globalThis !== "undefined"
+    && Number(globalThis.LiteGraph?.NODE_TITLE_HEIGHT)) || 30;
   if (typeof ctx.save === "function") {
     ctx.save();
   }
   try {
+    // Draw the badge as a right-aligned chip in the title bar (negative y is the
+    // title strip above the node body), so it never overlaps the input slot rows.
+    ctx.font = "bold 11px monospace";
+    let textW = badge.length * 7.25;
+    if (typeof ctx.measureText === "function") {
+      const measured = ctx.measureText(badge);
+      if (measured && typeof measured.width === "number") {
+        textW = measured.width;
+      }
+    }
+    const padX = 6;
+    const chipH = 16;
+    const chipW = Math.min(Math.max(width - 16, 0), textW + padX * 2);
+    const chipX = Math.max(8, width - chipW - 8);
+    const chipY = -titleHeight + (titleHeight - chipH) / 2;
     ctx.fillStyle = style.boxcolor;
     if (typeof ctx.fillRect === "function") {
-      ctx.fillRect(10, 6, Math.max(112, Math.min(width - 20, badge.length * 7.25)), 18);
+      ctx.fillRect(chipX, chipY, chipW, chipH);
     }
     ctx.fillStyle = "#111418";
-    ctx.font = "bold 11px monospace";
-    ctx.fillText(badge, 16, 19);
+    const priorBaseline = ctx.textBaseline;
+    ctx.textBaseline = "middle";
+    ctx.fillText(badge, chipX + padX, chipY + chipH / 2 + 0.5);
+    ctx.textBaseline = priorBaseline;
   } finally {
     if (typeof ctx.restore === "function") {
       ctx.restore();
@@ -554,6 +695,30 @@ function patchIntentNodePrototype(nodeType, nodeData) {
   proto.onNodeCreated = function patchedIntentNodeCreated(...args) {
     const result = typeof originalCreated === "function" ? originalCreated.apply(this, args) : undefined;
     this.type = this.type || classType;
+    // Seed default execution mode for code nodes (one-shot hydrate).
+    if (classType === "vibecomfy.code") {
+      const props = this.properties && typeof this.properties === "object" ? this.properties : {};
+      this.properties = props;
+      const vc = props.vibecomfy && typeof props.vibecomfy === "object" ? props.vibecomfy : {};
+      if (!props.vibecomfy || typeof props.vibecomfy !== "object") {
+        props.vibecomfy = vc;
+      }
+      const rt = vc.runtime && typeof vc.runtime === "object" ? vc.runtime : {};
+      if (!vc.runtime || typeof vc.runtime !== "object") {
+        vc.runtime = rt;
+      }
+      if (!rt.execution_mode) {
+        const defaultMode = getDefaultExecutionMode();
+        rt.execution_mode = defaultMode;
+        // Hydrate the widget property as well if empty.
+        if (!props.execution_mode) {
+          props.execution_mode = defaultMode;
+        }
+        if (defaultMode === "unrestricted") {
+          rt.unrestricted_ack = true;
+        }
+      }
+    }
     decorateIntentNode(this, classType);
     return result;
   };
@@ -10442,6 +10607,7 @@ app.registerExtension({
   },
   async setup() {
     await checkFrontendVersion();
+    registerDefaultExecutionModeSetting();
     installIntentNodeFallback();
     installAgentPreviewOverlay();
     decorateLiveIntentNodes();
