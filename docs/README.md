@@ -32,6 +32,7 @@ Start here when navigating project documentation.
 - [Comparisons](comparisons/comfyscript.md)
 - [Security](security/)
 - [Audits](audits/)
+- [Agent skill](agent-skill/)
 - [Plans](plans/) — active and in-flight planning docs
 - [Historical notes](historical/)
 - [Megaplan chains](megaplan_chains/)

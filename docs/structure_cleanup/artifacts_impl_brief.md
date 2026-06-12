@@ -22,7 +22,7 @@ Scope:
 Do not:
 
 - Move or delete anything under `out/`.
-- Move `artifacts/m1-safety-gate.md`, `artifacts/m2-symbol-map.md`,
+- Move `docs/audits/m1-safety-gate.md`, `docs/audits/m2-symbol-map.md`,
   `artifacts/m4/`, `artifacts/m5_*`, or `artifacts/m5a-*`.
 - Rewrite unrelated docs.
 - Run a full test suite.

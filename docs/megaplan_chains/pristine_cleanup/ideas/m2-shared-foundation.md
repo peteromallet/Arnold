@@ -41,7 +41,7 @@ by M1) is the authoritative list of duplicates and how they diverge.
 3. **Replace all call sites** with imports from the canonical home. Remove the local
    copies.
 4. **Produce a migration map artifact**
-   (`artifacts/m2-symbol-map.md`): `old symbol @ old location → new home`, so M3–M5
+   (`docs/audits/m2-symbol-map.md`): `old symbol @ old location → new home`, so M3–M5
    know where shared helpers now live.
 
 ## Locked decisions
@@ -55,7 +55,7 @@ by M1) is the authoritative list of duplicates and how they diverge.
 - Each listed helper has exactly one definition; `grep` confirms no remaining copies.
 - Full `pytest` green (same baseline as M1).
 - No change to emitter snapshot/parity tests, validation reports, or analyze output.
-- `artifacts/m2-symbol-map.md` exists and is accurate.
+- `docs/audits/m2-symbol-map.md` exists and is accurate.
 
 ## Touchpoints
 `vibecomfy/porting/{readability_inventory,static_contract... }` (note: static_contract is

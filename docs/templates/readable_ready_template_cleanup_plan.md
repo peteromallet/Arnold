@@ -927,7 +927,7 @@ Docs to update through the implementation:
 - `docs/authoring.md`;
 - `docs/templates/porting_workbench.md`;
 - `docs/templates/adding_templates_models.md`;
-- `.claude/skills/vibecomfy/SKILL.md`;
+- `docs/agent-skill/SKILL.md`;
 - any installed Codex/Hermes skill copy, if this repo owns one.
 
 ## Example-Driven Acceptance

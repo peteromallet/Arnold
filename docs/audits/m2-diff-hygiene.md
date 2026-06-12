@@ -27,7 +27,7 @@ chain scaffold were changed.
 These paths were produced by M1 and are part of the already completed chain
 baseline:
 
-- `artifacts/m1-safety-gate.md`
+- `docs/audits/m1-safety-gate.md`
 - `docs/megaplan_chains/pristine_cleanup/artifacts/m1-duplication-inventory.md`
 - `tests/parity/test_p1_typed_handle_parity.py`
 - `tests/parity/fixtures/flux2_klein_4b_image_edit_distilled_typed.py`
@@ -50,7 +50,7 @@ while migrating duplicated helpers.
 
 These paths are the M2 shared-foundation change set:
 
-- `artifacts/m2-symbol-map.md`
+- `docs/audits/m2-symbol-map.md`
 - `docs/audits/m2-diff-hygiene.md`
 - `scripts/__init__.py`
 - `tests/conftest.py`

@@ -64,7 +64,7 @@ trust. This milestone establishes the safety net the rest of the epic depends on
   suite trustworthy, so a red suite means M1 is not done. (If a test is genuinely
   un-fixable in M1's scope, it must be `xfail`-marked with a written reason + a tracking
   note, not left red.)
-- A **golden-gate artifact** `artifacts/m1-safety-gate.md` records the concrete,
+- A **golden-gate artifact** `docs/audits/m1-safety-gate.md` records the concrete,
   re-runnable gate every later milestone must pass: the exact `pytest` invocation,
   CLI JSON-snapshot commands (`workflows list --ready --json`, `port check <sample>
   --json`), the import-surface check, and the 9/9 parity-fixture compile/parity run.

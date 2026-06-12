@@ -4,7 +4,7 @@
 
 1. **CLAUDE.md and AGENTS.md are byte-for-byte identical duplicates.** Both files are 41,155 bytes, 589 lines, identical in every character. `CLAUDE.md:580` even lists `AGENTS.md` as a separate reference ("agent-facing constraints and rules"), implying different content. This guarantees future drift and doubles maintenance cost with zero benefit.
 
-2. **README.md points to a non-existent file.** `README.md:19` and `:24` reference `.claude/skills/vibecomfy/SKILL.md` as the bundled agent skill. The `.claude/` directory does not exist anywhere in the repo. This is a dead onboarding path for the primary audience described in the README's own § "Give this to your agent."
+2. **Resolved: README.md previously pointed to a non-existent bundled skill path.** The old README referenced `.claude/skills/vibecomfy/SKILL.md` even when that path was not a stable tracked source. The current repository uses `docs/agent-skill/SKILL.md` as the single authored skill source, with root agent files as bootstraps.
 
 3. **Version API drift: README (v2.6) vs CLAUDE.md/AGENTS.md (v2.7) describe different authoring surfaces.** `README.md:136–158` shows v2.6 shape with `from vibecomfy.nodes.core import CLIPTextEncode, SaveImage` and `_id=` kwargs. `CLAUDE.md:392–408` shows v2.7 `from vibecomfy.templates import new_workflow, node` ContextVar pattern. The two canonical "how to use" documents teach incompatible current APIs. A new user following README vs an agent following CLAUDE.md will write different code.
 

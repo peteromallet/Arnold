@@ -312,7 +312,7 @@ Everything writes under `out/`:
 
 ## Verb-native router (`router.pick`)
 
-`image.t2i(prompt, model="z_image")` internally calls `router.pick("image", "t2i", model=...)` to choose a template id and a list of patches. Use `router.pick(...)` directly to inspect a route before loading. Rules live in `vibecomfy/router_rules.py`.
+`image.t2i(prompt, model="z_image")` internally calls `router.pick("image", "t2i", model=...)` to choose a template id and a list of patches. Use `router.pick(...)` directly to inspect a route before loading. Router rules live in `vibecomfy/router/`.
 
 ```python
 from vibecomfy import router
@@ -366,7 +366,7 @@ For a one-off composition (combining existing workflows), prefer a **recipe** un
 - `docs/runpod/setup.md`, `docs/runpod/smoke.md` — RunPod lifecycle and smoke harness
 - `docs/runtime/lifecycle.md`, `docs/runtime/surface.md` — embedded vs server runtime
 - `docs/errors_and_doctor.md` — what `doctor` flags and how to fix it
-- `CLAUDE.md` — canonical long-form agent constraints and rules
+- `docs/agent-skill/SKILL.md` — canonical long-form agent constraints and rules
 
 When in doubt, the chain you're allowed to descend is always:
 

@@ -15,16 +15,15 @@ it can describe a final API, citing `docs/api/m6-public-api.md`.
 - Stale sprint/plan/spike docs; `sprint5_followups.md:5` has a copy-paste header titled
   "Sprint 4". Real.
 - **CORRECTED — not in scope:** the audit (lens 9) claimed `README.md` points to a
-  non-existent `.claude/skills/vibecomfy/SKILL.md`. This is a **false positive** — the
-  file exists (41 KB, verified). Do **not** "fix" a dead path; the README skill reference
-  is valid. Only the *version* content in the README needs aligning.
+  non-existent bundled skill file. The current source is `docs/agent-skill/SKILL.md`,
+  and root agent files are only bootstraps. Do **not** recreate a `.claude/` mirror.
+  Only the *version* content in the README needs aligning.
 
 ## Scope
-1. **De-duplicate CLAUDE.md / AGENTS.md.** Make `AGENTS.md` a thin pointer to `CLAUDE.md`
-   (or vice versa), or split genuinely distinct agent-facing content out — eliminate the
-   byte-for-byte copy so they cannot drift.
+1. **De-duplicate CLAUDE.md / AGENTS.md.** Keep both as thin bootstraps pointing to
+   `docs/agent-skill/SKILL.md` — eliminate byte-for-byte skill copies so they cannot drift.
 2. **Version-align `README.md` to v2.7**, matching the `new_workflow`/`node` ContextVar
-   authoring surface CLAUDE.md teaches. Keep the (valid) `.claude/skills/vibecomfy/SKILL.md`
+   authoring surface CLAUDE.md teaches. Keep the (valid) `docs/agent-skill/SKILL.md`
    reference; only update the API examples and version story.
 3. **Fix `release_notes.md`** to redirect to `docs/release_notes/`.
 4. **Archive stale docs** into `docs/historical/` with correct `Status:` headers; fix the

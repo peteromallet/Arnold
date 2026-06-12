@@ -76,7 +76,8 @@ result, and show the runtime JSON that ComfyUI will receive.
 
 ```text
 Clone https://github.com/peteromallet/VibeComfy and install it with `python -m pip install -e .`.
-Run `python scripts/sync_agent_skill.py --apply`; if this checkout should become a reusable local agent skill, run `python scripts/sync_agent_skill.py --install-user`.
+Edit the canonical skill in `docs/agent-skill/SKILL.md`, then run `python scripts/sync_agent_skill.py --apply`.
+If this checkout should become a reusable local agent skill, run `python scripts/sync_agent_skill.py --install-user`.
 That installer uses SkillSinker: it symlinks the VibeComfy skill into detected Claude, Codex, and Hermes skill directories without overwriting existing entries, and it updates Codex's `AGENTS.md` with an idempotent fenced VibeComfy block.
 If I already have ComfyUI workflows or custom nodes, index them with `python -m vibecomfy.cli sources sync --official <official_workflow_dir> --external <my_workflow_dir> --custom-nodes <ComfyUI/custom_nodes> --json`, then use `workflows list`, `search`, `nodes list`, and `nodes spec` against that local context.
 List ready templates with `python -m vibecomfy.cli workflows list --ready`.
@@ -212,8 +213,21 @@ evidence; do not make compiled API JSON the reusable source of truth.
 | `ready_templates/` | Curated Python templates intended as starting points. |
 | `recipes/` | User code that composes templates, patches, blocks, and runtime calls. |
 | `workflow_corpus/` | Source ComfyUI workflows used for indexing, conversion, and coverage. |
+| `agentic/` | Sisypy-style agentic test harness: briefs, scenarios, actors, and runner. |
 | `docs/` | Authoring, porting, runtime, testing, architecture, and migration docs. |
-| `out/` | Generated scratchpads, run outputs, reports, and temporary artifacts. |
+| `docs/agent-skill/` | The single authored VibeComfy agent skill source; root agent files are bootstraps. |
+| `scripts/` | Direct-run operational scripts, RunPod harnesses, sync helpers, and maintenance commands. |
+| `tools/` | Importable developer tools intended to run with `python -m tools.<name>`. |
+| `tests/` | Unit, integration, browser, parity, and agentic harness tests. |
+| `vendor/` | Pinned or vendored external code and submodules, including ComfyUI. |
+| `.github/` | GitHub Actions workflows. |
+| `.megaplan/` | Legacy path-sensitive authored megaplan briefs/chains/tickets; generated runtime state remains ignored. |
+| `AGENTS.md`, `CLAUDE.md` | Short agent bootstraps that point at `docs/agent-skill/SKILL.md`. |
+| `pyproject.toml`, `uv.lock` | Python package metadata and locked dependencies. |
+| `cloud.yaml` | Megaplan cloud workspace config. |
+| `custom_nodes.lock` | Custom-node pack lockfile used by node install/restore flows. |
+| `template_index.json`, `version_matrix.json` | Tracked repository indexes consumed by template/runtime validation. |
+| `out/`, `input/`, `output/`, `temp/` | Generated local runtime data; gitignored. |
 
 ## Thanks
 

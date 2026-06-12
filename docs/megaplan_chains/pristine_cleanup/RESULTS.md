@@ -22,9 +22,9 @@ Status meanings:
   11 skipped, 5 deselected, 1 xfailed`; the four required CLI smoke commands
   also exited 0, including `python -m vibecomfy.cli port check image/z_image
   --json`.
-- M1 safety evidence: `artifacts/m1-safety-gate.md`.
+- M1 safety evidence: `docs/audits/m1-safety-gate.md`.
 - M1 duplicate inventory: `docs/megaplan_chains/pristine_cleanup/artifacts/m1-duplication-inventory.md`.
-- M2 helper consolidation map: `artifacts/m2-symbol-map.md`.
+- M2 helper consolidation map: `docs/audits/m2-symbol-map.md`.
 - M2 dirty-worktree classification: `docs/audits/m2-diff-hygiene.md`.
 - M6 public API contract: `docs/api/m6-public-api.md`.
 - M7 documentation reconciliation is present in the working tree via
@@ -65,7 +65,7 @@ the inventory are gone:
 
 Backed count: 8 inventory search matches removed (`32 -> 24`) and 10 duplicated
 local helper definitions collapsed into canonical helpers, with one UI-only
-constant relocated. Evidence: M1 inventory, `artifacts/m2-symbol-map.md`, and
+constant relocated. Evidence: M1 inventory, `docs/audits/m2-symbol-map.md`, and
 current `rg` inspection.
 
 ## Lens 1 - CLI Commands
@@ -88,7 +88,7 @@ current `rg` inspection.
 - `fixed` - `fetch.py` / `doctor.py` duplicate model-entry helpers: shared model
   logic now lives in `vibecomfy/commands/_model_entries.py`.
 - `fixed` - `doctor.py` / `nodes.py` duplicate `_git_head`: both use
-  `vibecomfy._git_utils.git_head(...)`; see `artifacts/m2-symbol-map.md`.
+  `vibecomfy._git_utils.git_head(...)`; see `docs/audits/m2-symbol-map.md`.
 - `deferred` - `schemas.py` mixed raw prints and `emit`: no current
   `vibecomfy/commands/schemas.py` command module is registered; no active fix was
   needed for publish.
@@ -211,7 +211,7 @@ current `rg` inspection.
 ## Lens 7 - Testing Infrastructure
 
 - `fixed` - Public testing API stubs: current `vibecomfy/testing/__init__.py`
-  imports real fixture helpers, and `artifacts/m1-safety-gate.md` records a
+  imports real fixture helpers, and `docs/audits/m1-safety-gate.md` records a
   passing `from vibecomfy.testing import *` check.
 - `fixed` - `_is_link` duplicated in testing/helpers: M2 removed the targeted
   local helper definitions and routes callers through `vibecomfy._graph_utils`.

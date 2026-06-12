@@ -54,7 +54,7 @@ M1 safety net → M2 shared utils (kernel) → M3 validation ┐
 
 ## The three rules you do not break
 
-1. **The M1 golden gate is sacred.** `artifacts/m1-safety-gate.md` is the bar every
+1. **The M1 golden gate is sacred.** `docs/audits/m1-safety-gate.md` is the bar every
    later milestone clears: full green pytest, CLI JSON snapshots, import-surface, 9/9
    parity. You do not advance a milestone that doesn't pass it.
 2. **Behavior-preserving means byte-for-byte where tests assert it.** If a snapshot

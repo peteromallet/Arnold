@@ -1,6 +1,0 @@
-interface:
-  display_name: "VibeComfy"
-  short_description: "ComfyUI workflow templates and RunPod validation"
-  default_prompt: "Use $vibecomfy to load, edit, validate, or run ComfyUI workflows through Python ready templates."
-policy:
-  allow_implicit_invocation: true

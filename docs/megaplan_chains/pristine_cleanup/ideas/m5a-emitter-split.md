@@ -43,7 +43,7 @@ without importing the whole surface.
   inside a logic module.
 - All 9 parity fixtures pass byte-for-byte (or any snapshot change is explicitly
   re-blessed with written justification).
-- The M1 golden gate (`artifacts/m1-safety-gate.md`) passes in full.
+- The M1 golden gate (`docs/audits/m1-safety-gate.md`) passes in full.
 - Full `pytest` green; `port convert`/`port check` CLI smoke pass with stable output.
 
 ## Touchpoints

@@ -22,7 +22,7 @@ own brief + critique pass — epic-shaped, not single-sprint.
 - **Repair the safety net first — and make the gate concrete.** The suite is not
   currently trustworthy (a broken import; `NotImplementedError` stubs in the public
   testing API; only ~4 of 9 declared parity fixtures exist). M1 fixes all of that and
-  emits a re-runnable **golden gate** (`artifacts/m1-safety-gate.md`: pytest + CLI JSON
+  emits a re-runnable **golden gate** (`docs/audits/m1-safety-gate.md`: pytest + CLI JSON
   snapshots + import-surface + 9/9 parity) that every later milestone must pass.
   "Green pytest" alone is explicitly not the gate — both reviewers flagged that as the
   chain's biggest original hole.
@@ -108,6 +108,6 @@ see how much the god-files shrink.
     overstated.
   - Old combined M6 **split into M6 (code conventions) + M7 (docs)**.
   - M7 drops the audit's false-positive "README dead skill path" claim —
-    `.claude/skills/vibecomfy/SKILL.md` **does** exist.
+    `docs/agent-skill/SKILL.md` **does** exist.
   - M1 tier raised `directed`→`premium` (the `template_index` near-miss shows M1 needs
     judgment). All milestones set to `vendor: codex`.

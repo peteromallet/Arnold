@@ -31,7 +31,7 @@ developer tools that are meant to run as `python -m tools.<name>`.
 | `agentic_success_rate.py` | Agentic-evaluation success-rate harness. |
 | `generate_agent_contract_js.py` | Regenerates the agent-edit JavaScript response contract. |
 | `run_local_agent_comfy.sh` | Starts a local agent-edit ComfyUI session. |
-| `sync_agent_skill.py` | Syncs local agent skill metadata. |
+| `sync_agent_skill.py` | Checks the canonical skill in `docs/agent-skill/` and installs it into local agent harnesses. |
 | `vibecomfy_debug.py` | Debug helper for agent-edit sessions. |
 | `_agent_edit_prompt_dump.py` | Private prompt-dump helper. |
 
