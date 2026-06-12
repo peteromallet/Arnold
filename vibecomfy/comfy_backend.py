@@ -15,14 +15,15 @@ uninitialized, ``ensure_nodes()`` returns ``False`` and never raises.
 
 Compatibility matrix (S1 oracle-durability)
 -------------------------------------------
-Also provides a ``version_matrix.json`` loader and vendored-commit reader so
-the S1 skew fence can compare the running ComfyUI against the pinned oracle
-without importing the full dependency tree. ``load_version_matrix()`` returns
-a typed ``VersionMatrix`` record; callers use ``read_vendored_commit()`` to
-get the *actual* commit from the submodule checkout (or ``None`` when the
-submodule is absent / uninitialised). In pip-installed contexts where no
-``.git`` directory exists, ``read_vendored_commit()`` returns ``None`` and
-callers should fall back to ``VersionMatrix.pinned_comfyui_commit``.
+Also provides a checked-in ComfyUI version matrix loader and vendored-commit
+reader so the S1 skew fence can compare the running ComfyUI against the pinned
+oracle without importing the full dependency tree. ``load_version_matrix()``
+returns a typed ``VersionMatrix`` record; callers use
+``read_vendored_commit()`` to get the *actual* commit from the submodule
+checkout (or ``None`` when the submodule is absent / uninitialised). In
+pip-installed contexts where no ``.git`` directory exists,
+``read_vendored_commit()`` returns ``None`` and callers should fall back to
+``VersionMatrix.pinned_comfyui_commit``.
 """
 from __future__ import annotations
 
@@ -71,7 +72,7 @@ _MISSING = _MissingSentinel()
 class VersionMatrix:
     """Checked-in version pin for the vendored ComfyUI oracle.
 
-    Loaded from the root ``version_matrix.json`` at most once per process.
+    Loaded from ``vibecomfy/registry/comfy_version_matrix.json`` at most once per process.
     All fields are required; missing / malformed JSON raises immediately
     so drift is loud, not silent.
     """
@@ -120,16 +121,16 @@ class ComfyCompatibilityError(DriftError):
 
 
 def _find_version_matrix_path() -> Path:
-    """Locate ``version_matrix.json`` relative to the repo root.
+    """Locate the checked-in ComfyUI version matrix.
 
     Returns the absolute path.  Does **not** check existence — callers
     decide how to handle a missing file.
     """
-    return _REPO_ROOT / "version_matrix.json"
+    return _REPO_ROOT / "vibecomfy" / "registry" / "comfy_version_matrix.json"
 
 
 def load_version_matrix() -> VersionMatrix:
-    """Load and validate the root ``version_matrix.json``.
+    """Load and validate ``vibecomfy/registry/comfy_version_matrix.json``.
 
     Returns a :class:`VersionMatrix` on success.  Raises typed errors for
     every failure mode so callers never receive a silently-incomplete record:
@@ -144,13 +145,13 @@ def load_version_matrix() -> VersionMatrix:
     global _VERSION_MATRIX_CACHE
     if _VERSION_MATRIX_CACHE is not None:
         if _VERSION_MATRIX_CACHE is _MISSING:
-            raise FileNotFoundError("version_matrix.json not found (cached)")
+            raise FileNotFoundError("comfy_version_matrix.json not found (cached)")
         return _VERSION_MATRIX_CACHE
 
     path = _find_version_matrix_path()
     if not path.is_file():
         _VERSION_MATRIX_CACHE = _MISSING
-        raise FileNotFoundError(f"version_matrix.json not found at {path}")
+        raise FileNotFoundError(f"comfy_version_matrix.json not found at {path}")
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -161,7 +162,7 @@ def load_version_matrix() -> VersionMatrix:
     if not isinstance(raw, dict):
         _VERSION_MATRIX_CACHE = _MISSING
         raise TypeError(
-            f"version_matrix.json must be a JSON object, got {type(raw).__name__}"
+            f"comfy_version_matrix.json must be a JSON object, got {type(raw).__name__}"
         )
 
     # --- required string fields ---
@@ -176,20 +177,20 @@ def load_version_matrix() -> VersionMatrix:
             missing.append(key)
         elif not isinstance(raw[key], str):
             raise TypeError(
-                f"version_matrix.json field '{key}' must be a string, "
+                f"comfy_version_matrix.json field '{key}' must be a string, "
                 f"got {type(raw[key]).__name__}"
             )
     if missing:
         _VERSION_MATRIX_CACHE = _MISSING
         raise ValueError(
-            f"version_matrix.json missing required field(s): {', '.join(missing)}"
+            f"comfy_version_matrix.json missing required field(s): {', '.join(missing)}"
         )
 
     # --- optional fingerprint ---
     fingerprint = raw.get("object_info_fingerprint")
     if fingerprint is not None and not isinstance(fingerprint, dict):
         raise TypeError(
-            "version_matrix.json field 'object_info_fingerprint' must be "
+            "comfy_version_matrix.json field 'object_info_fingerprint' must be "
             f"a JSON object or null, got {type(fingerprint).__name__}"
         )
 
@@ -291,7 +292,7 @@ def read_live_comfy_version() -> str | None:
 
 
 def check_comfy_compatibility() -> ComfyCompatibility:
-    """Compare the active ComfyUI checkout/build against ``version_matrix.json``."""
+    """Compare the active ComfyUI checkout/build against the checked-in matrix."""
     actual_commit = read_vendored_commit()
     actual_version = read_live_comfy_version()
     actual = {

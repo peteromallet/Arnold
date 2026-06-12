@@ -516,7 +516,7 @@ exactly the delta, nothing else"). Faithfulness is orthogonal to **correctness**
 **Highest-value near-term actions (judgment-filtered — not the whole sweep):**
 1. **[cheap, do early] Make oracle drift loud, not silent.** Flip `comfy_converter_strict=True` at the
    ingest boundary and wire the Layer-3 gate into required CI (`VIBECOMFY_COMFY_SMOKE=1`) with the
-   pinned ComfyUI commit recorded in a committed `version_matrix.json`. Converts the dangerous
+   pinned ComfyUI commit recorded in `vibecomfy/registry/comfy_version_matrix.json`. Converts the dangerous
    "green-while-diverged" mode into a loud break the moment a bump lands. Pure enhancement.
 2. **[fence the live bug] Consume the signal we already capture.** The recovery report already carries
    `widget_length_check`/`schema_less`/confidence per node; promote `overflow`/`schema_less` into a

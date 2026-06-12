@@ -1,7 +1,7 @@
 # Agent-Edit
 
-Docs for the agent-edit workflow: contracts, lifecycle, implementation plans,
-and captured failure evidence.
+Docs for the agent-edit workflow: contracts, lifecycle, and implementation
+plans.
 
 ## Active Contracts
 
@@ -17,7 +17,3 @@ and captured failure evidence.
 - [Concrete tree](concrete-tree.md)
 - [Phase 1 plan](phase1-plan.md)
 - [Solution spec](solution-spec.md)
-
-## Evidence
-
-- [Failure evidence](failure-evidence/)

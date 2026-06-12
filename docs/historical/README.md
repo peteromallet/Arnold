@@ -2,8 +2,7 @@
 
 Archived spikes, old rationale, and completed follow-up plans. These are kept
 for context and should not be treated as the current source of truth unless a
-current guide links here explicitly. Active plans belong in
-[`docs/plans/`](../plans/).
+current guide links here explicitly.
 
 - [ComfyScript spike](comfyscript_spike.md)
 - [Frontier hardening runbook](frontier-hardening-runbook.md)

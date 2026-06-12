@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agentic.actors import (
+from tests.agentic_harness.actors import (
     build_faking_structural_chain,
     build_m3_controlnet_depth_positive_evidence,
     build_m3_controlnet_video_noop_evidence,
@@ -189,7 +189,7 @@ def _load_recovery_scenario():
     from sisypy.runner import load_scenario
 
     scenario_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "scenarios" / "image_to_video_chain_recovery.yaml"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "scenarios" / "image_to_video_chain_recovery.yaml"
     )
     return load_scenario(scenario_path)
 
@@ -230,7 +230,8 @@ def test_recovery_brief_tempts_object_form_i2v() -> None:
     """The brief must tempt the actor to pass an Image object to video.i2v."""
     brief_path = (
         Path(__file__).resolve().parent.parent
-        / "agentic"
+        / "tests"
+        / "agentic_harness"
         / "briefs"
         / "image-to-video-chain-recovery.md"
     )
@@ -364,7 +365,7 @@ def _hyphen_yaml_name(slug: str) -> str:
 
 
 def _brief_path(slug: str) -> Path:
-    return Path(__file__).resolve().parent.parent / "agentic" / "briefs" / f"{slug}.md"
+    return Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "briefs" / f"{slug}.md"
 
 
 def _load_scenario_yaml(slug: str):
@@ -376,7 +377,8 @@ def _load_scenario_yaml(slug: str):
 
     scenario_path = (
         Path(__file__).resolve().parent.parent
-        / "agentic"
+        / "tests"
+        / "agentic_harness"
         / "scenarios"
         / _yaml_name(slug)
     )
@@ -392,7 +394,8 @@ def _load_hyphenated_scenario_yaml(slug: str):
 
     scenario_path = (
         Path(__file__).resolve().parent.parent
-        / "agentic"
+        / "tests"
+        / "agentic_harness"
         / "scenarios"
         / _hyphen_yaml_name(slug)
     )

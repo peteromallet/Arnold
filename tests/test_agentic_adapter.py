@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agentic.adapter import VibeComfyProjectAdapter
+from tests.agentic_harness.adapter import VibeComfyProjectAdapter
 
 sisypy = pytest.importorskip("sisypy")
 
@@ -246,7 +246,7 @@ def test_project_universal_checks_report_missing_required_frozen_evidence(tmp_pa
 
 def test_classify_success_fails_on_faking_actor_evidence(tmp_path: Path) -> None:
     """classify_success must FAIL on faking-actor evidence even with report.md."""
-    from agentic.actors import build_faking_structural_chain
+    from tests.agentic_harness.actors import build_faking_structural_chain
 
     adapter = VibeComfyProjectAdapter(name="vibecomfy", repo_root=tmp_path)
     report_dir = tmp_path / "reports" / "faking"
@@ -284,7 +284,7 @@ def _build_genuine_evidence_pack(
     metadata JSON, actions.jsonl, and output placeholders.  Returns the
     scenario with required_frozen_evidence set and the EvidencePack.
     """
-    from agentic.actors import build_positive_structural_chain
+    from tests.agentic_harness.actors import build_positive_structural_chain
 
     report_dir = tmp_path / "reports" / "genuine"
     build_positive_structural_chain(report_dir)
@@ -505,7 +505,7 @@ def test_all_seven_m2_slugs_route_through_m2_builders_dict(
     non-None manifest when dispatched structurally with dispatcher='fake'."""
     from sisypy import RunMode
 
-    from agentic.adapter import _M2_BUILDERS
+    from tests.agentic_harness.adapter import _M2_BUILDERS
 
     all_m2_slugs = [
         "generate-image-canonical-op",
@@ -595,7 +595,7 @@ def test_m2_required_frozen_evidence_disjoint_from_faking_outputs(
     faking actor could pass a purely narrative-based check, defeating the
     evidence-guard design.
     """
-    from agentic.actors import build_faking_structural_chain
+    from tests.agentic_harness.actors import build_faking_structural_chain
 
     # Files the faking actor actually writes to disk
     faking_dir = tmp_path / "reports" / "faking-guard-check"
@@ -631,7 +631,8 @@ def test_m2_required_frozen_evidence_disjoint_from_faking_outputs(
         yaml_name = slug.replace("-", "_") + ".yaml"
         scenario_path = (
             Path(__file__).resolve().parent.parent
-            / "agentic"
+            / "tests"
+        / "agentic_harness"
             / "scenarios"
             / yaml_name
         )
@@ -677,7 +678,7 @@ def _build_m2_genuine_evidence_pack(
     """
     import shutil
 
-    from agentic.adapter import _M2_BUILDERS
+    from tests.agentic_harness.adapter import _M2_BUILDERS
 
     builder = _M2_BUILDERS[slug]
 
@@ -695,7 +696,8 @@ def _build_m2_genuine_evidence_pack(
     yaml_name = slug.replace("-", "_") + ".yaml"
     scenario_path = (
         Path(__file__).resolve().parent.parent
-        / "agentic"
+        / "tests"
+        / "agentic_harness"
         / "scenarios"
         / yaml_name
     )
@@ -777,7 +779,7 @@ def test_m2_faking_evidence_fails_classification(
     returns AUTHORED — the faking actor cannot pass as real frozen proof.
     """
     monkeypatch.chdir(tmp_path)
-    from agentic.actors import build_faking_structural_chain
+    from tests.agentic_harness.actors import build_faking_structural_chain
 
     # Load scenario YAML to get required_frozen_evidence
     import sys as _sys
@@ -790,7 +792,8 @@ def test_m2_faking_evidence_fails_classification(
     yaml_name = slug.replace("-", "_") + ".yaml"
     scenario_path = (
         Path(__file__).resolve().parent.parent
-        / "agentic"
+        / "tests"
+        / "agentic_harness"
         / "scenarios"
         / yaml_name
     )

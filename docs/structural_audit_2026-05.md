@@ -58,7 +58,7 @@ The `VibeSession` protocol exists but isn't used for dispatch; RunPod is a CLI s
 Independently confirmed against the working tree:
 
 1. **`ready_templates/image/z_image.py` is broken** — line 73 `steps=770044821593082` (a seed value in the steps field) and line 74 `cfg='randomize'` (a `control_after_generate` string leaked into a float field). The emitter mismapped subgraph call-kwargs and this shipped into a curated template. *Check whether other generated templates share the leak.*
-2. **`scripts/materialize_ready_templates.py` does not exist** — yet `CLAUDE.md` cites it as the template-generation entry point (step 7 of "Adding a new workflow"). The real path is `cli port convert`, one at a time.
+2. **`scripts/materialize_ready_templates.py` does not exist** — older agent docs cited it as the template-generation entry point (step 7 of "Adding a new workflow"). The real path is `cli port convert`, one at a time.
 3. **~12,280 LOC of dead node-spec code** (`comfyui_kjnodes.py`, `comfyui_ltxvideo.py`, `rgthree_comfy.py`) — referenced only by `scripts/demo_wrapper_codegen.py`, nothing in production.
 
 High-confidence but not separately re-verified (precisely located by the audits): IR `inputs`/`widgets` merge-order bug (lens 1), `conftest.py:85` marker logic (lens 9), `_common.py` double-prompt-set hack (lens 6).
@@ -69,7 +69,7 @@ High-confidence but not separately re-verified (precisely located by the audits)
 - Fix the `z_image.py` emitter kwarg-mapping bug (and grep other templates for the same leak).
 - Delete the 12K dead-node-spec lines + add stale-file cleanup to the generator.
 - Fix the `conftest.py` marker bug.
-- Reconcile `CLAUDE.md` with reality (remove/rewrite the missing-script references).
+- Reconcile the agent skill with reality (remove/rewrite the missing-script references).
 - Add the 5 orphan templates to `coverage.json`.
 
 **Tier 2 — structural payoff (~1–2 weeks each):**

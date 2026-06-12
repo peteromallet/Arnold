@@ -55,7 +55,7 @@ that ``wf.node("KSampler", ...)`` would. Callers can use:
 Each pack lives in its own module ``vibecomfy/nodes/<slug>.py``. The
 ``__init__.py`` of ``vibecomfy.nodes`` is left unchanged by this codegen —
 callers explicitly import the pack module they want (consistent with the
-"explicit registries" rule in CLAUDE.md).
+"explicit registries" rule in the agent skill).
 """
 from __future__ import annotations
 

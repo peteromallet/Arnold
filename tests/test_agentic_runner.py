@@ -6,7 +6,7 @@ pytest.importorskip("sisypy")
 
 import sisypy.runner
 
-from agentic import runner as agentic_runner
+from tests.agentic_harness import runner as agentic_runner
 from sisypy import RunMode
 
 

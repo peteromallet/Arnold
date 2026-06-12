@@ -13,5 +13,5 @@ def load_workflow_json(path: str | Path) -> dict[str, Any]:
     return data
 
 
-# Back-compat alias (see CLAUDE.md).
+# Back-compat alias documented by the agent skill.
 load_template = load_workflow_json

@@ -1,6 +1,6 @@
 # Template cleanup follow-ups
 
-**Status:** Historical record of cleanup ideas captured 2026-05-23. Items listed here may no longer be current; check `docs/plans/` or `.megaplan/` for active work.
+**Status:** Historical record of cleanup ideas captured 2026-05-23. Items listed here may no longer be current; check current docs and open work before acting on them.
 
 Captured 2026-05-23 after porting `desloppify/strict-score-push` work onto
 `vibecomfy-v26-1` (branch `agentic-port-20260523`). Natural-Python ready

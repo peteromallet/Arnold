@@ -23,32 +23,32 @@ sisypy = pytest.importorskip("sisypy")
 
 def test_agentic_skeleton_directories_exist() -> None:
     """All canonical directories must exist."""
-    root = Path(__file__).resolve().parent.parent / "agentic"
-    assert root.is_dir(), f"agentic/ directory missing: {root}"
+    root = Path(__file__).resolve().parent.parent / "tests" / "agentic_harness"
+    assert root.is_dir(), f"tests/agentic_harness/ directory missing: {root}"
 
     for subdir in ["scenarios", "briefs"]:
         path = root / subdir
-        assert path.is_dir(), f"agentic/{subdir}/ directory missing: {path}"
+        assert path.is_dir(), f"tests/agentic_harness/{subdir}/ directory missing: {path}"
 
 
 def test_agentic_skeleton_files_exist() -> None:
     """All canonical files must exist."""
-    root = Path(__file__).resolve().parent.parent / "agentic"
+    root = Path(__file__).resolve().parent.parent / "tests" / "agentic_harness"
     for filename in ["__init__.py", "adapter.py", "runner.py", "README.md"]:
         path = root / filename
-        assert path.is_file(), f"agentic/{filename} missing: {path}"
+        assert path.is_file(), f"tests/agentic_harness/{filename} missing: {path}"
 
 
 def test_adapter_imports_work() -> None:
     """The adapter must be importable."""
-    from agentic.adapter import VibeComfyProjectAdapter
+    from tests.agentic_harness.adapter import VibeComfyProjectAdapter
 
     assert VibeComfyProjectAdapter is not None
 
 
 def test_runner_imports_work() -> None:
     """The runner must be importable."""
-    from agentic.runner import run_chaining_family, main
+    from tests.agentic_harness.runner import run_chaining_family, main
 
     assert callable(run_chaining_family)
     assert callable(main)
@@ -59,7 +59,7 @@ def test_runner_imports_work() -> None:
 
 def test_adapter_extends_fake_project_adapter() -> None:
     """VibeComfyProjectAdapter must extend sisypy.FakeProjectAdapter."""
-    from agentic.adapter import VibeComfyProjectAdapter
+    from tests.agentic_harness.adapter import VibeComfyProjectAdapter
 
     assert issubclass(VibeComfyProjectAdapter, sisypy.FakeProjectAdapter), (
         "VibeComfyProjectAdapter must extend FakeProjectAdapter"
@@ -68,7 +68,7 @@ def test_adapter_extends_fake_project_adapter() -> None:
 
 def test_adapter_satisfies_agentic_project_adapter_abc() -> None:
     """VibeComfyProjectAdapter must satisfy the AgenticProjectAdapter ABC."""
-    from agentic.adapter import VibeComfyProjectAdapter
+    from tests.agentic_harness.adapter import VibeComfyProjectAdapter
 
     # AgenticProjectAdapter is the abstract base; FakeProjectAdapter extends it
     assert issubclass(VibeComfyProjectAdapter, sisypy.AgenticProjectAdapter), (
@@ -78,7 +78,7 @@ def test_adapter_satisfies_agentic_project_adapter_abc() -> None:
 
 def test_adapter_has_required_methods() -> None:
     """Adapter must implement all abstract methods from the base class."""
-    from agentic.adapter import VibeComfyProjectAdapter
+    from tests.agentic_harness.adapter import VibeComfyProjectAdapter
 
     # Discover required methods from the ABC (not from source reads)
     required_methods = {
@@ -103,7 +103,7 @@ def test_adapter_has_required_methods() -> None:
 
 def test_adapter_init_signature_matches_fake() -> None:
     """Adapter __init__ must be compatible with FakeProjectAdapter.__init__."""
-    from agentic.adapter import VibeComfyProjectAdapter
+    from tests.agentic_harness.adapter import VibeComfyProjectAdapter
 
     fake_sig = inspect.signature(sisypy.FakeProjectAdapter.__init__)
     adapter_sig = inspect.signature(VibeComfyProjectAdapter.__init__)
@@ -122,7 +122,7 @@ def test_classify_success_uses_universal_checks() -> None:
     """classify_success must call universal_checks.run_all_checks, not guess."""
     import inspect as ins
 
-    from agentic.adapter import VibeComfyProjectAdapter
+    from tests.agentic_harness.adapter import VibeComfyProjectAdapter
 
     source = ins.getsource(VibeComfyProjectAdapter.classify_success)
     # Must reference universal_checks.run_all_checks
@@ -142,7 +142,7 @@ def test_runner_calls_run_all_with_correct_signature() -> None:
     """Runner must call sisypy.runner.run_all with correct parameters."""
     import inspect as ins
 
-    from agentic.runner import run_chaining_family
+    from tests.agentic_harness.runner import run_chaining_family
 
     source = ins.getsource(run_chaining_family)
 
@@ -156,18 +156,20 @@ def test_runner_calls_run_all_with_correct_signature() -> None:
 
 
 def test_runner_resolves_repo_root_correctly() -> None:
-    """Runner must resolve repo root from agentic package location."""
-    from agentic.runner import _resolve_repo_root
+    """Runner must resolve repo root from the test harness package location."""
+    from tests.agentic_harness.runner import _resolve_repo_root
 
     root = _resolve_repo_root()
     assert root.is_dir(), f"Resolved repo root not a directory: {root}"
-    assert (root / "agentic").is_dir(), f"agentic/ not found under resolved root: {root}"
+    assert (root / "tests" / "agentic_harness").is_dir(), (
+        f"tests/agentic_harness/ not found under resolved root: {root}"
+    )
     assert (root / "vibecomfy").is_dir(), f"vibecomfy/ not found under resolved root: {root}"
 
 
 def test_runner_default_directories_are_within_repo() -> None:
     """Default scenarios/briefs/reports directories must be under repo root."""
-    from agentic.runner import (
+    from tests.agentic_harness.runner import (
         _default_briefs_dir,
         _default_reports_root,
         _default_scenarios_dir,
@@ -184,7 +186,7 @@ def test_runner_default_directories_are_within_repo() -> None:
 
 def test_runner_cli_parser_exposes_required_options() -> None:
     """Runner CLI must expose mode, actor, tag, and other required options."""
-    from agentic.runner import main
+    from tests.agentic_harness.runner import main
 
     import argparse
 
@@ -295,7 +297,7 @@ def test_evidence_pack_dataclass_has_required_fields() -> None:
 
 def test_project_adapter_abc_methods_are_callable() -> None:
     """All AgenticProjectAdapter abstract methods must be callable."""
-    from agentic.adapter import VibeComfyProjectAdapter
+    from tests.agentic_harness.adapter import VibeComfyProjectAdapter
 
     adapter = VibeComfyProjectAdapter(name="test")
 
@@ -319,7 +321,7 @@ def test_adapter_module_does_not_read_sibling_sisypy_source() -> None:
     It should only use `import sisypy` and attribute access.
     """
     adapter_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "adapter.py"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "adapter.py"
     )
     source = adapter_path.read_text(encoding="utf-8")
 
@@ -342,7 +344,7 @@ def test_adapter_module_does_not_read_sibling_sisypy_source() -> None:
 def test_runner_module_does_not_read_sibling_sisypy_source() -> None:
     """The runner module must NOT contain any sibling source file references."""
     runner_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "runner.py"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "runner.py"
     )
     source = runner_path.read_text(encoding="utf-8")
 
@@ -364,7 +366,7 @@ def test_runner_module_does_not_read_sibling_sisypy_source() -> None:
 def test_adapter_uses_import_introspection_not_source_reads() -> None:
     """Adapter must use inspect/dir for API discovery, not read source files."""
     adapter_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "adapter.py"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "adapter.py"
     )
     source = adapter_path.read_text(encoding="utf-8")
 
@@ -382,11 +384,11 @@ def test_adapter_uses_import_introspection_not_source_reads() -> None:
 def test_readme_documents_layout() -> None:
     """README must document the canonical layout."""
     readme_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "README.md"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "README.md"
     )
     content = readme_path.read_text(encoding="utf-8")
 
-    assert "agentic/" in content, "README must document agentic/ layout"
+    assert "tests/agentic_harness/" in content, "README must document tests/agentic_harness/ layout"
     assert "adapter.py" in content, "README must mention adapter.py"
     assert "runner.py" in content, "README must mention runner.py"
     assert "scenarios/" in content, "README must mention scenarios/"
@@ -395,7 +397,7 @@ def test_readme_documents_layout() -> None:
 def test_readme_documents_how_to_add_scenario() -> None:
     """README must explain how to add a scenario."""
     readme_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "README.md"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "README.md"
     )
     content = readme_path.read_text(encoding="utf-8")
 
@@ -407,7 +409,7 @@ def test_readme_documents_how_to_add_scenario() -> None:
 def test_readme_documents_metadata_contract() -> None:
     """README must document entrypoint/layer and chain_id/parent_run_id."""
     readme_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "README.md"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "README.md"
     )
     content = readme_path.read_text(encoding="utf-8")
 
@@ -419,7 +421,7 @@ def test_readme_documents_metadata_contract() -> None:
 def test_readme_documents_evidence_pack_shape() -> None:
     """README must document the evidence pack shape."""
     readme_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "README.md"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "README.md"
     )
     content = readme_path.read_text(encoding="utf-8")
 
@@ -429,7 +431,7 @@ def test_readme_documents_evidence_pack_shape() -> None:
 def test_readme_documents_handoff() -> None:
     """README must include handoff notes for M2-M6."""
     readme_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "README.md"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "README.md"
     )
     content = readme_path.read_text(encoding="utf-8")
 
@@ -442,7 +444,7 @@ def test_readme_documents_evidence_vs_narrative_falsification() -> None:
     """README must document that report.md is not used for pass/fail and
     that evidence-based rubrics are the only valid classification mechanism."""
     readme_path = (
-        Path(__file__).resolve().parent.parent / "agentic" / "README.md"
+        Path(__file__).resolve().parent.parent / "tests" / "agentic_harness" / "README.md"
     )
     content = readme_path.read_text(encoding="utf-8")
 

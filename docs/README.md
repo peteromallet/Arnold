@@ -33,14 +33,9 @@ Start here when navigating project documentation.
 - [Security](security/)
 - [Audits](audits/)
 - [Agent skill](agent-skill/)
-- [Plans](plans/) — active and in-flight planning docs
 - [Historical notes](historical/)
 - [Megaplan chains](megaplan_chains/)
-- [Structure cleanup](structure_cleanup/)
 
 `docs/megaplan_chains/` contains durable planning and handoff material.
 Generated megaplan runtime state belongs in the mostly gitignored `.megaplan/`
 directory instead.
-
-Several large doc clusters are still being organized. Current candidates for
-future subfolders are remaining cross-cutting maintenance notes.

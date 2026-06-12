@@ -1,7 +1,7 @@
 """Tests for ``vibecomfy.comfy_backend`` version-matrix loading and commit reading.
 
 Covers:
-- Loading the checked-in ``version_matrix.json`` with all expected fields.
+- Loading the checked-in ComfyUI version matrix with all expected fields.
 - Missing matrix file → ``FileNotFoundError``.
 - Malformed JSON → ``json.JSONDecodeError``.
 - Missing required string fields → ``ValueError``.
@@ -55,7 +55,7 @@ def _write_matrix(path: Path, data: dict) -> None:
 
 
 def test_load_checked_in_version_matrix() -> None:
-    """The repo root ``version_matrix.json`` loads with all expected fields."""
+    """The checked-in ComfyUI version matrix loads with all expected fields."""
     reset_matrix_cache()
     matrix = load_version_matrix()
 

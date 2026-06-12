@@ -278,4 +278,4 @@ path = result.outputs[0]                         # the saved file
 
 Pipelines are ordinary Python. Use blocks for new graph structure, patches for policy, and `compile("api")` only when handing the graph to ComfyUI.
 
-Agent-facing constraints live in [../AGENTS.md](../AGENTS.md).
+Agent-facing constraints live in [agent-skill/SKILL.md](agent-skill/SKILL.md).

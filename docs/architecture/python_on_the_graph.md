@@ -22,7 +22,7 @@ and reorder the build (see §8).
 
 VibeComfy's premise is that a workflow is *real Python*, not static JSON: users grab a
 template, then "write code on top, combine it with other templates / patches / custom
-Python, then execute" (`CLAUDE.md`). That Python can contain things a single ComfyUI
+Python, then execute" (the agent skill). That Python can contain things a single ComfyUI
 graph fundamentally cannot hold:
 
 - **arbitrary code** that computes widget values or post-processes results,

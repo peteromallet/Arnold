@@ -24,9 +24,9 @@ from typing import Callable
 
 import pytest
 
-from agentic.actors_m5 import _M5_BUILDERS
+from tests.agentic_harness.actors_m5 import _M5_BUILDERS
 
-_AGENTIC_DIR = Path(__file__).resolve().parents[1] / "agentic"
+_AGENTIC_DIR = Path(__file__).resolve().parents[1] / "tests" / "agentic_harness"
 _SCENARIOS_DIR = _AGENTIC_DIR / "scenarios"
 _BRIEFS_DIR = _AGENTIC_DIR / "briefs"
 

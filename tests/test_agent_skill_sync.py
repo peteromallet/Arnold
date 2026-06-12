@@ -10,15 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_agent_skill_surfaces_are_synced() -> None:
     source = (ROOT / "docs" / "agent-skill" / "SKILL.md").read_text(encoding="utf-8")
-    claude_bootstrap = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    bootstrap = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
 
     assert "name: vibecomfy" in source
-    assert "docs/agent-skill/SKILL.md" in claude_bootstrap
-    assert "name: vibecomfy" not in claude_bootstrap
-    assert "canonical long-form agent instructions" in bootstrap
-    assert "docs/agent-skill/SKILL.md" in bootstrap
-    assert "name: vibecomfy" not in bootstrap
+    assert not (ROOT / "CLAUDE.md").exists()
+    assert not (ROOT / "AGENTS.md").exists()
 
 
 def test_agent_skill_sync_check_passes() -> None:
