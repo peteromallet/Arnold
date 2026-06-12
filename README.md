@@ -6,10 +6,13 @@ Its core job is translation: import a ComfyUI workflow, represent it as editable
 Python, validate the result, and compile it back to the API JSON that ComfyUI queues.
 JSON is the import/export format. Python is the authoring surface.
 
-The generated Python is intentionally ordinary code. A ready template is a
+The generated Python is intentionally ordinary code because Python is the
+language even small local agents tend to understand best. A ready template is a
 `build()` function that creates a `VibeWorkflow`, calls typed ComfyUI node
 wrappers or generated subgraph functions, and finalizes the workflow contract.
-This is abridged from `ready_templates/image/z_image.py`:
+The goal is not clever syntax; it is a surface that lightweight agents can read,
+edit, validate, and translate back to ComfyUI without needing to reason directly
+over graph JSON. This is abridged from `ready_templates/image/z_image.py`:
 
 ```python
 # Abridged from ready_templates/image/z_image.py.
@@ -125,7 +128,7 @@ flowchart LR
     B --> C[VibeWorkflow<br/>editable IR]
     Agent[Agent edits here] --> B
     C --> D[validate / patch / compose]
-    D -->|compile("api")| E[API JSON dict]
+    D -->|compile api| E[API JSON dict]
     E --> F[ComfyUI queue_prompt]
 ```
 
