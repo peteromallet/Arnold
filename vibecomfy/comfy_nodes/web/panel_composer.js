@@ -33,6 +33,30 @@ function ensureWorkingDotsStyle() {
   runtime._workingDotsStyleInjected = true;
 }
 
+function toggleClass(node, className, enabled) {
+  if (!node || !className) return;
+  if (node.classList && typeof node.classList.add === "function" && typeof node.classList.remove === "function") {
+    if (enabled) {
+      node.classList.add(className);
+    } else {
+      node.classList.remove(className);
+    }
+    return;
+  }
+  const current = String(node.className || node.attributes?.class || "").split(/\s+/).filter(Boolean);
+  const next = enabled
+    ? Array.from(new Set([...current, className]))
+    : current.filter((entry) => entry !== className);
+  node.className = next.join(" ");
+  if (node.attributes && typeof node.attributes === "object") {
+    if (node.className) {
+      node.attributes.class = node.className;
+    } else {
+      delete node.attributes.class;
+    }
+  }
+}
+
 export function submitReadinessState(panel, deps = {}) {
   const { routeStatusState, ROUTE_STATUS_KIND } = deps;
   const routeStatus = typeof routeStatusState === "function"
@@ -224,11 +248,10 @@ export function renderComposerActions(panel, deps = {}) {
   if (submitting) {
     ensureWorkingDotsStyle();
     panel.buttons.submit.textContent = "Working";
-    panel.buttons.submit.classList.add("vibecomfy-working-dots");
   } else {
     panel.buttons.submit.textContent = "Submit";
-    panel.buttons.submit.classList.remove("vibecomfy-working-dots");
   }
+  toggleClass(panel.buttons.submit, "vibecomfy-working-dots", submitting);
   panel.buttons.stop.disabled = !submitting;
   panel.buttons.apply.disabled = actionState.applyDisabled;
   panel.buttons.reject.disabled = actionState.rejectDisabled;
@@ -253,7 +276,9 @@ export function renderComposerActions(panel, deps = {}) {
     submitting
     || applying
     || routeStatusState(panel).kind !== ROUTE_STATUS_KIND.READY;
-  panel.buttons.settingsTest.disabled = submitting || applying;
+  const providerTestInFlight = Boolean(panel.state.providerTestInFlight);
+  panel.buttons.settingsTest.disabled = submitting || applying || providerTestInFlight;
+  panel.buttons.settingsTest.textContent = providerTestInFlight ? "Testing..." : "Test Provider";
   panel.state.previewEnabled = !!(reviewing && panel.state.candidateGraph);
 
   syncComposerButtonsImpl(panel, {
@@ -445,6 +470,27 @@ export function renderDeveloper(panel, deps = {}) {
   }
 }
 
+export function renderDeveloperDisclosure(panel, deps = {}) {
+  const { getPanelElementById, PANEL_IDS } = deps;
+  const body = panel?.sections?.developer;
+  const toggle = typeof getPanelElementById === "function" && PANEL_IDS
+    ? getPanelElementById(panel, PANEL_IDS.developerToggle)
+    : null;
+  const expanded = Boolean(panel?.state?.developerExpanded);
+  if (toggle) {
+    toggle.textContent = expanded ? "▾ Developer" : "▸ Developer";
+    toggle.ariaExpanded = expanded ? "true" : "false";
+    if (typeof toggle.setAttribute === "function") {
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    } else if (toggle.attributes && typeof toggle.attributes === "object") {
+      toggle.attributes["aria-expanded"] = expanded ? "true" : "false";
+    }
+  }
+  if (body) {
+    body.style.display = expanded ? "grid" : "none";
+  }
+}
+
 export function renderSettings(panel, deps = {}) {
   const {
     clearCredentialInput,
@@ -480,6 +526,14 @@ export function renderSettings(panel, deps = {}) {
   if (!statusNode || !guidanceNode) {
     return;
   }
+  statusNode.style.color =
+    panel.state.settingsMessageKind === "success"
+      ? "#7ee787"
+      : panel.state.settingsMessageKind === "error"
+        ? "#ff8d8d"
+        : panel.state.settingsMessageKind === "pending"
+          ? "#f2cc60"
+          : "#8d93a1";
   if (!controlsReady) {
     if (routeStatus.kind === ROUTE_STATUS_KIND.LOADING) {
       statusNode.textContent = panel.state.settingsMessage || "Loading route/model status…";
@@ -507,7 +561,7 @@ export function renderSettings(panel, deps = {}) {
     || `${descriptor.requested_route} → ${normalizedRoute} (${availability})`;
   guidanceNode.textContent = descriptor.guidance || "";
   if (descriptor.requested_route === "anthropic") {
-    guidanceNode.textContent += "\nTODO(S0): Claude/Anthropic ToS acknowledgement placeholder.";
+    guidanceNode.textContent += "\nClaude runs through your local CLI setup; browser-submitted API keys are not stored for this route.";
   }
 }
 
@@ -521,4 +575,5 @@ export function renderDeveloperSection(panel, deps = {}) {
   const { recordAgentPanelRenderCount, RENDER_SECTIONS } = deps;
   recordAgentPanelRenderCount(panel, RENDER_SECTIONS.DEVELOPER);
   renderDeveloper(panel, deps);
+  renderDeveloperDisclosure(panel, deps);
 }

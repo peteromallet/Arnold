@@ -17,11 +17,12 @@ input/
 input/.DS_Store
 
 # Large local runtime/vendor checkouts
-recipes/
-vendor/ComfyUI/
-vendor/workflow_templates/
-vendor/external_workflows/
-custom_nodes/
+/recipes/
+/vendor/ComfyUI/
+/vendor/workflow_templates/
+/vendor/external_workflows/
+/custom_nodes/
+/user/
 
 # Tool working directories
 .agents/

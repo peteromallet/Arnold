@@ -1355,6 +1355,9 @@ export function detectQueueGuard(app) {
  *   current turn context should prevent queueing, or null to allow pass-through.
  * @param {(blockInfo: object) => void} [options.onBlock] — called when a queue
  *   prompt is blocked so the caller can record block notices and update the panel.
+ * @param {(args: any[]) => void} [options.normalize] — called before the
+ *   original queuePrompt with the same arguments so the caller can normalize
+ *   exec-node typed IO in the serialized graph before it hits the backend.
  * @returns {{
  *   capability: Capability,
  *   strategy: string,
@@ -1387,6 +1390,7 @@ export function installQueueGuard(app, options = {}) {
   const original = app.queuePrompt;
   const shouldBlock = typeof options.shouldBlock === "function" ? options.shouldBlock : null;
   const onBlock = typeof options.onBlock === "function" ? options.onBlock : null;
+  const normalize = typeof options.normalize === "function" ? options.normalize : null;
 
   const wrapper = function guardedQueuePrompt(...args) {
     if (shouldBlock) {
@@ -1400,6 +1404,13 @@ export function installQueueGuard(app, options = {}) {
           }
         }
         return null;
+      }
+    }
+    if (normalize) {
+      try {
+        normalize(...args);
+      } catch (_err) {
+        // Best-effort: normalization failures must not block queueing.
       }
     }
     return original.apply(this, args);

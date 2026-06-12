@@ -121,7 +121,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -204,7 +204,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -287,7 +287,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -370,7 +370,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -509,7 +509,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -630,7 +630,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -769,7 +769,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -890,7 +890,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -1029,7 +1029,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -1132,7 +1132,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": "ready_templates/image/basic_image_upscale.py",
@@ -1233,7 +1233,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -1334,7 +1334,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -1435,7 +1435,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -1590,7 +1590,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -1691,7 +1691,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -1902,7 +1902,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": "ready_templates/image/z_image_img2img.py",
@@ -2003,7 +2003,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -2069,7 +2069,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": "ready_templates/video/basic_video_enhance.py",
@@ -2241,7 +2241,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": "manual",
@@ -2508,7 +2508,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -2727,7 +2727,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -2938,7 +2938,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -3131,7 +3131,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -3327,7 +3327,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -3539,7 +3539,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -3730,7 +3730,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -3961,7 +3961,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -4156,7 +4156,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -4423,7 +4423,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -4580,7 +4580,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -4791,7 +4791,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -4953,7 +4953,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -5176,7 +5176,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -5369,7 +5369,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -5600,7 +5600,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -5865,7 +5865,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -6040,7 +6040,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -6233,7 +6233,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -6500,7 +6500,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -6733,7 +6733,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": "ready_templates/video/wan22_animate_native_first_stage.py",
@@ -7003,7 +7003,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -7216,7 +7216,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -7463,7 +7463,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -7564,7 +7564,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -7701,7 +7701,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -7876,7 +7876,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -8051,7 +8051,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -8170,7 +8170,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -8345,7 +8345,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -8520,7 +8520,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -8657,7 +8657,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -8758,7 +8758,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -8933,7 +8933,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -9112,7 +9112,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": "ready_templates/video/wanvideo_wrapper_22_14b_i2v_kijai.py",
@@ -9274,7 +9274,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": "ready_templates/video/wanvideo_wrapper_22_14b_t2i.py",
@@ -9461,7 +9461,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": "ready_templates/video/wanvideo_wrapper_22_14b_vace_cocktail.py",
@@ -9652,7 +9652,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -9771,7 +9771,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -9964,7 +9964,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -10083,7 +10083,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -10258,7 +10258,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -10433,7 +10433,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -10580,7 +10580,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,
@@ -10806,7 +10806,7 @@
       "comfy_core": {
         "commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
         "status": "discovered",
-        "tested_at": "2026-05-20T09:19:32.302139+00:00",
+        "tested_at": "2026-06-13T00:00:00+00:00",
         "version": "0.18.2"
       },
       "source_workflow": null,

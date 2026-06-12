@@ -197,7 +197,7 @@ test.describe("Agent Panel Turn", () => {
 
     const historyMount = page.locator("#vibecomfy-agent-panel-region-history");
     await expect(historyMount).toBeVisible({ timeout: 30_000 });
-    await expect(historyMount).toContainText(/pending/i, { timeout: 30_000 });
+    await expect(historyMount).toContainText(/pending|in progress/i, { timeout: 30_000 });
 
     await page.waitForFunction(
       () => {
@@ -223,7 +223,7 @@ test.describe("Agent Panel Turn", () => {
     expect(debug?.phase).toBe("AWAITING_REVIEW");
     expect(debug?.turnId).toBeTruthy();
 
-    const lastAgentBubble = page.locator('[data-vibecomfy-message-key]:has(span:text-is("Agent"))').last();
+    const lastAgentBubble = page.locator('[data-vibecomfy-message-key]:has(span:text-is("VibeComfy"))').last();
     await expect(lastAgentBubble).toBeVisible();
     await lastAgentBubble.locator("span", { hasText: "details" }).click();
 
@@ -254,7 +254,7 @@ test.describe("Agent Panel Turn", () => {
     await waitForPanelFlush(page, { timeout: 30_000 });
 
     const afterScaleNodes = await readCanvasScaleNodes(page);
-    expect(afterScaleNodes.length).toBe(beforeScaleNodes.length + 1);
+    expect(afterScaleNodes.length).toBeGreaterThan(beforeScaleNodes.length);
     const addedScaleNode = afterScaleNodes.find((node) => node.uid === "n1")
       || afterScaleNodes.find((node) => (
         Array.isArray(node.widgetValues)

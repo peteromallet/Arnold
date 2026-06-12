@@ -241,7 +241,7 @@ def build_batch_messages(
         "name or copy a name from the worked example below — those are placeholders.\n\n"
         "Search first (only when needed):\n"
         "The existing nodes are already shown above — do NOT search for them.\n"
-        "Only `search(focus_types=[\"X\"])` for a NEW node TYPE to ADD when you\n"
+        "Only `search(focus_types=[\"X\"])` for a NEW node TYPE you want to ADD when you\n"
         "need its signature. One search is enough; don't repeat it. Then construct\n"
         "and wire the node in the SAME or next batch.\n\n"
         "Placement:\n"

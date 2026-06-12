@@ -1,0 +1,36 @@
+{
+  "1": {
+    "class_type": "LoadAudio",
+    "inputs": {
+      "audio": "speech_smoke.wav",
+      "widget_0": "speech_smoke.wav"
+    }
+  },
+  "2": {
+    "class_type": "AILab_Qwen3TTSVoiceClone",
+    "inputs": {
+      "target_text": "This Qwen voice clone template uses a tiny bundled reference clip and runs as a reusable audio smoke test.",
+      "model_size": "0.6B",
+      "language": "English",
+      "reference_audio": [
+        "1",
+        0
+      ],
+      "reference_text": "This is a short reference audio sample for workflow smoke testing.",
+      "x_vector_only": false,
+      "unload_models": true,
+      "seed": 125
+    }
+  },
+  "3": {
+    "class_type": "SaveAudioMP3",
+    "inputs": {
+      "audio": [
+        "2",
+        0
+      ],
+      "filename_prefix": "audio/qwen3_tts_voice_clone",
+      "quality": "V0"
+    }
+  }
+}

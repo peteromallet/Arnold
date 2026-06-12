@@ -38,7 +38,7 @@ from vibecomfy.comfy_backend import (
 
 _VALID_MATRIX: dict = {
     "schema_version": "1.0",
-    "supported_comfyui_version": "hiddenswitch-pinned",
+    "supported_comfyui_version": "0.18.2",
     "pinned_comfyui_commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
     "vendor_path": "vibecomfy[comfy]",
     "object_info_fingerprint": None,
@@ -61,7 +61,7 @@ def test_load_checked_in_version_matrix() -> None:
 
     assert isinstance(matrix, VersionMatrix)
     assert matrix.schema_version == "1.0"
-    assert matrix.supported_comfyui_version == "hiddenswitch-pinned"
+    assert matrix.supported_comfyui_version == "0.18.2"
     assert matrix.pinned_comfyui_commit == "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68"
     assert matrix.vendor_path == "vibecomfy[comfy]"
     assert matrix.object_info_fingerprint is None
@@ -299,9 +299,9 @@ def test_dict_fingerprint_is_accepted(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_read_vendored_commit_returns_none_after_submodule_removal() -> None:
-    """The removed tracked ComfyUI submodule no longer supplies a commit SHA."""
-    assert read_vendored_commit() is None
+def test_read_vendored_commit_reads_installed_package_or_none() -> None:
+    """The removed submodule is replaced by optional pip provenance."""
+    assert read_vendored_commit() in {None, _VALID_MATRIX["pinned_comfyui_commit"]}
 
 
 # ---------------------------------------------------------------------------

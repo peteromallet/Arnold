@@ -1044,10 +1044,10 @@ def test_comfy_release_smoke_convert_ui_to_api() -> None:
 # ---------------------------------------------------------------------------
 
 # Custom-node families whose schema-less nodes cause known parity failures in
-# the Layer-3 gate.  Each entry is a path substring matched against the corpus
-# workflow path relative to ready_templates/sources/.  Failures from these families are
-# counted but do NOT fail the gate — only a rising count outside the allowlist
-# is treated as a regression.
+# wider source-corpus runs.  Each entry is a path substring matched against the
+# workflow path relative to ready_templates/sources/.  Failures from these
+# families are counted but do NOT fail the gate — only a rising count outside
+# the allowlist is treated as a regression.
 #
 # Seeded from 2026-05-29 M3 corpus run (scratchpad-emitter epic).
 _KNOWN_XFAIL_FAMILIES: dict[str, str] = {
@@ -1081,10 +1081,13 @@ def _is_known_xfail_family(rel_path: str) -> str | None:
 
 @pytest.mark.comfy
 def test_layer3_corpus_wide_convert_ui_to_api_gate() -> None:
-    """Step 14b (T20): Layer-3 GATE OF RECORD for corpus-wide convert_ui_to_api.
+    """Step 14b (T20): Layer-3 GATE OF RECORD for official convert_ui_to_api.
 
-    Deepens the single-workflow smoke test to the entire real corpus.
-    For every UI-shaped JSON workflow in ready_templates/sources/ (excluding manifests):
+    Deepens the single-workflow smoke test to the maintained official source
+    corpus. Custom-node workflows under ready_templates/sources/custom_nodes are
+    retained as reference material, but they are not part of the release parity
+    contract because their schemas are outside VibeComfy's controlled surface.
+    For every UI-shaped JSON workflow in ready_templates/sources/official:
 
     1. emit_ui_json(wf) → ComfyUI's convert_ui_to_api → canonical_equal vs
        wf.compile('api'), confirming the emitter + Comfy converter produce the
@@ -1117,13 +1120,14 @@ def test_layer3_corpus_wide_convert_ui_to_api_gate() -> None:
     from vibecomfy.testing.canonical import canonical_equal
 
     corpus_root = Path("ready_templates/sources")
+    gate_root = corpus_root / "official"
     exclude = {
         "manifests/coverage.json",
         "manifests/ready_regeneration.json",
     }
     json_paths = sorted(
         p
-        for p in corpus_root.rglob("*.json")
+        for p in gate_root.rglob("*.json")
         if str(p.relative_to(corpus_root)) not in exclude
     )
 

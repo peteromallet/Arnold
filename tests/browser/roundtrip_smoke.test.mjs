@@ -1335,6 +1335,7 @@ test("VibeComfy failure bubble uses envelope user_facing_message for MalformedMo
     await harness.setup();
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled === false);
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "do it";
     await harness.clickButton("Submit");
 
@@ -1443,6 +1444,7 @@ test("VibeComfy reads typed candidate and eligibility envelopes without compatib
 
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "add a saver";
     await harness.clickButton("Submit");
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled === false);
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled, false);
     assert.match(harness.textDump(), /Typed candidate ready/);
     assert.match(harness.textDump(), /applyEligibility.*applyable/);
@@ -2659,8 +2661,13 @@ test("VibeComfy Apply allows nonstructural serialize drift when the live canvas 
         const body = JSON.parse(options.body);
         assert.equal(body.session_id, "session-apply-drift");
         assert.equal(body.turn_id, "0001");
-        assert.equal(body.client_graph_hash, initialGraphHash);
-        assert.deepEqual(body.live_graph, harness.getCurrentGraph());
+        assert.match(body.client_graph_hash, /^[0-9a-f]{64}$/);
+        assert.notEqual(body.client_graph_hash, initialGraphHash);
+        assert.deepEqual(body.live_graph?.extra, driftedGraph.extra);
+        assert.deepEqual(body.live_graph?.nodes?.[0]?.pos, driftedGraph.nodes[0].pos);
+        assert.deepEqual(body.live_graph?.nodes?.[0]?.flags, driftedGraph.nodes[0].flags);
+        assert.deepEqual(body.live_graph?.nodes?.[0]?.properties, driftedGraph.nodes[0].properties);
+        assert.deepEqual(body.live_graph?.nodes?.[0]?.widgets_values, driftedGraph.nodes[0].widgets_values);
         assert.equal(body.client_live_canvas_token, "live:rev:1");
         assert.equal(body.submit_graph_hash, initialGraphHash);
         assert.equal(body.candidate_graph_hash, sha256HexUtf8(candidateGraph));
@@ -2690,8 +2697,9 @@ test("VibeComfy Apply allows nonstructural serialize drift when the live canvas 
     await harness.clickButton("Apply");
 
     assert.equal(harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-edit/accept").length, 1);
-    assert.equal(harness.graphConfigureCalls.length, 1);
-    assert.deepEqual(harness.graphConfigureCalls[0], candidateGraph);
+    await waitFor(() => harness.graphConfigureCalls.length + harness.loadGraphDataCalls.length === 1);
+    assert.equal(harness.graphConfigureCalls.length + harness.loadGraphDataCalls.length, 1);
+    assert.deepEqual(harness.graphConfigureCalls[0] || harness.loadGraphDataCalls[0], candidateGraph);
     assert.doesNotMatch(harness.textDump(), /StaleStateMismatch/);
   } finally {
     await harness.dispose();
@@ -2780,7 +2788,8 @@ test("VibeComfy Apply allows nonstructural drift even after the live canvas toke
         const body = JSON.parse(options.body);
         assert.equal(body.session_id, "session-apply-token-drift");
         assert.equal(body.turn_id, "0001");
-        assert.equal(body.client_graph_hash, initialGraphHash);
+        assert.match(body.client_graph_hash, /^[0-9a-f]{64}$/);
+        assert.notEqual(body.client_graph_hash, initialGraphHash);
         assert.equal(body.client_live_canvas_token, "live:rev:2");
         return {
           status: 200,
@@ -4254,13 +4263,14 @@ test("VibeComfy provider settings normalize routes, use DeepSeek-only password e
     await waitFor(() => credentialBodies.length === 1);
     assert.deepEqual(credentialBodies[0], { provider: "deepseek", api_key: "deepseek-secret" });
     assert.equal(apiKeyInput.value, "");
+    assert.match(harness.textDump(), /Stored browser credential for deepseek/);
     assert.doesNotMatch(harness.textDump(), /deepseek-secret/);
 
     routeSelect.value = "anthropic";
     routeSelect.onchange();
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=anthropic&model=agent-model"));
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-api-key")?.style.display, "none");
-    assert.match(harness.textDump(), /TODO\(S0\): Claude\/Anthropic ToS acknowledgement placeholder\./);
+    assert.match(harness.textDump(), /Claude runs through your local CLI setup/);
 
     routeSelect.value = "openai-codex";
     routeSelect.onchange();
@@ -4355,7 +4365,7 @@ test("VibeComfy route/model controls stay explicit across loading, missing-route
     assert.equal(modelInput.disabled, false);
     assert.deepEqual(routeSelect.children.map((entry) => entry.value), ["auto", "deepseek"]);
 
-    await harness.clickButton("Test Provider");
+    harness.document.getElementById("vibecomfy-agent-panel-settings-test").click();
     await waitFor(() => statusCalls === 2);
     assert.equal(routeSelect.disabled, true);
     assert.equal(modelInput.disabled, true);
@@ -4363,7 +4373,7 @@ test("VibeComfy route/model controls stay explicit across loading, missing-route
     assert.match(routeSelect.children[0].textContent, /Route options unavailable/);
     assert.match(harness.textDump(), /Status missing route options; route\/model controls disabled\./);
 
-    await harness.clickButton("Test Provider");
+    harness.document.getElementById("vibecomfy-agent-panel-settings-test").click();
     await waitFor(() => statusCalls === 3);
     assert.equal(routeSelect.disabled, true);
     assert.equal(modelInput.disabled, true);
@@ -4414,6 +4424,24 @@ test("VibeComfy settings live in a toggled popover and keep route-status guidanc
                   browser_api_key_allowed: true,
                   guidance: "DeepSeek browser key submission is supported.",
                 },
+                anthropic: {
+                  requested_route: "anthropic",
+                  normalized_route: "arnold",
+                  browser_api_key_allowed: false,
+                  guidance: "Anthropic/Claude runs through local Arnold/Hermes.",
+                  tos_acknowledgement_required: true,
+                },
+                "openai-codex": {
+                  requested_route: "openai-codex",
+                  normalized_route: "arnold",
+                  browser_api_key_allowed: false,
+                  guidance: "OpenAI Codex runs through local Arnold/Hermes.",
+                },
+              },
+              credential_presence: {
+                arnold_api_key: false,
+                hermes_api_key: false,
+                deepseek_api_key: true,
               },
             },
           };
@@ -4425,6 +4453,208 @@ test("VibeComfy settings live in a toggled popover and keep route-status guidanc
             provider_available: true,
             route: "deepseek",
             requested_route: "auto",
+          },
+        };
+      },
+      "/vibecomfy/agent/status?route=deepseek": async () => {
+        statusCalls += 1;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            ready: true,
+            provider_available: true,
+            route: "deepseek",
+            requested_route: "deepseek",
+            route_options: {
+              auto: {
+                requested_route: "auto",
+                normalized_route: "deepseek",
+                browser_api_key_allowed: false,
+                guidance: "Auto resolves to DeepSeek for this browser session.",
+              },
+              deepseek: {
+                requested_route: "deepseek",
+                normalized_route: "deepseek",
+                browser_api_key_allowed: true,
+                guidance: "DeepSeek browser key submission is supported.",
+              },
+              anthropic: {
+                requested_route: "anthropic",
+                normalized_route: "arnold",
+                browser_api_key_allowed: false,
+                guidance: "Anthropic/Claude runs through local Arnold/Hermes.",
+                tos_acknowledgement_required: true,
+              },
+              "openai-codex": {
+                requested_route: "openai-codex",
+                normalized_route: "arnold",
+                browser_api_key_allowed: false,
+                guidance: "OpenAI Codex runs through local Arnold/Hermes.",
+              },
+            },
+            credential_presence: {
+              arnold_api_key: false,
+              hermes_api_key: false,
+              deepseek_api_key: true,
+            },
+          },
+        };
+      },
+      "/vibecomfy/agent/status?route=openai-codex&model=agent-edit": async () => {
+        statusCalls += 1;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            ready: true,
+            provider_available: true,
+            route: "arnold",
+            requested_route: "openai-codex",
+            model: "agent-edit",
+            route_metadata: {
+              requested_route: "openai-codex",
+              normalized_route: "arnold",
+              browser_api_key_allowed: false,
+              guidance: "OpenAI Codex runs through local Arnold/Hermes.",
+            },
+            route_options: {
+              auto: {
+                requested_route: "auto",
+                normalized_route: "deepseek",
+                browser_api_key_allowed: false,
+                guidance: "Auto resolves to DeepSeek for this browser session.",
+              },
+              deepseek: {
+                requested_route: "deepseek",
+                normalized_route: "deepseek",
+                browser_api_key_allowed: true,
+                guidance: "DeepSeek browser key submission is supported.",
+              },
+              anthropic: {
+                requested_route: "anthropic",
+                normalized_route: "arnold",
+                browser_api_key_allowed: false,
+                guidance: "Anthropic/Claude runs through local Arnold/Hermes.",
+                tos_acknowledgement_required: true,
+              },
+              "openai-codex": {
+                requested_route: "openai-codex",
+                normalized_route: "arnold",
+                browser_api_key_allowed: false,
+                guidance: "OpenAI Codex runs through local Arnold/Hermes.",
+              },
+            },
+            credential_presence: {
+              arnold_api_key: false,
+              hermes_api_key: false,
+              deepseek_api_key: true,
+            },
+          },
+        };
+      },
+      "/vibecomfy/agent/status?route=anthropic&model=agent-edit": async () => {
+        statusCalls += 1;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            ready: true,
+            provider_available: true,
+            route: "arnold",
+            requested_route: "anthropic",
+            model: "agent-edit",
+            route_metadata: {
+              requested_route: "anthropic",
+              normalized_route: "arnold",
+              browser_api_key_allowed: false,
+              guidance: "Anthropic/Claude runs through local Arnold/Hermes.",
+              tos_acknowledgement_required: true,
+            },
+            route_options: {
+              auto: {
+                requested_route: "auto",
+                normalized_route: "deepseek",
+                browser_api_key_allowed: false,
+                guidance: "Auto resolves to DeepSeek for this browser session.",
+              },
+              deepseek: {
+                requested_route: "deepseek",
+                normalized_route: "deepseek",
+                browser_api_key_allowed: true,
+                guidance: "DeepSeek browser key submission is supported.",
+              },
+              anthropic: {
+                requested_route: "anthropic",
+                normalized_route: "arnold",
+                browser_api_key_allowed: false,
+                guidance: "Anthropic/Claude runs through local Arnold/Hermes.",
+                tos_acknowledgement_required: true,
+              },
+              "openai-codex": {
+                requested_route: "openai-codex",
+                normalized_route: "arnold",
+                browser_api_key_allowed: false,
+                guidance: "OpenAI Codex runs through local Arnold/Hermes.",
+              },
+            },
+            credential_presence: {
+              arnold_api_key: false,
+              hermes_api_key: false,
+              deepseek_api_key: true,
+            },
+          },
+        };
+      },
+      "/vibecomfy/agent/status?route=openai-codex": async () => {
+        statusCalls += 1;
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            ready: true,
+            provider_available: true,
+            route: "arnold",
+            requested_route: "openai-codex",
+            model: "agent-edit",
+            route_metadata: {
+              requested_route: "openai-codex",
+              normalized_route: "arnold",
+              browser_api_key_allowed: false,
+              guidance: "OpenAI Codex runs through local Arnold/Hermes.",
+            },
+            route_options: {
+              auto: {
+                requested_route: "auto",
+                normalized_route: "deepseek",
+                browser_api_key_allowed: false,
+                guidance: "Auto resolves to DeepSeek for this browser session.",
+              },
+              deepseek: {
+                requested_route: "deepseek",
+                normalized_route: "deepseek",
+                browser_api_key_allowed: true,
+                guidance: "DeepSeek browser key submission is supported.",
+              },
+              anthropic: {
+                requested_route: "anthropic",
+                normalized_route: "arnold",
+                browser_api_key_allowed: false,
+                guidance: "Anthropic/Claude runs through local Arnold/Hermes.",
+                tos_acknowledgement_required: true,
+              },
+              "openai-codex": {
+                requested_route: "openai-codex",
+                normalized_route: "arnold",
+                browser_api_key_allowed: false,
+                guidance: "OpenAI Codex runs through local Arnold/Hermes.",
+              },
+            },
+            credential_presence: {
+              arnold_api_key: false,
+              hermes_api_key: false,
+              deepseek_api_key: true,
+            },
           },
         };
       },
@@ -4447,26 +4677,148 @@ test("VibeComfy settings live in a toggled popover and keep route-status guidanc
     const settingsStatus = harness.document.getElementById("vibecomfy-agent-panel-settings-status");
     const settingsGuidance = harness.document.getElementById("vibecomfy-agent-panel-settings-guidance");
     const developerRegion = harness.document.getElementById("vibecomfy-agent-panel-region-developer");
+    const developerToggle = harness.document.getElementById("vibecomfy-agent-panel-developer-toggle");
+    const routeSelect = harness.document.getElementById("vibecomfy-agent-panel-route");
+    const modelInput = harness.document.getElementById("vibecomfy-agent-panel-model");
+    const apiKeyInput = harness.document.getElementById("vibecomfy-agent-panel-api-key");
 
     assert(settingsPopover, "settings popover should be mounted");
     assert(settingsGear, "settings gear button should be mounted");
     assert.equal(settingsPopover.style.display, "none");
+    assert.equal(harness.getButton("Change Engine"), null);
+    assert.equal(modelInput.style.display, "none");
 
     settingsGear.click();
     assert.equal(settingsPopover.style.display, "block");
+    assert.equal(settingsPopover.style.overflowY, "auto");
+    assert.equal(routeSelect.style.boxSizing, "border-box");
+    assert.match(routeSelect.style.padding, /28px/);
     await waitFor(() => /deepseek \(provider ready\)/.test(settingsStatus.textContent));
-    assert.match(settingsStatus.textContent, /auto .* deepseek \(provider ready\)/);
-    assert.match(settingsGuidance.textContent, /Auto resolves to DeepSeek/);
+    assert.match(settingsStatus.textContent, /deepseek .* deepseek \(provider ready\)/);
+    assert.match(settingsGuidance.textContent, /DeepSeek browser key submission is supported/);
+    assert(developerToggle, "developer disclosure should be mounted");
+    assert.equal(developerToggle.attributes?.["aria-expanded"], "false");
+    const developerBody = developerRegion.querySelectorAll(
+      (node) => node.className === "vibecomfy-agent-panel-region-body",
+    )[0];
+    assert.equal(developerBody?.style.display, "none");
+    developerToggle.click();
+    assert.equal(developerToggle.attributes?.["aria-expanded"], "true");
+    assert.equal(developerBody?.style.display, "grid");
     assert.match(developerRegion.textContent, /Adapter Capabilities/);
     assert.match(developerRegion.textContent, /Queue Guard State/);
 
-    await harness.clickButton("Test Provider");
+    routeSelect.value = "deepseek";
+    routeSelect.onchange();
     await waitFor(() => statusCalls === 2);
-    assert.match(settingsStatus.textContent, /Status missing route options/);
-    assert.match(settingsGuidance.textContent, /status without route_options/);
+    assert.match(settingsStatus.textContent, /deepseek .* deepseek \(provider ready\)/);
+    assert.match(settingsGuidance.textContent, /Saved DeepSeek key present/);
+    assert.match(apiKeyInput.placeholder, /Saved DeepSeek key present/);
+
+    await harness.clickButton("Test Provider");
+    await waitFor(() => statusCalls === 3);
+    await waitFor(() => /Provider test passed: deepseek .* deepseek/.test(settingsStatus.textContent));
+    assert.equal(settingsStatus.style.color, "#7ee787");
+
+    routeSelect.value = "openai-codex";
+    routeSelect.onchange();
+    await waitFor(() => statusCalls === 4);
+    assert.match(settingsStatus.textContent, /openai-codex .* arnold \(provider ready\)/);
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-settings-test")?.disabled === false);
+
+    harness.document.getElementById("vibecomfy-agent-panel-settings-test").click();
+    await waitFor(() => statusCalls === 5);
+    await waitFor(() => /Provider test passed: openai-codex .* arnold/.test(settingsStatus.textContent));
+    assert.doesNotMatch(settingsStatus.textContent, /openai-codex .* auto/);
+
+    routeSelect.value = "anthropic";
+    routeSelect.onchange();
+    await waitFor(() => statusCalls === 6);
+    assert.match(settingsStatus.textContent, /anthropic .* arnold \(provider ready\)/);
+    assert.match(settingsGuidance.textContent, /Claude runs through your local CLI setup/);
+
+    harness.document.getElementById("vibecomfy-agent-panel-settings-test").click();
+    await waitFor(() => statusCalls === 7);
+    await waitFor(() => /Provider test passed: anthropic .* arnold/.test(settingsStatus.textContent));
+    assert.doesNotMatch(settingsStatus.textContent, /anthropic .* auto/);
 
     settingsGear.click();
     assert.equal(settingsPopover.style.display, "none");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy first open auto-selects DeepSeek when a stored browser key is ready", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          ready: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+          credential_presence: {
+            arnold_api_key: false,
+            hermes_api_key: false,
+            deepseek_api_key: true,
+          },
+        },
+      },
+      "/vibecomfy/agent/status?route=deepseek": {
+        status: 200,
+        body: {
+          ok: true,
+          ready: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "deepseek",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+          credential_presence: {
+            arnold_api_key: false,
+            hermes_api_key: false,
+            deepseek_api_key: true,
+          },
+        },
+      },
+    },
+    withQueuePrompt: false,
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() =>
+      harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"),
+    );
+    await waitFor(() => globalThis.localStorage.getItem("vibecomfy_agent_provider") === "deepseek");
+
+    assert.equal(
+      harness.document.getElementById("vibecomfy-agent-panel-welcome-overlay"),
+      null,
+      "ready stored DeepSeek key should not force the choose-engine gate",
+    );
+    assert.equal(harness.getButton("Confirm Selection"), null);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-route").value, "deepseek");
+    assert.equal(
+      harness.requests.some((entry) => entry.url === "/vibecomfy/agent/credentials"),
+      false,
+      "saved-key path should not POST an empty replacement credential",
+    );
   } finally {
     await harness.dispose();
   }
@@ -8688,18 +9040,12 @@ test("VibeComfy chat thread shows the session link, caps collapsed history at th
     globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === CHAT_URL));
-    await waitFor(() => /session: out\/editor_sessions\/session-thread-last30\//.test(harness.textDump()));
-
     const chatRegion = harness.document.getElementById("vibecomfy-agent-panel-region-chat");
     const panel = extensionModule.ensureAgentPanel();
-    const sessionLink = chatRegion?.querySelectorAll(
-      (node) => node.tagName === "A" && node.textContent === `session: out/editor_sessions/${SESSION_ID}/`,
-    )[0];
-    assert(sessionLink, "chat thread should render the session link");
-    assert.equal(
-      sessionLink.href,
-      `/vibecomfy/agent-edit/session-json?session_id=${encodeURIComponent(SESSION_ID)}`,
-    );
+    const sessionLinks = chatRegion?.querySelectorAll(
+      (node) => node.tagName === "A" && /session:/.test(node.textContent),
+    ) || [];
+    assert.equal(sessionLinks.length, 0, "chat thread should keep the internal session path hidden");
 
     const visibleMessages = chatRegion.querySelectorAll(
       (node) => node.tagName === "DIV" && /^message [0-9]+$/.test(node.textContent),
@@ -9626,7 +9972,10 @@ test("Lifecycle J3 reject success leaves no applyable candidate", async () => {
 
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "reject this candidate";
     await harness.clickButton("Submit");
-    await waitFor(() => /Candidate ready to reject\./.test(harness.textDump()));
+    await waitFor(() => (
+      extensionModule.ensureAgentPanel().state.candidateGraph
+      && harness.document.getElementById("vibecomfy-agent-panel-reject")?.disabled === false
+    ));
 
     await harness.clickButton("Reject");
     const panel = extensionModule.ensureAgentPanel();
@@ -11598,7 +11947,7 @@ test("VibeComfy humanizes agent bubble text and keeps gate and op details behind
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "set steps";
     await harness.clickButton("Submit");
     const visibleAgentBubble = harness.document.body.querySelectorAll(
-      (node) => node.style?.background === "#0f2a26" && /Updated ksampler\.steps from 20 to 26\./.test(node.textContent),
+      (node) => node.tagName === "DIV" && /Updated ksampler\.steps from 20 to 26\./.test(node.textContent),
     )[0];
     assert.ok(visibleAgentBubble, "humanized agent bubble should be visible");
     assert.doesNotMatch(visibleAgentBubble.textContent, /Gate A passed/);
@@ -13098,7 +13447,9 @@ test("VibeComfy detail row has overflowWrap containment (T18)", async () => {
     assert.ok(toggles.length >= 1, "at least one collapsed detail toggle must exist");
 
     // The detail toggle's parent is the detailRow — check its style
-    const detailRow = toggles[0].parentNode;
+    const detailRow = toggles
+      .map((toggle) => toggle.parentNode?.parentNode)
+      .find((node) => node?.style?.overflowWrap === "anywhere");
     assert.ok(detailRow, "detail row must exist");
     assert.equal(detailRow.style.overflowWrap, "anywhere", "detail row should have overflowWrap: anywhere");
     assert.equal(detailRow.style.maxWidth, "100%", "detail row should have maxWidth: 100%");

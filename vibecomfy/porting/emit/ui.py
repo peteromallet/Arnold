@@ -915,6 +915,14 @@ def _normalize_exec_io_entries(value: Any) -> list[tuple[str, str]]:
 
 
 def _normalize_exec_io(value: Any) -> dict[str, list[tuple[str, str]]] | None:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(parsed, Mapping):
+            return None
+        return _normalize_exec_io(parsed)
     if not isinstance(value, Mapping):
         return None
     inputs = _normalize_exec_io_entries(value.get("inputs"))
@@ -1095,14 +1103,20 @@ def materialize_litegraph_node(
         "size": [_canonicalize_coord(s) for s in _STUB_NODE_SIZE],
     }
     furniture = _resolve_furniture(node, None)
-    outputs = _schema_outputs_for_unwired_node(schema)
+    inputs: list[dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = _schema_outputs_for_unwired_node(schema)
+    if class_type == "vibecomfy.exec":
+        exec_io = _exec_io_for_node(node)
+        if exec_io is not None:
+            inputs = _exec_dynamic_inputs(exec_io, {})
+            outputs = _exec_dynamic_outputs(exec_io, {})
     return _emit_litegraph_node_dict(
         node,
         litegraph_node_id=int(node_id),
         order=0,
         geometry=geometry,
         furniture=furniture,
-        inputs=[],
+        inputs=inputs,
         outputs=outputs,
         schema=schema,
         include_main_positions=False,

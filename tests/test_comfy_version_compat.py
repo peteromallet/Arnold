@@ -44,8 +44,8 @@ pytestmark = [
 # Channel descriptions are documented in docs/comfy_version_support.md.
 # These tests describe the contracts that Sprint 4 will implement.
 
-CHANNEL_CURRENT = "hiddenswitch-pinned"
-"""Currently pinned Hiddenswitch commit — the active development target."""
+CHANNEL_CURRENT = "comfyui-0.18.2"
+"""Currently pinned pip-installable ComfyUI package — the active development target."""
 
 CHANNEL_PREVIOUS = "previous-release"
 """One previous release pin — backward compatibility baseline."""
@@ -70,8 +70,8 @@ ALL_CHANNELS = [
 
 
 @pytest.mark.comfy_version_compat
-def test_channel_current_hiddenswitch_pinned_contract() -> None:
-    """Sprint 4 will verify: currently pinned Hiddenswitch commit passes
+def test_channel_current_pip_package_contract() -> None:
+    """Sprint 4 will verify: currently pinned pip-installable ComfyUI package passes
     the full port_convert_workflow + strict-ready validation suite.
 
     This is the primary development target.
@@ -117,7 +117,7 @@ def test_all_channels_enumerated() -> None:
     Validates that the channel selection mechanism works correctly.
     """
     assert len(ALL_CHANNELS) == 4
-    assert CHANNEL_CURRENT == "hiddenswitch-pinned"
+    assert CHANNEL_CURRENT == "comfyui-0.18.2"
     assert CHANNEL_PREVIOUS == "previous-release"
     assert CHANNEL_AHEAD == "ahead-candidate"
     assert CHANNEL_UPSTREAM_HEAD == "upstream-main-head"

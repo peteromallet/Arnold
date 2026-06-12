@@ -28,7 +28,7 @@ comfy = [
   # Optional adoption hook only (M2 Step 7 / SD2). No M2 feature depends on
   # this; vibecomfy.comfy_backend.ensure_nodes() falls back to pure-Python when
   # this extra is not installed. Mirrors the opt-in `comfy` pytest marker.
-  "comfyui @ git+https://github.com/peteromallet/ComfyUI.git@fix/latentupscale-model-mmap-residency",
+  "comfyui @ git+https://github.com/peteromallet/ComfyUI.git@f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
 ]
 png = [
   # Optional image-ingest hook (M2 Step 11): read a ComfyUI workflow chunk

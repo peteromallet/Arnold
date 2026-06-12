@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from vibecomfy.porting.emit.ui import emit_ui_json, materialize_litegraph_node
 from vibecomfy.schema.provider import InputSpec, NodeSchema, OutputSpec
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
@@ -131,3 +133,38 @@ def test_materialize_save_image_matches_single_node_emit() -> None:
         **expected,
         "id": 9,
     }
+
+
+def test_materialize_exec_uses_stringified_io_instead_of_generic_schema_pool() -> None:
+    schema = NodeSchema(
+        class_type="vibecomfy.exec",
+        pack="vibecomfy",
+        inputs={
+            "source": InputSpec("STRING", required=True),
+            "io": InputSpec("JSON", required=True),
+            **{f"in_{index}": InputSpec("*", required=False) for index in range(16)},
+        },
+        outputs=[OutputSpec("*", f"out_{index}") for index in range(16)],
+        source_provider="vibecomfy_builtin",
+    )
+    io_spec = {"inputs": [["image", "IMAGE"]], "outputs": [["image", "IMAGE"]]}
+
+    node = materialize_litegraph_node(
+        "vibecomfy.exec",
+        {
+            "source": "image = in_0",
+            "io": json.dumps(io_spec),
+        },
+        schema,
+        11,
+        "uid-exec",
+        [10.0, 20.0],
+    )
+
+    assert node["inputs"] == [{"name": "in_0", "label": "image: IMAGE", "type": "IMAGE"}]
+    assert node["outputs"] == [
+        {"name": "out_0", "label": "image: IMAGE", "type": "IMAGE", "links": None, "slot_index": 0}
+    ]
+    assert len(node["inputs"]) == 1
+    assert len(node["outputs"]) == 1
+    assert node["properties"]["vibecomfy"]["io"] == io_spec

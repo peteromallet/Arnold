@@ -876,3 +876,291 @@ test("VibeComfy loadGraphData fallback repairs dynamic exec links after async Co
     await harness.dispose();
   }
 });
+
+// ── Test: Full lifecycle through all four facades with native-shape assertions ──
+test("VibeComfy full lifecycle (display→serialize→apply→repair) preserves dynamic-IO shape and uses proper prototypes", async () => {
+  const harness = await createBrowserHarness({
+    withGraphMutation: true,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    const normalizeForDisplay = extensionModule.normalizeForDisplay;
+    const normalizeForSerialize = extensionModule.normalizeForSerialize;
+    const normalizeForApply = extensionModule.normalizeForApply;
+    const repairLiveNodes = extensionModule.repairLiveNodes;
+    assert.equal(typeof normalizeForDisplay, "function");
+    assert.equal(typeof normalizeForSerialize, "function");
+    assert.equal(typeof normalizeForApply, "function");
+    assert.equal(typeof repairLiveNodes, "function");
+
+    // ── Setup: exec node with 16-port pool and typed IO declaring 2in/1out ──
+    const source = "return {\"image\": image, \"latent\": latent}";
+    const typedIo = {
+      inputs: [["image", "IMAGE"], ["latent", "LATENT"]],
+      outputs: [["result", "IMAGE"]],
+    };
+
+    // ── Phase 1: DISPLAY — normalizeForDisplay via beforeRegisterNodeDef ──
+    await harness.loadExtension();
+    const extension = harness.getExtension();
+
+    const nodeType = { prototype: {} };
+    await extension.beforeRegisterNodeDef(nodeType, { name: "vibecomfy.exec" });
+
+    const removedInputs = [];
+    const removedOutputs = [];
+    const execNode = {
+      type: "vibecomfy.exec",
+      size: [240, 90],
+      properties: {
+        vibecomfy_uid: "lifecycle-exec-1",
+        "Node name for S&R": "vibecomfy.exec",
+      },
+      widgets_values: [
+        source,
+        typedIo,
+      ],
+      inputs: Array.from({ length: 16 }, (_, i) => ({
+        name: `in_${i}`, label: "", type: "*",
+      })),
+      outputs: Array.from({ length: 16 }, (_, i) => ({
+        name: `out_${i}`, label: "", type: "*",
+      })),
+      removeInput(index) {
+        const removed = this.inputs.splice(index, 1)[0];
+        removedInputs.push({ index, name: removed?.name });
+      },
+      removeOutput(index) {
+        const removed = this.outputs.splice(index, 1)[0];
+        removedOutputs.push({ index, name: removed?.name });
+      },
+    };
+
+    nodeType.prototype.onNodeCreated.call(execNode);
+
+    // Native-shape: verify inputs/outputs are Array instances (not plain objects)
+    assert.ok(execNode.inputs instanceof Array, "inputs must be Array instance after display normalize");
+    assert.ok(execNode.outputs instanceof Array, "outputs must be Array instance after display normalize");
+    assert.equal(Object.getPrototypeOf(execNode.inputs), Array.prototype, "inputs must have Array.prototype");
+    assert.equal(Object.getPrototypeOf(execNode.outputs), Array.prototype, "outputs must have Array.prototype");
+
+    // Verify correct port counts (2 in, 1 out — NOT the 16-port pool)
+    assert.equal(execNode.inputs.length, 2, "display normalize: 2 typed inputs, not 16-port pool");
+    assert.equal(execNode.outputs.length, 1, "display normalize: 1 typed output, not 16-port pool");
+    assert.equal(execNode.inputs[0].name, "in_0");
+    assert.equal(execNode.inputs[0].label, "image: IMAGE");
+    assert.equal(execNode.inputs[0].type, "IMAGE");
+    assert.equal(execNode.inputs[1].name, "in_1");
+    assert.equal(execNode.inputs[1].label, "latent: LATENT");
+    assert.equal(execNode.inputs[1].type, "LATENT");
+    assert.equal(execNode.outputs[0].name, "out_0");
+    assert.equal(execNode.outputs[0].label, "result: IMAGE");
+    assert.equal(execNode.outputs[0].type, "IMAGE");
+    // Verify removal was backward walk (16→2 = 14 input, 16→1 = 15 output)
+    assert.equal(removedInputs.length, 14, "14 unused input pool slots removed (indices 15→2)");
+    assert.equal(removedOutputs.length, 15, "15 unused output pool slots removed (indices 15→1)");
+    assert.equal(removedInputs[0].index, 15);
+    assert.equal(removedOutputs[0].index, 15);
+
+    // ── Phase 2: SERIALIZE — normalizeForSerialize (payload mode) ──
+    const rawGraph = {
+      nodes: [
+        {
+          id: 1,
+          type: "vibecomfy.exec",
+          widgets_values: [source, typedIo],
+          inputs: Array.from({ length: 16 }, (_, i) => ({ name: `in_${i}`, type: "*" })),
+          outputs: Array.from({ length: 16 }, (_, i) => ({
+            name: `out_${i}`, type: "*", links: i === 0 ? [99] : null,
+          })),
+          properties: {
+            vibecomfy_uid: "lifecycle-exec-2",
+            "Node name for S&R": "vibecomfy.exec",
+          },
+        },
+        { id: 2, type: "SaveImage", inputs: [{ name: "images", link: 99 }] },
+      ],
+      links: [
+        [99, 1, 0, 2, 0, "IMAGE"],
+        [88, 99, 0, 1, 0, "IMAGE"], // dangling: target 99 doesn't exist
+        [77, 1, 0, 2, 0, "IMAGE"],  // duplicate: same src→dst as 99
+      ],
+    };
+
+    normalizeForSerialize(rawGraph);
+
+    // Native-shape: serialize must produce proper Array links
+    assert.ok(rawGraph.links instanceof Array, "links must be Array instance after serialize");
+    assert.equal(Object.getPrototypeOf(rawGraph.links), Array.prototype);
+
+    // Dangling/duplicate links removed
+    assert.equal(rawGraph.links.length, 1, "only the valid link survives");
+    const execSerialized = rawGraph.nodes[0];
+    // Native-shape: check that inputs/outputs on serialized node are proper Arrays
+    assert.ok(execSerialized.inputs instanceof Array, "serialized inputs must be Array");
+    assert.ok(execSerialized.outputs instanceof Array, "serialized outputs must be Array");
+    // The exec node should have been normalized: typed IO restored, ports reflect actual count
+    // (normalizeExecNodeForSerialization runs inside normalizeForSerialize payload path)
+    assert.deepEqual(execSerialized.widgets_values, [source, typedIo]);
+    // After normalization, the node itself may still have the original pool slots;
+    // the key validation is that the graph-level links are sanitized and
+    // the exec node's widgets_values carry the typed IO for downstream consumers.
+    assert.equal(rawGraph.nodes[1].inputs[0].link, 99);
+
+    // ── Phase 3: APPLY — normalizeForApply prepares candidate for configure ──
+    const candidateGraph = {
+      nodes: [
+        {
+          id: 10,
+          type: "vibecomfy.exec",
+          widgets_values: [source, typedIo],
+          inputs: Array.from({ length: 16 }, (_, i) => ({
+            name: `in_${i}`, type: "*", link: i === 0 ? 55 : null,
+          })),
+          outputs: Array.from({ length: 16 }, (_, i) => ({
+            name: `out_${i}`, type: "*", links: i === 0 ? [56] : null,
+          })),
+          properties: {
+            vibecomfy_uid: "lifecycle-exec-3",
+            "Node name for S&R": "vibecomfy.exec",
+          },
+        },
+        { id: 11, type: "VAEDecode", outputs: [{ name: "IMAGE", type: "IMAGE", links: [55] }] },
+        { id: 12, type: "SaveImage", inputs: [{ name: "images", type: "IMAGE", link: 56 }] },
+      ],
+      links: [
+        [55, 11, 0, 10, 0, "IMAGE"],
+        [56, 10, 0, 12, 0, "IMAGE"],
+      ],
+    };
+
+    normalizeForApply(candidateGraph);
+
+    // Native-shape: apply must produce Arrays for links
+    assert.ok(candidateGraph.links instanceof Array, "links must be Array after apply");
+    // The exec node in the candidate gets normalized by decorateIntentGraphPayload
+    const applyExec = candidateGraph.nodes[0];
+    assert.ok(applyExec.inputs instanceof Array, "apply inputs must be Array");
+    assert.ok(applyExec.outputs instanceof Array, "apply outputs must be Array");
+    // normalizeForApply calls decorateIntentGraphPayload which calls decorateIntentNode,
+    // but on plain payload objects (not live LiteGraph nodes), the removeInput/removeOutput
+    // path won't fire. The key contract is that normalizeExecNodeForSerialization runs first,
+    // ensuring widgets_values carries typed IO.
+    assert.deepEqual(applyExec.widgets_values, [source, typedIo]);
+    // Links survive sanitizeSerializedGraphLinks
+    assert.equal(candidateGraph.links.length, 2);
+
+    // ── Phase 4: REPAIR — repairLiveNodes restores live graph after configure ──
+    // Simulate: ComfyUI configure drops input links and mangles slot names
+    const postConfigureGraph = {
+      nodes: [
+        {
+          id: 10,
+          type: "vibecomfy.exec",
+          inputs: [{ name: "io", label: "image: IMAGE", type: "IMAGE", link: null }],
+          outputs: [{ name: "out_0", label: "result: IMAGE", type: "IMAGE", links: [56] }],
+          widgets_values: [source],
+          properties: {
+            vibecomfy_uid: "lifecycle-exec-3",
+            "Node name for S&R": "vibecomfy.exec",
+            vibecomfy: {
+              kind: "code",
+              io: typedIo,
+              intent: { source },
+            },
+          },
+        },
+        { id: 11, type: "VAEDecode", outputs: [{ name: "IMAGE", type: "IMAGE", links: null }] },
+        { id: 12, type: "SaveImage", inputs: [{ name: "images", type: "IMAGE", link: 56 }] },
+      ],
+      links: [{ id: 56, origin_id: 10, origin_slot: 0, target_id: 12, target_slot: 0, type: "IMAGE" }],
+    };
+    harness.setCurrentGraph(postConfigureGraph);
+
+    // Prepare the candidate (all nodes needed for link restoration)
+    const repairCandidate = {
+      nodes: [
+        {
+          id: 11,
+          type: "VAEDecode",
+          outputs: [{ name: "IMAGE", type: "IMAGE", links: [55] }],
+        },
+        {
+          id: 10,
+          type: "vibecomfy.exec",
+          inputs: [{ name: "in_0", label: "image: IMAGE", type: "IMAGE", link: 55 }],
+          outputs: [{ name: "out_0", label: "result: IMAGE", type: "IMAGE", links: [56], slot_index: 0 }],
+          widgets_values: [source, typedIo],
+          properties: {
+            vibecomfy_uid: "lifecycle-exec-3",
+            "Node name for S&R": "vibecomfy.exec",
+          },
+        },
+        {
+          id: 12,
+          type: "SaveImage",
+          inputs: [{ name: "images", type: "IMAGE", link: 56 }],
+        },
+      ],
+      links: [[55, 11, 0, 10, 0, "IMAGE"], [56, 10, 0, 12, 0, "IMAGE"]],
+    };
+
+    repairLiveNodes(repairCandidate);
+
+    // Verify the live exec node was repaired
+    const liveExec = harness.getLiveNodes().find((n) => n.type === "vibecomfy.exec");
+    assert.ok(liveExec, "exec node must exist in live graph after repair");
+
+    // Native-shape: live node inputs/outputs must be Arrays of proper prototype
+    assert.ok(liveExec.inputs instanceof Array, "repaired inputs must be Array instance");
+    assert.ok(liveExec.outputs instanceof Array, "repaired outputs must be Array instance");
+    assert.equal(Object.getPrototypeOf(liveExec.inputs), Array.prototype);
+    assert.equal(Object.getPrototypeOf(liveExec.outputs), Array.prototype);
+
+    // Port counts match typed IO (1 input, 1 output — NOT 16-port pool)
+    assert.equal(liveExec.inputs.length, 1, "repair: 1 input after dynamic slot replacement, not pool");
+    assert.equal(liveExec.outputs.length, 1, "repair: 1 output after dynamic slot replacement, not pool");
+    assert.equal(liveExec.inputs[0].name, "in_0");
+    assert.equal(liveExec.inputs[0].label, "image: IMAGE");
+    assert.equal(liveExec.inputs[0].type, "IMAGE");
+    assert.equal(liveExec.inputs[0].link, 55, "dropped input link restored by repair");
+    assert.equal(liveExec.outputs[0].name, "out_0");
+    assert.equal(liveExec.outputs[0].label, "result: IMAGE");
+    assert.equal(liveExec.outputs[0].type, "IMAGE");
+    assert.deepEqual(liveExec.outputs[0].links, [56]);
+
+    // Native-shape: cloned slots must have `serialize` as an own (non-inherited) method
+    // (cloneDynamicSlot stamps `serialize` via Object.defineProperty on the slot itself)
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(liveExec.inputs[0], "serialize")
+        || Object.getOwnPropertyDescriptor(liveExec.inputs[0], "serialize") !== undefined,
+      "repaired input slot must carry own serialize method (not prototype-inherited)",
+    );
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(liveExec.outputs[0], "serialize")
+        || Object.getOwnPropertyDescriptor(liveExec.outputs[0], "serialize") !== undefined,
+      "repaired output slot must carry own serialize method (not prototype-inherited)",
+    );
+
+    // Verify the upstream node's output links were also repaired
+    const upstreamNode = harness.getLiveNodes().find((n) => n.id === 11);
+    assert.ok(upstreamNode, "upstream VAEDecode must exist");
+    assert.deepEqual(upstreamNode.outputs[0].links, [55], "upstream output links restored");
+
+    // Verify live links contain the restored link
+    const liveLinks = harness.getLiveLinks();
+    assert.ok(liveLinks["55"], "restored link 55 must exist in live link store");
+    assert.equal(liveLinks["55"].origin_id, 11);
+    assert.equal(liveLinks["55"].target_id, 10);
+    assert.equal(liveLinks["55"].type, "IMAGE");
+  } finally {
+    await harness.dispose();
+  }
+});

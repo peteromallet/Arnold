@@ -4342,12 +4342,11 @@ def _generate_mixed_batch(
 
 
 def _flat_fuzz_session():
-    """Create an EditSession from the flat fixture with a real schema provider."""
+    """Create an EditSession from the flat fixture with deterministic schemas."""
     from vibecomfy.porting import EditSession
-    from vibecomfy.schema import get_schema_provider
 
     raw = _load_flat_fixture_raw()
-    return EditSession(raw, schema_provider=get_schema_provider())
+    return EditSession(raw, schema_provider=_TestSchemaProvider())
 
 
 # ---------------------------------------------------------------------------

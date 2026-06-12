@@ -740,9 +740,27 @@ export async function createBrowserHarness({
   }
 
   function findButtons(label) {
-    return document.body.querySelectorAll(
+    const buttons = document.body.querySelectorAll(
       (node) => node.tagName === "BUTTON" && node.textContent === label,
     );
+    const agentPanelOpen = document.getElementById("vibecomfy-agent-panel-root")?.dataset?.open === "1";
+    return buttons.slice().sort((left, right) => {
+      const leftHidden = left.style?.display === "none" ? 1 : 0;
+      const rightHidden = right.style?.display === "none" ? 1 : 0;
+      if (leftHidden !== rightHidden) {
+        return leftHidden - rightHidden;
+      }
+      const leftDisabled = left.disabled ? 1 : 0;
+      const rightDisabled = right.disabled ? 1 : 0;
+      if (leftDisabled !== rightDisabled) {
+        return leftDisabled - rightDisabled;
+      }
+      const leftAgentPanel = String(left.id || "").startsWith("vibecomfy-agent-panel-") ? 1 : 0;
+      const rightAgentPanel = String(right.id || "").startsWith("vibecomfy-agent-panel-") ? 1 : 0;
+      return agentPanelOpen
+        ? rightAgentPanel - leftAgentPanel
+        : leftAgentPanel - rightAgentPanel;
+    });
   }
 
   return {

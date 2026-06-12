@@ -60,6 +60,29 @@ import {
   extractRebaselineRecovery,
 } from "./agent_edit_response_contract.js";
 
+// ── Facade entry points (delegate to local helpers + live-graph orchestrators) ──
+
+export function normalizeForSerialize(graph, { live = false } = {}) {
+  if (live) {
+    normalizeLiveExecNodesForSerialization();
+  } else {
+    normalizeGraphExecNodesForSerialization(graph);
+    sanitizeSerializedGraphLinks(graph);
+  }
+}
+
+export function normalizeForDisplay(node, fallbackClassType = null) {
+  decorateIntentNode(node, fallbackClassType);
+}
+
+export function normalizeForApply(candidateGraph) {
+  decorateIntentGraphPayload(candidateGraph);
+}
+
+export function repairLiveNodes(candidateGraph = null) {
+  repairLiveIntentNodesFromCandidate(candidateGraph);
+}
+
 export { RENDER_SECTIONS };
 export {
   markAgentPanelDirty,
@@ -241,6 +264,7 @@ const PANEL_IDS = Object.freeze({
   auditRegion: "vibecomfy-agent-panel-region-audit",
   debugRegion: "vibecomfy-agent-panel-region-debug",
   developerRegion: "vibecomfy-agent-panel-region-developer",
+  developerToggle: "vibecomfy-agent-panel-developer-toggle",
   previewToggle: "vibecomfy-agent-preview-toggle",
   changeEngine: "vibecomfy-agent-panel-change-engine",
   welcomeOverlay: "vibecomfy-agent-panel-welcome-overlay",
@@ -685,10 +709,10 @@ function sanitizeSerializedGraphLinks(graph) {
       if (!sourceNode || !targetNode) {
         return false;
       }
-      if (!Array.isArray(sourceNode.outputs) || !sourceNode.outputs[link.origin_slot]) {
+      if (Array.isArray(sourceNode.outputs) && !sourceNode.outputs[link.origin_slot]) {
         return false;
       }
-      if (!Array.isArray(targetNode.inputs) || !targetNode.inputs[link.target_slot]) {
+      if (Array.isArray(targetNode.inputs) && !targetNode.inputs[link.target_slot]) {
         return false;
       }
       return true;
@@ -769,10 +793,9 @@ function normalizeLiveExecNodesForSerialization() {
 }
 
 function captureSerializedGraphForAgent() {
-  normalizeLiveExecNodesForSerialization();
+  normalizeForSerialize(null, { live: true });
   const graph = app.canvas.graph.serialize();
-  normalizeGraphExecNodesForSerialization(graph);
-  sanitizeSerializedGraphLinks(graph);
+  normalizeForSerialize(graph);
   return graph;
 }
 
@@ -1066,7 +1089,7 @@ function patchIntentNodePrototype(nodeType, nodeData) {
         }
       }
     }
-    decorateIntentNode(this, classType);
+    normalizeForDisplay(this, classType);
     return result;
   };
 
@@ -1074,7 +1097,7 @@ function patchIntentNodePrototype(nodeType, nodeData) {
   proto.onConfigure = function patchedIntentNodeConfigure(...args) {
     const result = typeof originalConfigure === "function" ? originalConfigure.apply(this, args) : undefined;
     this.type = this.type || classType;
-    decorateIntentNode(this, classType);
+    normalizeForDisplay(this, classType);
     return result;
   };
 
@@ -1084,7 +1107,7 @@ function patchIntentNodePrototype(nodeType, nodeData) {
       ? originalDrawForeground.call(this, ctx, ...args)
       : undefined;
     this.type = this.type || classType;
-    decorateIntentNode(this, classType);
+    normalizeForDisplay(this, classType);
     drawIntentBadge(ctx, this);
     return result;
   };
@@ -1893,16 +1916,16 @@ function installIntentNodeFallback() {
     return;
   }
   app.loadGraphData = function vibecomfyIntentLoadGraphData(nextGraph, ...args) {
-    decorateIntentGraphPayload(nextGraph);
+    normalizeForApply(nextGraph);
     const repairCandidate = clonePlainData(nextGraph);
     const result = originalLoadGraphData.call(this, nextGraph, ...args);
     if (result && typeof result.then === "function") {
       return result.then((value) => {
-        repairLiveIntentNodesFromCandidate(repairCandidate);
+        repairLiveNodes(repairCandidate);
         return value;
       });
     }
-    repairLiveIntentNodesFromCandidate(repairCandidate);
+    repairLiveNodes(repairCandidate);
     return result;
   };
   app.__vibecomfyIntentFallbackInstalled = true;
@@ -1918,10 +1941,10 @@ function installGraphConfigureIntentFallback() {
     return;
   }
   graph.configure = function vibecomfyIntentGraphConfigure(nextGraph, ...args) {
-    decorateIntentGraphPayload(nextGraph);
+    normalizeForApply(nextGraph);
     const repairCandidate = clonePlainData(nextGraph);
     const result = originalConfigure.call(this, nextGraph, ...args);
-    repairLiveIntentNodesFromCandidate(repairCandidate);
+    repairLiveNodes(repairCandidate);
     return result;
   };
   graph.__vibecomfyIntentConfigureFallbackInstalled = true;
@@ -3732,6 +3755,10 @@ async function refreshAgentStatus(panel, { quiet = false } = {}) {
   if (typeof document === "undefined") {
     return;
   }
+  syncChooseEngineGate(panel);
+  if (typeof panel?.state?.chooseEngineRefresh === "function") {
+    panel.state.chooseEngineRefresh();
+  }
   const statusDirtySections = Array.isArray(panel?.state?.chatMessages) && panel.state.chatMessages.length
     ? [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD]
     : SETTINGS_STATUS_RENDER_SECTIONS;
@@ -3747,6 +3774,59 @@ function submitReadinessState(panel) {
 
 function clearCredentialInput(panel) {
   panel.fields.apiKey.value = "";
+}
+
+function hasStoredDeepseekCredential(panel) {
+  return Boolean(panel?.state?.statusSnapshot?.credential_presence?.deepseek_api_key);
+}
+
+function closeChooseEngineOverlay(panel) {
+  const existing = getPanelElementById(panel, PANEL_IDS.welcomeOverlay);
+  if (existing && typeof existing.remove === "function") {
+    existing.remove();
+  }
+  if (panel?.state?.chooseEngineRefresh) {
+    panel.state.chooseEngineRefresh = null;
+  }
+}
+
+function storedReadyProviderFromStatus(panel) {
+  const status = panel?.state?.statusSnapshot;
+  const routeStatus = routeStatusState(panel);
+  if (!status || routeStatus.kind !== ROUTE_STATUS_KIND.READY || status.provider_available === false) {
+    return null;
+  }
+  const resolvedRoute = normalizeRoutePreference(
+    status.route || status.route_metadata?.normalized_route || status.requested_route,
+  );
+  if (resolvedRoute === "deepseek" && status.credential_presence?.deepseek_api_key) {
+    return "deepseek";
+  }
+  return null;
+}
+
+function syncChooseEngineGate(panel) {
+  if (!panel?.shell || typeof document === "undefined") {
+    return;
+  }
+  const persisted = getPersistedAgentProvider();
+  if (persisted) {
+    closeChooseEngineOverlay(panel);
+    return;
+  }
+  const readyProvider = storedReadyProviderFromStatus(panel);
+  if (readyProvider) {
+    setPersistedAgentProvider(readyProvider);
+    populateRouteSelect(panel.fields.route, routeOptionsFromStatus(panel.state.statusSnapshot), {
+      selectedRoute: readyProvider,
+    });
+    panel.fields.route.value = readyProvider;
+    closeChooseEngineOverlay(panel);
+    return;
+  }
+  if (routeStatusState(panel).kind !== ROUTE_STATUS_KIND.LOADING) {
+    openChooseEngineOverlay(panel, { onResolved: () => {} });
+  }
 }
 
 function normalizeApplyEligibility(payload) {
@@ -4379,6 +4459,11 @@ function createAgentPanelShell() {
     boxShadow: "0 8px 30px rgba(0,0,0,0.5)",
     zIndex: "10000",
     padding: "12px",
+    boxSizing: "border-box",
+    maxHeight: "calc(100vh - 72px)",
+    overflowY: "auto",
+    overflowX: "hidden",
+    overscrollBehavior: "contain",
   });
 
   const settingsRegion = panelSection(PANEL_IDS.settingsRegion, "Settings");
@@ -4394,9 +4479,10 @@ function createAgentPanelShell() {
     color: "#edf2f7",
     border: "1px solid #373c46",
     borderRadius: "6px",
-    padding: "6px 8px",
+    padding: "6px 28px 6px 8px",
     fontFamily: "monospace",
     fontSize: "12px",
+    boxSizing: "border-box",
   });
   populateRouteSelect(routeSelect, null, { selectedRoute: "auto" });
   routeSelect.value = "auto";
@@ -4405,6 +4491,7 @@ function createAgentPanelShell() {
   modelInput.placeholder = "Model override (optional)";
   Object.assign(modelInput.style, {
     width: "100%",
+    display: "none",
     background: "#0d0e12",
     color: "#edf2f7",
     border: "1px solid #373c46",
@@ -4451,6 +4538,8 @@ function createAgentPanelShell() {
     const panel = currentAgentPanel();
     if (panel) {
       panel.fields.route.value = normalizeRoutePreference(routeSelect.value);
+      panel.state.settingsMessage = null;
+      panel.state.settingsMessageKind = null;
       renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
       refreshAgentStatus(panel, { quiet: true });
     }
@@ -4464,19 +4553,6 @@ function createAgentPanelShell() {
   settingsRegion.body.appendChild(settingsStatus);
   settingsRegion.body.appendChild(settingsGuidance);
 
-  const changeEngineBtn = button("Change Engine", () => {
-    const p = currentAgentPanel();
-    if (p) {
-      openChooseEngineOverlay(p, { onResolved: () => {
-        settingsPopover.style.display = "none";
-        renderAgentPanel(p);
-      }});
-    }
-  });
-  changeEngineBtn.id = PANEL_IDS.changeEngine;
-  changeEngineBtn.style.marginTop = "8px";
-  settingsRegion.body.appendChild(changeEngineBtn);
-
   settingsPopover.appendChild(settingsRegion.section);
 
   // ── Developer section inside settings popover ────────────────────────────
@@ -4487,6 +4563,25 @@ function createAgentPanelShell() {
   developerRegion.section.style.marginTop = "12px";
   developerRegion.section.style.borderTop = "1px solid #34343a";
   developerRegion.section.style.paddingTop = "10px";
+  const developerToggle = button("▸ Developer", () => {
+    const panel = currentAgentPanel();
+    if (!panel) {
+      return;
+    }
+    panel.state.developerExpanded = !panel.state.developerExpanded;
+    renderDeveloperDisclosure(panel);
+  });
+  developerToggle.id = PANEL_IDS.developerToggle;
+  Object.assign(developerToggle.style, {
+    width: "100%",
+    justifyContent: "space-between",
+    background: "#1d2027",
+  });
+  if (developerRegion.body?.parentNode && typeof developerRegion.body.parentNode.removeChild === "function") {
+    developerRegion.body.parentNode.removeChild(developerRegion.body);
+  }
+  developerRegion.section.appendChild(developerToggle);
+  developerRegion.section.appendChild(developerRegion.body);
   settingsPopover.appendChild(developerRegion.section);
 
   // ── Assemble shell ──────────────────────────────────────────────────────
@@ -4589,6 +4684,9 @@ function createAgentPanelShell() {
       turns: [],
       undoStack: [],
       settingsMessage: null,
+      settingsMessageKind: null,
+      providerTestInFlight: false,
+      developerExpanded: false,
       statusSnapshot: null,
       statusRetry: null,
       statusRequestEpoch: 0,
@@ -4967,8 +5065,6 @@ function openAgentPanel({ mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, container = nu
   if (persisted) {
     panel.fields.route.value = persisted;
     populateRouteSelect(panel.fields.route, null, { selectedRoute: persisted });
-  } else {
-    openChooseEngineOverlay(panel, { onResolved: () => {} });
   }
   refreshAgentStatus(panel, { quiet: true });
   ensureScheduledAgentPanelDirtyFlush(panel, "open-backstop");
@@ -7553,6 +7649,27 @@ function installQueueGuard() {
       }
       return null;
     },
+    normalize(...queueArgs) {
+      // Normalize live exec nodes before the backend serializes the canvas.
+      normalizeForSerialize(null, { live: true });
+      // Also normalize any serialized graph payloads passed as queue args.
+      for (const arg of queueArgs) {
+        if (arg && typeof arg === 'object') {
+          // Direct graph payload (has nodes array).
+          if (Array.isArray(arg.nodes)) {
+            normalizeForSerialize(arg);
+          }
+          // ComfyUI wraps the serialized graph in { output: {...} }.
+          if (arg.output && typeof arg.output === 'object' && Array.isArray(arg.output.nodes)) {
+            normalizeForSerialize(arg.output);
+          }
+          // Some callers pass { workflow: {...} }.
+          if (arg.workflow && typeof arg.workflow === 'object' && Array.isArray(arg.workflow.nodes)) {
+            normalizeForSerialize(arg.workflow);
+          }
+        }
+      }
+    },
     onBlock(blockInfo) {
       if (!runtime.queueGuardBlockedTurnKeys.has(blockInfo.blockKey)) {
         runtime.queueGuardBlockedTurnKeys.add(blockInfo.blockKey);
@@ -8328,6 +8445,24 @@ function renderDeveloper(panel) {
   }
 }
 
+function renderDeveloperDisclosure(panel) {
+  const body = panel?.sections?.developer;
+  const toggle = getPanelElementById(panel, PANEL_IDS.developerToggle);
+  const expanded = Boolean(panel?.state?.developerExpanded);
+  if (toggle) {
+    toggle.textContent = expanded ? "▾ Developer" : "▸ Developer";
+    toggle.ariaExpanded = expanded ? "true" : "false";
+    if (typeof toggle.setAttribute === "function") {
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    } else if (toggle.attributes && typeof toggle.attributes === "object") {
+      toggle.attributes["aria-expanded"] = expanded ? "true" : "false";
+    }
+  }
+  if (body) {
+    body.style.display = expanded ? "grid" : "none";
+  }
+}
+
 function renderDeveloperSubsection(title) {
   const section = el("div");
   Object.assign(section.style, {
@@ -8362,8 +8497,9 @@ function renderSettings(panel) {
   panel.fields.route.disabled = !controlsReady;
   panel.fields.model.disabled = !controlsReady;
   setVisible(panel.fields.apiKey, apiKeyVisible, "");
+  const storedDeepseekKey = hasStoredDeepseekCredential(panel);
   panel.fields.apiKey.placeholder = apiKeyVisible
-    ? "DeepSeek API key"
+    ? (storedDeepseekKey ? "Saved DeepSeek key present; paste a new key to replace" : "DeepSeek API key")
     : "Browser API keys are not accepted for this route";
   if (!apiKeyVisible) {
     clearCredentialInput(panel);
@@ -8374,6 +8510,14 @@ function renderSettings(panel) {
   if (!statusNode || !guidanceNode) {
     return;
   }
+  statusNode.style.color =
+    panel.state.settingsMessageKind === "success"
+      ? "#7ee787"
+      : panel.state.settingsMessageKind === "error"
+        ? "#ff8d8d"
+        : panel.state.settingsMessageKind === "pending"
+          ? "#f2cc60"
+          : "#8d93a1";
   if (!controlsReady) {
     if (routeStatus.kind === ROUTE_STATUS_KIND.LOADING) {
       statusNode.textContent = panel.state.settingsMessage || "Loading route/model status…";
@@ -8400,8 +8544,11 @@ function renderSettings(panel) {
   statusNode.textContent = panel.state.settingsMessage
     || `${descriptor.requested_route} → ${normalizedRoute} (${availability})`;
   guidanceNode.textContent = descriptor.guidance || "";
+  if (apiKeyVisible && storedDeepseekKey) {
+    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved DeepSeek key present. Paste a new key only if you want to replace it.`;
+  }
   if (descriptor.requested_route === "anthropic") {
-    guidanceNode.textContent += "\nTODO(S0): Claude/Anthropic ToS acknowledgement placeholder.";
+    guidanceNode.textContent += "\nClaude runs through your local CLI setup; browser-submitted API keys are not stored for this route.";
   }
 }
 
@@ -8525,6 +8672,7 @@ function renderSettingsSection(panel) {
 function renderDeveloperSection(panel) {
   recordAgentPanelRenderCount(panel, RENDER_SECTIONS.DEVELOPER);
   renderDeveloper(panel);
+  renderDeveloperDisclosure(panel);
 }
 
 function recordAgentPanelRenderError(panel, section, err) {
@@ -8710,12 +8858,16 @@ async function saveAgentSettings(panel) {
   const descriptor = getRouteDescriptor(panel, route);
   if (routeStatusState(panel).kind !== ROUTE_STATUS_KIND.READY || !descriptor) {
     panel.state.settingsMessage = "Route/model controls are unavailable until /vibecomfy/agent/status returns a valid payload.";
+    panel.state.settingsMessageKind = "error";
     renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
     return;
   }
   const apiKey = panel.fields.apiKey.value;
 
-  panel.state.settingsMessage = `Saved route=${route} model=${model || "default"}`;
+  setPersistedAgentProvider(route);
+  let savedMessage = `Saved settings: ${route}${model ? ` / ${model}` : " / default model"}.`;
+  panel.state.settingsMessage = savedMessage;
+  panel.state.settingsMessageKind = "success";
   if (apiKey) {
     try {
       const res = await fetch("/vibecomfy/agent/credentials", {
@@ -8724,25 +8876,55 @@ async function saveAgentSettings(panel) {
         body: JSON.stringify({ provider: route, api_key: apiKey }),
       });
       const result = await res.json();
-      panel.state.settingsMessage = result?.stored
+      savedMessage = result?.stored
         ? `Stored browser credential for ${result.provider || route}.`
         : (result?.reason || descriptor.guidance || "Browser credential was not stored.");
+      panel.state.settingsMessage = savedMessage;
+      panel.state.settingsMessageKind = result?.stored ? "success" : "error";
     } catch (e) {
-      panel.state.settingsMessage = `Credential save failed: ${String(e)}`;
+      savedMessage = `Credential save failed: ${String(e)}`;
+      panel.state.settingsMessage = savedMessage;
+      panel.state.settingsMessageKind = "error";
     } finally {
       clearCredentialInput(panel);
     }
   }
   await refreshAgentStatus(panel, { quiet: Boolean(apiKey) });
+  panel.state.settingsMessage = savedMessage;
+  renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
 }
 
 async function testAgentSettings(panel) {
   if (!panel) {
     return;
   }
+  const route = normalizeRoutePreference(panel.fields.route.value);
+  const model = normalizeModelPreference(panel.fields.model.value);
+  panel.state.providerTestInFlight = true;
   panel.state.settingsMessage = "Testing provider status…";
-  renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-  await refreshAgentStatus(panel);
+  panel.state.settingsMessageKind = "pending";
+  renderAgentPanel(panel, { dirtySections: [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.COMPOSER] });
+  try {
+    await refreshAgentStatus(panel, { quiet: true });
+    const routeStatus = routeStatusState(panel);
+    const status = panel.state.statusSnapshot;
+    if (routeStatus.kind === ROUTE_STATUS_KIND.READY && status?.provider_available !== false) {
+      const resolvedRoute = String(status?.route_metadata?.normalized_route || status?.route || route);
+      const requestedRoute = String(status?.requested_route || route);
+      const modelLabel = status?.model || model || "default";
+      panel.state.settingsMessage =
+        `Provider test passed: ${requestedRoute} \u2192 ${resolvedRoute} (${modelLabel}).`;
+      panel.state.settingsMessageKind = "success";
+    } else if (routeStatus.kind === ROUTE_STATUS_KIND.READY) {
+      const resolvedRoute = String(status?.route_metadata?.normalized_route || status?.route || route);
+      panel.state.settingsMessage =
+        `Provider test failed: ${route} \u2192 ${resolvedRoute} is unavailable.`;
+      panel.state.settingsMessageKind = "error";
+    }
+  } finally {
+    panel.state.providerTestInFlight = false;
+    renderAgentPanel(panel, { dirtySections: [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.COMPOSER] });
+  }
 }
 
 async function newAgentConversation(panel) {
@@ -10587,6 +10769,9 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   // Tear down the overlay (and any pending countdown) exactly once.
   function teardownOverlay() {
     clearCountdown();
+    if (panel?.state?.chooseEngineRefresh === updateConfirmEnabled) {
+      panel.state.chooseEngineRefresh = null;
+    }
     if (overlay && typeof overlay.remove === "function") {
       overlay.remove();
     }
@@ -10755,6 +10940,18 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   });
   deepseekCard.body.appendChild(keyLink);
 
+  const deepseekStoredKeyNode = el("div");
+  Object.assign(deepseekStoredKeyNode.style, {
+    display: "none",
+    fontSize: "11px",
+    color: "#b8d9c7",
+    padding: "6px 8px",
+    borderRadius: "4px",
+    background: "#142218",
+    border: "1px solid #2f6842",
+  });
+  deepseekCard.body.appendChild(deepseekStoredKeyNode);
+
   deepseekErrorNode = el("div");
   Object.assign(deepseekErrorNode.style, {
     display: "none",
@@ -10782,7 +10979,7 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   box.appendChild(confirmBtn);
 
   function deepseekKeyOk() {
-    return !!(deepseekKeyInput && deepseekKeyInput.value.trim());
+    return hasStoredDeepseekCredential(panel) || !!(deepseekKeyInput && deepseekKeyInput.value.trim());
   }
 
   function confirmEnabled() {
@@ -10792,6 +10989,18 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   }
 
   function updateConfirmEnabled() {
+    const storedDeepseekKey = hasStoredDeepseekCredential(panel);
+    if (deepseekStoredKeyNode) {
+      deepseekStoredKeyNode.style.display = storedDeepseekKey ? "block" : "none";
+      deepseekStoredKeyNode.textContent = storedDeepseekKey
+        ? "Saved DeepSeek key present. Paste a new key only if you want to replace it."
+        : "";
+    }
+    if (deepseekKeyInput) {
+      deepseekKeyInput.placeholder = storedDeepseekKey
+        ? "Optional replacement DeepSeek API key…"
+        : "Paste your DeepSeek API key…";
+    }
     const enabled = confirmEnabled();
     confirmBtn.disabled = !enabled;
     if (enabled) {
@@ -10880,36 +11089,38 @@ function openChooseEngineOverlay(panel, { onResolved }) {
 
     if (route === "deepseek") {
       const apiKey = deepseekKeyInput.value.trim();
-      if (!apiKey) return;
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = "Storing…";
-      Object.assign(confirmBtn.style, { opacity: "0.5", cursor: "not-allowed" });
-      deepseekErrorNode.style.display = "none";
+      if (!apiKey && !hasStoredDeepseekCredential(panel)) return;
+      if (apiKey) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "Storing…";
+        Object.assign(confirmBtn.style, { opacity: "0.5", cursor: "not-allowed" });
+        deepseekErrorNode.style.display = "none";
 
-      let stored = false;
-      try {
-        const res = await fetch("/vibecomfy/agent/credentials", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider: "deepseek", api_key: apiKey }),
-        });
-        const result = await res.json();
-        if (result && result.stored) {
-          stored = true;
-        } else {
-          deepseekErrorNode.textContent = (result && result.reason) || "Failed to store key.";
+        let stored = false;
+        try {
+          const res = await fetch("/vibecomfy/agent/credentials", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider: "deepseek", api_key: apiKey }),
+          });
+          const result = await res.json();
+          if (result && result.stored) {
+            stored = true;
+          } else {
+            deepseekErrorNode.textContent = (result && result.reason) || "Failed to store key.";
+            deepseekErrorNode.style.display = "block";
+          }
+        } catch (e) {
+          deepseekErrorNode.textContent = "Credential save failed: " + String(e);
           deepseekErrorNode.style.display = "block";
         }
-      } catch (e) {
-        deepseekErrorNode.textContent = "Credential save failed: " + String(e);
-        deepseekErrorNode.style.display = "block";
-      }
 
-      if (!stored) {
-        // Stay on the screen; restore the button.
-        confirmBtn.textContent = "Confirm Selection";
-        updateConfirmEnabled();
-        return;
+        if (!stored) {
+          // Stay on the screen; restore the button.
+          confirmBtn.textContent = "Confirm Selection";
+          updateConfirmEnabled();
+          return;
+        }
       }
     }
 
@@ -10918,6 +11129,7 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   }
 
   // Initial disabled state.
+  panel.state.chooseEngineRefresh = updateConfirmEnabled;
   updateConfirmEnabled();
 
   panel.shell.appendChild(overlay);

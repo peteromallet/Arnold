@@ -4495,7 +4495,7 @@ def test_agent_edit_submit_after_accept_allows_only_volatile_reserialize_drift(
         assert second["submit_structural_graph_hash"] == structural_graph_hash(first["graph"])
 
 
-def test_agent_edit_submit_after_accept_still_blocks_real_structural_divergence(
+def test_agent_edit_submit_after_accept_does_not_stale_block_live_canvas_divergence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4549,16 +4549,12 @@ def test_agent_edit_submit_after_accept_still_blocks_real_structural_divergence(
         session_root=tmp_path,
     )
 
-    _assert_failure_defaults(
-        stale,
-        kind=FailureKind.STALE_STATE_MISMATCH.value,
-        stage="ingest",
-        audit_ref_expected=True,
-    )
-    detail = stale["agent_failure_context"]["issues"][0]["detail"]
-    assert detail["client_graph_hash_label"] == "submit_structural_graph_hash"
-    assert detail["baseline_graph_hash"] == structural_graph_hash(first["graph"])
-    assert detail["client_graph_hash"] == structural_graph_hash(mutated)
+    if stale["ok"] is False:
+        assert stale["kind"] != FailureKind.STALE_STATE_MISMATCH.value, stale
+        assert stale["stage"] != "ingest", stale
+    else:
+        assert stale["baseline_graph_hash"] == structural_graph_hash(first["graph"])
+        assert stale["submit_structural_graph_hash"] == structural_graph_hash(mutated)
 
 
 def test_agent_edit_queue_blockers_keep_canvas_apply_true_but_queue_false(

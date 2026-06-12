@@ -204,10 +204,23 @@ def read_vendored_commit() -> str | None:
     """Compatibility shim for the removed tracked ComfyUI submodule.
 
     Strict paths now use the installed ``comfyui`` package from the ``[comfy]``
-    optional dependency. Pip installs generally do not expose a source checkout
-    SHA, so callers should compare :func:`read_live_comfy_version` when this
-    returns ``None``.
+    optional dependency. For git-backed pip installs, PEP 610 records the exact
+    commit in ``direct_url.json``; use that as the provenance pin instead of a
+    local ``vendor/`` checkout.
     """
+    for dist_name in ("comfyui", "ComfyUI"):
+        try:
+            dist = importlib_metadata.distribution(dist_name)
+        except importlib_metadata.PackageNotFoundError:
+            continue
+        for entry in dist.files or ():
+            if str(entry).endswith("direct_url.json"):
+                try:
+                    raw = json.loads(Path(dist.locate_file(entry)).read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError, TypeError):
+                    return None
+                commit = raw.get("vcs_info", {}).get("commit_id")
+                return commit if isinstance(commit, str) and commit else None
     return None
 
 
