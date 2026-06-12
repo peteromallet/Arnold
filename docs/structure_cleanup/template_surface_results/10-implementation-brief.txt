@@ -1,0 +1,213 @@
+Now I have a thorough understanding of the entire repository. Here is the mechanical implementation brief.
+
+---
+
+# Mechanical Implementation Brief: Template / Corpus / Recipe Layer
+
+## 1. Layer Boundary & Scope
+
+The **template/corpus/recipe** layer spans three distinct but related concepts:
+
+| Term | Definition | Location |
+|------|------------|----------|
+| **Template** | A Python workflow in `ready_templates/` with `build() → VibeWorkflow`, `READY_METADATA`, typed node wrappers, and `InputSpec`-based public inputs. Generated from JSON corpus workflows. The primary starting point for users. | `ready_templates/` |
+| **Corpus** | JSON workflow files in `workflow_corpus/` that are the serialized source of truth for generated templates. Indexed by `workflow_index.json` / `external_workflow_index.json`. | `workflow_corpus/` + root index JSON files |
+| **Recipe** | Hand-authored Python files in `recipes/` with `build() → VibeWorkflow`. Forked from templates via `copy-to-recipe`, or composed from scratch. Uses patches, blocks, and ops on top of loaded templates. | `recipes/` |
+
+The registry and loader machinery in `vibecomfy/registry/`, `vibecomfy/cli_loader.py`, `vibecomfy/templates.py`, and `vibecomfy/scratchpad_loader.py` is the **infrastructure** that makes all three work; it is not itself part of the layer but is the boundary between the layer and the core IR (`VibeWorkflow`).
+
+---
+
+## 2. Ordered Checklist of Exact Edits
+
+### Phase A: Add a New Template
+
+1. **Place the JSON source** in the corpus:
+   - Official: `workflow_corpus/official/<media>/<id>.json`
+   - Custom/third-party: `workflow_corpus/custom_nodes/<pack>/<id>.json`
+2. **Regenerate the Python template** into `ready_templates/<media>/<id>.py`:
+   - Use `python -m vibecomfy.cli port convert <id> --out ready_templates/<media>/<id>.py --json`
+   - Or run `python tools/convert_ready_templates.py` for bulk regeneration
+3. **Update indexes**:
+   - `workflow_index.json` — add entry `{"id": "<id>", "path": "workflow_corpus/official/<media>/<id>.json", "source": "external", "media_type": "<media_type>"}`
+   - `template_index.json` — regenerate via `python tools/refresh_template_index.py`
+   - `asset_manifest.json` — regenerate via workflow_corpus/manifests coverage
+4. **Update coverage manifest** (`workflow_corpus/manifests/coverage.json`) — add entry with `ready_template`, `coverage_tier`, `model_family`, `task`
+5. **Wire up the router** if the template should be auto-discoverable by `ops`:
+   - Edit `vibecomfy/router/_rules.py` — add `register_route("image", "t2i", predicate, "<media>/<id>", patches)`
+6. **Add typed node wrapper** if new node classes are needed:
+   - Edit `vibecomfy/nodes/core.py` — add typed class if not auto-generated
+7. **Verify**:
+   ```bash
+   python -m vibecomfy.cli sources sync
+   python -m vibecomfy.cli workflows list --ready
+   python -m vibecomfy.cli inspect <media>/<id>
+   pytest tests/test_ready_templates.py -x
+   ```
+
+### Phase B: Edit an Existing Template (Safe Path)
+
+1. **Do NOT edit** `ready_templates/<media>/<id>.py` directly — those are generated files.
+2. **Fork to recipe first**:
+   ```bash
+   python -m vibecomfy.cli copy-to-recipe <media>/<id> --out recipes/<my_thing>.py
+   ```
+3. **Edit** `recipes/<my_thing>.py` — it's a hand-auditable Python file with `build()` → `VibeWorkflow`.
+4. If your edits need to **persist back** to the template: modify the JSON source in `workflow_corpus/`, regenerate, then re-fork.
+
+### Phase C: Add a Recipe
+
+1. **Create** `recipes/<name>.py` with:
+   - `from __future__ import annotations`
+   - `def build() -> VibeWorkflow:` that loads a template, applies patches/blocks, or constructs from scratch
+   - Optionally `if __name__ == "__main__": run_embedded_sync(build())`
+2. **Pattern** (two common forms):
+   - **Fork + patch**: `load_workflow_any("video/wan_i2v")` then `resolution(...).apply(wf)` + `wf.set_seed(...)`
+   - **Compose**: Load templates, use `blocks.subgraph.opaque()`, `blocks.save.image()`, `wf.finalize_metadata()`
+3. **Verify**:
+   ```bash
+   python -m vibecomfy.cli validate recipes/<name>.py
+   python recipes/<name>.py  # smoke test
+   ```
+
+### Phase D: Update the Indexes
+
+1. `workflow_index.json` — list of `{"id", "path", "source", "media_type"}` for official corpus JSONs
+2. `external_workflow_index.json` — same shape for custom_nodes JSONs
+3. `template_index.json` — comprehensive index of all ready templates with inputs, outputs, custom_nodes, model_count. Regenerate:
+   ```bash
+   python tools/refresh_template_index.py
+   ```
+4. `asset_manifest.json` — model asset dependencies. Regenerate:
+   ```bash
+   python tools/refresh_comfy_metadata.py
+   ```
+5. `workflow_corpus/manifests/coverage.json` — coverage tier and task metadata. Hand-audited; edit directly.
+6. Sync all:
+   ```bash
+   python -m vibecomfy.cli sources sync
+   ```
+
+---
+
+## 3. Exact Files to Add/Update
+
+### Add — New template
+| File | Content |
+|------|---------|
+| `workflow_corpus/official/<media>/<id>.json` | Source JSON workflow |
+| `ready_templates/<media>/<id>.py` | Generated Python template (via emitter) |
+| `recipes/<name>.py` | Hand-authored recipe (optional) |
+
+### Update — Existing files when adding/modifying templates
+| File | Action | When |
+|------|--------|------|
+| `workflow_index.json` | Add entry | New official corpus JSON |
+| `external_workflow_index.json` | Add entry | New custom-nodes corpus JSON |
+| `template_index.json` | Regenerate | Any change to `ready_templates/*.py` |
+| `asset_manifest.json` | Regenerate | Any change to template model deps |
+| `workflow_corpus/manifests/coverage.json` | Update row | New template with coverage tier |
+| `workflow_corpus/manifests/ready_regeneration.json` | Update | Emitter regen manifest |
+| `vibecomfy/router/_rules.py` | Add `register_route` | Only if template needs op-level discoverability |
+| `vibecomfy/nodes/core.py` | Add typed wrapper | Only if template uses new node classes |
+
+### Update — Infrastructure changes (rare)
+| File | Action | When |
+|------|--------|------|
+| `vibecomfy/templates.py` | Add new `InputSpec`-like or `ReadyMetadata` features | New template metadata patterns |
+| `vibecomfy/registry/ready.py` | Tweak discovery, id resolution, policy | Changes to how templates are found/loaded |
+| `vibecomfy/registry/library.py` | Tweak `workflow_from_id` fallback order | Changes to corpus lookup |
+| `vibecomfy/cli_loader.py` | Tweak `load_workflow_any` resolution | Changes to universal loader |
+
+---
+
+## 4. Exact Files NOT to Move
+
+The following files must **never** be moved, renamed, or restructured. Their paths are referenced by indexes, import machinery (`importlib.util.spec_from_file_location`), and CLI commands:
+
+| File | Reason |
+|------|--------|
+| `ready_templates/` (directory) | Hardcoded as `READY_ROOT` in `vibecomfy/registry/ready.py` (line 17) |
+| `ready_templates/**/*.py` | Individual paths embedded in `template_index.json`, `asset_manifest.json`, coverage manifests |
+| `workflow_corpus/` (directory) | Paths hardcoded in `workflow_index.json`, `external_workflow_index.json` |
+| `workflow_corpus/official/` | Referenced by `workflow_from_id()` corpus lookup and emitter provenance |
+| `workflow_index.json` | Read by `vibecomfy/registry/library.py` `workflow_from_id()` |
+| `external_workflow_index.json` | Read together with `workflow_index.json` by `workflow_from_id()` |
+| `template_index.json` | Public entry point; consumed by `vibecomfy.cli workflows list --ready` and external tools |
+| `asset_manifest.json` | Consumed by `vibecomfy.cli fetch` and model-staging commands |
+| `recipes/` (directory) | Referenced by `copy-to-recipe` CLI command |
+| `vibecomfy/registry/ready.py` | Contains `READY_ROOT`, `_ready_roots()`, `_template_paths()`, `_resolve_ready_path()` |
+| `vibecomfy/registry/library.py` | Contains `workflow_from_id()`, `workflow_from_file()`, `load_workflow_reference()` |
+| `vibecomfy/templates.py` | Contains `new_workflow()` — imported by every generated template |
+| `vibecomfy/cli_loader.py` | Contains `load_workflow_any()` — the universal entry point |
+| `vibecomfy/registry/ready_template.py` | Contains `apply_ready_template_policy()` — called by both `ready.py` and `templates.py` |
+| `vibecomfy/nodes/core.py` | Typed node wrappers imported by every generated template |
+
+---
+
+## 5. Verification Commands
+
+```bash
+# 1. Syntax / import check on all templates
+python -c "from vibecomfy.registry.ready import ready_template_ids; ids = ready_template_ids(); print(f'{len(ids)} ready templates')"
+
+# 2. Load every template and validate build() returns VibeWorkflow
+pytest tests/test_ready_templates.py -x -v
+
+# 3. Index integrity
+python -m vibecomfy.cli sources sync
+python -m vibecomfy.cli workflows list --ready
+python -m vibecomfy.cli workflows list
+
+# 4. Specific template inspection
+python -m vibecomfy.cli inspect image/z_image
+python -m vibecomfy.cli inspect video/wan_i2v
+
+# 5. Recipe validation
+python -m vibecomfy.cli validate recipes/example_tested_recipe.py
+python -c "from recipes.example_tested_recipe import build; wf = build(); print(type(wf).__name__)"
+
+# 6. Corpus coverage check
+python tools/check_canonical_parity.py
+python tools/validate_templates_against_packs.py
+
+# 7. Full test suite (layer-relevant)
+pytest tests/test_templates_module.py tests/test_workflow_core.py tests/test_porting_emitter.py -x -v
+
+# 8. Template source classification (pure_python vs wrapper)
+python -c "from vibecomfy.registry.ready import ready_template_source_info; info = ready_template_source_info('image/z_image'); print(info.source_mode, info.runtime_source_of_truth)"
+```
+
+---
+
+## 6. Rejected Risky Changes
+
+| Change | Risk | Rejection Rationale |
+|--------|------|---------------------|
+| **Move `ready_templates/` into `vibecomfy/` package** | High — breaks all absolute `READY_ROOT` paths, plugin ready roots, `template_index.json` paths, `asset_manifest.json` paths, and the `importlib` spec-based loading in `ready.py:_resolve_ready_path()`. | No benefit; the directory is repo-root-scoped by design. |
+| **Rename `recipes/` to `vibecomfy/recipes/`** | High — breaks `copy-to-recipe` CLI output path and user expectations. Recipes are user-authored and should stay at repo root. | No benefit; recipes are not package code. |
+| **Merge `workflow_index.json` and `external_workflow_index.json`** | Medium — breaks CI scripts, tooling, `sources sync` logic that treats them as separate scopes. Also breaks `workflow_from_id()` iteration order. | Separate indexes serve separate purposes (official vs custom). Merge would lose provenance. |
+| **Remove `template_index.json` and rely on filesystem scanning** | Medium — `template_index.json` carries public input/output metadata, custom_node refs, model counts, and contract shapes that filesystem scanning cannot provide. It is the public API for template discovery. | It is the single source of truth for the template catalog. Removing it would require every consumer to load every template. |
+| **Auto-generate `recipes/` from templates** | High — recipes are deliberately hand-authored. Auto-generation would produce non-editor-reviewable code and create merge conflicts. | Recipes are the human-editable layer. Keep them hand-written. |
+| **Remove `workflow_corpus/manifests/coverage.json` in favor of inline template metadata** | Medium — the coverage manifest drives CI smoke-test matrix selection and runpod corpus-matrix commands. Inline metadata would require template loading to extract, which is too expensive for matrix planning. | Separate manifest is the correct design for cheap offline queries. |
+| **Auto-discover recipes via filesystem scanning** | Medium — `recipes/` is a user workspace, not a registry. Auto-discovery would create implicit coupling between file creation and CLI behavior, and recipes should be explicitly run. | Keep recipes as explicit, runnable scripts, not auto-discovered plugins. |
+
+---
+
+## 7. Summary: Data Flow Diagram (Text)
+
+```
+workflow_corpus/*.json
+  └── [emitter: python -m vibecomfy.cli port convert]
+        └── ready_templates/<media>/<id>.py  ──── template_index.json
+              │                                       │
+              │ [vibecomfy.cli copy-to-recipe]         │
+              │                                       │
+              └── recipes/<name>.py                    │
+                      │                                │
+                      │ [load_workflow_any()]           │
+                      │                                ▼
+                      └──> VibeWorkflow ──> compile("api") ──> queue_prompt(dict)
+```
+
+The layer is intentionally one-directional: corpus → templates → recipes. Edits flow right (copy-to-recipe), never left (don't edit generated templates). The indexes (`template_index.json`, `workflow_index.json`, `asset_manifest.json`) are derived artifacts that must be regenerated on corpus or template changes, never hand-edited for structural changes.

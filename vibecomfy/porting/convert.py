@@ -25,14 +25,14 @@ from vibecomfy.porting.parity import (
 )
 from vibecomfy.porting.report import PortIssue
 from vibecomfy.custom_node_refs import normalize_custom_node_requirements, structured_refs_from_lock_entries
-from vibecomfy.node_packs_lockfile import read_lockfile
+from vibecomfy.node_packs import read_lockfile
 from vibecomfy.porting.strict_ready import (
     STRICT_READY_BUILD_FAILED,
     STRICT_READY_COMPILE_FAILED,
     StrictReadyContext,
     validate_strict_ready_workflow,
 )
-from vibecomfy.porting.widget_aliases import widget_alias_analysis
+from vibecomfy.porting.widgets.aliases import widget_alias_analysis
 from vibecomfy.utils import repo_relative_path
 from vibecomfy.workflow import ValidationIssue, ValidationReport, VibeWorkflow
 
@@ -395,7 +395,7 @@ def port_convert_workflow(
             class_widget_aliases[ct] = list(aliases)
         elif schema_provider is not None:
             try:
-                from vibecomfy.porting.widget_aliases import LINK_ONLY_TYPES
+                from vibecomfy.porting.widgets.aliases import LINK_ONLY_TYPES
                 schema = schema_provider.get_schema(ct) if hasattr(schema_provider, "get_schema") else None
                 if schema is not None:
                     inputs = getattr(schema, "inputs", None)

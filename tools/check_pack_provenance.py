@@ -12,7 +12,7 @@ from tools.backfill_custom_node_refs import BackfillTarget, _extract_requirement
 from tools.validate_templates_against_packs import _is_comfy_core
 from vibecomfy.custom_node_refs import normalize_custom_node_requirements
 from vibecomfy.node_packs import get_known_node_packs
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+from vibecomfy.node_packs import LockEntry, read_lockfile
 from vibecomfy.registry.static_contract import extract_ready_template_contract
 
 # TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's

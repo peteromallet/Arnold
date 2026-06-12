@@ -352,7 +352,7 @@ def test_independent_readback_corpus() -> None:
     )
     # The Layer-1 read-back is independent — it doesn't call _normalize_ui_to_api.
     # Failures are expected for workflows that also fail the self-consistency check
-    # (listed in docs/corpus_parity_allowlist.md).  The test passes if at least
+    # (listed in docs/templates/corpus_parity_allowlist.md).  The test passes if at least
     # SOME workflows succeed, proving the read-back path is functional.
     if failures:
         print(

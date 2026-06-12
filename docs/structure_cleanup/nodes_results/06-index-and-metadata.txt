@@ -1,0 +1,48 @@
+## Verdict: **Keep** `nodes/index.py`
+
+### Why keep it
+
+1. **It serves a clear purpose** — scanning filesystem state & ComfyUI runtime to produce node metadata. Two focused indexing functions + one tiny JSON writer.
+2. **Two real consumers**: `vibecomfy/search/index.py` (custom-node examples for search) and `vibecomfy/ingest/sources.py` (the `sync_sources` orchestration that writes `node_index.json`). Not dead code.
+3. **Tested**: `tests/test_nodes_index.py` provides unit coverage for `index_runtime_nodes` and the CLI fallback chain.
+4. **No duplication in generated wrappers** — the `_generated/` wrapper modules are class-re-export shims for template codegen, completely orthogonal to index/snapshot metadata.
+
+### Name collision with root `node_index.json`?
+
+**No collision.** `nodes/index.py` is a Python module (imported as `vibecomfy.nodes.index`). `node_index.json` is a data file (artifact written by `sync_sources`). The shared word "index" is a slight conceptual overlap, but not a technical or naming conflict — one is a module that *builds* indexes, the other is a file that *is* the index. No cleanup needed.
+
+### Safe cleanup to clarify the boundary
+
+The only misfit is `write_json` — a generic 2-line JSON dumper living inside the nodes package. It's used exclusively in `ingest/sources.py` as `write_json("node_index.json", runtime_nodes)`. This is the kind of trivial utility that adds noise.
+
+**Recommendation**: Inline it. In `ingest/sources.py`, replace:
+
+```python
+from vibecomfy.nodes.index import index_custom_node_examples, index_runtime_nodes, write_json
+...
+write_json("node_index.json", runtime_nodes)
+```
+
+with:
+
+```python
+Path("node_index.json").write_text(json.dumps(runtime_nodes, indent=2))
+```
+
+Then remove `write_json` from `nodes/index.py` and its `__all__` (if any). This leaves `nodes/index.py` as pure indexing logic, no generic I/O utilities leaking out of its boundary.
+
+### Verification commands
+
+```bash
+# No import broken
+python -c "from vibecomfy.nodes.index import index_custom_node_examples, index_runtime_nodes"
+
+# Current tests still pass after inline
+python -m pytest tests/test_nodes_index.py -v
+
+# The sync_sources integration still works
+python -c "from vibecomfy.ingest.sources import sync_sources; print(sync_sources())"
+
+# Confirm no imports of write_json elsewhere after cleanup
+grep -rn "from vibecomfy.nodes.index import.*write_json" --include="*.py"
+```

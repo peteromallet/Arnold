@@ -32,7 +32,7 @@ class PluginAPI:
         return register_op(verb_kind, verb_name, fn)
 
     def register_route(self, verb_kind: str, verb_name: str, predicate: Any, template_id: str, patches: Any = ()) -> Any:
-        from vibecomfy.router_rules import register_route
+        from vibecomfy.router import register_route
 
         return register_route(verb_kind, verb_name, predicate, template_id, patches)
 

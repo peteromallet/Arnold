@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from vibecomfy.porting.identity import codec as slot_codec  # noqa: F401 — public M1 submodule
 from vibecomfy.porting.assets import AssetAnalysis
-from vibecomfy.porting.emit.emitter import (
+from vibecomfy.porting.emitter import (
     EmissionDiagnostic,
     InputSignatureField,
     NodeSignatureRow,

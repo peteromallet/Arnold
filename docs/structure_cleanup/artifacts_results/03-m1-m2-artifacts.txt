@@ -1,0 +1,22 @@
+## Audit Classification
+
+| File | Classification | Reason |
+|------|--------------|--------|
+| `artifacts/m1-safety-gate.md` | **Historical milestone evidence** | Dated 2026-05-24. Records rerunnable gates, test results (430 passed, 1 xfailed), git hygiene checks, and xfail tracking for the completed M1 milestone. Contains observed outputs and commands — a snapshot, not a living doc. |
+| `artifacts/m1-step1-audit.md` | **Historical milestone evidence** | M1 audit baseline: 12 public symbols, 3 aliases, 2 crossed privates, and full-suite counts (108 failed, 39 errors). Records pre-existing state at M1 step 1. No further updates intended. |
+| `artifacts/m2-diff-hygiene.md` | **Historical milestone evidence** | Dated 2026-05-24. Classifies dirty worktree into chain setup, completed M1 baseline, and M2 helper migration. Self-describes as the artifact that "distinguishes" scope so M2 is not misjudged. A review-time record, not current guidance. |
+| `artifacts/m2-symbol-map.md` | **Historical milestone evidence** | Records canonical homes after M2 helper migration (4 families), old/new symbol locations, and verification greps confirming no leftover `_is_link`/`_id_sort_key`/etc. A post-migration inventory, not a current spec. |
+
+**Judgment:** All four are **historical milestone evidence** — formal, complete, single-purpose records of completed work, produced by a *pristine chain* workflow. None are current docs that need updating, and none are scratchpads (they're too structured, with rerunnable commands and explicit output snapshots).
+
+**Safe destination:** **No move needed.** They belong exactly where they are in `artifacts/`. The directory convention is correct — it's an archive of milestone artifacts. If you want stronger signal for future readers, you could add a two-line YAML front-matter block to each:
+
+```yaml
+---
+type: milestone-evidence
+milestone: M1  # or M2
+status: archived
+---
+```
+
+But that's purely cosmetic. As-is, they're properly filed and won't confuse future work.

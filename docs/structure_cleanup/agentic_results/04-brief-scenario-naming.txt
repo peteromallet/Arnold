@@ -1,0 +1,55 @@
+Here's the full audit:
+
+---
+
+## 1. Missing Pairs — None
+
+All 26 briefs (`.md`) have a matching scenario (`.yaml`). Both directories also share a `.gitkeep`. Pair coverage is **100%**.
+
+## 2. Naming Inconsistencies — 9 Files
+
+All briefs use **hyphen-separated** slugs. All scenario files' internal `name:` fields use hyphens too. But **9 scenario filenames use underscores** instead, creating a filename-vs-internal-name mismatch:
+
+| Brief (`.md`) | Scenario (`.yaml`) — Wrong |
+|---|---|
+| `generate-image-canonical-op` | `generate_image_canonical_op.yaml` |
+| `fork-z-image-copy-to-recipe` | `fork_z_image_copy_to_recipe.yaml` |
+| `audio-t2a-unwired-limit` | `audio_t2a_unwired_limit.yaml` |
+| `impossible-8k-free-tier-video` | `impossible_8k_free_tier_video.yaml` |
+| `chaining-positive` | `chaining_positive.yaml` |
+| `audio-song-escape-hatch-positive` | `audio_song_escape_hatch_positive.yaml` |
+| `run-wan-t2v-ready-cli` | `run_wan_t2v_ready_cli.yaml` |
+| `image-edit-unwired-limit` | `image_edit_unwired_limit.yaml` |
+| `image-to-video-chain-recovery` | `image_to_video_chain_recovery.yaml` |
+
+The remaining **17** scenario filenames correctly use hyphens.
+
+**Operational impact**: If any code resolves scenario files by slug (e.g., `scenarios/{slug}.yaml`), underscore filenames will 404 unless there's a translation layer. The `name:` field inside each YAML is correct (hyphens), so anything that reads content rather than deriving paths from slugs is fine. But discoverability suffers — `ls scenarios/ | grep generate-image` returns nothing.
+
+## 3. Is Renaming Worth Doing?
+
+**Yes — low risk, high payoff.** The internal `name:` field already uses hyphens consistently, so no YAML content needs changing. The bug is purely in the filename. Renaming the 9 files to match the hyphen convention would:
+
+- Make `ls` / glob matches intuitive again
+- Eliminate the "why didn't my grep find it?" class of bugs
+- Make tooling that derives scenario paths from brief slugs work correctly
+
+No other files reference these filenames by underscore (all cross-references go through the `name:` field), so there's zero cascade impact. Renaming is a 30-second operation.
+
+## 4. Safe First Batch
+
+**All 9** are safe to rename in one batch:
+
+```
+mv audio_t2a_unwired_limit.yaml         audio-t2a-unwired-limit.yaml
+mv audio_song_escape_hatch_positive.yaml audio-song-escape-hatch-positive.yaml
+mv chaining_positive.yaml                chaining-positive.yaml
+mv fork_z_image_copy_to_recipe.yaml      fork-z-image-copy-to-recipe.yaml
+mv generate_image_canonical_op.yaml      generate-image-canonical-op.yaml
+mv image_edit_unwired_limit.yaml         image-edit-unwired-limit.yaml
+mv image_to_video_chain_recovery.yaml    image-to-video-chain-recovery.yaml
+mv impossible_8k_free_tier_video.yaml    impossible-8k-free-tier-video.yaml
+mv run_wan_t2v_ready_cli.yaml            run-wan-t2v-ready-cli.yaml
+```
+
+No content changes needed. Want me to execute this?

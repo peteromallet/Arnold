@@ -86,7 +86,7 @@ def _load_flat_fixture_wf() -> VibeWorkflow:
 
 def _emit_agent_edit_python_stub(wf: VibeWorkflow, **kwargs: Any) -> str:
     """Compatibility shim for early grounding tests."""
-    from vibecomfy.porting.emit.emitter import emit_agent_edit_python
+    from vibecomfy.porting.emitter import emit_agent_edit_python
 
     return emit_agent_edit_python(wf, **kwargs)
 
@@ -290,7 +290,7 @@ class TestSlotAliasRoundTrip:
     def test_slot_codec_round_trips_keywords(self) -> None:
         """Python keyword slots round-trip correctly."""
         # This test must fail until the slot codec is implemented.
-        from vibecomfy.porting import slot_codec  # type: ignore[attr-defined]  # noqa: F811
+        from vibecomfy.porting.identity import codec as slot_codec  # type: ignore[attr-defined]  # noqa: F811
 
         try:
             encoded = slot_codec.to_python_identifier("in")
@@ -304,7 +304,7 @@ class TestSlotAliasRoundTrip:
 
     def test_slot_codec_round_trips_special_chars(self) -> None:
         """Slots with special characters round-trip via the codec."""
-        from vibecomfy.porting import slot_codec  # type: ignore[attr-defined]  # noqa: F811
+        from vibecomfy.porting.identity import codec as slot_codec  # type: ignore[attr-defined]  # noqa: F811
 
         try:
             for raw in ["resize_type.multiple", "MODEL (Positive)", "", "3d_model"]:
@@ -319,7 +319,7 @@ class TestSlotAliasRoundTrip:
 
     def test_slot_codec_handles_keyword_collisions(self) -> None:
         """Keyword + non-keyword collision gets deterministic suffixes."""
-        from vibecomfy.porting import slot_codec  # type: ignore[attr-defined]  # noqa: F811
+        from vibecomfy.porting.identity import codec as slot_codec  # type: ignore[attr-defined]  # noqa: F811
 
         try:
             # 'in' is a Python keyword, 'in_' is the alias for it.
@@ -534,7 +534,7 @@ class TestAgentEditPythonEmitter:
     """Focused coverage for the T5 agent-edit rendering surface."""
 
     def test_agent_edit_python_is_parseable_assignment_view_with_identity_comments(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_agent_edit_python
+        from vibecomfy.porting.emitter import emit_agent_edit_python
 
         rendered = emit_agent_edit_python(_load_flat_fixture_wf())
 
@@ -553,13 +553,13 @@ class TestAgentEditPythonEmitter:
         assert "slots latent='LATENT'" in rendered
 
     def test_agent_edit_python_rejects_raw_ui_json_before_emitter_internals(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_agent_edit_python
+        from vibecomfy.porting.emitter import emit_agent_edit_python
 
         with pytest.raises(TypeError, match="emit_agent_edit_python requires VibeWorkflow"):
             emit_agent_edit_python(_load_flat_fixture_raw())  # type: ignore[arg-type]
 
     def test_agent_edit_python_preserves_locked_names_without_changing_scratchpad(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_agent_edit_python, emit_scratchpad_python
+        from vibecomfy.porting.emitter import emit_agent_edit_python, emit_scratchpad_python
 
         wf = _load_flat_fixture_wf()
         baseline_scratchpad = emit_scratchpad_python(wf, prune_dead_branches=False)
@@ -577,7 +577,7 @@ class TestAgentEditPythonEmitter:
         assert "_node(wf," not in rendered
 
     def test_agent_edit_python_tags_virtual_nodes(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_agent_edit_python
+        from vibecomfy.porting.emitter import emit_agent_edit_python
 
         wf = VibeWorkflow("virtual", WorkflowSource("virtual"))
         wf.add_node("SetNode", uid="set-uid", name="LATENT")
@@ -598,7 +598,7 @@ class TestAgentEditLeanRender:
 
     def test_decorative_title_equal_to_class_is_dropped(self) -> None:
         """title='KSampler' on KSampler → no `title:` token."""
-        from vibecomfy.porting.emit.emitter import emit_agent_edit_python
+        from vibecomfy.porting.emitter import emit_agent_edit_python
 
         wf = VibeWorkflow("lean-class", WorkflowSource("lean-class"))
         node = wf.add_node("KSampler", uid="k1")
@@ -608,7 +608,7 @@ class TestAgentEditLeanRender:
 
     def test_decorative_title_equal_to_var_name_is_dropped(self) -> None:
         """title matching rendered variable name → no `title:` token."""
-        from vibecomfy.porting.emit.emitter import emit_agent_edit_python
+        from vibecomfy.porting.emitter import emit_agent_edit_python
 
         wf = VibeWorkflow("lean-var", WorkflowSource("lean-var"))
         node = wf.add_node("KSampler", uid="k1")
@@ -619,7 +619,7 @@ class TestAgentEditLeanRender:
 
     def test_decorative_title_pure_symbols_is_dropped(self) -> None:
         """title of only symbols ('---') → no `title:` token."""
-        from vibecomfy.porting.emit.emitter import emit_agent_edit_python
+        from vibecomfy.porting.emitter import emit_agent_edit_python
 
         wf = VibeWorkflow("lean-symbols", WorkflowSource("lean-symbols"))
         node = wf.add_node("KSampler", uid="k1")
@@ -629,7 +629,7 @@ class TestAgentEditLeanRender:
 
     def test_meaningful_title_is_kept(self) -> None:
         """distinct meaningful title (including emoji) → `title:` token present."""
-        from vibecomfy.porting.emit.emitter import emit_agent_edit_python
+        from vibecomfy.porting.emitter import emit_agent_edit_python
 
         wf = VibeWorkflow("lean-meaningful", WorkflowSource("lean-meaningful"))
         node = wf.add_node("KSampler", uid="k1")
@@ -639,7 +639,7 @@ class TestAgentEditLeanRender:
 
     def test_long_string_elision_threshold_respected(self) -> None:
         """string widget value >400 chars is elided with [...elided N chars...]."""
-        from vibecomfy.porting.emit.emitter import _format_value
+        from vibecomfy.porting.emitter import _format_value
 
         long_str = "x" * 500
         result = _format_value(long_str, elide_strings_over=400)
@@ -719,7 +719,7 @@ class TestIntegrationBoundaries:
 
     def test_emit_scratchpad_python_exists_and_location(self) -> None:
         """emit_scratchpad_python is in vibecomfy/porting/emitter.py."""
-        from vibecomfy.porting.emit.emitter import emit_scratchpad_python
+        from vibecomfy.porting.emitter import emit_scratchpad_python
 
         assert callable(emit_scratchpad_python)
         # The emitter takes a workflow + keyword args and returns a string.
@@ -728,7 +728,7 @@ class TestIntegrationBoundaries:
 
     def test_emit_scratchpad_python_accepts_vibeworkflow(self) -> None:
         """emit_scratchpad_python accepts VibeWorkflow and returns valid Python."""
-        from vibecomfy.porting.emit.emitter import emit_scratchpad_python
+        from vibecomfy.porting.emitter import emit_scratchpad_python
 
         wf = _load_flat_fixture_wf()
         result = emit_scratchpad_python(wf)
@@ -803,7 +803,7 @@ class TestIntegrationBoundaries:
 
     def test_slugify_identifier_handles_keywords(self) -> None:
         """_slugify_identifier appends trailing underscore for Python keywords."""
-        from vibecomfy.porting.emit.emitter import _slugify_identifier  # type: ignore[attr-defined]
+        from vibecomfy.porting.emitter import _slugify_identifier  # type: ignore[attr-defined]
 
         # Non-keyword passes through
         assert _slugify_identifier("hello") == "hello"
@@ -815,7 +815,7 @@ class TestIntegrationBoundaries:
 
     def test_safe_var_handles_uuids_and_keywords(self) -> None:
         """_safe_var shortens UUIDs and adds trailing underscore for keywords."""
-        from vibecomfy.porting.emit.emitter import _safe_var  # type: ignore[attr-defined]
+        from vibecomfy.porting.emitter import _safe_var  # type: ignore[attr-defined]
 
         # UUID class types get short prefixes
         assert _safe_var("7b34ab90-36f9-45ba-a665-71d418f0df18").startswith("subgraph_")
@@ -825,7 +825,7 @@ class TestIntegrationBoundaries:
 
     def test_unique_var_avoids_keyword_conflicts(self) -> None:
         """_unique_var never returns a bare Python keyword."""
-        from vibecomfy.porting.emit.emitter import _unique_var  # type: ignore[attr-defined]
+        from vibecomfy.porting.emitter import _unique_var  # type: ignore[attr-defined]
 
         used: set[str] = set()
         # "in" is a keyword; _unique_var must suffix it.
@@ -835,7 +835,7 @@ class TestIntegrationBoundaries:
 
     def test_safe_kwarg_name_falls_back_for_digit_start(self) -> None:
         """_safe_kwarg_name uses fallback when name starts with digit."""
-        from vibecomfy.porting.emit.emitter import _safe_kwarg_name  # type: ignore[attr-defined]
+        from vibecomfy.porting.emitter import _safe_kwarg_name  # type: ignore[attr-defined]
 
         # Names starting with digits should fall back.
         result = _safe_kwarg_name("123abc", fallback="input_0")
@@ -845,7 +845,7 @@ class TestIntegrationBoundaries:
 
     def test_safe_output_name_returns_none_for_oob_slot(self) -> None:
         """_safe_output_name returns None for out-of-range slots."""
-        from vibecomfy.porting.emit.emitter import _safe_output_name  # type: ignore[attr-defined]
+        from vibecomfy.porting.emitter import _safe_output_name  # type: ignore[attr-defined]
 
         wf = _load_flat_fixture_wf()
         workflow_nodes = {nid: node for nid, node in wf.nodes.items()}
@@ -905,11 +905,11 @@ class TestIntegrationBoundaries:
         NOT tools/format_as_python.py.  M1 work must go into the porting
         emitter module.
         """
-        from vibecomfy.porting.emit.emitter import emit_ready_template_python
+        from vibecomfy.porting.emitter import emit_ready_template_python
 
         # The active emit path lives in the porting module.
         assert callable(emit_ready_template_python)
-        assert emit_ready_template_python.__module__ == "vibecomfy.porting.emit.emitter"
+        assert emit_ready_template_python.__module__ == "vibecomfy.porting.emitter"
 
     # ------------------------------------------------------------------
     # M1 scope contract: EditSession is standalone, not wired into handle_agent_edit
@@ -924,7 +924,7 @@ class TestIntegrationBoundaries:
 
     def test_emit_scratchpad_python_still_works_independently(self) -> None:
         """emit_scratchpad_python works independently; M1 does not replace it."""
-        from vibecomfy.porting.emit.emitter import emit_scratchpad_python
+        from vibecomfy.porting.emitter import emit_scratchpad_python
 
         wf = _load_flat_fixture_wf()
         result = emit_scratchpad_python(wf)
@@ -948,7 +948,7 @@ class TestEmitterVariableNameLocks:
         return wf
 
     def test_locked_aliases_bridge_vibenode_uid_and_ui_property_uid(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_scratchpad_python
+        from vibecomfy.porting.emitter import emit_scratchpad_python
 
         wf = self._tiny_uid_workflow()
         diagnostics = []
@@ -968,7 +968,7 @@ class TestEmitterVariableNameLocks:
         assert not [diag for diag in diagnostics if diag.code.startswith("locked_variable_")]
 
     def test_invalid_locked_alias_reports_diagnostic_and_does_not_emit_bad_python(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             READABILITY_WARNING_LOCKED_VARIABLE_ALIAS_INVALID,
             emit_scratchpad_python,
         )
@@ -986,7 +986,7 @@ class TestEmitterVariableNameLocks:
         assert any(diag.code == READABILITY_WARNING_LOCKED_VARIABLE_ALIAS_INVALID for diag in diagnostics)
 
     def test_colliding_locked_aliases_report_diagnostic(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             READABILITY_WARNING_LOCKED_VARIABLE_ALIAS_COLLISION,
             emit_scratchpad_python,
         )
@@ -1007,7 +1007,7 @@ class TestEmitterVariableNameLocks:
         assert any(diag.code == READABILITY_WARNING_LOCKED_VARIABLE_ALIAS_COLLISION for diag in diagnostics)
 
     def test_strict_missing_locked_uid_reports_later_render_diagnostic(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             READABILITY_WARNING_LOCKED_VARIABLE_ALIAS_MISSING,
             emit_scratchpad_python,
         )
@@ -1027,7 +1027,7 @@ class TestEmitterVariableNameLocks:
         assert missing[0].detail["uid"] == "missing-uid"
 
     def test_subgraph_internal_locked_names_use_scope_qualified_uid(self) -> None:
-        from vibecomfy.porting.emit.emitter import _build_subgraph_def, _emit_subgraph_functions
+        from vibecomfy.porting.emitter import _build_subgraph_def, _emit_subgraph_functions
         from vibecomfy.porting.identity.uid import make_uid
 
         raw_subgraph = {
@@ -1101,7 +1101,7 @@ class TestAvailableNodeSignatures:
     # -- enumeration path via .schemas() -----------------------------------
 
     def test_enumeration_uses_schemas_method(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
         from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 
         provider = self._fake_provider(
@@ -1140,7 +1140,7 @@ class TestAvailableNodeSignatures:
         assert loader.pack == "core"
 
     def test_enumeration_empty_provider_returns_empty(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
 
         provider = self._fake_provider({})
         rows = emit_available_node_signatures(provider)
@@ -1149,7 +1149,7 @@ class TestAvailableNodeSignatures:
     # -- focused / per-node path via .get_schema() -------------------------
 
     def test_focus_types_uses_get_schema(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
         from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 
         provider = self._fake_provider(
@@ -1175,7 +1175,7 @@ class TestAvailableNodeSignatures:
         assert rows[0].class_type == "A"
 
     def test_focus_types_skips_unknown(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
         from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 
         provider = self._fake_provider(
@@ -1198,7 +1198,7 @@ class TestAvailableNodeSignatures:
     # -- compatibility filtering -------------------------------------------
 
     def test_compatible_input_type_filters_by_output_compatibility(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
         from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 
         provider = self._fake_provider(
@@ -1226,7 +1226,7 @@ class TestAvailableNodeSignatures:
         assert rows[0].class_type == "ModelProducer"
 
     def test_compatible_output_type_filters_by_input_compatibility(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
         from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 
         provider = self._fake_provider(
@@ -1253,7 +1253,7 @@ class TestAvailableNodeSignatures:
         assert rows[0].class_type == "ModelConsumer"
 
     def test_combined_compatibility_filters(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
         from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 
         provider = self._fake_provider(
@@ -1286,7 +1286,7 @@ class TestAvailableNodeSignatures:
     # -- unknown / wildcard compatibility ----------------------------------
 
     def test_unknown_type_is_compatible_with_everything(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
         from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 
         provider = self._fake_provider(
@@ -1314,7 +1314,7 @@ class TestAvailableNodeSignatures:
         assert rows[0].class_type == "WildcardOut"
 
     def test_none_type_is_compatible_with_anything(self) -> None:
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
         from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 
         provider = self._fake_provider(
@@ -1343,7 +1343,7 @@ class TestAvailableNodeSignatures:
     # -- formatted output --------------------------------------------------
 
     def test_format_signature_rows_basic(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             InputSignatureField,
             NodeSignatureRow,
             OutputSignatureField,
@@ -1366,7 +1366,7 @@ class TestAvailableNodeSignatures:
         assert "def KSampler(model: MODEL, seed: INT = ...) -> LATENT:" in text
 
     def test_format_signature_rows_no_outputs(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             InputSignatureField,
             NodeSignatureRow,
             format_signature_rows,
@@ -1386,7 +1386,7 @@ class TestAvailableNodeSignatures:
         assert "def SaveImage(images: IMAGE) -> None:" in text
 
     def test_format_signature_rows_show_pack(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             InputSignatureField,
             NodeSignatureRow,
             format_signature_rows,
@@ -1406,7 +1406,7 @@ class TestAvailableNodeSignatures:
         assert "def Foo() -> None:" in text
 
     def test_format_signature_rows_show_confidence(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             InputSignatureField,
             NodeSignatureRow,
             format_signature_rows,
@@ -1437,7 +1437,7 @@ class TestAvailableNodeSignatures:
         assert "def LowConf() -> None:" in text
 
     def test_format_signature_rows_deterministic(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             InputSignatureField,
             NodeSignatureRow,
             format_signature_rows,
@@ -1457,7 +1457,7 @@ class TestAvailableNodeSignatures:
         assert lines == ["def A() -> None:", "def M() -> None:", "def Z() -> None:"]
 
     def test_format_signature_rows_slot_name_codec(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             InputSignatureField,
             NodeSignatureRow,
             format_signature_rows,
@@ -1479,7 +1479,7 @@ class TestAvailableNodeSignatures:
         assert "def KwargsNode(in_: IMAGE, class_: STRING = ...) -> None:" in text
 
     def test_node_signature_row_frozen(self) -> None:
-        from vibecomfy.porting.emit.emitter import (
+        from vibecomfy.porting.emitter import (
             InputSignatureField,
             NodeSignatureRow,
             OutputSignatureField,
@@ -1500,7 +1500,7 @@ class TestAvailableNodeSignatures:
             row.class_type = "Other"  # type: ignore[misc]
 
     def test_input_signature_field_default_none(self) -> None:
-        from vibecomfy.porting.emit.emitter import InputSignatureField
+        from vibecomfy.porting.emitter import InputSignatureField
 
         f = InputSignatureField(name="test")
         assert f.name == "test"
@@ -1509,7 +1509,7 @@ class TestAvailableNodeSignatures:
         assert f.default is None
 
     def test_output_signature_field_default_none(self) -> None:
-        from vibecomfy.porting.emit.emitter import OutputSignatureField
+        from vibecomfy.porting.emitter import OutputSignatureField
 
         f = OutputSignatureField()
         assert f.name is None
@@ -1517,7 +1517,7 @@ class TestAvailableNodeSignatures:
 
     def test_unknown_compatibility_handles_both_none_and_star_types(self) -> None:
         """Both None and '*' types should match any filter."""
-        from vibecomfy.porting.emit.emitter import emit_available_node_signatures
+        from vibecomfy.porting.emitter import emit_available_node_signatures
         from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 
         provider = self._fake_provider(
@@ -1693,7 +1693,7 @@ class TestPublicM1SurfaceImports:
     # -- Slot codec -----------------------------------------------------
 
     def test_slot_codec_module_is_exported(self) -> None:
-        from vibecomfy.porting import slot_codec
+        from vibecomfy.porting.identity import codec as slot_codec
 
         assert hasattr(slot_codec, "to_python_identifier")
 
@@ -3261,7 +3261,7 @@ class TestSearchQuery:
     """Tests for the side-effect-free search() query."""
 
     def test_search_returns_structured_rows(self) -> None:
-        from vibecomfy.porting.emit.emitter import NodeSignatureRow
+        from vibecomfy.porting.emitter import NodeSignatureRow
 
         session = _primitive_session()
         result = session.search()
@@ -3311,7 +3311,7 @@ class TestSearchQuery:
 
     def test_search_focus_types_vibecomfy_exec_returns_usable_signature(self) -> None:
         """Agent search for focus_types=['vibecomfy.exec'] returns signature with source, io, fixed slots."""
-        from vibecomfy.porting.emit.emitter import NodeSignatureRow
+        from vibecomfy.porting.emitter import NodeSignatureRow
 
         session = _primitive_session()
         result = session.search(focus_types=["vibecomfy.exec"])
@@ -3348,9 +3348,8 @@ class TestSearchQuery:
         # Input slots appear with their types
         for i in range(16):
             assert f"in_{i}" in result, f"formatted result missing in_{i}"
-        # Output slots appear as return types (the formatted output shows types, not names)
-        # The signature ends with 16 "*" types -> *, *, *, ...
-        expected_returns = ", ".join(["*"] * 16)
+        # Output slots include their names because these differ from their type.
+        expected_returns = ", ".join([f"out_{i}:*" for i in range(16)])
         assert expected_returns in result, f"formatted result missing 16 output types"
 
 

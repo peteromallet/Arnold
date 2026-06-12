@@ -1,0 +1,37 @@
+Now I have a complete picture of content, cross-references, and existing structure conventions. Here's my analysis:
+
+---
+
+## 1. Proposed folder: `docs/text-to-graph/`
+
+Shorter than `agent_text_to_graph`, matches the feature name used in the MVP doc header, and consistent with existing subfolder patterns (`docs/security/`, `docs/release_notes/`).
+
+## 2. File moves and rationale
+
+**Move these three (core design cluster):**
+- `docs/agent_text_to_graph_mvp.md` → `docs/text-to-graph/mvp.md`
+- `docs/agent_text_to_graph_premortem.md` → `docs/text-to-graph/premortem.md`
+- `docs/agent_text_to_graph_python_loading_spike.md` → `docs/text-to-graph/python-loading-spike.md`
+
+**Rationale:** These three are the canonical product-design docs. They reference each other with relative links (`./agent_text_to_graph_*`) that still work inside the subfolder. No external doc references the premortem or spike files by clickable link. The MVP is only referenced internally within this cluster.
+
+**Do NOT move these two:**
+- `docs/local_agent_text_to_graph_blockers.md` — Referenced externally by `docs/agent_edit_solution_spec.md` (bare relative path `local_agent_text_to_graph_blockers.md`) and `docs/agent_edit_concrete_tree.md`. Moving it would break those references. This file acts as a bridge between the "agent-edit" cluster and "text-to-graph" cluster; leave it as the shared evidence log.
+- `docs/local_agent_text_to_graph_e2e.md` — Gitignored, contains a live API key. Referenced by blockers.md and concrete_tree.md. Leave in place.
+
+## 3. Docs that stay top-level
+
+- **`docs/roadmap_agentic_comfyui.md`** — A holistic strategic roadmap (PoC→Agentic ComfyUI), broader than just text-to-graph. References `python_on_the_graph.md`, not the text-to-graph files directly. Stays top-level.
+
+- **`docs/vibecomfy_exec_node_design.md`** — A different feature entirely (in-graph code execution node, not agent text-to-graph). Stays top-level.
+
+## 4. Required reference checks
+
+**Safe — relative links survive move:**
+- `agent_text_to_graph_mvp.md` line 130: `[agent_text_to_graph_python_loading_spike.md](./agent_text_to_graph_python_loading_spike.md)` → rename file → **needs update to `./python-loading-spike.md`**
+- `agent_text_to_graph_python_loading_spike.md` line 7: `[agent_text_to_graph_mvp.md](./agent_text_to_graph_mvp.md)` → rename file → **needs update to `./mvp.md`**
+
+**Safe — no update needed (bare text, not clickable link):**
+- `structure_cleanup/docs_briefs/03-agent-text-to-graph-cluster.md` — audit brief, not a live doc
+
+**Summary:** Two relative link updates needed in the moved files. That's it.

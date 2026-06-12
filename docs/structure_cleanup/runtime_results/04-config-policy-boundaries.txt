@@ -1,0 +1,69 @@
+Now I have the complete picture. Here is the audit report.
+
+---
+
+## Audit Report: Runtime Config / Model-Policy / Local-Library Boundaries
+
+### File Locations
+
+All requested files exist under the `vibecomfy/` package, **not at the project root**:
+
+| Requested name | Actual location | Status |
+|---|---|---|
+| `config.py` | `vibecomfy/runtime/config.py` | ✅ |
+| `model_policy.py` | `vibecomfy/runtime/model_policy.py` | ✅ |
+| `policy.py` | `vibecomfy/runtime/policy.py` | **⚠️ orphan** |
+| `metadata.py` | **`vibecomfy/metadata.py`** (root level) | ✅ (see below) |
+| `metadata.py` (runtime) | `vibecomfy/runtime/metadata.py` | ✅ (different module) |
+| `_local_library_yaml.py` | `vibecomfy/runtime/_local_library_yaml.py` | ✅ |
+| `local_library.py` | `vibecomfy/local_library.py` (root level) | ✅ |
+| `commands/config.py` | `vibecomfy/commands/config.py` | ✅ (CLI, not runtime) |
+
+### Decision 1: `vibecomfy/runtime/policy.py` — DELETE (dead duplicate)
+
+**Evidence:**
+- `policy.py` defines `_maybe_flush_for_policy()` and `_free_vram_gb()`.
+- **Zero** modules import from `vibecomfy.runtime.policy` or from `.policy` relative import (verified via ripgrep).
+- The **exact same two functions** are duplicated at `vibecomfy/runtime/session.py` lines 1358–1380, and those are the ones actually called (lines 341, 550 in `session.py`).
+- The `policy.py` versions are **dead code** — likely a leftover from an earlier refactor where these were factored out then re-inlined.
+
+**Action:** Delete `vibecomfy/runtime/policy.py`. No import references to update. Confirm with `git log --follow` to see if it was ever called externally.
+
+### Decision 2: `vibecomfy/metadata.py` vs `vibecomfy/runtime/metadata.py` — NOT duplicates
+
+**Evidence:**
+
+| Module | Content | Consumers |
+|---|---|---|
+| `vibecomfy/metadata.py` | `PROMPT_KEYS`, `SEED_KEYS`, `OUTPUT_NODE_NAMES`, `_register_common_inputs()`, `_infer_requirements()` — workflow heuristic constants | 8 modules across `patches/`, `ir/`, `porting/`, `registry/`, `ingest/`, `workflow.py` |
+| `vibecomfy/runtime/metadata.py` | `_run_metadata()`, `_git_sha()` — run telemetry dict builder | Only `runtime/session.py` (via `from .metadata import _run_metadata`) |
+
+These serve **different concerns**. However, the root-level name `vibecomfy/metadata.py` is misleading — it's really "workflow heuristics". The doc in `docs/structure_cleanup/package_results/06-ir-compile-schema.txt` already flags this module for possible relocation. This is a **low-priority rename opportunity**, not a bug.
+
+### Decision 3: No old compatibility names or test-only shims
+
+All test files import directly from current production paths:
+- `tests/test_local_library.py` → `from vibecomfy.local_library import ...`
+- `tests/test_runtime_model_policy.py` → `from vibecomfy.runtime.model_policy import ...`
+- `tests/test_runtime_session_config.py` → `from vibecomfy.runtime.session import ...` (not from `runtime/config.py` directly, but that's the normal API surface since `SessionConfig` is re-exported via `runtime/__init__.py`)
+- `tests/security/test_runtime_code_policy.py` → `from vibecomfy.contracts import ...` (unrelated to `runtime/policy.py`)
+
+No deprecated import aliases or compatibility stubs exist.
+
+### Decision 4: All other files are correctly placed
+
+| File | Rationale |
+|---|---|
+| `vibecomfy/local_library.py` | Root-level because consumed by both CLI (`commands/config.py`) and runtime (`runtime/drift.py`, `runtime/_local_library_yaml.py`). Heavy cross-cutting. ✅ |
+| `vibecomfy/runtime/_local_library_yaml.py` | Private runtime helper (leading `_`), only called by `session.py`. ✅ |
+| `vibecomfy/runtime/config.py` | Runtime-only `SessionConfig` dataclass + translation helpers. ✅ |
+| `vibecomfy/runtime/model_policy.py` | Runtime-only preflight policy. ✅ |
+| `vibecomfy/commands/config.py` | CLI layer (argparse), correctly outside `runtime/`. ✅ |
+
+### Safe Batch Summary
+
+| Action | File | Risk |
+|---|---|---|
+| **DELETE** | `vibecomfy/runtime/policy.py` | Zero imports; exact duplicate of functions in `session.py`. Trivial. |
+| **(optional) RENAME** | `vibecomfy/metadata.py` → `vibecomfy/_workflow_metadata.py` or similar | Low risk but touches 8+ import sites; defer unless already planned. |
+| **LEAVE** | all others | Correctly placed, no duplicates. |

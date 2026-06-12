@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from tools import validate_template_traceability as traceability
-from vibecomfy.node_packs_lockfile import LockEntry, write_lockfile
+from vibecomfy.node_packs import LockEntry, write_lockfile
 
 
 def _write_template(root: Path, *, source_sha: str | None, commit: str = "abc") -> Path:

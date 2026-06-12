@@ -20,8 +20,8 @@ from typing import Any, Sequence
 
 import pytest
 
-from vibecomfy import node_packs_install
-from vibecomfy.node_packs_install import install_pack
+import vibecomfy.node_packs._install as node_packs_install
+from vibecomfy.node_packs import install_pack
 from vibecomfy.security.gate import (
     CapabilityFenceError,
     GateContext,

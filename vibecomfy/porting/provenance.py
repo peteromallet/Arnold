@@ -129,7 +129,7 @@ class ProvenanceReport:
 
 
 def extract_provenance(workflow: Mapping[str, Any] | str | Path) -> ProvenanceReport:
-    from vibecomfy.node_packs_install import CORE_COMFY_CLASSES
+    from vibecomfy.node_packs import CORE_COMFY_CLASSES
 
     raw = _load_workflow(workflow)
     subgraph_ids = {

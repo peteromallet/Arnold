@@ -54,7 +54,7 @@ VibeComfy uses ComfyUI's two-word distinction precisely:
 Use "workflow" when referring to any graph; use "template" only when you mean a starting-point workflow from `ready_templates/`.
 
 **M6 public import surface.** The authoritative source for import claims is
-`artifacts/m6-public-api.md`. Use `VibeWorkflow.compile("api")` to export a
+`docs/api/m6-public-api.md`. Use `VibeWorkflow.compile("api")` to export a
 workflow to the ComfyUI API JSON shape accepted by runtime execution. There is
 no separate public export method to teach here.
 
@@ -312,7 +312,7 @@ Everything writes under `out/`:
 
 ## Verb-native router (`router.pick`)
 
-`image.t2i(prompt, model="z_image")` internally calls `router.pick("image", "t2i", model=...)` to choose a template id and a list of patches. Use `router.pick(...)` directly to inspect a route before loading. Rules live in `vibecomfy/router_rules.py`.
+`image.t2i(prompt, model="z_image")` internally calls `router.pick("image", "t2i", model=...)` to choose a template id and a list of patches. Use `router.pick(...)` directly to inspect a route before loading. Router rules live in `vibecomfy/router/`.
 
 ```python
 from vibecomfy import router
@@ -342,7 +342,7 @@ result = router.pick("video", "i2v", model="ltx")    # RouterResult(template_id,
 
 ## Adding a new workflow
 
-The full operating path lives in **`docs/adding_templates_models.md`**. Read it before adding a new family. The short version:
+The full operating path lives in **`docs/templates/adding_templates_models.md`**. Read it before adding a new family. The short version:
 
 1. **Pick a stable id** in lower snake case encoding model + capability: `qwen3_tts_voice_clone`, `wanvideo_wrapper_21_14b_t2v`. The id becomes the manifest id, file name, RunPod matrix row, artifact path, and CLI handle.
 2. **Drop the source JSON** under `workflow_corpus/official/<media>/<id>.json`, `workflow_corpus/custom_nodes/<pack>/<source>/<id>.json`, or `workflow_corpus/community/<source>/<id>.json`. Keep it close to upstream.
@@ -353,7 +353,7 @@ The full operating path lives in **`docs/adding_templates_models.md`**. Read it 
 7. **Convert to a ready template** with `python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --ready-id <media>/<id> --out ready_templates/<media>/<id>.py --json`, or hand-author it under `ready_templates/<media>/<id>.py` for full control (see `ready_templates/image/z_image.py` for the canonical hand-authored shape). To fork a generated template into `recipes/` for hand-editing, use `python -m vibecomfy.cli copy-to-recipe <id> --out recipes/<name>.py`.
 8. **Validate locally**: `vibecomfy validate ready_templates/<media>/<id>.py`, then targeted tests `pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli.py`.
 9. **Validate on RunPod** with a focused scope: `VIBECOMFY_MATRIX_SCOPE=<family> uv run python scripts/runpod_corpus_matrix.py`. Don't run the full matrix while iterating.
-10. **Document failures** in `docs/hiddenswitch_incompatibilities.md`, `docs/structural_issues.md`, or a family coverage doc — never leave fixes only in chat history or pod logs.
+10. **Document failures** in `docs/runtime/incompatibilities.md`, `docs/structural_issues.md`, or a family coverage doc — never leave fixes only in chat history or pod logs.
 
 For a one-off composition (combining existing workflows), prefer a **recipe** under `recipes/` — that's flow 5 and doesn't need a manifest entry.
 
@@ -361,10 +361,10 @@ For a one-off composition (combining existing workflows), prefer a **recipe** un
 
 - `docs/authoring.md` — blocks, patches, handles, opaque subgraphs, recipes, escape hatches
 - `docs/vibeworkflow.md` — IR contract
-- `docs/python_composition_dsl_plan.md` — Layer 2 architecture
+- `docs/architecture/python_composition_dsl_plan.md` — Layer 2 architecture
 - `docs/custom_nodes.md` — node packs, install/lock/restore
-- `docs/runpod.md`, `docs/runpod_smoke.md` — RunPod lifecycle and smoke harness
-- `docs/runtime_lifecycle.md`, `docs/runtime_surface.md` — embedded vs server runtime
+- `docs/runpod/setup.md`, `docs/runpod/smoke.md` — RunPod lifecycle and smoke harness
+- `docs/runtime/lifecycle.md`, `docs/runtime/surface.md` — embedded vs server runtime
 - `docs/errors_and_doctor.md` — what `doctor` flags and how to fix it
 - `CLAUDE.md` — canonical long-form agent constraints and rules
 

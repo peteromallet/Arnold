@@ -1,0 +1,111 @@
+Now I have a complete picture. Here is the synthesis.
+
+---
+
+## Historical-Docs Boundary: Safe First Batch Proposal
+
+### Current State
+
+**`docs/historical/`** contains 7 content files + `README.md`:
+
+| File | Status header | Correct for historical? |
+|------|--------------|------------------------|
+| `comfyscript_spike.md` | ✅ "Historical spike" | ✅ |
+| `graphbuilder_spike.md` | ✅ "Historical spike" | ✅ |
+| `frontier-hardening-runbook.md` | ✅ "Historical completion record" | ✅ |
+| `sprint5_followups.md` | ✅ "Historical follow-up plan" | ✅ (but §1 has "Sprint 4" copy-paste header bug) |
+| `template_cleanup_followups.md` | ✅ "Historical record" | ✅ |
+| `old_vibecomfy_port_rationale.md` | ✅ (implicitly historical) | ✅ |
+| **`agent_readable_templates_v2.md`** | **"Status: active"** | **❌ — active plan in historical** |
+
+The `historical/README.md` has a **Note** block claiming `agent_readable_templates_v2.md` was already moved to `docs/plans/` — but the file **still lives in historical**. The README is documenting a move that was never executed.
+
+**External references from non-cleanup docs:**
+- `docs/architecture/python_composition_dsl_plan.md` references `graphbuilder_spike.md`, `comfyscript_spike.md`, and `old_vibecomfy_port_rationale.md` — all currently valid.
+- **Zero** code files (`*.py`) reference any `docs/historical/` path.
+- The stale path `docs/historical/agent_readable_templates_v2.md` appears only in cleanup audit briefs that describe the mis-categorization.
+
+**`docs/plans/`** has 4 content files + `README.md`. All correctly classified as active/partial-exec plans per the prior audit (see `historical_docs_results/01-plans-currentness.txt`).
+
+---
+
+### Proposed Batch: Exactly 1 Move + 2 README Edits
+
+#### 1. Move `agent_readable_templates_v2.md` → `docs/plans/`
+
+```bash
+# The file has no relative markdown links that would break.
+# It uses only absolute-style paths (e.g., `ready_templates/video/...`).
+# Zero non-cleanup docs reference the old path.
+mv docs/historical/agent_readable_templates_v2.md docs/plans/agent_readable_templates_v2.md
+```
+
+- **Risk:** None. This was already approved by the prior `02-historical-folder-contract` audit result (which said "must not live in `docs/historical/`" and gave the exact `mv` command). The README claims it was already done. The only reference to the old path is in `docs/structure_cleanup/` audit evidence (a pre-existing brief that describes the misplacement) — cleanup evidence references are allowed to lag.
+- **Reference repair required:** None outside cleanup docs. The file has no internal relative links.
+
+#### 2. Update `docs/historical/README.md`
+
+Remove the **Note** block (lines 7-9) that claims the file was already moved, since the move is now actually being executed. The bullet list already does not include the file, so removing the note leaves a clean index.
+
+**Exact edit (lines 7-9):**
+
+```markdown
+> **Note:** `agent_readable_templates_v2.md` has been moved to
+> [`docs/plans/agent_readable_templates_v2.md`](../plans/agent_readable_templates_v2.md)
+
+```
+→
+(delete those 3 lines)
+
+The remaining bullet list (lines 11-16) stays as-is — all 6 remaining files are correctly listed.
+
+#### 3. Update `docs/plans/README.md`
+
+Add a link for the newly arrived active plan:
+
+**Current (line 9):**
+```markdown
+- [Loose-work consolidation plan](loose-work-consolidation-plan.md)
+```
+
+**After (add line 10):**
+```markdown
+- [Loose-work consolidation plan](loose-work-consolidation-plan.md)
+- [Agent-readable templates v2 plan](agent_readable_templates_v2.md)
+```
+
+---
+
+### Verification Commands (after applying)
+
+```bash
+# 1. Confirm the move
+ls docs/historical/agent_readable_templates_v2.md && echo "STILL EXISTS" || echo "MOVED OK"
+ls docs/plans/agent_readable_templates_v2.md && echo "LANDED OK" || echo "MISSING"
+
+# 2. Verify no stale path references remain in non-cleanup code
+rg "historical/agent_readable_templates_v2" --glob '*.{py,md}' docs/ \
+  --glob '!docs/structure_cleanup/*' --glob '!docs/megaplan_chains/pristine_cleanup/audit/*'
+
+# 3. Verify the old README note is gone
+head -10 docs/historical/README.md
+
+# 4. Verify plans README updated
+tail -3 docs/plans/README.md
+
+# 5. CLI smoke test (no regression from doc-only change)
+python -m vibecomfy.cli workflows list --ready --json > /dev/null && echo "CLI OK"
+```
+
+---
+
+### Explicit Deferrals
+
+| Item | Rationale | Defer to |
+|------|-----------|----------|
+| **`docs/structure_cleanup/` archival** | The overall cleanup goal is still active. `docs/structure_cleanup/README.md` (line 92) already says it will move to `docs/historical/structure-cleanup/` once complete. Moving it mid-cleanup breaks the very audit evidence and briefs that guide the remaining passes. | When cleanup completes (end of pass sequence) |
+| **Moving `docs/plans/loose-work-consolidation-plan.md` → `docs/historical/`** | Per the audit, it's still "active / one-shot" — the consolidation branch work hasn't landed yet. Once the L1–L4 items on that plan are merged, it becomes a historical record and should move. | After consolidation branch merges |
+| **Fixing `sprint5_followups.md`'s "Sprint 4" copy-paste header** | Cosmetic doc quality issue, not a boundary problem. Minimal impact — the status header already says "Historical follow-up plan." | Content-fix pass |
+| **Splitting `template_cleanup_followups.md` (actionable §§B.1–B.4 vs. cosmetic §§A.1–A.3)** | Requires content restructuring, not just a move. The prior audit flagged this but the actionable sections are historical anyway. | Separate historical-docs content pass |
+| **Moving `docs/structural_issues.md`, `docs/structural_audit_2026-05.md`, etc.** | Already deferred in `status.md:230` — enough cross-references that they need explicit link repair batching. | Dedicated docs-root reorg pass |
+| **Renaming or merging `CLAUDE.md` / `AGENTS.md`** | Byte-identical files with divergent version claims. Requires content decisions, not structural moves. | M7 docs-reconciliation pass (post all code changes) |

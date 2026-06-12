@@ -1,0 +1,25 @@
+## Audit Complete: `vibecomfy/commands/port.py`
+
+### Verdict: **DELETE** — 100% dead, shadowed zombie god-file
+
+### Evidence
+
+| Check | Finding |
+|---|---|
+| **CLI registration** | `commands/__init__.py` imports `"vibecomfy.commands.port"` via `import_module()` — Python resolves this to the **package** `port/__init__.py`, NOT `port.py`. The package has its own `register()` in `_register.py`. |
+| **Tests imports** | All 7 test files import from `vibecomfy.commands.port` which resolves to the package. Zero tests import `port.py` directly. |
+| **In-source references** | Submodules (`_check.py`, `_convert.py`, etc.) do `from vibecomfy.commands import port as _port` — again resolves to the package. Zero imports of `port.py` as a file module. |
+| **Symbol migration** | All **49 functions** defined in `port.py` have exact duplicates in the `port/` submodules (`_shared.py`, `_check.py`, `_convert.py`, `_export.py`, `_widgets.py`, `_doctor_all.py`, `_inventory.py`, `_repair.py`, `_rules.py`, `_lint.py`, `_simulate.py`, `_register.py`). Every symbol is re-exported via `port/__init__.py`. |
+| **Python import shadowing** | When both `port.py` and `port/__init__.py` exist, the **directory package always wins** — `port.py` is **never loaded** at runtime. |
+| **Doc confirmation** | `docs/structure_cleanup/package_results/02-cli-commands.txt` line 65-66: _"When Python imports `vibecomfy.commands.port`, the directory package (`port/__init__.py`) wins — `port.py` is never loaded."_ |
+
+### Required Reference Updates
+
+**None.** No code in the repository references `port.py` as a file path or imports it specifically. All existing imports use the `vibecomfy.commands.port` module path, which already resolves to the package. The `port/__init__.py` docstring mentions the old file (`"was split out of a single port.py god-file"`), but that's historical context that remains accurate after deletion.
+
+### Cleanup Details
+
+- **File**: `vibecomfy/commands/port.py` — 1970 lines, ~81 KB
+- **Impact**: Zero runtime impact; file is shadowed and never loaded
+- **Tests**: All existing test imports (`test_cli_port.py`, `test_agent_acceptance.py`, `test_walking_skeleton.py`, `test_agentic_affordances.py`, `test_ui_emitter_prior_payload.py`) resolve to the package and continue working
+- **Historical artifacts**: The `artifacts/m4/` files reference old symbols (`run_health_checks`, `repo_ready_template_paths`) that existed in an older version of `port.py` — those tests were already broken and are unrelated to this cleanup

@@ -1,0 +1,118 @@
+Now I have a complete picture. Here is the full audit.
+
+---
+
+## Audit Report: Agentic Tests Layer
+
+### 1. Files belonging to `tests/agentic*` or related
+
+The following files test the `agentic/` harness (adapter, runner, actors, scenarios, briefs):
+
+| File | Role | Subsystem Under Test |
+|------|------|---------------------|
+| `tests/test_agentic_structural.py` | Structural chain builders (positive, recovery, faking) + M2/M3 scenario YAML loading + rubric enforcement | `agentic/actors.py`, `agentic/scenarios/*.yaml`, `agentic/briefs/*.md` |
+| `tests/test_agentic_golden_m4.py` | Golden-run regression for M4 template-edit builders | `agentic/actors_m4/` |
+| `tests/test_agentic_golden_m5.py` | Golden-run regression for M5 investigate/execution builders | `agentic/actors_m5/` |
+| `tests/test_agentic_runner.py` | CLI parser, `run_chaining_family` forwarding, Sisypy-API shape | `agentic/runner.py` |
+| `tests/test_agentic_adapter.py` | Adapter `prime`/`capture`/`classify_success`/`project_universal_checks` + adversarial evidence-vs-narrative tests | `agentic/adapter.py`, `agentic/actors.py` |
+| `tests/test_agentic_contract.py` | Skeleton structure, ABC method compliance, import introspection, README completeness | `agentic/` directory layout |
+| `tests/test_agentic_success_rate.py` | CLI parsing, dry-run determinism, budget caps | `scripts/agentic_success_rate.py` |
+| `tests/fixtures/agentic_success_rate.json` | Dry-run output fixture for the success rate script | `scripts/agentic_success_rate.py` |
+
+**Out-of-place / misnamed files:**
+
+- **`tests/test_agentic_affordances.py`** — Tests VibeComfy core CLI affordances (`port doctor-all`, `inspect`, `eval`). It imports from `vibecomfy.*`, not from `agentic.*`. The `agentic_` prefix is misleading; this should be `test_vibecomfy_affordances.py` or live under a `tests/commands/` or similar namespace.
+- **`tests/test_intent_nodes.py`** — Tests `vibecomfy.contracts.intent_nodes` (code/loop/runtime contract validation). Zero references to the `agentic/` harness. Has nothing to do with agentic tests; belongs in `tests/contracts/` or under a `vibecomfy/` test namespace.
+
+### 2. Checked-in / duplicated agentic evidence artifacts
+
+- **`tests/fixtures/agentic_success_rate.json`** — A committed dry-run JSON snapshot (66 lines, 4 tasks). This is a legitimate fixture for the success-rate script's schema-validation tests. It's not a duplicated evidence pack; it's a test fixture for a `scripts/` utility. **No action needed.**
+- **No large committed evidence packs found under `tests/`.** The golden tests (`test_agentic_golden_m4.py`, `test_agentic_golden_m5.py`) generate evidence in `tmp_path` at runtime and assert on shape/contents — they do not commit the generated evidence.
+- **`tests/characterization/goldens/emitter/*.golden`** — These are emitter (code-generation) golden files, not agentic evidence. They belong to a different test layer (characterization). Not duplicated.
+
+**Conclusion:** No agentic evidence artifacts are improperly duplicated under `tests/`.
+
+### 3. Helper modules: colocated vs. `tests/support/`
+
+**`tests/support/` exists but is almost empty:**
+
+| File | Content | Used by agentic tests? |
+|------|---------|----------------------|
+| `tests/support/__init__.py` | Empty | — |
+| `tests/support/corpus_schema.py` | Core NodeSchema definitions for test schema providers | No — used by `test_widget_shape_evidence.py` and schema tests, not agentic tests |
+
+**Colocated inline helpers (should move to `tests/support/`):**
+
+All agentic test files define significant helper functions inline rather than in a shared module:
+
+| Test File | Inline Helpers | Duplicates |
+|-----------|---------------|------------|
+| `test_agentic_structural.py` | `_load_recovery_scenario()`, `_load_scenario_yaml()`, `_load_hyphenated_scenario_yaml()`, `_actions()`, `_metadata()`, `_compiled_api()`, `_controlnet_patch_marker()`, `_assert_controlnet_positive_patch_marker()`, `_assert_controlnet_noop_patch_marker()`, `_assert_controlnet_noop_action_ack()`, `_yaml_name()`, `_hyphen_yaml_name()`, `_brief_path()` | Some of these are duplicated across `test_agentic_golden_m4.py` and `test_agentic_golden_m5.py` (path resolution to `agentic/scenarios/` and `agentic/briefs/`) |
+| `test_agentic_adapter.py` | `_scenario()`, `_run()`, `_build_genuine_evidence_pack()` | Low duplication risk |
+| `test_agentic_golden_m4.py` | Inline `_AGENTIC_DIR`, `_SCENARIOS_DIR`, `_BRIEFS_DIR` resolution | Same pattern repeated in `test_agentic_golden_m5.py` |
+| `test_agentic_golden_m5.py` | Same inline directory resolution, category assertion helpers | Substantially overlaps with M4 pattern |
+
+**Recommendation:** Extract shared scenario-loading and path-resolution helpers (scenario YAML loading via Sisypy, brief path resolution, actions/metadata reading, controlnet assertion helpers) into `tests/support/agentic_helpers.py` (or similar). This would DRY up the three golden test files and `test_agentic_structural.py`.
+
+### 4. Path contracts that prevent moving these files
+
+Every agentic test file depends on one or more of the following path contracts:
+
+#### a) `Path(__file__).resolve().parent.parent` → repo root
+
+Used in **all** agentic test files to navigate to `agentic/` source:
+
+| File | Expression | Resolves to |
+|------|-----------|-------------|
+| `test_agentic_structural.py` | `Path(__file__).resolve().parent.parent / "agentic" / "scenarios" / ...` | `{repo}/agentic/scenarios/` |
+| `test_agentic_golden_m4.py` | `Path(__file__).resolve().parents[1] / "agentic"` | `{repo}/agentic/` |
+| `test_agentic_golden_m5.py` | (same pattern as M4) | `{repo}/agentic/` |
+| `test_agentic_contract.py` | (same pattern) | `{repo}/agentic/` |
+| `test_agentic_adapter.py` | (inline via `build_faking_structural_chain` import) | N/A (uses imports, not paths) |
+| `test_agentic_success_rate.py` | `Path(__file__).resolve().parents[1]` | `{repo}/` — also `REPO_ROOT` for `scripts/` |
+
+**Contract:** These tests **must** remain at exactly `tests/test_agentic_*.py` (depth 1 from repo root) for the `parent.parent` / `parents[1]` navigation to continue working. Moving them into a subdirectory like `tests/agentic/test_structural.py` would break every path resolution.
+
+**Fix recommendation:** Factor the repo-root resolution into a `tests/support/` helper (e.g., `repo_root()`) so the path contract is centralized. All agentic tests should import from that helper rather than recomputing `Path(__file__).resolve().parent.parent`.
+
+#### b) Import-based contracts
+
+| Import | File(s) | Risk |
+|--------|---------|------|
+| `from agentic.actors import ...` | `test_agentic_structural.py`, `test_agentic_adapter.py` | These are stable `agentic.*` imports — no path dependency |
+| `from agentic.adapter import VibeComfyProjectAdapter` | `test_agentic_adapter.py`, `test_agentic_contract.py` | Stable |
+| `from agentic.runner import ...` | `test_agentic_runner.py`, `test_agentic_contract.py` | Stable |
+| `from agentic.actors_m4 import _M4_BUILDERS` | `test_agentic_golden_m4.py` | Stable |
+| `from agentic.actors_m5 import _M5_BUILDERS` | `test_agentic_golden_m5.py` | Stable |
+| `pytest.importorskip("sisypy")` | `test_agentic_runner.py`, `test_agentic_adapter.py`, `test_agentic_contract.py` | Runtime guard, not a path issue |
+
+**Contract:** Imports from `agentic.*` require the `agentic/` package to be on the Python path. This is satisfied by running tests from the repo root (or having the repo in `sys.path`). Moving test files deeper would not break these imports as long as the Python path is correct.
+
+#### c) File-reference contracts
+
+| Reference | File | Dependency |
+|-----------|------|-----------|
+| `REPO_ROOT / "scripts" / "agentic_success_rate.py"` | `test_agentic_success_rate.py` | Hard-coded relative path to sibling `scripts/` dir |
+| `REPO_ROOT / "tests" / "fixtures" / "agentic_success_rate.json"` | `test_agentic_success_rate.py` | Hard-coded path to fixture |
+| `Path.home() / "Documents" / "reigh-workspace" / "sisypy"` | `test_agentic_structural.py` | **Brittle developer-machine path** (introduced in `_load_recovery_scenario` and `_load_scenario_yaml`). This path is a fragility risk — it won't work on CI or other machines without the same directory layout. |
+
+**The `~/Documents/reigh-workspace/sisypy` path** in `test_agentic_structural.py` (lines 186-188, 373-375, 388-390) is a serious path contract problem. It hard-codes a developer's local workspace path. This should be replaced with either:
+- A `PYTHONPATH`-based import (the tests already use `pytest.importorskip("sisypy")` elsewhere)
+- An environment variable (`$SISYPY_PATH`)
+- A pytest fixture that installs or locates Sisypy
+
+#### d) `subprocess` call contract
+
+`test_agentic_success_rate.py` invokes `[sys.executable, str(SCRIPT_PATH), ...]` (line 28+). This requires that `scripts/agentic_success_rate.py` remain at that exact path relative to `tests/`. If tests move under `tests/agentic/`, the `REPO_ROOT` computation would need adjustment (it currently uses `parents[1]` which would become `parents[2]`).
+
+### Summary of Recommendations
+
+| # | Issue | Recommendation | Priority |
+|---|-------|---------------|----------|
+| 1 | **Misnamed `test_agentic_affordances.py`** | Rename to `test_vibecomfy_affordances.py` (it tests VibeComfy CLI core, not the agentic harness) | Medium |
+| 2 | **Misplaced `test_intent_nodes.py`** | Move under `tests/contracts/` or `tests/vibecomfy/` namespace (it tests `vibecomfy.contracts.intent_nodes`, zero agentic references) | Medium |
+| 3 | **Colocated helpers duplicated across 4+ test files** | Extract shared helpers into `tests/support/agentic_helpers.py`: scenario loader, path resolver, actions/metadata readers, controlnet assertions | High (DRY) |
+| 4 | **Brittle `~/Documents/reigh-workspace/sisypy` path** | Replace with `pytest.importorskip("sisypy")` + `import sisypy.runner; sisypy.runner.load_scenario(...)` (import-based, no path) | **High** (won't work on CI) |
+| 5 | **`Path(__file__).parent.parent` hard-coded in 5 files** | Centralize repo-root resolution in `tests/support/repo.py` or similar, so path depth changes require one edit | Medium |
+| 6 | **No `tests/agentic/` subdirectory** | Currently all files are flat in `tests/`. Creating a `tests/agentic/` subdir would require updating every `parent.parent` to `parent.parent.parent`. Only worth doing if the flat pattern becomes too crowded. | Low (document status quo) |
+| 7 | **`tests/support/` is underutilized** | It has one module (`corpus_schema.py`) unrelated to agentic. Populate with agentic-specific helpers. | Low |

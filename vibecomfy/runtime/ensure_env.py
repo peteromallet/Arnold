@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from vibecomfy.node_packs import CustomNodePack, get_known_node_packs
-from vibecomfy.node_packs_git import find_installed_pack_ref
-from vibecomfy.node_packs_install import DEFAULT_INSTALL_ROOT, InstallBatchResult, install_required_packs
+from vibecomfy.node_packs import find_installed_pack_ref
+from vibecomfy.node_packs import DEFAULT_INSTALL_ROOT, InstallBatchResult, install_required_packs
 from vibecomfy.porting.object_info.consume import reset_cache
 from vibecomfy.porting.object_info.serialize import CacheIdentity, build_cache
 from vibecomfy.porting.provenance import (

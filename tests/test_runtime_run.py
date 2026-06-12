@@ -990,7 +990,7 @@ def test_collect_drift_pinned_comfy_commit(tmp_path, monkeypatch):
 
 def test_collect_drift_canonical_schema_hash_match_is_not_mismatch(tmp_path, monkeypatch):
     """Canonical object_info metadata is comparable and matching hashes pass."""
-    from vibecomfy.node_packs_lockfile import LockEntry, compute_schema_hash
+    from vibecomfy.node_packs import LockEntry, compute_schema_hash
     from vibecomfy.runtime.drift import _invalidate_cache_entry, collect_drift
     import vibecomfy.porting.object_info as object_info
 
@@ -1018,7 +1018,7 @@ def test_collect_drift_canonical_schema_hash_match_is_not_mismatch(tmp_path, mon
     )
 
     monkeypatch.setattr("vibecomfy.runtime.drift.read_lockfile", lambda: [entry], raising=False)
-    monkeypatch.setattr("vibecomfy.node_packs_lockfile.read_lockfile", lambda: [entry])
+    monkeypatch.setattr("vibecomfy.node_packs.read_lockfile", lambda: [entry])
     monkeypatch.setattr("vibecomfy.runtime.drift._nodepack_dir", lambda name: pack_dir)
     monkeypatch.setattr("vibecomfy.runtime.drift._git_head", lambda path: "abc123")
     monkeypatch.setattr(
@@ -1039,7 +1039,7 @@ def test_collect_drift_canonical_schema_hash_match_is_not_mismatch(tmp_path, mon
 
 def test_collect_drift_legacy_schema_hash_is_unverified_not_mismatch(tmp_path, monkeypatch):
     """Legacy lockfile hashes without class_set are not compared as canonical hashes."""
-    from vibecomfy.node_packs_lockfile import LockEntry
+    from vibecomfy.node_packs import LockEntry
     from vibecomfy.runtime.drift import _invalidate_cache_entry, collect_drift
 
     monkeypatch.chdir(tmp_path)
@@ -1052,7 +1052,7 @@ def test_collect_drift_legacy_schema_hash_is_unverified_not_mismatch(tmp_path, m
         class_schema_sha256="legacy-file-byte-hash",
     )
 
-    monkeypatch.setattr("vibecomfy.node_packs_lockfile.read_lockfile", lambda: [entry])
+    monkeypatch.setattr("vibecomfy.node_packs.read_lockfile", lambda: [entry])
     monkeypatch.setattr("vibecomfy.runtime.drift._nodepack_dir", lambda name: pack_dir)
     monkeypatch.setattr("vibecomfy.runtime.drift._git_head", lambda path: "abc123")
 

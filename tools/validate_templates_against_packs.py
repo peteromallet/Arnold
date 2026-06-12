@@ -177,7 +177,7 @@ def _load_known_packs() -> tuple[dict[str, str], set[str]]:
 
 def _load_lockfile() -> set[str]:
     """Return the set of pack names present in custom_nodes.lock."""
-    from vibecomfy.node_packs_lockfile import read_lockfile
+    from vibecomfy.node_packs import read_lockfile
 
     entries = read_lockfile(REPO / "custom_nodes.lock")
     return {entry.name for entry in entries}

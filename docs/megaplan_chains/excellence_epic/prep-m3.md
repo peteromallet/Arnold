@@ -191,7 +191,7 @@ All 54 flag verifications in `evaluator_verdict.json` are verified/closed. Key i
 `vibecomfy/contracts/surface.py` imports from:
 - `vibecomfy.contracts.model` (same package — allowed)
 - `vibecomfy.porting.strict_ready` (porting — Layer-2)
-- `vibecomfy.porting.widget_aliases` (porting — Layer-2)
+- `vibecomfy.porting.widgets.aliases` (porting — Layer-2)
 - `vibecomfy.utils` (utilities — allowed)
 - `vibecomfy.workflow` (IR core — allowed)
 
@@ -290,8 +290,8 @@ Command:
 
 ```bash
 python - <<'PY'
-from vibecomfy.porting.widget_aliases import COMPILE_WIDGET_ALIAS_CLASS_TYPES
-from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
+from vibecomfy.porting.widgets.aliases import COMPILE_WIDGET_ALIAS_CLASS_TYPES
+from vibecomfy.porting.widgets.schema import WIDGET_SCHEMA
 from vibecomfy.porting.object_info.consume import object_info_widget_order
 
 object_only = []

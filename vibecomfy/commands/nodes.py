@@ -19,10 +19,10 @@ from vibecomfy.porting.workbench import load_port_source
 from vibecomfy.registry import load_workflow_reference
 from vibecomfy.registry.pack_resolver import PackResolverError, resolve_pack
 from vibecomfy.schema import SchemaIndexError, get_authoring_schema_provider, get_schema_provider, schemas_for, socket_types_compatible
-import vibecomfy.node_packs_install as node_packs_install
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, write_lockfile
-from vibecomfy.porting import wrapper_codegen as _wrapper_codegen
-from vibecomfy.porting import wrapper_discovery as _wrapper_discovery
+import vibecomfy.node_packs as node_packs_install
+from vibecomfy.node_packs import LockEntry, read_lockfile, write_lockfile
+from vibecomfy.porting.wrappers import codegen as _wrapper_codegen
+from vibecomfy.porting.wrappers import discovery as _wrapper_discovery
 
 
 def _cmd_nodes_list(args: argparse.Namespace) -> int:

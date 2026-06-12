@@ -4,7 +4,7 @@ This module provides the data model (LoweringResult, LoweringEvidence, etc.)
 and loop extraction/discovery. Body-boundary discovery, cloning, and
 multi-iteration substitution live in later steps of the lowering pipeline.
 
-Design decisions (see plan_v2.md):
+Design decisions:
 - Lowering is atomic: any unsupported loop fails the entire lower stage.
 - Supported loops: bounded literal seed/prompt/text sweeps only.
 - Unsupported: runtime-dependent counts, dynamic termination, unresolved
@@ -26,7 +26,7 @@ from vibecomfy.contracts.intent_nodes import (
 )
 from vibecomfy.metadata import OUTPUT_NODE_NAMES
 from vibecomfy.porting.canonical_coords import snap_pos
-from vibecomfy.porting.uid import make_uid, parse_uid
+from vibecomfy.porting.identity.uid import make_uid, parse_uid
 from vibecomfy.workflow import ValidationIssue
 
 if TYPE_CHECKING:

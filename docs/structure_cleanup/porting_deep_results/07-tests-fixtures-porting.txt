@@ -1,0 +1,106 @@
+Here is the comprehensive audit result.
+
+---
+
+## Deep Audit 07 — Tests & Fixtures For Porting
+
+### 1. Tests That Assert Old Module Names Only in Docstrings/Comments
+
+**None found.** Neither docstrings nor comments reference removed/stale porting module names. The only docstring references point to modules that still exist:
+- `test_wrapper_codegen.py` docstring: `vibecomfy.porting.wrappers.codegen` — but this module **does not exist** (see below), however the reference is in the module-level docstring, not in an assertion.
+- `test_wrapper_discovery.py` docstring: `vibecomfy.porting.wrappers.discovery` — same situation.
+
+---
+
+### 2. Stale or Unused Fixtures
+
+**All active fixtures are still referenced.** Here is the full inventory:
+
+| Fixture Dir/File | Used By | Status |
+|---|---|---|
+| `tests/fixtures/agent_edit/flat.json` | 7 test files (ledger, lint, harness, projection, apply, corpus, agent_edit) | **KEEP** |
+| `tests/fixtures/agent_edit/subgraphed_wan_i2v.json` | Same set | **KEEP** |
+| `tests/fixtures/walking_skeleton/flat.json` | `test_walking_skeleton.py`, `test_porting_emitter.py`, `test_porting_ui_emitter.py`, `test_porting_normalize_ingest.py` | **KEEP** |
+| `tests/fixtures/editor_sessions/` (6 sessions) | `fixture_provider.py` (via `_FIXTURE_ROOT`), `test_fixture_provider.py` | **KEEP** |
+| `tests/fixtures/e2e_sessions/panel_lifecycle_seed/` | `tests/e2e/run.mjs` (sesame seeding) | **KEEP** |
+| `tests/fixtures/agent_generated_loader/` (13 files) | `tests/security/test_agent_generated_loader.py` | **KEEP** |
+| `tests/fixtures/golden_api_video_wan_i2v.json` | `test_template_roundtrip.py` line 21 | **KEEP** |
+| `tests/fixtures/failing_first_m1_corruptions.json` | `test_template_roundtrip.py` line 397 | **KEEP** |
+| `tests/fixtures/canonical_parity_baseline.json` | `tools/check_canonical_parity.py` | **KEEP** |
+| `tests/fixtures/profile_smokes/profile-1.json`, `profile-3.json` | `test_profile_smoke_report.py` | **KEEP** |
+
+**No stale fixtures to delete.**
+
+---
+
+### 3. Tests Needing Path Migration After Shim Deletion
+
+**Critical finding: `vibecomfy.porting.wrappers` does not exist anywhere in the source tree.**
+
+Four files import from it — they will `ImportError` at module load time:
+
+| File | Broken Import |
+|---|---|
+| **`tests/test_wrapper_codegen.py`** (lines 18–19) | `from vibecomfy.porting.wrappers import codegen as wc`<br>`from vibecomfy.porting.wrappers.discovery import ClassSpec, InputFieldSpec` |
+| **`tests/test_wrapper_discovery.py`** (line 16) | `from vibecomfy.porting.wrappers import discovery as wd` |
+| **`vibecomfy/commands/nodes.py`** (lines 24–25) | `from vibecomfy.porting.wrappers import codegen as _wrapper_codegen`<br>`from vibecomfy.porting.wrappers import discovery as _wrapper_discovery` |
+| **`scripts/demo_wrapper_codegen.py`** (lines 27–28) | `from vibecomfy.porting.wrappers import codegen as wc`<br>`from vibecomfy.porting.wrappers import discovery as wd` |
+
+These are **top-level imports**, not lazy. `test_wrapper_codegen.py` and `test_wrapper_discovery.py` cannot possibly run. The `commands/nodes.py` module will fail on any import of the `vibecomfy.commands` package that triggers the `nodes` subcommand module.
+
+**Action needed:** Either create `vibecomfy/porting/wrappers/` (with `codegen.py`, `discovery/__init__.py`, etc.) or delete the referencing files and update `vibecomfy/commands/nodes.py`.
+
+---
+
+### 4. What Can Be Deleted Now
+
+#### CAN DELETE (no side effects):
+
+**No fixtures are stale.**
+
+#### CANNOT DELETE:
+
+- All fixture directories are actively referenced.
+- All test files in `tests/test_*port*` are active EXCEPT the two wrapper files below.
+
+#### MUST ADDRESS:
+
+**🗑️ `tests/test_wrapper_codegen.py`** — imports non-existent `vibecomfy.porting.wrappers`. Delete or fix.
+**🗑️ `tests/test_wrapper_discovery.py`** — same problem. Delete or fix.
+**🔧 `scripts/demo_wrapper_codegen.py`** — same problem. Delete or fix.
+**🔧 `vibecomfy/commands/nodes.py` (lines 24–25)** — broken imports will crash the `nodes` CLI subcommand. Fix by adding `vibecomfy/porting/wrappers/` module or removing the imports.
+
+---
+
+### Focused Test Commands
+
+```bash
+# Verify wrapper tests are broken (expected ImportError)
+python -m pytest tests/test_wrapper_codegen.py -x --no-header -q 2>&1 | head -5
+python -m pytest tests/test_wrapper_discovery.py -x --no-header -q 2>&1 | head -5
+
+# Verify nodes.py import failure
+python -c "from vibecomfy.commands.nodes import _cmd_nodes_list" 2>&1
+
+# Verify all other porting tests can at least import (dry-run collection)
+python -m pytest tests/test_porting_emitter.py --co -q 2>&1 | tail -5
+python -m pytest tests/test_porting_edit_session.py --co -q 2>&1 | tail -5
+
+# Quick inventory of all porting test collection
+python -m pytest tests/test_porting_*.py tests/test_wrapper_*.py --co -q 2>&1 | tail -20
+
+# Verify fixtures are loadable
+python -c "import json; json.load(open('tests/fixtures/agent_edit/flat.json')); print('OK')"
+python -c "import json; json.load(open('tests/fixtures/walking_skeleton/flat.json')); print('OK')"
+```
+
+---
+
+### Summary Scorecard
+
+| Question | Answer |
+|---|---|
+| Old module names in docstrings/comments only? | **None.** |
+| Stale/unused fixtures? | **None.** All 10 fixture groups are referenced. |
+| Tests needing path migration? | **`test_wrapper_codegen.py`, `test_wrapper_discovery.py`** — import non-existent `vibecomfy.porting.wrappers`. Also `commands/nodes.py` and `scripts/demo_wrapper_codegen.py`. |
+| What can be deleted? | Delete `test_wrapper_codegen.py` and `test_wrapper_discovery.py` unless the `wrappers` module is restored. No fixtures are deletable. |

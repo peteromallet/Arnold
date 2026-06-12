@@ -1,0 +1,50 @@
+## Verdict: **Move into `validate.py` — keep `format.py` as thin shim, delete in next pass**
+
+**1. Verdict: Move, with compat shim**
+
+`format_issue` is a 9-line formatting helper that converts `ValidationIssue` → human-readable string. It has zero dependency on anything outside stdlib, and `validate.py` already deals with `ValidationIssue` objects extensively. The function is a natural `_format_issue` helper inside `validate.py` — but it's called from 4 external modules, so a direct delete would break those imports. 
+
+**Recommended approach (two-phase as in `revised_plan.md`):**
+
+- Append `format_issue` to `validate.py` as a public function.
+- Replace `format.py` content with a single re-export shim: `from vibecomfy.schema.validate import format_issue`
+- Delete `format.py` once all consumers have been migrated to import from `validate.py` directly.
+
+**2. Required import migrations (4 files)**
+
+| File | Current import | Migrated import |
+|---|---|---|
+| `commands/doctor.py:31` | `from vibecomfy.schema.format import format_issue` | `from vibecomfy.schema.validate import format_issue` |
+| `commands/validate.py:17` | `from vibecomfy.schema.format import format_issue` | `from vibecomfy.schema.validate import format_issue` |
+| `runtime/prompt.py:135` | `from vibecomfy.schema.format import format_issue` | `from vibecomfy.schema.validate import format_issue` |
+| `runtime/session.py:954` | `from vibecomfy.schema.format import format_issue` | `from vibecomfy.schema.validate import format_issue` |
+
+The two runtime imports are lazy (inside functions) — same pattern works with `validate` instead of `format`.
+
+**3. Public API vs. internal helper → fully internal**
+
+- No `__init__.py` in `schema/` re-exports `format_issue`.
+- No `__all__` in either `format.py` or `validate.py`.
+- No test files import it (zero hits in `tests/`).
+- Consumers are entirely internal: 2 CLI commands + 2 runtime modules. No external consumer or documented API surface.
+- `format_issue` isn't a schema-level concept — it's a display concern that happens to be paired with validation output. Belongs in `validate.py` as a companion to the issue types it formats.
+
+**4. Tests/commands to run after move**
+
+```bash
+# Verify imports resolve
+python -c "from vibecomfy.schema.validate import format_issue; print('OK')"
+
+# Run validation commands that use format_issue
+python -m vibecomfy validate --help
+python -m vibecomfy doctor --help
+
+# Run existing test suites
+python -m pytest tests/ -x -q --tb=short
+
+# Verify runtime lazy imports
+python -c "from vibecomfy.runtime.prompt import build_prompt; print('OK')"
+python -c "from vibecomfy.runtime.session import RunSession; print('OK')"
+```
+
+The delete-from-source step can happen after all 4 consumers are migrated, confirming the shim goes unused.

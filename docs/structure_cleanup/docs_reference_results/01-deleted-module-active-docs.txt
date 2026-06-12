@@ -1,0 +1,32 @@
+All patches applied successfully. Here's the final report:
+
+---
+
+## Docs Reference Audit 01: Complete
+
+### Classification Results
+
+| Deleted File | Status | Active Docs Patched | Historical Docs Left | Cleanup Logs Left |
+|---|---|---|---|---|
+| `vibecomfy/commands/port.py` | ✅ No active refs | — | 4 docs | 5 files |
+| `vibecomfy/commands/_analyze_names.py` | ✅ No active refs | — | — | 5 files |
+| `vibecomfy/router.py` | **Patched** | `revised_plan.md` | — | 5 files |
+| `vibecomfy/patches/resize_schema.py` | **Patched** | `revised_plan.md` | 2 docs | 4 files |
+
+### Patches Applied (all in `docs/plans/revised_plan.md`)
+
+1. **Status table — Unit 3** (line 13): `**NOT done**` → `**DONE**` with updated description confirming `resize_schema.py` deleted.
+2. **Status table — Unit 5** (line 15): `**NOT done**` → `**DONE**` with updated description confirming `router.py` deleted, `router/` package exists, `router_rules.py` is a thin shim.
+3. **Step 4 body** (lines 79-86): All sub-steps marked ✅ with past-tense confirmation (confirmed → was confirmed, delete → deleted, etc.) and `✅ DONE` added to heading.
+4. **Step 6 body** (lines 104-115): Same treatment — all 9 sub-steps marked ✅ completed, heading annotated `✅ DONE`.
+
+### Docs Left As-Is (with rationale)
+
+| Document | Reason |
+|---|---|
+| `handoff-m2b.md:153` "Current wiring in port.py" | Dated sprint handoff (2026-05-28). The functions described (`_build_conversion_provider`, `_build_authoring_provider`) still live at `vibecomfy/commands/port/_shared.py`, but this section is an architectural evidence snapshot, not a live reference. |
+| `audit/01-cli-commands.md:6` "port.py:611 corrupted" | Audit finding preserved for trail — `RESULTS.md` already tracks it as `fixed`. |
+| `RESULTS.md:74` "current port.py is a small module" | Reconciliation record; stale-by-definition as cleanup progresses. |
+| `architecture-review-codex.md:1` port.py:1500 footnote | Architecture evidence with absolute-path footnotes; substance is about schema design. |
+| `audit/04-layer2-architecture.md:19` resize_schema orphan | Audit finding whose recommendation was executed. Preserve for trail. |
+| All `docs/structure_cleanup/` and `artifacts/` | Explicit cleanup logs — not active docs by design. |

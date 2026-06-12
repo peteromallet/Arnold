@@ -1,0 +1,173 @@
+Now I have a complete picture. Let me provide the comprehensive audit.
+
+---
+
+## Deep Audit 01 — Old/New Emitter Split
+
+### File Landscape
+
+| File | Lines | Size | Role |
+|------|-------|------|------|
+| `vibecomfy/porting/emitter.py` | 5088 | 200 KB | **OLD monolithic** — still has ALL original code inline |
+| `vibecomfy/porting/ui_emitter.py` | 2295 | 96 KB | **OLD duplicate** — byte-for-byte identical to `emit/ui.py` |
+| `vibecomfy/porting/emit_kwargs.py` | 1331 | 53 KB | Split module (Step 4), real impl |
+| `vibecomfy/porting/emit_constants.py` | 1089 | 40 KB | Split module (Step 6), real impl |
+| `vibecomfy/porting/emit_subgraph.py` | 950 | 36 KB | Split module (Step 5), real impl |
+| `vibecomfy/porting/emit_prepare.py` | 354 | 15 KB | Split module (Step 7), real impl |
+| `vibecomfy/porting/emit_ready.py` | 1647 | 69 KB | Split module (Step 8), real impl |
+| `vibecomfy/porting/emit_scratchpad.py` | 98 | 3.8 KB | Split module (Step 9), real impl |
+| `vibecomfy/porting/emit_agent_edit.py` | 68 | 2.5 KB | Split module (Step 10), real impl |
+| `vibecomfy/porting/emit/__init__.py` | 117 | 3.7 KB | **NEW** — re-exports public API |
+| `vibecomfy/porting/emit/emitter.py` | 2230 | 91 KB | **NEW** — identity-aware contextvars + re-exports |
+| `vibecomfy/porting/emit/ui.py` | 2295 | 96 KB | **NEW** — identical copy of `ui_emitter.py` |
+| `vibecomfy/porting/emit/node_kwargs.py` | ~100 | — | NEW helper |
+| `vibecomfy/porting/emit/formatting.py` | ~100 | — | NEW helper |
+| `vibecomfy/porting/emit/naming.py` | ~100 | — | NEW helper |
+
+---
+
+### 1. Real Implementations vs. Shims/Duplicates
+
+**`emitter.py` (root, 5088 lines)** — **DUPLICATE WITH REAL CODE**
+- Still contains ALL original monolithic code directly (no re-exports from split modules)
+- Defines `emit_ready_template_python`, `emit_scratchpad_python`, `emit_agent_edit_python` inline
+- Key behavioral difference from new `emit/emitter.py`: **lacks `object_info_identities` parameter** and identity-aware context management
+
+**`ui_emitter.py` (root, 2295 lines)** — **BYTE-FOR-BYTE DUPLICATE**
+- `diff` against `emit/ui.py` yields zero differences
+- Same 95615 bytes, same 2295 lines, same `__all__` exports
+
+**Root-level `emit_*.py` files** — **REAL IMPLEMENTATIONS** (the canonical split modules)
+- Imported by BOTH old `emitter.py` (indirectly, via inline duplicate code) and new `emit/emitter.py` (directly via re-exports)
+
+**`emit/` subpackage** — **THE NEW HOME** (real implementations)
+
+---
+
+### 2. Callers Keeping Each Old File Alive
+
+**Callers of old `emitter.py` (6 sites):**
+
+| File | Line | What It Imports |
+|------|------|-----------------|
+| `porting/loader.py` | 126 | `format_as_python` |
+| `porting/convert.py` | 12-17 | `EmissionDiagnostic`, `EmissionSeverity`, `emit_ready_template_python`, `emit_scratchpad_python` |
+| `porting/workbench.py` | 25-31 | `READABILITY_WARNING_*` constants (5 string constants) |
+| `commands/analyze_names.py` | 9 | `_compute_variable_names` |
+| `commands/validate.py` | 15 | `_build_subgraph_def`, `_disambiguated_subgraph_slugs` |
+| `tests/test_porting_edit_session.py` | 1550,1577,1608,1628 | `InputSignatureField`, `NodeSignatureRow`, `OutputSignatureField`, `format_signature_rows` |
+
+**Callers of old `ui_emitter.py` (8 sites):**
+
+| File | Line | What It Imports |
+|------|------|-----------------|
+| `porting/widget_shape_fence.py` | 14 | `WidgetShapeEvidence` |
+| `porting/layout/sizing.py` | 11 | `_canonicalize_coord` |
+| `porting/layout/placement.py` | 16 | `_canonicalize_coord` |
+| `porting/layout/engine.py` | 36 | `_canonicalize_coord` |
+| `porting/layout/groups.py` | 16 | `_canonicalize_coord` |
+| `comfy_nodes/agent/routes.py` | 41 | `emit_ui_json` |
+| `comfy_nodes/agent/edit.py` | 3175 | `emit_ui_json` |
+| `porting/latency.py` | 10 | `emit_ui_json` |
+
+---
+
+### 3. Safety Assessment / Migration Path
+
+#### `ui_emitter.py` → `emit/ui.py` migration: **LOW RISK**
+- Byte-for-byte identical code. Straight import swap.
+- All 8 imports are available from `vibecomfy.porting.emit.ui` with the same names.
+- `porting/__init__.py` already re-exports `WidgetShapeEvidence`? No it doesn't — `WidgetShapeEvidence` is only in `emit.ui.__all__`. But `emit/ui.py` already exports it.
+- The `_canonicalize_coord` function is a private helper used by layout engine, sizing, placement, groups — these are tightly coupled to the UI emitter. Straight swap works.
+
+**Migration steps:**
+1. Change 8 import lines to target `vibecomfy.porting.emit.ui`
+2. Run full test suite
+3. Delete `ui_emitter.py`
+
+#### `emitter.py` → `emit/emitter.py` migration: **LOW-MEDIUM RISK**
+- All 6 callers import names that exist in the new `emit/emitter.py` (either directly defined or re-exported from split modules).
+- The new `emit_ready_template_python` has an ADDITIONAL optional parameter `object_info_identities` — additive, not breaking.
+- **However**: the new version wraps the call with identity-aware context management (`_use_object_info_identities`). Since callers don't pass `object_info_identities`, it becomes a no-op — but the new code path is slightly different from the old monolithic code. A regression test run is advised.
+- `convert.py` (line 12-17) is the most critical caller — it produces all ready-template and scratchpad output.
+
+**Migration steps:**
+1. Change 6 import lines to target `vibecomfy.porting.emit.emitter`
+2. Run characterization tests (`test_porting_emitter.py`, `test_ui_emitter_parity.py`, `test_porting_ui_emitter.py`, snapshot tests)
+3. Delete `emitter.py`
+
+---
+
+### 4. Exact Verdicts
+
+| File | Verdict | Reason |
+|------|---------|--------|
+| **`vibecomfy/porting/emitter.py`** | **`MIGRATE_THEN_DELETE`** | 6 callers; all names available from `emit/emitter.py`; behavioral delta is additive-only |
+| **`vibecomfy/porting/ui_emitter.py`** | **`MIGRATE_THEN_DELETE`** | 8 callers; byte-for-byte duplicate of `emit/ui.py`; straight import swap |
+| `vibecomfy/porting/emit_kwargs.py` | **`KEEP_FOR_NOW`** | Canonical implementation, required by both emitter variants |
+| `vibecomfy/porting/emit_constants.py` | **`KEEP_FOR_NOW`** | Same — canonical, leaf-level module |
+| `vibecomfy/porting/emit_subgraph.py` | **`KEEP_FOR_NOW`** | Same — canonical |
+| `vibecomfy/porting/emit_prepare.py` | **`KEEP_FOR_NOW`** | Same — canonical |
+| `vibecomfy/porting/emit_ready.py` | **`KEEP_FOR_NOW`** | Same — canonical |
+| `vibecomfy/porting/emit_scratchpad.py` | **`KEEP_FOR_NOW`** | Same — canonical, thin wrapper |
+| `vibecomfy/porting/emit_agent_edit.py` | **`KEEP_FOR_NOW`** | Same — canonical, thin wrapper |
+| `vibecomfy/porting/emit/__init__.py` | **`KEEP_FOR_NOW`** | New public API surface |
+| `vibecomfy/porting/emit/emitter.py` | **`KEEP_FOR_NOW`** | New canonical emitter |
+| `vibecomfy/porting/emit/ui.py` | **`KEEP_FOR_NOW`** | New canonical UI emitter |
+| `vibecomfy/porting/emit/node_kwargs.py` | **`KEEP_FOR_NOW`** | New helper module |
+| `vibecomfy/porting/emit/formatting.py` | **`KEEP_FOR_NOW`** | New helper module |
+| `vibecomfy/porting/emit/naming.py` | **`KEEP_FOR_NOW`** | New helper module |
+
+---
+
+### Verification Commands (after proposed deletions)
+
+After migrating imports and deleting `emitter.py` and `ui_emitter.py`, run:
+
+```bash
+# 1. All emitter-related tests
+cd /Users/peteromalley/Documents/reigh-workspace/vibecomfy && \
+python -m pytest tests/test_porting_emitter.py tests/test_porting_emitter_widgets.py \
+  tests/test_porting_ui_emitter.py tests/test_ui_emitter_parity.py \
+  tests/test_ui_emitter_prior_payload.py tests/test_ui_emitter_widget_shape_verdict.py \
+  tests/test_emitter_object_info_validation.py \
+  -x --tb=short -v 2>&1 | tail -40
+
+# 2. Edit session tests (uses old emitter for signature types)
+python -m pytest tests/test_porting_edit_session.py \
+  -x --tb=short -v 2>&1 | tail -20
+
+# 3. CLI port tests (exercises convert.py → old emitter)
+python -m pytest tests/test_cli_port.py \
+  -x --tb=short -v 2>&1 | tail -20
+
+# 4. Agent routes/edit tests (exercises old ui_emitter for emit_ui_json)
+python -m pytest tests/test_comfy_nodes_agent_backend_spine.py \
+  tests/test_comfy_nodes_agent_edit.py \
+  -x --tb=short -v 2>&1 | tail -20
+
+# 5. Snapshot/fuzz tests
+python -m pytest tests/characterization/test_emitter_snapshots.py \
+  tests/property/test_emitter_fuzz.py \
+  -x --tb=short -v 2>&1 | tail -20
+
+# 6. Import-verification: ensure no stale references remain
+python -c "
+import ast, pathlib, sys
+root = pathlib.Path('vibecomfy/porting')
+emitter_refs = []
+for f in sorted(root.rglob('*.py')):
+    text = f.read_text()
+    if 'from vibecomfy.porting.emitter import' in text or 'from vibecomfy.porting.ui_emitter import' in text:
+        emitter_refs.append(str(f))
+for f in sorted(pathlib.Path('vibecomfy/commands').rglob('*.py')):
+    text = f.read_text()
+    if 'from vibecomfy.porting.emitter import' in text or 'from vibecomfy.porting.ui_emitter import' in text:
+        emitter_refs.append(str(f))
+if emitter_refs:
+    print('STALE REFS:', *emitter_refs, sep='\\n  ')
+    sys.exit(1)
+else:
+    print('No stale references found.')
+"
+```

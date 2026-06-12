@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-import vibecomfy.node_packs_install as node_packs_install
+import vibecomfy.node_packs as node_packs_install
 import vibecomfy.runtime.session as session_module
 from vibecomfy.node_packs import CustomNodePack
 from vibecomfy.runtime.session import EmbeddedSession

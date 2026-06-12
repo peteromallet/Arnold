@@ -21,7 +21,13 @@ unset VIBECOMFY_CODE_DYNAMIC_IO or set it to any value other than "1".
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 from typing import Any
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from .exec_node import EXEC_CLASS_TYPE, VibeComfyExec
 from vibecomfy.contracts.intent_nodes import KIND_TO_CLASS_TYPE

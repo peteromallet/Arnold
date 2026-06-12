@@ -5,7 +5,7 @@ names. Link-only sockets such as IMAGE, MODEL, CLIP, VAE, and LATENT are
 intentionally excluded so positional widgets cannot be shifted by object-info
 link inputs. Object-info fallback is intentionally not available in this
 module; conversion/emission tooling keeps that behavior in
-``vibecomfy.porting.widget_aliases``.
+``vibecomfy.porting.widgets.aliases``.
 """
 
 from __future__ import annotations

@@ -1,0 +1,76 @@
+Here is the complete audit.
+
+---
+
+## Filename Quality Audit: `docs/plans/` and `docs/historical/`
+
+### Files assessed
+
+**`docs/plans/`** (5 files): `README.md`, `plan_v2.md`, `revised_plan.md`, `finalize.json`, `loose-work-consolidation-plan.md`
+
+**`docs/historical/`** (7 files): `README.md`, `graphbuilder_spike.md`, `frontier-hardening-runbook.md`, `sprint5_followups.md`, `agent_readable_templates_v2.md`, `comfyscript_spike.md`, `template_cleanup_followups.md`, `old_vibecomfy_port_rationale.md`
+
+---
+
+### Ranked rename candidates
+
+#### #1 (HIGH) — `docs/plans/revised_plan.md`
+- **Problem**: "revised_plan.md" tells the reader nothing — revised *version of what?* Plan for *what?* The content is an M0 low-risk reorg plan with 13 execution steps.
+- **Active code references**: None. Only `docs/plans/README.md` and cleanup audit docs reference it.
+- **Recommended target**:
+  ```
+  docs/plans/revised_plan.md  →  docs/plans/m0-low-risk-reorg-plan.md
+  ```
+- **Reference repairs needed**:
+  - `docs/plans/README.md:7` — link text and path
+  - (No active `.py`, `.json`, or `.md` contract docs to update)
+
+#### #2 (HIGH) — `docs/plans/finalize.json`
+- **Problem**: "finalize.json" sounds like a transient build artifact, a CI step output, or a template. In fact it's a 328-line multi-task execution manifest for the M0 reorg, with task IDs T1–T13, sense checks, and watch items. The name is actively misleading — a reader scanning the tree could easily mistake it for generated state and delete it.
+- **Active code references**: None (`docs/audits/m1-step1-audit.md:203` references it, but that's a documentation audit, not load-bearing code).
+- **Recommended target**:
+  ```
+  docs/plans/finalize.json  →  docs/plans/m0-reorg-execution-manifest.json
+  ```
+- **Reference repairs needed**:
+  - `docs/plans/README.md:8` — link text and path
+  - `docs/audits/m1-step1-audit.md:203` — the string `finalize.json`
+
+#### #3 (MEDIUM) — `docs/plans/plan_v2.md`
+- **Problem**: "plan_v2.md" is a versioned number, not a descriptor. It could be version 2 of any plan in the repo. The content is about "M3 — Corpus proof + polish" — a well-scoped, specific implementation plan.
+- **Active code references**: **Yes, two** — this is why it's #3 not #1:
+  1. `vibecomfy/porting/lowering.py:7` — code comment: `Design decisions (see docs/plans/plan_v2.md):`
+  2. `vibecomfy/contracts/RUNTIME_CONTRACT.md:4` — contract doc: `Plan: s6-runtime-backed-intent-nodes (docs/plans/plan_v2.md)`
+- **Benefit assessment**: The name is genuinely opaque to new readers. However, the active references are in a code comment and a contract doc — both real, non-trivial touch points. The rename benefit is moderate but the cost is low (2 file changes).
+- **Recommended target**:
+  ```
+  docs/plans/plan_v2.md  →  docs/plans/m3-corpus-proof-and-polish.md
+  ```
+- **Reference repairs needed**:
+  - `vibecomfy/porting/lowering.py:7` — comment update
+  - `vibecomfy/contracts/RUNTIME_CONTRACT.md:4` — link path update
+  - `docs/plans/README.md:6` — link text and path
+
+---
+
+### Files recommended to NOT rename
+
+| File | Reason |
+|------|--------|
+| `docs/plans/loose-work-consolidation-plan.md` | Already descriptive; includes date. No change needed. |
+| `docs/plans/README.md` | Standard index file. Fine as is. |
+| `docs/historical/graphbuilder_spike.md` | Clear spike label + topic. Good name. |
+| `docs/historical/frontier-hardening-runbook.md` | Self-describing. |
+| `docs/historical/sprint5_followups.md` | Follow-up for a known sprint. Adequate. |
+| `docs/historical/comfyscript_spike.md` | Clear spike label + topic. Good name. |
+| `docs/historical/template_cleanup_followups.md` | Descriptive of content. Fine. |
+| `docs/historical/old_vibecomfy_port_rationale.md` | Explains what it is, includes date context. Fine. |
+| `docs/historical/README.md` | Standard index. |
+
+---
+
+### Secondary finding: categorization issue (not a rename)
+
+**`docs/historical/agent_readable_templates_v2.md`** has `Status: active` (line 3) and an owner/start-date — yet it lives in `docs/historical/`. The `docs/historical/README.md` claims it "has been moved to `docs/plans/agent_readable_templates_v2.md`" but no copy exists under `docs/plans/`. This is a stale-README / categorization error, not a filename problem. The filename `agent_readable_templates_v2.md` is actually fine — it clearly describes the content. The fix would be:
+- Either move it to `docs/plans/` (consistent with its active status), or
+- Mark it historical and update the README.

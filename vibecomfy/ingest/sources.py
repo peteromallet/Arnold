@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from vibecomfy.ingest.index import index_workflows, write_index
-from vibecomfy.nodes.index import index_custom_node_examples, index_runtime_nodes, write_json
+from vibecomfy.nodes.index import index_custom_node_examples, index_runtime_nodes
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ def sync_sources(
     external_rows = external_vendor + custom_examples
     write_index("workflow_index.json", official_rows)
     write_index("external_workflow_index.json", external_rows)
-    write_json("node_index.json", runtime_nodes)
+    write_index("node_index.json", runtime_nodes)
     return SourceSyncResult(
         official=len(official_rows),
         external=len(external_rows),

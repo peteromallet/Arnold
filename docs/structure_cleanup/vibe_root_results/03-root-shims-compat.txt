@@ -1,0 +1,96 @@
+Here is the complete audit.
+
+---
+
+## Audit Results
+
+### 1. `_workflow_helpers.py` — **DELETE** (pure re-export shim)
+
+| Aspect | Detail |
+|---|---|
+| **Type** | Wildcard re‑export: `from vibecomfy._compile._helpers import *` |
+| **Consumers** | `workflow.py` line 10 imports it as `workflow_helpers`; test `test_workflow_helpers.py` asserts `__name__ == "vibecomfy._workflow_helpers"` |
+| **Canonical** | `vibecomfy/_compile/_helpers.py` — ~290 lines of real helpers |
+| **Migrate** | Yes — 2‑line change in `workflow.py` + 1 assertion update in test |
+
+**Required changes:**
+1. `workflow.py` line 10: `from vibecomfy import _workflow_helpers as workflow_helpers` → `from vibecomfy._compile import _helpers as workflow_helpers`
+2. `test_workflow_helpers.py` line 6: `"vibecomfy._workflow_helpers"` → `"vibecomfy._compile._helpers"`
+
+**Public‑API impact:** None. Private (underscore‑prefixed), not in `__init__.py` or `__all__`.
+
+---
+
+### 2. `_helper_resolve.py` — **DELETE** (pure re-export shim)
+
+| Aspect | Detail |
+|---|---|
+| **Type** | Wildcard re‑export: `from vibecomfy._compile._resolve import *` |
+| **Consumers** | `workflow.py` line 8 imports it as `helper_resolve`; same test asserts `__name__` |
+| **Canonical** | `vibecomfy/_compile/_resolve.py` — ~449 lines of real resolver implementation |
+| **Migrate** | Yes — 1‑line change in `workflow.py` + 1 assertion update |
+
+**Required changes:**
+1. `workflow.py` line 8: `from vibecomfy import _helper_resolve as helper_resolve` → `from vibecomfy._compile import _resolve as helper_resolve`
+2. `test_workflow_helpers.py` line 7: `"vibecomfy._helper_resolve"` → `"vibecomfy._compile._resolve"`
+
+**Public‑API impact:** None.
+
+---
+
+### 3. `_widget_aliases.py` — **DELETE** (dead module‑swap shim)
+
+| Aspect | Detail |
+|---|---|
+| **Type** | Module‑swap: `sys.modules[__name__] = _real` → `vibecomfy._compile._widgets` |
+| **Consumers** | **Zero runtime consumers.** `workflow.py` line 9 imports directly from `vibecomfy._compile._widgets` (bypasses shim). Only test `test_widget_aliases.py` reads the file for static‑analysis assertions. |
+| **Canonical** | `vibecomfy/_compile/_widgets.py` — ~905 lines of real positional alias data |
+| **Migrate** | Yes — delete file; drop or re‑target the static‑import assertion in the test |
+
+**Required changes:**
+1. Delete `_widget_aliases.py` (3 lines)
+2. `test_widget_aliases.py`: line 38 — the assertion that reads the now‑deleted file should be removed (or retargeted to the canonical path). The remaining tests import from `vibecomfy._compile._widgets` directly and are unaffected.
+
+**Public‑API impact:** None.
+
+---
+
+### 4. `_graph_utils.py` — **DELETE** (dead module‑swap shim)
+
+| Aspect | Detail |
+|---|---|
+| **Type** | Module‑swap: `sys.modules[__name__] = _real` → `vibecomfy._compile._graph` |
+| **Consumers** | **Zero.** No `.py` file anywhere in the repo imports `_graph_utils`. The sole `_graph` consumer (`ir/compile.py` line 5) imports from `_compile._graph` directly. No test references it. |
+| **Canonical** | `vibecomfy/_compile/_graph.py` — ~55 lines of `is_api_link`, `node_id_sort_key` |
+| **Migrate** | Trivial — just delete. Nothing to rewrite. |
+
+**Required changes:** Delete the file. That's it.
+
+**Public‑API impact:** None.
+
+---
+
+### 5. `cli_loader.py` — **KEEP** (active implementation)
+
+Not a shim. Contains `load_workflow_any()` — a real orchestrator that routes to scratchpad loader, JSON loader, or ready‑template loader. Exported in `vibecomfy.__all__`. No changes needed.
+
+---
+
+### 6. `scratchpad_loader.py` — **KEEP** (active implementation)
+
+Not a shim. Contains `load_scratchpad()`, `render_scratchpad()`, `render_scratchpad_from_dict()`. Imported by `cli_loader.py`. No changes needed.
+
+---
+
+## Summary of Action Plan
+
+| File | Decision | Import rewrites needed |
+|---|---|---|
+| `_workflow_helpers.py` | **Delete** | `workflow.py` line 10; `test_workflow_helpers.py` line 6 |
+| `_helper_resolve.py` | **Delete** | `workflow.py` line 8; `test_workflow_helpers.py` line 7 |
+| `_widget_aliases.py` | **Delete** | `test_widget_aliases.py` — remove line 38 assertion |
+| `_graph_utils.py` | **Delete** | None |
+| `cli_loader.py` | **Keep** | — |
+| `scratchpad_loader.py` | **Keep** | — |
+
+**Total:** 4 files deleted, 4 lines changed across `workflow.py` + 2 test assertions updated. Zero public‑API breakage. All deletions are backward‑compatible for anything importing from the canonical `_compile.*` modules (which is already the norm).

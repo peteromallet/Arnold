@@ -34,7 +34,7 @@ A new top-level subpackage exposing:
 - **Pytest fixtures**: `vibecomfy_workflow_factory`, `vibecomfy_handle_factory`, `dry_runtime` — small builders so users don't have to construct `VibeNode` / `VibeEdge` / `Handle` by hand to test custom blocks
 - **Dry-run runtime**: `vibecomfy.testing.dry_run(wf) -> DryRunResult` that returns the compiled API dict + a list of `would_invoke` records (one per node) without actually calling ComfyUI. Useful for asserting wiring on workflows that depend on models/checkpoints not present locally.
 
-The module ships with a doctest-tested example for each assertion and a 30-line "your first VibeWorkflow test" walkthrough in `docs/testing-user-code.md`.
+The module ships with a doctest-tested example for each assertion and a 30-line "your first VibeWorkflow test" walkthrough in `docs/testing/user_code.md`.
 
 ### 2. Snapshot integration — `vibecomfy test snapshot`
 
@@ -124,8 +124,8 @@ tests/test_testing_assertions.py       # NEW — tests for the test framework
 tests/test_testing_snapshot.py         # NEW
 tests/test_testing_dry_run.py          # NEW
 tests/test_testing_pytest_plugin.py    # NEW
-docs/testing-user-code.md              # NEW — user-facing walkthrough
-docs/testing-user-code-examples/       # NEW — three worked examples
+docs/testing/user_code.md              # NEW — user-facing walkthrough
+docs/testing/user_code_examples/       # NEW — three worked examples
 recipes/example_tested_recipe.py       # NEW — canonical example
 ```
 
@@ -147,4 +147,4 @@ uv run python -m pytest tests/test_testing_*.py -q                 # all pass
 uv run python -c "from vibecomfy.testing import assert_node_present, assert_edge, assert_input_value, assert_compiles_cleanly, dry_run; print('ok')"
 ```
 
-Plus: a `docs/testing-user-code.md` page that a new VibeComfy user can read end-to-end in 10 minutes and be testing their first recipe.
+Plus: a `docs/testing/user_code.md` page that a new VibeComfy user can read end-to-end in 10 minutes and be testing their first recipe.

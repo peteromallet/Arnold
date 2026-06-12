@@ -1,0 +1,143 @@
+Here is the complete audit.
+
+---
+
+## Audit Results: `ready_templates/`
+
+### File Inventory
+
+| Category   | Source `.py` files | Notes |
+|------------|-------------------|-------|
+| `audio/`   | 4                 | `ace_step_1_5_t2a_song`, `qwen3_tts_voice_clone`, `qwen3_tts_voice_design`, `qwen3_tts_custom_voice` |
+| `edit/`    | 5                 | Flux.2 Klein 4B/9B base & distilled + `qwen_image_edit` |
+| `image/`   | 7                 | `basic_image_upscale`, `flux2_klein_4b_t2i`, `flux2_klein_9b_gguf_t2i`, `flux2_klein_9b_t2i`, `qwen_image_2512`, `z_image`, `z_image_img2img` |
+| `video/`   | **47**            | Wan wrappers (22), LTX templates (22), plus `basic_video_enhance`, `wan_t2v`, `wan_i2v` |
+| `smoke/`   | **1**             | `empty_image_red` (capability: `runtime_smoke`) |
+| **Total**  | **64**            | Confirmed in `template_index.json` (count: 64, generated_at: 2026-05-08) |
+
+---
+
+### Q1: Is the category layout consistent and loader-backed?
+
+**Yes, consistently backed by the loader — but the README is wrong.**
+
+The loader in `vibecomfy/registry/ready.py` (line 328) uses `root.rglob("*.py")` with no directory whitelist — any subdirectory is valid. The `template_index.json` include rule (`find ready_templates -type f -name '*.py' ! -name '_*' | sort`) likewise accepts all categories. So `audio/` and `smoke/` work at runtime.
+
+**Problem: the README only documents 3 categories.** Line 7 says:
+
+> Templates are organized by category (`edit/`, `image/`, `video`)
+
+Missing: **`audio/`** and **`smoke/`**. The README mentions audio *content* at line 13 ("image/edit...") but never lists `audio/` as a directory category. The `smoke/` directory is not mentioned at all.
+
+`audio/` has 4 templates that are `pure_python` source (verified by `ready_template_source_info` check). `smoke/empty_image_red` is a `generated` marker template used for runtime smoke validation (`capability: runtime_smoke`).
+
+**Verdict:** Layout is functional but **under-documented** in the README.
+
+---
+
+### Q2: Are any docs/index files missing or stale?
+
+| File | Status | Detail |
+|------|--------|--------|
+| `ready_templates/README.md` | **Stale** | Claims **59** templates; actual is **64**. Missing `audio/` and `smoke/` from category listing. |
+| `ready_templates/VALIDATION.md` | **Very stale** | Last updated April 2026, claims **46** templates. Now shows 64. Still useful as historical record but the count is 18 templates behind. |
+| `template_index.json` | **Current** | Generated 2026-05-08, count 64, consistent with `ready_templates/**/*.py` glob. |
+| `workflow_corpus/manifests/coverage.json` | Not audited separately | Referenced by inventory tooling; presumed consistent. |
+
+No missing mandatory docs (the two that exist are present), but **both need count updates**.
+
+---
+
+### Q3: Are any generated or stale files mixed into the template source tree?
+
+**Yes — three classes of artifacts:**
+
+#### a) `__pycache__/` directories (stale bytecode) — **in every category**
+
+```
+audio/__pycache__/    (6 .pyc files — cp311 + cp314 for 3 source files)
+edit/__pycache__/     (8 .pyc files — cp311 + cp314 for 4 source files)
+image/__pycache__/    (12 .pyc files — mixes cp311, cp312, cp314 for 6 source files)
+video/__pycache__/    (66 .pyc files — cp311 + cp314 for 33+ source files)
+smoke/__pycache__/    (2 .pyc files — cp311 + cp314)
+```
+
+These are **safe to delete** — `.pyc` files are auto-regenerated at import time. The loader (`_template_paths` at `ready.py:328`) explicitly excludes `__pycache__/` via `rglob("*.py")` so they are invisible to runtime.
+
+#### b) `.DS_Store` (macOS metadata)
+
+```
+ready_templates/.DS_Store
+```
+
+Safe to delete. Add to `.gitignore` if not already there.
+
+#### c) `VALIDATION.md` — stale content, not harmful at runtime
+
+The **46-template** count is 18 behind reality. The validation commands and methodology are still valid; the document just needs the count updated (or removed if the process is now CI-enforced).
+
+**Verdict:** The `__pycache__/` and `.DS_Store` are noise, not runtime hazards, but they clutter the tree. `VALIDATION.md` is harmless.
+
+---
+
+### Q4: What changes are safe without altering runtime behavior?
+
+All of the following are **safe** (no behavior change):
+
+| Change | Rationale |
+|--------|-----------|
+| **Delete all `__pycache__/` dirs** | Auto-regenerated; loader ignores them. Zero runtime impact. |
+| **Delete `.DS_Store`** | macOS file metadata; zero impact. |
+| **Update README.md count (59→64)** | Cosmetic; the framework does not read this file. |
+| **Add `audio/` and `smoke/` to README category listing** | Cosmetic; no loader impact. |
+| **Update VALIDATION.md count (46→64)** | Cosmetic; not consumed by code. |
+| **Rename or remove `VALIDATION.md`** | Not referenced by any tool or test. |
+| **Add `__pycache__/` and `.DS_Store` to `.gitignore`** | Prevents future re-introduction. |
+
+**Risky changes** (would alter runtime behavior):
+
+| Change | Risk |
+|--------|------|
+| **Move/rename any `.py` file** | Changes template IDs; breaks `ready_template_ids()`, `template_index.json`, referenced ids in tests (`test_ready_templates.py` snapshot list, `test_runpod_matrix.py` scope config, coverage.json). |
+| **Delete `smoke/` or any source `.py`** | Removes a discoverable template; breaks `template_index.json` sync. |
+| **Change the `_template_paths` exclusion rule** | Would alter which files are discovered at runtime. |
+| **Restructure directories (e.g., flatten categories)** | Would change all template IDs; large blast radius. |
+
+---
+
+### Exact Recommendations
+
+1. **Clean up generated files:**
+   ```bash
+   find ready_templates -type d -name __pycache__ -exec rm -rf {} +
+   rm ready_templates/.DS_Store
+   ```
+
+2. **Update documentation:**
+   - In `ready_templates/README.md` line 7: change `(edit/, image/, video)` → `(audio/, edit/, image/, video/, smoke/)`
+   - In `ready_templates/README.md` line 11: change `59` → `64`
+   - Update or retire `ready_templates/VALIDATION.md` (the count of 46 is from April)
+
+3. **Regenerate the static index** (to pick up the smoke template if it was added after the last index build — already included as of May 8, so just confirm):
+   ```bash
+   python -m tools.refresh_template_index
+   python -m tools.refresh_template_index --check
+   ```
+
+4. **Add to `.gitignore`:**
+   ```
+   ready_templates/**/__pycache__/
+   ready_templates/.DS_Store
+   ```
+
+5. **Do NOT** rename, move, or delete any `.py` source file without updating `template_index.json`, `coverage.json`, and all test references.
+
+---
+
+### Summary
+
+- **Consistent loader support**: ✅ (any directory works)
+- **Docs/index missing**: ❌ README missing `audio/` and `smoke/` from category list
+- **Stale files mixed in**: ✅ — 94 `.pyc` files, 1 `.DS_Store`, 2 stale doc counts
+- **Safe changes**: clean `__pycache__`, update README counts, update VALIDATION.md, add gitignore entries
+- **Risky changes**: any rename/move/delete of source `.py` files (breaks template IDs across the codebase)

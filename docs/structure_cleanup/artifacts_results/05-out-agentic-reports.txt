@@ -1,0 +1,53 @@
+Here's the audit of `out/agentic/reports/`:
+
+---
+
+## 1. Categories Present
+
+| Category | Examples | Nature |
+|---|---|---|
+| **Standalone forensics doc** | `megaplan-critique-wedge-forensics-20260531.md` | Human-written postmortem — valuable design knowledge |
+| **Batch summary JSONs** | `ds4-structural-batch-summary.json`, `sisypy-layout-smoke-batch-summary.json`, etc. | Machine-generated batch aggregates |
+| **CLI test packs** | `cli-test-{hyperrealism_lora_replacement, vague_controlnet_image, raw_json_onboarding, impossible_request}/` | Generated per-run evidence |
+| **DS4 structural packs** | `ds4-structural-{vague_controlnet_image, all, fixed, final, terminal, ...}/` | DeepSeek structural-mode test evidence |
+| **Sisypy smoke packs** | `sisypy-{layout, rename, api-polish, operational-gaps, ...}-smoke-batch_twelve_prompts/` | Sisypy pipeline smoke test evidence |
+| **Unit test packs** | `unit_fake_actor-*`, `unit_actions-*`, `unit_live_block-*` | Fake-actor unit test evidence |
+| **Smoke test packs** | `smoke-*`, `smoke2-*`, `smoke-test-*`, `foundation_smoke-*`, `prepatch-*`, `cli-smoke-*` | Integration smoke test evidence |
+| **VC fake test** | `vc-fake-test-vc-fake-test/` | Version-control fake agent test evidence |
+
+Each evidence pack follows a uniform structure: `report.md` (batch summary), `summary.json`, `evidence/<tag>-<agent>-<timestamp>/` with `brief.md`, `capture.notes`, logs, diffs, tree snapshots, `project_specific/` (template indices, runtime metadata, corpus patches).
+
+---
+
+## 2. Candidate to Promote
+
+**One file: `out/agentic/reports/megaplan-critique-wedge-forensics-20260531.md`** → **`docs/forensics/m1-critique-wedge-20260531.md`**
+
+This is a first-class postmortem: it documents a **real production wedge** with four stacked causes (dead `critic_model` pin, unbounded file-read loop, deadline-escalation positive feedback, operator confusion), specific code paths, fix prescriptions, and a remediation plan. It's valuable reference for anyone touching the critique handler, agent loop, or dispatch routing — not a generated artifact.
+
+No other file is worth promoting. The per-batch `report.md` files and briefs are regenerable test summaries; the JSON summaries are automation fodder.
+
+---
+
+## 3. Generated Output That Should Stay Ignored
+
+**Everything else** — the entire `out/agentic/reports/` tree except the forensics doc. Specifically:
+
+- All `summary.json` files (batch-level and per-scenario)
+- All per-batch `report.md` and `summary.json`
+- All `evidence/<run>/` directories (logs, diffs, metadata, snapshots)
+- All `project_specific/` contents (template indices, workflow corpus patches, runtime metadata JSONs, recipes/out/scratchpad trees)
+- `.DS_Store`
+
+These are voluminous (~280+ entries), timestamped, model-run-specific, and fully regenerable by re-running the harness. Tracking them would bloat the repo with no durable signal.
+
+---
+
+## 4. References That Would Need Updates
+
+- **`docs/structure_cleanup/status.md`** (line 60): currently says *"evidence belongs under `out/agentic/reports/<tag>/`"* — no change needed; the policy still holds.
+- **`docs/structure_cleanup/agentic_results/01-agentic-package-boundaries.txt`** and **`02-tracked-evidence-placement.txt`**: mention `out/agentic/reports/` as the output location — correct as-is.
+- **`docs/structure_cleanup/artifacts_briefs/05-out-agentic-reports.md`**: this very audit brief — self-referential, no action needed.
+- If the forensics doc is promoted, no tracked file currently links to it (confirmed via `rg`). No references to break.
+
+**Caveat on deletion:** Do not delete the forensics doc from `out/` after promoting — a symlink or a note in the promoted copy that the original lives at `out/agentic/reports/` preserves provenance. The rest of the tree should remain ignored and untouched unless explicitly garbage-collected by a separate cleanup pass.

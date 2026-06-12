@@ -1,0 +1,121 @@
+Here is the complete analysis and recommendation.
+
+---
+
+## Evidence Summary
+
+### Files under `.megaplan/chains/`
+
+| File | Lines | Status |
+|------|-------|--------|
+| `frontier-hardening.yaml` | 98 | Self-declares COMPLETE (all 5 sprints landed on `main`) |
+| `scratchpad-emitter.yaml` | 159 | Self-declares COMPLETE — "supersedes the 2026-05-25 design" |
+| `.megaplan/chains/.megaplan/plans/.chains/scratchpad-emitter-abdb4f11c3ba.json` | — | Auto-generated scratchpad plan cache (NOT an authored spec) |
+
+### Files under `docs/megaplan_chains/`
+
+Four epics, each with their own `chain.yaml` and supporting artifacts:
+
+| Epic | `chain.yaml` lines | Status |
+|------|-------------------|--------|
+| `excellence_epic/` | 120 | Active (10 sprints) |
+| `node_resolution_epic/` | 58 | Active (3 gated sprints A/B/C) |
+| `pristine_cleanup/` | 101 | Active (9 milestones) |
+| `readable_ready_templates/` | 59 | Active (9 sprints) |
+
+**Critical finding: No `frontier-hardening/` or `scratchpad-emitter/` directories exist under `docs/megaplan_chains/`.** The two `.megaplan/chains/*.yaml` files have *no counterpart* in `docs/megaplan_chains/`.
+
+### All references to `.megaplan/chains` (not `docs/megaplan_chains`)
+
+Only **3 files** reference the `.megaplan/chains` path directly:
+
+1. **`docs/architecture/python_on_the_graph.md:50`** — `scratchpad-emitter epic is completing (`.megaplan/chains/scratchpad-emitter.yaml`)` — a **live doc link**.
+2. **`docs/structure_cleanup/megaplan_briefs/03-chain-specs.md`** — this task brief itself (self-referential).
+3. **`docs/structure_cleanup/agentic_results/09-deletion-risk.txt:47`** — classifies them as "Authored chain definitions — configuration, not cache."
+
+**No `--spec` command, no test, no script, no Makefile uses `.megaplan/chains/*.yaml` as a runtime argument.**
+
+### All references to `docs/megaplan_chains/` (for contrast)
+
+**91+ references** — the active ecosystem:
+- `tests/test_porting_emitter.py:1310` — imports test fixtures from `docs/megaplan_chains/node_resolution_epic/testing/fixtures`
+- `pyproject.toml:98-100` — defines sprint_a/b/c markers referencing `docs/megaplan_chains/node_resolution_epic/testing/testing.md`
+- `scripts/megaplan_cloud_operator_loop.sh:4` and `scripts/megaplan_cloud_recovery_loop.sh:4` — use `docs/megaplan_chains/readable_ready_templates/chain.yaml` as default spec
+- Every `chain.yaml` under `docs/megaplan_chains/` references its own sibling `idea:` and `START_HERE.md` paths within `docs/megaplan_chains/`
+
+---
+
+## Q1: What are `.megaplan/chains/*.yaml`?
+
+**Canonical executable specs — not duplicates, not purely historical.**
+
+They are the *original* `megaplan chain` specs for two epics (`frontier-hardening` and `scratchpad-emitter`) that are now **completed**. They were authored in `.megaplan/chains/` before the convention of putting chain specs under `docs/megaplan_chains/` was established (the four live epics there all postdate these two).
+
+- `frontier-hardening.yaml` — header says "STATUS (2026-05-31) — COMPLETE"; all 5 milestones list `# LANDED` commits.
+- `scratchpad-emitter.yaml` — header says it "supersedes the 2026-05-25 design"; references `idea:` files at `.megaplan/ideas/scratchpad-emitter/`.
+
+They are **not** duplicated anywhere. `docs/megaplan_chains/` has zero overlap — it contains four *different* epics.
+
+---
+
+## Q2: Would moving them break anything?
+
+**One confirmed broken doc link.** No runtime breakage.
+
+| Risk | Evidence | Impact |
+|------|----------|--------|
+| Doc cross-reference | `docs/architecture/python_on_the_graph.md:50` links to `.megaplan/chains/scratchpad-emitter.yaml` | Would **break** if moved without updating that link |
+| `--spec` commands | Zero commands reference `.megaplan/chains/` | **No breakage** |
+| Tests | Zero tests reference `.megaplan/chains/` | **No breakage** |
+| Scripts | Zero scripts reference `.megaplan/chains/` | **No breakage** |
+| pyproject.toml | References only `docs/megaplan_chains/...` | **No breakage** |
+| Internal `idea:` paths | `frontier-hardening.yaml` → `.megaplan/ideas/frontier-hardening/`; `scratchpad-emitter.yaml` → `.megaplan/ideas/scratchpad-emitter/` | **Would break** if moved relative to those idea dirs, unless updated |
+
+**Verdict:** Moving the YAMLs would require updating 1 doc reference + potentially the `idea:` paths inside the YAMLs (if they're expected to be relative). No command or test breakage.
+
+---
+
+## Q3: README/policy vs. moving files?
+
+**Keep in place + add a README/policy** is the recommended path.
+
+Rationale:
+
+1. **They're not in the way.** Both epics are complete; the files are inert (no active chain runner references them). There's no maintenance burden.
+
+2. **Moving would break the one doc link** in `docs/architecture/python_on_the_graph.md:50` and require updating internal `idea:` relative paths — risk for zero gain.
+
+3. **They're the canonical location** for their content. Moving them to `docs/megaplan_chains/frontier-hardening/chain.yaml` and `docs/megaplan_chains/scratchpad-emitter/chain.yaml` would create two new directories there but serve no functional purpose (the epics are done).
+
+4. **The real problem is ambiguity** about the relationship between `.megaplan/chains/` and `docs/megaplan_chains/` — which a README solves directly.
+
+---
+
+## Recommendation
+
+**Option A (recommended): Keep in place. Add a README at `.megaplan/chains/README.md` documenting the policy:**
+
+> - `.megaplan/chains/*.yaml` — canonical executable specs for **completed** epics (frontier-hardening, scratchpad-emitter)
+> - `docs/megaplan_chains/*/chain.yaml` — executable specs for **active** epics (excellence, node_resolution, pristine_cleanup, readable_ready_templates)
+> - New chain specs should be placed under `docs/megaplan_chains/<epic-name>/chain.yaml`
+> - Completed epics may stay in `.megaplan/chains/` or be migrated to `docs/megaplan_chains/<epic-name>/` at the team's discretion
+
+**Option B (if you want strict consistency):** Move both YAMLs to `docs/megaplan_chains/frontier-hardening/chain.yaml` and `docs/megaplan_chains/scratchpad-emitter/chain.yaml`, then:
+- Update `docs/architecture/python_on_the_graph.md:50`
+- Update internal `idea:` paths from relative (`.megaplan/ideas/...`) to absolute or `docs/megaplan_chains/.../ideas/...` (these idea dirs live under `.megaplan/ideas/` though, so this gets messy)
+- Mark `.megaplan/chains/` as deprecated in a README
+
+**I recommend Option A.** The two files are stable, complete, and referenced from only one doc. The cost-to-benefit ratio of moving them is poor. A README clarifies the convention without touching established content.
+
+### Exact references supporting this
+
+| Reference | Supports |
+|-----------|----------|
+| `docs/architecture/python_on_the_graph.md:50` | Only live external link to `.megaplan/chains/` — moving breaks it |
+| `frontier-hardening.yaml:1-7` | Self-declares COMPLETE with landing commits on main |
+| `scratchpad-emitter.yaml:1-2` | Self-declares supersession; active but complete |
+| `docs/megaplan_chains/*/chain.yaml` | Four active epics with different labels — no overlap |
+| `scripts/megaplan_cloud_*.sh:4` | All runner scripts use `docs/megaplan_chains/...` — not `.megaplan/chains/` |
+| `tests/test_porting_emitter.py:1310` | Tests reference `docs/megaplan_chains/...` — not `.megaplan/chains/` |
+| `pyproject.toml:98-100` | Marker paths reference `docs/megaplan_chains/...` — not `.megaplan/chains/` |
+| `docs/structure_cleanup/agentic_results/09-deletion-risk.txt:47` | Already classified as "Authored chain definitions — configuration, not cache" |

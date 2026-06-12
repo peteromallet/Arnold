@@ -39,8 +39,8 @@ from .contracts import (
     success_envelope,
     turn_envelope,
 )
-from vibecomfy.porting.edit_types import FieldChange
-from vibecomfy.porting.widget_aliases import widget_names_for_class
+from vibecomfy.porting.edit.types import FieldChange
+from vibecomfy.porting.widgets.aliases import widget_names_for_class
 from .gates import (
     apply_stage_gate_updates,
     derive_gates,
@@ -70,7 +70,7 @@ from .session import (
 )
 
 if TYPE_CHECKING:
-    from vibecomfy.porting.edit_session import EditSession
+    from vibecomfy.porting.edit.session import EditSession
     from vibecomfy.workflow import VibeWorkflow
 
 DeepSeekClient = Callable[[list[dict[str, str]]], dict[str, str]]
@@ -2181,7 +2181,7 @@ def _stamp_identity_on_original(graph: dict[str, Any], workflow: Any) -> int:
     layer no-ops (blockers.md B12). The candidate inherits these same uids from
     the IR, so stamping the original makes the scope non-empty.
 
-    See docs/agent_edit_concrete_tree.md. Match is by litegraph node id, which is
+    See docs/agent-edit/concrete-tree.md. Match is by litegraph node id, which is
     stable across the round-trip.
     """
     by_id = {str(nid): node for nid, node in getattr(workflow, "nodes", {}).items()}
@@ -2236,7 +2236,7 @@ def _stage_ingest(state: AgentEditState, context: TurnContext) -> StageResult:
     original_ui_ref = write_json_artifact(state.original_ui_path, state.graph)
     state.workflow = convert_to_vibe_format(state.graph, schema_provider=state.schema_provider)
     state.prior_store = store_from_ui_json(state.graph)
-    # Phase 1 (concrete-tree migration, docs/agent_edit_concrete_tree.md): give the
+    # Phase 1 (concrete-tree migration, docs/agent-edit/concrete-tree.md): give the
     # user's original graph stable identity so the delta-scope guard (guard_emit)
     # engages on the FIRST edit. Stamp a COPY — never mutate state.graph, which is
     # hashed/echoed/audited. The candidate inherits the same uids (verified: uid ==
@@ -2286,7 +2286,7 @@ def _stage_ingest(state: AgentEditState, context: TurnContext) -> StageResult:
 
 
 def _stage_ingest_v2(state: AgentEditState, context: TurnContext) -> StageResult:
-    from vibecomfy.porting.edit_ledger import EditLedger
+    from vibecomfy.porting.edit.ledger import EditLedger
 
     start = time.monotonic()
     request_ref = write_json_artifact(state.request_path, state.request_payload)
@@ -2362,7 +2362,7 @@ def _stage_convert(state: AgentEditState, _context: TurnContext) -> StageResult:
 
 
 def _stage_project_v2(state: AgentEditState, _context: TurnContext) -> StageResult:
-    from vibecomfy.porting.edit_projection import render_edit_projection, ProjectionOptions
+    from vibecomfy.porting.edit.projection import ProjectionOptions, render_edit_projection
 
     start = time.monotonic()
     # The 8000-token default forces sparse mode on every real ComfyUI graph (140-200+
@@ -2447,7 +2447,7 @@ def _stage_agent_delta(
     route: str | None = None,
     model: str | None = None,
 ) -> StageResult:
-    from vibecomfy.porting.edit_ops import (
+    from vibecomfy.porting.edit.ops import (
         EDIT_OP_RESPONSE_SCHEMA_V2,
         normalize_delta_test_client_response,
     )
@@ -2718,8 +2718,8 @@ def _stage_agent_batch_repl(
             and batch_result.landed_ops
             and _agent_edit_batch_repl_enabled()
         ):
-            from vibecomfy.porting.edit_lint import LintIndex, lint_delta
-            from vibecomfy.porting.edit_ops import (
+            from vibecomfy.porting.edit.lint import LintIndex, lint_delta
+            from vibecomfy.porting.edit.ops import (
                 RemoveLinkOp,
                 SetModeOp,
                 SetNodeFieldOp,
@@ -3172,7 +3172,7 @@ def _stage_validate(state: AgentEditState, _context: TurnContext) -> StageResult
 def _stage_emit(state: AgentEditState, _context: TurnContext) -> StageResult:
     from vibecomfy.porting.layout import evaluate_felt_delta
     from vibecomfy.porting.layout_store import store_from_ui_json, write_store
-    from vibecomfy.porting.ui_emitter import emit_ui_json
+    from vibecomfy.porting.emit.ui import emit_ui_json
 
     start = time.monotonic()
     recovery_report: list[dict[str, Any]] = []
@@ -3228,13 +3228,13 @@ def _stage_emit(state: AgentEditState, _context: TurnContext) -> StageResult:
 
 
 def _stage_apply_delta(state: AgentEditState, _context: TurnContext) -> StageResult:
-    from vibecomfy.porting.edit_apply import apply_delta
-    from vibecomfy.porting.edit_apply import (
+    from vibecomfy.porting.edit.apply import apply_delta
+    from vibecomfy.porting.edit.apply import (
         AppliedAddNodeSpec,
         ResolvedFieldRef,
         ResolvedRemoveNodePlan,
     )
-    from vibecomfy.porting.edit_ops import op_to_dict
+    from vibecomfy.porting.edit.ops import op_to_dict
 
     def _build_delta_audit(result: Any) -> dict[str, Any]:
         automatic_link_removals: list[dict[str, Any]] = []
@@ -3294,7 +3294,7 @@ def _stage_apply_delta(state: AgentEditState, _context: TurnContext) -> StageRes
     # ── lint gate (VIBECOMFY_AGENT_EDIT_LINT defaults ON) ──────────────────
     original_ui = state.guard_original_ui or state.graph
     if _edit_lint_enabled() and state.delta_ops:
-        from vibecomfy.porting.edit_lint import LintIndex, lint_delta
+        from vibecomfy.porting.edit.lint import LintIndex, lint_delta
 
         index = LintIndex.build(original_ui)
         lint_result = lint_delta(
@@ -3916,7 +3916,7 @@ def _build_dev_success_response(
     )
     response["internal_outcome"] = internal_outcome.to_dict()
     if contract == "delta":
-        from vibecomfy.porting.edit_ops import op_to_dict
+        from vibecomfy.porting.edit.ops import op_to_dict
 
         response["delta_ops"] = [op_to_dict(op) for op in state.delta_ops]
     return response

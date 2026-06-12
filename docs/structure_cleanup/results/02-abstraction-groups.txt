@@ -1,0 +1,56 @@
+Here are my conclusions from examining the root contents.
+
+---
+
+## 1. Proposed Root Taxonomy (12 first-class groups)
+
+| Category | Contents | Role |
+|---|---|---|
+| **`vibecomfy/`** | Main Python package | Library/application |
+| **`ready_templates/`** | `audio/`, `edit/`, `image/`, `video/`, `smoke/` | Workflow templates by modality |
+| **`recipes/`** | `wan_t2v_long.py`, `dual_pass_t2i.py` etc. | Compound multi-workflow compositions |
+| **`workflow_corpus/`** | `official/`, `input/`, `manifests/` | Canonical JSON workflows + test assets |
+| **`vendor/`** | `ComfyUI/` + its deps | Third-party (vendored, mostly static) |
+| **`agentic/`** | `scenarios/`, `briefs/`, `actors_m4/`, `runner.py`, `adapter.py` | Agentic test harness (first-class subsystem) |
+| **`tests/`** | Unit tests + `e2e/` (Playwright) | Test suite |
+| **`docs/`** | Markdown docs + `security/`, `megaplan_chains/`, `assets/` | All documentation |
+| **`scripts/`** | `runpod_*.py`, `sync_agent_skill.py`, `demo_*.py`, shell scripts | Operational/utility scripts |
+| **`tools/`** | `check_pack_provenance.py`, `refresh_template_index.py`, etc. | Developer code-quality tooling |
+| **`out/`** | `runs/`, `agentic/reports/`, `runpod_artifacts/`, `corpus_matrix/` | Generated output (gitignored) |
+| **`artifacts/`** | `m1-step1-audit.md`, `m4/` baselines, `m5a-emitter-baseline/` | Checked-in milestone evidence/goldens |
+
+Root configs stay: `.importlinter`, `.pre-commit-config.yaml`, `uv.lock`, `LICENSE`, `version_matrix.json`.
+
+---
+
+## 2. Entries That Violate It Today
+
+- **`_debug_json.py`, `_debug_normalize.py`, `_fix_t6.py`, `_regen_templates.py`** — implemented debug scripts sitting at root → should be in `scripts/`.
+- **`SECURITY_AUDIT_NOTES.md`** — an audit document at root → should be `docs/security_audit_notes.md`.
+- **`finalize.json`** — a JSON task plan at root → belongs in `docs/plans/finalize.json` or similar.
+- **`node_index.json`, `template_index.json`, `asset_manifest.json`** — generated indexes at root → could sit in `out/` (regenerable) or a `data/` directory; root is noisy.
+- **`.agents/skills/desloppify/SKILL.md`** — semantically agent config, not clearly belonging to `agentic/` or anywhere exposed.
+
+---
+
+## 3. Minimal Migration Path (No Import/Test Breakage)
+
+**Phase 1 (zero-risk moves):** Move root debug scripts and audit notes, leaving shims.
+- `_debug_json.py` → `scripts/_debug_json.py` with a symlink or import shim at root (debug scripts are run directly, so a symlink suffices).
+- Move `SECURITY_AUDIT_NOTES.md` → `docs/security/audit_notes.md` (no imports to break).
+- Move `finalize.json` → `docs/plans/finalize.json`.
+
+**Phase 2 (generated indexes):** Add `.gitignore` entries for the root JSON files and regenerate into `out/` or a new `data/` folder. Update any CI/scripts that reference the root paths.
+
+**Phase 3 (`.agents/`):** Either rename to `.agent_skills/` or merge into `agentic/runtime_skills/` if the harness should own it. Since `.agents/` is a dotfile (hidden), the naming confusion with `agentic/` is less urgent.
+
+---
+
+## 4. Naming Conflicts Worth Resolving
+
+| Conflict | Diagnosis | Recommendation |
+|---|---|---|
+| **`agentic/` vs `.agents/`** | `agentic/` = test harness; `.agents/` = runtime skill definitions. Both "agent" but different concerns. | Accept `.agents/` as hidden config. No urgent rename needed, but document the distinction in `agentic/README.md`. |
+| **`artifacts/` vs `out/`** | `artifacts/` = checked-in milestone evidence; `out/` = generated runtime output. The names don't communicate this polarity. | Rename `artifacts/` → `evidence/` or `milestones/` to signal it's curated, not generated. Low priority. |
+| **`ready_templates/` vs `recipes/`** | Both are user-facing workflow code. `ready_templates/` = single-workflow; `recipes/` = compound/compositional. Boundary is blurry when a template chains inside its Python. | Consider merging `recipes/` into `ready_templates/compositions/` long-term, or rename `recipes/` → `compositions/`. Not urgent. |
+| **`workflow_corpus/` vs `ready_templates/`** | One is JSON (serialized graphs), the other is Python (generator code). Complementary but different representations. | Names are clear enough, but consider nesting `workflow_corpus/` under `ready_templates/` as `ready_templates/.corpus/` if it's purely derived. |

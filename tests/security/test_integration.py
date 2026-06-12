@@ -36,7 +36,7 @@ from vibecomfy.security.gate import (
     set_gate_context,
     untrusted_scope,
 )
-from vibecomfy.node_packs_install import install_pack
+from vibecomfy.node_packs import install_pack
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +336,7 @@ from pathlib import Path
 from vibecomfy.security.gate import (
     CapabilityFenceError, GateContext, set_gate_context, untrusted_scope,
 )
-from vibecomfy.node_packs_install import install_pack
+from vibecomfy.node_packs import install_pack
 
 ctx = GateContext(non_interactive=True, assume_yes=False, audit=[])
 set_gate_context(ctx)

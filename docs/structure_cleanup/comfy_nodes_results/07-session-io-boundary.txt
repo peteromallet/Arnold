@@ -1,0 +1,148 @@
+Here is the complete audit.
+
+---
+
+## Session I/O Boundary — Audit Report
+
+### 1. Overlap & Ownership Map
+
+There are **three** session-related modules in scope, but they occupy **two distinct domains** with no true cross-boundary overlap:
+
+| Module | Domain | Owns |
+|---|---|---|
+| `comfy_nodes/agent/session.py` (2.6k loc) | **Agent edit session state** | `session_dir_for`, `turn_dir_for`, `read_state`, `write_state_atomic`, `allocate_turn`, `accept_turn`, `reject_turn`, `rebaseline_session`, `payload_hash`, `structural_graph_hash`, `SessionStateLock`, idempotency, turn state machine |
+| `comfy_nodes/session_io.py` (730 loc) | **Agent session I/O (read path)** | `read_session_chat`, `read_session_bundle`, `read_session_json`, `_write_turn_chat_artifact`, chat rendering/trimming helpers |
+| `runtime/session.py` (1.4k loc) | **ComfyUI server lifecycle** | `EmbeddedSession`, `ServerSession`, `SessionConfig`, queue execution, PID files, server health, process management |
+
+**`runtime/session.py` has no overlap with the agent modules.** It manages ComfyUI server processes (`out/sessions/<id>/pid`, `out/sessions/<id>/url`). The agent modules manage edit-turn state (`out/editor_sessions/<id>/session_state.json`, `turns/`). Different directories, different files, different concerns.
+
+---
+
+### 2. DUPLICATION FINDING: `session_io.py` is fully dead — contents forked into `edit.py`
+
+This is the headline finding.
+
+#### `session_io.py` has **zero importers** anywhere in the codebase
+
+```
+$ grep -r "session_io" --include="*.py" vibecomfy/   # 0 results
+```
+
+#### What `session_io.py` defines vs what `edit.py` duplicates
+
+| Function/Constant | `session_io.py` | `edit.py` |
+|---|---|---|
+| `_write_turn_chat_artifact` | line 20 | line 1383 |
+| `_stamped_turn_response_outcome` | line 99 | line 1462 |
+| `_stamped_message_outcome` | line 114 | line 1477 |
+| `_read_turn_response_payload` | line 132 | line 1495 |
+| `_latest_session_candidate_payload` | line 141 | line 1504 |
+| `_trim_chat_text` | line 206 | line 1569 |
+| `_compact_chat_change_details` | line 215 | line 1578 |
+| `read_session_chat` | line 311 | line 1674 |
+| `_BUNDLE_TEXT_SUFFIXES` | line 470 | line 1833 |
+| `_BUNDLE_MAX_FILE_BYTES` | line 473 | line 1836 |
+| `read_session_bundle` | line 477 | line 1840 |
+| `read_session_json` | line 567 | line 1930 |
+| `DEFAULT_CHAT_DISPLAY_MESSAGES` | line 18 | line 79 |
+
+Additionally, `edit.py` defines its **own copies** of helpers that `session_io.py` imports from `stages/humanize.py`:
+- `_safe_session_id` (edit.py:236, defers to humanize.py:151)
+- `_json_safe` (edit.py:1244, defers to humanize.py:44)
+
+#### Import chains
+
+**`session_io.py`** imports from:
+- `.agent.session` → `read_state`, `session_dir_for`
+- `.stages.humanize` → `_field_changes_payload`, `_json_safe`, `_safe_session_id`
+- `.agent.contracts` → `ensure_agent_edit_response_contract`, `TurnContext`
+
+**`edit.py`** ⛔ does NOT import from `session_io.py`. Instead it:
+- Has its own copies of all the above functions
+- Imports from `./session` → `allocate_turn`, `read_state`, `session_dir_for`, etc.
+- Uses its own `_safe_session_id`, `_json_safe` (not imported from humanize)
+
+**`routes.py`** imports `read_session_chat`, `read_session_bundle`, `read_session_json` from **`edit.py`**, not `session_io.py`.
+
+#### Nature of duplication
+
+This is a **forked duplicate** — the implementations are near-identical in signature, docstring, and logic, but appear to have been independently maintained. Minor differences likely exist from edits applied to one copy but not the other. The `session_io.py` version is the **original module** (imports helpers properly from `humanize.py`), while `edit.py` contains **inline copies** that were presumably moved there during a refactor to avoid a circular dependency or to consolidate the edit pipeline.
+
+#### `edit.py` internal usage
+
+`edit.py` calls its own `read_session_chat` at line 4323 for prompt memory. It calls its own `_write_turn_chat_artifact` at lines 4372 and 4434.
+
+---
+
+### 3. Safe Delete/Move/Split Recommendations
+
+**Option A (Recommended): Delete `session_io.py` entirely.**
+
+Rationale:
+- Zero importers — deleting it breaks nothing
+- Everything it provides is already duplicated in `edit.py`
+- The `routes.py` route handlers already source from `edit.py`
+- Reduces confusion about which module is canonical
+
+**Option B (Cleaner, more work): Extract shared I/O from `edit.py` back into `session_io.py`, rewire `edit.py` and `routes.py` to import from `session_io.py`, then delete the inline copies from `edit.py`.**
+
+This is the architecturally cleaner outcome but requires:
+1. Removing the duplicate function definitions from `edit.py` (lines ~1383–1970)
+2. Adding `from ..session_io import read_session_chat, read_session_bundle, ...` to `edit.py`
+3. Since `routes.py` already imports from `edit.py`, transitively nothing changes
+
+Risk: `edit.py` is 4.6k lines — the inline copies may have diverged subtly, so a diff comparison between each pair is needed before consolidation.
+
+**Option C (Minimum risk): Keep both but mark `session_io.py` as deprecated.**
+
+Add a deprecation warning at the top of `session_io.py` and a comment in `edit.py` noting that the copies should be the source of truth going forward.
+
+---
+
+### 4. Verification Commands
+
+Run these from the working directory:
+
+```bash
+# Confirm session_io.py has no importers
+cd /Users/peteromalley/Documents/reigh-workspace/vibecomfy
+rg -l "session_io" --type py vibecomfy/
+
+# Confirm routes.py sources from edit.py, not session_io.py
+rg "from .edit import" vibecomfy/comfy_nodes/agent/routes.py
+rg "from .session_io import" vibecomfy/comfy_nodes/agent/routes.py
+
+# Diff the two read_session_chat implementations
+diff \
+  <(sed -n '311,465p' vibecomfy/comfy_nodes/session_io.py) \
+  <(sed -n '1674,1840p' vibecomfy/comfy_nodes/comfy_nodes/agent/edit.py)
+
+# Diff the two read_session_bundle implementations
+diff \
+  <(sed -n '477,564p' vibecomfy/comfy_nodes/session_io.py) \
+  <(sed -n '1840,1928p' vibecomfy/comfy_nodes/agent/edit.py)
+
+# Diff the two read_session_json implementations
+diff \
+  <(sed -n '567,707p' vibecomfy/comfy_nodes/session_io.py) \
+  <(sed -n '1930,2030p' vibecomfy/comfy_nodes/agent/edit.py)
+
+# Verify runtime session has no overlap with agent session I/O
+rg "read_session|session_dir_for|turn_dir_for|session_state" vibecomfy/runtime/session.py
+
+# Check that no test file references session_io
+rg "session_io" tests/ --type py
+```
+
+---
+
+### Summary
+
+| Finding | Severity | Action |
+|---|---|---|
+| `session_io.py` has zero importers — fully dead code | **High** | Delete or deprecate |
+| All 3 public functions + 7 private helpers + 3 constants forked into `edit.py` | **High** | Consolidate to single source |
+| `edit.py` also forked `_safe_session_id` and `_json_safe` from `humanize.py` | **Medium** | Should import from humanize like `session_io.py` does |
+| `runtime/session.py` (server lifecycle) has no overlap with agent session modules | **None** | No action needed |
+
+**Bottom line:** `session_io.py` is a ghost module. It was split out for modularity but the consuming code (`edit.py` + `routes.py`) never imported it — instead `edit.py` inlined everything. **Safe to delete `session_io.py`**, or do a proper consolidation pass that re-exports from `session_io.py` and removes the inline copies from `edit.py`.

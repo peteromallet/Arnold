@@ -1,0 +1,60 @@
+Here is the audit:
+
+---
+
+## 1. Tracked (repository surface)
+
+**None.** The `.gitignore` explicitly ignores both `/.claude/` (line 27) and `/.agents/` (line 26). A scan confirms no files under either directory are in the git index. They are invisible to collaborators.
+
+## 2. Ignored local state
+
+Everything below `.claude/` and `.agents/` is git-ignored and lives on disk only:
+
+| File | Purpose |
+|---|---|
+| `.claude/settings.local.json` | Local Claude permissions (allow-listed bash commands, paths) — machine-specific |
+| `.claude/scheduled_tasks.json` | Scheduled/routine task state — runtime ephemera |
+| `.claude/skills/vibecomfy/SKILL.md` | Main VibeComfy agent skill (597 lines, detailed) |
+| `.claude/skills/vibecomfy/advanced_usage.md` | Companion guide for loops, batching, sweeps |
+| `.claude/skills/vibecomfy/examples/*.py` | Runnable agent examples |
+| `.agents/skills/desloppify/SKILL.md` | Desloppify code-health skill (318 lines) |
+
+`settings.local.json` and `scheduled_tasks.json` are rightly local. But **the skill docs are substantive project documentation, not ephemera**. They explain how to *use the project* — hidden behind a gitignore means no one else sees them.
+
+## 3. Should SKILL.md stay where it is?
+
+**No.** Or at least, not exclusively.
+
+The file at `.claude/skills/vibecomfy/SKILL.md` is a 597-line reference covering repository rules, template loading, workflow IR manipulation, execution, RunPod deployment, and CLI commands. That's project documentation, not agent scratchpad. It should be:
+
+- **Either** symlinked or duplicated into `docs/agent-skill.md` (tracked), **or**
+- The gitignore narrowed so `/.claude/skills/` is tracked while local files (`settings.local.json`, `scheduled_tasks.json`) remain ignored.
+
+Same logic applies to `.agents/skills/desloppify/SKILL.md` (318 lines of code-health methodology).
+
+## 4. Safe `.gitignore` / README improvements
+
+**`.gitignore` — narrow the ignore instead of blanket-directory:**
+
+```gitignore
+# Agent config — track skills, ignore local state
+.claude/settings.local.json
+.claude/scheduled_tasks.json
+.claude/sessions/
+.agents/settings.local.json
+```
+
+Remove the blanket `/.claude/` and `/.agents/` lines, replace with the targeted patterns above. This keeps skill docs tracked while local/per-machine state stays ignored.
+
+**README — add a section:**
+
+```markdown
+## Agent Skills
+
+This project ships agent skill definitions for Claude Code and other
+AI assistants in `.claude/skills/` and `.agents/skills/`. These files
+teach an agent how to work with VibeComfy — run them with your agent
+to get contextual help.
+```
+
+This makes the hidden skill surfaces discoverable to human readers too.

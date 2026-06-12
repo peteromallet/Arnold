@@ -1,0 +1,66 @@
+Here is the audit:
+
+---
+
+## 1. Active Docs That Must Stay Valid
+
+These are referenced by agents, CLI help text, or as the canonical skill surface:
+
+- **`README.md`** — primary entry point: install, CLI usage (`port`, `validate`, `doctor`, `run`, `sources sync`, `search`, `inspect`, `copy-to-recipe`), templates/recipes vocabulary, repository layout
+- **`CLAUDE.md`** (377 lines) — canonical agent skill: public import surface (`load_workflow_any`, ops, blocks, patches), CLI command reference, five-flow mental model, Decision Shortcut table, environment variables
+- **`AGENTS.md`** — bootstrap pointer to CLAUDE.md; SkillSinker sync source
+- **`docs/authoring.md`** — blocks, patches, handles, opaque subgraphs, recipes; references `port check/convert/inventory`
+- **`docs/api/m6-public-api.md`** — settled public import surface contract
+- **`docs/testing/user_code.md`** — pytest plugin, `vibecomfy test` CLI
+- **`docs/custom_nodes.md`** — node packs, `nodes install/lock/restore` lifecycle
+- **`docs/errors_and_doctor.md`** — `doctor`/`port check`/`validate`/`nodes install-plan`/`fetch` CLI surface
+- **`docs/templates/porting_workbench.md`** — porting preflight → conversion → promotion pipeline
+- **`docs/templates/adding_templates_models.md`** — adding workflows end-to-end
+- **`docs/vibeworkflow.md`** — IR contract
+- **`scripts/README.md`** — documents all user-facing scripts
+
+---
+
+## 2. Docs to Update if Implementation Moves
+
+These reference paths that could change under a restructure:
+
+| Doc | References | If moved |
+|-----|-----------|----------|
+| `docs/runtime/incompatibilities.md` | `vibecomfy/fixtures.py` bootstrap, `python -m vibecomfy.fixtures copy --target input` | Update CLI path |
+| `docs/plans/revised_plan.md` | Explicit plan to move `fixtures.py` → `testing/_fixtures_smoke.py` + shim; also `_agent_edit_debug.py` move | Update after execution |
+| `docs/structure_cleanup/` (multiple files) | Audits of `vibecomfy/fixtures.py`, `testing/_fixtures.py`, `_agent_edit_debug.py` | Regenerate after cleanup |
+| `docs/templates/decorator_template_emitter_completion.md` | Lists `testing/fixtures.py`, `testing/_pytest_plugin.py` as files to inspect | Update file list |
+| `docs/templates/adding_templates_models.md` | Mentions `vibecomfy.fixtures` as fixture path | Update if relocated |
+| `docs/architecture/python_composition_dsl_plan.md` | References `wf.run_until(handle)` debug runner (gated on P4) | Update when un-gated |
+
+---
+
+## 3. Historical Docs (Provenance — Keep, Don't Update)
+
+- **`docs/historical/`** (6 files) — spikes (ComfyScript, GraphBuilder), old port rationale, sprint follow-ups. Preserved as-is.
+- **`docs/migration/`** (v2.3→v2.4, v2.5→v2.6, v2.5→v2.7) — version migration guides. Frozen per-version.
+- **`docs/megaplan_chains/`** — epic-level handoffs, reviews, evidence, sprint planning. Internal planning provenance.
+- **`docs/structural_audit_2026-05.md`** — 10-lens architecture audit (verdict: "strained"). Reference document.
+- **`docs/text-to-graph/`** — old spikes (loading, MVP, premortem). Stale planning.
+- **`docs/agent-edit/`** — wire protocol, phase plans, failure evidence. Agent-edit R&D history.
+- **`docs/structure_cleanup/`** — audit results for fixtures/debug/schema/diagnostics. Already ingested; actions tracked elsewhere.
+
+---
+
+## 4. Public Exception Paths (Hard CLI/API Contracts)
+
+These paths are exposed as user-facing contracts and must be preserved as stable entrypoints, even if internals move:
+
+| Path | Contract | Invoked by |
+|------|----------|-----------|
+| `python -m vibecomfy.fixtures` | **Hard CLI contract** — smoke fixture bootstrap | `scripts/runpod_corpus_matrix.py`, `docs/runtime/incompatibilities.md` |
+| `python -m vibecomfy._agent_edit_debug` | **Hard CLI contract** (via `scripts/vibecomfy_debug.py` wrapper) | Debug CLI entrypoint |
+| `workflow_corpus/input/` | **Data contract** — smoke-test fixture assets (audio, video, images) | `vibecomfy/fixtures.py`, `docs/runtime/incompatibilities.md`, `FIXTURES.md` |
+| `docs/cookbook/05_debug_with_port_doctor_all.py` | **Documented CLI surface** for `port doctor-all` | User-facing cookbook example |
+
+**Not public contracts** (internal only, safe to move/rename):
+- `vibecomfy/testing/fixtures.py` (84 LOC, pytest `vibecomfy_workflow_factory` etc.) — no user-facing doc references, only internal test imports
+- `vibecomfy/testing/_fixtures.py` — **dead duplicate** (zero importers), safe to delete immediately
+
+**Summary:** The only fixture path with true public-contract status is `vibecomfy/fixtures.py` via its `-m` CLI entrypoint. Everything else in the fixture/debug/schema/diagnostics surface is internal and relocatable.

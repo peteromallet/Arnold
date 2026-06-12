@@ -51,9 +51,9 @@ CustomNodePack(
 ```
 
 Classes that are Comfy built-ins (not from any custom pack) belong in
-`CORE_COMFY_CLASSES` in `vibecomfy/node_packs_install.py`. For ComfyUI's special
+`CORE_COMFY_CLASSES` in `vibecomfy/node_packs/_install.py`. For ComfyUI's special
 runtime handles (`PrimitiveNode`, `Reroute`), add them to the `comfy-core-fallback`
-entry in `node_packs.py`.
+entry in `vibecomfy/node_packs/_defs.py`.
 
 ### 3. Fix `unknown_class_type` — add to object_info cache
 
@@ -171,7 +171,7 @@ to regenerate affected templates after the emitter correctly writes `frame_rate`
 
 If a class has no identifiable public repository (e.g. `IAMCCS_*`, `ClownSampler_Beta`
 from an unreleased pack, enterprise-only nodes), record the exception:
-- Add a row to `docs/strict_ready_exceptions.md` / `docs/strict_ready_exceptions.json`
+- Add a row to `docs/templates/strict_ready_exceptions.md` / `docs/templates/strict_ready_exceptions.json`
 - Mark the template status as `J-deferred: community-unknown` in coverage notes
 - Do not add a stub cache entry for classes with no known upstream
 
@@ -222,7 +222,7 @@ Stub classes are added to `SCHEMA_VALIDATION_SKIP_CLASSES` in
 `vibecomfy/schema/validate.py` to prevent cascade `unknown_input` errors until a real
 runpod snapshot is available.
 
-### CORE_COMFY_CLASSES additions (vibecomfy/node_packs_install.py)
+### CORE_COMFY_CLASSES additions (vibecomfy/node_packs/_install.py)
 
 Added ~50 Comfy built-in classes confirmed from comfy_core/comfy_extras object_info
 snapshots: AudioConcat, AudioEncoderEncode/Loader, BasicScheduler,

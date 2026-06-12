@@ -404,7 +404,7 @@ def test_simulated_ltx_stall_yields_stalled_runtime_diagnosis(monkeypatch: pytes
     """Mock a long LTX community workflow that progresses then goes silent.
 
     Mirrors the failure pattern documented in
-    docs/hiddenswitch_incompatibilities.md: progress events arrive for a while,
+    docs/runtime/incompatibilities.md: progress events arrive for a while,
     then the runtime stops emitting events but the process is still up.
     """
     api_dict = {

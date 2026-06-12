@@ -1,0 +1,127 @@
+Now I have a thorough understanding. Here is the complete audit.
+
+---
+
+# Package Layer Audit 10: Safe First Batch
+
+## Inspection Summary
+
+Scanned: `vibecomfy/` (~500+ files across ~50 directories), `pyproject.toml`, `.importlinter`, `README.md`, `AGENTS.md`, prior audit docs.
+
+---
+
+## 1. Exact Delete List
+
+### DELETE `vibecomfy/_graph_utils.py` — Safe (zero external Python consumers)
+
+| File | Status | Evidence |
+|---|---|---|
+| `vibecomfy/_graph_utils.py` | **Stale shim** — 3 lines, `sys.modules[__name__] = _real` pointing to `_compile._graph` | **Zero Python imports** of `vibecomfy._graph_utils` found anywhere in the repo. All 13+ call sites import from `vibecomfy._compile._graph` or `vibecomfy._compile` directly. Test `test_foundation_utils.py` imports from `_compile._graph`, not the shim. The `.importlinter` does NOT list this shim (only the other three). |
+
+**Risk: None.** The shim's `sys.modules` alchemy is vestigial — no code is looking for this name.
+
+### DELETE `.bak` backup artifacts (if present)
+
+Searches detected `.bak` files under `.desloppify/`. These are transient artifacts from prior processing runs, not source-of-truth. Safe to delete unless an active workflow depends on them.
+
+---
+
+## 2. Exact File Create/Edit List
+
+### CREATE `vibecomfy/ir/README.md`
+One-paragraph boundary doc explaining that this is the canonical data model / IR package, what lives here (`VibeWorkflow`, `Diagnostic`, compile helpers), and that module-level imports must not pull from `workflow`, `handles`, `contracts`, or `security`.
+
+### CREATE `vibecomfy/_compile/README.md`
+Brief: "Private compile utility package. Public API is re-exported through `vibecomfy.*` shims; do not import directly from this package. Contains `_graph`, `_helpers`, `_resolve`, `_widgets` submodules."
+
+### CREATE `vibecomfy/schema/README.md`
+One-paragraph: "Schema providers and validation. Implements the `SchemaProvider` protocol hierarchy. Consumers should import `SchemaProvider` and friends from `vibecomfy.schema`, not from internal submodules."
+
+### CREATE `vibecomfy/contracts/README.md`
+Brief doc describing what contracts are: "Semantic contracts, IR guarantees, and validation policies. See also `RUNTIME_CONTRACT.md` for runtime contract specifics. Key submodules: `validation.py` (validation policies), `ir.py` (IR contract codes), `model.py` (runtime contract model), `doctor.py` (contract doctor)."
+
+### CREATE `vibecomfy/porting/README.md`
+Brief one-paragraph: "Porting subsystem: convert ComfyUI JSON workflows to Python scratchpads/ready templates. Sub-packages: `edit/` (EditSession), `emit/` (Python emitter), `layout/` (node layout), `widgets/` (widget alias resolution), `identity/` (UID/codec), `wrappers/` (wrapper codegen), `object_info/` (node schema snapshots), `cache/` (cached object info)."
+
+### CREATE `vibecomfy/commands/README.md`
+Brief: "CLI command implementations. Each subcommand module maps to `vibecomfy <verb>`. Internal helpers prefixed with `_`."
+
+### CREATE `vibecomfy/runtime/README.md`
+Brief: "Runtime execution and session management. Sub-package `eval/` for remote evaluation. Consumers should prefer `vibecomfy.run*` imports over direct runtime imports."
+
+### CREATE `vibecomfy/testing/README.md`
+Brief: "Public testing toolkit. See `_pytest_plugin.py` for the pytest integration. Key exports: `assert_compiles_cleanly`, `assert_node_present`, `dry_run`, `canonicalize_api`, `vibecomfy_workflow_factory`."
+
+### CREATE `vibecomfy/router/README.md`
+Brief: "Workflow routing and rule evaluation. `_rules.py` defines routing rules; `_core.py` evaluates them."
+
+---
+
+**NOTE on `.gitkeep` files**: `vibecomfy/web/.gitkeep` and `vibecomfy/comfy_nodes/web/.gitkeep` are zero-byte placeholders holding empty directories. These are intentional (the `web/` directories are expected to exist but have no tracked content). **Leave them.** Removing them would delete the directories, which could break ComfyUI node registration paths expecting those directories.
+
+---
+
+## 3. Exact Move List
+
+**NONE recommended for this batch.**
+
+| Candidate Move | Risk | Decision |
+|---|---|---|
+| `vibecomfy/_workflow_helpers.py` → `_compile._helpers` (delete shim) | **HIGH** — `workflow.py` imports `from vibecomfy import _workflow_helpers as workflow_helpers`, `test_workflow_helpers.py` asserts this specific module name. `.importlinter` references the shim path. | **DEFER** |
+| `vibecomfy/_helper_resolve.py` → `_compile._resolve` (delete shim) | **HIGH** — Same reasons as above. | **DEFER** |
+| `vibecomfy/_widget_aliases.py` → `_compile._widgets` (delete shim) | **MEDIUM** — No Python imports reference the shim directly, but `test_widget_aliases.py` analyzes its import set. `.importlinter` references it. | **DEFER** (needs coordinated linter + test update) |
+| `vibecomfy/workflow.py` → `vibecomfy/ir/workflow.py` (consolidate) | **CRITICAL** — 30+ modules import from `vibecomfy.workflow`, countless doc references. Duplicate `VibeWorkflow` already exists in `ir/workflow.py`. | **DEFER** (needs epic-level coordination) |
+
+---
+
+## 4. Deferrals
+
+| Item | Reason | When |
+|---|---|---|
+| Delete `_workflow_helpers.py`, `_helper_resolve.py`, `_widget_aliases.py` shims | Each has active consumers (workflow.py imports, test assertions, importlinter references). Deleting them without updating all references would break imports and CI. | Coordinated with linter update |
+| Update `.importlinter` | References old shim paths (`vibecomfy._workflow_helpers`, etc.) instead of `vibecomfy._compile.*`. Adding `vibecomfy.ir` as a governed source module would also be valuable. | After shim consolidation |
+| Add docstring to `vibecomfy/contracts/__init__.py` | Already has a complex `__getattr__` lazy-loading system but **no module docstring**. Adding one is safe but requires understanding the lazy contract. | Future doc batch |
+| Add docstring to `vibecomfy/_compile/__init__.py` | Bare re-export (`from ... import *`) with no docstring. Would benefit from a clarifying docstring. | Future doc batch |
+| Remove old object_info JSON snapshots under `vibecomfy/porting/object_info/` | There's a parallel `vibecomfy/porting/cache/object_info/` with more snapshots. Need to verify which is canonical. | After auditing snapshot lifecycle |
+| Clean `__pycache__` directories | Present throughout the tree but likely gitignored. Run `git clean -fdX` instead of manual deletion. | Run `git clean -fdX` as verification step |
+
+---
+
+## 5. Verification Commands
+
+```bash
+# 1. Verify _graph_utils.py is truly unreferenced (should return 0 Python matches)
+grep -r "from vibecomfy._graph_utils\|from vibecomfy import _graph_utils\|vibecomfy._graph_utils" --include="*.py" . | grep -v __pycache__ | grep -v ".pyc"
+
+# 2. After deleting _graph_utils.py, verify import resolution still works
+python -c "from vibecomfy._compile._graph import is_api_link, node_id_sort_key; print('_compile._graph OK')"
+python -c "from vibecomfy._compile import _graph; print('_compile OK')"
+
+# 3. Verify core imports still work
+python -c "from vibecomfy.workflow import VibeWorkflow; print('workflow OK')"
+python -c "from vibecomfy.ir import VibeWorkflow as IrVibeWorkflow; print('ir OK')"
+
+# 4. Verify CLI still works
+python -m vibecomfy.cli --help > /dev/null && echo "CLI OK"
+
+# 5. Run import-linter to verify no regressions
+pip install import-linter && lint-imports
+
+# 6. Clean all __pycache__ and .pyc artifacts
+find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; echo "pycache cleaned"
+
+# 7. Run core test suite
+python -m pytest tests/ -x --timeout=60 -q --no-header 2>&1 | head -30
+```
+
+---
+
+## Summary Table
+
+| Action | Target | Count | Risk |
+|---|---|---|---|
+| DELETE | `vibecomfy/_graph_utils.py` | 1 file | 🟢 None |
+| DELETE | `.bak` files under `.desloppify/` | ~3 files | 🟢 None |
+| CREATE | README files in 8 subpackages | 8 files | 🟢 None (docs only) |
+| MOVE | None | 0 | N/A |
+| DEFER | 3 shim deletions + linter update | 4 items | 🟡 Medium |

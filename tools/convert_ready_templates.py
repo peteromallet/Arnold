@@ -202,7 +202,7 @@ def _clear_workflow_contextvar() -> None:
 def _canonicalize_broadcast_widget_keys(workflow: Any) -> None:
     """Ensure SetNode/GetNode broadcast names live at ``widgets['widget_0']``.
 
-    The helper resolver in ``vibecomfy.porting.helpers`` reads broadcast names
+    The compile helper resolver reads broadcast names
     exclusively from ``inputs['widget_0']`` or ``widgets['widget_0']``. When the
     source JSON is a UI-format litegraph, ``normalize_to_api`` routes the value
     through the schema's widget name (e.g. ``inputs['name'] = 'width'`` for

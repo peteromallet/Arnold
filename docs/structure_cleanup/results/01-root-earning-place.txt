@@ -1,0 +1,54 @@
+Here is the root-entry audit.
+
+---
+
+## 1. Keep at Root
+
+| Entry | Reason |
+|---|---|
+| `.git/`, `.gitignore`, `.gitmodules`, `.github/` | VCS infrastructure |
+| `AGENTS.md`, `CLAUDE.md` | Agent skill manifests; agents discover these at root by convention (both repo rules and tool convention) |
+| `LICENSE`, `README.md`, `pyproject.toml`, `uv.lock` | Standard Python project metadata and lockfile |
+| `vibecomfy/` | Main Python package; rule: do not move package code without clear evidence |
+| `tests/` | Test suite, standard location |
+| `vendor/` | Git submodule + vendored ComfyUI checkout |
+| `ready_templates/` | Template library; CLI discovers via canonical path `find ready_templates -type f -name '*.py'` |
+| `docs/`, `scripts/`, `tools/` | Documentation, utility scripts, tooling — standard |
+| `agentic/` | Contains `__init__.py` and `adapter.py` — actual runtime Python package code; rule applies |
+| `custom_nodes.lock` | Custom-node dependency lock, generated and consumed by CLI (`vibecomfy nodes lock`); analogous to `uv.lock` for ComfyUI |
+| `cloud.yaml` | Railway deployment config — standard location |
+| `recipes/`, `workflow_corpus/` | Package content and workflow data referenced by tests/validation |
+| `.pre-commit-config.yaml`, `.importlinter` | Project-wide tooling config (pre-commit hooks, import-linter rules) |
+| `.ruff_cache/` | Ruff cache (has `CACHEDIR.TAG`); belongs in `.gitignore` but harmless tracked |
+| `.import_linter_cache/` | Has own `.gitignore` + `CACHEDIR.TAG`; cache, local-only |
+| `agents/openai.yaml` | Agent config; trivial surface area, not worth moving |
+
+## 2. Move Out of Root
+
+| Entry | Proposed Destination | Confidence |
+|---|---|---|
+| `CUSTOM_NODES_AUDIT.md` | `docs/` | High — it's a generated audit document, not API surface or tool discovery |
+| `SECURITY_AUDIT_NOTES.md` | `docs/` | High — same category, audit notes |
+| `finalize.json` | `docs/plans/` | High — task-planning artifact, not runtime |
+| `plan_v2.md`, `revised_plan.md` | `docs/plans/` | High — implementation plans, not package content |
+| `_fix_t6.py`, `_regen_templates.py` | `scripts/` | High — one-off maintenance scripts, not runtime |
+| `asset_manifest.json` | `vibecomfy/registry/` | High — generated model-asset manifest; CLI reads it from `vibecomfy/registry/` path (if moved there) |
+| `version_matrix.json` | `vendor/` or `docs/` | Moderate — version compatibility metadata for vendored ComfyUI |
+| `artifacts/` | `docs/artifacts/` | Moderate — milestone test snapshots, not live runtime |
+
+## 3. Delete or Ignore
+
+| Entry | Action | Confidence | Required Evidence Before Deletion |
+|---|---|---|---|
+| `input/` | Delete (empty) | High | Confirm empty (`ls input/` → nothing). Confirmed above. |
+| `.DS_Store` | Delete (local macOS junk) | High | Already gitignored; can clean with `find . -name .DS_Store -delete` |
+| `.ruff_cache/` | Add to `.gitignore` | High | Confirm it has `CACHEDIR.TAG` — yes. Should be gitignored, not deleted. |
+| `_debug_*.py` (3 files) | Delete local scratch | High | Already gitignored; remove local copies |
+| `install.log` | Delete | High | Gitignored install log |
+| `this.env` | Delete (or keep local) | High | Gitignored local env file |
+
+## 4. Highest-Leverage First Move
+
+**Move `CUSTOM_NODES_AUDIT.md` and `SECURITY_AUDIT_NOTES.md` into `docs/`.** Both are generated audit documents with zero runtime/tool-discovery dependency on root location. The `finalize.json`, `plan_v2.md`, and `revised_plan.md` are closely related planning artifacts that should be batched into `docs/plans/`. These four files are the highest-leverage move because they clean up the root without touching any import paths, CLI discovery rules, or agent tool expectations.
+
+Second: `_fix_t6.py` and `_regen_templates.py` → `scripts/`. These are one-off maintenance scripts that clutter the root; no code imports them.

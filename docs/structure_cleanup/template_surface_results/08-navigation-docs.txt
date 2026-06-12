@@ -1,0 +1,183 @@
+Here is the full audit.
+
+---
+
+## Audit: Navigation docs for template/corpus/recipe users
+
+---
+
+### Q1: Can a new user find templates, recipes, and corpus workflows from the root README?
+
+| Artifact | Reachable from root README? | How |
+|---|---|---|
+| **Templates** (`ready_templates/`) | ✅ **Yes** | Repository Layout table (line 226), dedicated "Templates And Porting" section (line 169), install commands (`list --ready`, `inspect`), and the Architecture glossary table (line 161). |
+| **Recipes** (`recipes/`) | ✅ **Yes** | Repository Layout table (line 227), copy-to-recipe example in install section (line 79), Architecture glossary (line 162), and a code snippet showing `load_workflow_any` usage (lines 86-99). |
+| **Workflow Corpus** (`workflow_corpus/`) | ⚠️ **Barely** | Repository Layout table (line 228): one line — *"Source ComfyUI workflows used for indexing, conversion, and coverage."* No dedicated section, no link to `docs/workflow-coverage/corpus.md`, and no mention in the "Templates And Porting" section where a reader would naturally look for it. A user who scans the layout table will find it; a user reading the prose sections may miss it entirely. |
+
+**Verdict:** Templates and recipes are well-served. `workflow_corpus/` is discoverable only if the user reads the Repository Layout table — it's invisible from the narrative sections.
+
+---
+
+### Q2: Is `workflow_corpus/` documented anywhere at the directory itself?
+
+**No.** The directory has zero README files:
+
+```
+workflow_corpus/          ← no README.md
+├── manifests/
+│   ├── coverage.json
+│   └── ready_regeneration.json
+├── official/
+│   ├── audio/
+│   ├── edit/
+│   ├── image/
+│   └── video/
+└── custom_nodes/
+    ├── flux2/
+    └── ltxvideo/ ...
+```
+
+A user who `cd`s into `workflow_corpus/` sees subdirectories and JSON files with no explanation of:
+- What the directory is for
+- How its structure maps to ready templates
+- What `official/` vs `custom_nodes/` means
+- What the manifests contain
+- Where the detailed documentation lives (i.e., `docs/workflow-coverage/corpus.md`)
+
+The *best* documentation lives at **`docs/workflow-coverage/corpus.md`**, which thoroughly explains the corpus purpose, manifest schema, status tiers, and validation commands. But there is no pointer to it from either the root README's corpus row or from the directory itself.
+
+---
+
+### Q3: What small README additions would improve navigation?
+
+Below are the exact proposed edits.
+
+---
+
+#### Edit A: Add `workflow_corpus/README.md`
+
+This is the most impactful single change. Create a new file:
+
+```markdown
+# Workflow Corpus
+
+Source ComfyUI JSON workflows used for template generation, coverage validation, and the RunPod runtime matrix.
+
+## Structure
+
+```
+workflow_corpus/
+├── official/          # Official ComfyUI template sources (image, video, edit, audio)
+├── custom_nodes/      # Community custom-node workflow sources (ltxvideo, flux2, …)
+└── manifests/         # Coverage manifests
+    ├── coverage.json          # Required corpus manifest with status tiers
+    └── ready_regeneration.json  # Template regeneration tracking
+```
+
+- `official/` workflows are the primary sources for ready templates in `ready_templates/`.
+- `custom_nodes/` workflows extend coverage to model families that require non-standard custom nodes (e.g., LTX, WanVideoWrapper).
+- `manifests/coverage.json` defines the required corpus with status tiers: `raw_json` → `converted` → `ready_template` → `runtime_ready` → `runtime_green`.
+
+## Related docs
+
+- [docs/workflow-coverage/corpus.md](../docs/workflow-coverage/corpus.md) — full corpus schema, status language, and RunPod validation workflow.
+- [docs/workflow-coverage/](../docs/workflow-coverage/) — per-family coverage maps.
+- [ready_templates/README.md](../ready_templates/README.md) — how workflows graduate to Python ready templates.
+```
+
+---
+
+#### Edit B: Root `README.md` — add corpus mention to "Templates And Porting" section
+
+**File:** `README.md`, after line 172 (the `list --ready` / `inspect` examples). Insert before the porting subsection.
+
+**Context (existing lines 169-178):**
+```markdown
+Ready templates live in [ready_templates/](ready_templates/). Start by listing
+and inspecting them:
+
+```bash
+python -m vibecomfy.cli workflows list --ready
+python -m vibecomfy.cli search wan --task i2v
+python -m vibecomfy.cli inspect image/z_image
+python -m vibecomfy.cli analyze info image/z_image
+```
+
+When starting from raw ComfyUI JSON, preflight it before manual editing or GPU
+time:
+```
+
+**Proposed edit — add new paragraph after the CLI examples, before "When starting from raw ComfyUI JSON":**
+
+```markdown
+Source ComfyUI JSON lives in [workflow_corpus/](workflow_corpus/), organized by
+origin (`official/` and `custom_nodes/`) and model family. Browse it to find
+upstream workflows, then check
+[docs/workflow-coverage/corpus.md](docs/workflow-coverage/corpus.md) for the
+coverage manifest and status tiers.
+
+When starting from raw ComfyUI JSON, preflight it before manual editing or GPU
+time:
+```
+
+This makes the corpus visible from the narrative flow, directly adjacent to template discovery.
+
+---
+
+#### Edit C: `docs/README.md` — add a link to recipes
+
+**File:** `docs/README.md`
+
+**Context (lines 22-29):**
+```markdown
+- [Templates](templates/)
+- [Workflow coverage](workflow-coverage/)
+```
+
+**Proposed edit — add a Recipes row to the "Main Areas" list, between Templates and Workflow coverage:**
+
+```markdown
+- [Templates](templates/)
+- [Recipes](../recipes/README.md)
+- [Workflow coverage](workflow-coverage/)
+```
+
+This gives recipes a home in the docs index. Currently `docs/README.md` links to templates and coverage but not recipes, even though `recipes/README.md` exists and is useful.
+
+---
+
+#### Edit D: `docs/templates/README.md` — cross-link to workflow coverage
+
+**File:** `docs/templates/README.md`
+
+**Context (lines 12-13):**
+```markdown
+- [Subgraph inner-id recoverability](subgraph_inner_id_recoverability.md)
+- [Examples](examples/)
+```
+
+**Proposed edit — add a cross-link after the existing list:**
+
+```markdown
+- [Subgraph inner-id recoverability](subgraph_inner_id_recoverability.md)
+- [Examples](examples/)
+
+Coverage and corpus:
+- [Workflow coverage docs](../workflow-coverage/) — per-family coverage maps and corpus manifest.
+- [Corpus parity allowlist](corpus_parity_allowlist.md) — templates held to corpus parity.
+```
+
+This connects the template authoring docs to the coverage/corpus docs, helping a template author understand which workflows have corpus parity.
+
+---
+
+### Summary of gaps and fixes
+
+| Gap | Fix |
+|---|---|
+| `workflow_corpus/` has no README — a user browsing the directory gets zero context | **Edit A** — create `workflow_corpus/README.md` |
+| Root README mentions corpus only in the layout table, not in the narrative "Templates And Porting" section | **Edit B** — add a paragraph before the porting subsection |
+| `docs/README.md` links to templates and coverage but not recipes | **Edit C** — add a Recipes row to the main-areas list |
+| `docs/templates/README.md` has no cross-link to workflow-coverage docs | **Edit D** — add a "Coverage and corpus" subsection |
+
+None of these edits change any code or break existing links. They're pure navigation improvements totaling ~40 lines across all four files.

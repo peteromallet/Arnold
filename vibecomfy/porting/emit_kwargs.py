@@ -1,10 +1,10 @@
 """emit_kwargs.py — variable-name, topology, and node-kwargs helpers.
 
-This module is the foundation seam carved from :mod:`vibecomfy.porting.emitter`
+This module is the foundation seam carved from :mod:`vibecomfy.porting.emit.emitter`
 as part of the M2 structural-decomposition epic (Step 4).  It is a leaf-level
 module: it does not import from any other ``emit_*.py`` module.
 
-All names exported here remain importable from ``vibecomfy.porting.emitter``
+All names exported here remain importable from ``vibecomfy.porting.emit.emitter``
 via explicit re-exports so that existing callers are unaffected.
 """
 

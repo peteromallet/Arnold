@@ -25,8 +25,8 @@ Status meanings:
 - M1 safety evidence: `artifacts/m1-safety-gate.md`.
 - M1 duplicate inventory: `docs/megaplan_chains/pristine_cleanup/artifacts/m1-duplication-inventory.md`.
 - M2 helper consolidation map: `artifacts/m2-symbol-map.md`.
-- M2 dirty-worktree classification: `artifacts/m2-diff-hygiene.md`.
-- M6 public API contract: `artifacts/m6-public-api.md`.
+- M2 dirty-worktree classification: `docs/audits/m2-diff-hygiene.md`.
+- M6 public API contract: `docs/api/m6-public-api.md`.
 - M7 documentation reconciliation is present in the working tree via
   `README.md`, `CLAUDE.md`, `AGENTS.md`, `docs/historical/`,
   `docs/release_notes.md`, and deleted stale docs.
@@ -128,7 +128,7 @@ current `rg` inspection.
 
 - `fixed` - Missing `workflow_from_template` / `load_template`: both are exported
   from `vibecomfy.__all__`; see current `vibecomfy/__init__.py` and
-  `artifacts/m6-public-api.md`.
+  `docs/api/m6-public-api.md`.
 - `fixed` - `run_embedded` / `run_embedded_sync` omitted from `__all__`: both are
   now exported and documented in M6.
 - `fixed` - `load_workflow_json` not top-level: exported from `vibecomfy` and
@@ -258,7 +258,7 @@ current `rg` inspection.
   this checkout.
 - `fixed` - README v2.6 vs CLAUDE v2.7 API drift: README now documents the
   current `load -> edit -> patch/block -> validate -> run` flow and cites
-  `artifacts/m6-public-api.md`.
+  `docs/api/m6-public-api.md`.
 - `fixed` - Historical docs marked active: stale docs are now under
   `docs/historical/`.
 - `fixed` - Ephemeral sprint artifact docs: stale docs were moved/trimmed as

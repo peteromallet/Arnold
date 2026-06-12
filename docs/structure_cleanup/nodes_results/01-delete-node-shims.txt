@@ -1,0 +1,71 @@
+Here's the complete audit.
+
+---
+
+## Node Shim Analysis
+
+### Structure
+
+Each `vibecomfy/nodes/<pack>.py` is an identical 4-line re-export:
+
+```python
+from vibecomfy.nodes._generated import <pack> as _generated
+from vibecomfy.nodes._generated.<pack> import *
+__all__ = list(_generated.__all__)
+```
+
+Plus a matching `<pack>.pyi` stub. **Zero business logic.** The `index.py` file is unrelated (node-listing utilities) and is **not** a shim.
+
+### Who Imports Through the Shims?
+
+| Caller site | Shim packs used | Count |
+|---|---|---|
+| `ready_templates/` | `core`, `kjnodes`, `rgthree`, `videohelpersuite`, `wanvideowrapper`, `ltxvideo`, `controlnet_aux`, `depthanythingv2`, `sam2`, `gimm_vfi`, `melbandroformer`, `qwentts`, `gguf` | ~50 files |
+| `docs/templates/examples/` | `core` | 1 file |
+| `docs/megaplan_chains/` | `core` | 1 file |
+| `scripts/demo_wrapper_codegen.py` | `rgthree` | 1 import |
+| `tests/test_node_shims.py` | All 19 pack modules + `from vibecomfy.nodes import UNETLoader` | 2 tests |
+| `vibecomfy/nodes/__init__.py` | All 19 pack modules (star import) | 1 file |
+
+**No code in `vibecomfy/` (the main package) imports through the shims directly** — only through `__init__.py`'s wildcard re-export.
+
+### Tools that Own the Shims
+
+`tools/generate_node_shims.py` generates all shim files via `_write_reexport_module()` / `_write_reexport_stub_module()`. The `_prune_stale_thin_shims()` function treats them as prunable artifacts.
+
+---
+
+### 1. Can Be Safely Deleted Now (all 38 files)
+
+**All 19 `.py` shims + all 19 `.pyi` shims** at `vibecomfy/nodes/<pack>.py` and `vibecomfy/nodes/<pack>.pyi`. Every one is a mechanical re-export with zero logic. The `_generated/` modules are the source of truth, and `__init__.py` can re-export directly from them.
+
+Ranked by deletion ease (lowest risk first):
+
+| Tier | Files | Rationale |
+|---|---|---|
+| **1. Zero callers beyond `__init__.py`** | `ailab_audioduration`, `custom_scripts`, `florence2`, `vibecomfy_internal` | No template/test/doc imports exist |
+| **2. Only test-file callers** | `gguf`, `qwen3tts`, `qwentts` | Only `test_node_shims.py` tests them |
+| **3. Light template use** | `controlnet_aux`, `depthanythingv2`, `sam2`, `gimm_vfi`, `melbandroformer` | 1-2 template imports each |
+| **4. Heavy template use** | `core` (50+ imports), `kjnodes`, `ltxvideo`, `videohelpersuite`, `wanvideowrapper`, `rgthree` | Most templates, but still mechanical |
+
+### 2. Must Stay (extreme public contract)
+
+**None.** The `from vibecomfy.nodes import KSampler` surface survives via `__init__.py` (which is **not** deleted — it just needs rewriting). The per-pack `from vibecomfy.nodes.core import ...` is a convenience shim, not a hard contract. Template code is end-user example code, not a published API guarantee.
+
+### 3. Required Caller Migrations
+
+After deleting shims, **update imports to point at `_generated`**:
+
+1. **`vibecomfy/nodes/__init__.py`** — Change `from vibecomfy.nodes.<pack> import *` → `from vibecomfy.nodes._generated.<pack> import *`
+2. **`vibecomfy/nodes/__init__.pyi`** — Same change
+3. **`tools/generate_node_shims.py`** — Remove `_write_reexport_module()` and `_write_reexport_stub_module()` calls in `main()`; update `_prune_stale_thin_shims()` to skip the nodes shims (or remove it entirely)
+4. **`ready_templates/` (50 files)** — Bulk find-and-replace `vibecomfy.nodes.` → `vibecomfy.nodes._generated.` (each import line)
+5. **`docs/` (2 files)** — Same find-and-replace
+6. **`scripts/demo_wrapper_codegen.py:78`** — `from vibecomfy.nodes.rgthree` → `from vibecomfy.nodes._generated.rgthree`
+
+### 4. Highest-Risk Test/Doc Surfaces
+
+1. **`tests/test_node_shims.py`** — The two `test_generated_*` tests directly import from shims (`vibecomfy.nodes.core`, `vibecomfy.nodes.controlnet_aux`, etc.). They would either be rewritten to import from `_generated` or refactored to test `__init__.py` re-exports instead.
+2. **`tests/test_generated_node_wrappers.py:93`** — Asserts `"from vibecomfy.nodes._generated.core import *"` is in the stub file. This checks the stub content itself, safe if stubs are kept.
+3. **`vibecomfy/checks.py:244`** — Scans `.pyi` stubs for `"from vibecomfy.nodes._generated."` text. The shim `.pyi` files would no longer exist, so the check would stop finding them. Verify this doesn't break a CI lint/validation step.
+4. **`tools/generate_node_shims.py`** — The generation tool itself. If shims are deleted, the tool must stop regenerating them, or CI will re-create them on each run.

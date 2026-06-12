@@ -1,6 +1,6 @@
 # Readable Ready Templates Megaplan Chain
 
-This chain executes the roadmap in `docs/readable_ready_template_cleanup_plan.md`
+This chain executes the roadmap in `docs/templates/readable_ready_template_cleanup_plan.md`
 as a cloud-capable sequence of sprint-sized megaplan runs.
 
 ## Single Branch Policy

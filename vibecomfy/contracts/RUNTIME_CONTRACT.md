@@ -1,8 +1,8 @@
 # S6 Runtime Contract — Settled Gate Decisions
 
 **Go decision**: PROCEED (gate passed 2026-06-01, iteration 2).
-**Plan**: `s6-runtime-backed-intent-nodes` (plan_v2.md).
-**Updated**: 2026-06-10 — three-mode execution policy added (see `docs/runtime_code_modes.md`).
+**Plan**: `s6-runtime-backed-intent-nodes` ([runtime docs](../../docs/runtime/README.md)).
+**Updated**: 2026-06-10 — three-mode execution policy added (see `docs/runtime/code_modes.md`).
 
 ## In-scope
 
@@ -15,7 +15,7 @@ Do not runtime-back additional node kinds without a new approval.
 
 ### Execution modes
 
-Three active modes plus one legacy back-compat mode. See [`docs/runtime_code_modes.md`](../docs/runtime_code_modes.md) for the full per-mode capability table.
+Three active modes plus one legacy back-compat mode. See [`docs/runtime/code_modes.md`](../docs/runtime/code_modes.md) for the full per-mode capability table.
 
 | Mode | Surface | Imports | Timeout | Source cap |
 |---|---|---|---|---|

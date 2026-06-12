@@ -3,7 +3,7 @@
 ## Outcome
 The docs describe the now-pristine end-state truthfully and without duplication. This is
 the last content milestone before publish: it runs after all code is settled (M1–M6) so
-it can describe a final API, citing `artifacts/m6-public-api.md`.
+it can describe a final API, citing `docs/api/m6-public-api.md`.
 
 ## Problem (audit lens 9 — with two stale claims corrected)
 - **`CLAUDE.md` and `AGENTS.md` are byte-identical** (41,155 bytes each) — yet CLAUDE.md
@@ -29,7 +29,7 @@ it can describe a final API, citing `artifacts/m6-public-api.md`.
 3. **Fix `release_notes.md`** to redirect to `docs/release_notes/`.
 4. **Archive stale docs** into `docs/historical/` with correct `Status:` headers; fix the
    `sprint5_followups.md` header.
-5. **Align docs to the real API surface** recorded in `artifacts/m6-public-api.md` — the
+5. **Align docs to the real API surface** recorded in `docs/api/m6-public-api.md` — the
    loader table, exported names, and aliases in CLAUDE.md must match what actually imports.
 6. Fold the verified audit findings' resolutions into the v2.x release notes / migration
    notes.
@@ -37,7 +37,7 @@ it can describe a final API, citing `artifacts/m6-public-api.md`.
 ## Locked decisions
 - Docs only — **no code changes** in this milestone. If a doc/code mismatch is found that
   needs a code fix, it is a follow-up ticket, not a silent edit here.
-- Cite `artifacts/m6-public-api.md` as the source of truth for importable names; do not
+- Cite `docs/api/m6-public-api.md` as the source of truth for importable names; do not
   re-derive the API from memory.
 
 ## Done criteria
@@ -51,7 +51,7 @@ it can describe a final API, citing `artifacts/m6-public-api.md`.
 
 ## Touchpoints
 `README.md`, `AGENTS.md`, `CLAUDE.md`, `docs/` (release notes, historical, sprint docs),
-`artifacts/m6-public-api.md` (read-only input).
+`docs/api/m6-public-api.md` (read-only input).
 
 ## Anti-scope
 No code edits. No re-opening of M1–M6. Do not chase the false-positive skill path.

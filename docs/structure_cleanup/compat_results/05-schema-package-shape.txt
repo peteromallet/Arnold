@@ -1,0 +1,51 @@
+Now I have a complete picture. Here's the audit summary.
+
+---
+
+## Audit Results: Schema Package Shape
+
+### Status of key files
+
+| File | LOC | Importers | Verdict |
+|------|-----|-----------|---------|
+| `factory.py` | 50 | **ZERO** | Obsolete — `get_schema_provider()` is duplicated in `provider.py:730` with a cleaner signature; `__init__.py` re-exports the `provider.py` version |
+| `registry.py` | 25 | **ZERO** | Obsolete — `schema_for()`, `schemas_for()`, `schema_registry_empty()` all duplicated in `provider.py` with richer behavior (builtin schema check) |
+| `format.py` | 9 | 4 (doctor, validate, session, prompt) | Valid target — plan's Step 13 merge into `validate.py` + thin shim |
+| `types.py` | 41 | 5 internal + 1 external test + 1 porting | **Live** — canonical lightweight types used by `runtime.py`, `local.py`, `object_info.py`, `parsing.py`. Not obsolete. |
+| `diagnostics/findings.py` | 51 | Already extracted | **Already done** — `diagnostics/__init__.py` is already a pure barrel. Unit 11 part B is complete. |
+| `README.md` | 8 | — | Documentation. Harmless. |
+
+---
+
+### 1. Safe actions now
+
+**DELETE `factory.py` and `registry.py`.** Both are dead code with zero importers across the entire repo. Their functions (`get_schema_provider`, `schema_for`, `schemas_for`, `schema_registry_empty`) are superseded by richer versions in `provider.py`. The `__init__.py` barrel already re-exports exclusively from `.provider`. This is a pure safe delete — no shim needed.
+
+**That's it for this pass.** The `format.py` merge (Step 13 part A) can follow, but it's a separate concern (requires creating a thin shim to preserve 4 importers). Don't conflate deletions with the format merge.
+
+### 2. Explicit deferrals and why
+
+- **`format.py` → `validate.py` merge**: Defer to a follow-up pass (or handle right after the deletes). Requires moving the `format_issue` function into `validate.py`, writing a thin shim `from vibecomfy.schema.validate import format_issue`, and verifying all 4 importers. It's small but logically separate from deleting dead files.
+
+- **`types.py` cleanup**: **Defer indefinitely.** It's the canonical lightweight type module used by 5 internal submodules + external code. Not stale. The `provider.py` copies have extra provenance fields and are convenience re-definitions, not duplicates to delete.
+
+- **Diagnostics extraction**: Already done. No action needed.
+
+- **`README.md`**: Harmless doc file. Leave it.
+
+### 3. Verification commands
+
+```bash
+# After deleting factory.py and registry.py:
+python -c "import vibecomfy; print('import OK')"
+
+# Verify barrel still exposes all public names:
+python -c "from vibecomfy.schema import get_schema_provider, schema_for, schemas_for, schema_registry_empty; print('barrel OK')"
+
+# Verify no one depended on the deleted modules (should be clean):
+python -c "from vibecomfy.schema.factory import get_schema_provider" 2>&1 || echo "factory gone — correct"
+python -c "from vibecomfy.schema.registry import schema_for" 2>&1 || echo "registry gone — correct"
+
+# Characterization gate:
+PYTHONHASHSEED=0 pytest tests/characterization -x -q
+```

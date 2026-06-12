@@ -1,0 +1,50 @@
+Now I have a clear picture of the full docs tree. Here's my audit assessment:
+
+---
+
+## 1. Delete Candidates
+
+**Generated/auto-generated junk (clearly not docs):**
+- `docs/gold_template_wan_i2v.py` — a generated Python template file, not documentation.
+- `docs/megaplan_chains/excellence_epic/.megaplan/plans/.chains/chain-db6e5f76a62a.json` — auto-generated chain state machine artifact.
+- `docs/megaplan_chains/node_resolution_epic/.megaplan/plans/.chains/chain-95f1118e77e8.json` — same pattern, generated.
+- `docs/structure_cleanup/results/*.txt`, `docs/structure_cleanup/results/*.meta.json`, `docs/structure_cleanup/results/_report.json` — all generated output from the audit run, not source docs.
+
+---
+
+## 2. Archive Candidates → `docs/historical/`
+
+These are completed/stale plans that should move under `docs/historical/` for reference without cluttering the active doc root:
+
+| File | Reason |
+|------|--------|
+| `sprint5_followups.md` | Sprint 5 is past; contains "Out of Scope for Sprint 4" — clearly superseded. |
+| `migration_v23_to_v24.md` / `migration_v25_to_v26.md` | Old migration guides; superseded by current version. |
+| `loose-work-consolidation-plan.md` | Dated 2026-06-09, plan text says "merge, then retire everything." Likely already executed. |
+| `readable_ready_template_cleanup_plan.md` | 1332-line cleanup plan; the decisions are settled, document is archival. |
+| `local_agent_text_to_graph_blockers.md` | Blocker log from 2026-06-01; references resolved issues. |
+| `agent_text_to_graph_python_loading_spike.md` | Spike report whose status reads "KEEP — decision made." Archival. |
+| `structural_audit_2026-05.md` | May 2026 structural audit; superseded by `structure_cleanup/` audit. |
+| `agent_edit_phase1_plan.md` | Phase 1 plan; likely completed since phase 2+ contracts exist (`agent_edit_wire_protocol.md`, `agent-edit-contracts.md`). |
+| `z_flux_workflow_coverage.md` | One-off coverage analysis, not a living reference. |
+| `runpod_layer2_test_plan.md` | Test plan; if testing is ongoing this stays, but title suggests completed work. |
+| `python_composition_dsl_plan.md` | Full of "Settled Decisions" (SD-001 through SD-xxx) now baked into the architecture. Historical record. |
+
+No files belong under `docs/plans/` — none of these are actively in-flight plans; they're all completed/stale.
+
+---
+
+## 3. Keep-Current Docs (Active Reference Material)
+
+These describe current architecture, APIs, contracts, or how-to guides and should stay where they are:
+`agent-edit-contracts.md`, `agent_edit_wire_protocol.md`, `runtime_lifecycle.md`, `runtime_code_modes.md`, `custom_node_wrapper_codegen.md`, `custom_nodes.md`, `comfy_version_support.md`, `workflow_corpus.md`, `characterization_gate.md`, `node_pack_reconciliation.md`, `frontier-hardening-runbook.md`, `subgraph_inner_id_recoverability.md`, `vibecomfy_exec_node_design.md`, `python_on_the_graph.md`, `python_authoring_edit_surface.md`, `python_composition_dsl_review.md`, `testing.md`, `testing-user-code.md`, `template_porting_workbench.md`, `workflow_onboarding_parity_tooling.md`, `adding_templates_models.md`, `runpod.md`, `runpod_smoke.md`, `hiddenswitch_incompatibilities.md`, `roadmap_agentic_comfyui.md`, `corpus_parity_allowlist.md`, `strict_ready_exceptions.json`, `release_notes.md`, `assets/`, `release_notes/`.
+
+Plus the `megaplan_chains/` directories — these are active planning hierarchies and should remain intact.
+
+---
+
+## 4. Evidence Folders — Do Not Touch
+
+- **`docs/megaplan_chains/excellence_epic/evidence/`** — Contains `widget_n_classification_20260528.json`, `t10_reemit_evidence_20260528.json`, `pre_fix_inventory_20260528.json`. These are empirical JSON artifacts backing the epic's conclusions. Leave in place.
+- **`docs/megaplan_chains/node_resolution_epic/testing/fixtures/`** — Contains test fixtures (`ideogram4_t2i.json`, `ideogram4_t2i.expected_emit.py`). These are the correctness baseline for the node resolution epic. Intact.
+- **`docs/testing-user-code-examples/`** — Contains pytest demo files and code examples that serve as both documentation and runnable tests. Keep intact.

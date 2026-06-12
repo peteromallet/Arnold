@@ -249,7 +249,7 @@ async def ensure_node_packs(
         "import sys\n"
         "\n"
         "from vibecomfy import load_workflow_any\n"
-        "from vibecomfy.node_packs_install import install_pack\n"
+        "from vibecomfy.node_packs import install_pack\n"
         "from vibecomfy.patches.registry import find_applicable\n"
         "\n"
         f"TEMPLATE_IDS = {tuple(template_ids)!r}\n"

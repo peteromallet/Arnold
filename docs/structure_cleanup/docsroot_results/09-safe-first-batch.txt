@@ -1,0 +1,144 @@
+Now I have a complete picture. Here is the proposal.
+
+---
+
+## Safe First-Batch Proposal: Remaining `docs/` Root Layer
+
+### Complete Root-Level Inventory (14 docs + README)
+
+| # | File | Verdict |
+|---|------|---------|
+| 1 | `docs/README.md` | **KEEP** — navigation hub |
+| 2 | `docs/authoring.md` | **KEEP** — core guide, 10+ refs |
+| 3 | `docs/vibeworkflow.md` | **KEEP** — foundational IR contract |
+| 4 | `docs/api_stability.md` | **KEEP** — 1 ref, negligible gain to move |
+| 5 | `docs/custom_nodes.md` | **KEEP** — core guide, cross-ref'd |
+| 6 | `docs/errors_and_doctor.md` | **KEEP** — straddles categories, `docs/runtime/` has no mass yet |
+| 7 | `docs/node_pack_reconciliation.md` | **KEEP** — 20+ hardcoded strings in `vibecomfy/schema/validate.py` |
+| 8 | `docs/roadmap_agentic_comfyui.md` | **KEEP** — strategic roadmap, project-wide scope |
+| 9 | `docs/local_agent_text_to_graph_blockers.md` | **KEEP** — bridge between `agent-edit/` and `text-to-graph/` |
+| 10 | `docs/local_agent_text_to_graph_e2e.md` | **DEFER** — gitignored, already absent from clean checkouts |
+| 11 | `docs/release_notes.md` | **KEEP** or **OPTIONAL MOVE** (see below) |
+| **12** | **`docs/m4_resolution_context.md`** | **✅ MOVE NOW — safe** |
+| 13 | `docs/structural_audit_2026-05.md` | **DEFER** — 17+ refs in `excellence_epic/` |
+| 14 | `docs/structural_issues.md` | **DEFER** — 5+ refs incl. `AGENTS.md`, `CLAUDE.md` |
+| 15 | `docs/comfy_version_support.md` | **DEFER** — 6 refs (tests, megaplans) |
+
+---
+
+### 🟢 MOVE NOW (exact commands)
+
+**1. `docs/m4_resolution_context.md` → `docs/architecture/m4-resolution-context.md`**
+
+Rationale: Zero external references outside the reorg's own `structure_cleanup/` artifacts — the only cleanup analysis that found any risk was in earlier passes, and the refined `docsroot_results/05-structural-audits.txt` confirms **0 code refs, 0 agent-instruction refs, 0 megaplan refs**. The rename to kebab-case matches existing `docs/architecture/` convention (`python_composition_dsl_plan.md`, `python_on_the_graph.md`).
+
+One artifact reference to update (already in reorg scope):
+
+```
+sed -i '' 's|docs/m4_resolution_context.md|docs/architecture/m4-resolution-context.md|' artifacts/m4/m4_baseline_pre_apply.txt
+```
+
+**2. (Optional) `docs/release_notes.md` → `docs/release_notes/README.md`**
+
+If you want the GitHub convention where navigating to `docs/release_notes/` auto-displays the index:
+
+```
+mv docs/release_notes.md docs/release_notes/README.md
+```
+
+Then update `docs/README.md:13`:
+```
+- [Release notes](release_notes.md)   →   - [Release notes](release_notes/)
+```
+
+And fix 3 relative links inside the moved `README.md`:
+```
+Line 3: [docs/release_notes/](release_notes/)  →  [docs/release_notes/](./)
+Line 5: [v2.8.0](release_notes/v2.8.0.md)     →  [v2.8.0](v2.8.0.md)
+Line 6: [v2.7.0](release_notes/v2.7.0.md)     →  [v2.7.0](v2.7.0.md)
+```
+
+The prior analysis (`06-release-notes.txt`) recommends **Option A (keep as-is)** as the zero-change path. This move is purely cosmetic.
+
+---
+
+### 📋 README/Index Updates Required
+
+**If you do ONLY the m4 move:**
+- `docs/README.md` — **no update needed** (m4 is not listed there)
+- `artifacts/m4/m4_baseline_pre_apply.txt:106` — update the path (1 line)
+
+**If you also do the release_notes move:**
+- `docs/README.md:13` — change link as shown above (1 line)
+- `docs/release_notes/README.md` — fix 3 relative links (3 lines)
+
+---
+
+### ⏸️ Moves to Defer (coordinated link repairs needed)
+
+| File | Target | Blocker | Link sites to fix |
+|------|--------|---------|-------------------|
+| `docs/structural_audit_2026-05.md` | `docs/historical/structural-audit-2026-05.md` | 17+ `../structural_audit_2026-05.md` refs in `excellence_epic/*.md` | Every sprint plan m1–m7, `chain.yaml`, `START_HERE.md`, `prep-m1.md` |
+| `docs/structural_issues.md` | `docs/plans/structural-issues.md` | `AGENTS.md:596`, `CLAUDE.md:356` (agent configs) + 3 doc refs | `AGENTS.md`, `CLAUDE.md`, `adding_templates_models.md`, `corpus.md`, `loose-work-consolidation-plan.md` |
+| `docs/comfy_version_support.md` | `docs/migration/comfy_version_support.md` | 6 refs across tests, megaplans, roadmap | `tests/test_comfy_version_compat.py:44`, `roadmap_agentic_comfyui.md:267`, `megaplan_chains/node_resolution_epic/README.md:49`, `m3-faithful-pinning.md:27,47`, `structure_cleanup/` |
+| `docs/local_agent_text_to_graph_e2e.md` | `docs/historical/` | Gitignored (already absent); root `README.md:129` ref | 4 refs including `README.md`, `concrete-tree.md`, `blockers.md`, `run_local_agent_comfy.sh` |
+
+**Recommended strategy:** Do the structural_audit + structural_issues moves together in a single "fix broken doc links" pass after the current reorg settles, since both touch overlapping file sets.
+
+---
+
+### ✅ Verification Commands
+
+After applying **just the m4 move** (safest first batch):
+
+```bash
+# 1. Verify the file landed correctly
+ls -la docs/architecture/m4-resolution-context.md
+
+# 2. Verify no remaining references to old path outside structure_cleanup
+rg -n 'm4_resolution_context' docs/ --include='*.md' \
+  | grep -v 'structure_cleanup/'
+
+# 3. Verify the artifact reference was updated
+rg 'm4-resolution-context' artifacts/m4/m4_baseline_pre_apply.txt
+
+# 4. Quick syntax check on moved doc (it's markdown, just open it)
+head -20 docs/architecture/m4-resolution-context.md
+
+# 5. Confirm no broken links in docs/README.md still work
+# (no change needed for this move, but verify README structure)
+rg '\[.*\]\(.*\.md\)' docs/README.md
+
+# 6. Full grep for any straggler old-path references in non-reorg dirs
+rg -n 'm4_resolution_context' \
+  --glob '!docs/structure_cleanup/**' \
+  --glob '!artifacts/m4/**' .
+# Expected: zero results
+```
+
+If you also do the release_notes move, add:
+
+```bash
+# Verify the release_notes/README.md exists and old stub is gone
+ls docs/release_notes/README.md
+test ! -f docs/release_notes.md && echo "old stub removed"
+
+# Verify docs/README.md link is correct
+rg 'Release notes' docs/README.md
+# Expected: - [Release notes](release_notes/)
+
+# Verify internal links in the moved README resolve
+rg '\]\(' docs/release_notes/README.md
+# No line should contain 'release_notes/' prefix
+```
+
+---
+
+### Summary
+
+| Action | Files | Link churn |
+|--------|-------|------------|
+| **✅ Move now** | `m4_resolution_context.md` → `architecture/m4-resolution-context.md` | 0 external breaks; 1 artifact path update |
+| **↔️ Optional** | `release_notes.md` → `release_notes/README.md` | 1 README link + 3 internal relative paths |
+| **⏸️ Defer** | `structural_audit_2026-05.md`, `structural_issues.md`, `comfy_version_support.md` | 28+ total link sites |
+| **🚫 Keep** | `authoring.md`, `vibeworkflow.md`, `api_stability.md`, `custom_nodes.md`, `errors_and_doctor.md`, `node_pack_reconciliation.md`, `roadmap_agentic_comfyui.md`, `local_agent_text_to_graph_blockers.md`, `local_agent_text_to_graph_e2e.md` | 0 (would create churn) |

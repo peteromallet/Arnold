@@ -1,6 +1,6 @@
 # Sprint 2: Schema-Backed Readable Emission
 
-Implement Sprint 2 from `docs/readable_ready_template_cleanup_plan.md`.
+Implement Sprint 2 from `docs/templates/readable_ready_template_cleanup_plan.md`.
 
 ## Branch And Chain Constraints
 

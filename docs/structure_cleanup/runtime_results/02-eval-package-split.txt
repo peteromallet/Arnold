@@ -1,0 +1,90 @@
+Here's the complete audit.
+
+---
+
+## Runtime Eval Split Audit
+
+### Diagnosis: Unresolved Duplication
+
+The flat files (`runtime/eval.py`, `eval_plan.py`, `eval_prompt.py`, `preview_types.py`) are **stale legacy copies** of the `runtime/eval/` package. The package is the canonical version. The flat files persist only because 3 external import sites still target them.
+
+### Content Comparison
+
+| Flat File | Package File | Status |
+|---|---|---|
+| `runtime/eval.py` (437 lines) | `runtime/eval/core.py` (401 lines) | **Near-identical.** Flat has extra dead function `queue_eval_subgraph` (raises `NotImplementedError`, never imported). Package is the canonical version. |
+| `runtime/eval_plan.py` (187 lines) | `runtime/eval/plan.py` (187 lines) | **Identical** modulo import style (abs vs rel). |
+| `runtime/eval_prompt.py` (146 lines) | `runtime/eval/prompt.py` (146 lines) | **Identical** modulo import style. |
+| `runtime/preview_types.py` (83 lines) | `runtime/eval/preview_types.py` (83 lines) | **Byte-for-byte identical.** |
+
+### Importers of Flat Files
+
+| File | Line | Import | Action |
+|---|---|---|---|
+| `vibecomfy/commands/runtime.py` | 12 | `from vibecomfy.runtime.eval import compile_eval_subgraph` | Ambiguous — could resolve to flat or package. |
+| `tests/test_runtime_run.py` | 871, 889, 910, 927, 941 | `from vibecomfy.runtime.eval import compile_eval_subgraph` | Same ambiguity (5 sites). |
+| `tests/test_agentic_affordances.py` | 12 | `import vibecomfy.runtime.eval_prompt as eval_prompt_module` | Explicit flat. |
+| `tests/test_agentic_affordances.py` | 25 | `from vibecomfy.runtime.eval_plan import plan_eval_node` | Explicit flat. |
+| `runtime/eval_prompt.py` | 11 | `from vibecomfy.runtime.eval_plan import ...` | Internal flat→flat import. |
+
+### Decision: Delete All 4 Flat Files
+
+**1. `runtime/eval.py`** → **Delete safe.** `queue_eval_subgraph` is dead code (raises `NotImplementedError`, zero callers). `compile_eval_subgraph` is re-exported from `vibecomfy/runtime/eval/__init__.py`.
+
+**2. `runtime/eval_plan.py`** → **Delete safe.** Exact subset of what the package provides.
+
+**3. `runtime/eval_prompt.py`** → **Delete safe.** Exact subset. Internal import `from vibecomfy.runtime.eval_plan` is rewritten in the package as `from .plan`.
+
+**4. `runtime/preview_types.py`** → **Delete safe.** Byte-identical to the package version.
+
+### Required Import Rewrites (Before Deletion)
+
+**`vibecomfy/commands/runtime.py`** (line 12):
+```python
+# Before:
+from vibecomfy.runtime.eval import compile_eval_subgraph
+# After:
+from vibecomfy.runtime.eval import compile_eval_subgraph  # no change — package __init__ re-exports it
+```
+
+**`tests/test_runtime_run.py`** (5 sites, lines 871–941):
+```python
+# Before:
+from vibecomfy.runtime.eval import compile_eval_subgraph
+# After:
+from vibecomfy.runtime.eval import compile_eval_subgraph  # no change — resolves to package now
+```
+
+**`tests/test_agentic_affordances.py`** (line 12):
+```python
+# Before:
+import vibecomfy.runtime.eval_prompt as eval_prompt_module
+# After:
+import vibecomfy.runtime.eval.prompt as eval_prompt_module
+```
+
+**`tests/test_agentic_affordances.py`** (line 25):
+```python
+# Before:
+from vibecomfy.runtime.eval_plan import plan_eval_node
+# After:
+from vibecomfy.runtime.eval.plan import plan_eval_node
+```
+
+### Test Plan
+
+1. **Apply import rewrites** to test file and command file.
+2. **Delete 4 flat files**: `runtime/eval.py`, `eval_plan.py`, `eval_prompt.py`, `preview_types.py`.
+3. **Run these test suites:**
+   - `tests/test_runtime_run.py::test_compile_eval_subgraph_*` (5 tests covering IMAGE, LATENT-with-VAE, LATENT-without, non-viz, absent node)
+   - `tests/test_agentic_affordances.py::test_eval_node_dry_run_*` and any test using `eval_prompt_module`
+4. **Run `vibecomfy runtime eval-node --help`** to confirm CLI doesn't break.
+5. **Re-run full test suite** and grep for any lingering `runtime\.eval_prompt|runtime\.eval_plan|runtime\.eval\.py` references.
+
+### Catch: `queue_eval_subgraph` is Dead
+
+The flat `eval.py` `queue_eval_subgraph` function raises `NotImplementedError` and has **zero** importers anywhere in the codebase. The package `core.py` intentionally omitted it. No migration needed for this function — it was already abandoned.
+
+### One Concern: Shadowing Risk
+
+Currently `from vibecomfy.runtime.eval import compile_eval_subgraph` is ambiguous (flat file `eval.py` vs package `eval/__init__.py`). Deleting the flat file removes the ambiguity — definitely resolves to the package. **Do not merge without deleting the flat files first**, or the shadowing persists silently.

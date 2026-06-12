@@ -1,0 +1,43 @@
+## Nodes Layer Audit 03: Ready Template Blast Radius
+
+### Architecture (confirmed)
+
+```
+vibecomfy/nodes/_generated/<pack>.py  ← auto-generated wrappers
+vibecomfy/nodes/<pack>.py             ← thin public shim (re-exports *)
+vibecomfy/nodes/__init__.py           ← star-imports all packs
+```
+
+The public shims (`core.py`, `kjnodes.py`, etc.) are literally 3-line re-exports:
+```python
+from vibecomfy.nodes._generated import core as _generated
+from vibecomfy.nodes._generated.core import *
+__all__ = list(_generated.__all__)
+```
+
+### Blast radius
+
+| Artifact | Uses `vibecomfy.nodes.<pack>` | Count |
+|---|---|---|
+| On-disk ready templates | `from vibecomfy.nodes.core import ...` etc. | **64 files** |
+| `.ready.py.golden` files | Same pattern | **11 files** |
+| `.scratchpad.py.golden` files | No (use raw_call) | 0 |
+| Emitter codegen | `f"from vibecomfy.nodes.{module_name} import ..."` | **3 locations** |
+| Test assertions on import text | `vibecomfy.nodes.core` in `test_node_shims.py`, `test_generated_node_wrappers.py` | 2 files |
+
+The characterization snapshot test (`tests/characterization/test_emitter_snapshots.py`) does **byte-exact golden comparison** (`neutralized != golden`, line 174). Any import-path change instantly fails all 11 `.ready.py.golden` files.
+
+### Recommended action
+
+**Keep as public contract — defer migration indefinitely.**
+
+Rationale: The shims are *designed* as the public authoring API. Ready templates serve dual purpose — they're both runtime execution and **authoring examples** for API consumers. Changing imports to `_generated` would leak internal package structure into the user-facing contract with zero behavioral benefit (the shims already delegate to `_generated` transparently). The 64 template files + 11 goldens + 3 emitter sites + test assertions make this a wide blast radius for negative value.
+
+### Smallest safe action batch (if forced)
+
+1. Change the 3 emit sites (`emit/emitter.py:994`, `emitter.py:1535`, `emit_ready.py:712`) to emit `_generated` paths
+2. Bulk-patch all 64 `ready_templates/...py` files
+3. Regenerate all 11 `.ready.py.golden` files via `VIBECOMFY_CHARACTERIZATION_WRITE=1`
+4. Update `test_node_shims.py` and `test_generated_node_wrappers.py` imports
+
+This is **not recommended** — it's re-labeling work that obfuscates the API for zero gain.

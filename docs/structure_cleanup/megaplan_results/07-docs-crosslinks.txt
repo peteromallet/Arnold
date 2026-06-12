@@ -1,0 +1,200 @@
+Now I have a complete picture. Here's the full analysis.
+
+---
+
+## Complete Reference Hazard Analysis
+
+### Files Scanned (by category)
+
+| Area | Files Containing `.megaplan`/`megaplan_chains` References |
+|---|---|
+| **Scripts** | `scripts/megaplan_cloud_operator_loop.sh`, `scripts/megaplan_cloud_recovery_loop.sh`, `__run_task.sh` |
+| **Tests** | `test_megaplan_chain_spec.py`, `test_porting_provenance.py`, `test_porting_emitter.py`, `test_sprint_a_acceptance.py`, `test_sprint_b_acceptance.py`, `test_sprint_c_acceptance.py`, `test_comfy_nodes_agent_backend_spine.py` |
+| **Config** | `pyproject.toml` |
+| **Docs** | `local_agent_text_to_graph_e2e.md`, `local_agent_text_to_graph_blockers.md`, `templates/decorator_template_emitter_completion.md`, `architecture/python_on_the_graph.md`, `historical/frontier-hardening-runbook.md`, `structure_cleanup/{megaplan_results/*,megaplan_briefs/*,agentic_results/*}` |
+| **Chain Specs** | All `docs/megaplan_chains/*/chain.yaml`, `docs/megaplan_chains/excellence_epic/*.md` |
+| **README** | `README.md` — no direct `.megaplan` refs; `CLAUDE.md` — no direct `.megaplan` refs; `AGENTS.md` — no direct `.megaplan` refs |
+
+---
+
+### Q1: Operational Commands That Must Remain Valid
+
+These are **live paths** that, if changed, will break functionality:
+
+#### 🔴 CRITICAL — Cloud Operator Scripts (Docker workspace paths)
+
+| File | Line | Reference | Why |
+|---|---|---|---|
+| `scripts/megaplan_cloud_operator_loop.sh` | 4 | `SPEC="${1:-/workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml}"` | Default chain spec for the cloud operator loop. Must resolve on the Docker container. |
+| `scripts/megaplan_cloud_operator_loop.sh` | 8 | `LOG="${OPERATOR_LOG:-/workspace/app/.megaplan/cloud-operator-loop.log}"` | Runtime log path. References `.megaplan/` which is gitignored. |
+| `scripts/megaplan_cloud_recovery_loop.sh` | 4 | `SPEC="${1:-/workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml}"` | Same default chain spec for recovery loop. |
+| `scripts/megaplan_cloud_recovery_loop.sh` | 7 | `LOG="${RECOVERY_LOG:-/workspace/app/.megaplan/cloud-recovery-loop.log}"` | Runtime log path. |
+| `scripts/megaplan_cloud_recovery_loop.sh` | 8 | `CHAIN_LOG="${CHAIN_LOG:-/workspace/app/.megaplan/cloud-chain.log}"` | Chain log path. |
+| `scripts/megaplan_cloud_recovery_loop.sh` | 13 | `mkdir -p ... .megaplan/manual-backups .megaplan/recovery-prompts` | Creates runtime directories. |
+| `scripts/megaplan_cloud_recovery_loop.sh` | 59 | `megaplan chain start --spec '$SPEC' ... >> /workspace/app/.megaplan/cloud-chain.log` | Chain start with log append. |
+| `scripts/megaplan_cloud_recovery_loop.sh` | 213–222 | `write_recovery_prompt` — uses `.megaplan/recovery-prompts/` paths | Creates/reads recovery prompts. |
+
+**Hazard:** If any `docs/megaplan_chains/...` path changes, these scripts break. The `.megaplan/` runtime dirs are gitignored so path changes won't break git, but the scripts' hardcoded `/workspace/app/...` paths must be updated.
+
+#### 🔴 CRITICAL — Test Import Paths (Python import-level, not string paths)
+
+| File | Line | Reference | Why |
+|---|---|---|---|
+| `tests/test_sprint_a_acceptance.py` | 8 | `from docs.megaplan_chains.node_resolution_epic.testing.test_node_resolution_acceptance import (` | **Python import.** The `docs/` directory must be importable via `PYTHONPATH` (set in `conftest.py` or pyproject). Changing the path under `docs/` breaks the import. |
+| `tests/test_sprint_b_acceptance.py` | 8 | Same pattern | Same hazard. |
+| `tests/test_sprint_c_acceptance.py` | 8 | Same pattern | Same hazard (confirmed by file listing). |
+
+**Hazard:** `docs/megaplan_chains/node_resolution_epic/` contains a `testing/` package that is imported by 3 test files. Any restructure (e.g., flattening `node_resolution_epic/`) breaks all three.
+
+#### 🟠 HIGH — Test Fixture Paths (relative filesystem paths)
+
+| File | Line | Reference | Why |
+|---|---|---|---|
+| `tests/test_porting_provenance.py` | 17 | `Path(...) / "docs" / "megaplan_chains" / "node_resolution_epic" / "testing" / "fixtures" / "ideogram4_t2i.json"` | Relative path from `tests/` to fixture file. |
+| `tests/test_porting_emitter.py` | 1310–1311 | `Path("docs/megaplan_chains/node_resolution_epic/testing/fixtures") / "ideogram4_t2i.json"` | Same fixture, relative path from working dir (assumes repo root). |
+| `tests/test_megaplan_chain_spec.py` | 9–10 | `CHAIN = ROOT / "docs" / "megaplan_chains" / "readable_ready_templates" / "chain.yaml"` and `README = ...` | Relative from `test_megaplan_chain_spec.py`'s `parents[1]` to repo root. |
+
+**Hazard:** All four resolve relative to repo root. If the subtree under `node_resolution_epic/` or `readable_ready_templates/` moves, these tests fail.
+
+#### 🟡 MEDIUM — Chain Spec Internal References
+
+| File | Line | Reference | Why |
+|---|---|---|---|
+| `docs/megaplan_chains/excellence_epic/chain.yaml` | 15, 25, 34, etc. | `idea: docs/megaplan_chains/excellence_epic/m1-net-and-correctness.md` (and 8 more) | Internal `idea:` paths in the chain spec. If the chain YAML moves relative to its idea files, or vice versa, the megaplan engine can't find them. |
+| `docs/megaplan_chains/readable_ready_templates/chain.yaml` | 16–56 | `idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/...` | Absolute Docker paths. If the subtree moves, these **will** break. |
+| `docs/megaplan_chains/pristine_cleanup/chain.yaml` | 34, 41 | `idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/...` | Same absolute Docker path pattern. |
+| `docs/megaplan_chains/excellence_epic/START_HERE.md` | 9, 81 | `megaplan chain start --spec docs/megaplan_chains/excellence_epic/chain.yaml` | CLI command in docs that operators follow. |
+| `docs/megaplan_chains/readable_ready_templates/README.md` | 92, 102, 111, 122, 137, 171 | Multiple `docs/megaplan_chains/readable_ready_templates/chain.yaml` references | Operator documentation with live commands. |
+| `docs/megaplan_chains/excellence_epic/m1-net-and-correctness.md` | 17 | `docs/megaplan_chains/excellence_epic/handoff-m1.md` | Internal crosslink. |
+| `docs/megaplan_chains/excellence_epic/prep-m1.md` | 175, 202 | `docs/megaplan_chains/excellence_epic/evidence/...` | Writes evidence files to this path. |
+
+**Hazard:** The chain specs themselves (under `docs/megaplan_chains/`) are self-referencing. Moving a chain's subtree requires updating all internal `idea:` fields in `chain.yaml`, plus the `START_HERE.md` and `README.md` in that subtree.
+
+#### 🟡 MEDIUM — pyproject.toml Marker References
+
+| File | Line | Reference | Why |
+|---|---|---|---|
+| `pyproject.toml` | 98–100 | `sprint_a: ... (see docs/megaplan_chains/node_resolution_epic/testing/testing.md)` | Doc reference in pytest markers. Not operational at build/run time but used by developers. |
+
+---
+
+### Q2: Historical Mentions That Can Tolerate Path Changes
+
+These reference paths under `.megaplan/` (gitignored, local-only) or `.megaplan-worktrees/` (local machine paths). They won't break automated processes, but docs would be stale:
+
+| File | Line | Reference | Classification |
+|---|---|---|---|
+| `docs/local_agent_text_to_graph_e2e.md` | 13 | `.megaplan/briefs/text-to-graph-agent-epic/chain.yaml` | **Historical.** Epic is `done, 7/7` milestones complete. Path is gitignored. If `.megaplan/briefs/` moves, this doc reference is stale but non-breaking. |
+| `docs/architecture/python_on_the_graph.md` | 50 | `.megaplan/chains/scratchpad-emitter.yaml` | **Historical/Stale.** The chain spec still exists in `.megaplan/chains/` but the epic is complete. If chain specs move, this link breaks. **This is the only committed doc that references a `.megaplan/chains/*.yaml` path.** |
+| `docs/historical/frontier-hardening-runbook.md` | 32 | `.megaplan/ideas/frontier-hardening/` | **Historical.** Says "Use the committed sprint ideas under `.megaplan/ideas/frontier-hardening/`". If those move, this recommendation becomes stale. Actually the ideas are NOT committed — they're gitignored — so this is already misleading. |
+| `docs/templates/decorator_template_emitter_completion.md` | 280–281 | `.megaplan/plans/...`, `.megaplan/ideas/scratchpad-emitter/...` | **Historical.** Post-hoc completion report referencing runtime artifacts and completed epic. |
+| `docs/local_agent_text_to_graph_blockers.md` | 52–53 | `.megaplan-worktrees/arnold-paf`, `~/Documents/megaplan` | **Machine-local.** Not path-dependent. |
+| `docs/templates/decorator_template_emitter_completion.md` | 38 | `.megaplan-worktrees/phase-3-5/` | **Machine-local.** |
+| `artifacts/m4/m4_after.txt` | 14–30 | `.megaplan-worktrees/structural-decomp/...` | **Historical test output.** Already stale. |
+| `docs/structure_cleanup/megaplan_results/*.txt` | multiple | Proposed move paths, classification tables | **Self-referencing cleanup artifacts.** These propose moves; they'd need updating if the moves actually execute, but they're reference docs for planning. |
+
+**Key finding:** Only `docs/architecture/python_on_the_graph.md` has a committed cross-reference to a `.megaplan/chains/*.yaml` path that would break if those files moved. Everything else under `.megaplan/` is gitignored/local.
+
+---
+
+### Q3: Documents Already Covering `.megaplan` Material Under `docs/megaplan_chains/`
+
+The `docs/megaplan_chains/` subtree already covers these epics. None of them duplicate `.megaplan/` content — they were authored directly in `docs/`:
+
+| Subdirectory | Has `chain.yaml` | Status | Covers `.megaplan` material? |
+|---|---|---|---|
+| `node_resolution_epic/` | ✅ Yes | Active (tests import from it) | ✅ Testing, chain, fixture data |
+| `excellence_epic/` | ✅ Yes | Active (m1-m7, in progress) | ✅ Milestone docs, handoffs, prep |
+| `readable_ready_templates/` | ✅ Yes | Active (cloud operator loops) | ✅ Chain spec, ideas, README |
+| `pristine_cleanup/` | ✅ Yes | Active (2 milestones) | ✅ Ideas, chain, results |
+
+**Gap — NOT covered in `docs/megaplan_chains/`:**
+
+| `.megaplan/` Source | Tracked? | Status | Covered in `docs/`? |
+|---|---|---|---|
+| `.megaplan/briefs/*` (40+ files) | ❌ Gitignored | Various (active/completed) | ❌ **No.** Only referenced by name in cleanup docs. |
+| `.megaplan/chains/frontier-hardening.yaml` | ❌ Gitignored | COMPLETE | ❌ **No.** Only ref is `docs/architecture/python_on_the_graph.md:50` which links to `.megaplan/chains/scratchpad-emitter.yaml` |
+| `.megaplan/chains/scratchpad-emitter.yaml` | ❌ Gitignored | COMPLETE | ❌ **No.** |
+| `.megaplan/ideas/frontier-hardening/*` (5 files) | ❌ Gitignored | COMPLETE | ❌ **No.** Only `docs/historical/frontier-hardening-runbook.md:32` points to them. |
+| `.megaplan/ideas/scratchpad-emitter/*` (13 files) | ❌ Gitignored | COMPLETE | ❌ **No.** |
+| `.megaplan/tickets/*.md` (3 files) | ✅ 1 tracked | Open | ❌ **No.** |
+| `.megaplan/schemas/*.json` (17 files) | ❌ Gitignored | Active | ❌ **No.** |
+
+**Bottom line:** Four live chains live in `docs/megaplan_chains/`. Two completed chains (`frontier-hardening`, `scratchpad-emitter`) plus all briefs, ideas, tickets, schemas still live in `.megaplan/` (mostly gitignored).
+
+---
+
+### Q4: If Adding `.megaplan/README.md`, What Crosslinks Should It Include?
+
+Since `.megaplan/` is mostly **gitignored runtime state** with only 1 tracked ticket file, a `.megaplan/README.md` should primarily serve as a **signpost** to the canonical authored material. It should crosslink:
+
+```markdown
+# `.megaplan/` — Runtime State (do not commit)
+
+This directory is gitignored. It holds runtime-generated artifacts:
+megaplan plan executions, telemetry, logs, and chain state.
+
+## Tracking authored material
+
+Authored design material (briefs, chain specs, ideas) does NOT live here.
+See these tracked locations instead:
+
+- **`docs/megaplan_chains/`** — All active chain specs, milestone docs, ideas, and tests
+  - `node_resolution_epic/` — Node resolution acceptance tests and fixtures
+  - `excellence_epic/` — Sprint M1–M7 excellence chain
+  - `readable_ready_templates/` — Production-parity template chain (cloud operator)
+  - `pristine_cleanup/` — Pristine cleanup chain
+  - *(Completed chains `frontier-hardening` and `scratchpad-emitter` still in `.megaplan/chains/` — see cleanup plan)*
+
+- **`.megaplan/tickets/`** — Tech-debt tickets (force-tracked, 1 file committed)
+
+- **`docs/structure_cleanup/`** — Reorganization planning docs analyzing this directory
+
+## Symlink note
+
+If `.megaplan/briefs`, `.megaplan/chains`, or `.megaplan/ideas` exist as
+symlinks to `docs/megaplan_chains/...`, they provide backward-compatibility
+for the megaplan engine.
+```
+
+**Crosslinks it should include:**
+1. `docs/megaplan_chains/` (with sub-list of each chain directory)
+2. `docs/structure_cleanup/` (for the analysis/classification work)
+3. `.megaplan/tickets/` (the only tracked content here)
+4. `docs/architecture/python_on_the_graph.md` (only doc that references a `.megaplan/chains/` path)
+5. `docs/historical/frontier-hardening-runbook.md` (points into `.megaplan/ideas/`)
+
+---
+
+### Prioritized Hazards (Ranked)
+
+| Priority | Hazard | Impact | Files Requiring Updates |
+|---|---|---|---|
+| 🔴 **1** | **Test imports break** if `node_resolution_epic/testing/` package moves | 3 test files fail to import (`ModuleNotFoundError`) | `tests/test_sprint_a_acceptance.py`, `test_sprint_b_acceptance.py`, `test_sprint_c_acceptance.py` |
+| 🔴 **2** | **Cloud operator scripts** hardcode `/workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml` | Both `cloud_operator_loop.sh` and `cloud_recovery_loop.sh` silently fail on Docker | `scripts/megaplan_cloud_operator_loop.sh` (lines 4, 8), `scripts/megaplan_cloud_recovery_loop.sh` (lines 4, 7, 8, 13) |
+| 🟠 **3** | **Chain spec internal `idea:` paths** — 3 `chain.yaml` files contain relative/absolute paths to sibling `.md` files | `megaplan chain start` fails to find milestone docs; affects 3 live chains | `docs/megaplan_chains/excellence_epic/chain.yaml` (9 internal `idea:` fields), `readable_ready_templates/chain.yaml` (9 `idea:` fields ABSOLUTE Docker paths), `pristine_cleanup/chain.yaml` (2 `idea:` fields) |
+| 🟠 **4** | **Test fixture paths** resolve relative to repo root | 2 test files fail to find fixture JSON | `tests/test_porting_provenance.py` (line 17), `tests/test_porting_emitter.py` (lines 1310–1311) |
+| 🟠 **5** | **Chain spec test** resolves `ROOT / "docs/..." | 1 test fails | `tests/test_megaplan_chain_spec.py` (lines 9–10) |
+| 🟡 **6** | **`docs/architecture/python_on_the_graph.md:50`** links to `.megaplan/chains/scratchpad-emitter.yaml` | Doc has a broken cross-reference if that file moves | `docs/architecture/python_on_the_graph.md` (line 50) |
+| 🟡 **7** | **`pyproject.toml`** pytest marker docs reference | Developer-facing, low operational impact | `pyproject.toml` (lines 98–100) |
+| 🟡 **8** | **Chain operator docs** (`START_HERE.md`, `README.md` in each chain) contain CLI commands | Operators following written instructions encounter `No such file` | `docs/megaplan_chains/excellence_epic/START_HERE.md` (lines 9, 81), `readable_ready_templates/README.md` (lines 92, 102, 111, 122, 137, 171) |
+| ⚪ **9** | **Historical doc crosslinks** — stale but non-breaking | Misleading but not blocking | `docs/historical/frontier-hardening-runbook.md:32`, `docs/templates/decorator_template_emitter_completion.md:280-281`, `docs/local_agent_text_to_graph_e2e.md:13` |
+
+---
+
+### Hazards by Move Scenario
+
+**If you move `docs/megaplan_chains/node_resolution_epic/`** (e.g., rename or flatten):
+→ Breaks **3 test imports**, **2 test fixture paths**, **pyproject.toml marker docs**
+
+**If you move `docs/megaplan_chains/readable_ready_templates/`**:
+→ Breaks **2 cloud operator scripts** (default SPEC path), **1 chain spec test**, **1 chain.yaml's internal absolute paths**, **operator README.md commands**
+
+**If you move `docs/megaplan_chains/excellence_epic/`**:
+→ Breaks **chain.yaml internal relative paths** (9 idea: fields), **START_HERE.md CLI commands**, **internal crosslinks within milestone docs**
+
+**If you move `.megaplan/chains/` or `.megaplan/ideas/` content into `docs/`**:
+→ Breaks **`docs/architecture/python_on_the_graph.md:50`** (only committed cross-reference)
+→ Breaks **`docs/historical/frontier-hardening-runbook.md:32`** (stale but documented)
+→ The `.megaplan/` files are gitignored, so the move requires `git add -f` or a new tracked location
+→ **Recommended mitigation:** Create symlinks (`.megaplan/chains → ../../docs/megaplan_chains/chains/`) as the `01-tracked-megaplan-contract.txt` proposes (line 143–148)

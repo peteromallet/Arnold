@@ -1,0 +1,129 @@
+Now I have the full picture. Here's the complete audit.
+
+---
+
+## Hidden Local/Config Directories — Audit Report
+
+### 1. Tracked vs. Ignored State
+
+| Directory | `.gitignore` Entry | Tracked? | Total Files | Nature |
+|---|---|---|---|---|
+| **`.agents/`** | ✅ Line 26 — `.agents/` | **Ignored** | 1 file | Agent skill definition |
+| **`.claude/`** | ✅ Line 27 — `.claude/` | **Ignored** | 6 files | Claude skill + local settings |
+| **`.desloppify/`** | ✅ Line 28 — `.desloppify/` | **Ignored** | ~100+ files | Tool runtime state + review artifacts |
+| **`.pytest_cache/`** | ✅ Line 3 — `.pytest_cache/` | **Ignored** | 5 files | Standard test cache |
+| **`.venv/`** | ✅ Line 1 — `.venv/` | **Ignored** | ~thousands | Python virtualenv |
+| **`.importlinter/`** | ❌ **NOT in `.gitignore`** | **TRACKED** | (it's a **file**, not a dir) | 21-line INI lint config |
+
+**Critical finding:** `.importlinter` is a **file** at root, not a directory. The task's `/.` suffix is misleading. It contains one `forbidden` import contract (IR core must not import porting/Layer-2 modules). The `.gitignore` does have `.import_linter_cache/` (with underscores) on line 5 — that's a separate cache directory that doesn't currently exist.
+
+---
+
+### 2. Are Tracked Files in Hidden Dirs Intentional?
+
+**Yes, one:** `.importlinter` (the file) is intentionally tracked. It's a project-wide linting configuration consumed by `import-linter` in CI. The previous cleanup audit (`docs/structure_cleanup/results/10-deletion-risk.txt`) lists it as a **permanent root entry**. The megaplan docs (`excellence_epic/handoff-m3.md`) also reference it as a committed config file.
+
+No files inside `.agents/`, `.claude/`, `.desloppify/`, `.pytest_cache/`, or `.venv/` are tracked — all are properly gitignored.
+
+---
+
+### 3. Is Documentation Enough?
+
+**No — it's thin.** Here's what exists:
+
+| Directory | Documented in | Quality |
+|---|---|---|
+| `.agents/` | `agents/README.md` — *"local agent skill/config files."* | Minimal but adequate |
+| `.claude/` | `agents/README.md` — *"local or force-tracked Claude skill/config files."* | Minimal but adequate |
+| `.desloppify/` | **No root-level docs.** Only mentioned in megaplan briefs under `docs/`. | **Missing** |
+| `.pytest_cache/` | Self-documenting (`README.md` inside says "do not commit") | Adequate |
+| `.venv/` | Standard Python convention | Adequate |
+| `.importlinter` | Not in root README. Only in `docs/megaplan_chains/excellence_epic/` and structure cleanup docs. | **Missing from root** |
+
+**Gap:** A new contributor (or agent) has no way to learn:
+- What `.desloppify/` is and why ~100 files live there.
+- Why `.importlinter` (a dotfile config) is committed at root vs. moved to `pyproject.toml`.
+
+---
+
+### 4. Deletion Risks & Recommendations (by approval level)
+
+#### 🟢 **Safe to delete anytime** (pure local cache, auto-regenerable)
+
+| Path | Risk | Regeneration cost |
+|---|---|---|
+| `.pytest_cache/` | Zero. 3 stale failed-test entries (`lastfailed`). | `pytest` recreates on next run. |
+| `.venv/` | Zero if `uv.lock` + `pyproject.toml` are intact. | `uv sync` (~1–5 min) |
+
+#### 🟡 **Delete only with explicit approval** (contains config or audit artifacts)
+
+| Path | Why it's risky | What you lose |
+|---|---|---|
+| `.desloppify/subagents/runs/` | 3 run directories with **60 batch prompts**, **60 result files**, **3 run logs**, **3 run summaries**, **3 holistic_issues_merged.json**. These are the raw output of desloppify subjective-code-quality review batches. | Irrecoverable review detail unless re-scanned (takes hours/subagent cost). |
+| `.desloppify/review_packets/` | 3 `holistic_packet_*.json` files — immutable review snapshots used for reproducible retries. | Ability to retry specific batches without full re-scan. |
+| `.desloppify/config.json` | Custom desloppify config: target score (95), exclusions (vendor/), ignores, commit tracking settings. | **Config is not regenerable** — would need manual re-creation. |
+| `.desloppify/plan.json` | **7,019 lines, 380 KB** — the full living execution plan queue with 80+ ordered review items. | **Major loss.** Would require `desloppify scan` + `plan triage` from scratch. |
+
+#### 🔴 **Keep permanently / move before deleting**
+
+| Path | Reason |
+|---|---|
+| `.importlinter` | **Tracked file.** CI lint config. Move to `pyproject.toml` first if you want to delete. |
+| `.agents/skills/desloppify/SKILL.md` | Agent skill definition for the desloppify tool (318 lines of instructions). Used by Codex/agents. |
+| `.claude/skills/vibecomfy/SKILL.md` | Core VibeComfy agent skill (597 lines). Used by Claude Desktop. |
+| `.claude/settings.local.json` | Permission allow-list for local shell commands (subagent launcher, file ops). |
+
+---
+
+### 5. Exact Recommended Actions
+
+**Delete immediately (no approval needed):**
+```
+.pytest_cache/
+```
+
+**Delete immediately BUT re-create venv after:**
+```
+.venv/
+```
+(Re-run `uv sync` afterward.)
+
+**Trim stale run artifacts (safe, can be re-generated):**
+```
+.desloppify/subagents/runs/20260515_214126/   # oldest run
+.desloppify/subagents/runs/20260515_221108/   # middle run
+.desloppify/subagents/runs/20260515_222808/   # most recent (dry-run)
+```
+Keep only the latest if actively iterating, or keep all if historical auditing matters.
+
+**Keep as-is:**
+```
+.importlinter                          # tracked project config
+.agents/                               # agent skills
+.claude/                               # Claude skills + settings
+.desloppify/config.json                # non-regenerable config
+.desloppify/plan.json                  # active execution plan
+.desloppify/review_packets/            # review snapshots
+.desloppify/state-python.json          # scan state
+```
+
+**Documentation improvements (recommended, no file changes):**
+1. Add a line in root `README.md` or `CONTRIBUTING.md`:
+   - `.desloppify/` — *"Desloppify code-health tool runtime state, config, and review artifacts. Gitignored."*
+   - `.importlinter` — *"Import-linter config enforcing IR-core dependency boundaries. Tracked."*
+2. Consider moving `.importlinter` config into `pyproject.toml` as `[tool.importlinter]` to reduce root dotfiles.
+
+---
+
+### Summary Table
+
+| Path | Status | Size | Regenerable? | Risk if deleted | Action |
+|---|---|---|---|---|---|
+| `.pytest_cache/` | Ignored | ~few KB | ✅ Yes (instant) | None | 🟢 Delete |
+| `.venv/` | Ignored | ~hundreds MB | ✅ Yes (uv sync) | None with lockfile | 🟢 Delete + `uv sync` |
+| `.desloppify/subagents/runs/` | Ignored | ~MB | ⚠️ Partially (costly re-scan) | Loss of review history | 🟡 Keep/trim with approval |
+| `.desloppify/config.json` | Ignored | 1.2 KB | ❌ No | Config lost | 🔴 Keep |
+| `.desloppify/plan.json` | Ignored | 380 KB | ❌ No (re-scan needed) | Execution queue lost | 🔴 Keep |
+| `.agents/` | Ignored | ~15 KB | ❌ No (skill doc) | Agent capability lost | 🔴 Keep |
+| `.claude/` | Ignored | ~42 KB | ❌ No (skill doc + settings) | Agent capability lost | 🔴 Keep |
+| `.importlinter` | **Tracked** | 519 B | ❌ No (CI config) | CI lint step breaks | 🔴 Keep (committed) |

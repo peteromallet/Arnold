@@ -1,0 +1,87 @@
+Here is the complete analysis.
+
+---
+
+## Audit Results: `_agent_edit_debug.py`
+
+### File Inventory
+
+| File | LOC | Role | Importers |
+|---|---|---|---|
+| `vibecomfy/_agent_edit_debug.py` | 504 | **Canonical implementation** (all logic, `add_debug_subcommands`, `dispatch`, `main`) | 3 |
+| `vibecomfy/commands/debug.py` | 17 | CLI wrapper — imports `add_debug_subcommands`, `dispatch` from root | 0 (leaf) |
+| `scripts/vibecomfy_debug.py` | 14 | Standalone entry point — imports `main` from root | 0 (leaf) |
+| `tests/test_cli_debug.py` | 191 | Tests — imports `vibecomfy._agent_edit_debug` directly at lines 143, 181 to monkeypatch | test-only |
+| **`vibecomfy/cli/_debug.py`** | **504** | **Exact duplicate** of root file | **0 importers — dead code** |
+
+### 1. Canonical Home
+
+**`vibecomfy/commands/_agent_edit_debug.py`** — already prescribed by `docs/plans/revised_plan.md` Step 8.
+
+Rationale:
+- `commands/` is the package for CLI subcommand implementations. `commands/debug.py` is the sole consumer of `add_debug_subcommands()` and `dispatch()`.
+- The `_` prefix signals "private module, not public API" — reinforced by being inside `commands/` rather than at the package root.
+- The alternative (`scripts/`) is wrong: scripts are for standalone runnables, not modules imported by the main CLI.
+
+`vibecomfy/cli/_debug.py` is an orphaned duplicate with zero importers — **delete it**.
+
+### 2. Root Import Path: Public or Accidental?
+
+**Accidental.** The `_` prefix already marks it private, but root-level placement was a historical mistake. Three internal consumers import it:
+- `commands/debug.py:5` — `from vibecomfy._agent_edit_debug import add_debug_subcommands, dispatch`
+- `scripts/vibecomfy_debug.py:10` — `from vibecomfy._agent_edit_debug import main`
+- `tests/test_cli_debug.py:143,181` — `import vibecomfy._agent_edit_debug as debug`
+
+None are external. All three can migrate.
+
+### 3. Required Import Migrations (for deletion)
+
+**Step A — Move file + update all importers:**
+1. **Create** `vibecomfy/commands/_agent_edit_debug.py` (copy of root file)
+2. **Edit** `vibecomfy/commands/debug.py` line 5:
+   ```
+   -from vibecomfy._agent_edit_debug import add_debug_subcommands, dispatch
+   +from vibecomfy.commands._agent_edit_debug import add_debug_subcommands, dispatch
+   ```
+3. **Edit** `scripts/vibecomfy_debug.py` line 10:
+   ```
+   -from vibecomfy._agent_edit_debug import main
+   +from vibecomfy.commands._agent_edit_debug import main
+   ```
+4. **Edit** `tests/test_cli_debug.py` lines 143, 181:
+   ```
+   -import vibecomfy._agent_edit_debug as debug
+   +import vibecomfy.commands._agent_edit_debug as debug
+   ```
+
+**Step B — Shim (backward compat, can be deleted in next major release):**
+5. **Replace** `vibecomfy/_agent_edit_debug.py` with:
+   ```python
+   from vibecomfy.commands._agent_edit_debug import *  # noqa
+   ```
+
+**Step C — Delete dead duplicate:**
+6. **Delete** `vibecomfy/cli/_debug.py` (orphaned duplicate, 0 importers)
+
+### 4. Verification Commands
+
+```bash
+# 1. All imports resolve
+python -c "from vibecomfy.commands._agent_edit_debug import main, add_debug_subcommands, dispatch; print('commands OK')"
+python -c "from vibecomfy._agent_edit_debug import main; print('shim OK')"
+
+# 2. CLI subcommand still works
+python -m vibecomfy debug log 2>&1 | head -5
+
+# 3. Standalone script still works
+python scripts/vibecomfy_debug.py log 2>&1 | head -5
+
+# 4. Tests pass
+uv run pytest tests/test_cli_debug.py -v
+
+# 5. No remaining import of old path (besides shim)
+grep -rn "vibecomfy\._agent_edit_debug" vibecomfy/ scripts/ tests/ --include="*.py"
+
+# 6. Confirm dead duplicate gone
+test ! -f vibecomfy/cli/_debug.py && echo "deleted"
+```

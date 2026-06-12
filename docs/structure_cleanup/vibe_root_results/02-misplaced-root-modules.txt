@@ -1,0 +1,81 @@
+Now I have the full picture. Let me assemble the analysis.
+
+---
+
+## Root-File Audit: Move Candidates
+
+**Root files discovered** (23 total):
+
+| # | File | Lines | Public API? |
+|---|------|-------|-------------|
+| 1 | `__init__.py` | 82 | ✅ package root |
+| 2 | `workflow.py` | 1465 | ✅ core domain types |
+| 3 | `handles.py` | 31 | ✅ Handle type |
+| 4 | `artifacts.py` | 70 | ✅ Artifact types |
+| 5 | `errors.py` | 284 | ✅ exception hierarchy (cross-cutting) |
+| 6 | `extras.py` | 117 | ✅ plugin loader (exported via `__init__`) |
+| 7 | `cli_loader.py` | 60 | ✅ `load_workflow_any` (exported via `__init__`) |
+| 8 | `utils.py` | 70 | ✅ `find_repo_root` (exported via `__init__`) |
+| 9 | `fetch.py` | 149 | ~ model downloading (4 commands import it) |
+| 10 | `templates.py` | 984 | ~ template binding (24 importers, high churn) |
+| 11 | `local_library.py` | 352 | ❌ TOML config resolution |
+| 12 | `checks.py` | 305 | ❌ structural audit checks |
+| 13 | `comfy_command.py` | 30 | ❌ ComfyUI discovery |
+| 14 | `fixtures.py` | 288 | ❌ smoke fixture management |
+| 15 | `workflow_context.py` | 47 | ❌ context var binding |
+| 16 | `custom_node_refs.py` | 159 | ❌ node-ref normalization |
+| 17 | `metadata.py` | 107 | ❌ heuristics (prompt/seed/step keys) |
+| 18 | `scratchpad_loader.py` | 103 | ❌ scratchpad loading |
+| 19 | `node_packs_lockfile.py` | ~60 | ❌ lockfile types |
+| 20 | `node_packs.py` | 465 | ❌ pack definitions |
+| 21 | `_agent_edit_debug.py` | 504 | ❌ private debug CLI |
+| 22 | `_helper_resolve.py` | 3 | ❌ re-export shim → `_compile._resolve` |
+| 23 | `_workflow_helpers.py` | 3 | ❌ re-export shim → `_compile._helpers` |
+
+---
+
+### Move-Candidate Table
+
+| Old Path | Proposed Path | Why | Importing Files (count) | Risk | Tests to Run |
+|----------|---------------|-----|------------------------|------|-------------|
+| `_agent_edit_debug.py` | `commands/_debug_agent_edit.py` | 504-line debug CLI tool, wholly internal to `commands/debug.py` | 1 | **Low** — private underscore name, single consumer | `test_comfy_nodes_agent_edit.py`, `test_comfy_nodes_agent_backend_spine.py` |
+| `fixtures.py` | `testing/_fixture_management.py` | Smoke-fixture management belongs with testing infrastructure | 0 (called from scripts only) | **Low** — no in-tree importers, entry is `python -m` | `test_fixture_provider.py` |
+| `comfy_command.py` | `runtime/_comfy_command.py` | ComfyUI command/process discovery is a runtime detail | 4 (schema, runtime, nodes) | **Low** — 30 lines, 4 mechanical import updates | `test_runtime_session_config.py`, `test_runtime_run.py` |
+| `scratchpad_loader.py` | `loader/_scratchpad.py` | Scratchpad loading is a loader implementation detail | 3 (cli_loader, workbench, library) | **Low** — 3 importers, straightforward move | `test_porting_edit_ops.py`, `test_cli_port.py` |
+| `checks.py` | `commands/_checks.py` | Structural audit checks are a CLI command implementation | 1 (`commands/check.py`) | **Low** — single importer, private name | `test_cli_doctor_contract_validate.py` |
+| `workflow_context.py` | `_compile/_workflow_context.py` | Context-var binding for workflow compilation | 2 (templates.py, blocks) | **Low** — 2 importers, 47 lines | `test_workflow_core.py` |
+| `metadata.py` | `analysis/_metadata.py` | Prompt/seed/metadata heuristics belong with analysis | 3 (emitter, templates, lowering) | **Low** — small file, 3 importers | analysis tests |
+| `_helper_resolve.py` | **Eliminate** — inline into `workflow.py` | 3-line re-export shim; `workflow.py` should import `_compile._resolve` directly | 1 (workflow.py) | **Low** — delete shim, update one import | `test_workflow_core.py` |
+| `_workflow_helpers.py` | **Eliminate** — inline into `workflow.py` | Same pattern as above | 1 (workflow.py) | **Low** — same as above | `test_workflow_core.py` |
+| `custom_node_refs.py` | `node_packs/_custom_refs.py` | Custom node reference normalization belongs with node packs | 6 (templates, emitter, porting, etc.) | **Moderate** — 6 importers, but mechanical | `test_templates_module.py`, node_packs tests |
+| `node_packs_lockfile.py` | `node_packs/_lockfile.py` | Lockfile types are node-pack internals | 13 (porting, runtime, commands) | **Moderate** — 13 importers, but trivial rename | `test_nodes_lock.py`, `test_plugin_discovery.py` |
+| `node_packs.py` | `node_packs/_core.py` | Pack definitions belong inside the `node_packs` package | 15+ (porting, emitter, commands) | **Moderate** — 15+ mechanical updates | `test_comfy_nodes.py`, `test_cli_port.py` |
+| `local_library.py` | `registry/_local_library.py` | TOML-based path config is a registry concern | 7 (fetch, cli, runtime, node_packs, commands) | **Moderate** — 7 importers, no API breakage | `test_runtime_session_config.py` |
+
+---
+
+### Keep at Root (no move recommended)
+
+| File | Rationale |
+|------|-----------|
+| `__init__.py` | Package root, obviously |
+| `workflow.py` | Core domain types (VibeWorkflow, VibeNode…) — exported from `__init__`, ~50 importers |
+| `handles.py` | Core domain type — exported from `__init__`, 13+ importers |
+| `artifacts.py` | Public Artifact types — exported from `__init__`, ops/image+video import it |
+| `errors.py` | Cross-cutting exception hierarchy, imported everywhere |
+| `extras.py` | Plugin system entry point — exported from `__init__` |
+| `cli_loader.py` | `load_workflow_any` — exported from `__init__`, 12 importers |
+| `utils.py` | `find_repo_root` — exported from `__init__`, 24 importers |
+| `fetch.py` | Model fetching — borderline, but public CLI commands depend on it as a broad boundary; moving to `registry/_fetch.py` would be acceptable but low priority |
+| `templates.py` | 984 lines, 24 importers across generated nodes, porting, and core — moving here would cause **major churn** with little semantic gain; it's already a "broad public boundary" |
+
+---
+
+### Summary of Impact
+
+- **13 move candidates** (2 are elimination candidates)
+- **Low-risk moves** (~1–4 importers each): 9 files
+- **Moderate-risk moves** (6–15 importers each): 4 files
+- **Keepers**: 10 files (including `__init__`)
+- **Total test suite to run after all moves**: ~20 test files covering ports, templates, runtime, node_packs, and workflow
+- **No public API breakage**: zero renames affect names exported from `vibecomfy.__init__`

@@ -1,0 +1,141 @@
+Now I have a comprehensive view of all 12 files. Here's the full audit:
+
+---
+
+## Agent Module Shape Audit — `vibecomfy/comfy_nodes/agent/`
+
+### Files: Classification & Assessment
+
+| File | Lines | Role | Verdict |
+|------|-------|------|---------|
+| **`edit.py`** | ~4625 | Core orchestrator: state, stage pipeline, batch-REPL, message synthesis | **Keep** (large but internally coherent) |
+| **`session.py`** | ~2608 | Session state machine: turn alloc, baseline tracking, hash persistence, V2 accept evidence | **Keep** (large but state logic is tightly coupled) |
+| **`contracts.py`** | ~1437 | Pure data types: FailureKind, TurnContext, StageResult, TurnOutcome, ApplyEligibility, envelope builders | **Keep** / **consider split** for message builders (see below) |
+| **`provider.py`** | ~1189 | Provider integration: route resolution, runtime loading, message building, response normalization, retries | **Keep** / **extract** message builders |
+| **`runtime.py`** | ~660 | Real-model runtime adapter: DeepSeek/Arnold subprocess dispatch, readiness probes | **Keep** |
+| **`runtime_code.py`** | ~510 | Sandboxed code execution engine (subprocess), embedded worker source | **Keep** |
+| **`routes.py`** | ~742 | aiohttp route handlers, delegates to edit/session/provider | **Keep** — has **duplicate** function |
+| **`diagnostics.py`** | ~437 | Pipeline validation: validate/lower/queue stage diagnostics | **Keep** |
+| **`audit.py`** | ~403 | Audit artifact writing, credential redaction | **Keep** — has **duplicate** trivial utility |
+| **`fixture_provider.py`** | ~287 | Test double for runtime adapter (deterministic, file-backed) | **Keep** |
+| **`gates.py`** | ~184 | Gate lifecycle: init, update, derive, queue gate | **Keep** |
+| **`worker.py`** | ~222 | Subprocess entry point for Arnold dispatch | **Keep** |
+
+---
+
+### Duplicate Functionality Found
+
+**1. `_extract_rebaseline_recovery` — duplicated in two files (functionally identical)**
+
+- **`contracts.py`** lines 828–855: `_extract_rebaseline_recovery(response)` — used by `_public_error_outcome_from_response` and `failure_outcome_payload`
+- **`routes.py`** lines 147–177: `_extract_failure_recovery(response)` — used by `_validated_failure_response` and `_promote_accept_rebaseline_recovery`
+
+Both walk the same nesting order: top-level → outcome → debug contexts, looking for `rebaseline_recovery` in `agent_failure_context.issues`. The `routes.py` version is named differently and lives in a different file but the logic is byte-identical.
+
+**2. `_now()` timestamp utility — duplicated in two files**
+
+- **`session.py`** line 102–103: `def _now() -> str: return time.strftime(...)`
+- **`audit.py`** line 42–43: `def _now() -> str: return time.strftime(...)`
+
+Identical implementation. Trivial but unnecessary duplication.
+
+**3. `_extract_json_object` — near-identical in two files**
+
+- **`provider.py`** lines 110–124: parses stripped text, handles markdown fences, raises `MalformedModelJSON`
+- **`worker.py`** lines 48–68: same structure but additionally uses `raw_decode` for trailing-data resilience and raises generic JSON errors
+
+These are *not* clean to unify because `worker.py` has the more robust `raw_decode` fallback and must be self-contained (subprocess). Acceptable as-is.
+
+**4. Route normalization — overlapping logic in provider.py and runtime.py**
+
+- **`provider.py`** lines 486–548 `_resolve_agent_route(route)`: maps route strings, adds ToS/guidance/granular browser-key policy
+- **`runtime.py`** lines 117–121 `_normalize_route(route)`: maps auto/anthropic/codex → "arnold"
+- **`runtime.py`** lines 135–147 `_agent_id_for_route(route)`: maps to Arnold dispatch agent IDs ("hermes", "codex", "claude")
+- **`runtime.py`** lines 400–407 `_requested_route(route)`: normalizes claude→anthropic, codex→openai-codex
+
+These serve different concerns (UI policy vs. dispatch routing) so the overlap is nominal, not duplicated logic — but it means a route change must be made in 3–4 places.
+
+---
+
+### Compatibility Shims
+
+| Location | Shim | Notes |
+|----------|------|-------|
+| `runtime.py` L644 `get_agent_status()` | **Compatibility wrapper** around `readiness()` | Docstring says "Prefer readiness(); this legacy shape remains for callers that still expect status-like fields." |
+| `fixture_provider.py` L269 `get_agent_status()` | Same shim — wraps `readiness()` | Mirrors runtime.py exactly |
+| `provider.py` L679 `_call_runtime()` | Checks `run_agent_turn`, fallback to legacy `run` | Two-tier backward compat |
+| `provider.py` L700 `_call_delta_runtime()` | Checks `run_agent_turn_delta`, fallback `run_delta_agent_turn`, fallback `run` | Three-tier |
+| `provider.py` L899 `_call_batch_runtime()` | Checks `run_agent_turn_batch`, fallback `run_agent_turn`, fallback `run` | Three-tier |
+| `runtime.py` L128 `_ROUTE_TO_AGENT_ID` | Comments note codex/claude not registered yet; dispatch raises `LookupError` | Planned-forward adapters |
+
+**All shims are actively used** — the `_call_*` fallbacks allow switching between runtime module implementations (real model, fixture provider, future backends) without changing `provider.py`. The `get_agent_status()` shim is a thin delegation. **None should be removed.**
+
+---
+
+### Concrete Smallest Safe Cleanup Batch
+
+**Priority 1 — Remove duplication (no behavior change):**
+
+1. **Delete `_extract_rebaseline_recovery` from `routes.py`**, import it from `contracts.py` instead.
+   - `routes.py` lines 147–177 → replace with `from .contracts import _extract_rebaseline_recovery`
+   - Rename calls from `_extract_failure_recovery` → `_extract_rebaseline_recovery`
+
+2. **Delete `_now()` from `audit.py`**, import it from `session.py`.
+   - `audit.py` line 42–43 → `from .session import _now`
+   - No rename needed (same name, same implementation)
+
+**Priority 2 — Low-risk extract (improves cohesion):**
+
+3. **Extract message builders from `provider.py` into `contracts.py`** (or a new `messages.py`):
+   - `build_messages()` (lines 390–421)
+   - `build_delta_messages()` (lines 424–453)
+   - `build_batch_messages()` (lines 182–360)
+   - `build_delta_messages()` (lines 424–453)
+   - `ensure_sentence_message()` (lines 141–149)
+   - `normalize_user_message()` (lines 135–138)
+   - `extract_batch_fence()` (lines 152–179)
+   - These are pure formatting functions with no dependency on `provider.py` internals (they don't touch `_load_arnold_runtime`, route resolution, credentials, etc.)
+   - They only import from `contracts.py` and `audit.py` already
+
+   This would take `provider.py` from ~1189 lines to ~550 lines and give the package a clean "message protocol" module.
+
+**Skipped — Not worth the churn:**
+- Unifying route normalization across `provider.py` / `runtime.py` — different concerns, would require touching both external interfaces
+- Merging `_extract_json_object` — subprocess isolation constraint
+- Splitting `edit.py` — tight coupling, and extracting message formatting (another ~500 lines) would just create another large file without improving actual dependency structure
+
+---
+
+### Tests Likely to Cover This
+
+| Module | Primary test file | Lines |
+|--------|------------------|-------|
+| **edit.py** | `tests/test_comfy_nodes_agent_edit.py` | ~8076 |
+| **session.py** | `tests/test_comfy_nodes_agent_backend_spine.py` | ~7639 |
+| **contracts.py** | `tests/test_comfy_nodes_agent_backend_spine.py` + `tests/test_agentic_contract.py` | both |
+| **provider.py** | `tests/test_comfy_nodes_agent_backend_spine.py` + `tests/test_comfy_nodes_agent_edit.py` | both |
+| **runtime.py** | `tests/test_comfy_nodes_agent_backend_spine.py` (imports `runtime` module) | ~7639 |
+| **runtime_code.py** | `tests/test_runtime_code_modes.py` | ~? |
+| **diagnostics.py** | `tests/test_comfy_nodes_agent_backend_spine.py` (imports `lower_stage_result`, `queue_stage_result`, `validate_stage_result`) | ~7639 |
+| **audit.py** | `tests/test_comfy_nodes_agent_backend_spine.py` (imports audit functions directly) | ~7639 |
+| **gates.py** | `tests/test_comfy_nodes_agent_backend_spine.py` (imports `derive_gates`, `initialize_gates`, etc.) | ~7639 |
+| **fixture_provider.py** | e2e Playwright tier (`tests/e2e/`) — not unit-tested directly | — |
+| **worker.py** | Tested indirectly through `runtime.py`'s subprocess integration path | — |
+
+The backbone test file `tests/test_comfy_nodes_agent_backend_spine.py` (7639 lines) is the primary coverage vehicle. It directly imports from every module except `fixture_provider.py` and `worker.py`. The `test_comfy_nodes_agent_edit.py` test (8076 lines) covers the high-level `handle_agent_edit` pipeline end-to-end.
+
+---
+
+### Summary
+
+**Well-abstracted:** ✅ 
+
+The package has a clean boundary — `edit.py` orchestrates, `session.py` persists, `contracts.py` provides values, `provider.py` integrates the runtime, `diagnostics.py` validates, `gates.py` manages gates, `audit.py` logs. The separation of `runtime.py` (real backend) from `fixture_provider.py` (test double) following the same interface is good design.
+
+**Only real issues:**
+
+1. **One concrete duplicated function** (`_extract_rebaseline_recovery` in `routes.py` + `contracts.py`) — easy fix
+2. **One trivial duplicated utility** (`_now()` in `audit.py` + `session.py`) — easy fix  
+3. **`provider.py` is too mixed** — message building (~500 lines) could be extracted into `contracts.py` or a dedicated `messages.py`
+
+The package does **not** need file deletions, relocations, or module splits beyond the two dedup fixes and one optional extraction.

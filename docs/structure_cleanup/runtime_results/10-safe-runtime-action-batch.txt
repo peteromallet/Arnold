@@ -1,0 +1,65 @@
+Now I have the full picture. Here's the synthesis:
+
+---
+
+## Runtime Cleanup Batch
+
+### DO NOW — Delete these (safe, zero imports remain)
+
+| File | LOC | Why |
+|------|-----|-----|
+| `runtime/server_process.py` | 57 | Dead extraction, zero imports. `_spawn_comfy_server` lifted into `server.py` long ago. |
+| `runtime/watchdog_runtime.py` | 70 | Dead extraction, zero imports. `_start_watchdog` lifted into `watchdog.py`. |
+| `runtime/preview_types.py` | 83 | **Exact duplicate** of `runtime/eval/preview_types.py` (same 83 lines, same content). Must delete to unblock eval package consolidation. |
+
+**Verify after:** `python -c "from vibecomfy.runtime.session import SessionConfig; print('OK')"` and `pytest tests/test_runtime_session_config.py -x --no-header -q`
+
+---
+
+### DO NOW — Consolidate eval modules (careful shim strategy)
+
+The `runtime/eval/` subpackage (5 files, ~700 LOC) already re-exports everything the flat files provide. The flat files shadow the package.
+
+| File | Action | After |
+|------|--------|-------|
+| `runtime/eval.py` (437 LOC) | **Delete** | `eval/__init__.py` already re-exports `compile_eval_subgraph` from `eval/core.py`. No importers need updating. |
+| `runtime/eval_plan.py` (187 LOC) | **Replace with shim** | Single line: `from vibecomfy.runtime.eval.plan import *` — preserves `test_agentic_affordances.py:25` import. |
+| `runtime/eval_prompt.py` (146 LOC) | **Replace with shim** | Single line: `from vibecomfy.runtime.eval.prompt import *` — preserves `test_agentic_affordances.py:12` import. |
+
+**Live importers unaffected:**
+- `commands/runtime.py:12` → `from vibecomfy.runtime.eval import compile_eval_subgraph` — resolves to `eval/__init__.py` after flat `eval.py` deleted
+- `tests/test_runtime_run.py` (5 sites) — same path, same resolution
+
+**Verify:**
+```bash
+# 1. Package resolves correctly
+python -c "from vibecomfy.runtime.eval import compile_eval_subgraph; print('OK')"
+
+# 2. Shim imports work
+python -c "from vibecomfy.runtime.eval_plan import plan_eval_node; print('eval_plan shim OK')"
+python -c "from vibecomfy.runtime.eval_prompt import eval_node; print('eval_prompt shim OK')"
+
+# 3. Broader smoke
+python -c "import vibecomfy; print('import vibecomfy OK')"
+pytest tests/test_runtime_run.py tests/test_runtime_session_config.py -x --no-header -q
+```
+
+**Total LOC removed this batch:** ~750
+
+---
+
+### DO LATER (next batch)
+
+1. **`session.py` god-file decomposition** — 1461 lines. Extract `EmbeddedSession` into `session/embedded.py`, `ServerSession` into `session/server.py`, shared helpers into `session/_common.py`. Keep `session.py` as a re-export barrel.
+2. **Deduplicate queue/wait/outputs** — The pattern `queue_prompt → _wait_for_server_history → _outputs_from_server_history` appears identically in `run.py:84-92`, `session.py:505-530`, and `eval/prompt.py:55-58`. Extract into `runtime/execution.py`.
+3. **`run.py:run()` and `ServerSession._run_untracked`** are ~80% identical. One should delegate to the other.
+4. **Fix broken import** in `test_agentic_affordances.py:25`: `from vibecomfy.runtime.eval import plan_eval_node` → should be `from vibecomfy.runtime.eval.plan import plan_eval_node` (currently guarded by the flat `eval_plan.py` shim, but the test path is wrong).
+
+---
+
+### DO NOT DO
+
+- ❌ Do **not** delete `eval_plan.py` / `eval_prompt.py` outright until the sole test import (`test_agentic_affordances.py`) is fixed or removed. Use shims for now.
+- ❌ Do **not** refactor `session.py` in this batch — it's a known god-file but needs careful incremental extraction with no regressions.
+- ❌ Do **not** touch `runtime/config.py` — it's already the canonical home for `SessionConfig` data class; `session.py` has a stale second copy, but fixing that requires touching the god file, which is deferred.
+- ❌ Do **not** touch `runtime/eval/core.py` or `runtime/eval/plan.py` logic — the `queue_eval_subgraph` dead code in the old `eval.py` that raised `NotImplementedError` goes away with the file deletion.

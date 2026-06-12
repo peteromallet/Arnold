@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from vibecomfy.node_packs_lockfile import LockEntry
+from vibecomfy.node_packs import LockEntry
 
 
 @pytest.fixture(autouse=True)

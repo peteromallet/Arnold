@@ -1,0 +1,56 @@
+Now I have a complete picture. Here's the first batch recommendation.
+
+---
+
+## First Batch — Safe Path-Only Moves
+
+### Exact moves
+
+| Source | Destination | Reason |
+|---|---|---|
+| `docs/frontier-hardening-runbook.md` | `docs/historical/frontier-hardening-runbook.md` | Historical completion record of past sprints (s3–s5, all LANDED). Zero external refs outside `structure_cleanup/`. |
+| `docs/sprint5_followups.md` | `docs/historical/sprint5_followups.md` | Stale sprint artifact with copy-paste header errors ("Out Of Scope For Sprint 4"). Zero external refs outside `structure_cleanup/` and `pristine_cleanup/`. |
+| `docs/template_cleanup_followups.md` | `docs/historical/template_cleanup_followups.md` | Ephemeral task tracker from 2026-05-23. Zero external refs outside `structure_cleanup/` and `pristine_cleanup/`. |
+| `docs/loose-work-consolidation-plan.md` | `docs/plans/loose-work-consolidation-plan.md` | Active consolidation plan. Only external ref is a one-way link to `docs/structural_issues.md` (which stays at root). |
+
+### Why this batch is safe
+
+- **Zero code/agent-tooling references:** No Python source under `vibecomfy/` or `scripts/` references any of these four files. No agent skills, no `chain.yaml`, no active megaplan chains.
+- **Only references come from cleanup zones:** `structure_cleanup/` (being decommissioned) and `pristine_cleanup/` (audit-only). No active documentation or tooling depends on these paths.
+- **No relative-link breakage:** `frontier-hardening-runbook.md` and `sprint5_followups.md` contain zero internal `.md` references. `template_cleanup_followups.md` references only code paths (unaffected). `loose-work-consolidation-plan.md` references `docs/structural_issues.md` — this is repo-root-relative, so it still resolves from `docs/plans/`. Already slightly broken from `docs/` root anyway.
+- **Path-only, content untouched:** No rewrites, no content changes, no README edits.
+
+### Commands to run afterward
+
+```bash
+# Execute moves
+git mv docs/frontier-hardening-runbook.md docs/historical/
+git mv docs/sprint5_followups.md docs/historical/
+git mv docs/template_cleanup_followups.md docs/historical/
+git mv docs/loose-work-consolidation-plan.md docs/plans/
+
+# Verify no broken refs in active docs
+cd docs
+grep -rn 'frontier-hardening-runbook\|sprint5_followups\|template_cleanup_followups\|loose-work-consolidation-plan' \
+  --include='*.md' . | grep -v 'structure_cleanup/' | grep -v 'pristine_cleanup/'
+
+# Sanity: confirm moved files exist
+ls -la docs/historical/frontier-hardening-runbook.md docs/historical/sprint5_followups.md \
+  docs/historical/template_cleanup_followups.md docs/plans/loose-work-consolidation-plan.md
+
+# Dry-run: git status should show only renames (4 moved, 0 modified)
+git status --short
+
+# Optionally: fix the loose-work link to be directory-agnostic
+sed -i '' 's|docs/structural_issues.md|../structural_issues.md|' docs/plans/loose-work-consolidation-plan.md
+```
+
+### What to defer to a later docs pass
+
+- **`structural_audit_2026-05.md`** → heavily cross-referenced by 17 files in `megaplan_chains/excellence_epic/` (all via relative paths like `../structural_audit_2026-05.md`). Moving it requires updating those refs — best done as part of a broader link-repair pass.
+- **`corpus_parity_allowlist.md`** → referenced by `decorator_template_emitter_completion.md` and `custom_node_wrapper_codegen.md`. Needs coordinated move.
+- **`structural_issues.md`** → referenced by 7 files including `workflow_corpus.md`, `adding_templates_models.md`, and `loose-work-consolidation-plan.md` itself.
+- **`readable_ready_template_cleanup_plan.md`** → 16 cross-references including `authoring.md` (top-level keep).
+- **`characterization_gate.md`** → debated between `docs/plans/` or `docs/testing/` — needs taxonomy decision first.
+- **All cluster moves** (agent-edit/ → subdir, runpod/ → subdir, etc.) — larger batch, some require link updates.
+- **`structure_cleanup/`** → archive to `historical/structure-cleanup/` only after this batch and all other moves are done, as it's the reference source for this cleanup.

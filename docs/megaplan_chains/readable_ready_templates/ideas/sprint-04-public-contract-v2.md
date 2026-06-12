@@ -1,6 +1,6 @@
 # Sprint 4: Public Inputs, Outputs, And Contract V2
 
-Implement Sprint 4 from `docs/readable_ready_template_cleanup_plan.md`.
+Implement Sprint 4 from `docs/templates/readable_ready_template_cleanup_plan.md`.
 
 ## Branch And Chain Constraints
 

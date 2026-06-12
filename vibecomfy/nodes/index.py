@@ -36,7 +36,3 @@ def index_runtime_nodes() -> list[RuntimeNodeRow]:
     except json.JSONDecodeError:
         return []
     return data if isinstance(data, list) else []
-
-
-def write_json(path: str | Path, data: object) -> None:
-    Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")

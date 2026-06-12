@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibecomfy.node_packs_lockfile import (
+from vibecomfy.node_packs import (
     LockEntry,
     canonical_pack_schema_projection,
     compute_schema_hash,

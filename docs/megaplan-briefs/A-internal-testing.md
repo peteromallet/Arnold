@@ -25,7 +25,7 @@ Hard criteria, all measurable:
 - [ ] **Schema output extraction.** `vibecomfy/schema/provider.py::LocalSchemaProvider` (or its construction site) extracts output type specs from snapshot data, not just inputs. The 9 `test_snapshot_api_workflows_validate_against_permissive_local_schema` failures resolve as a side effect. Verify by running that test paramset under the CI suite.
 - [ ] **`test_runtime_session.py` split into 3–5 focused files** that mirror behavior groups: config / lifecycle, embedded session, server session, run-untracked, validation. Each file < 700 LOC. No test logic changed; pure relocation. Test count stays the same.
 - [ ] **`test_cli.py` split by command group** (sources/workflows/nodes, port, doctor/contract/validate, run/runtime, models/fetch, etc.). Each file < 500 LOC.
-- [ ] **`_read_doctor_lockfile` deleted.** Patch sites in `tests/test_doctor_lockfile.py`, `tests/test_cli.py`, `tests/test_doctor_models.py` rewired to monkeypatch `vibecomfy.node_packs_lockfile.read_lockfile` directly. No behaviour change.
+- [ ] **`_read_doctor_lockfile` deleted.** Patch sites in `tests/test_doctor_lockfile.py`, `tests/test_cli.py`, `tests/test_doctor_models.py` rewired to monkeypatch `vibecomfy.node_packs.read_lockfile` directly. No behaviour change.
 - [ ] **RunPod cost cap.** New env var `VIBECOMFY_RUNPOD_BUDGET_USD` honored by `tests/smoke/_runpod_helpers.py`. When the cumulative *estimated* pod-hours × hourly rate for a single pytest invocation exceeds the budget, the next pod-provisioning call refuses (raises a clear test-failure with the running tally). Default budget: $2.00 for `--runpod`, $15.00 for `--runpod-full`. Hourly rate read from a small per-GPU-type table in the helpers module.
 - [ ] **Flaky-retry policy.** `pytest-rerunfailures` added. Policy: tests marked `runpod` or `runpod_full` retry once on failure; nothing else retries. Encode in `pyproject.toml` or `conftest.py`.
 - [ ] **Nightly RunPod smoke job.** GitHub Actions scheduled (`cron: '0 5 * * *'` UTC, i.e. ~midnight ET) that runs `uv run pytest --runpod tests/smoke/test_p1_runpod.py` against one cheap pod with `VIBECOMFY_RUNPOD_BUDGET_USD=2`. Requires `RUNPOD_API_KEY` and `VIBECOMFY_RUNPOD_STORAGE` as repo secrets. Sends a failure notification (annotate the workflow run; GitHub's default email-on-failure suffices unless the team has a Slack hook).
@@ -54,7 +54,7 @@ If those fixes are in, the snapshot-extraction work in this sprint becomes the *
 vibecomfy/schema/provider.py
 vibecomfy/schema/cache.py
 vibecomfy/commands/doctor.py            # _read_doctor_lockfile deletion
-vibecomfy/node_packs_lockfile.py        # canonical read_lockfile
+vibecomfy/node_packs/_lockfile.py       # canonical read_lockfile
 tests/conftest.py                       # add coverage opts, rerun policy
 tests/smoke/_runpod_helpers.py          # budget cap
 tests/test_runtime_session.py           # split into 3–5
@@ -66,7 +66,7 @@ pyproject.toml                          # pytest-cov, pytest-rerunfailures, cove
 scripts/regenerate_snapshots.py         # NEW
 .github/workflows/ci.yml                # NEW
 .github/workflows/nightly-runpod.yml    # NEW
-docs/testing.md                         # NEW or updated, describes the contract
+docs/testing/overview.md                # NEW or updated, describes the contract
 ```
 
 ## Constraints and non-goals

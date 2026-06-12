@@ -683,14 +683,30 @@ def _write_generated_init_stub() -> None:
     (GENERATED_DIR / "__init__.pyi").write_text("__all__: list[str]\n", encoding="utf-8")
 
 
-def _write_nodes_init(target_modules: tuple[str, ...], all_exports: dict[str, list[str]]) -> None:
-    lines = ["from __future__ import annotations", ""]
-    for module in target_modules:
-        lines.append(f"from vibecomfy.nodes.{module} import *")
-    exported = sorted({name for names in all_exports.values() for name in names})
-    lines.append("")
-    lines.append(f"__all__ = {exported!r}")
-    lines.append("")
+def _write_nodes_init(target_modules: tuple[str, ...], _all_exports: dict[str, list[str]]) -> None:
+    lines = [
+        "from __future__ import annotations",
+        "",
+        "from importlib import import_module",
+        "",
+        "from vibecomfy.nodes._generated import MODULES as _MODULES",
+        "",
+        "",
+        "def _load_exports() -> list[str]:",
+        "    exports: set[str] = set()",
+        "    for module_name in _MODULES:",
+        '        module = import_module(f"vibecomfy.nodes.{module_name}")',
+        '        for name in getattr(module, "__all__", ()):',
+        "            globals()[name] = getattr(module, name)",
+        "            exports.add(name)",
+        "    return sorted(exports)",
+        "",
+        "",
+        "__all__ = _load_exports()",
+        "",
+        "del _load_exports",
+        "",
+    ]
     (NODES_DIR / "__init__.py").write_text("\n".join(lines), encoding="utf-8")
 
 

@@ -1,0 +1,114 @@
+Now I have a thorough picture. Let me compile my analysis.
+
+---
+
+## Audit Results: Plans & Historical Status
+
+### 1. Files That Are Proper Historical Records — **Stay Unchanged**
+
+**`docs/historical/`** — All 8 files are correctly placed as archived/spiked/completed records:
+
+| File | Rationale |
+|------|-----------|
+| `README.md` | Index, correctly describes the folder |
+| `graphbuilder_spike.md` | Explicitly labeled "Historical spike" |
+| `comfyscript_spike.md` | Explicitly labeled "Historical spike" |
+| `frontier-hardening-runbook.md` | Completion record; all 5 sprints LANDED |
+| `sprint5_followups.md` | Historical sprint follow-up |
+| `template_cleanup_followups.md` | Dated 2026-05-23, captured cleanup notes |
+| `old_vibecomfy_port_rationale.md` | Explicitly labeled "Historical rationale" |
+| `agent_readable_templates_v2.md` | In the right folder, but **minor issue** (see below) |
+
+**`docs/audits/`** — All 5 files stay unchanged. These are long-lived audit reports:
+
+| File | Rationale |
+|------|-----------|
+| `README.md` | Index |
+| `CUSTOM_NODES_AUDIT.md` | Active reference for node pack tracking |
+| `m1-step1-audit.md` | Historical M1 audit baseline |
+| `m2-diff-hygiene.md` | Historical M2 diff classification |
+| `SECURITY_AUDIT_NOTES.md` | Security decisions, by-design verdicts |
+
+**`docs/structure_cleanup/`** — All files stay unchanged. These are audit records (subagent briefs, test results, status report) from the recent cleanup pass. They are correctly placed as internal documentation of what was done. `status.md` is still useful as a record.
+
+---
+
+### 2. Minor Cosmetic Issue — **One Line Change**
+
+**`docs/historical/agent_readable_templates_v2.md`** (line 3) says `**Status:** active` but lives in `docs/historical/`. This is contradictory — the folder placement overrides, but the internal status should match. Recommend changing line 3 to `**Status:** archived / superseded` to match its location.
+
+---
+
+### 3. Plan Docs That Are Stale / Should Be Moved to `docs/historical/`
+
+**`docs/plans/`** — 4 of 5 files present themselves as active/driving plans but describe completed or abandoned work:
+
+#### ✅ **`revised_plan.md`** — M0 Low-Risk Reorg Plan → **MOVE to `docs/historical/`**
+
+This is a detailed 13-step implementation plan with status tables, execution order, and validation steps. Per `docs/structure_cleanup/status.md`, the work is done:
+- `resize_schema.py` deleted ✓
+- `router.py` → `router/` package ✓
+- `port.py` deleted ✓
+- `eval.py` → `runtime/eval/` ✓
+- `node_packs.py` bundled ✓
+- `nodes/__init__.py` rewritten ✓
+- `format.py` merged into `validate.py` ✓
+- Remaining deferred items (runtime dead files like `discovery.py`) explicitly documented as deferred in `status.md`
+
+This reads as an active plan with "Execution Order" sections. It's historical now.
+
+#### ✅ **`finalize.json`** — Execution Manifest → **MOVE to `docs/historical/`**
+
+This is a task execution manifest for Units 12, 14, 15 (`_compile/` bundling, `agent/` sub-package restructuring, `loader/` move). I verified:
+- `vibecomfy/_compile/` exists with sub-modules — Unit 12 done ✓
+- `vibecomfy/comfy_nodes/agent/edit.py` exists — Unit 14 Merge 1 done ✓
+- `vibecomfy/security/agent_generated_loader.py` still exists (as shim) AND `vibecomfy/loader/agent_generated_loader.py` exists — Unit 15 done ✓
+
+All 13 tasks (T1–T13) describe completed work. This is a historical execution record.
+
+#### ✅ **`plan_v2.md`** — M3 Corpus Proof + Polish → **MOVE to `docs/historical/`**
+
+This plan describes Phase 1–3 work (corpus schema adapter, byte-identity harness, polish). I verified:
+- `tests/support/corpus_schema.py` **exists** (Phase 1 Step 1 done)
+- `tests/test_porting_edit_runexx_ltx.py` **does NOT exist** (Phase 1 Step 2 never created)
+- Phase 2+3 polish items never materialized into tests
+
+The plan was partially completed and then abandoned. Reads as current with "Execution Order" and "Validation Order" sections.
+
+#### ✅ **`loose-work-consolidation-plan.md`** → **MOVE to `docs/historical/`**
+
+Dated 2026-06-09, describes a specific consolidation branch operation (cherry-pick L1, merge L2/L3/L4, delete branches). This is a one-time execution plan. Whether it was completed or superseded, it's not a current ongoing plan.
+
+---
+
+### 4. Action List (Conservative)
+
+```
+1. MOVE to docs/historical/:
+   - docs/plans/revised_plan.md        → docs/historical/m0-reorg-plan.md
+   - docs/plans/finalize.json          → docs/historical/finalize-execution-manifest.json
+   - docs/plans/plan_v2.md             → docs/historical/m3-corpus-plan.md
+   - docs/plans/loose-work-consolidation-plan.md → docs/historical/loose-work-consolidation-plan.md
+
+2. UPDATE one status line:
+   - docs/historical/agent_readable_templates_v2.md
+     Line 3:  "**Status:** active"  →  "**Status:** archived / superseded"
+
+3. UPDATE index READMEs:
+   - docs/plans/README.md    — remove the 4 moved entries
+   - docs/historical/README.md — add the 4 moved entries + update agent_readable_templates_v2 entry if needed
+
+4. DO NOT TOUCH:
+   - All docs/audits/ files
+   - All docs/structure_cleanup/ files (including status.md)
+   - docs/historical/graphbuilder_spike.md
+   - docs/historical/comfyscript_spike.md
+   - docs/historical/frontier-hardening-runbook.md
+   - docs/historical/sprint5_followups.md
+   - docs/historical/template_cleanup_followups.md
+   - docs/historical/old_vibecomfy_port_rationale.md
+```
+
+The rationale for moving rather than re-marking in-place: `docs/plans/` README describes itself as holding documents "still useful as project context." Completed execution manifests and abandoned plans are better served by the `docs/historical/` contract: "Archived spikes, old rationale, and **completed follow-up plans**" and "should not be treated as the current source of truth." This is a cleaner semantic boundary.
+
+Want me to execute these moves?

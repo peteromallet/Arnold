@@ -1,0 +1,51 @@
+Now I have the complete picture. Here is the audit verdict:
+
+---
+
+## Audit Result: `vibecomfy/_graph_utils.py`
+
+### File Contents (3-line shim)
+```python
+import sys
+from vibecomfy._compile import _graph as _real
+sys.modules[__name__] = _real
+```
+This replaces itself in `sys.modules` so any `vibecomfy._graph_utils` import transparently resolves to `vibecomfy._compile._graph`.
+
+### Code/Tests/Tools Imports: **0** (zero)
+- `grep -r "vibecomfy\._graph_utils" --include="*.py" .` → **0 results**
+- `vibecomfy/workflow.py` imports the other three shims (`_helper_resolve`, `_workflow_helpers`, `_widget_aliases`) but **not** `_graph_utils`
+- `vibecomfy/ir/workflow.py` imports `_compile._resolve`, `_compile._widgets`, `_compile._helpers` directly
+- `tools/format_as_python.py` defines `UI_ONLY_CLASS_TYPES` **locally** (line 58), not imported from `_graph_utils`
+- `tools/_compile_equivalence.py` doesn't mention `_graph_utils` at all
+- `.importlinter` lists the other three shims but **not** `_graph_utils`
+
+### Public Compatibility Value: **None**
+- It's a `_`-prefixed private module (internal compat bridge)
+- The real target (`vibecomfy._compile._graph`) is imported directly everywhere
+- Removing it breaks nothing; the `sys.modules` swap is an unnecessary indirection
+
+---
+
+### Action: **DELETE** `vibecomfy/_graph_utils.py`
+
+No deprecation period warranted — it's private, unreferenced in code, and the real module is already imported directly.
+
+---
+
+### Reference-Update List (14 files to update)
+
+| # | File | Lines | What to change |
+|---|------|-------|----------------|
+| 1 | `artifacts/m2-symbol-map.md` | 10–12, 39–40 | Replace `vibecomfy._graph_utils.is_api_link(...)` → `vibecomfy._compile._graph.is_api_link(...)`, same for `node_id_sort_key` and `UI_ONLY_CLASS_TYPES`. Fix claims about `tools/format_as_python.py` and `tools/_compile_equivalence.py` importing from `_graph_utils` — they don't. |
+| 2 | `docs/megaplan_chains/excellence_epic/m4a-dedup-helpers.md` | 10, 11, 20, 42 | Replace `_graph_utils.py` references with `_compile._graph` (or note the plan was not executed; the helpers live in `_compile._graph`). |
+| 3 | `docs/megaplan_chains/pristine_cleanup/ideas/m2-shared-foundation.md` | 21 | Replace `_graph_utils.py` reference with `_compile._graph`. |
+| 4 | `docs/megaplan_chains/pristine_cleanup/RESULTS.md` | 58, 60, 64, 108, 217 | Replace `vibecomfy._graph_utils.*` → `vibecomfy._compile._graph.*`. |
+| 5 | `docs/structure_cleanup/package_results/01-public-api-and-root.txt` | 46, 51, 132 | Remove `_graph_utils.py` from the shim list; adjust count from 4 to 3 shims. |
+| 6 | `docs/structure_cleanup/package_results/10-safe-first-batch.txt` | 15, 19, 93, 94, 96, 123 | Update status from "safe to delete" → "deleted". |
+| 7 | `docs/structure_cleanup/status.md` | 391–393 | Remove the deferral note (or mark as resolved). |
+| 8 | `docs/audits/m2-diff-hygiene.md` | 63 | Remove `vibecomfy/_graph_utils.py` from the file list. |
+| 9 | `docs/structural_audit_2026-05.md` | 187 | Replace `_graph_utils.py` reference with `_compile._graph`. |
+| 10 | `docs/structure_cleanup/dead_module_briefs/06-graph-utils-shim.md` | this file | Keep as-is (historical audit record; title says "Dead Module Audit"). |
+
+**Proceed?** I can execute the delete and all reference updates in one batch.

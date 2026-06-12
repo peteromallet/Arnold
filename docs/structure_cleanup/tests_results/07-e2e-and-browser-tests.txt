@@ -1,0 +1,165 @@
+Now I have a complete picture. Here's the full audit report.
+
+---
+
+## Tests Layer Audit 07: E2E And Browser Tests
+
+### Directory Structure
+
+The e2e and browser test infrastructure spans two tiers:
+
+**Tier 1: `tests/e2e/` — Real-browser Playwright tests** (runs against live ComfyUI)
+```
+tests/e2e/
+├── package.json                  # npm manifest: @playwright/test ^1.57.0
+├── package-lock.json             # lockfile (committed — correct)
+├── playwright.config.mjs         # config: Chromium, 1 worker, 120s timeout
+├── run.mjs                       # Node launcher (spawns ComfyUI, runs Playwright)
+├── specs/
+│   ├── agent_panel_layout.spec.mjs      (8 tests)
+│   ├── agent_panel_lifecycle.spec.mjs   (3 tests)
+│   ├── agent_panel_turn.spec.mjs        (1 test)
+│   └── agent_panel_overlay.spec.mjs     (1 test)
+├── helpers/
+│   ├── index.mjs                        (barrel re-export)
+│   ├── failure-capture.mjs              (console/page/request error capture)
+│   ├── panel-open.mjs                   (launcher + sidebar open helpers)
+│   ├── dom-probes.mjs                   (layout/scroll/composer probes)
+│   └── canvas-debug-probes.mjs          (LiteGraph/debug state probes)
+├── node_modules/                  ← gitignored
+├── test-results/                  ← gitignored (stale artifacts present locally)
+└── playwright-report/             ← gitignored (stale artifacts present locally)
+```
+
+**Tier 2: `tests/browser/` — jsdom-style Node test harness** (no real browser)
+```
+tests/browser/
+├── harness.mjs                            # Shared harness
+├── roundtrip_smoke.test.mjs               # Canonical hash parity tests
+├── agent_edit_response_contract.test.mjs  # Response contract tests
+├── agent_edit_lifecycle.test.mjs          # Lifecycle tests
+└── dynamic_io_smoke.test.mjs             # Dynamic IO tests
+```
+
+---
+
+### 1. Local Dependency Outputs Present
+
+| Path | Status |
+|------|--------|
+| `tests/e2e/node_modules/` | **Present locally** (Playwright + deps) — correctly gitignored |
+| `tests/e2e/package-lock.json` | **Committed** — correct, required for reproducible installs |
+| `tests/e2e/test-results/` | **Present locally** (13 test failure traces + `.last-run.json` with 12 failed test IDs) — correctly gitignored |
+| `tests/e2e/playwright-report/` | **Present locally** (HTML report, trace data, CSS/JS bundles) — correctly gitignored |
+| `tests/browser/` | ✅ No `node_modules/` (uses Node built-in `node:test` — no npm deps) |
+
+**Verdict:** No tracked dependency bloat. The `package-lock.json` is the right artifact to commit.
+
+---
+
+### 2. Ignore Rules Analysis
+
+From `.gitignore` (lines 45–48):
+```gitignore
+# e2e test tier — isolated dependency management
+tests/e2e/node_modules/
+tests/e2e/playwright-report/
+tests/e2e/test-results/
+```
+
+**Assessment: SUFFICIENT.** All three locally-generated output directories are covered. Additionally:
+- `*.pyc` / `__pycache__/` patterns cover any cached bytecode that might be generated inside `tests/` — though the e2e tier is JS-only.
+- The `out/` pattern covers any runtime output that could leak from `run.mjs` into the repo root.
+
+**No gaps found.** The ignore rules are complete for the current setup.
+
+---
+
+### 3. Browser Test Documentation
+
+**✅ Documented.** The primary documentation is:
+
+- **`docs/agent-edit/e2e-real-browser-tier.md`** (380 lines) — Comprehensive document covering:
+  - Rationale for a real-browser tier (lists 5 shipped bugs missed by jsdom)
+  - Tier boundary comparison table (jsdom vs. Playwright)
+  - Prerequisites (Node ≥18, Python, ComfyUI checkout, Playwright + Chromium)
+  - One-command execution (`node tests/e2e/run.mjs`)
+  - CLI options, environment variables, examples
+  - Fixture structure and refresh procedure
+  - Repo `out/` prohibition policy
+  - Architecture diagram
+  - Per-spec documentation (4 spec files, 8+3+1+1 = 13 tests total)
+  - Helper module reference table
+  - Local-only cadence policy (no CI integration)
+  - Known limitations (7 items documented)
+
+There is **no `docs/testing/` directory** — but the documentation at `docs/agent-edit/e2e-real-browser-tier.md` serves the same purpose and is linked from `docs/agent-edit/README.md`.
+
+---
+
+### 4. Stale Generated Artifacts
+
+**`tests/e2e/test-results/.last-run.json`** — Contains a record of **12 failed test runs** from a prior execution, including SHA IDs. This is properly gitignored, so it's not tracked in the repo. It exists only on the local filesystem.
+
+All 13 failure trace directories under `test-results/` (e.g., `agent_panel_layout-Agent-P-b13ea--not-have-its-own-scrollbar-chromium/`) each contain:
+- `error-context.md` — failure context details
+- `trace.zip` — Playwright trace files
+
+The `playwright-report/` directory contains full HTML report bundles (~30+ files including data zips, MD, JS/CSS assets, index.html).
+
+**All are properly gitignored. No stale artifacts are committed to the repository.**
+
+---
+
+### 5. Safe Cleanups & Deferrals
+
+#### Safe to Clean (Local Only — Not Tracked)
+
+1. **`tests/e2e/test-results/`** — Entire directory is local detritus from previous failed runs. ~3MB of trace data. Safe to delete:
+   ```bash
+   rm -rf tests/e2e/test-results/
+   ```
+   Will be regenerated on next `node tests/e2e/run.mjs`.
+
+2. **`tests/e2e/playwright-report/`** — HTML report from prior run. ~4MB of report assets. Safe to delete:
+   ```bash
+   rm -rf tests/e2e/playwright-report/
+   ```
+   Will be regenerated on next run.
+
+3. **`tests/e2e/node_modules/`** — Can be reinstalled at any time:
+   ```bash
+   rm -rf tests/e2e/node_modules/
+   cd tests/e2e && npm install
+   ```
+   But **defer this** — these are already gitignored and don't cause issues. Only clean if disk space is a concern.
+
+#### Deferrals (No Action Needed)
+
+| Item | Reason |
+|------|--------|
+| `tests/e2e/package-lock.json` | **Keep committed** — enables deterministic `npm install` |
+| `tests/e2e/package.json` | **Keep** — declares Playwright dependency |
+| `tests/e2e/playwright.config.mjs` | **Keep** — test configuration |
+| `tests/e2e/run.mjs` | **Keep** — launcher script (593 lines, well-structured) |
+| `tests/e2e/specs/*.spec.mjs` | **Keep** — 4 spec files, 13 tests total |
+| `tests/e2e/helpers/*.mjs` | **Keep** — 5 helper modules, well-factored |
+| `tests/browser/*.mjs` | **Keep** — jsdom-tier tests (5 files) |
+| `docs/agent-edit/e2e-real-browser-tier.md` | **Keep** — thorough documentation |
+| `.gitignore` rules for e2e | **Keep** — complete and correct |
+
+#### Potential Improvement (Optional)
+
+The `tests/e2e/run.mjs` hardcodes a macOS-specific default ComfyUI path (`/Users/peteromalley/Documents/reigh-workspace/ComfyUI`, line 13). The doc acknowledges this as a known limitation. Consider making this a configurable default via environment variable, or documenting the override more prominently. **Not a cleanup issue** — just an observation about portability.
+
+---
+
+### Summary
+
+| Question | Verdict |
+|----------|---------|
+| Local dependency outputs present? | ✅ `node_modules/`, `test-results/`, `playwright-report/` — all present locally, all gitignored |
+| Ignore rules sufficient? | ✅ Complete coverage for all 3 e2e output directories |
+| Browser tests documented? | ✅ Yes — `docs/agent-edit/e2e-real-browser-tier.md` (380 lines, thorough) |
+| Stale generated artifacts checked in? | ❌ **No** — all are properly gitignored |
+| Safe cleanups? | `tests/e2e/test-results/` and `tests/e2e/playwright-report/` can be safely deleted locally |

@@ -3,7 +3,7 @@
 Status: Historical spike. `GraphBuilder` remains optional background context;
 current authoring guidance lives in [`../authoring.md`](../authoring.md), and
 the public export path is `VibeWorkflow.compile("api")` per
-[`../../artifacts/m6-public-api.md`](../../artifacts/m6-public-api.md).
+[`../api/m6-public-api.md`](../api/m6-public-api.md).
 
 Decision: enable as an optional backend.
 

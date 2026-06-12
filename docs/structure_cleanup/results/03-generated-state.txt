@@ -1,0 +1,42 @@
+Here's my classification based on the file system scan and `.gitignore` analysis:
+
+**1. DURABLE (likely stay — intentionally tracked contracts)**
+
+- **`node_index.json`, `workflow_index.json`, `template_index.json`, `external_workflow_index.json`** — Generated indexes, but **already in `.gitignore`** (lines 8–11). If currently tracked (e.g., force-added), they should stay ignored. However they exist on disk presently; verify with `git ls-files` whether they've been accidentally committed.
+- **`asset_manifest.json`** — Exists on disk but **NOT in `.gitignore`**. If this is a durable build manifest (maybe committed), keep. If ephemeral, add to `.gitignore`.
+- **`custom_nodes.lock`** — Exists on disk, **NOT in `.gitignore`**. Likely a lockfile (like `uv.lock`). If intentionally committed, keep and maybe add to `.gitignore` if auto-generated.
+
+**2. SHOULD MOVE under a clear directory**
+
+- **`.ruff_cache/`, `.import_linter_cache/`, `.pytest_cache/`** — Each has an internal `.gitignore` with `*` (tool-created, ignores contents). The dir stubs are occasionally tracked for CACHEDIR.TAG compatibility. Better unified under `out/.cache/` or similar, but low pain as-is.
+- **`.desloppify/`, `.megaplan/`** — Agent tool state. Already in `.gitignore`. Could move under `.agents/` for uniformity but fine as-is.
+
+**3. LOCAL/IGNORED — delete or add to `.gitignore`**
+
+| Entry | Status | Action |
+|---|---|---|
+| `.DS_Store` | In `.gitignore` ✓ | Can delete from checkout safely |
+| `.hypothesis/` | In `.gitignore` ✓ | Delete if stale |
+| `.venv/` | In `.gitignore` ✓ | Delete, recreate via `uv sync` |
+| `install.log` | In `.gitignore` ✓ | Delete |
+| `out/` | In `.gitignore` ✓ | Delete |
+| `_debug_*.py` (3 files) | In `.gitignore` ✓ | Delete |
+| `**/__pycache__/` | In `.gitignore` ✓ | `find . -type d -name __pycache__ -exec rm -rf {} +` |
+| `finalize.json`, `version_matrix.json` | Don't exist on disk | No action |
+| `artifacts/`, `input/` | Not found on disk | No action |
+
+**Missing from `.gitignore` (high priority):**
+
+- **`asset_manifest.json`** — Add to `.gitignore` unless intentionally committed.
+- **`custom_nodes.lock`** — Add to `.gitignore` unless it's a source lockfile.
+- **`.ruff_cache/`, `.import_linter_cache/`** — These dirs have self-ignoring `.gitignore` files which is a fragile pattern. Better to add them to root `.gitignore` explicitly.
+
+**4. CHECKS NEEDED BEFORE ACTING**
+
+1. **`git ls-files --error-unmatch` each file** — Confirm which of the above are actually tracked vs. already ignored. Several in `.gitignore` may have been committed before the rule existed.
+2. **`asset_manifest.json`** — Check `git log --oneline asset_manifest.json` to see if it was intentionally committed or is an untracked orphan.
+3. **`custom_nodes.lock`** — Check whether downstream tooling depends on it being committed (e.g., `uv.lock`-style lockfile) or if it's regenerable.
+4. **`.ruff_cache/` + `.import_linter_cache/`** — If `git ls-files` shows the `.gitignore` stubs tracked, decide whether to keep (shallow tracked dirs) or fully ignore them in root `.gitignore`.
+5. **Merge `.gitignore` additions** — After confirming status, add missing entries and run `git rm --cached` on any that are currently tracked but should be ignored. Then delete with `rm -rf` on a fresh clone.
+
+**Recommendation:** Add `asset_manifest.json`, `custom_nodes.lock`, `.ruff_cache/`, and `.import_linter_cache/` to `.gitignore`. Delete all debug/ cache files from working tree. Keep index JSONs ignored but not deleted (they're useful cache).

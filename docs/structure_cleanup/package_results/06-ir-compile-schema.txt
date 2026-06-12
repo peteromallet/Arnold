@@ -1,0 +1,156 @@
+Now I have a comprehensive picture. Here's the full audit.
+
+---
+
+# Package Layer Audit 06: IR, Compile, Schema
+
+## 1. Which Modules Are Core Architecture Boundaries?
+
+| Module | Role | Boundary Type |
+|--------|------|---------------|
+| `vibecomfy/ir/` | **IR data model + compile orchestration** | Canonical data model boundary |
+| `vibecomfy/_compile/` | **Internal compile utilities** | Private implementation (underscore-prefixed) |
+| `vibecomfy/schema/` | **Schema providers + validation** | Service boundary (providers + validation) |
+| `vibecomfy/contracts/` | **Semantic contracts + IR guarantees** | Policy/contract boundary |
+
+**Current dependency flow (ideal):**
+```
+ir/ ──→ _compile/ ──→ schema/ ──→ contracts/
+  ↑                        ↑
+  └─ root files ───────────┘
+```
+
+**The `ir/` package has an explicit layering docstring** in `ir/__init__.py` stating that module-level imports must never pull from `vibecomfy.workflow`, `handles`, `contracts`, or `security` — but it **violates its own rule** at module level (see Finding #2 below).
+
+---
+
+## 2. ⚠️ Critical Finding: Duplicate `VibeWorkflow` (Active Migration in Progress)
+
+This is the most important structural finding:
+
+| File | Lines | Where Used |
+|------|-------|-----------|
+| **`vibecomfy/workflow.py`** (root) | **1,465 lines** | **30+ modules** import from here |
+| **`vibecomfy/ir/workflow.py`** (in package) | **788 lines** | **Only `ir/__init__.py`** imports from here |
+
+`vibecomfy/ir/workflow.py` defines a *newer* `VibeWorkflow` that is essentially **unused by the broader codebase**. All 30+ consumers still import `VibeWorkflow` from the root `vibecomfy/workflow.py`. The `ir/` package's `VibeWorkflow` exists in isolation.
+
+**Evidence:** `from vibecomfy.ir import` has **0 matches** outside `ir/` itself. `from vibecomfy.workflow import VibeWorkflow` has **30 matches**.
+
+The `ir/__init__.py` `__all__` exports a clean API surface including `VibeWorkflow`, but nothing outside `ir/` consumes it.
+
+---
+
+## 3. Import Layering Issues
+
+### 3a. `ir/` module-level imports violate its own stated rules
+
+The `ir/__init__.py` docstring says:
+> *"Module-level imports must never pull from `vibecomfy.workflow`, `vibecomfy.handles`, `vibecomfy.contracts`, or `vibecomfy.security` — keep those inside lazy (function/method) imports."*
+
+But `ir/workflow.py` has **module-level** imports violating this:
+
+| Line | Import | Violation |
+|------|--------|-----------|
+| L12 | `from vibecomfy.handles import Handle` | ⚠️ `handles` is in the forbidden list |
+| L43-46 | `from vibecomfy.contracts.validation import ...` | ⚠️ `contracts` is in the forbidden list |
+| L9-11 | `from vibecomfy._compile import ...` | ✅ OK (internal) |
+
+Some imports ARE correctly lazy:
+- `vibecomfy.security` (function-level in `confirm_node`, `add_node`)
+- `vibecomfy.workflow_context` (function-level in `__enter__`)
+- `vibecomfy.metadata` (function-level in `finalize_metadata`)
+- `vibecomfy.templates` (function-level in `finalize`)
+- `vibecomfy.porting.identity.uid` (function-level in `_mint_uid`)
+- `vibecomfy.schema` (function-level in `_warn_if_incompatible_connect`)
+
+### 3b. `.importlinter` only protects OLD paths, not `ir/`
+
+The single linter contract:
+```
+[importlinter:contract:ir-core-no-porting]
+source_modules =
+    vibecomfy.workflow       ← OLD path
+    vibecomfy.metadata
+    vibecomfy.contracts.ir
+    vibecomfy._workflow_helpers     ← OLD shims
+    vibecomfy._helper_resolve
+    vibecomfy._widget_aliases
+```
+
+**`vibecomfy.ir` is NOT listed as a source module** — it has zero import-linter governance. The contract protects the **old** root-level modules, not the **new** `ir/` package.
+
+### 3c. Circular dependency risk: `contracts/surface.py` → `porting/`
+
+`vibecomfy/contracts/surface.py` imports from `vibecomfy.porting`:
+```python
+from vibecomfy.porting.strict_ready import ...
+from vibecomfy.porting.widget_aliases import ...
+```
+
+This means the `contracts/` layer depends on the `porting/` layer -- which is a **downward dependency violation** if contracts is supposed to be at the same or higher level than porting.
+
+---
+
+## 4. Shim Re-Export Files (Stale Artifacts)
+
+Three root-level files are pure backward-compatibility shims pointing into `_compile/`:
+
+| Shim File | Points To | Status |
+|-----------|-----------|--------|
+| `vibecomfy/_workflow_helpers.py` | `from vibecomfy._compile._helpers import *` | **Stale** — only 3 lines |
+| `vibecomfy/_helper_resolve.py` | `from vibecomfy._compile._resolve import *` | **Stale** — only 3 lines |
+| `vibecomfy/_widget_aliases.py` | `sys.modules[__name__] = _real` (`_compile._widgets`) | **Stale** — only 3 lines |
+
+These exist because the old flat modules were moved into the `_compile/` package. The `.importlinter` config still references the OLD shim paths (`vibecomfy._workflow_helpers`, `_helper_resolve`, `_widget_aliases`), not the actual locations (`vibecomfy._compile._helpers`, etc.).
+
+---
+
+## 5. Missing READMEs
+
+| Package | README Status |
+|---------|---------------|
+| `vibecomfy/ir/` | ❌ **Missing** — no README |
+| `vibecomfy/_compile/` | ❌ **Missing** — no README |
+| `vibecomfy/schema/` | ❌ **Missing** — no README |
+| `vibecomfy/contracts/` | ⚠️ Has `RUNTIME_CONTRACT.md` but **no general README** |
+
+There are **zero READMEs** anywhere under `vibecomfy/`.
+
+---
+
+## 6. Path Moves That Would Violate Public API
+
+| Path Move | Impact | Breakage Count |
+|-----------|--------|----------------|
+| Move `vibecomfy/workflow.py` | Direct `from vibecomfy.workflow import VibeWorkflow` | **30+ modules** |
+| Move `vibecomfy/handles.py` | `from vibecomfy.handles import Handle` | **~5 modules** (workflow.py, ir/workflow.py, etc.) |
+| Move `vibecomfy/metadata.py` | `from vibecomfy.metadata import ...` | **2 modules** (ir/workflow.py, tests) |
+| Move `vibecomfy/_workflow_helpers.py` (shim) | Only backward-compat consumers | Low (internal already use `_compile._helpers`) |
+| Move `vibecomfy/_helper_resolve.py` (shim) | Only backward-compat consumers | Low |
+| Move `vibecomfy/_widget_aliases.py` (shim) | Only backward-compat consumers | Low (alchemy-style `sys.modules` swap) |
+
+Any migration of `workflow.py` → `ir/workflow.py` must be coordinated with the **30 importing modules**.
+
+---
+
+## 7. Summary of Findings
+
+| # | Finding | Severity |
+|---|---------|----------|
+| 1 | **Duplicate `VibeWorkflow`** — root-level (used) and `ir/` (unused) | 🔴 **Critical** |
+| 2 | **`ir/` module-level imports violate its own layering docstring** (`handles`, `contracts`) | 🟠 High |
+| 3 | **`.importlinter` doesn't govern the `ir/` package** (only old shim paths) | 🟠 High |
+| 4 | **`contracts/surface.py` imports from `porting/`** — downward dependency | 🟠 High |
+| 5 | **3 stale shim files** (`_workflow_helpers.py`, `_helper_resolve.py`, `_widget_aliases.py`) | 🟡 Medium |
+| 6 | **No READMEs** in any of the 4 target packages | 🟡 Medium |
+| 7 | **Linter config references 6 old module paths**, not current `ir/` package | 🟡 Medium |
+| 8 | `schema/validate.py` imports from `vibecomfy.workflow` (should be `vibecomfy.ir`) | 🟢 Low |
+
+**Recommended actions:**
+1. **Reconcile the two `VibeWorkflow` classes** — either finish the migration to `ir/workflow.py` and deprecate root `workflow.py`, or delete the unused one in `ir/` and update `ir/__init__.py` to re-export from the root
+2. **Add `vibecomfy.ir` to `.importlinter`** source modules
+3. **Fix `ir/workflow.py`** lazy-import violations (move `handles` and `contracts.validation` imports inside functions)
+4. **Break `contracts/surface.py` → porting/** dependency (invert or extract)
+5. **Add READMEs** to `ir/`, `_compile/`, `schema/`, and `contracts/`
+6. **Remove 3 stale shim files** after confirming no external consumers

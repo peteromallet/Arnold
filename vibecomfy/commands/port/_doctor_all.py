@@ -120,7 +120,7 @@ def _doctor_all_port_check(args: argparse.Namespace) -> dict[str, Any]:
 
 def _doctor_all_nodes_install_plan(args: argparse.Namespace) -> dict[str, Any]:
     def run() -> tuple[dict[str, Any], int]:
-        import vibecomfy.node_packs_install as node_packs_install
+        import vibecomfy.node_packs as node_packs_install
         from vibecomfy.commands import port as _port
 
         workflow = _port.load_workflow_reference(args.workflow, schema_provider=get_schema_provider("auto"), allow_scratchpad=True, ready=getattr(args, "ready", False))

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from vibecomfy.node_packs_lockfile import LockEntry
+from vibecomfy.node_packs import LockEntry
 from vibecomfy.workflow import VibeWorkflow
 
 

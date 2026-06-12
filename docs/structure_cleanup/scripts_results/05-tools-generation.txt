@@ -1,0 +1,19 @@
+These 7 files form a **mostly coherent group** around a ready-template generation/conversion pipeline, with one outlier and a few bits of low-risk cleanup.
+
+**Pipeline coherence (6 of 7 tools):**
+
+The core conversion flow is `convert_ready_templates.py` (driver) → `format_as_python.py` (emitter, delegates to `vibecomfy.porting.emitter`). `regenerate_affected_templates.py` is a sibling driver targeting 18 specific templates. `refresh_template_index.py` builds the discovery index from the resulting templates. `refresh_comfy_metadata.py` and `fetch_hf_metadata.py` are ancillary data collectors whose output feeds template metadata. These six share the same `sys.path` bootstrapping pattern, same `REPO_ROOT` derivation, and same `ready_templates/` artifact surface.
+
+**Outlier:**
+
+`generate_node_shims.py` generates Python thin wrappers at `vibecomfy/nodes/_generated/` so users can call ComfyUI nodes as Python functions. It's tangentially related (generation of Python code from node metadata), but its target is the **node shim layer**, not the **ready-template pipeline**. It doesn't touch `ready_templates/`, doesn't share import dependencies with the other tools, and isn't called by any of them. It's conceptually a separate tool living in the same directory by proximity.
+
+**Low-risk cleanup opportunities:**
+
+1. **Strip dead code from `format_as_python.py`** — Lines 1–395 contain a legacy emitter body with an explicit warning: "NO LONGER the active code path." The active wrapper at line 396 just delegates to `vibecomfy.porting.emitter`. The legacy code is retained "for historical reference and CLI bootstrapping" — if that's no longer needed, ~400 lines of dead code can be removed.
+
+2. **Normalize `REPO_ROOT` discovery** — Every tool has a `# TODO(repo-root)` comment about migrating to `vibecomfy.utils.find_repo_root()`. Tools 1–5 and 7 repeat the same 2-line bootstrap. Consolidating to a shared utility would reduce duplication across all files.
+
+3. **Hardcoded developer path in `refresh_comfy_metadata.py`** — Line 56 has `Path.home() / "Documents" / "reigh-workspace" / "vibecomfy" / "vendor" / "ComfyUI"` as a fallback vendor root. This is a developer-specific absolute path that should be generalized or removed.
+
+4. **Stale template entries in `regenerate_affected_templates.py`** — Lines 37–41 list 4 templates "with no resolvable source workflow JSON" (they point at `.py` files, not JSON). These will always fail with `source_not_found`. They should either be removed or resolved to actual JSON sources.

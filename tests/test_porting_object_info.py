@@ -12,7 +12,7 @@ from unittest import mock
 
 import pytest
 
-from vibecomfy.node_packs_lockfile import compute_schema_hash
+from vibecomfy.node_packs import compute_schema_hash
 from vibecomfy.porting.object_info.consume import CACHE_DIR as _PROD_CACHE_DIR, effective_widget_names_for_class
 from vibecomfy.porting.object_info.serialize import (
     LEGACY_IMPORT_PACK_VERSION,

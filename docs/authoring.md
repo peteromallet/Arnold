@@ -1,6 +1,6 @@
 # Authoring
 
-> See [docs/python_composition_dsl_plan.md](python_composition_dsl_plan.md) for the broader composition-layer architecture this doc fits into.
+> See [architecture/python_composition_dsl_plan.md](architecture/python_composition_dsl_plan.md) for the broader composition-layer architecture this doc fits into.
 
 `VibeWorkflow` is the only editable IR. Blocks and patches mutate that object; API JSON is an escape hatch produced by `wf.compile("api")`, not an authoring surface.
 
@@ -16,7 +16,7 @@ python -m vibecomfy.cli port inventory --ready --json
 
 `port check` is the cheap preflight for helper/UI nodes, missing custom-node packs, missing required inputs, widget alias drift, and model asset problems. `port convert` turns the source into Python scratchpad form by default; add `--ready-id <kind>/<name>` only when you are intentionally creating a ready-template candidate. `port convert` uses atomic writes (temp file → validate/parity-check → `Path.replace()`), refuses to overwrite `# vibecomfy: manual` templates, and supports `--dry-run` and `--diff` modes. `port inventory` reports readability issues and source-provenance across all checked-in templates.
 
-See [template_porting_workbench.md](template_porting_workbench.md) for the full workflow and when to use `doctor`, `validate`, `nodes install-plan`, `fetch`, and `--head-check-models`.
+See [templates/porting_workbench.md](templates/porting_workbench.md) for the full workflow and when to use `doctor`, `validate`, `nodes install-plan`, `fetch`, and `--head-check-models`.
 
 The canonical promotion path is raw workflow source -> `port check` -> optional scratchpad -> `port convert --ready-id` or hand-authored Python ready template -> `tools.refresh_template_index` -> `validate`/`doctor`/strict-ready checks. Raw JSON and compiled API dictionaries are source/runtime material, not the reusable authoring surface.
 
@@ -86,7 +86,7 @@ Deprecated for generated or newly authored templates:
 - `apply_ready_template_policy(...)`
 - direct `wf.register_input(...)` calls inside `build()`
 
-Those APIs remain for old templates and tests, but they emit `PendingDeprecationWarning`. Use `python -m tools.convert_ready_templates --all --write --include-manual` for the repository batch-migration path, `python -m vibecomfy.cli port convert <workflow> --ready-id <kind>/<id> --out ready_templates/<kind>/<id>.py --json` for individual sources, or `python -m vibecomfy.cli copy-to-recipe <id> --out recipes/<name>.py` to fork a generated template into `recipes/` for hand-editing. `tools.narrate_template` has been removed (M0 cleanup); use `vibecomfy.porting.emitter` instead.
+Those APIs remain for old templates and tests, but they emit `PendingDeprecationWarning`. Use `python -m tools.convert_ready_templates --all --write --include-manual` for the repository batch-migration path, `python -m vibecomfy.cli port convert <workflow> --ready-id <kind>/<id> --out ready_templates/<kind>/<id>.py --json` for individual sources, or `python -m vibecomfy.cli copy-to-recipe <id> --out recipes/<name>.py` to fork a generated template into `recipes/` for hand-editing. `tools.narrate_template` has been removed (M0 cleanup); use `vibecomfy.porting.emit.emitter` instead.
 
 ## Blocks
 
@@ -110,7 +110,7 @@ Use blocks when the call changes the handles available to the caller: a loader c
 
 P1 ships typed handle metadata, not mypy-grade static validation. New authoring code should prefer `wf.node(...).out(<slot_or_name>)`, which returns a `Handle` carrying the source node id, output slot, optional output type, and optional name. Blocks should return `Handles({"image": Handle(node_id=node.id, output_slot=0, name="image")})` instead of raw string references.
 
-Named output strings such as `.out("image")` are supported when the node has `metadata["output_names"]` and the requested name maps unambiguously to a slot. Use integer slots only when output names are genuinely unavailable or ambiguous. See [readable_ready_template_cleanup_plan.md](readable_ready_template_cleanup_plan.md) for the plan to make named handles the generated-template default.
+Named output strings such as `.out("image")` are supported when the node has `metadata["output_names"]` and the requested name maps unambiguously to a slot. Use integer slots only when output names are genuinely unavailable or ambiguous. See [templates/readable_ready_template_cleanup_plan.md](templates/readable_ready_template_cleanup_plan.md) for the plan to make named handles the generated-template default.
 
 ## Patches
 
@@ -188,7 +188,7 @@ The block sets `metadata.subgraph_class_type` to the UUID class type. Wire its r
 
 ## Ready Templates and Recipes
 
-Ready templates should be hand-curated Python builders. Do not use `scripts/materialize_ready_templates.py` for new work; the materializer was useful for bootstrapping, but it hid authoring decisions inside copied API dictionaries.
+Ready templates should be hand-curated Python builders. For new work, use `python -m vibecomfy.cli port convert` instead of the old materializer approach, which hid authoring decisions inside copied API dictionaries.
 
 `MarkdownNote` nodes are dropped during refactor because they are ComfyUI UI annotations with no execution effect. Snapshot tests filter them at capture time so runnable graph parity is compared without those notes.
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from vibecomfy._agent_edit_debug import add_debug_subcommands, dispatch
+from vibecomfy.commands._agent_edit_debug import add_debug_subcommands, dispatch
 
 
 def _cmd_debug(args: argparse.Namespace) -> int:

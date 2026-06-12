@@ -105,7 +105,7 @@ directory that the first pass omitted. The failed review was correct that the
 old command only checked `tests/parity` through tracked diff output and did not
 classify untracked `tests/parity/fixtures/*_typed.py` files.
 
-The full dirty-worktree split is recorded in `artifacts/m2-diff-hygiene.md`.
+The full dirty-worktree split is recorded in `docs/audits/m2-diff-hygiene.md`.
 That artifact distinguishes chain setup, completed M1 baseline work, and the M2
 helper migration so M2 is not judged as if it started from a pristine per-plan
 worktree.

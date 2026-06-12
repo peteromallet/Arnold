@@ -1,6 +1,6 @@
 # Sprint 8: Strict Gates And Documentation Finalization
 
-Implement Sprint 8 from `docs/readable_ready_template_cleanup_plan.md`.
+Implement Sprint 8 from `docs/templates/readable_ready_template_cleanup_plan.md`.
 
 ## Branch And Chain Constraints
 

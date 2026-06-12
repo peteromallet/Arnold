@@ -1,0 +1,64 @@
+Now I have all the data. Here's the complete analysis:
+
+---
+
+## Runtime Import Coupling Audit — Ranked Hotspots
+
+### 🔴 P1 — Circular Import Hazards
+
+**1. `schema ↔ runtime` (code-verified liveness danger)**
+- `vibecomfy.schema.runtime` and `vibecomfy.schema.provider` both do **top-level** `from vibecomfy.runtime.client import ComfyClient` and `from vibecomfy.runtime.server import comfy_server`.
+- `vibecomfy.runtime.prompt` and `vibecomfy.runtime.session` import `vibecomfy.schema.RuntimeSchemaProvider`, `schema.cache`, `schema.format` **lazily** (inside functions).
+- **If anyone converts those lazy imports to top-level, an import cycle crashes at startup.** This is the single riskiest coupling in the codebase. Mitigation: keep schema imports lazy in runtime; ideally move `provider.py`/`runtime.py`'s runtime dependency behind a lazy Protocol.
+
+**2. `attempt.py ↔ drift.py ↔ model_policy.py ↔ session.py` (intra-runtime tangle)**
+- `runtime/attempt.py` (L30) → `runtime.drift.collect_drift`
+- `runtime/model_policy.py` (L74) → `runtime.session._model_assets_from_workflow`
+- `runtime/drift.py` (L74) → `runtime.session._model_assets_from_workflow`
+- `runtime/session.py` (L76+) → `runtime.model_policy` (indirect via nodepacks/model_assets)
+- All currently lazy imports, but the intra-runtime dependency graph is a bowl of spaghetti. These four files form a near-cycle.
+
+### 🔴 P2 — Coupling Hotspots (most inbound/outbound)
+
+**3. `runtime/session.py` — highest fan-out (14 → 8 subsystems)**
+- Top-level: `comfy_command`, `errors`, `memory_profile`, `utils`, `workflow`
+- Lazy: `node_packs` (5 symbols), `model_assets`, `custom_node_refs`, `schema` (4 symbols), `workflow.ValidationReport`
+- **Recommendation**: extract model-asset resolution and pack-install logic into their own modules; session.py is a god module at 1461 lines.
+
+**4. `runtime/ensure_env.py` — highest diversity (8 → 4 subsystems, all top-level)**
+- Imports `node_packs`, `porting.object_info.consume`, `porting.object_info.serialize`, `porting.provenance`, `registry.pack_resolver`, `schema.RuntimeSchemaProvider`
+- **This module is the only runtime file that imports `porting` at top level.** If `porting` ever developed a reverse dependency on runtime (e.g. for `RuntimeSchemaProvider`), a cycle would form immediately.
+
+**5. `runtime/attempt.py` — heavy lazy fan-out**
+- Lazily imports `comfy_nodes.agent.audit`, `drift`, `model_policy`, `model_assets`
+- The `comfy_nodes.agent.audit` edge crosses a subsystem boundary in the opposite direction from most runtime deps.
+
+### 🟡 P3 — Other Notable Coupling
+
+**6. `commands` importing private runtime internals**
+- `commands/workflows.py` → `runtime.session._model_assets_from_workflow` (private!)
+- `commands/doctor.py` → `runtime.run._embedded_configuration` (private!)
+- **Fix**: promote these to public API or add a thin accessor in `runtime/__init__.py`.
+
+**7. `schema/provider.py` → `comfy_command` + `runtime.client` + `runtime.server`**
+- Top-level imports of `comfy_command.has_comfyui_runtime`, `runtime.client.ComfyClient`, `runtime.server.comfy_server`.
+- Combined with hotspot #1, this is the entry point of the most dangerous cycle.
+
+**8. `runtime/eval/plan.py` + `runtime/eval_plan.py` → `porting`**
+- Both import `porting.object_info.consume.output_names/output_types` and `porting.workbench.load_port_source`.
+- These are narrow, stable imports — low risk but worth noting since `porting` is a large subsystem.
+
+### 🟢 No Deleted Root Shims Found
+
+All `from vibecomfy.<module>` references resolve to real modules on disk (`handles`, `workflow`, `errors`, `artifacts`, `fetch`, `metadata`, `extras`, `local_library`, etc.). No dangling imports to deleted root shims detected.
+
+### Summary Recommendations
+
+| Priority | Action | Why |
+|----------|--------|-----|
+| **P1** | Keep all `runtime → schema` imports **lazy**; document in each file header | Cycle would crash at import time |
+| **P1** | Add `from __future__ import annotations` + `TYPE_CHECKING` guards to `schema/runtime.py` and `schema/provider.py` for their `runtime.client`/`runtime.server` imports | Same cycle risk |
+| **P1** | Extract shared model-policy helpers from `session.py`/`model_policy.py`/`drift.py`/`attempt.py` into `runtime/_model_utils.py` | Untangle intra-runtime near-cycle |
+| **P2** | Extract pack-install + model-asset resolution from `session.py` into `runtime/_pack_setup.py` | Reduce session.py fan-out |
+| **P2** | Move `ensure_env.py`'s top-level `porting` imports to lazy | Break porting→runtime cycle potential |
+| **P3** | Promote `_model_assets_from_workflow` and `_embedded_configuration` to public API | Commands should not access private members |

@@ -1,0 +1,296 @@
+Now I have the full picture. Here is the implementation brief.
+
+---
+
+# Mechanical Implementation Brief: Docs-Root Layer
+
+## Scope
+Conservative edits to root-level and `docs/` entry-point documentation files only. No code changes, no file deletions, no template edits, no JSON corpus changes.
+
+---
+
+## Ordered Checklist
+
+### [1] Fix README.md — update v2.6 code examples to v2.7 ContextVar pattern
+
+The README is the public onboarding doc. It currently teaches v2.5/v2.6 API (`from vibecomfy.nodes.core import SaveImage`, `_id=` kwargs, `id=` string syntax). It must show the v2.7 equivalent.
+
+**Edits needed in README.md:**
+
+**1a.** Replace the example block (lines 14–51):
+
+```
+rg -n 'from vibecomfy\.nodes\.core import' README.md
+# → line 16
+```
+
+Replace lines 14–51 (the `text_to_image_z_image_base` example) with the v2.7 equivalent using `new_workflow` / `node` ContextVar pattern:
+
+```markdown
+This is abridged from `ready_templates/image/z_image.py`:
+
+```python
+from vibecomfy.templates import ReadyMetadata, new_workflow, node
+from vibecomfy.nodes.core import SaveImage
+from vibecomfy.handles import Handle
+
+READY_METADATA = ReadyMetadata.build(capability="image")
+
+with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    # ContextVar-bound — no explicit wf arg needed
+    edited = text_to_image_z_image_base(
+        width=1024, height=1024,
+        unet_name="z_image_bf16.safetensors",
+        clip_name="qwen_3_4b.safetensors",
+        vae_name="ae.safetensors",
+        prompt="a glass teapot on black basalt",
+        steps=25, cfg=4,
+    )
+
+    save = SaveImage(_id="9", images=edited, filename_prefix="z-image")
+    return wf.finalize(
+        {},
+        output_node=save,
+        output_type="SaveImage",
+        name="image",
+        artifact_kind="image",
+        mime_type="image/png",
+        expected_cardinality="one",
+        filename_prefix="z-image",
+    )
+```
+```
+
+**Note:** The actual `text_to_image_z_image_base` function signature should stay intact — it's generated code. Just update the `build()` body to use the `with new_workflow(...)` context manager and remove the old `wf = new_workflow(...)` / `return wf.finalize(...)` patterns.
+
+**1b.** Replace the recipe example (lines 82–95) to reference `new_workflow` if applicable, or keep `load_workflow_any` since that's still the canonical loader. Verify `wf.finalize_metadata()` pattern is current.
+
+**1c.** Replace the `set_prompt` / `set_seed` / `set_steps` examples (lines 89–95) — these are still valid v2.7 setters, so they're fine as-is.
+
+### [2] Resolve CLAUDE.md ↔ AGENTS.md overlap
+
+**Problem:** AGENTS.md (377 lines) is a shorter copy of CLAUDE.md (619 lines). They share ~95% prefix content. CLAUDE.md line 610 lists `AGENTS.md` as a separate reference doc, implying distinct content. This is misleading.
+
+**Strategy:** Do NOT delete either file (different tools expect different filenames: Claude Code reads CLAUDE.md, agents read AGENTS.md). Instead, **trim AGENTS.md to a concise agent-facing contract doc** and keep CLAUDE.md as the comprehensive skill.
+
+**2a.** Replace AGENTS.md with a focused stub (target: ~80–120 lines) containing:
+- YAML frontmatter (keep existing)
+- "# VibeComfy" overview (lines 6–11)
+- "## Repository rules" (lines 12–23) — keep verbatim
+- "## Vocabulary" (lines 47–61) — keep verbatim
+- "## Mental model — two layers" (lines 63–103) — keep verbatim
+- "## The flow you should follow" (lines 105–379) — keep **only** the numbered flow sections and the quick-reference table, drop the v2.7 guidance sections
+- "## Decision shortcut" — keep
+- "## Reference docs" — keep
+
+**What to DELETE from AGENTS.md** (sections that belong in the full CLAUDE.md skill but not in a concise agent contract):
+- Full CLI command listings under each flow step (retain only the key 3–4 commands)
+- All subsections of "## v2.7 guidance" (not in AGENTS.md anyway)
+- "## Adding a new workflow" — too detailed for agent contract
+- "## Workflow lifecycle" (lines 565–578) — belongs in skill, not contract
+- "## Plugin / extension surface" (lines 305–311) — keep only a one-liner
+- "## Verb-native router" (lines 313–321) — keep only `router.pick` mention
+- "## Known limitations" (lines 322–328) — keep as a bullet list
+
+**2b.** Update CLAUDE.md line 610 to accurately describe AGENTS.md:
+
+```
+- `AGENTS.md` — concise agent-facing contract (rules, vocabulary, mental model, decision tree)
+```
+
+Instead of the current circular `AGENTS.md — agent-facing constraints and rules`.
+
+### [3] Fix broken doc reference in CLAUDE.md
+
+Replace all references to the non-existent file:
+
+```
+rg 'python_composition_dsl_plan' AGENTS.md CLAUDE.md
+# → AGENTS.md:364, CLAUDE.md:605
+```
+
+Both reference `docs/architecture/python_composition_dsl_plan.md`. The actual file is `docs/architecture/python_authoring_edit_surface.md`.
+
+**Replace:** `docs/architecture/python_composition_dsl_plan.md` → `docs/architecture/python_authoring_edit_surface.md` in both files.
+
+### [4] Expand `docs/release_notes.md` from stub to proper index
+
+Current content (11 lines) is a stub that only covers "v2.7 Sprint 1 Foundation". Replace with:
+
+```markdown
+# Release Notes
+
+Release notes per version:
+
+- [v2.8.0](release_notes/v2.8.0.md) — seams, IR purity, and contract foundation
+- [v2.7.0](release_notes/v2.7.0.md) — documentation reconciliation and public API surface alignment
+```
+
+Delete the orphaned "## v2.7 Sprint 1 Foundation" section (lines 8–11) since that content belongs in `release_notes/v2.7.0.md` (which already exists at 186 lines).
+
+### [5] Add missing migration guide stub: `docs/migration/v24_to_v25.md`
+
+The version chain at `docs/migration/README.md` has a gap:
+
+```
+- [v2.3 to v2.4](v23_to_v24.md)
+- [v2.5 to v2.6](v25_to_v26.md)
+- [v2.5 to v2.7](v25_to_v27.md)
+```
+
+Missing: v2.4 → v2.5.
+
+Create `docs/migration/v24_to_v25.md` with:
+
+```markdown
+# Migration: v2.4 → v2.5
+
+No migration guide exists for this version transition.
+If you are upgrading from v2.4, read [v2.5 → v2.6](v25_to_v26.md) and
+[v2.5 → v2.7](v25_to_v27.md) for the cumulative changes.
+The key structural change in v2.5 was the introduction of the `new_workflow`
+ContextVar pattern (documented in the v2.5→v2.6 guide).
+```
+
+Then update `docs/migration/README.md` to add the missing link:
+
+```
+- [v2.4 to v2.5](v24_to_v25.md)
+```
+
+### [6] Verify all doc-to-doc cross-references
+
+Run a one-shot check of every `](docs/` reference in README.md, AGENTS.md, and CLAUDE.md:
+
+```bash
+# Extract all doc links and check they exist
+grep -roP '\]\(docs/[^)]+\)' README.md AGENTS.md CLAUDE.md | \
+  sed 's/.*](//;s/)//' | while read -r link; do
+  if [ ! -f "$link" ]; then
+    echo "BROKEN: $link"
+  fi
+done
+```
+
+Fix any broken links found. Currently known broken:
+- `docs/architecture/python_composition_dsl_plan.md` referenced in AGENTS.md:364 and CLAUDE.md:605 (fixed in step 3 above)
+
+---
+
+## Exact `rg` Replacements
+
+### REPLACEMENT A — AGENTS.md:364
+
+```
+rg -n 'python_composition_dsl_plan' AGENTS.md
+# line 364
+```
+
+Replace:
+```
+docs/architecture/python_composition_dsl_plan.md
+```
+With:
+```
+docs/architecture/python_authoring_edit_surface.md
+```
+
+### REPLACEMENT B — CLAUDE.md:605
+
+```
+rg -n 'python_composition_dsl_plan' CLAUDE.md
+# line 605
+```
+
+Same replacement.
+
+### REPLACEMENT C — CLAUDE.md:610
+
+```
+rg -n 'AGENTS.md — agent-facing constraints and rules' CLAUDE.md
+# line 610
+```
+
+Replace:
+```
+- `AGENTS.md` — agent-facing constraints and rules
+```
+With:
+```
+- `AGENTS.md` — concise agent-facing contract (rules, vocabulary, mental model, decision tree)
+```
+
+---
+
+## Focused Verification Commands
+
+Run in order after completing edits:
+
+```bash
+# 1. Verify README builds() example uses v2.7 pattern
+grep -c 'with new_workflow' README.md
+# Expected: ≥ 1
+
+# 2. Verify no remaining v2.6 _id= kwargs in README examples
+grep -c '_id=' README.md
+# Expected: acceptable (SaveImage still uses _id=). 
+# But no bare `wf = new_workflow(...)` outside `with` block should remain.
+
+# 3. Check AGENTS.md is substantially shorter than CLAUDE.md
+wc -l AGENTS.md CLAUDE.md
+# AGENTS.md should be ~80–120 lines, CLAUDE.md stays at 619 lines
+
+# 4. Verify no dead references
+grep -roP '\]\(docs/[^)]+\)' README.md AGENTS.md CLAUDE.md | \
+  sed 's/.*](//;s/)//' | while read -r link; do
+  [ -f "$link" ] || echo "BROKEN: $link"
+done
+# Expected: zero "BROKEN" lines
+
+# 5. Verify release_notes.md redirects properly
+grep -c 'v2.8.0' docs/release_notes.md
+# Expected: ≥ 1 (link to v2.8.0.md)
+grep -c 'v2.7 Sprint 1 Foundation' docs/release_notes.md
+# Expected: 0 (stale content removed)
+
+# 6. Verify migration chain is complete
+grep -c 'v24_to_v25' docs/migration/README.md
+# Expected: 1
+[ -f docs/migration/v24_to_v25.md ] && echo "EXISTS"
+# Expected: "EXISTS"
+
+# 7. Final baseline — no unintended changes
+git diff --stat
+# Should show only: README.md, AGENTS.md, CLAUDE.md, 
+#   docs/release_notes.md, docs/migration/README.md, 
+#   docs/migration/v24_to_v25.md
+```
+
+---
+
+## Rejected Risky Moves
+
+| Risky Move | Reason Rejected |
+|---|---|
+| **Delete AGENTS.md entirely** | Different tooling reads different files; Claude Code expects CLAUDE.md, generic agents expect AGENTS.md. Both must exist. |
+| **Make AGENTS.md a symlink to CLAUDE.md** | They should have different content after this brief. Symlink prevents divergence. |
+| **Rename or consolidate any file** | File moves break existing cross-references in agent prompts, CI workflows, and editor configs. Not scoped. |
+| **Edit code in `vibecomfy/__init__.py`** | `__all__` already includes `run_embedded`/`run_embedded_sync`; `load_template` and `workflow_from_template` both exist. The audit's claims were stale. No code fix needed. |
+| **Rewrite README.md entirely** | Too broad. The README structure is valid; only the v2.6 code examples need updating. Content, section headers, and table of contents stay as-is. |
+| **Remove `docs/release_notes.md` in favor of only `docs/release_notes/v2.7.0.md`** | The top-level stub provides a navigation entry point. Keep it but fix it to redirect properly. |
+| **Add full release notes to `docs/release_notes.md`** | Would duplicate `docs/release_notes/v2.7.0.md` and `v2.8.0.md`. Keep the version-specific notes in their own files. |
+| **Add new docs sections** | Not scoped. The existing reference docs (`docs/authoring.md`, `docs/templates/porting_workbench.md`, etc.) are the right homes for new content. |
+| **Edit `docs/migration/v25_to_v27.md`** | Not a root doc. The migration guides are already thorough; only the missing index entry needs fixing. |
+
+---
+
+## Summary of File Changes
+
+| File | Action |
+|---|---|
+| `README.md` | Patch: update code examples to v2.7 ContextVar pattern |
+| `AGENTS.md` | Overwrite: trim to concise agent-facing contract (~100 lines) |
+| `CLAUDE.md` | Patch: fix broken ref (line 605), fix AGENTS.md description (line 610) |
+| `docs/release_notes.md` | Overwrite: replace stub with proper version index |
+| `docs/migration/README.md` | Patch: add v2.4→v2.5 link |
+| `docs/migration/v24_to_v25.md` | Create: stub migration guide |

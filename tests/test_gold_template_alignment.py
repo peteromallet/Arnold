@@ -1,4 +1,4 @@
-"""Alignment tests for docs/gold_template_wan_i2v.py vs ready_templates/video/wan_i2v.py.
+"""Alignment tests for docs/templates/examples/gold_template_wan_i2v.py vs ready_templates/video/wan_i2v.py.
 
 Verifies:
 - Public input parity (same keys, same default types)
@@ -17,7 +17,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-GOLD_PATH = REPO_ROOT / "docs" / "gold_template_wan_i2v.py"
+GOLD_PATH = REPO_ROOT / "docs" / "templates" / "examples" / "gold_template_wan_i2v.py"
 GENERATED_PATH = REPO_ROOT / "ready_templates" / "video" / "wan_i2v.py"
 
 

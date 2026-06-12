@@ -1,7 +1,7 @@
 # Roadmap v2: from PoC to Agentic ComfyUI
 
 **Status:** holistic plan, **revised after a 10-agent red-team** of the v1 roadmap.
-Companion to `docs/python_on_the_graph.md` (design + verified findings) and the
+Companion to `architecture/python_on_the_graph.md` (design + verified findings) and the
 scratchpad-emitter epic (the round-trip engine). v1 framed this as a lossless *bijection*;
 the red-team showed that framing is the single most dangerous thing in the plan. v2 keeps
 the spine (oracle-backed gates, foundation-first, "never grade your own homework") and fixes
@@ -264,7 +264,7 @@ ComfyUI ships ~biweekly; the V3 node-schema migration is ongoing; `object_info` 
 **installation-specific** (depends on the user's pack versions). So "fidelity % vs ComfyUI's
 converter" is *non-reproducible across users* unless pinned — which would re-introduce the
 frozen-snapshot problem one layer up. Resolution (the ecosystem already does this; the repo
-already has `docs/comfy_version_support.md` + `migration_v25_to_v27.md`):
+already has `docs/comfy_version_support.md` + `docs/migration/v25_to_v27.md`):
 
 - **Pin a ComfyUI version per VibeComfy release** (`supported_comfyui_version`); the CI gate
   runs against the *vendored* pin → reproducible numbers.
@@ -508,7 +508,7 @@ exactly the delta, nothing else"). Faithfulness is orthogonal to **correctness**
 | Lens | Danger | Verified anchor (both families) | Type |
 |---|---|---|---|
 | **Intent-correctness** | **Existential** | Intent judge is *vapor* — not in code, epic ends at read-only m7. Structured tools *launder* wrong intent into clean gate-passing graphs. An L3 gate built later will grab the only oracle present (`convert_ui_to_api`) → re-enters the self-reference §6.1 condemns. | **Challenge** |
-| **Security / confused-deputy** | **Existential** (on write) | Graph text (titles/widgets) ingested as agent context verbatim (`analysis/graph.py`) = injection channel. `add_node` (`workflow.py:380`) has **no class allowlist**. Three unsandboxed exec paths: `scratchpad_loader.py:24`, `registry/ready.py:97`, `node_packs_install.py:127`. | **Challenge** |
+| **Security / confused-deputy** | **Existential** (on write) | Graph text (titles/widgets) ingested as agent context verbatim (`analysis/graph.py`) = injection channel. `add_node` (`workflow.py:380`) has **no class allowlist**. Three unsandboxed exec paths: `scratchpad_loader.py:24`, `registry/ready.py:97`, `node_packs/_install.py`. | **Challenge** |
 | **Custom-node expressibility** | High (live silent bug) | `object_info` *lies* about dynamic nodes: rgthree Power Lora Loader snapshot = `[None,None]` (2) but real graphs carry ~8 dict-shaped rows → emitter records `overflow 8>2` and **nothing raises**. The §6 fence is **data-complete but gate-incomplete** — the recovery report already carries `schema_less`/`widget_length_check`; nothing consumes it as a refusal. | **Challenge** |
 | **Moving oracle / durability** | High (cheap fix) | `comfy_converter_strict=False` is the **default happy path** → an oracle bump silently falls back to our offline reimpl ("green while reality diverges"). The only real oracle gate (`test_layer3_corpus_wide_convert_ui_to_api_gate`) is **opt-in and never runs in CI** (`VIBECOMFY_COMFY_SMOKE` set nowhere). Our own widget-schema bumps can silently steal saved positions (no migration test). | **Enhance** |
 | **End-user trust** | High | The L2 trust surface is unbuilt: `porting/layout/__init__.py` `layout()` raises `NotImplementedError`; the "change report" is a `print`, not a previewable/approvable diff; **latency is gated nowhere**; ingest's many-to-one normalization silently rationalizes the user's organizational reroutes (felt-catastrophic, geometrically invisible). | **Enhance** |

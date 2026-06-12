@@ -1,0 +1,30 @@
+## Audit: `out/runpod_artifacts/`
+
+### 1. What it contains
+
+RunPod cloud GPU run artifacts, organized per-run by numeric ID (e.g., `1777225293/`) or ISO timestamp (`20260507T020859Z/`). Each subdirectory holds:
+
+- **`artifacts.tar.gz`** — full tarball downloaded from the remote pod.
+- **`manifest.json`**, **`report.md`** — generated summaries.
+- **`output/`** — generated images (PNG) or videos (MP4).
+- **`out/corpus_matrix/`** — TSV result tables, logs, exit codes, patched workflows.
+- **`out/runs/`** — per-run `metadata.json` and `watchdog.json`.
+- Scattered `.DS_Store` files.
+
+Around 15+ run subdirectories. Some archives (`.tar.gz`) are multi-hundred-MB. These are purely local cached output from `scripts/runpod_e2e_matrix.py` / `scripts/runpod_runner.py`.
+
+### 2. Promote any files?
+
+**No.** All content is transient runtime output. The validation results are already summarized in the committed `ready_templates/VALIDATION.md`, which references specific artifact dirs (`1777223626`, `1777224240`, `1777225293`) as traceability records. Those three dirs could be kept until that validation doc is stable/archived, but nothing should be promoted to the repo.
+
+### 3. Deletion safety
+
+**Safe to delete** with user approval. The entire `out/` tree is already gitignored. However:
+- The referenced dirs in `VALIDATION.md` provide forensic traceability for past validation bugs (overrides, model staging). If that history matters, the **three referenced dirs** should be preserved until `VALIDATION.md` is consolidated.
+- Everything else (failed runs, stale reports) is safe to nuke immediately.
+
+### 4. `.gitignore` / docs changes
+
+**`.gitignore`** — already covers `out/` (line 14). No change needed. Optionally add `**/.DS_Store` (though `.DS_Store` is already covered at line 6).
+
+**Docs** — the directory is already documented in `docs/structure_cleanup/results/02-abstraction-groups.txt` as "Generated output (gitignored)". No update needed unless you want to add a one-liner in a README or cleanup doc stating: *"`out/runpod_artifacts/` — cached RunPod GPU run downloads. Safe to delete after validation; gitignored."* The audit brief file at `docs/structure_cleanup/artifacts_briefs/07-out-runpod-artifacts.md` can be filled with this analysis.

@@ -1,4 +1,4 @@
-"""Tests for vibecomfy.porting.scope (T8 — sg_key + scoped inner uids)."""
+"""Tests for vibecomfy.porting.identity.scope (T8 — sg_key + scoped inner uids)."""
 from __future__ import annotations
 
 import itertools

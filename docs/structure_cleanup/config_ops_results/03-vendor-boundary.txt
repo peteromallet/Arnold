@@ -1,0 +1,132 @@
+Here is the complete audit of `vendor/` as a structural boundary.
+
+---
+
+## Audit Results
+
+### 1. Is `vendor/` a submodule, checked-in vendored code, or local dependency?
+
+**It is a hybrid — two distinct kinds of content live here:**
+
+| Path | Type | Details |
+|---|---|---|
+| `vendor/ComfyUI/` | **Git submodule** | Defined in `.gitmodules`, points to `https://github.com/peteromallet/ComfyUI.git` on branch `fix/latentupscale-model-mmap-residency`. The `.git` file is a gitdir pointer (`../../.git/modules/vendor/ComfyUI`). The parent `.git/config` also records it as a submodule. |
+| `vendor/direct_templates/` | **Checked-in vendored JSON** | 23 JSON files (BFL, Luma, OpenAI, Kling, LTX, PixVerse, Hunyuan, Wan, etc.). No submodule — these are committed directly into the parent repo. |
+| `vendor/workflow_templates/` | **Ignored local checkout** | Listed in `.gitignore` as a "large local runtime/vendor checkout" — not committed, can exist locally. |
+| `vendor/external_workflows/` | **Ignored local checkout** | Same pattern — `.gitignore`-d, not committed. |
+
+**Answer:** `vendor/` is a **mixed-use directory**: one genuine submodule (ComfyUI), one set of checked-in vendored data (direct_templates), and two gitignored local-only paths (workflow_templates, external_workflows).
+
+---
+
+### 2. Is there a README or policy explaining what belongs there?
+
+**No.** There is no `vendor/README.md`. Findings:
+
+- **`README.md`** — The repository layout table (lines 234-241) does not list `vendor/` at all. A reader checking the top-level README has no idea vendor/ exists or what it contains.
+- **`docs/structural_issues.md`** (line 25) mentions "Keep raw JSON under `workflow_corpus/` or `vendor/`" — but this is buried, not discoverable as a vendor policy.
+- **`docs/structure_cleanup/config_ops_briefs/03-vendor-boundary.md`** is the *task brief* I was given to execute — it is not published policy. It exists only as an internal cleanup planning document.
+- **`docs/structure_cleanup/config_ops_briefs/09-navigation-policy.md`** (line 15) explicitly asks "Should a new `vendor/README.md` be added?" — this was identified as a gap during a prior audit pass but never acted on.
+
+**Answer:** There is no published policy. The only documentation is a task brief and a prior audit note both saying one is needed.
+
+---
+
+### 3. Are any safe docs/index improvements needed?
+
+**Yes — four safe improvements:**
+
+#### A. Add `vendor/README.md` (highest priority)
+
+This is the single most impactful fix. It should document:
+
+- `vendor/ComfyUI/` — git submodule, forked repo, branch pinned in `.gitmodules`
+- `vendor/direct_templates/` — checked-in API JSON templates for various providers
+- `vendor/workflow_templates/` and `vendor/external_workflows/` — gitignored, created locally when needed
+- Reminder to `git submodule update --init --recursive` after clone
+
+#### B. Add `vendor/` row to `README.md` repository layout table
+
+The table at line 234-241 of `README.md` omits `vendor/`. A row between `workflow_corpus/` and `docs/` would make it discoverable.
+
+#### C. Remove `__pycache__/` from vendor/ComfyUI submodule
+
+The submodule checkout contains multiple `__pycache__/` directories with `.pyc` files for Python 3.11/3.12/3.14. While the parent repo's `.gitignore` has `__pycache__/` and `*.pyc`, **submodules manage their own tracking** — these `.pyc` files are tracked in the submodule's history. They should be cleaned up in the fork (peteromallet/ComfyUI) and a `.gitignore` added there.
+
+#### D. Reference vendor/ in `pyproject.toml` comment more clearly
+
+Line 30 of `pyproject.toml` says:
+```
+# neither this extra nor the vendor/ComfyUI submodule is present.
+```
+This is correct but minimal. Adding a brief note referencing `vendor/README.md` would help developers understand the boundary.
+
+---
+
+### 4. What must not move?
+
+| Item | Reason |
+|---|---|
+| `vendor/ComfyUI/` submodule | `.gitmodules` and `.git/config` both hardcode the path `vendor/ComfyUI`. Moving it would break the submodule registration. The `pyproject.toml` comment also references this path. |
+| `vendor/direct_templates/` | These JSON files are loaded by code. If any code references these paths (need to verify), moving them would break imports. Even if no code references them yet, the convention "raw JSON under vendor/" is established in `docs/structural_issues.md`. |
+| `.gitignore` entries for `vendor/workflow_templates/` and `vendor/external_workflows/` | These paths are gitignored but recognized as convention. Changing them would break local workflows for anyone who has these directories populated. |
+
+**What *can* safely move after investigation:**
+- Nothing in `vendor/` should move without a coordinated update to `.gitmodules` and any code that loads from `vendor/direct_templates/`.
+- The `__pycache__/` dirs inside the submodule should be fixed in the fork, not by moving them.
+
+---
+
+## Exact Recommendations
+
+### 1. Create `vendor/README.md`
+
+```markdown
+# vendor/
+
+Vendored dependencies and third-party workflow templates.
+
+## Contents
+
+| Path | Type | Notes |
+|---|---|---|
+| `ComfyUI/` | Git submodule | Fork of ComfyUI, pinned in `.gitmodules`. Run `git submodule update --init --recursive` after clone. |
+| `direct_templates/` | Checked-in JSON | API JSON templates for BFL, Luma, OpenAI, Kling, LTX, PixVerse, Hunyuan, Wan, and others. Loaded by tooling, not hand-edited. |
+| `workflow_templates/` | Local only | Listed in `.gitignore`. Populated locally for development; not committed. |
+| `external_workflows/` | Local only | Listed in `.gitignore`. Populated locally for development; not committed. |
+
+## Policy
+
+- Submodules belong at `vendor/<name>/`.
+- Raw JSON workflow material that is not part of `workflow_corpus/` lives under `vendor/direct_templates/`.
+- Large local checkouts go in gitignored subdirectories (`workflow_templates/`, `external_workflows/`).
+- Do not commit `__pycache__/` or `.pyc` files in any vendor subdirectory.
+```
+
+### 2. Add vendor row to `README.md` repository table
+
+Insert after line 239 (`workflow_corpus/` row):
+
+```
+|| `vendor/` | Vendored dependencies (ComfyUI submodule) and provider API JSON templates. See `vendor/README.md`. |
+```
+
+### 3. Clean up submodule `__pycache__/` in the fork
+
+On the `peteromallet/ComfyUI` fork, add `__pycache__/` and `*.pyc` to `.gitignore`, then remove and commit the tracked `.pyc` files. This is outside the parent repo's direct control but should be queued.
+
+### 4. (Optional) Minor clarification in `pyproject.toml` line 30
+
+Current:
+```
+# neither this extra nor the vendor/ComfyUI submodule is present.
+```
+Suggestion:
+```
+# neither this extra nor the vendor/ComfyUI submodule is present.
+# See vendor/README.md for the submodule boundary policy.
+```
+
+---
+
+**Summary:** The `vendor/` directory is a mixed-use boundary with a submodule, checked-in JSON, and gitignored local paths. It lacks any documentation explaining its structure. The highest-impact, safest fix is creating `vendor/README.md` and a single row in the main `README.md` table. The `__pycache__/` issue is a submodule hygiene problem that needs fixing in the fork. Nothing in `vendor/` should be moved without also updating `.gitmodules` and verifying code references to `vendor/direct_templates/`.

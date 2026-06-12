@@ -8,10 +8,8 @@ from ._defs import CustomNodePack, get_known_node_packs, resolve_node_packs, unr
 from ._lockfile import LockEntry, upsert_lockfile_entry
 from vibecomfy.registry.pack_resolver import PackNotFoundError, PackRef
 
-# resolve_pack is imported lazily inside install_pack() so that
-# monkeypatching node_packs_install.resolve_pack correctly affects
-# install_pack behaviour.  A module-level ``from ... import resolve_pack``
-# would bypass the thin-shim namespace and break test monkeypatching.
+# resolve_pack is imported lazily inside install_pack() so that monkeypatching
+# vibecomfy.node_packs.resolve_pack correctly affects install_pack behaviour.
 from vibecomfy.security.gate import current_gate_context, require_confirmation, requesting_provenance
 from vibecomfy.workflow import VibeWorkflow
 InstallStatus = Literal["installed", "refreshed", "skipped_dirty", "failed"]
@@ -188,7 +186,7 @@ def install_pack(
     resolved_ref: PackRef | None = None
     if pack is None and repo is None and name is not None:
         try:
-            from vibecomfy.node_packs_install import resolve_pack  # see module-level comment
+            from vibecomfy.node_packs import resolve_pack  # see module-level comment
 
             resolved_ref = pack_ref or resolve_pack(name).ref
         except PackNotFoundError as exc:

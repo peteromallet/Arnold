@@ -1,0 +1,65 @@
+I now have all the evidence needed. Here is the complete audit.
+
+---
+
+## Root `vibecomfy/*.py` Deletion-first Audit
+
+### ✅ SAFE DELETE NOW (zero imports, dead shims)
+
+| # | File | Evidence | Verify |
+|---|------|----------|--------|
+| 🔴 | `vibecomfy/_graph_utils.py` | 3-line `sys.modules` shim → `_compile._graph`. **Zero imports** across all `.py` files. The `dead_module_results` audit already confirms this is safe. | `grep -rn "import.*_graph_utils" vibecomfy/ tests/ tools/` — expect 0 hits |
+| 🔴 | `vibecomfy/_widget_aliases.py` | 3-line `sys.modules` shim → `_compile._widgets`. **Zero runtime imports**. `workflow.py:9` imports `from vibecomfy._compile import _widgets` (bypassing shim). Test file references by disk path only. | `grep -rn "import.*_widget_aliases" vibecomfy/ tests/` — expect 0 hits |
+| 🔴 | `vibecomfy/node_packs_git.py` | **Shim** — `from node_packs._git import *`. Has active callers (2 imports: `test_node_packs_git.py`, `ensure_env.py`). The shim itself is fine; callers import from it → **delete AFTER migrating those 2 imports** to `vibecomfy.node_packs._git`. | `grep -rn "from vibecomfy.node_packs_git import" .` — shows callers to migrate |
+
+### 🟡 DELETE AFTER MIGRATION (active importers exist, migrate then remove)
+
+| # | File | Evidence | Migration Target | Verify After |
+|---|------|----------|-----------------|-------------|
+| 🟡 | `_helper_resolve.py` | 3-line `from _compile._resolve import *`. **1 importer**: `workflow.py:8` (`from vibecomfy import _helper_resolve as helper_resolve`). Change that to `from vibecomfy._compile import _resolve as helper_resolve`. | `vibecomfy._compile._resolve` | `python -c "from vibecomfy.workflow import VibeWorkflow"` |
+| 🟡 | `_workflow_helpers.py` | 3-line `from _compile._helpers import *`. **1 importer**: `workflow.py:10` (`from vibecomfy import _workflow_helpers as workflow_helpers`). Change to `from vibecomfy._compile import _helpers as workflow_helpers`. | `vibecomfy._compile._helpers` | `python -c "from vibecomfy.workflow import VibeWorkflow"` |
+| 🟡 | `node_packs_install.py` | 14-line re-export shim + `registry.pack_resolver` re-exports. **15+ importers** across tests, runtime, and tools. Giant migration. Defer to later cleanup pass. | `node_packs._install` | Bulk grep: `from vibecomfy.node_packs_install import ...` |
+
+### ✅ KEEP (live implementation files — not shims, actively imported)
+
+| File | Role | Import Count |
+|------|------|-------------|
+| `__init__.py` | Package API | ∞ (entry point) |
+| `workflow.py` | Core types (VibeWorkflow etc.) | 200+ across tests/docs |
+| `templates.py` | `new_workflow()`, `node()` | Documented public API |
+| `cli.py` | CLI entry point | Entry point in pyproject.toml |
+| `cli_loader.py` | `load_workflow_any` | Exported in `__init__.py` |
+| `errors.py` | Exception hierarchy | Widely imported |
+| `handles.py` | `Handle` type | Core type |
+| `artifacts.py` | `Artifact`, `Image`, etc. | Exported in `__init__.py` |
+| `utils.py` | `find_repo_root` | Exported in `__init__.py` |
+| `extras.py` | Plugin API | Plugin infra |
+| `comfy_backend.py` | ComfyUI adoption hook | ~5 imports |
+| `comfy_command.py` | `comfy` executable resolver | ~3 imports |
+| `memory_profile.py` | MemoryProfile enum | 7 imports (tests + runtime) |
+| `environment_diagnostics.py` | Env warnings | 2 imports |
+| `node_packs.py` | CustomNodePack dataclass | 20+ imports |
+| `node_packs_lockfile.py` | Lockfile I/O | 32 imports (heaviest root file) |
+| `custom_node_refs.py` | Normalize refs | 11 imports |
+| `checks.py` | Consistency checks | 3 imports |
+| `local_library.py` | Library path resolution | 11 imports |
+| `metadata.py` | Workflow heuristics | 7 imports |
+| `model_assets.py` | Asset URL resolution | 10 imports |
+| `index_types.py` | TypedDict definitions | 2 imports |
+| `workflow_context.py` | ContextVar for active workflow | 18 imports |
+| `scratchpad_loader.py` | Load scratchpad workflows | 6 imports |
+| `origin.py` | Workflow origin stamping | internal |
+| `fixtures.py` | Smoke fixture management | internal |
+| `_agent_edit_debug.py` | Debug CLI tool | 2 imports (commands/debug.py, scripts/) |
+| `_git_utils.py` | Git command wrapper | 3 imports |
+
+### Summary
+
+| Action | Count | Files |
+|--------|-------|-------|
+| **DELETE NOW** | 2 | `_graph_utils.py`, `_widget_aliases.py` |
+| **DELETE after 1-import migration** | 2 | `_helper_resolve.py`, `_workflow_helpers.py` (update `workflow.py` lines 8,10) |
+| **DELETE after bulk migration** | 2 | `node_packs_git.py`, `node_packs_install.py` (defer to later pass) |
+| **KEEP** | 28 | All live implementation files |
+
+**Note:** `router.py` and `router_rules.py` were already deleted in a prior pass (confirmed absent from disk).

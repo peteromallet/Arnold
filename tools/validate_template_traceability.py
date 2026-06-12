@@ -23,7 +23,7 @@ from tools.check_pack_provenance import build_pack_provenance_report
 from tools.refresh_template_index import DEFAULT_OUTPUT as DEFAULT_TEMPLATE_INDEX
 from tools.refresh_template_index import _ready_template_metadata
 from vibecomfy.custom_node_refs import normalize_custom_node_requirements
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+from vibecomfy.node_packs import LockEntry, read_lockfile
 from vibecomfy.registry.models_loader import DEFAULT_REGISTRY_PATH, ModelEntry, load_registry
 from vibecomfy.registry.static_contract import extract_ready_template_contract
 

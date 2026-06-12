@@ -1,0 +1,65 @@
+Here are the complete findings and recommendations.
+
+---
+
+## 1. Document Classification
+
+| File | Type | Reasoning |
+|------|------|-----------|
+| `docs/structural_audit_2026-05.md` | **Historical audit report** | Completed two-sweep structural evaluation (May 2026). Static snapshot — no active maintenance, no status fields, no backlog. The date stamp itself signals finality. |
+| `docs/structural_issues.md` | **Active reference / running log** | Living document with per-section `Status:` fields (`Active`, `Mitigated, needs hardening`, `Open — follow-up`), policy declarations, and an "Immediate Backlog" section. Directly cited in agent instructions (`AGENTS.md`, `CLAUDE.md`) as the canonical place to document failures. |
+| `docs/m4_resolution_context.md` | **Architecture specification (+ divergence inventory)** | Self-described "LIVING DOCUMENT." Core content is the `ResolutionContext` API spec, `NodeBackend` protocol, `ResolveResult`/`ResolutionIssue` types, backend implementations, and adapter functions (sections d–f). The divergence inventory (sections a–b) is supporting context for the architectural unification. |
+
+---
+
+## 2. Recommended Destinations
+
+### `docs/structural_audit_2026-05.md` → `docs/historical/structural-audit-2026-05.md`
+
+Matches `docs/historical/README.md`: *"Archived spikes, old rationale, and completed follow-up plans. ... should not be treated as the current source of truth."*
+
+Not `docs/audits/` — the audits README says "*Long-lived audit reports that are useful for maintainers*" but the structural audit is already superseded; it belongs in the archive. The prior cleanup analysis (`06-plans-audits-history.txt`) already proposed this exact mapping.
+
+### `docs/structural_issues.md` → `docs/plans/structural-issues.md`
+
+Matches `docs/plans/README.md`: *"Planning documents and execution manifests that are still useful as project context."* This is a running issues log with status tracking and backlog — an active planning document.
+
+Not `docs/historical/` — it's actively maintained. Not `docs/architecture/` — it's operational/running-log content, not design. Not `docs/audits/` — it's an issues log, not an audit.
+
+### `docs/m4_resolution_context.md` → `docs/architecture/m4-resolution-context.md`
+
+Matches `docs/architecture/README.md`: *"Design notes and architecture proposals."* The primary content is the `ResolutionContext` API specification — a design document for the M4 resolution convergence. The divergence inventory is supporting context.
+
+The prior cleanup analysis said it "belongs under `docs/` or `docs/project/`" but `docs/project/` doesn't exist and `docs/architecture/` is the correct fit. Also rename to `m4-resolution-context.md` (kebab-case) to match existing convention in `docs/architecture/` (`python_composition_dsl_plan.md`, `python_on_the_graph.md`, etc.).
+
+---
+
+## 3. Move Safety
+
+| File | Safe now? | Blockers |
+|------|-----------|----------|
+| `structural_audit_2026-05.md` | **❌ NO** | **17+ cross-references** in `docs/megaplan_chains/excellence_epic/*.md` all use `../structural_audit_2026-05.md` — every sprint plan (m1 through m7), `chain.yaml`, `START_HERE.md`, and `prep-m1.md` would break. Requires a coordinated link-repair pass. |
+| `structural_issues.md` | **❌ NO** | **5+ live references**, including `AGENTS.md:596` and `CLAUDE.md:356` (agent instructions citing the exact path `docs/structural_issues.md`), plus `adding_templates_models.md`, `corpus.md`, and `loose-work-consolidation-plan.md`. Agent-config changes are higher-risk. |
+| `m4_resolution_context.md` | **✅ YES** | **Zero Python code references. Zero agent-instruction references. Zero megaplan references.** The 7 references are all within `docs/structure_cleanup/` artifacts (which are part of this same reorg scope) and `artifacts/m4/m4_baseline_pre_apply.txt` (line 106 doc reference — also being reorganized). No external dependents will break. |
+
+---
+
+## Exact Recommendations
+
+### Move now (safe):
+
+```
+mv docs/m4_resolution_context.md docs/architecture/m4-resolution-context.md
+```
+
+Update the one test/doc dependency in `artifacts/m4/m4_baseline_pre_apply.txt` (line 106 references the old path).
+
+### Defer (requires coordinated link-repair):
+
+1. **`docs/structural_audit_2026-05.md` → `docs/historical/structural-audit-2026-05.md`**
+   - Update all 17+ `../structural_audit_2026-05.md` references in `docs/megaplan_chains/excellence_epic/`.
+
+2. **`docs/structural_issues.md` → `docs/plans/structural-issues.md`**
+   - Update `AGENTS.md:596`, `CLAUDE.md:356`, `docs/templates/adding_templates_models.md:360`, `docs/workflow-coverage/corpus.md:60`, and `docs/plans/loose-work-consolidation-plan.md:17`.
+
+Both are best done in a single "fix broken doc links" pass after the structural cleanup directory moves are finalized.

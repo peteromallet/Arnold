@@ -1,0 +1,125 @@
+Here's my audit finding.
+
+---
+
+## 1. Classification
+
+**Current Contracts (active, authoritative) — hyphenated naming:**
+| File | Status |
+|---|---|
+| `agent-edit-client-lifecycle.md` | Active contract — references response-contract and contracts |
+| `agent-edit-contracts.md` | Active M1 contract for baseline authority |
+| `agent-edit-response-contract.md` | Active typed response contract (single source of truth) |
+| `agent_edit_session_contract.md` | Active M1 EditSession contract (frozen, 177+ tests) |
+| `agent_edit_wire_protocol.md` | Active M2 batch-REPL protocol (frozen) |
+
+**Historical Plans / Design Docs — underscore named:**
+| File | Status |
+|---|---|
+| `agent_edit_concrete_tree.md` | Design + Phase 1 prototype (companion to blockers doc) |
+| `agent_edit_phase1_plan.md` | Implementation plan for Phase 1 |
+| `agent_edit_solution_spec.md` | Root-level design spec (v2, jury-verdict incorporated) |
+| `agent_edit_failure_evidence/` | Failure transcripts, audit logs, proof artifacts |
+
+**Tracking / Infrastructure:**
+| File | Status |
+|---|---|
+| `m4_resolution_context.md` | Living M4 divergence inventory (project-tracking, not agent-edit per se) |
+| `e2e_real_browser_tier.md` | Test-infrastructure spec (agent-edit testing is main consumer) |
+
+**Key insight:** The naming split (`agent-edit-` vs `agent_edit_`) accidentally encodes the contract/plan divide. Hyphenated = current contracts. Underscored = historical designs + evidence. The two exceptions are the frozen M1/M2 contracts (`_session_contract`, `_wire_protocol`) which are underscore-named but are very much current — they predate the hyphen convention.
+
+---
+
+## 2. Exact Moves
+
+```
+docs/agent-edit-client-lifecycle.md       →  docs/agent-edit/client-lifecycle.md
+docs/agent-edit-contracts.md             →  docs/agent-edit/contracts.md
+docs/agent-edit-response-contract.md     →  docs/agent-edit/response-contract.md
+docs/agent_edit_concrete_tree.md         →  docs/agent-edit/concrete-tree.md
+docs/agent_edit_phase1_plan.md           →  docs/agent-edit/phase1-plan.md
+docs/agent_edit_session_contract.md      →  docs/agent-edit/session-contract.md
+docs/agent_edit_solution_spec.md         →  docs/agent-edit/solution-spec.md
+docs/agent_edit_wire_protocol.md         →  docs/agent-edit/wire-protocol.md
+docs/agent_edit_failure_evidence/        →  docs/agent-edit/failure-evidence/
+docs/e2e_real_browser_tier.md            →  docs/agent-edit/e2e-real-browser-tier.md
+docs/m4_resolution_context.md            →  STAY (not agent-edit; belongs under docs/ or docs/project/)
+```
+
+**Rationale:** Standardize on kebab-case under `docs/agent-edit/`. Strip `agent-edit-` prefix from filenames since the directory already scopes it. `m4_resolution_context.md` is about M4 lint/apply divergence for the overall project — move elsewhere or leave at root.
+
+---
+
+## 3. Link/Reference Risks
+
+**Cross-doc links that will break:**
+- `agent-edit-client-lifecycle.md:18` → `docs/agent-edit-response-contract.md` (reflexive; fixable by relative `response-contract.md`)
+- `agent-edit-client-lifecycle.md:191` → `docs/agent-edit-contracts.md` → fixable
+- `agent_edit_phase1_plan.md:3` → `docs/agent_edit_solution_spec.md` → fixable
+- `edit.py:2184,2239` → `docs/agent_edit_concrete_tree.md` → must rewrite to `docs/agent-edit/concrete-tree.md`
+- `lean_render_summary.md` references `docs/agent_edit_failure_evidence/…` (self-move; fine after relpath update)
+
+**Mitigation:** Use `git mv` so history is preserved, then write a `scripts/fix-agent-edit-refs.sh` that does `sed -i` over all `.py` and `.md` files replacing old paths. Estimated 6 replacements across 3 files.
+
+---
+
+## 4. Minimal Safe Batch
+
+**Batch 1 — create directory + move non-contract docs (zero link-risk surface):**
+1. `git mv docs/agent_edit_failure_evidence/ docs/agent-edit/failure-evidence/`
+2. `git mv docs/agent_edit_concrete_tree.md docs/agent-edit/concrete-tree.md`
+3. `git mv docs/agent_edit_phase1_plan.md docs/agent-edit/phase1-plan.md`
+4. `git mv docs/agent_edit_solution_spec.md docs/agent-edit/solution-spec.md`
+
+**Batch 2 — move contract docs + fix links in one go:**
+5. `git mv docs/agent-edit-client-lifecycle.md docs/agent-edit/client-lifecycle.md`
+6. `git mv docs/agent-edit-contracts.md docs/agent-edit/contracts.md`
+7. `git mv docs/agent-edit-response-contract.md docs/agent-edit/response-contract.md`
+8. `git mv docs/agent_edit_session_contract.md docs/agent-edit/session-contract.md`
+9. `git mv docs/agent_edit_wire_protocol.md docs/agent-edit/wire-protocol.md`
+10. `git mv docs/e2e_real_browser_tier.md docs/agent-edit/e2e-real-browser-tier.md`
+
+**Batch 3 — fix all references (run once):**
+- Rewrite `docs/agent_edit_` → `docs/agent-edit/` and `docs/agent-edit-` → `docs/agent-edit/` in all `.md` and `.py` files under the repo.
+
+**Batch 4 — write index README:**
+
+```
+docs/agent-edit/README.md
+```
+
+**Suggested README:**
+
+```markdown
+# Agent-Edit Documentation
+
+## Active Contracts (current, authoritative)
+
+- [client-lifecycle.md](client-lifecycle.md) — Client-side lifecycle state machine
+- [contracts.md](contracts.md) — M1 baseline authority & accept eligibility
+- [response-contract.md](response-contract.md) — Typed server→browser response contract
+- [session-contract.md](session-contract.md) — M1 EditSession API (frozen)
+- [wire-protocol.md](wire-protocol.md) — M2 batch-REPL wire protocol (frozen)
+- [e2e-real-browser-tier.md](e2e-real-browser-tier.md) — Playwright test tier spec
+
+## Historical Designs & Plans
+
+- [concrete-tree.md](concrete-tree.md) — Concrete-tree / diff-over-original rationale
+- [phase1-plan.md](phase1-plan.md) — Phase 1 implementation plan
+- [solution-spec.md](solution-spec.md) — Root-level design spec (v2)
+
+## Failure Evidence
+
+- [failure-evidence/](failure-evidence/) — Real failure transcripts, audit logs, proof artifacts
+  - `grammar-violation-*` — Linter grammar violations
+  - `resolver-primitivefloat-*` — Resolver type mismatches
+  - `addnode-missing-input-*` — Node construction failures
+  - `lean_render_*` — Fidelity measurement dumps
+```
+
+**Not moved here:** `docs/m4_resolution_context.md` — belongs under `docs/` or `docs/project/` as it tracks cross-project divergence inventory.
+
+---
+
+**Summary: 100% yes to `docs/agent-edit/`. 6 active contracts + 3 historical plans + 1 evidence dir. 7 link fixes needed (3 .md + 1 .py file). Safe to batch by (1) evidence + plans, (2) contracts, (3) link fix, (4) README.**

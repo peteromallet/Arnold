@@ -1,4 +1,4 @@
-"""Tests for ``vibecomfy.porting.wrapper_discovery``.
+"""Tests for ``vibecomfy.porting.wrappers.discovery``.
 
 Each test exercises one discovery source against a synthetic fixture written
 into a temporary directory. ``live`` is exercised via a tiny stub server
@@ -13,7 +13,7 @@ from unittest import mock
 
 import pytest
 
-from vibecomfy.porting import wrapper_discovery as wd
+from vibecomfy.porting.wrappers import discovery as wd
 
 
 @pytest.fixture

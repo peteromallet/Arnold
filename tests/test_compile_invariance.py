@@ -34,7 +34,7 @@ _KNOWN_XFAIL_FAMILIES: dict[str, str] = {
         "ComfyUI convert_ui_to_api adds a '_meta': {'title': ...} field to every "
         "node in the output; vibecomfy compile('api') does not. This is a cosmetic "
         "metadata annotation (used by the ComfyUI frontend for display) and has no "
-        "effect on execution semantics. Documented in docs/hiddenswitch_incompatibilities.md."
+        "effect on execution semantics. Documented in docs/runtime/incompatibilities.md."
     ),
 }
 
@@ -148,7 +148,7 @@ def test_bypass_equivalence_against_convert_ui_to_api(
     ComfyUI convert_ui_to_api for bypass (mode 4) and mute (mode 2) graphs.
 
     Gated on VIBECOMFY_COMFY_SMOKE=1. Known divergences are listed in
-    _KNOWN_XFAIL_FAMILIES and documented in docs/hiddenswitch_incompatibilities.md.
+    _KNOWN_XFAIL_FAMILIES and documented in docs/runtime/incompatibilities.md.
 
     The comparison ignores the '_meta' annotation (see _KNOWN_XFAIL_FAMILIES).
     Any other divergence is a test failure that must be diagnosed and either
@@ -197,5 +197,5 @@ def test_bypass_equivalence_against_convert_ui_to_api(
         f"_meta_field xfail):\n\n" + "\n\n".join(divergences) + "\n\n"
         "To accept a new divergence: add it to _KNOWN_XFAIL_FAMILIES in "
         "tests/test_compile_invariance.py and document it in "
-        "docs/hiddenswitch_incompatibilities.md."
+        "docs/runtime/incompatibilities.md."
     )

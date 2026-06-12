@@ -1,0 +1,48 @@
+Here's the audit:
+
+---
+
+## 1. Boundary Map
+
+| Category | Items | Notes |
+|---|---|---|
+| **Runtime package surface** | `vibecomfy/` | Sole wheel package (`pyproject.toml` line 79). CLI entrypoint `vibecomfy.cli:main` (line 70), ComfyUI custom_nodes entrypoint `vibecomfy.comfy_nodes` (line 76), pytest plugin `vibecomfy.testing._pytest_plugin` (line 118). PEP 561 via `py.typed`. |
+| **Vendored submodules** | `vendor/ComfyUI/` | Not shipped, but importable at runtime when checkout present. Do not touch. |
+| **Test surface** | `tests/` | Pytest `testpaths = ["tests"]`. Not shipped. |
+| **Importable dev packages** | `scripts/`, `tools/` | Have `__init__.py`, importable by tests. `scripts/` docstring says "Repository-local maintenance scripts package". **Not** in wheel. |
+| **CLI/dev tooling (root scripts)** | `_debug_json.py`, `_debug_resolver.py`, `_debug_normalize.py`, `_regen_templates.py`, `_fix_t6.py` | Root-level scripts. `_debug_*.py` is git-ignored (`.gitignore` line 34). |
+| **Data/template/corpus** | `recipes/`, `agentic/briefs/`, `workflow_index.json`, `template_index.json`, `node_index.json` | `ready_templates/` and `workflow_corpus/` **do not exist on disk** in this worktree — references in `_debug_*.py` suggest they exist elsewhere (another worktree or git submodule). |
+| **Agentic runtime** | `agentic/actors.py`, `agentic/actors_m4/`, `agentic/actors_m5/` | `agentic/` has no `__init__.py` at top level (not a package). Subdirs `actors_m4/` and `actors_m5/` *do* have `__init__.py`. `actors.py` is standalone. |
+
+## 2. Safe Moves at Top Level
+
+- **Move `_debug_*.py` → `scripts/`**: Already git-ignored at root. To un-ignore, add them to `scripts/` and remove the `.gitignore` line. Update `_regen_templates.py` and `_fix_t6.py` similarly — they are one-shot maintenance scripts.
+- **Move `recipes/` → `vibecomfy/recipes/` or keep**: Recipes reference `vibecomfy` but are not in the wheel. They're standalone example files (no `__init__.py`). Minimal risk.
+- **Move `agentic/briefs/` → `docs/`**: Markdown files, no import risk.
+- **Move `agentic/actors_m4/`, `actors_m5/` → `scripts/`**: These are generated actor scripts. `actors.py` already imports `vibecomfy`; safe to relocate if you update import paths.
+
+## 3. Risky Moves That Should Wait
+
+- **Renaming or restructuring `vibecomfy/`**: Will break:
+  - CLI entrypoint (`vibecomfy = "vibecomfy.cli:main"`)
+  - ComfyUI custom_nodes entrypoint (`vibecomfy = "vibecomfy.comfy_nodes"`)
+  - Pytest plugin (`vibecomfy = "vibecomfy.testing._pytest_plugin"`)
+  - `[tool.hatch.build.targets.wheel] packages = ["vibecomfy"]`
+  - All internal relative imports
+  - All `from vibecomfy.xxx import yyy` across tests, scripts, agentic, recipes
+- **Moving `tests/` → `vibecomfy/tests/`**: Breaks `testpaths = ["tests"]` and `pytest11` plugin discovery.
+- **Changing `scripts/` or `tools/` to shipped packages**: Must update `pyproject.toml` `packages` list and audit for hatch artifacts.
+- **Deleting `vendor/`**: Live runtime dependency for ComfyUI-interop tests.
+
+## 4. Specific Config/files to Check Before Any Move
+
+| File | What to check |
+|---|---|
+| `pyproject.toml` lines 69, 76, 78–79, 85, 117–118 | Entrypoints (`project.scripts`, `comfyui.custom_nodes`, `pytest11`), wheel build, test paths |
+| `pyproject.toml` lines 106–109 | Coverage `source = ["vibecomfy"]` |
+| `vibecomfy/__init__.py` | Public API exports (`__all__`, PEP 562 lazy runtime imports) |
+| `vibecomfy/ingest/loader.py` line `load_template` | References template paths |
+| `vibecomfy/utils.py` line `find_repo_root` | References repo root for relative path resolution |
+| `.gitignore` lines 34 | `_debug_*.py` gitignored at root |
+| `workflow_index.json`, `template_index.json`, `node_index.json` | Generated indexes — may reference moved paths |
+| `agentic/actors.py` | Imports `vibecomfy.runtime.session` — verify after any runtime reorg |

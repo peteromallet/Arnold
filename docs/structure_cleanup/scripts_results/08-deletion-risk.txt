@@ -1,0 +1,54 @@
+Here's the full classification:
+
+---
+
+## 🗑 Safe delete now
+
+These are already gitignored and contain zero source value:
+
+| File | Reason |
+|---|---|
+| `scripts/.DS_Store` | macOS metadata junk, gitignored |
+| `tools/.DS_Store` | same |
+| `scripts/__pycache__/` (5 `.pyc` files) | bytecode caches, gitignored |
+| `tools/__pycache__/` (18 `.pyc` files) | bytecode caches, gitignored |
+| `tools/_legacy/__pycache__/` | orphaned `.pyc` in a dead dir, gitignored |
+| `scripts/maintenance/_regen_templates.py` | gitignored (`_regen_templates.py`), one-off v2.3.2→v2.3.1 migration |
+| `scripts/maintenance/_fix_t6.py` | gitignored (`_fix_t6.py`), one-off agent_edit fix |
+
+> `tools/_legacy/` will be empty once its `__pycache__` subdir is gone — safe to `rmdir` it too.
+
+---
+
+## ⚠️ Delete only after approval
+
+One-off scripts, spikes, demos, or dead-code stubs. Each needs a human nod before removal:
+
+| File | Lines | Why suspect |
+|---|---|---|
+| `scripts/_catalog_size_probe.py` | 155 | Underscore-prefixed probe — one-off catalog sizing analysis |
+| `scripts/_agent_edit_prompt_dump.py` | 211 | Underscore-prefixed dump — debug tool for prompt inspection |
+| `scripts/roundtrip_fidelity_spike.py` | 159 | Literally called a "spike" in docstring — falsification experiment |
+| `scripts/demo_wrapper_codegen.py` | 131 | "Demo" in docstring — wrapper codegen demonstration, not production |
+| `scripts/patch_shannon_unattended_root.sh` | 192 | Hard-coded to host `shannon`; unattended-root patching, one-shot |
+| `scripts/warm_session_smoke.py` | 76 | Smoke test harness, possible one-off |
+| `tools/_widget_schema.py` | 8 | Trivial re-export shim — kept for backward compat only |
+| `tools/_compile_equivalence.py` | 10 | Docstring says "retained to avoid breaking git history… no active logic" |
+
+**How to confirm:** For each, run `git log --oneline <file>` to see if it's been touched recently. If untouched in 6+ months, delete.
+
+---
+
+## ✅ Keep
+
+These are actively used or CI-integrated scripts/tools:
+
+**`scripts/` — keep all of:**
+`__init__.py`, `vibecomfy_debug.py`, `runpod_artifacts.py`, `sync_agent_skill.py`, `populate_model_hashes.py`, `run_local_agent_comfy.sh`, `runpod_matrix_remote.py`, `runpod_runner.py`, `megaplan_cloud_operator_loop.sh`, `runpod_validate.py`, `runpod_corpus_matrix.py`, `regenerate_snapshots.py` (has `--check` for CI), `megaplan_cloud_recovery_loop.sh`, `agentic_success_rate.py` (411-line framework harness), `runpod_model_matrix.py`, `runpod_matrix_plan.py`, `runpod_e2e_matrix.py`, `generate_agent_contract_js.py` (generates tracked JS contract)
+
+**`tools/` — keep all of:**
+`__init__.py`, `check_pack_provenance.py`, `refresh_template_index.py`, `regenerate_affected_templates.py`, `check_strict_ready_templates.py`, `fetch_hf_metadata.py`, `convert_ready_templates.py`, `backfill_custom_node_refs.py`, `check_canonical_parity.py`, `generate_node_shims.py`, `validate_templates_against_packs.py`, `clone_and_extract_packs.py`, `validate_template_traceability.py`, `refresh_comfy_metadata.py`, `profile_smoke_report.py`, `class_inventory_audit.py`, `format_as_python.py`
+
+---
+
+**Totals:** 7 safe-delete items (all already gitignored, zero risk), 8 approval-needed (mostly underscored one-offs + dead stubs), 36 keep.

@@ -26,7 +26,7 @@ FORBIDDEN = frozenset(
     {
         "convert_ui_to_api",
         "emit_ui_json",
-        "vibecomfy.porting.ui_emitter",
+        "vibecomfy.porting.emit.ui",
         "vibecomfy.ingest.normalize",
         "comfy.component_model.workflow_convert",
     }

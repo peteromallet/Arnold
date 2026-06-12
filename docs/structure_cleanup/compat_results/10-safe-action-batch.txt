@@ -1,0 +1,62 @@
+All shims are clean. Here is the complete report.
+
+---
+
+## Safe Action Batch — Complete Implementation
+
+### 1. Concrete File Changes
+
+| Action | File | What |
+|--------|------|------|
+| **Created** | `vibecomfy/testing/_fixtures_smoke.py` | Canonical copy of the smoke-fixture logic (288 lines, all public API + `__main__`) |
+| **Replaced** | `vibecomfy/fixtures.py` | 23-line thin shim → imports+re-exports from `_fixtures_smoke`; preserves `python -m vibecomfy.fixtures` CLI |
+| **Deleted** | `vibecomfy/testing/_fixtures.py` | Stale byte-for-byte duplicate of `fixtures.py` — zero importers anywhere |
+| **Created** | `vibecomfy/commands/_agent_edit_debug.py` | Canonical agent-edit debug tool (504 lines, full logic) |
+| **Replaced** | `vibecomfy/_agent_edit_debug.py` | 6-line thin shim → `from vibecomfy.commands._agent_edit_debug import *` — preserves all 3 importers |
+
+### 2. Files NOT Touched (and why)
+
+| File | Reason |
+|------|--------|
+| `vibecomfy/schema/format.py` | Clean 9-line utility, properly placed in `schema/` package |
+| `vibecomfy/diagnostics/__init__.py` | Clean re-export, properly placed |
+| `vibecomfy/diagnostics/findings.py` | Clean data types and helpers, properly placed |
+
+### 3. Verification Commands
+
+Run these after the batch:
+
+```bash
+# Import smoke — fixtures shim
+python -c "from vibecomfy.fixtures import FIXTURE_ROOT, SMOKE_FIXTURES, available_fixtures; print('fixtures shim OK')"
+
+# Import smoke — agent_edit_debug shim
+python -c "from vibecomfy._agent_edit_debug import main, add_debug_subcommands, dispatch; print('agent_edit_debug shim OK')"
+
+# Import smoke — canonical copies
+python -c "from vibecomfy.testing._fixtures_smoke import FIXTURE_ROOT, SMOKE_FIXTURES, available_fixtures; print('canonical fixtures OK')"
+python -c "from vibecomfy.commands._agent_edit_debug import main, add_debug_subcommands, dispatch; print('canonical agent_edit_debug OK')"
+
+# CLI smoke
+python -m vibecomfy.cli workflows list --ready --json
+python -m vibecomfy.cli nodes list --json
+
+# No whitespace drift
+git diff --check
+
+# Confirm stale file is gone
+test ! -f vibecomfy/testing/_fixtures.py && echo "stale duplicate removed"
+
+# Test import chain still works for existing consumers
+python -m pytest tests/test_fixtures.py -q --no-header
+python -m pytest tests/test_cli_debug.py -q --no-header
+```
+
+### 4. Status.md Recording
+
+Already appended to `docs/structure_cleanup/status.md` under a new **Safe Action Batch Layer** section. It documents:
+
+- The fixtures move + shim + duplicate deletion
+- The `_agent_edit_debug.py` move + shim
+- The three untouched files
+- Full verification command list

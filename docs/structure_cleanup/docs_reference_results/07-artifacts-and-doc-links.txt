@@ -1,0 +1,55 @@
+## Audit Results
+
+### 1. Are active docs still pointing at old `artifacts/m6-public-api.md`?
+
+**No.** All live/reachable links already point to the correct new location `docs/api/m6-public-api.md`:
+
+| File | Link | Status |
+|------|------|--------|
+| `CLAUDE.md` (line 57) | `docs/api/m6-public-api.md` | ✅ Correct |
+| `docs/api/README.md` (line 7) | `m6-public-api.md` (relative) | ✅ Correct |
+| `docs/historical/graphbuilder_spike.md` (line 6) | `../api/m6-public-api.md` (resolves to `docs/api/m6-public-api.md`) | ✅ Correct |
+| `docs/historical/comfyscript_spike.md` (line 5) | `../api/m6-public-api.md` | ✅ Correct |
+| `docs/historical/old_vibecomfy_port_rationale.md` (line 6) | `../api/m6-public-api.md` | ✅ Correct |
+
+The 8 files still matching `artifacts/m6-public-api.md` are all **inside `docs/structure_cleanup/`** — they are planning/analysis documents that intentionally describe the old path as part of documenting what was moved. No safe edit needed.
+
+The three historical spike docs that the `02-public-api-artifact.txt` analysis predicted would need `../../artifacts/m6-public-api.md` → `../../docs/api/m6-public-api.md` fixes **were already updated** as part of the cleanup — they use `../api/m6-public-api.md` (relative from `docs/historical/`), which correctly resolves.
+
+### 2. Are artifact references intentionally historical?
+
+**Yes.** All surviving references to `artifacts/` paths fall into these categories:
+
+- **`docs/megaplan_chains/`** — planning docs describing milestone handoffs (`artifacts/m1-safety-gate.md`, `artifacts/m2-symbol-map.md`). These refer to files that genuinely still live in `artifacts/` and are intentionally pointing at milestone evidence.
+- **`docs/audits/m2-diff-hygiene.md`** — cites `artifacts/m1-safety-gate.md` and `artifacts/m2-symbol-map.md` as evidence sources. Both files exist at those paths.
+- **`docs/structure_cleanup/`** — analysis artifacts describing the cleanup process itself. Intentionally historical.
+- **`artifacts/README.md`** — correctly documents what was moved and what remains.
+
+No stale cross-references to non-existent artifact paths found.
+
+### 3. Should any artifact index be updated?
+
+**No.** Three index files are all accurate:
+
+| Index | Content | Status |
+|-------|---------|--------|
+| `artifacts/README.md` | Lists what remains (m1-safety-gate, m2-symbol-map, m4/, m5_*, m5a-*) and what was moved (m6-public-api → `docs/api/`, m1-step1-audit → `docs/audits/`, m2-diff-hygiene → `docs/audits/`) | ✅ Current |
+| `docs/api/README.md` | Links to `m6-public-api.md` | ✅ Current |
+| `docs/audits/README.md` | Lists `m1-step1-audit.md` and `m2-diff-hygiene.md` | ✅ Current |
+
+### File location verification
+
+| File | Exists at |
+|------|-----------|
+| `artifacts/m6-public-api.md` | ❌ Gone from old location |
+| `docs/api/m6-public-api.md` | ✅ At new location |
+| `artifacts/m1-step1-audit.md` | ❌ Gone from old location |
+| `docs/audits/m1-step1-audit.md` | ✅ At new location |
+| `artifacts/m2-diff-hygiene.md` | ❌ Gone from old location |
+| `docs/audits/m2-diff-hygiene.md` | ✅ At new location |
+
+No code or config files (`.py`, `.yaml`, `.json`) reference any of the old `artifacts/` moved paths.
+
+### Verdict
+
+**No exact safe edits required.** All three artifact moves are complete, all cross-references are updated, all indexes are correct, and the remaining `artifacts/` references are intentionally historical.

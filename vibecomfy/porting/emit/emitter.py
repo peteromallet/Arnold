@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from vibecomfy.errors import ArityDisagreementError, ConversionParityError
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+from vibecomfy.node_packs import LockEntry, read_lockfile
 from vibecomfy._compile._helpers import RESOLVABLE_HELPER_CLASS_TYPES
 from vibecomfy.porting.widgets.aliases import resolve_widget_key_with_provenance
 from vibecomfy.porting.object_info import (
@@ -30,7 +30,7 @@ from vibecomfy.porting.object_info import (
 from vibecomfy.porting.object_info import output_names as class_output_names
 
 # Re-exports from emit_kwargs.py (Step 4 of M2 structural decomposition).
-# All these names remain importable from vibecomfy.porting.emitter so that
+# All these names remain importable from vibecomfy.porting.emit.emitter so that
 # existing callers (tests, commands, etc.) continue to work unchanged.
 from vibecomfy.porting.emit_kwargs import (  # noqa: E402
     _is_link as _is_link,
@@ -187,7 +187,7 @@ from vibecomfy.porting.emit_prepare import (  # noqa: E402
 )
 
 # Re-exports from emit_ready.py (Step 8 of M2 structural decomposition).
-# All these names remain importable from vibecomfy.porting.emitter so that
+# All these names remain importable from vibecomfy.porting.emit.emitter so that
 # existing callers (tests, commands, etc.) continue to work unchanged.
 from vibecomfy.porting.emit_ready import (  # noqa: E402
     _PublicInputBinding as _PublicInputBinding,
@@ -878,7 +878,7 @@ def format_as_python(
     """Compatibility wrapper for the package ready-template emitter.
 
     This is the canonical ``format_as_python`` entry point re-exported from
-    ``vibecomfy.porting.emitter`` so that legacy callers (``loader.py``,
+    ``vibecomfy.porting.emit.emitter`` so that legacy callers (``loader.py``,
     etc.) that previously imported from ``tools.format_as_python`` continue
     to work through the emitter facade.
     """

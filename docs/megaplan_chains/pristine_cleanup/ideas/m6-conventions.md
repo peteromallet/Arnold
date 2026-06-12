@@ -45,14 +45,14 @@ their own `_emit()` instead of the shared `commands/_output.py:emit`; `nodes spe
    expects `load_template`) OR remove all references — pick one. Add `run_embedded`/
    `run_embedded_sync` to `__all__`. Decide `export_to_json` vs `compile` (keep one, alias
    the other with a note). Record the final import surface in
-   `artifacts/m6-public-api.md` so M7's docs cite the real surface.
+   `docs/api/m6-public-api.md` so M7's docs cite the real surface.
 4. **Resolve the node split.** Either make `nodes/*.py` genuinely hand-authorable or
    collapse the indirection; remove the duplicate `.pyi` layer so stubs live in one place.
 
 ## Locked decisions
 - May change public API surface, but only *additively* or to match documented intent.
   Any removal needs a deprecation note.
-- **No doc edits here** (that is M7) beyond the `artifacts/m6-public-api.md` handoff.
+- **No doc edits here** (that is M7) beyond the `docs/api/m6-public-api.md` handoff.
 
 ## Done criteria
 - A test asserts the intended top-level importable names actually import.
@@ -60,7 +60,7 @@ their own `_emit()` instead of the shared `commands/_output.py:emit`; `nodes spe
 - Patch/block boundary is consistent with a single written rule; `ltx_lowvram` no longer
   silently no-ops.
 - Node `.pyi` stubs live in one place; the indirection is resolved or justified.
-- `artifacts/m6-public-api.md` records the final public import surface.
+- `docs/api/m6-public-api.md` records the final public import surface.
 - M1 golden gate passes; full `pytest` green; CLI smoke green.
 
 ## Touchpoints

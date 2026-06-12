@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import vibecomfy.commands.port as port_module
-import vibecomfy.runtime.eval_prompt as eval_prompt_module
+import vibecomfy.runtime.eval.prompt as eval_prompt_module
 from vibecomfy.cli import build_parser
 from vibecomfy.commands.inspect import _cmd_inspect
 from vibecomfy.commands.nodes import _cmd_nodes_compatible_with
@@ -22,7 +22,7 @@ from vibecomfy.errors import (
     SchemaMismatchError,
     UnknownClassError,
 )
-from vibecomfy.runtime.eval_plan import plan_eval_node
+from vibecomfy.runtime.eval.plan import plan_eval_node
 from vibecomfy import workflow_from_ready
 
 

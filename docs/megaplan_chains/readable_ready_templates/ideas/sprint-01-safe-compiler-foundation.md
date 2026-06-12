@@ -1,6 +1,6 @@
 # Sprint 1: Safe Compiler Foundation
 
-Implement Sprint 1 from `docs/readable_ready_template_cleanup_plan.md`.
+Implement Sprint 1 from `docs/templates/readable_ready_template_cleanup_plan.md`.
 
 ## Branch And Chain Constraints
 

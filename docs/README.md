@@ -1,0 +1,45 @@
+# VibeComfy Docs
+
+Start here when navigating project documentation.
+
+## Core Guides
+
+- [Authoring](authoring.md)
+- [VibeWorkflow](vibeworkflow.md)
+- [API](api/)
+- [API stability](api_stability.md)
+- [Custom nodes](custom_nodes.md)
+- [Errors & doctor](errors_and_doctor.md)
+- [ComfyUI version support](comfy_version_support.md)
+- [Testing](testing/)
+- [Test suite layout](../tests/README.md)
+- [Release notes](release_notes.md)
+
+## Main Areas
+
+- [Cookbook](cookbook/)
+- [Agent-edit](agent-edit/)
+- [Text-to-graph](text-to-graph/)
+- [Runtime](runtime/)
+- [RunPod](runpod/)
+- [Migration](migration/)
+- [Templates](templates/)
+- [Ready templates](../ready_templates/README.md)
+- [Recipes](../recipes/README.md)
+- [Workflow coverage](workflow-coverage/)
+- [Workflow corpus](../workflow_corpus/README.md)
+- [Architecture](architecture/)
+- [Comparisons](comparisons/comfyscript.md)
+- [Security](security/)
+- [Audits](audits/)
+- [Plans](plans/) — active and in-flight planning docs
+- [Historical notes](historical/)
+- [Megaplan chains](megaplan_chains/)
+- [Structure cleanup](structure_cleanup/)
+
+`docs/megaplan_chains/` contains durable planning and handoff material.
+Generated megaplan runtime state belongs in the mostly gitignored `.megaplan/`
+directory instead.
+
+Several large doc clusters are still being organized. Current candidates for
+future subfolders are remaining cross-cutting maintenance notes.

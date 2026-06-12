@@ -35,7 +35,7 @@ def test_workflow_imports_ir_neutral_widget_aliases_not_porting() -> None:
 
 
 def test_ir_neutral_widget_aliases_do_not_import_porting_or_object_info() -> None:
-    imports = _imports(ROOT / "vibecomfy" / "_widget_aliases.py")
+    imports = _imports(ROOT / "vibecomfy" / "_compile" / "_widgets.py")
 
     assert not any(name.startswith("vibecomfy.porting") for name in imports)
 

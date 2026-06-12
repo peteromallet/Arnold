@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vibecomfy.node_packs_lockfile import compute_schema_hash
+from vibecomfy.node_packs import compute_schema_hash
 from vibecomfy.porting.object_info.consume import (
     CACHE_DIR,
     INDEX_PATH,

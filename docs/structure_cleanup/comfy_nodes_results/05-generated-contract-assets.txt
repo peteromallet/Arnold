@@ -1,0 +1,85 @@
+Now I have the full picture. Here is the complete audit.
+
+---
+
+## Audit Results: Generated Contract Assets
+
+### Source of Truth
+
+There are **two sources of truth** feeding into two separate JS files:
+
+| Truth | Location | Role |
+|-------|----------|------|
+| **Python source of truth** | `vibecomfy/comfy_nodes/agent/contracts.py` (lines 53–95) | Defines `REBASELINE_RECOVERY_FIELDS`, `PUBLIC_OUTCOME_KINDS`, `INTERNAL_TO_PUBLIC_OUTCOME`, `FAILURE_HINT_KEYS` |
+| **JS hand-maintained source** | `agent_edit_response_contract.js` (558 lines) | **Real runtime module.** Full normalization pipeline: `normalizeAgentEditResponse`, `normalizePublicOutcome`, `inferLegacyOutcome`, camelCase+snake_case field fallback, `normalizeMessage`, etc. Consumed by `vibecomfy_roundtrip.js` and browser tests. |
+| **JS generated artifact** | `agent_edit_response_contract_generated.js` (134 lines) | **Snake_case-only subset** generated from `contracts.py`. Not imported by any production code. |
+
+### Generation Command
+
+```bash
+python scripts/generate_agent_contract_js.py
+```
+
+The generator:
+1. Imports `REBASELINE_RECOVERY_FIELDS`, `PUBLIC_OUTCOME_KINDS`, `INTERNAL_TO_PUBLIC_OUTCOME` (filtered to `"candidate"` entries), and `FAILURE_HINT_KEYS` from `contracts.py`
+2. Hardcodes `NORMALIZED_RESPONSE_MARKER` and `responseHasCandidatePayload` (not Python-sourced)
+3. Writes to `agent_edit_response_contract_generated.js`
+
+### Redundancy
+
+**Yes — substantial duplication exists** between the two JS files:
+
+| Symbol | In `contract.js` (hand) | In `_generated.js` | Notes |
+|--------|----------------------|-------------------|-------|
+| `PUBLIC_OUTCOME_KINDS` | Lines 1–6 | Lines 25–30 | **Duplicated verbatim** |
+| `INTERNAL_OUTCOME_KIND_MAP` | Lines 8–11 | Lines 32–35 | **Duplicated verbatim** |
+| `FAILURE_HINT_KEYS` | Lines 13–20 | Lines 37–44 | **Duplicated verbatim** |
+| `NORMALIZED_RESPONSE_MARKER` | Line 22 | Line 46 | **Duplicated verbatim** |
+| `isObject` | Lines 24–26 | Lines 15–17 | **Duplicated verbatim** |
+| `asString` | Lines 28–30 | Lines 19–21 | **Duplicated verbatim** |
+| `responseHasCandidatePayload` | Lines 68–75 | Lines 64–71 | **Duplicated nearly verbatim** |
+| `normalizeRebaselineRecovery` | Lines 109–129 | Lines 82–96 | **Different:** hand version has camelCase fallback (`asString(recovery.submitGraphHash) \|\| asString(recovery.submit_graph_hash)`); generated is snake_case-only |
+| `extractRebaselineRecovery` | Lines 131–171 | Lines 112–134 | **Different:** hand searches camelCase paths (`response.rebaselineRecovery`, `response.agentFailureContext`); generated searches only snake_case paths (`response.rebaseline_recovery`, `response.agent_failure_context`) |
+
+### Should Both Be Checked In?
+
+**Current status: The generated file is not consumed by anything.** Zero production imports:
+
+```
+$ grep -r "agent_edit_response_contract_generated" --include="*.js" --include="*.mjs"
+# Only references: the generator script, the drift-guard test, and docs.
+```
+
+The generated file exists as a **standalone reference artifact** — a drift-guarded snapshot to ensure Python→JS contract alignment. Per the existing cleanup doc (`docs/structure_cleanup/vibe_root_results/05-generated-cache-artifacts.txt`), the current decision is **Keep, intentionally checked in**.
+
+**My assessment:** Defensible but currently redundant. The generated file adds maintenance burden (two copies of every constant must stay in sync) without any consumer benefit. The ideal future state would be to have the hand-maintained file **import from the generated file** (for constants + snake_case recovery functions), eliminating the duplication. But as designed today, if you check in the generated file, you must keep the duplication alive.
+
+### Cleanup Recommendation
+
+**Defer — but document as a known debt item.** The safe path:
+
+1. **Do not delete** the generated file now — it's the drift-guard target. Deleting it would break the test.
+2. **Do not remove** the duplication from `contract.js` — the hand-maintained file doesn't import the generated one.
+3. **Cleanup candidate** for a future refactor: Make `agent_edit_response_contract.js` import the constants and snake_case recovery functions from `_generated.js`, then delete the duplicated inline copies.
+
+### Verification Command
+
+```bash
+python -m pytest tests/test_agent_contract_codegen.py -v
+```
+
+This drift-guard test runs the generator against a temp file and does a byte-for-byte comparison with the committed generated file. It will fail if:
+- `contracts.py` constants changed without regeneration
+- The generator script was modified
+- The generated file was hand-edited
+
+---
+
+### Summary Table
+
+| File | Type | Source of Truth | Check In? | Redundant? |
+|------|------|----------------|-----------|------------|
+| `agent_edit_response_contract.js` | **Source** | Hand-maintained | Yes — runtime module | No |
+| `agent_edit_response_contract_generated.js` | **Generated artifact** | `contracts.py` | Yes — drift-guard target | **Yes** — not consumed by anything; duplicates constants and helpers |
+| `generate_agent_contract_js.py` | **Generator** | Hardcoded logic + `contracts.py` | Yes | No |
+| `test_agent_contract_codegen.py` | **Drift-guard test** | N/A | Yes | No |

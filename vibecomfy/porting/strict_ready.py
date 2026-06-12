@@ -47,7 +47,7 @@ STRICT_READY_VIOLATION_CODES: frozenset[str] = frozenset(
     }
 )
 
-DEFAULT_EXCEPTION_PATH = find_repo_root() / "docs" / "strict_ready_exceptions.json"
+DEFAULT_EXCEPTION_PATH = find_repo_root() / "docs" / "templates" / "strict_ready_exceptions.json"
 EXCEPTION_MATCH_KEYS: tuple[str, str, str] = ("ready_id", "violation_code", "target")
 ALLOWED_FINAL_CATEGORIES: frozenset[str] = frozenset(
     {"reference", "supplemental", "blocked", "scratchpad-only"}

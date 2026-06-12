@@ -1,0 +1,138 @@
+Here is the complete audit report:
+
+---
+
+## VibeComfy — Agent/Runtime File Audit
+
+### 1. `.megaplan/` — Megaplan Agentic Framework Working Directory
+
+This is the **local megaplan runtime working directory** within the vibecomfy repo. It mixes authoritative config with generated runtime state.
+
+#### 🔴 DELETE — Generated Runtime State (Stale/Expired)
+
+| Path | Why |
+|------|-----|
+| `.megaplan/epics/` (3 dirs: `s2-*`, `s3-*`, `s4-*`) | Each contains `events.jsonl` — megaplan session event logs (~6k lines each, 35MB for s3 alone). Generated runtime state from completed epic runs. |
+| `.megaplan/telemetry/` (6 `.seq` + `.ndjson` files) | Generated telemetry sequence/NDJSON files from planning runs. |
+| `.megaplan/logs/` (5 files: `structural-decomp-drive.log`, `reorg-chain-drive.log`, `m0-merge-fullsuite.log`, `m0-merge-fullsuite-2.log`, `loop-progress.md`) | Stale drive/execution logs from completed chain runs. `loop-progress.md` is 100KB+ of cron-fire breadcrumbs — historical, not needed. |
+| `.megaplan/verification/verification/` (8 `raw_*.log` files) | Generated verification logs; each is 2MB+ of pytest output. |
+| `.megaplan/init-local-library.log` | Stale init log (shows a worktree was created and a plan started but never completed). |
+| `.megaplan/auto-local-library.log` | Stale auto-runner log showing the plan "stalled at prepped for 5 iterations". Dead runtime state. |
+| `.megaplan/plan-native-test.log` | Stale test log. |
+| `.megaplan/plan-retest.log` | Stale test log. |
+| `.megaplan/chains/.megaplan/` | Accidental nested megaplan directory inside chains — contains `scratchpad-emitter-abdb4f11c3ba.json`. Generated chain state artifact. |
+| `.megaplan/plans/` | **~50 completed plan directories** (each contains `state.json`, `.plan.lock`, `.events.seq`, `.events.init_ts`, `execution_batch_*.json`, `execution.json`, `critique*.json`, `gate*.json`, `plan_v*.md`, `review.json`, `final.md`, `faults.json`, `finalize*.json`, and `*.hermes_state/*.db/*.db-wal/*.db-shm` SQLite databases). **All are generated runtime state from completed megaplan sessions.** | 
+
+**Plan directories identified:** `m5-position-furniture-20260530-0856`, `s6-runtime-backed-intent-20260601-1258`, `vibecomfy-v21-templates`, `sisypy-evidence-evaluator-codex`, `sisypy-evidence-evaluator-codex-2`, `sprint-3-seams-ir-purity-20260528-1903`, `s4-editable-intent-nodes-20260601-0807`, `sprint-1-safety-net-20260527-2343`, `m1-5-walking-skeleton-prove-20260529-1233`, `workflow-runtime-contracts-direct-deepseek`, `s3-state-protocol-and-20260601-0553`, `s2-durable-frontend-panel-20260601-0330`, `finish-higher-abstraction`, `vibecomfy-model-distribution-20260426-0155`, `m2-durable-node-identity-20260529-1424`, and ~35 more.
+
+The `.hermes_state/*.db` files are SQLite databases — potential **corrupt backup/dangling state** from agent workers. The `.db-wal`/`.db-shm` files suggest unclean shutdowns.
+
+#### 🟢 KEEP — Authoritative Repo-Owned Config
+
+| Path | Why |
+|------|-----|
+| `.megaplan/briefs/` (all `.md` files + `chain.yaml` files) | Agent-authored plan briefs and chain configurations. These are **repo-owned instructions** — the authoritative spec docs that drive megaplan runs. |
+| `.megaplan/schemas/` (5 `.json` files) | Framework JSON schema definitions for execution, feedback, review, directors_notes, critique_evaluator. Authoritative config. |
+| `.megaplan/chains/frontier-hardening.yaml` | Chain config — authoritative milestone definitions for the frontier-hardening epic. |
+| `.megaplan/chains/scratchpad-emitter.yaml` | Chain config for the scratchpad-emitter epic. |
+| `.megaplan/audit-adaptive-critique.md` | Audit documentation for adaptive critique — could be doc or runtime note. Borderline, but likely **keep** as it's analytical documentation. |
+
+---
+
+### 2. `.agents/` — Local Agent Skill Definitions
+
+#### 🟢 KEEP
+
+| Path | Why |
+|------|-----|
+| `.agents/skills/desloppify/SKILL.md` | Active local skill definition for the `desloppify` code health scanner tool. Not a duplicate — desloppify is a separate tool from vibecomfy. Project-local agent instruction (not user-global). No evidence it conflicts. |
+
+---
+
+### 3. `.claude/` — Claude Agent Config & State
+
+#### 🔴 DELETE
+
+| Path | Why |
+|------|-----|
+| `.claude/scheduled_tasks.json` | Empty task list (`{"tasks":[]}`). **Stale scheduled-task state** with no active tasks. |
+
+#### 🟢 KEEP
+
+| Path | Why |
+|------|-----|
+| `.claude/settings.local.json` | **User permissions config** — grants specific Bash/Read permissions for Claude to operate on this project. Active local runtime state (user-specific). |
+| `.claude/skills/vibecomfy/SKILL.md` | **Repo-owned agent instructions** — comprehensive 377-line Claude skill for VibeComfy. This is the canonical Claude agent instructions for this project. |
+| `.claude/skills/vibecomfy/advanced_usage.md` | Companion doc to SKILL.md — repo-owned documentation. |
+| `.claude/skills/vibecomfy/examples/sweep_build_time.py` | Example Python script — repo-owned example code. |
+| `.claude/skills/vibecomfy/examples/retry_until_good.py` | Example Python script — repo-owned example code. |
+
+---
+
+### 4. `agents/` — Public Agent Interface Declarations
+
+#### 🟢 KEEP
+
+| Path | Why |
+|------|-----|
+| `agents/README.md` | Documentation explaining the directory's purpose ("visible agent interface declarations"). |
+| `agents/openai.yaml` | **Repo-owned agent config** for external/OpenAI agents. Declares the VibeComfy interface for agents to invoke. Not a duplicate — it's a lightweight interface descriptor, not a full skill. |
+
+---
+
+### 5. `agentic/` — Sisypy Agentic-Test Harness (Repo-Owned Code)
+
+#### 🟢 KEEP (all)
+
+| Path | Why |
+|------|-----|
+| `agentic/__init__.py` | Package module — repo-owned source code. |
+| `agentic/adapter.py` | VibeComfyProjectAdapter — repo-owned code. |
+| `agentic/runner.py` | Scenario runner — repo-owned code. |
+| `agentic/actors.py` | Structural evidence builders — repo-owned code. |
+| `agentic/actors_m4/` (7 files) | M4 recovery evidence builders — repo-owned code. |
+| `agentic/actors_m5/` (10 files) | M5 runtime/readiness evidence builders — repo-owned code. |
+| `agentic/briefs/` (24 `.md` files + `.gitkeep`) | User-shaped briefs referenced by scenarios — repo-owned test assets. |
+| `agentic/scenarios/` (21 `.yaml` files + `.gitkeep`) | Scenario YAML files with assessment rubrics — repo-owned test definitions. |
+| `agentic/README.md` | Documentation — repo-owned. |
+
+---
+
+### Duplicate Agent Config Analysis
+
+| Config A | Config B | Verdict |
+|----------|----------|---------|
+| `.agents/skills/desloppify/SKILL.md` | `.claude/skills/vibecomfy/SKILL.md` | **Not duplicates.** Different tools (desloppify vs vibecomfy). |
+| `.claude/skills/vibecomfy/SKILL.md` | `agents/openai.yaml` | **Not duplicates.** The `.claude` skill is a full agent instruction doc for Claude; `agents/openai.yaml` is a brief interface declaration for OpenAI agents. Complementary, not conflicting. |
+| No duplicate of `.agents/skills/desloppify/SKILL.md` found elsewhere | — | Unique. |
+| No duplicate of `.claude/skills/vibecomfy/SKILL.md` found elsewhere | — | Unique. |
+
+---
+
+### Summary: Action Items
+
+#### DELETE NOW
+1. `.megaplan/epics/` — 3 directories of event logs
+2. `.megaplan/telemetry/` — 6 telemetry files
+3. `.megaplan/logs/` — 5 stale log files
+4. `.megaplan/init-local-library.log`
+5. `.megaplan/auto-local-library.log`
+6. `.megaplan/plan-native-test.log`
+7. `.megaplan/plan-retest.log`
+8. `.megaplan/verification/verification/` — 8 raw verification logs
+9. `.megaplan/chains/.megaplan/` — accidental nested directory (1 file)
+10. `.claude/scheduled_tasks.json`
+
+#### NEEDS APPROVAL (large generated data — verify no active references)
+11. **`.megaplan/plans/` (~50 plan directories, ~400+ files)** — Contains all completed megaplan session artifacts: state files, execution batches, critique outputs, gate signals, SQLite databases (`.hermes_state/*.db` including stale WAL/SHM files). If megaplan is not currently active on this repo and won't resume these plans, delete all. If a plan could be resumed, check each `state.json` for active status first.
+
+#### KEEP
+- `.megaplan/briefs/` — repo-owned instructions
+- `.megaplan/schemas/` — repo-owned config
+- `.megaplan/chains/frontier-hardening.yaml`, `scratchpad-emitter.yaml` — repo-owned chain config
+- `.megaplan/audit-adaptive-critique.md` — documentation
+- `.agents/skills/desloppify/SKILL.md` — active skill
+- `.claude/settings.local.json` — user permissions
+- `.claude/skills/vibecomfy/` (all 5 files) — agent instructions
+- `agents/` (both files) — interface declarations
+- `agentic/` (all files) — repo-owned test harness

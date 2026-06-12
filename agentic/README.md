@@ -17,12 +17,17 @@ agentic/
   __init__.py        Package init
   adapter.py         VibeComfyProjectAdapter (extends FakeProjectAdapter)
   runner.py          Scenario runner: load YAML, dispatch actors, freeze evidence
+  actors.py          Structural evidence builders for early scenario families
+  actors_m4/         M4 recovery evidence builders
+  actors_m5/         M5 runtime/readiness evidence builders
   scenarios/         Scenario YAML files (one per user ask)
   briefs/            User-shaped markdown briefs (referenced by scenario YAML)
   README.md          This file
 ```
 
-Evidence packs land in `out/agentic/reports/<tag>/`.
+Evidence packs land in `out/agentic/reports/<tag>/`. Do not commit generated
+evidence packs under `agentic/`; the `evidence/` path used in scenario YAML is
+the frozen-evidence subdirectory inside each run report.
 
 ## How to add a scenario
 

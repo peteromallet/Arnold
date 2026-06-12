@@ -1,0 +1,75 @@
+Now I have everything I need. Here's the audit:
+
+---
+
+## VibeComfy Root Audit — New Contributor Lens
+
+### 1. Ideal First-Screen Root Listing
+
+```
+.gitignore         .gitmodules        .pre-commit-config.yaml
+LICENSE            README.md          pyproject.toml
+uv.lock
+docs/              ready_templates/   recipes/
+tests/             tools/             vendor/
+vibecomfy/         workflow_corpus/
+```
+
+**Why this works:** Seven files tell the story — README explains the project, pyproject.toml declares build, uv.lock pins deps, LICENSE sets terms, .gitignore/.gitmodules/.pre-commit-config.yaml signal engineering hygiene. Seven dirs map to source, tests, docs, vendored dep, workflow corpus, templates, and dev tooling. Everything else is internal machinery.
+
+---
+
+### 2. Top 10 Distractions & Recommended Actions
+
+| # | Current Entry | Why It Hurts | Action |
+|---|--------------|-------------|--------|
+| 1 | `node_index.json`, `workflow_index.json`, `template_index.json`, `external_workflow_index.json`, `version_matrix.json`, `finalize.json`, `asset_manifest.json` | 7 generated JSON blobs at root — look like project state, are rebuildable artifacts | Add `*.index.json`, `version_matrix.json`, `finalize.json`, `asset_manifest.json` to `.gitignore`, then `git rm --cached` them |
+| 2 | `agentic/briefs/` | 20+ agent session briefs as a top-level directory — looks like core project docs, is actually ephemeral chat history | Move to `.agentic/` (hidden) or delete; add to `.gitignore` |
+| 3 | `plan_v2.md` | 150-line implementation plan for an old sprint — reads like THE roadmap to a new contributor | Move to `docs/archive/plan_v2.md` |
+| 4 | `cloud.yaml` | Railway deployment config at root — irrelevant to understanding the library | Move to `.cloud/cloud.yaml` or `deploy/cloud.yaml` |
+| 5 | `SECURITY_AUDIT_NOTES.md` | Important content, wrong location — pollutes first-scan signal | Move to `docs/security_audit_notes.md` |
+| 6 | `_debug_json.py`, `_debug_normalize.py`, `_fix_t6.py` | Debug scripts at root — look like active entry points | Already matched by `_debug_*.py` gitignore pattern; add `_fix_t6.py` and remove tracked versions |
+| 7 | `artifacts/` | Milestone outputs (baseline dumps, pytest logs, emitted templates) masquerading as project docs | Move to `docs/artifacts/` or `_artifacts/`; add to `.gitignore` after audit |
+| 8 | `.import_linter_cache/` | CI cache directory NOT in `.gitignore` — pollutes status and diffs | Add `.import_linter_cache/` to `.gitignore` |
+| 9 | `.megaplan/`, `.agents/`, `.claude/` | Gitignored but present on disk — confuse `ls` output | Verify `.gitignore` entries are followed; add `.gitattributes` export-ignore for these |
+| 10 | `vendor/ComfyUI/` inline `.git/`, `__pycache__/`, `temp/`, `.github/` | Vendored dep leaks its own build artifacts, CI templates, and issue templates into your tree | Add `vendor/**/.git/**`, `vendor/**/__pycache__/`, `vendor/**/temp/` to `.gitignore` |
+
+---
+
+### 3. README/Docs Pointers for Discoverability
+
+Add short "where things went" notes in README:
+
+> **Not finding something?**  
+> - `plan_v2.md` → `docs/archive/plan_v2.md` (historical sprint plan)  
+> - `cloud.yaml` → `deploy/cloud.yaml` (Railway config)  
+> - `SECURITY_AUDIT_NOTES.md` → `docs/security_audit_notes.md`  
+> - `agentic/briefs/` → `_agentic_logs/` (agent session logs, cleaned periodically)  
+> - Generated indexes (`*_index.json`, `version_matrix.json`) → auto-rebuilt via `python -m tools.refresh_template_index`  
+
+Add a `CONTRIBUTING.md` one-pager pointing to `docs/` for design docs, `recipes/` for usage examples, and `tools/` for dev utilities.
+
+---
+
+### 4. One High-Confidence Cleanup Batch
+
+```bash
+# Untrack and ignore generated JSON artifacts
+git rm --cached node_index.json workflow_index.json template_index.json \
+  external_workflow_index.json version_matrix.json finalize.json asset_manifest.json
+
+# Move distracting root files out of sight
+git mv plan_v2.md docs/archive/plan_v2.md
+git mv cloud.yaml deploy/cloud.yaml
+git mv SECURITY_AUDIT_NOTES.md docs/security_audit_notes.md
+git mv artifacts/ docs/artifacts/
+
+# Hide agent briefs
+mkdir -p .agentic_logs
+git mv agentic/briefs/* .agentic_logs/ && git rm -rf agentic/briefs/
+git mv agentic/ .agentic_logs/legacy/
+
+# Housekeeping — then update .gitignore with additions above
+```
+
+This batch removes ~25 distracting entries from first-glance root, moves 3 important-but-wrong-location docs into `docs/`, and silences vendored-dep noise — all without touching a single line of application code.

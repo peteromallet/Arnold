@@ -1,0 +1,41 @@
+---
+
+### Audit Summary
+
+#### Package Registry Ownership (Q1)
+
+**19 package files** own tracked registry data across four domains:
+- **Model registry**: `models.yaml` + `models_loader.py` + `__init__.py`
+- **Workflow library**: `library.py`, `ready.py`, `ready_template.py`
+- **Pack management**: `node_packs.py`, `node_packs_install.py`, `pack_resolver.py`
+- **Operational registries**: `patches/registry.py`, `ops/registry.py`, `porting/rules_registry.py`, `schema/registry.py`
+- **Assets & fixtures**: `model_assets.py`, `fixtures.py`, `local_library.py`
+- **Snapshots**: `testing/snapshot_registry.py`, `checks.py`, `version_matrix.json`
+- **Cached schemas**: `porting/object_info/`, `porting/cache/object_info/`
+
+Architecture is **well-separated**: YAML-driven model registry, Python dataclass loaders, and in-memory registries for patches/ops. No circular dependencies between these layers.
+
+#### Generated Indexes (Q2)
+
+Four indexes are correctly gitignored (`workflow_index.json`, `template_index.json`, `external_workflow_index.json`, `node_index.json`). **One was missed: `asset_manifest.json`** — now fixed (added to `.gitignore`). No stale indexes remain under version control.
+
+#### Runtime/Model Files (Q3)
+
+**Clean separation**: No model weights tracked. The vendor `.whl` blobs are a minor policy violation (pre-built platform binaries in a git submodule) but are part of the ComfyUI fork's install workflow — defer to a vendor cleanup pass.
+
+#### Missing Docs (Q4)
+
+- **`vibecomfy/registry/`** has no README — the most critical gap given its central role.
+- **`vibecomfy/porting/object_info/`** has no README explaining snapshot lifecycle.
+- The `pack_resolver.py` HTTP cache location (`~/.cache/vibecomfy/registry/`) is undocumented.
+- `docs/node_pack_reconciliation.md` exists and is good — the main gap is the registry module's own docs.
+
+#### Deferrals (needs more context)
+
+| Item | Why deferred |
+|------|-------------|
+| `vendor/ComfyUI/pkg/*.whl` | Part of ComfyUI fork's install flow; verify if upstream removed them first. |
+| `vibecomfy/porting/cache/object_info/*.json` | Large checked-in JSON (~700KB each). Looks regenerable but need to confirm generation pipeline before removing from source. |
+| `workflow_corpus/input/` binary fixtures | Currently regenerated synthetically when committed copies missing; no actual binary files tracked — architecture is correct. |
+| Registry module README | Would be a net-new doc — valuable but not a cleanup. Log as documentation debt. |
+| Remove `this.env` from git index | Added to gitignore; needs `git rm --cached this.env` to fully untrack. Cannot do from tools without shell. |

@@ -1,0 +1,50 @@
+---
+
+## Audit Result: `_analyze_names.py` — **100% DEAD**
+
+### Evidence summary
+
+| Check | Finding |
+|---|---|
+| **Imports of `_analyze_names`** | **Zero** — no `from vibecomfy.commands._analyze_names` anywhere in the codebase |
+| **Imports of `analyze_names` (public)** | One: `vibecomfy/commands/analyze.py` line 19 (`from vibecomfy.commands.analyze_names import analyze_names`) |
+| **Tests referencing `_analyze_names`** | **None** — the CLI test (`test_analyze_names_cli_reports_role_based_preview`) exercises the public `analyze_names` module via `vibecomfy.cli` |
+| **`__init__.py` listing** | Not listed in `vibecomfy/commands/__init__.py` — only `analyze` (which imports `analyze_names`, not `_analyze_names`) |
+| **Docs flagging it** | ✅ Already flagged in `docs/structure_cleanup/package_results/02-cli-commands.txt` as ❌ DEAD |
+| **Structure vs. public copy** | Identical logic (same 295 lines, identical data classes, identical `analyze_names()` function) |
+
+### The only difference
+
+Both files are identical except **line 9** import path:
+
+| File | Line 9 import |
+|---|---|
+| `_analyze_names.py` | `from vibecomfy.porting.emit.emitter import _compute_variable_names` |
+| `analyze_names.py` | `from vibecomfy.porting.emitter import _compute_variable_names` |
+
+Both paths resolve at runtime (the function exists in both `emitter.py` and `emit/emitter.py`), so there is **zero behavioral difference**. `_analyze_names.py` is a stale copy that was left behind after a refactor.
+
+---
+
+### Exact action
+
+**Delete** `vibecomfy/commands/_analyze_names.py` (~10 KB, 295 lines).
+
+### Verification commands
+
+```bash
+# 1. Confirm no remaining imports reference it
+grep -rn 'from vibecomfy.commands._analyze_names' vibecomfy/ tests/ docs/
+
+# 2. Confirm the public module still imports cleanly
+python -c "from vibecomfy.commands.analyze_names import analyze_names"
+
+# 3. Confirm the analyze CLI command still works
+python -m vibecomfy.cli analyze names --help
+
+# 4. Run the existing test that exercises the analyze names path
+python -m pytest tests/test_analysis.py::test_analyze_names_cli_reports_role_based_preview -xvs
+
+# 5. Final sweep — make sure the file is gone
+test ! -f vibecomfy/commands/_analyze_names.py && echo "DELETED OK"
+```

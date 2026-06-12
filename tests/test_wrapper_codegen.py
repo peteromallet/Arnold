@@ -1,4 +1,4 @@
-"""Tests for ``vibecomfy.porting.wrapper_codegen``.
+"""Tests for ``vibecomfy.porting.wrappers.codegen``.
 
 Covers:
 - Determinism: rendering the same specs twice yields byte-identical output.
@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from vibecomfy.porting import wrapper_codegen as wc
-from vibecomfy.porting.wrapper_discovery import ClassSpec, InputFieldSpec
+from vibecomfy.porting.wrappers import codegen as wc
+from vibecomfy.porting.wrappers.discovery import ClassSpec, InputFieldSpec
 
 
 def _make_simple_spec(class_type: str = "SimpleSampler") -> ClassSpec:

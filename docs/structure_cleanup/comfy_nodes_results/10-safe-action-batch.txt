@@ -1,0 +1,219 @@
+Here is the complete action batch synthesis.
+
+---
+
+## Comfy Nodes Audit 10: Safe Action Batch — Synthesis
+
+### Current File Map
+
+```
+vibecomfy/comfy_nodes/
+├── __init__.py             # 302L  🔴 LIVE (entry point, NODE_CLASS_MAPPINGS, WEB_DIRECTORY)
+├── exec_node.py            # 239L  🔴 LIVE (VibeComfyExec node, parse_io, compile_source_body)
+├── exec_examples.py        #  78L  🔴 LIVE (EXEC_HELP_TEXT, EXEC_EXAMPLES → class attributes)
+├── session_io.py           # 730L  💀 DEAD (zero importers)
+├── _time_utils.py          #   8L  💀 DEAD (zero callers)
+├── agent/                  # 13 files, ~13K lines total  🔴 LIVE (all modules imported by tests/__init__)
+├── stages/                 #  7 files, ~2.7K lines total  💀 DEAD (all imports broken, zero external consumers)
+├── web/
+│   ├── vibecomfy_roundtrip.js          #  🔴 LIVE (main orchestrator)
+│   ├── panel_thread.js                 #  🔴 LIVE
+│   ├── panel_overlay.js                #  🔴 LIVE
+│   ├── panel_composer.js               #  🔴 LIVE
+│   ├── panel_scheduler.js              #  🔴 LIVE
+│   ├── panel_runtime.js                #  🔴 LIVE
+│   ├── agent_edit_lifecycle.js         #  🔴 LIVE
+│   ├── agent_edit_response_contract.js  #  🔴 LIVE
+│   ├── agent_edit_response_contract_generated.js  #  🔴 KEEP (drift-guard target)
+│   ├── agent_status_poller.js          #  🔴 LIVE
+│   ├── comfy_adapter.js                #  🔴 LIVE
+│   ├── astrid_logo.png                 #  🔴 LIVE (3 runtime img src refs)
+│   ├── vibecomfy_roundtrip.js.bak      #  💀 DEBRIS (385KB stale backup)
+│   ├── panel_thread.js.bak             #  💀 DEBRIS (50KB stale backup)
+│   ├── .gitkeep                        #  💀 DEBRIS (empty placeholder)
+│   └── package.json                    #  💀 DEBRIS (no bundler; ComfyUI serves raw scripts)
+```
+
+---
+
+### 1. Delete: `stages/` — full directory (7 files, ~2.7K lines)
+
+**Evidence:**
+- Every file uses broken relative imports: `from ..agent_audit` → actual module is `agent/audit.py`
+- Zero external Python importers (only `session_io.py` which is itself dead)
+- All 6 stage functions are duplicated in `agent/edit.py` (with divergence found — missing `execution_mode` kwarg proves stale)
+- No test file imports `stages`
+
+**Files:**
+| File | Broken Imports |
+|------|---------------|
+| `stages/__init__.py` | `..agent_contracts`, `..agent_gates` |
+| `stages/agent.py` | `..agent_audit`, `..agent_contracts`, `..agent_provider` |
+| `stages/audit.py` | `..agent_audit`, `..agent_contracts`, `..agent_session` |
+| `stages/batch_repl.py` | `..agent_audit`, `..agent_contracts`, `..agent_provider` |
+| `stages/emit.py` | `..agent_audit`, `..agent_contracts`, `..agent_diagnostics` |
+| `stages/humanize.py` | `..agent_audit`, `..agent_contracts`, `..agent_provider`, `..agent_session` |
+| `stages/summarize.py` | `..agent_contracts`, `..agent_diagnostics`, `..agent_gates` |
+
+**Action:**
+```bash
+rm -rf vibecomfy/comfy_nodes/stages/
+```
+
+---
+
+### 2. Delete: `vibecomfy/comfy_nodes/session_io.py` (730 lines)
+
+**Evidence:** Zero importers across the entire codebase. The 3 live-ish functions it imports from `stages/humanize` (`_field_changes_payload`, `_json_safe`, `_safe_session_id`) die with the stages deletion. Superseded by `agent/session.py` + `agent/routes.py`.
+
+**Action:**
+```bash
+rm vibecomfy/comfy_nodes/session_io.py
+```
+
+---
+
+### 3. Delete: `vibecomfy/comfy_nodes/_time_utils.py` (8 lines)
+
+**Evidence:** Function `_now()` is never called. Zero importers. Both consumers that need a timestamp helper define their own `_now()` locally (`agent/session.py`, `agent/audit.py`).
+
+**Action:**
+```bash
+rm vibecomfy/comfy_nodes/_time_utils.py
+```
+
+---
+
+### 4. Delete: Web debris (4 files)
+
+| File | Size | Why |
+|------|------|-----|
+| `web/vibecomfy_roundtrip.js.bak` | 385 KB | Byte-identical to live file except for old "Astrid" branding alt text |
+| `web/panel_thread.js.bak` | 50 KB | Stale backup, zero imports |
+| `web/.gitkeep` | 0 B | Unnecessary (Git tracks dirs with content) |
+| `web/package.json` | 23 B | `{"type": "module"}` — irrelevant; ComfyUI serves via `<script>` tags, not a bundler |
+
+**Action:**
+```bash
+rm vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js.bak
+rm vibecomfy/comfy_nodes/web/panel_thread.js.bak
+rm vibecomfy/comfy_nodes/web/.gitkeep
+rm vibecomfy/comfy_nodes/web/package.json
+```
+
+---
+
+### 5. Keep (no action)
+
+| File | Rationale |
+|------|-----------|
+| `__init__.py` | Entry point — ComfyUI custom_node discovery, NODE_CLASS_MAPPINGS |
+| `exec_node.py` | Core node `VibeComfyExec` — imported by 4+ modules across vibecomfy |
+| `exec_examples.py` | Live data for `DESCRIPTION`/`HELP`/`EXAMPLES` class attributes |
+| `agent/` (13 files) | All live, heavily imported by tests and `__init__.py` |
+| `web/*.js` (11 files) | Live frontend; ComfyUI serves via `WEB_DIRECTORY = "./web"` |
+| `web/astrid_logo.png` | Live static asset (3 `<img src>` refs in `vibecomfy_roundtrip.js`) |
+| `web/agent_edit_response_contract_generated.js` | Drift-guard target for `test_agent_contract_codegen.py` |
+
+---
+
+### 6. Deferrals and Why
+
+| Item | Defer | Reason |
+|------|-------|--------|
+| `exec_examples.py` inline → `exec_node.py` | 🟡 Defer | Only 78 lines + 1 consumer, but consolidating now adds risk with zero benefit. |
+| `agent/edit.py` local stage functions → deduplicate w/stages | 🛑 Never | Stages are dead; `agent/edit.py` locals are the canonical versions. Divergence confirms stages were stale. |
+| `_fix_t6.py` maintenance script | 🟡 Defer | References `stages.agent`/`stages.batch_repl` as **string patterns** only (reads agent_edit.py as text). After deletion, patterns won't match — script still runs safely. |
+| `agent_edit_response_contract_generated.js` redundant constants | 🟡 Defer | Not consumed by anything; is the drift-guard test's comparison target. Cleaning up requires refactoring the hand-written `agent_edit_response_contract.js` to import from it. Documented debt. |
+| `agent/routes.py` `_extract_failure_recovery` duplicate | 🟡 Defer | Duplicated from `agent/contracts.py._extract_rebaseline_recovery`. Safe cleanup but not deletion-priority. |
+
+---
+
+### 7. Import Updates Required
+
+**Zero updates needed.** The only file whose imports would break (`session_io.py` line 12 — `from .stages.humanize import ...`) is itself being deleted. The `_fix_t6.py` maintenance script uses string matching, not imports — it survives harmlessly.
+
+---
+
+### 8. Focused Verification Commands
+
+Run **before** deletion to baseline, then **after** to confirm cleanup:
+
+```bash
+# === PHASE 1: Confirm dead-code status (should show 0 live importers) ===
+
+# stages/ — should show only session_io.py (also dead) and _fix_t6.py (string pattern)
+grep -rn "from vibecomfy\.comfy_nodes\.stages\|from \.stages\|import stages" \
+  vibecomfy/ tests/ --include="*.py" | grep -v ".pyc"
+
+# session_io.py — should show 0 results
+grep -rn "session_io" vibecomfy/ tests/ --include="*.py"
+
+# _time_utils.py — should show 0 results
+grep -rn "_time_utils" vibecomfy/ tests/ --include="*.py"
+
+# .bak files in tests — should show 0 results
+grep -rn "\.bak" vibecomfy/ tests/ --include="*.py"
+
+
+# === PHASE 2: Execute deletions ===
+
+rm -rf vibecomfy/comfy_nodes/stages/
+rm vibecomfy/comfy_nodes/session_io.py
+rm vibecomfy/comfy_nodes/_time_utils.py
+rm vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js.bak
+rm vibecomfy/comfy_nodes/web/panel_thread.js.bak
+rm vibecomfy/comfy_nodes/web/.gitkeep
+rm vibecomfy/comfy_nodes/web/package.json
+
+
+# === PHASE 3: Verify deletion (should all return "No such file or directory") ===
+
+ls -la vibecomfy/comfy_nodes/stages/ 2>&1
+ls vibecomfy/comfy_nodes/session_io.py 2>&1
+ls vibecomfy/comfy_nodes/_time_utils.py 2>&1
+ls vibecomfy/comfy_nodes/web/*.bak 2>&1
+ls vibecomfy/comfy_nodes/web/.gitkeep 2>&1
+
+
+# === PHASE 4: Verify live code still works ===
+
+# Agent package loads
+python -c "from vibecomfy.comfy_nodes.agent import contracts, session, edit; print('agent OK')"
+
+# Exec node loads
+python -c "from vibecomfy.comfy_nodes.exec_node import VibeComfyExec, EXEC_CLASS_TYPE; print('exec OK')"
+
+# Top-level __init__ loads (requires ComfyUI server context — safe in isolated env)
+python -c "
+import sys, os
+sys.path.insert(0, '.')
+try:
+    from vibecomfy.comfy_nodes import NODE_CLASS_MAPPINGS
+    print(f'{len(NODE_CLASS_MAPPINGS)} nodes registered')
+except (ImportError, RuntimeError) as e:
+    print(f'Expected if no ComfyUI: {e}')
+"
+
+# Web directory still registered
+grep "WEB_DIRECTORY" vibecomfy/comfy_nodes/__init__.py
+
+# Core test files pass
+python -m pytest tests/test_comfy_exec_node.py -x --no-header -q 2>&1 | tail -5
+```
+
+---
+
+### Summary Table
+
+| Action | Target | Lines Removed | Risk Level |
+|--------|--------|--------------|------------|
+| **DELETE** | `stages/` directory | ~2,700 | None (broken imports, no callers) |
+| **DELETE** | `session_io.py` | 730 | None (zero importers) |
+| **DELETE** | `_time_utils.py` | 8 | None (zero callers) |
+| **DELETE** | `web/*.bak` (×2) | ~435 KB | None (stale backups) |
+| **DELETE** | `web/.gitkeep` | 0 | None (empty placeholder) |
+| **DELETE** | `web/package.json` | 23 B | None (no bundler needed) |
+| **KEEP** | Everything else | — | — |
+
+**Total debt reclaimed: ~3,438 lines + 435 KB of binary debris, zero import changes, zero test breakage.**

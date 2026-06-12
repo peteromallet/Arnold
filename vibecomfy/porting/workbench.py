@@ -20,7 +20,7 @@ from vibecomfy.metadata import OUTPUT_NODE_NAMES
 from vibecomfy.contracts import build_contract
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
 from vibecomfy.custom_node_refs import check_pack_pin_compatibility
-from vibecomfy.node_packs_lockfile import read_lockfile
+from vibecomfy.node_packs import read_lockfile
 from vibecomfy.porting.assets import analyze_model_assets
 from vibecomfy.porting.emitter import (
     READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
@@ -31,7 +31,7 @@ from vibecomfy.porting.emitter import (
 )
 from vibecomfy.porting.report import NodePackSuggestion, PortIssue, PortReport
 from vibecomfy.porting.strict_ready import StrictReadyContext, validate_strict_ready_workflow
-from vibecomfy.porting.widget_aliases import widget_alias_analysis, widget_names_for_class
+from vibecomfy.porting.widgets.aliases import widget_alias_analysis, widget_names_for_class
 from vibecomfy.registry.ready import workflow_from_ready
 from vibecomfy.scratchpad_loader import load_scratchpad
 from vibecomfy.schema import schema_for, schema_registry_empty

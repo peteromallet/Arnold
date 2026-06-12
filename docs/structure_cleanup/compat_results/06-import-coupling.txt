@@ -1,0 +1,50 @@
+Here is the import-coupling audit for the five compatibility-layer candidates.
+
+---
+
+## 1. Live Importers by Candidate
+
+| Candidate | Live Importers | Import Sites |
+|---|---|---|
+| **`vibecomfy.fixtures`** | `tests/test_fixtures.py` | 1 |
+| **`vibecomfy._agent_edit_debug`** | `scripts/vibecomfy_debug.py`, `tests/test_cli_debug.py` (×2), `vibecomfy/commands/debug.py` | 4 |
+| **`vibecomfy.schema.format`** | `commands/doctor.py`, `commands/validate.py`, `runtime/prompt.py`, `runtime/session.py` | 4 |
+| **`vibecomfy.diagnostics`** | `tests/test_diagnostics.py`, `commands/doctor.py` | 2 |
+| **`vibecomfy.diagnostics.findings`** | `vibecomfy/diagnostics/__init__.py` (re-exports only) | 1 |
+
+Key finding: **No candidate is imported by external packages.** All consumers are internal — production code, tests, or the diagnostics package root.
+
+---
+
+## 2. Which Imports Can Be Migrated Safely
+
+**`vibecomfy.fixtures`** — ✅ Safely migratable. Only `tests/test_fixtures.py` imports it. No production code depends on this path. The module is a standalone fixture-copy/regenerate utility. Can be relocated to `vibecomfy/testing/fixtures.py` without a compat shim since tests are an internal surface.
+
+**`vibecomfy._agent_edit_debug`** — ✅ Safely restructurable, but must update all 3 consumers simultaneously. The underscore prefix already signals private. If moved to `vibecomfy/debug/agent_edit.py`, stubs aren't strictly necessary — just update `commands/debug.py`, `scripts/vibecomfy_debug.py`, and `tests/test_cli_debug.py` atomically.
+
+**`vibecomfy.schema.format`** — ✅ Migration already documented in `docs/structure_cleanup/compat_results/03-schema-format-delete.txt`. The single function `format_issue` can be moved into `vibecomfy/schema/validate.py` (it does **not** currently exist there). All 4 consumers change their import to `from vibecomfy.schema.validate import format_issue`. No compat layer needed — all consumers are internal and the migration is a one-commit rename.
+
+**`vibecomfy.diagnostics.findings`** — ✅ Submodule is an implementation detail. Only `diagnostics/__init__.py` references it directly; no external code imports `findings` directly. The types (`DiagnosticFinding`, `PatchSuggestion`, `Severity`, helper functions) are re-exported via the `diagnostics` package. The submodule can be renamed, split, or merged into `health.py` without affecting any external consumer.
+
+---
+
+## 3. Which Import Paths Should Remain Public
+
+**`vibecomfy.diagnostics`** must remain public. It is the canonical API surface consumed by `commands/doctor.py` and `tests/test_diagnostics.py`. Its `__all__` currently exports 9 names re-exported from `findings` and `health`. This is the right public contract — keep it stable.
+
+**`vibecomfy._agent_edit_debug`** — The leading underscore signals "private, do not use." It is correct as-is. The production entry point (`commands/debug.py`) is the intended public face.
+
+**`vibecomfy.fixtures`** — No public contract needed. If moved to `testing/fixtures.py`, expose it via `vibecomfy.testing` if test-support is the intended use, or keep as internal.
+
+---
+
+## 4. Suggested Stale-Import Guard Tests
+
+| Candidate | Guard Test Suggestion |
+|---|---|
+| **`vibecomfy.fixtures`** | If moved, add a guard to catch any residual `from vibecomfy import fixtures` in non-test code. Minimal risk. |
+| **`vibecomfy.schema.format`** | **Recommended guard**: After migrating `format_issue` into `schema.validate`, add a single assertion that `vibecomfy.schema.format` does not exist or raises `ImportError`. This prevents re-creation of a now-dead module. |
+| **`vibecomfy.diagnostics.findings`** | If `findings.py` is renamed/split, add a guard that `vibecomfy.diagnostics.findings` is not directly imported outside `diagnostics/__init__.py`. A runtime check in the package root can warn if someone bypasses the re-export. |
+| **`vibecomfy._agent_edit_debug`** | No guard needed — the underscore convention is sufficient, and `commands/debug.py` is the sole production consumer under your control. |
+
+**TOTAL**: 2 guard tests recommended (schema.format deletion + findings submodule encapsulation). Keep them in `tests/` with a comment flagging them as compatibility guards, scoped to the `compat` test marker if you maintain one.

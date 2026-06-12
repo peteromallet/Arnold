@@ -1,0 +1,84 @@
+Here is the comprehensive audit report.
+
+---
+
+## Audit Report: Tracked Source Files for Potential Deletion
+
+### 🔴 DELETE (strong evidence — zero imports, safe to remove)
+
+| File | Lines | Evidence |
+|---|---|---|
+| **`porting/helpers.py`** | 65 | **Zero imports** from anywhere in the codebase. Compatibility shim that re-exports from `vibecomfy._compile._helpers`. Docstring says "kept temporarily" and marks with `REMOVE-M4`. |
+| **`porting/templates.py`** | 76 | **Zero imports** from any `.py` file. Contains `GENERATED_HEADER`, `LTX2_3_TAIL_PATCHES` constants — these are now defined in `emit/emitter.py` and `emit_ready.py`. |
+| **`porting/handle_index.py`** | 180 | **Zero imports** from any `.py` file. Node handle index — appears to be an abandoned refactoring attempt. |
+| **`porting/naming.py`** | 147 | **Zero imports** from any source or test file. Identical twin lives at `porting/emit/naming.py` (same 147 lines, same docstring). Old `emitter.py` defines its own inline `_safe_var` / `_topological_node_order`. |
+| **`porting/formatting.py`** | 53 | Only imported by `porting/node_kwargs.py` — which is itself dead (see below). Not imported by `emitter.py` (has inline `_format_value`). |
+| **`porting/node_kwargs.py`** | 176 | **Zero imports** from any file outside itself. Old `emitter.py` has its own inline `_node_kwargs`. New emitter uses `emit_kwargs._node_kwargs` and `emit/node_kwargs`. |
+
+### 🟡 KEEP (still actively imported — cannot delete without updating callers)
+
+#### Compatibility shims (re-exports only, but callers exist)
+
+| File | Re-exports from | Active importers |
+|---|---|---|
+| `porting/edit_ops.py` | `edit/ops` | `comfy_nodes/agent/edit.py`, `comfy_nodes/agent/provider.py` |
+| `porting/edit_apply.py` | `edit/apply` | `comfy_nodes/agent/edit.py` |
+| `porting/edit_lint.py` | `edit/lint` | `comfy_nodes/agent/edit.py` |
+| `porting/edit_projection.py` | `edit/projection` | `comfy_nodes/agent/edit.py` |
+| `porting/edit_ledger.py` | `edit/ledger` | `comfy_nodes/agent/edit.py` |
+| `porting/edit_types.py` | `edit/types` | `comfy_nodes/agent/edit.py` |
+| `porting/edit_session.py` | `edit/session` | `comfy_nodes/agent/edit.py` |
+| `router_rules.py` | `router/_rules` | `vibecomfy/extras.py` |
+
+#### Core implementation files (still the actual implementation)
+
+| File | Lines | Used by |
+|---|---|---|
+| `porting/emitter.py` | 5088 | `convert.py`, `workbench.py`, `loader.py`, `commands/validate.py`, `commands/analyze_names.py`, tests |
+| `porting/ui_emitter.py` | ~2200 | `layout/sizing.py`, `layout/placement.py`, `layout/engine.py`, `layout/groups.py`, `latency.py`, `comfy_nodes/agent/edit.py`, `comfy_nodes/agent/routes.py`, `widget_shape_fence.py` |
+| `porting/emit_kwargs.py` | 1331 | `emit/emitter.py`, `emit_constants.py`, `emit_prepare.py`, `emit_ready.py`, `emit_subgraph.py` |
+| `porting/emit_constants.py` | ~800 | `emit/emitter.py`, `emit_prepare.py`, `emit_ready.py`, `emit_subgraph.py` |
+| `porting/emit_subgraph.py` | ~600 | `emit/emitter.py`, `emit_ready.py`, `emit_agent_edit.py` |
+| `porting/emit_prepare.py` | ~300 | `emit/emitter.py`, `emit_scratchpad.py`, `emit_agent_edit.py`, `emit_ready.py` |
+| `porting/emit_ready.py` | ~1100 | `emit/emitter.py`, `emit_prepare.py`, `emit_scratchpad.py` |
+| `porting/emit_agent_edit.py` | ~100 | `emit/emitter.py` |
+| `porting/emit_scratchpad.py` | ~50 | `emit/emitter.py` |
+| All `porting/edit_session_*.py` (9 files) | various | `edit/session.py` (new subpackage) imports them — they ARE the implementation |
+| `porting/slot_codec.py` | 171 | Old `emitter.py` (3 import sites) |
+| `porting/uid.py` | 61 | `scope.py`, `emitter.py`, `layout_store.py`, `layout/reconcile.py`, `lowering.py`, `ingest/normalize.py`, `workflow.py`, `ui_emitter.py` |
+| `porting/scope.py` | 126 | `layout_store.py` |
+| `porting/widget_aliases.py` | 410 | `emitter.py`, `convert.py`, `workbench.py`, `ui_emitter.py`, `ingest/normalize.py`, `comfy_nodes/agent/edit.py`, `contracts/surface.py`, `parity.py` |
+| `porting/widget_schema.py` | 35 | `emitter.py`, `node_kwargs.py`, `object_info/consume.py` |
+| `porting/wrapper_discovery.py` | 602 | `commands/nodes.py` (via `from vibecomfy.porting import wrapper_discovery`) |
+| `porting/wrapper_codegen.py` | 539 | `commands/nodes.py` (via `from vibecomfy.porting import wrapper_codegen`) |
+
+### 🟠 NEEDS DEEPER AUDIT (duplicate implementations — old root-level vs new subpackage)
+
+These are pairs where old root-level files and new subpackage files contain the same (or very similar) code. Both are functionally alive via different import paths. A migration plan is needed before any deletion.
+
+| Old Root-Level | New Subpackage | Status |
+|---|---|---|
+| `porting/uid.py` (61 ln) | `porting/identity/uid.py` (61 ln) | **Identical**. Old path used by ~8 callers; new path used by `edit/ledger.py`, `emit_kwargs.py`, `emit_subgraph.py`, `ir/workflow.py`, `emit/ui.py`. |
+| `porting/scope.py` (126 ln) | `porting/identity/scope.py` (126 ln) | **Identical**. Old path used by `layout_store.py`; new path used by `edit/ledger.py`. |
+| `porting/slot_codec.py` (171 ln) | `porting/identity/codec.py` (171 ln) | **Identical**. Old path used by `emitter.py`; new path exported from `identity/__init__` and used by tests. |
+| `porting/widget_aliases.py` (410 ln) | `porting/widgets/aliases.py` (410 ln) | **Identical**. Old path has ~8 callers; new path used by `emit/emitter.py`, `emit_constants.py`, `emit_kwargs.py`, `emit_prepare.py`, `emit_ready.py`, `comfy_nodes/stages/humanize.py`. |
+| `porting/widget_schema.py` (35 ln) | `porting/widgets/schema.py` (35 ln) | **Near-identical**. Old path imported by `emitter.py`, `node_kwargs.py`, `object_info/consume.py`; new path imported by `emit/emitter.py`, `emit/node_kwargs.py`, `edit/session.py`, `edit/apply.py`, `edit/projection.py`, `edit_session_ir_utils.py`, `emit_subgraph.py`, `emit_constants.py`, `emit_kwargs.py`. |
+| `porting/wrapper_discovery.py` (602 ln) | `porting/wrappers/discovery.py` (616 ln) | **Slightly different** (different line count). Old path used by `commands/nodes.py`; new path not yet used anywhere. |
+| `porting/wrapper_codegen.py` (539 ln) | `porting/wrappers/codegen.py` (539 ln) | **Possibly identical**. Old path used by `commands/nodes.py`; new path not yet used anywhere. |
+| `porting/emitter.py` (5088 ln) | `porting/emit/emitter.py` (2230 ln) | **Different designs**. Old = monolith with inline impl; new = re-assembly that re-exports from `emit_*.py` files. Both actively used. |
+| `porting/ui_emitter.py` (~2200 ln) | `porting/emit/ui.py` (~2200 ln) | **Separate evolving implementations**. Old heavily used by layout system and agent edit; new used by `commands/port/`. |
+
+### Summary
+
+| Verdict | Count | Files |
+|---|---|---|
+| **DELETE** | **6** | `helpers.py`, `templates.py`, `handle_index.py`, `naming.py`, `formatting.py`, `node_kwargs.py` |
+| **KEEP** | **25+** | All compatibility shims with active callers; all implementation files still in use |
+| **DEEPER AUDIT** | **10 pairs** | Duplicate old/new subpackage implementations needing migration planning |
+
+**Recommended deletion order** (lowest risk first):
+1. `porting/templates.py` — no imports, constants duplicated elsewhere
+2. `porting/handle_index.py` — no imports, appears abandoned
+3. `porting/naming.py` — no imports, identical copy at `emit/naming.py`
+4. `porting/node_kwargs.py` → then `porting/formatting.py` — chain dependency, both dead
+5. `porting/helpers.py` — zero imports, already marked `REMOVE-M4`

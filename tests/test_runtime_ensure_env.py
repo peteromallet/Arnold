@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 from vibecomfy.node_packs import CustomNodePack
-from vibecomfy.node_packs_install import InstallBatchResult, InstallResult, PipPreflightResult
+from vibecomfy.node_packs import InstallBatchResult, InstallResult, PipPreflightResult
 from vibecomfy.porting.object_info import consume as object_info_consume
 from vibecomfy.porting.object_info import serialize as object_info_serialize
 from vibecomfy.registry.pack_resolver import PackRef, PackResolution

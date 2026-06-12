@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import vibecomfy.node_packs_install as node_packs_install
+import vibecomfy.node_packs as node_packs_install
 from vibecomfy.commands.nodes import (
     _cmd_nodes_compatible_with,
     _cmd_nodes_coverage,
@@ -22,7 +22,7 @@ from vibecomfy.commands.nodes import (
     _cmd_nodes_restore,
     _cmd_nodes_spec,
 )
-from vibecomfy.node_packs_lockfile import LockEntry
+from vibecomfy.node_packs import LockEntry
 from vibecomfy.registry.pack_resolver import PackRef, PackResolution
 from vibecomfy.commands.workflows import (
     _cmd_workflows_enrich_targets,

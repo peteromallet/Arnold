@@ -1,0 +1,257 @@
+I now have a comprehensive picture of the tree. Here is the synthesized deletion batch.
+
+---
+
+## VibeComfy Safe Deletion Batch
+
+### ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### BATCH A — HIGH CONFIDENCE (low risk, clear verification)
+### ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Each item below satisfies: (1) gitignored OR tracked with zero production code references, (2) regenerable or superseded, (3) deletion won't affect tests, runtime, or documentation cross-references.
+
+---
+
+#### A1. `out/` — Entire runtime output tree (~100+ files, gitignored)
+
+Contains: run logs, scratchpads, review briefs, runpod artifacts (tar.gz, .png, .mp4, .tsv), emit_survey_baseline.json, live_panel screenshots. All gitignored (`out/`).
+
+```
+# Dry-run
+git clean -fdX --dry-run out/
+
+# Delete
+rm -rf out/
+```
+
+**Verification:** `git status out/` — should show nothing; `ls out/ 2>&1` — "No such file or directory"
+
+---
+
+#### A2. `node_index.json` — Empty array dead cache (gitignored)
+
+```
+git rm --cached node_index.json
+rm node_index.json
+```
+
+**Note:** `.gitignore` already lists `node_index.json`, but if it was tracked before being added to gitignore, `git rm --cached` ensures it's removed from tracking.
+
+**Verification:** `git status node_index.json` — untracked or deleted; `ls node_index.json 2>&1` — "No such file"
+
+---
+
+#### A3. `asset_manifest.json` — Orphaned tracked file (zero production code reads it)
+
+```
+git rm asset_manifest.json
+```
+
+**Verification:** `git status` shows file deleted; `grep -r "asset_manifest" vibecomfy/ tests/ 2>/dev/null` — no results
+
+---
+
+#### A4. `this.env` — Credential leak risk, no code reads it (gitignored)
+
+```
+rm this.env
+```
+
+**Verification:** `ls this.env 2>&1` — "No such file"; `cat .gitignore | grep "^this.env"` — confirms it's ignored
+
+---
+
+#### A5. `.desloppify/` — Stale agent run artifacts (gitignored, KEEP config.json + plan.json)
+
+**Delete:** backups, regenerable state, intermediate artifacts, review packets, subagent runs.
+
+```
+rm -f .desloppify/config.json.bak .desloppify/plan.json.bak
+rm -f .desloppify/state-python.json .desloppify/state-python.json.bak
+rm -f .desloppify/query.json .desloppify/review_packet_blind.json
+rm -rf .desloppify/review_packets/
+rm -rf .desloppify/subagents/runs/
+```
+
+**Keep:** `.desloppify/config.json` (user preferences), `.desloppify/plan.json` (active plan)
+
+**Verification:**
+```
+ls .desloppify/config.json .desloppify/plan.json    # should still exist
+ls .desloppify/*.bak 2>&1                           # "No such file"
+ls .desloppify/query.json 2>&1                      # "No such file"
+```
+
+---
+
+#### A6. `.megaplan/` — Stale agent runtime state (gitignored, KEEP briefs/ + schemas/ + chains/*.yaml)
+
+**Delete:** Completed session artifacts, event logs, telemetry, verification logs, stale root-level logs, nested `.megaplan/` inside chains, ALL plan directories.
+
+```
+rm -rf .megaplan/epics/
+rm -rf .megaplan/telemetry/
+rm -rf .megaplan/logs/
+rm -f  .megaplan/init-local-library.log .megaplan/auto-local-library.log
+rm -f  .megaplan/plan-native-test.log .megaplan/plan-retest.log
+rm -rf .megaplan/verification/verification/
+rm -rf .megaplan/chains/.megaplan/
+rm -rf .megaplan/plans/       # ~50 plan dirs, 500+ files, all completed
+```
+
+**Keep:** `.megaplan/briefs/` (repo-owned instructions), `.megaplan/schemas/` (repo-owned config), `.megaplan/chains/*.yaml` (chain configs), `.megaplan/audit-adaptive-critique.md`
+
+**Verification:**
+```
+ls .megaplan/briefs/    # should show briefs
+ls .megaplan/epics/ 2>&1    # "No such file"
+ls .megaplan/plans/ 2>&1   # "No such file"
+git status .megaplan/       # only shows briefs/ schemas/ chains/*.yaml
+```
+
+---
+
+#### A7. `.claude/scheduled_tasks.json` — Empty task list
+
+```
+rm -f .claude/scheduled_tasks.json
+```
+
+**Verification:** `ls .claude/scheduled_tasks.json 2>&1` — "No such file"
+
+---
+
+#### A8. `docs/migration/v25_to_v26.md` — Superseded by v25_to_v27.md
+
+```
+git rm docs/migration/v25_to_v26.md
+```
+
+**Verification:** `ls docs/migration/v25_to_v26.md 2>&1` — "No such file"; `ls docs/migration/v25_to_v27.md` — exists
+
+---
+
+#### A9. `docs/plans/` — 4 stale milestone execution plans
+
+```
+git rm docs/plans/loose-work-consolidation-plan.md
+git rm docs/plans/plan_v2.md
+git rm docs/plans/agent_readable_templates_v2.md
+git rm docs/plans/finalize.json
+```
+
+**Keep:** `docs/plans/README.md`, `docs/plans/revised_plan.md`
+
+**Verification:** `ls docs/plans/*.md docs/plans/*.json` — only `README.md` and `revised_plan.md` remain
+
+---
+
+#### A10. `artifacts/m5_baseline_red.txt` + `artifacts/m5_agent_edit_imports.txt` — Stale generated artifacts
+
+```
+git rm artifacts/m5_baseline_red.txt
+git rm artifacts/m5_agent_edit_imports.txt
+```
+
+**Verification:** `grep -r "m5_baseline_red\|m5_agent_edit_imports" vibecomfy/ tests/ scripts/ 2>/dev/null` — no results
+
+---
+
+#### A11. `docs/structure_cleanup/deletion_first_results/_fan.pid` — Orphaned PID file
+
+```
+rm -f docs/structure_cleanup/deletion_first_results/_fan.pid
+```
+
+(Untracked, in gitignored tree — safe `rm -f`)
+
+---
+
+### ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### BATCH B — PLAUSIBLE BUT NEEDS DEEPER AUDIT
+### ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+These are likely safe but require confirming no active use or verifying with the repo owner.
+
+---
+
+#### B1. Vendor submodule junk
+
+```
+# Inside vendor/ComfyUI submodule:
+cd vendor/ComfyUI
+git clean -fdX --dry-run    # review what's untracked
+# Expected deletable:
+rm -f pkg/sageattention-2.2.0-cp312-cp312-linux_x86_64.whl
+rm -f pkg/sageattention-2.2.0-cp39-abi3-linux_x86_64.whl
+rm -f comfy/comfyui.db
+# __pycache__ dirs (various)
+find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
+find . -name '*.pyc' -delete 2>/dev/null
+```
+
+**Deferred reason:** These are in the vendored submodule. The `.whl` files are ~50MB+ each, `comfyui.db` could contain cached state. Need to verify submodule `.gitignore` coverage and that ComfyUI isn't mid-run (would regenerate `.db` and re-download wheels).
+
+---
+
+#### B2. `docs/structure_cleanup/` — One-time audit analysis tree (~200 files, ~2-5MB)
+
+The README says to move it to `docs/historical/structure-cleanup/` after the cleanup pass is done. Zero external references from any Python code.
+
+```
+# Option A: Delete (if audit evidence no longer needed)
+rm -rf docs/structure_cleanup/
+
+# Option B: Move to archive (preferred by prior analysis)
+mkdir -p docs/historical/
+mv docs/structure_cleanup/ docs/historical/structure-cleanup/
+git add docs/historical/structure-cleanup/
+git rm -r docs/structure_cleanup/
+```
+
+**Deferred reason:** Contains paired briefs+results. The prior analysis recommended "move, don't delete" because evidence has ongoing value for verifying cleanup was done. Decision depends on whether cleanup has been verified.
+
+---
+
+#### B3. `scripts/patch_shannon_unattended_root.sh` — Machine-specific root patch script
+
+```
+# Need to verify: is this used by any CI/CD pipeline or just a one-off?
+grep -r "patch_shannon" . --include="*.yaml" --include="*.yml" --include="*.md" --include="*.py"
+```
+
+**Deferred reason:** Could be referenced by a cloud-init script, Railway deployment config, or runpod provisioning. Check `cloud.yaml`, `.github/workflows/`, and `scripts/runpod_*.py` for references.
+
+---
+
+#### B4. `scripts/_catalog_size_probe.py` — Exploration script with underscore prefix
+
+Underscore prefix suggests utility/scratch. Check if imported anywhere.
+
+```
+grep -r "_catalog_size_probe" . --include="*.py"
+```
+
+**Deferred reason:** Might be used by another script or referenced in documentation. Quick grep check needed.
+
+---
+
+### ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### SUMMARY
+### ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+| Batch | Category | Items | Risk | Estimated Size |
+|-------|----------|-------|------|----------------|
+| **A** | Gitignored runtime output | `out/`, `node_index.json`, `this.env`, `.desloppify/` junk, `.megaplan/` ephemera, `.claude/scheduled_tasks.json` | None (all gitignored or tracked dead) | ~150-300 MB |
+| **A** | Tracked stale/superseded docs | `v25_to_v26.md`, 4 stale plans, 2 stale artifacts | Low (zero refs, regenerable) | ~2 MB |
+| **B** | Needs deeper audit | Vendor submodule wheels/DB, `docs/structure_cleanup/`, `scripts/patch_shannon*`, `_catalog_size_probe.py` | Low-Medium | ~110+ MB |
+
+**Total in Batch A:** ~12 rm/git rm commands + 4 rm -rf commands, all verifiable with `git status` + simple `ls` checks.
+
+**Verification sweep after Batch A:**
+```bash
+cd /Users/peteromalley/Documents/reigh-workspace/vibecomfy
+git status     # should show clean working tree
+find . -name '*.pyc' -not -path './.git/*' 2>/dev/null
+find . -type d -name '__pycache__' -not -path './.git/*' 2>/dev/null
+```

@@ -132,7 +132,7 @@ async def _prepare_prompt_async(
 
 
 def _validation_failed_message(report: Any) -> str:
-    from vibecomfy.schema.format import format_issue
+    from vibecomfy.schema.validate import format_issue
 
     return "Workflow validation failed:\n  - " + "\n  - ".join(
         format_issue(issue) for issue in report.issues if issue.severity == "error"

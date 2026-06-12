@@ -95,5 +95,5 @@ Decisions now locked into the sprint docs:
 - M6 locks the `VibeSession` protocol, `_RUNTIME_REGISTRY`, `RunResult.runtime`, `RunResult.timings`, `reconfigure() -> bool`, fake RunPod boundary, and `VIBECOMFY_RUNPOD_BUDGET_USD`.
 - M7 locks plugin collision tiers, router ordering, distinct `image.edit` / `image.i2i` / `image.inpaint` semantics, `audio.t2a`, and the versioned release-note convention.
 
-The final pass also corrected stale factual claims: `.github/workflows/` exists, `artifacts/m6-public-api.md` exists, the three stale node-spec files all exist, and `docs/release_notes/v2.7.0.md` is the current release-note convention.
+The final pass also corrected stale factual claims: `.github/workflows/` exists, `docs/api/m6-public-api.md` exists, the three stale node-spec files all exist, and `docs/release_notes/v2.7.0.md` is the current release-note convention.
 - Some asset-link claims were imprecise (for example, hardlinks do not become dangling like symlinks), but the underlying integrity requirement was accepted.

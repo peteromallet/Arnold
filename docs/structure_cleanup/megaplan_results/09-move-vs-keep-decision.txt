@@ -1,0 +1,146 @@
+Now I have a comprehensive picture across all the audit layers. Here is my decisive position.
+
+---
+
+## Final Recommendation: **Split — Batch 1 move now, Batch 2 defer with symlink bridge**
+
+The authored `.megaplan` content is caught between two correct-but-conflicting patterns:
+- `docs/megaplan_chains/` already hosts 98 files of the exact same kind (excellence_epic, readable_ready_templates, node_resolution_epic, pristine_cleanup — all thriving in `docs/`)
+- `.megaplan/` is gitignored (line 29), forcing fragile `git add -f` tracking that's invisible to collaborators
+
+The lowest-regression path is to move **non-operational** authored content immediately and defer the **operationally-referenced** content until symlinks or path updates are in place.
+
+---
+
+### Concrete First Batch (Move Now — Zero Runtime Path Dependencies)
+
+These files have **no `idea:` field references** from any running chain YAML and no code-level path dependency:
+
+**Tickets** (highest-value, currently invisible — 29 authored files, zero tracked):
+```
+.megaplan/tickets/                    → docs/megaplan_chains/tickets/
+```
+
+**Standalone briefs** (top-level `.md` files, no sibling `chain.yaml`):
+```
+.megaplan/briefs/phase2-reorg-plan.md              → docs/megaplan_chains/briefs/
+.megaplan/briefs/phase2-repo-organization-audit.md → docs/megaplan_chains/briefs/
+.megaplan/briefs/agent-edit-epic.md                → docs/megaplan_chains/briefs/
+.megaplan/briefs/agent-edit-contracts.md           → docs/megaplan_chains/briefs/
+.megaplan/briefs/agent-edit-v2.md                  → docs/megaplan_chains/briefs/
+.megaplan/briefs/agent-edit-chat-interface.md      → docs/megaplan_chains/briefs/
+.megaplan/briefs/agent-edit-chat-wireframes.md     → docs/megaplan_chains/briefs/
+.megaplan/briefs/agent-edit-preview-fidelity.md    → docs/megaplan_chains/briefs/
+.megaplan/briefs/agent-edit-turn-progress.md       → docs/megaplan_chains/briefs/
+.megaplan/briefs/agent-edit-delta-lint.md          → docs/megaplan_chains/briefs/
+.megaplan/briefs/code-node-dynamic-io.md           → docs/megaplan_chains/briefs/
+.megaplan/briefs/diff-preview-overlay.md           → docs/megaplan_chains/briefs/
+.megaplan/briefs/local-library-config.md           → docs/megaplan_chains/briefs/
+.megaplan/briefs/vibecomfy-exec-node.md            → docs/megaplan_chains/briefs/
+.megaplan/briefs/text-to-graph-agent-mvp.md        → docs/megaplan_chains/briefs/
+```
+
+**Standalone audit doc:**
+```
+.megaplan/audit-adaptive-critique.md   → docs/megaplan_chains/
+```
+
+**Strategy docs (referenced only in YAML comments, not `idea:` fields):**
+```
+.megaplan/briefs/reorg/STRATEGY.md              → docs/megaplan_chains/briefs/reorg/
+.megaplan/briefs/structural-decomposition/STRATEGY.md → docs/megaplan_chains/briefs/structural-decomposition/
+```
+
+**Total Batch 1**: ~50 files, zero runtime path deps.
+
+---
+
+### Concrete Deferred Batch (Requires Symlink or Path Updates)
+
+These files are referenced by `idea:` fields in operational chain YAMLs. Moving them without a symlink bridge or path update will cause the megaplan engine to fail resolving milestones:
+
+**`ideas/` subtrees** (referenced by `.megaplan/chains/*.yaml` via `idea: .megaplan/ideas/...`):
+```
+.megaplan/ideas/frontier-hardening/  → docs/megaplan_chains/ideas/frontier-hardening/
+.megaplan/ideas/scratchpad-emitter/  → docs/megaplan_chains/ideas/scratchpad-emitter/
+```
+
+**Top-level chain YAMLs** (the engine reads these by path):
+```
+.megaplan/chains/frontier-hardening.yaml  → docs/megaplan_chains/chains/
+.megaplan/chains/scratchpad-emitter.yaml  → docs/megaplan_chains/chains/
+```
+
+**Chain-structured brief directories** (their `chain.yaml` files use `idea: .megaplan/briefs/...`):
+```
+.megaplan/briefs/agent-edit-chat-platform/    → docs/megaplan_chains/briefs/agent-edit-chat-platform/
+.megaplan/briefs/agent-edit-hardening/        → docs/megaplan_chains/briefs/agent-edit-hardening/
+.megaplan/briefs/agent-edit-live-streaming/   → docs/megaplan_chains/briefs/agent-edit-live-streaming/
+.megaplan/briefs/agent-edit-structural/       → docs/megaplan_chains/briefs/agent-edit-structural/
+.megaplan/briefs/reorg/                       → docs/megaplan_chains/briefs/reorg/
+.megaplan/briefs/sisypy-suite/                → docs/megaplan_chains/briefs/sisypy-suite/
+.megaplan/briefs/structural-decomposition/    → docs/megaplan_chains/briefs/structural-decomposition/
+.megaplan/briefs/text-to-graph-agent-epic/    → docs/megaplan_chains/briefs/text-to-graph-agent-epic/
+```
+
+**Schemas** (engine reads from `.megaplan/schemas/` with no configurable base path):
+```
+.megaplan/schemas/  → docs/megaplan_chains/schemas/
+```
+
+**Deferred enables Batch 2 via symlink bridge:**
+```bash
+ln -s docs/megaplan_chains/ideas    .megaplan/ideas
+ln -s docs/megaplan_chains/briefs   .megaplan/briefs
+ln -s docs/megaplan_chains/chains   .megaplan/chains
+ln -s docs/megaplan_chains/schemas  .megaplan/schemas
+ln -s docs/megaplan_chains/tickets  .megaplan/tickets
+```
+
+These symlinks live under the gitignored `.megaplan/` so they're local-only — recreated on clone via a documented one-liner. The gitignore keeps runtime debris (`plans/`, `logs/`, `telemetry/`, `*.log`, `*.json`) out of the index regardless.
+
+---
+
+### Risks
+
+| Risk | Severity | Mitigation |
+|------|----------|-----------|
+| **Missing symlinks after clone** → engine can't find `idea:` paths | Medium | Document setup in `docs/megaplan_chains/README.md`; engine handles missing ideas gracefully (skips milestone) |
+| **Cross-reference staleness** — docs like `docs/historical/frontier-hardening-runbook.md` line 32 reference `.megaplan/ideas/frontier-hardening/` | Low | Only 2 docs affected: `frontier-hardening-runbook.md` and `docs/architecture/python_on_the_graph.md`. Sweep in Batch 2 PR. |
+| **`docs/megaplan_briefs/` gitignore** (line 33) becomes misleading | Low | Remove line 33 in Batch 2 after confirming no briefs land there |
+| **Batch 1 files have in-doc cross-refs** to sibling `.megaplan/...` paths | Low | These are standalone briefs — they reference concepts, not operational paths. No runtime breakage. |
+
+---
+
+### Verification Commands
+
+```bash
+# 1. Snapshot current state
+git ls-files .megaplan > /tmp/megaplan-before.txt
+find .megaplan -type f | wc -l
+
+# 2. After Batch 1 — verify moved files are now tracked
+git ls-files docs/megaplan_chains/tickets/ docs/megaplan_chains/briefs/ docs/megaplan_chains/audit-adaptive-critique.md
+
+# 3. Verify no forced-tracked leftovers
+git ls-files .megaplan
+
+# 4. Verify engine exclusion scripts still work (they reference ".megaplan" as exclusion string)
+rg -n "\.megaplan" scripts/runpod_runner.py scripts/runpod_corpus_matrix.py scripts/runpod_e2e_matrix.py vibecomfy/checks.py
+# Expected: all 4 entries are exclusion strings — they still match the gitignored dir
+
+# 5. Check for orphaned cross-references to moved standalone briefs
+rg -n "\.megaplan/briefs/(phase2-reorg-plan|phase2-repo-organization-audit|agent-edit-epic|agent-edit-contracts|agent-edit-v2|agent-edit-chat-interface|agent-edit-chat-wireframes|agent-edit-preview-fidelity|agent-edit-turn-progress|agent-edit-delta-lint|code-node-dynamic-io|diff-preview-overlay|local-library-config|vibecomfy-exec-node|text-to-graph-agent-mvp)" docs README.md scripts tests .github 2>/dev/null
+
+# 6. After Batch 2 + symlinks — verify engine still resolves
+megaplan chain start --spec .megaplan/chains/scratchpad-emitter.yaml --dry-run 2>&1 | head -20
+
+# 7. Final tracked inventory
+git ls-files docs/megaplan_chains/ | wc -l
+```
+
+---
+
+### Bottom Line
+
+**Move now.** The standalone briefs, tickets, audit doc, and strategy docs have zero operational path dependencies and the highest risk of silent loss (gitignored + force-tracked). Get them into `docs/megaplan_chains/` where they're naturally tracked and discoverable. Defer the chain-structured directories and schemas until the symlink bridge is in place, then move the rest in a single coordinated PR.

@@ -1,6 +1,6 @@
 # Sprint 5: Import-To-Ready Orchestrator
 
-Implement Sprint 5 from `docs/readable_ready_template_cleanup_plan.md`.
+Implement Sprint 5 from `docs/templates/readable_ready_template_cleanup_plan.md`.
 
 ## Branch And Chain Constraints
 

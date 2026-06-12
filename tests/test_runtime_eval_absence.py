@@ -25,28 +25,36 @@ def _python_files() -> list[Path]:
     return sorted(files)
 
 
+REMOVED_RUNTIME_EVAL_MODULES = {
+    "vibecomfy.runtime.eval_plan",
+    "vibecomfy.runtime.eval_prompt",
+    "vibecomfy.runtime.metadata",
+    "vibecomfy.runtime.preview_types",
+}
+
+
 def _runtime_eval_imports(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     findings: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.startswith("vibecomfy.runtime.eval"):
+                if alias.name in REMOVED_RUNTIME_EVAL_MODULES:
                     findings.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}: import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            if module.startswith("vibecomfy.runtime.eval"):
+            if module in REMOVED_RUNTIME_EVAL_MODULES:
                 findings.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}: from {module} import ...")
             if module == "vibecomfy.runtime":
                 for alias in node.names:
-                    if alias.name.startswith("eval"):
+                    if alias.name in {"eval_plan", "eval_prompt", "metadata", "preview_types"}:
                         findings.append(
                             f"{path.relative_to(REPO_ROOT)}:{node.lineno}: from vibecomfy.runtime import {alias.name}"
                         )
     return findings
 
 
-def test_no_live_code_imports_removed_runtime_eval_modules() -> None:
+def test_no_live_code_imports_removed_flat_runtime_eval_modules() -> None:
     findings: list[str] = []
     for path in _python_files():
         findings.extend(_runtime_eval_imports(path))

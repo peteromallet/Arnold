@@ -1,0 +1,38 @@
+Here's the audit of `agentic/actors_m4/` and `agentic/actors_m5/`.
+
+---
+
+**1. What the m4/m5 split means**
+
+From docstrings and contents:
+
+- **`actors_m4/`** — *M4 structural evidence builders* (line 1 of `__init__.py`). These build golden evidence packs for *template-edit* scenarios: Wan/LTX multi-edit changes (frame interpolation, VAE decode swap, noise-lora stacking, model-patch splicing). They assert the agent performed the "canonical correct edit."
+
+- **`actors_m5/`** — *M5 investigate/execution-tier evidence builders* (line 1 of `__init__.py`). These build evidence for *diagnosis and execution* scenarios: broken graphs, dead server URLs, readiness checks, CLI invocation logging, RunPod termination. They test the agent's investigation and honesty behavior (no-GPU refusals).
+
+The split is by *scenario tier*, not by model or version. M4 = multi-edit template correctness; M5 = agent diagnostic/execution behavior.
+
+**2. Whether the directory names are stable API**
+
+Yes. Both are imported in three places:
+
+- `agentic/adapter.py` lines 34–35: `from agentic.actors_m4 import _M4_BUILDERS` / `from agentic.actors_m5 import _M5_BUILDERS`
+- `tests/test_agentic_golden_m4.py` line 25: `from agentic.actors_m4 import _M4_BUILDERS`
+- `tests/test_agentic_golden_m5.py` line 27: `from agentic.actors_m5 import _M5_BUILDERS`
+
+No cross-imports exist between m4 and m5 — they are self-contained packages. The `actors_m4`/`actors_m5` names are the stable public API surface for the adapter and test suite.
+
+**3. Low-risk cleanup inside those directories**
+
+- **Remove stale `__pycache__/` dirs** from both `actors_m4/` (7 `.pyc` files) and `actors_m5/` (10 `.pyc` files). These are build artifacts that should be gitignored or cleaned.
+- **No dead module files** found — every `.py` in both directories is imported via their respective `__init__.py`.
+
+**4. Any rename/move that should be deferred**
+
+**Do not rename or nest these directories.** Reasons:
+
+- `agentic/actors.py` is a single *module*, not a package — you can't merge these into `agentic/actors/` without first converting `actors.py` to a package, which would break `from agentic.actors import build_m2_...` imports in `adapter.py` (lines 19–33).
+- The `_m4`/`_m5` naming is *already* a namespacing convention that works. A rename to e.g. `actors/scenarios_m4/` would provide no benefit and would require touching 4 files with zero structural improvement.
+- The tier separation (M4 template-edits vs. M5 investigate/execute) is a coherent long-term taxonomy. If more milestone tiers appear, follow the `actors_mN` pattern consistently rather than nesting.
+
+**Verdict**: Coherent as-is. Clean pycaches, keep the names.

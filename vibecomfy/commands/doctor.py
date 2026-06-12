@@ -26,9 +26,9 @@ from vibecomfy.diagnostics import (
 from vibecomfy.environment_diagnostics import metadata_environment_warnings
 from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.model_assets import extract_from_raw_workflow
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+from vibecomfy.node_packs import LockEntry, read_lockfile
 from vibecomfy.schema import get_schema_provider
-from vibecomfy.schema.format import format_issue
+from vibecomfy.schema.validate import format_issue
 from vibecomfy.workflow import VibeEdge, VibeWorkflow
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
 from vibecomfy.patches.registry import find_applicable

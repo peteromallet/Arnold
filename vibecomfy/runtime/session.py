@@ -250,8 +250,8 @@ class EmbeddedSession:
             raise RuntimeError("session already has a run in flight; concurrent run() is not supported in P1")
         if ensure_packs:
             from vibecomfy.custom_node_refs import check_pack_pin_compatibility
-            from vibecomfy.node_packs_install import install_required_packs, missing_packs_for_workflow
-            from vibecomfy.node_packs_lockfile import read_lockfile
+            from vibecomfy.node_packs import install_required_packs, missing_packs_for_workflow
+            from vibecomfy.node_packs import read_lockfile
 
             lockfile_entries = read_lockfile()
             pin_issues = check_pack_pin_compatibility(workflow, lockfile_entries)
@@ -951,7 +951,7 @@ async def _prepare_prompt_async(
 
 
 def _validation_failed_message(report: Any) -> str:
-    from vibecomfy.schema.format import format_issue
+    from vibecomfy.schema.validate import format_issue
 
     return "Workflow validation failed:\n  - " + "\n  - ".join(
         format_issue(issue) for issue in report.issues if issue.severity == "error"

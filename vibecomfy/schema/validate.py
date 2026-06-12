@@ -8,6 +8,14 @@ from vibecomfy.schema.provider import SchemaProvider, schema_for, schema_registr
 from vibecomfy.workflow import ValidationIssue, VibeWorkflow
 
 
+def format_issue(issue: Any) -> str:
+    detail = issue.detail or {}
+    location = " ".join(
+        f"{key}={detail[key]}" for key in ("node_id", "class_type", "input") if key in detail
+    )
+    return f"[{issue.code}] {location}: {issue.message}".strip()
+
+
 #: Known-lying custom-node schemas that may suppress only ``unknown_input`` and
 #: ``value_*`` validation issues. Every entry must be cross-referenced from
 #: ``docs/node_pack_reconciliation.md`` with its contract/root-cause note.

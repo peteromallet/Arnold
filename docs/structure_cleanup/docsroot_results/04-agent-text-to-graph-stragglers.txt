@@ -1,0 +1,64 @@
+Here's the full classification:
+
+---
+
+## Classification Results
+
+### 1. `docs/local_agent_text_to_graph_blockers.md`
+
+| Attribute | Assessment |
+|---|---|
+| **Content type** | Blocker/evidence log from the agent-edit panel development (2026-06-01). Mix of ✅ fixed, 🟡 partial, 🔴 open (B12, B13), ⚪ out-of-scope. 353 lines. |
+| **Current classification** | **Root-level bridge** — explicitly positioned as "related local evidence" by `docs/text-to-graph/README.md` (line 12) AND referenced as "the evidence" by `docs/agent-edit/concrete-tree.md` (line 4) and `docs/agent-edit/solution-spec.md` (line 5). Both clusters depend on it via `../` relative paths. |
+| **Substance** | Agent-edit content. The blockers are about getting the in-ComfyUI agent-edit panel working. The cross-reference to text-to-graph is shallow (text-to-graph README just points to it as external evidence). |
+| **Proposed destination** | **Keep at root** — or move to `docs/agent-edit/evidence/blockers.md`. But moving breaks cross-references from BOTH `docs/agent-edit/` and `docs/text-to-graph/`. The root placement as a bridge is intentional and correctly reflects the shared dependency. |
+| **Not historical** | B12 and B13 are 🔴 open — this is not closed historical material. |
+| **Stale-reference risk if moved** | **High.** 3 files use relative paths depending on root placement: `docs/agent-edit/concrete-tree.md:4` (`../local_agent_text_to_graph_blockers.md`), `docs/agent-edit/solution-spec.md:5` (same), `docs/text-to-graph/README.md:12` (same). All three would need updating. |
+| **README update needed?** | Only if moved. If kept at root: no action. |
+
+---
+
+### 2. `docs/local_agent_text_to_graph_e2e.md`
+
+| Attribute | Assessment |
+|---|---|
+| **Content type** | E2E test runbook for the now-merged `epic/text-to-graph/s6-runtime-backed-intent-nodes` chain. Contains setup instructions, curl smoke tests, browser smoke tests. |
+| **Current status** | **Gitignored** (`.gitignore` line 35 — intentional; contains a real API key). Epic is done: "chain status after merge: done, 7/7 milestones complete." Not in the committed tree. |
+| **Substance** | Historical runbook for a completed epic. All "Done Criteria" checkboxes ✅ checked. The runbook was for manual verification at the end of the epic, not ongoing reference. |
+| **Proposed destination** | **`docs/historical/`** — this is the correct classification. The epic is merged, the runbook is post-hoc. A `local_agent_text_to_graph_e2e.md` → `docs/historical/text-to-graph-e2e-runbook.md` move aligns with the existing historical README pattern. |
+| **But is it gitignored?** | Yes. So moving it changes nothing in the committed tree — the file won't be in the repo either way. The move is purely for local/organizational hygiene. |
+| **Stale-reference risk** | **Medium if moved, but mitigated** since the file is gitignored (not committed, so links fail locally regardless on clean checkouts). References: root `README.md:129` (absolute `docs/local_agent_text_to_graph_e2e.md`), `docs/agent-edit/concrete-tree.md:5` (`../local_agent_text_to_graph_e2e.md`), `scripts/run_local_agent_comfy.sh:5` (`docs/local_agent_text_to_graph_e2e.md`), and `docs/local_agent_text_to_graph_blockers.md:4` (`docs/local_agent_text_to_graph_e2e.md`). The blockers.md reference is self-consistent (both are root-level). |
+| **README update needed?** | **Root `README.md:129`** links to this file. If moved, update that link. **`docs/text-to-graph/README.md:13`** already handles this gracefully: "`local_agent_text_to_graph_e2e.md` if present in a local checkout." **`docs/agent-edit/concrete-tree.md:5`** would need updating. **`docs/local_agent_text_to_graph_blockers.md:4`** would need updating if both moved (but I recommend keeping blockers.md at root). |
+
+---
+
+### 3. `docs/roadmap_agentic_comfyui.md`
+
+| Attribute | Assessment |
+|---|---|
+| **Content type** | Holistic strategic roadmap (PoC → Agentic ComfyUI). Covers architecture, red-team findings, spike results, phased build plan. 535 lines, §0–§14. The project's north-star document. |
+| **Current status** | **Root-level.** Active, forward-looking, frequently updated (last revision 2026-05-30). |
+| **Substance** | Broader than text-to-graph alone. Covers the full stack: semantic codec (L0), presentation fidelity, agent loop (L3), control-flow (L4), UX (L5), and operations track. References `docs/architecture/python_on_the_graph.md`, not any text-to-graph file directly. |
+| **Proposed destination** | **Keep at root**. This is the top-level strategic roadmap for the entire project. Placing it in a subfolder (`text-to-graph/`, `agent-edit/`, `historical/`) would undersell its scope. The existing cleanup analysis agreed: "Stays top-level." |
+| **Stale-reference risk** | **Negligible.** Only referenced by `scripts/roundtrip_fidelity_spike.py` line 1 (in a docstring header comment, not a hyperlink). No committed doc links to it. |
+| **README update needed?** | **No.** It's root-level and not listed in `docs/README.md` (which is appropriate — root-level docs don't need self-referencing). The `docs/README.md` already covers all subdirectories via links; this file is peer to that index. |
+
+---
+
+## Summary Table
+
+| File | Classification | Proposed destination | Stale-reference risk | README/index update needed |
+|---|---|---|---|---|
+| `docs/local_agent_text_to_graph_blockers.md` | Agent-edit evidence / bridge doc | **Keep at root** (bridge between `agent-edit/` and `text-to-graph/` clusters) | High if moved (3 relative links break) | Only if moved: update `docs/agent-edit/concrete-tree.md`, `docs/agent-edit/solution-spec.md`, `docs/text-to-graph/README.md` |
+| `docs/local_agent_text_to_graph_e2e.md` | Historical runbook | **`docs/historical/`** (epic is done, gitignored, post-hoc) | Medium (4 referrers; but file is gitignored so already absent from clean checkouts) | Update root `README.md:129`, `docs/agent-edit/concrete-tree.md:5`, `docs/local_agent_text_to_graph_blockers.md:4`, `scripts/run_local_agent_comfy.sh:5` |
+| `docs/roadmap_agentic_comfyui.md` | Strategic roadmap | **Keep at root** (project-wide scope, not cluster-specific) | Negligible (only a docstring mention in spike script) | None |
+
+---
+
+## Decision rationale summary
+
+1. **`local_agent_text_to_graph_blockers.md`** should stay at root. It's a genuine cross-cutting bridge: both `docs/agent-edit/` (2 files) and `docs/text-to-graph/README.md` reference it via `../` relative paths. Moving it to either side breaks the other. Its open items (B12, B13) mean it's not historical. If later the bridges consolidate (e.g., concrete-tree.md moves to `../agent-edit/evidence/`), it could be pulled into `docs/agent-edit/`.
+
+2. **`local_agent_text_to_graph_e2e.md`** belongs in `docs/historical/` — the epic is done, the runbook is a post-hoc artifact. However, since it's gitignored, it won't appear in the repo regardless. The move is organizational hygiene; the higher-priority action is updating the root README link to point to historical or remove it.
+
+3. **`roadmap_agentic_comfyui.md`** stays put — it's the project's top-level strategic doc, broader than any single subfolder.

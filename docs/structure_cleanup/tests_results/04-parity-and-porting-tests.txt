@@ -1,0 +1,223 @@
+Now I have a comprehensive view of the entire test surface. Here is the complete audit.
+
+---
+
+## Audit 04: Parity And Porting Tests — Complete Findings
+
+### 1. Dirs/Files Forming the Porting/Parity Test Surface
+
+**Porting tests (23 files):**
+| File | Purpose |
+|---|---|
+| `tests/test_porting_emitter.py` | Ready-template Python emitter, scratchpad emitter, convert_ready_templates tool |
+| `tests/test_porting_ui_emitter.py` | UI JSON emitter unit tests, corpus roundtrip parity, offline parity gate, output path derivation, comfy smoke gate |
+| `tests/test_porting_emitter_widgets.py` | Widget-related emitter tests |
+| `tests/test_porting_ui_materialize.py` | UI materialization from IR |
+| `tests/test_porting_convert.py` | `_capture_virtual_wires`, `port_convert_workflow` |
+| `tests/test_porting_edit_ops.py` | Edit delta parsing ops |
+| `tests/test_porting_edit_lint.py` | Edit linting |
+| `tests/test_porting_edit_apply.py` | Edit delta application |
+| `tests/test_porting_edit_corpus.py` | Corpus-based edit tests |
+| `tests/test_porting_edit_session.py` | Edit session tests |
+| `tests/test_porting_edit_session_harness.py` | Edit session harness tests (hardcodes `workflow_corpus/official/video`, `tests/fixtures/agent_edit`) |
+| `tests/test_porting_edit_projection.py` | Edit projection |
+| `tests/test_porting_edit_ledger.py` | Edit ledger tests |
+| `tests/test_porting_provenance.py` | Provenance tracking |
+| `tests/test_porting_inventory.py` | Readability inventory scanner |
+| `tests/test_porting_report.py` | PortReport dataclass shape |
+| `tests/test_porting_assets.py` | Asset tests |
+| `tests/test_porting_object_info.py` | Object-info serializer/consumer |
+| `tests/test_porting_synthetic_fixtures.py` | Synthetic fixture tests (virtual wires, mute-parity) |
+| `tests/test_porting_corpus_schema_adapter.py` | Corpus schema adapter |
+| `tests/test_porting_workbench.py` | Workbench analysis |
+| `tests/test_porting_normalize_ingest.py` | Ingest normalization |
+| `tests/test_cli_port.py` | CLI port commands |
+
+**Parity tests (3 files):**
+| File | Purpose |
+|---|---|
+| `tests/test_ui_emitter_parity.py` | **M1 integration gate** — offline parity on full corpus minus allowlist, structural validation, uid presence, byte-identical re-emit, schema-less strict mode |
+| `tests/test_v26_canonical_parity.py` | Canonical parity baseline check vs `tests/fixtures/canonical_parity_baseline.json` |
+| `tests/parity/test_p1_typed_handle_parity.py` | **⚠ File not found at expected path** — referenced in initial search results but does not exist in the filesystem |
+
+**Ready-template tests (1 file):**
+| File | Purpose |
+|---|---|
+| `tests/test_ready_templates.py` | Snapshot parity (pre-refactor API), template-index contracts, lowvram patches, load+validate |
+
+**Lowering tests (1 file):**
+| File | Purpose |
+|---|---|
+| `tests/intent/test_static_lowering.py` | Loop extraction, body-boundary discovery, atomic failure |
+
+**Other test files in scope:**
+| File | Purpose |
+|---|---|
+| `tests/test_helper_resolve.py` | Helper-node resolver (Reroute/Primitive/SetNode chains) |
+| `tests/test_emitted_no_helpers.py` | Corpus-wide assertion: zero helper `raw_call` lines in `ready_templates/**/*.py` |
+| `tests/test_felt_fidelity_gate.py` | Felt fidelity gate (references `ready_templates/`) |
+| `tests/test_agent_acceptance.py` | Agent acceptance (references `ready_templates/` in template index) |
+| `tests/test_contracts_reexport.py` | Contract symbol re-export tests |
+| `tests/test_ir_import_topology.py` | IR import isolation (no contracts/workflow imports in ir/types) |
+| `tests/test_testing_import_cost.py` | Import cost gate |
+| `tests/test_profile_smoke_report.py` | Profile smoke report validation |
+| `tests/test_cookbook_imports.py` | Cookbook import safety |
+| `tests/security/test_no_cross_layer_import.py` | Cross-layer import security |
+| `tests/security/test_agent_generated_loader.py` | Agent-generated loader security |
+
+**Source modules:**
+| File | Purpose |
+|---|---|
+| `vibecomfy/porting/parity.py` | `compile_equivalent` checker |
+| `vibecomfy/porting/lowering.py` | Static lowering pipeline |
+| `vibecomfy/porting/readability_inventory.py` | Inventory scanner (has `READY_ROOT`, `COVERAGE_PATH`, `TEMPLATE_INDEX_PATH` constants) |
+| `tools/check_canonical_parity.py` | Baseline builder/checker |
+| `ready_templates/video/ltx2_3_lightricks_first_last_parity.py` | Parity-specific ready template |
+| `docs/templates/corpus_parity_allowlist.md` | **T12 allowlist** — documents which entries the parity gate skips |
+
+---
+
+### 2. Hardcoded Fixture Paths — Exact References
+
+All paths below are bare relative strings that assume CWD is the repo root. None use `find_repo_root()`.
+
+#### `workflow_corpus/` — **19 references**
+
+| File | Line(s) | Code |
+|---|---|---|
+| `tests/test_porting_ui_emitter.py` | 460 | `glob.glob("workflow_corpus/official/**/*.json")` |
+| `tests/test_porting_ui_emitter.py` | 500, 1124 | `Path("workflow_corpus")` |
+| `tests/test_porting_ui_emitter.py` | 827-832 | `_STARTER_SET` list (6 entries) |
+| `tests/test_porting_ui_emitter.py` | 865 | `open("workflow_corpus/official/video/wan_t2v.json")` |
+| `tests/test_porting_ui_emitter.py` | 1462-1464 | `open(...)`, `source_path=...` |
+| `tests/test_ui_emitter_parity.py` | 46-51 | `_STARTER_SET` list (6 entries) |
+| `tests/test_ui_emitter_parity.py` | 61-63 | `_PARITY_ALLOWLIST` set |
+| `tests/test_ui_emitter_parity.py` | 68 | `glob.glob("workflow_corpus/**/*.json")` |
+| `tests/test_ui_emitter_parity.py` | 150 | `_wf_from_json("workflow_corpus/official/video/wan_t2v.json")` |
+| `tests/test_porting_edit_session_harness.py` | 34 | `Path("workflow_corpus/official/video")` |
+| `tests/test_porting_emitter.py` | 74, 91, 102, 144, 1384, 2399 | `"workflow_corpus/source.json"` |
+| `tests/test_porting_emitter.py` | 480, 499, 510, 533, 551, 570, 731, 741, 754 | Embedded in test data |
+| `tests/test_porting_report.py` | 17 | `"workflow_corpus/official/image/example.json"` |
+| `tests/test_helper_resolve.py` | 12, 586 | Docstring references only |
+
+#### `ready_templates/` — **11 references**
+
+| File | Line(s) | Code |
+|---|---|---|
+| `tests/test_emitted_no_helpers.py` | 36 | `Path(__file__).resolve().parent.parent / "ready_templates"` |
+| `tests/test_ready_templates.py` | 43 | `Path("ready_templates")` |
+| `tests/test_felt_fidelity_gate.py` | 249-255, 305-311 | `os.path.join(dirname, "..", "ready_templates", ...)` |
+| `tests/test_agent_acceptance.py` | 30, 87 | `"ready_templates/image/indexed.py"` |
+| `tests/test_agent_acceptance.py` | 103, 180 | `tmp_path / "ready_templates" / ...` |
+| `tests/test_porting_emitter.py` | 254-255, 832 | `__file__ = "ready_templates/..."` in exec() contexts |
+
+#### `docs/templates/` — **3 references**
+
+| File | Line(s) | Code |
+|---|---|---|
+| `tests/test_ui_emitter_parity.py` | 124 | `Path("docs/templates/corpus_parity_allowlist.md")` |
+| `tests/test_ui_emitter_parity.py` | 44, 54 | Docstring references only |
+
+#### `tests/fixtures/` (relative without `__file__`) — **1 reference**
+
+| File | Line(s) | Code |
+|---|---|---|
+| `tests/test_porting_edit_session_harness.py` | 31 | `Path("tests/fixtures/agent_edit")` |
+
+---
+
+### 3. Misleading Test Names
+
+| Current Name | Problem |
+|---|---|
+| `test_porting_convert.py` | Tests `_capture_virtual_wires` + `port_convert_workflow`, not a general "conversion"; vague name overlaps with `test_porting_emitter.py` and `test_porting_ui_emitter.py` |
+| `test_porting_emitter.py` | Tests Python emitter (ready-template + scratchpad), NOT the UI emitter. Name suggests generic emitter tests but is Python-specific |
+| `test_porting_ui_emitter.py` (2940 lines) | **Massive monolith** — mixes: UI emitter unit tests, corpus roundtrip parity (T6), byte-identity gate (T7), offline parity gate (T8), output-path derivation (T9), comfy-smoke gate. Needs splitting |
+| `test_ui_emitter_parity.py` | Positioned as "M1 integration gate" but name sounds like it tests UI emitter parity — overlaps significantly with the parity sections of `test_porting_ui_emitter.py` (which also has tests named `test_offline_parity_gate_...`). The two files have **redundant starter sets** and **similar gate logic** |
+| `test_ready_templates.py` | Primarily about **snapshot parity** (test_snapshotted_ready_template_graph_matches_pre_refactor_api) and **template-index contracts**, not just "templates load" |
+| `test_testing_import_cost.py` | Name doesn't signal it's a porting/parity gate; tests import isolation |
+| `test_emitted_no_helpers.py` | Name is cryptic — the function `test_no_helper_raw_call_in_ready_template` is clearer |
+| `test_profile_smoke_report.py` | Name doesn't signal it's about template profile smokes |
+
+---
+
+### 4. Safe Structure Cleanup (No Assertion Changes)
+
+These are refactors that rename, reorganize, or consolidate WITHOUT touching any assertion logic:
+
+#### A. Path Hygiene — Replace bare relative strings with `find_repo_root()`
+
+Every bare `"workflow_corpus/"`, `"ready_templates/"`, `"docs/templates/"`, and `"tests/fixtures/agent_edit"` listed in Section 2 can be replaced with:
+```python
+from vibecomfy.utils import find_repo_root
+ROOT = find_repo_root()
+```
+**Files to patch (assertion-safe):**
+- `tests/test_porting_ui_emitter.py` — 7 locations
+- `tests/test_ui_emitter_parity.py` — 5 locations  
+- `tests/test_porting_edit_session_harness.py` — line 31, 34
+- `tests/test_porting_emitter.py` — ~15 locations (all `"workflow_corpus/source.json"` strings are test data values, not file reads — safe to leave as is or refactor to a constant)
+- `tests/test_porting_report.py` — line 17 (test data value)
+- `tests/test_ready_templates.py` — line 43
+- `tests/test_emitted_no_helpers.py` — line 36
+- `tests/test_felt_fidelity_gate.py` — lines 249-255, 305-311
+- `tests/test_agent_acceptance.py` — lines 30, 87
+
+**NOTE:** `test_porting_emitter.py` lines 74, 91, 102 (`"workflow_corpus/source.json"`) are **test data strings inside assertion comparisons** — changing their value would change assertions. Leave those as-is; the path hygiene only applies to file-read paths.
+
+#### B. Rename Tests for Clarity (Assertion-Neutral)
+
+| Current | Safer Name | Reason |
+|---|---|---|
+| `test_porting_convert.py` → `test_porting_virtual_wires.py` | Name matches the one function tested (`_capture_virtual_wires`) |
+| `test_porting_emitter.py` → `test_porting_python_emitter.py` | Distinguishes from UI emitter tests |
+| `test_porting_ui_emitter.py` → **split into**: `test_ui_emitter_unit.py`, `test_ui_parity_gate.py`, `test_ui_output_paths.py` | 2940-line monolith with 5 distinct concerns |
+| `test_ready_templates.py` → `test_ready_template_snapshots.py` | Actually about snapshot parity + contracts |
+| `test_testing_import_cost.py` → no change needed (it's a different subsystem) |
+
+#### C. Deduplicate Parity Gates (Most Impactful)
+
+`test_porting_ui_emitter.py` and `test_ui_emitter_parity.py` both have:
+- `_STARTER_SET` with the same 6 paths
+- `_local_provider()` helper
+- `test_offline_parity_gate_green_on_starter_set` / `test_parity_starter_set` — **same test, different file**
+- `test_offline_parity_never_imports_comfy` / `test_parity_gate_never_imports_comfy` — **same test, different file**
+
+**Safe consolidation:** Delete the redundant copies from `test_porting_ui_emitter.py` (keep only in `test_ui_emitter_parity.py` which is the designated "M1 gate" file), OR vice-versa. Either way, the assertions remain identical.
+
+#### D. Move `test_parity/test_p1_typed_handle_parity.py` Fixtures
+
+The file `tests/parity/test_p1_typed_handle_parity.py` doesn't exist but the `known_failures.txt` references `tests/parity/test_independent_readback.py` on line 7. The fixtures it references at `tests/parity/fixtures/*_typed.py` also don't exist. Either:
+- Create the directory and files if the tests are planned, **or**
+- Remove the stale known-failures entries and clean up the non-existent paths.
+
+#### E. Simplify `test_felt_fidelity_gate.py` Path Construction
+
+Lines 249-255 and 305-311 use:
+```python
+os.path.join(os.path.dirname(__file__), "..", "ready_templates", ...)
+```
+Replace with:
+```python
+from vibecomfy.utils import find_repo_root
+find_repo_root() / "ready_templates" / "..."
+```
+No assertion change.
+
+---
+
+### Summary: Exact Files to Inspect Before Any Move
+
+| Priority | File | Issue |
+|---|---|---|
+| **HIGH** | `tests/test_porting_ui_emitter.py` | 7 bare `"workflow_corpus/"` refs; 2940-line monolith |
+| **HIGH** | `tests/test_ui_emitter_parity.py` | 5 bare path refs including `"docs/templates/"`; duplicate parity tests |
+| **HIGH** | `tests/test_porting_edit_session_harness.py` | Lines 31, 34: bare `Path("tests/fixtures/...")` and `Path("workflow_corpus/...")` |
+| **MEDIUM** | `tests/test_ready_templates.py` | Line 43: bare `Path("ready_templates")` |
+| **MEDIUM** | `tests/test_emitted_no_helpers.py` | Line 36: parent-relative `ready_templates` traversal |
+| **MEDIUM** | `tests/test_felt_fidelity_gate.py` | Lines 249-255, 305-311: `os.path.join(dirname, "..", "ready_templates")` |
+| **MEDIUM** | `tests/test_porting_emitter.py` | ~15 `"workflow_corpus/source.json"` strings in test data |
+| **MEDIUM** | `tests/test_porting_report.py` | Line 17: `"workflow_corpus/official/image/example.json"` |
+| **LOW** | `tests/test_agent_acceptance.py` | Lines 30, 87: `"ready_templates/image/indexed.py"` |
+| **LOW** | `tests/test_helper_resolve.py` | Lines 12, 586: docstring references (no assertion impact) |
+| **INVESTIGATE** | `tests/parity/` | Directory doesn't exist; `test_p1_typed_handle_parity.py` and `test_independent_readback.py` referenced in known_failures.txt but absent from filesystem |

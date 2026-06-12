@@ -1,0 +1,95 @@
+Here is the complete analysis.
+
+---
+
+## Release Notes Docs Structure — Inspection Results
+
+### Current Layout
+
+| Path | Type | Role |
+|------|------|------|
+| `docs/release_notes.md` | File (11 lines) | **Index stub** — links into `release_notes/` dir + has 4 lines of v2.7 sprint content |
+| `docs/release_notes/` | Directory | Holds versioned files (`v2.7.0.md` exists; `v2.8.0.md` is referenced but not yet created) |
+| `docs/release_notes/README.md` | — | Does **not** exist |
+
+### All References to `docs/release_notes.md`
+
+**User-facing navigation link (must keep working):**
+- `docs/README.md:13` — `- [Release notes](release_notes.md)` ← relative link from `docs/`
+
+**Internal/planning references** (not user-facing, no fix needed):
+- `docs/megaplan_chains/.../handoff-m3.md`, `prep-m3.md`, `m7-docs-reconciliation.md`, `09-docs-vs-reality.md`, `RESULTS.md`, etc.
+
+### All References to `docs/release_notes/` (the dir)
+- `docs/release_notes.md:3` — `Release notes live under [docs/release_notes/](release_notes/).`
+- `docs/release_notes.md:5-6` — links to `release_notes/v2.7.0.md`, `release_notes/v2.8.0.md`
+- Various sprint/planning docs reference the convention `docs/release_notes/`
+
+---
+
+### Q1: Is `docs/release_notes.md` an index that should stay at root?
+
+**Yes.** It functions as the intentional entry-point index at `docs/` root, aggregating links into the `release_notes/` subdirectory. This matches the existing navigation pattern in `docs/README.md` (other entries like `testing/`, `api/`, `cookbook/` also use subdirectory patterns). The docs taxonomy audit (`docs_results/01-docs-taxonomy.txt`) explicitly calls it _"index aggregator pointing into `release_notes/`"_.
+
+The stub is thin (~11 lines, only 6 of which are content), but it serves its purpose as a discoverable gateway.
+
+---
+
+### Q2: Should it become `docs/release_notes/README.md` — would that break links?
+
+**It would break exactly 1 user-facing link**, and would require updating relative paths inside the moved content.
+
+**Broken link if moved:**
+| Source | Current link | Would resolve to |
+|--------|-------------|------------------|
+| `docs/README.md:13` | `release_notes.md` | `docs/release_notes.md` → **404** |
+
+**Fix needed in `docs/README.md`:** change `release_notes.md` → `release_notes/`
+
+**Internal relative links inside `release_notes.md` that would need updating:**
+| Current | Resolution from `docs/` | Resolution from `docs/release_notes/` |
+|---------|------------------------|--------------------------------------|
+| `release_notes/` (dir link) | `docs/release_notes/` ✅ | `docs/release_notes/release_notes/` ❌ → change to `./` |
+| `release_notes/v2.7.0.md` | `docs/release_notes/v2.7.0.md` ✅ | `docs/release_notes/release_notes/v2.7.0.md` ❌ → change to `v2.7.0.md` |
+| `release_notes/v2.8.0.md` | same logic | same logic |
+
+**No other external links would break.** The only non-planning reference from outside `docs/` is from planning/meta docs within `docs/` itself.
+
+---
+
+### Q3: Safe Recommendation
+
+**Two valid options:**
+
+#### Option A — Keep as-is (lowest risk)
+Leave `docs/release_notes.md` at `docs/` root. It works, nothing is broken, and the audit trail (RESULTS.md) already considers this "fixed." This is the **zero-change recommendation**.
+
+#### Option B — Move to `docs/release_notes/README.md` (cleaner, requires 2 edits)
+This follows the GitHub convention where `README.md` in a directory is the default landing page when navigating to `docs/release_notes/`. If you want this cleaner structure:
+
+**Move:**
+```
+docs/release_notes.md  →  docs/release_notes/README.md
+```
+
+**Update links (2 files, 4 line changes):**
+
+1. **`docs/README.md:13`**
+   ```
+   - [Release notes](release_notes.md)   →   - [Release notes](release_notes/)
+   ```
+
+2. **`docs/release_notes/README.md`** (after the move, update 3 relative links):
+   - Line 3: `[docs/release_notes/](release_notes/)` → `[docs/release_notes/](./)`
+   - Line 5: `[v2.8.0](release_notes/v2.8.0.md)` → `[v2.8.0](v2.8.0.md)`
+   - Line 6: `[v2.7.0](release_notes/v2.7.0.md)` → `[v2.7.0](v2.7.0.md)`
+
+---
+
+### Final Verdict
+
+| Question | Answer |
+|----------|--------|
+| Is `docs/release_notes.md` an intentional index at root? | **Yes** — it's a working gateway, not an accident. |
+| Would moving to `docs/release_notes/README.md` break links? | **Yes, 1 user-facing link** (`docs/README.md:13`) plus 3 internal relative links in the moved file itself. All fixable. |
+| **Safe recommendation** | **Option A: Keep as-is.** Zero breakage, already considered resolved by the prior pristine cleanup. Only move if you strongly prefer the `README.md` convention. |

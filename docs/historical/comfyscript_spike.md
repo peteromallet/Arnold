@@ -2,7 +2,7 @@
 
 Status: Historical spike. Current authoring guidance lives in
 [`../authoring.md`](../authoring.md), and the current public import/export
-surface is recorded in [`../../artifacts/m6-public-api.md`](../../artifacts/m6-public-api.md).
+surface is recorded in [`../api/m6-public-api.md`](../api/m6-public-api.md).
 
 Decision: `learn` for milestone one.
 

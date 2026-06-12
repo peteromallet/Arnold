@@ -5,9 +5,9 @@ from dataclasses import dataclass, field, replace
 import warnings
 from typing import TYPE_CHECKING, Any
 
-from vibecomfy import _helper_resolve as helper_resolve
+from vibecomfy._compile import _resolve as helper_resolve
 from vibecomfy._compile import _widgets as widget_aliases
-from vibecomfy import _workflow_helpers as workflow_helpers
+from vibecomfy._compile import _helpers as workflow_helpers
 from vibecomfy.errors import VibeComfyError
 from vibecomfy.handles import Handle
 
@@ -473,7 +473,7 @@ class VibeWorkflow:
         When seed is given it becomes the local uid component (extrinsic identity).
         When omitted, the counter value provides authored creation-order identity.
         """
-        from vibecomfy.porting.uid import make_uid
+        from vibecomfy.porting.identity.uid import make_uid
         self._uid_counter += 1
         local = seed if seed is not None else f"n{self._uid_counter}"
         return make_uid("", local)

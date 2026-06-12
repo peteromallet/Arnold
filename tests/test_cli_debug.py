@@ -140,7 +140,7 @@ def test_debug_stats_json_reports_failure_distribution(
 def test_debug_status_json_uses_live_status_when_reachable(
     editor_sessions: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import vibecomfy._agent_edit_debug as debug
+    import vibecomfy.commands._agent_edit_debug as debug
 
     monkeypatch.setattr(debug, "_listener_pid", lambda: "12345")
     monkeypatch.setattr(
@@ -178,7 +178,7 @@ def test_debug_status_json_uses_live_status_when_reachable(
 def test_debug_status_json_falls_back_when_server_unreachable(
     editor_sessions: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import vibecomfy._agent_edit_debug as debug
+    import vibecomfy.commands._agent_edit_debug as debug
 
     monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_V2", "1")
     monkeypatch.setattr(debug, "_listener_pid", lambda: (None, "no lsof"))

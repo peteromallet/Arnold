@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import vibecomfy.commands.doctor as doctor_cmd
-from vibecomfy.node_packs_lockfile import LockEntry
+from vibecomfy.node_packs import LockEntry
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 

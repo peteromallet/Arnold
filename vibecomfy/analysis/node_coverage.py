@@ -21,7 +21,7 @@ from typing import Any
 
 from vibecomfy.blocks import registered_blocks
 from vibecomfy.blocks._utils import add_block_node
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+from vibecomfy.node_packs import LockEntry, read_lockfile
 from vibecomfy.workflow import VibeWorkflow
 
 

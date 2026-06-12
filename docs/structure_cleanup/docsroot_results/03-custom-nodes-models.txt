@@ -1,0 +1,67 @@
+---
+
+## Analysis & Recommendation
+
+### Answers
+
+#### 1. Should these stay at docs root or move?
+
+**Keep all three at `docs/` root.** They are cross-cutting reference docs read by agents and developers, not runtime lifecycle docs. Moving them would cause churn without payoff because:
+
+- **`docs/node_pack_reconciliation.md`** has ~20 hardcoded string references in production code (`vibecomfy/schema/validate.py:22-55`). These are display-only strings, not broken links, but changing 20+ lines for a cosmetic move is not worthwhile.
+- **`docs/custom_nodes.md`** is linked from `docs/README.md`, `CLAUDE.md`, `AGENTS.md`, and via relative paths from subdirs (e.g., `../../custom_nodes.md` from `docs/megaplan_chains/node_resolution_epic/README.md`).
+- **`docs/comfy_version_support.md`** is referenced in `tests/test_comfy_version_compat.py` and from megaplan docs.
+- None of these three fit cleanly into `docs/runtime/` (runpod/execution lifecycle), `docs/templates/` (template authoring guides), or `docs/migration/` (version migration). `comfy_version_support.md` is the closest fit for `docs/migration/`, but still crosses the cost/benefit threshold negatively.
+
+#### 2. Are there existing links or CLI/help text that assume current root paths?
+
+| Source | File referenced | Link type | Breaks on move? |
+|--------|----------------|-----------|----------------|
+| `docs/README.md:11` | `custom_nodes.md` | Relative (`custom_nodes.md`) | ✅ Yes |
+| `docs/templates/custom_node_wrapper_codegen.md:200` | `custom_nodes.md` | Relative (`custom_nodes.md`) | ✅ Yes |
+| `docs/architecture/python_composition_dsl_plan.md:238` | `custom_nodes.md` | Prose reference | ✅ Yes |
+| `docs/megaplan_chains/node_resolution_epic/README.md:52` | `custom_nodes.md` | `../../custom_nodes.md` | ✅ Yes |
+| `docs/megaplan_chains/node_resolution_epic/README.md:48` | `node_pack_reconciliation.md` | `../../node_pack_reconciliation.md` | ✅ Yes |
+| `docs/megaplan_chains/node_resolution_epic/README.md:49` | `comfy_version_support.md` | `../../comfy_version_support.md` | ✅ Yes |
+| `docs/megaplan_chains/node_resolution_epic/m3-faithful-pinning.md:27` | `comfy_version_support.md` | Prose reference | ✅ Yes |
+| `docs/megaplan_chains/node_resolution_epic/m3-faithful-pinning.md:47` | `comfy_version_support.md` | Prose reference | ✅ Yes |
+| `docs/roadmap_agentic_comfyui.md:267` | `comfy_version_support.md` | Prose reference | ✅ Yes |
+| `CLAUDE.md:365` | `custom_nodes.md` | Bare path | ✅ Yes |
+| `AGENTS.md:606` | `custom_nodes.md` | Bare path | ✅ Yes |
+| `tests/test_comfy_version_compat.py:44` | `comfy_version_support.md` | Comment string | ✅ Yes |
+| `vibecomfy/schema/validate.py:13,22-55` | `node_pack_reconciliation.md` | ~20 string literals | ⚠️ Stale display strings |
+| `vendor/ComfyUI/README.md:125` | `custom_nodes.md` | Relative | ❌ No (resolves to *their own* `vendor/ComfyUI/docs/custom_nodes.md`) |
+| **CLI help text** (`vibecomfy/cli/`) | — | None found | ❌ No |
+
+**Total: 13 breakable references** (plus ~20 staleable display strings).
+
+#### 3. What is the least-risk organization improvement?
+
+**Do nothing to these three files.** The existing `docs/structure_cleanup/` analysis already flagged `docs/` as **HIGHEST RISK** due to the density of cross-links (see `docs/structure_cleanup/docs_results/08-link-risk.txt`). These three files are not clutter — they are actively referenced core docs.
+
+If you *must* reduce docs-root density, the only low-risk move is:
+
+> **`docs/comfy_version_support.md` → `docs/migration/comfy_version_support.md`**
+
+This file is about version-migration strategy, `docs/migration/` already exists with `docs/migration/v25_to_v27.md`, and `docs/roadmap_agentic_comfyui.md:267` already groups them together conceptually: *"already has `docs/comfy_version_support.md` + `docs/migration/v25_to_v27.md`"*. But even this single move breaks **6 references**.
+
+### Verdict
+
+| Decision | Risk level | Links to update |
+|----------|-----------|-----------------|
+| **Keep all at `docs/` root** | ✅ Zero | None |
+| Move only `comfy_version_support.md` to `docs/migration/` | ⚠️ Low | 6 updates below |
+| Move all three anywhere | 🔴 High | 13+ link updates + 20 display-string edits |
+
+### If you proceed with moving `comfy_version_support.md` only, exact link-update list:
+
+| File | Line | Current text | Replace with |
+|------|------|-------------|--------------|
+| `tests/test_comfy_version_compat.py` | 44 | `docs/comfy_version_support.md` | `docs/migration/comfy_version_support.md` |
+| `docs/roadmap_agentic_comfyui.md` | 267 | `docs/comfy_version_support.md` | `docs/migration/comfy_version_support.md` |
+| `docs/megaplan_chains/node_resolution_epic/README.md` | 49 | `../../comfy_version_support.md` | `../../migration/comfy_version_support.md` |
+| `docs/megaplan_chains/node_resolution_epic/m3-faithful-pinning.md` | 27 | `docs/comfy_version_support.md` | `docs/migration/comfy_version_support.md` |
+| `docs/megaplan_chains/node_resolution_epic/m3-faithful-pinning.md` | 47 | `docs/comfy_version_support.md` | `docs/migration/comfy_version_support.md` |
+| `docs/structure_cleanup/docsroot_briefs/02-api-authoring-core.md` | 10 | `docs/comfy_version_support.md` | `docs/migration/comfy_version_support.md` |
+
+**Bottom line:** Leave them in place. The docs-root clean-up effort is better spent on genuinely orphaned or stale files (like those listed in `docs/structure_cleanup/docs_results/09-delete-or-archive.txt` that have no production references).

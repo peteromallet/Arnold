@@ -1,0 +1,69 @@
+Now I have all the data needed. Here's the contract map.
+
+---
+
+## Contract Map: Root `vibecomfy/*.py` Cleanup Candidates
+
+### 🔴 HIGH PRIORITY (heavy internal deps, risky)
+
+| Root Path | Live Contract Refs | Stale/Historical Refs | Strategy |
+|---|---|---|---|
+| **`vibecomfy/workflow.py`** | ~30+ test files import from it; recipes (`example_tested_recipe.py`); `vibecomfy/__init__.py` re-exports; docs (`docs/templates/examples/gold_template_wan_i2v.py`, `docs/migration/v25_to_v27.md`) | `docs/megaplan_chains/excellence_epic/prep-m3.md` references old `_classify_helper` move | **STABLE — KEEP.** Core public API. Must not move/delete. |
+| **`vibecomfy/templates.py`** | `test_templates_module.py`, `test_porting_emitter.py` (asserted in emitted code), `test_workflow_context.py`; gold template example; migration docs. | — | **STABLE — KEEP.** Public authoring API. |
+| **`vibecomfy/artifacts.py`** | `test_runtime_run.py`; `vibecomfy/__init__.py` re-exports; `ops/image.py`, `ops/video.py` | — | **STABLE — KEEP.** |
+| **`vibecomfy/cli_loader.py`** | 3 recipes import it; `vibecomfy/__init__.py` re-exports; doc examples (`docs/megaplan_chains/excellence_epic/handoff-m3.md`, `docs/runpod/plans/layer2_test_plan.md`) | — | **STABLE — KEEP.** |
+| **`vibecomfy/handles.py`** | `test_schemas_ensure.py`; `vibecomfy/__init__.py` re-exports; test fixture `benign_scratchpad.py` | — | **STABLE — KEEP.** |
+| **`vibecomfy/errors.py`** | 7+ test files; `docs/megaplan_chains/node_resolution_epic/testing/test_node_resolution_acceptance.py`; `docs/migration/v25_to_v27.md` | — | **STABLE — KEEP.** |
+| **`vibecomfy/utils.py`** | `test_porting_emitter.py`, `test_loader_gates.py`; `vibecomfy/__init__.py` re-exports | — | **STABLE — KEEP.** |
+
+### 🟡 MEDIUM PRIORITY (live internal consumers, cleanable with care)
+
+| Root Path | Live Contract Refs | Stale/Historical Refs | Strategy |
+|---|---|---|---|
+| **`vibecomfy/node_packs_lockfile.py`** | 7 internal modules (`porting/emitter.py`, `porting/emit/emitter.py`, `porting/convert.py`, `porting/workbench.py`, `porting/emit_ready.py`, `commands/doctor.py`, `commands/nodes.py`); 7 test files; 4 tools | — | **Cleanable** — could move to `vibecomfy/porting/` or `vibecomfy/registry/`. Update all internal imports + tools. |
+| **`vibecomfy/workflow_context.py`** | `vibecomfy/workflow.py`, `vibecomfy/templates.py`, `vibecomfy/ir/workflow.py`; 4 test files; `vibecomfy/testing/_fixtures.py` via conftest; 2 tools | — | **Cleanable** — could move to `vibecomfy/_compile/` or similar. Tightly coupled, but no public API exposure. |
+| **`vibecomfy/scratchpad_loader.py`** | `vibecomfy/cli_loader.py`, `vibecomfy/porting/workbench.py`, `vibecomfy/registry/library.py`; 2 test files | — | **Cleanable** — could move to `vibecomfy/ingest/`. Update 3 internal callers + 2 test files. |
+| **`vibecomfy/comfy_backend.py`** | `vibecomfy/ingest/normalize.py`, `vibecomfy/porting/edit/normalize.py`, `vibecomfy/porting/refuse.py`; 3 test files | — | **Cleanable** — could move to `vibecomfy/porting/` or `vibecomfy/vendor/`. |
+| **`vibecomfy/checks.py`** | `vibecomfy/commands/check.py`; 2 test files | — | **Cleanable** — could move to `vibecomfy/commands/` or `vibecomfy/diagnostics/`. |
+| **`vibecomfy/origin.py`** | `vibecomfy/ops/image.py`, `vibecomfy/ops/video.py`, `vibecomfy/patches/types.py`; `agentic/actors.py` | — | **Cleanable** — could move to `vibecomfy/_compile/`. |
+| **`vibecomfy/model_assets.py`** | `vibecomfy/porting/assets.py`, `vibecomfy/runtime/session.py`, `vibecomfy/runtime/attempt.py`, `vibecomfy/ir/workflow.py`, `vibecomfy/workflow.py`, `vibecomfy/fetch.py`, `vibecomfy/commands/doctor.py`, `vibecomfy/commands/_model_entries.py` | — | **Cleanable** — could move to `vibecomfy/runtime/` or `vibecomfy/registry/`. Many internal consumers. |
+| **`vibecomfy/memory_profile.py`** | `test_runtime_session_config.py`, `test_session_cli.py`, `test_memory_profile.py` | — | **Cleanable** — could move to `vibecomfy/runtime/`. Only 3 test files consume externally. |
+| **`vibecomfy/environment_diagnostics.py`** | `vibecomfy/porting/workbench.py`, `vibecomfy/commands/doctor.py` | — | **Cleanable** — could move to `vibecomfy/diagnostics/`. |
+| **`vibecomfy/fetch.py`** | Imports `model_assets` internally | — | Could move to `vibecomfy/cli/` or `vibecomfy/commands/`. |
+| **`vibecomfy/node_packs.py`** | `test_schemas_ensure.py` (lazy import); `docs/megaplan_chains/node_resolution_epic/testing/test_node_resolution_acceptance.py` | — | **Cleanable** — move to `vibecomfy/registry/`. 1 test file. |
+| **`vibecomfy/node_packs_install.py`** | 3 test files; `docs/megaplan_chains/.../test_node_resolution_acceptance.py` | — | **Cleanable** — move to `vibecomfy/security/` or `vibecomfy/registry/`. |
+| **`vibecomfy/_git_utils.py`** | `test_foundation_utils.py` | — | **Cleanable** — move to `vibecomfy/_compile/`. Only 1 test. |
+
+### 🟢 LOW PRIORITY (likely safe to delete/move)
+
+| Root Path | Live Contract Refs | Stale/Historical Refs | Strategy |
+|---|---|---|---|
+| **`vibecomfy/fixtures.py`** | None found in tests/docs | Possibly dead | **Audit + delete** if unused. |
+| **`vibecomfy/custom_node_refs.py`** | None found in tests/docs | Possibly dead | **Audit + delete** if unused. |
+| **`vibecomfy/node_packs_git.py`** | None found in tests/docs | Possibly dead | **Audit + delete** if unused. |
+| **`vibecomfy/index_types.py`** | None found in tests/docs | Possibly dead | **Audit + delete** if unused. |
+| **`vibecomfy/_helper_resolve.py`** | None found in tests/docs | Possibly dead | **Audit + delete** if unused. |
+| **`vibecomfy/_agent_edit_debug.py`** | None found in tests/docs | Possibly dead | **Audit + delete** if unused. |
+| **`vibecomfy/extras.py`** | `vibecomfy/__init__.py` re-exports; `vibecomfy/ops/_namespace.py`, `vibecomfy/registry/ready.py` | — | Internal only — could move to `vibecomfy/registry/` or `vibecomfy/_bootstrap/`. |
+
+### `known_failures.txt` — Root Path Entries
+**None.** All 237 entries reference submodule paths (`tests/`, `vibecomfy/porting/`, `vibecomfy/comfy_nodes/`, etc.). No root `vibecomfy/*.py` paths are listed.
+
+### Key Docs/Recipes That Must Stay Stable
+- **`recipes/`** (4 files): Import `vibecomfy.cli_loader`, `vibecomfy.workflow`, `vibecomfy.blocks.*`, `vibecomfy.runtime`. These are public API contracts — any root file change must keep these working.
+- **`docs/migration/v25_to_v27.md`**: Contains `from vibecomfy.templates import new_workflow, node` example — public API stability needed.
+- **`docs/templates/examples/gold_template_wan_i2v.py`**: Uses `vibecomfy.templates`, `vibecomfy.nodes.core`, `vibecomfy.workflow`.
+- **`docs/megaplan_chains/node_resolution_epic/testing/test_node_resolution_acceptance.py`**: Historical test (not run live but referenced) — update if moving `node_packs_install`, `node_packs_lockfile`, etc.
+
+### Summary Recommendation
+
+**Immediate safe moves (zero public API breakage):**
+1. `node_packs_lockfile.py` → `vibecomfy/porting/` (update 7 internal + 7 test + 4 tool imports)
+2. `workflow_context.py` → `vibecomfy/_compile/` (update 4 internal + 4 test + 2 tool imports)
+3. `scratchpad_loader.py` → `vibecomfy/ingest/` (update 3 internal + 2 test imports)
+4. `comfy_backend.py` → `vibecomfy/porting/` or `vibecomfy/vendor/` (update 3 internal + 3 test imports)
+5. `checks.py` → `vibecomfy/commands/` (update 1 internal + 2 test imports)
+6. `memory_profile.py` → `vibecomfy/runtime/` (update 3 test imports)
+7. `environment_diagnostics.py` → `vibecomfy/diagnostics/` (update 2 internal imports)
+
+**DO NOT TOUCH:** `workflow.py`, `templates.py`, `artifacts.py`, `cli_loader.py`, `handles.py`, `errors.py`, `utils.py`, `cli.py`, `__init__.py` — these are the stable public API surface documented in recipes and migration guides.

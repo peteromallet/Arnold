@@ -3,7 +3,7 @@
 Layer 2 is a fast pre-filter, NOT full independence.
 =====================================================
 
-The emitter (:func:`~vibecomfy.porting.ui_emitter.emit_ui_json`) and this
+The emitter (:func:`~vibecomfy.porting.emit.ui.emit_ui_json`) and this
 gate share the same ``object_info`` provenance (the pinned cache).  Because
 both read the same snapshot, Layer 2 can catch *internal inconsistencies*
 (e.g. a widget-order mismatch between two cache files), but it CANNOT prove

@@ -1,0 +1,146 @@
+Now I have the full picture. Here is the complete audit.
+
+---
+
+## Audit: `vibecomfy/comfy_nodes/stages/`
+
+### 1. Role of Each Stage Module
+
+| File | Role | Status |
+|------|------|--------|
+| `__init__.py` | Exports `_record()` helper that persists a `StageResult` into `TurnContext` and applies gate updates. | **Dead** — used only internally by `summarize.py` (also dead). `agent/edit.py` defines its own `_record()` at line 2169. |
+| `agent.py` | `_stage_agent()` and `_stage_agent_delta()` — LLM-call stage functions. | **Dead** — `agent/edit.py` has its own copies (lines 2399, 2442). |
+| `batch_repl.py` | `_stage_agent_batch_repl()` — multi-turn batch REPL orchestration (741 lines). | **Dead** — `agent/edit.py` has its own copy (line 2497). |
+| `emit.py` | `_stage_lower()`, `_stage_validate()`, `_stage_emit()`, `_stage_apply_delta()`, `_edit_lint_enabled()`. | **Dead** — all duplicated in `agent/edit.py` (lines 3146, 3164, 3172, 3230, 2147). |
+| `summarize.py` | `_stage_summarize()` and `_stage_summarize_v2()` — queue validation, artifact recording. | **Dead** — duplicated in `agent/edit.py` (lines 3465, 3503). |
+| `audit.py` | `_stage_audit()` and `_write_unknown_transition_audits()` — audit metadata serialization. | **Dead** — duplicated in `agent/edit.py` (lines 3540, 3596). |
+| `humanize.py` | ~1111 lines of shared utilities: `_artifact`, `_duration_ms`, `_json_safe`, `_field_changes_payload`, `_safe_session_id`, `_inject_lowering_provenance`, `_normalize_test_client_*`, `_batch_candidate_graph_changed`, `_build_lowering_*_entries`, `_repair_field_changes_from_original_ui`, `_human_change_phrase`, etc. | **Partially live** — `session_io.py` imports `_field_changes_payload`, `_json_safe`, `_safe_session_id` from it. |
+
+### 2. Live Importers & Public Contracts
+
+**External consumers (outside `stages/`):**
+
+| Importer | Symbol(s) | What it does |
+|----------|-----------|--------------|
+| `vibecomfy/comfy_nodes/session_io.py` | `_field_changes_payload`, `_json_safe`, `_safe_session_id` | Chat artifact writing, session ID sanitization |
+
+**Intra-package (dead-end) imports:**
+
+| Source | Target | Notes |
+|--------|--------|-------|
+| `stages/batch_repl.py` | `stages/emit.py:_edit_lint_enabled` | Both dead |
+| `stages/agent.py` | `stages/humanize.py` | Both dead |
+| `stages/emit.py` | `stages/humanize.py` | Both dead |
+| `stages/audit.py` | `stages/humanize.py` | Both dead |
+| `stages/summarize.py` | `stages/__init__` | Both dead |
+
+**The orchestration in `agent/edit.py` does NOT import from `stages/` at all.** It defines every stage function locally and passes them by reference to `_run_stage()`:
+
+```python
+# agent/edit.py line 4075-4090 — all local refs, no stages/ imports
+_run_stage("ingest", state, context, _stage_ingest)
+_run_stage("agent", state, context, _stage_agent, ...)
+_run_stage("lower", state, context, _stage_lower)
+_run_stage("validate", state, context, _stage_validate)
+_run_stage("emit", state, context, _stage_emit)
+_run_stage("summarize", state, context, _stage_summarize)
+```
+
+### 3. Deletion / Move Opportunities
+
+| Action | File(s) | Rationale |
+|--------|---------|-----------|
+| **DELETE** | `stages/agent.py` | 100% dead; `agent/edit.py` has active duplicate |
+| **DELETE** | `stages/batch_repl.py` | 100% dead; `agent/edit.py` has active duplicate |
+| **DELETE** | `stages/emit.py` | 100% dead; `agent/edit.py` has active duplicate |
+| **DELETE** | `stages/summarize.py` | 100% dead; `agent/edit.py` has active duplicate |
+| **DELETE** | `stages/audit.py` | 100% dead; `agent/edit.py` has active duplicate |
+| **MOVE** | `stages/humanize.py` → `agent/_humanize.py` | The 3 live exports belong to `agent/` package; 3 callers in `session_io.py` would need import update. |
+| **DELETE** | `stages/__init__.py` | Only provides `_record()` used by dead `summarize.py`; `_record` is also duplicated in `agent/edit.py` |
+
+**Alternative to deletion** (higher effort but cleaner long-term): Switch `agent/edit.py` to import from `stages/` and delete the local copies. This would:
+- Deduplicate ~2500+ lines
+- Expose any drift bugs (there is at least one: see divergence below)
+- Require careful QA on all 4 pipeline paths (full, delta, batch, legacy)
+
+### 4. Divergence Discovered
+
+`stages/agent.py` `_stage_agent()` calls:
+```python
+messages = build_messages(task=state.task, python_source=state.python_before)
+```
+`agent/edit.py` `_stage_agent()` calls:
+```python
+messages = build_messages(task=state.task, python_source=state.python_before,
+                          execution_mode="sandboxed_loose")
+```
+
+The `execution_mode` kwarg is **missing** from the `stages/` copy. If ever swapped in, this would change prompt construction for the full agent path. This confirms the `stages/` copies are stale and not synchronized.
+
+### 5. Should `stages/` Remain a First-Class Package?
+
+**No** — not in its current form.
+
+The `stages/` package is an unfinished extraction that was abandoned mid-refactor. Six of seven files are fully dead; the seventh (`humanize.py`) is 99% dead code co-located with 3 live utility functions that happen to be imported by `session_io.py`.
+
+**Recommendation:** Delete the package. Move the 3 live symbols from `humanize.py` into `agent/_humanize.py` (or inline them in `session_io.py` — each is a one-liner wrapper or small utility).
+
+### 6. Focused Tests / Commands
+
+**Validation commands** (run before any cleanup to confirm dead-code status):
+
+```bash
+# Confirm no external imports of stage functions (aside from humanize.py)
+rg "from.*stages\.(agent|batch_repl|emit|summarize|audit)" vibecomfy/comfy_nodes --no-filename
+
+# Confirm no _run_stage call passes a stages/ import
+rg "_run_stage.*_stage_" vibecomfy/comfy_nodes/agent/edit.py --no-filename
+
+# Check for any test files referencing stages
+fd -e py -X rg -l "stages\." tests/ vibecomfy/
+```
+
+**If going to delete:**
+
+```bash
+rm vibecomfy/comfy_nodes/stages/agent.py
+rm vibecomfy/comfy_nodes/stages/batch_repl.py
+rm vibecomfy/comfy_nodes/stages/emit.py
+rm vibecomfy/comfy_nodes/stages/summarize.py
+rm vibecomfy/comfy_nodes/stages/audit.py
+```
+
+Then relocate `humanize.py`:
+
+```bash
+mv vibecomfy/comfy_nodes/stages/humanize.py vibecomfy/comfy_nodes/agent/_humanize.py
+```
+
+And update the one consumer:
+
+```bash
+# session_io.py line 12:
+# -from .stages.humanize import _field_changes_payload, _json_safe, _safe_session_id
+# +from .agent._humanize import _field_changes_payload, _json_safe, _safe_session_id
+```
+
+Finally delete `__init__.py` and the empty directory:
+
+```bash
+rm vibecomfy/comfy_nodes/stages/__init__.py
+rmdir vibecomfy/comfy_nodes/stages
+```
+
+**If going to complete the extraction** (higher risk, higher payoff):
+
+```python
+# agent/edit.py — swap local defs for stages/ imports
+from ..stages.agent import _stage_agent, _stage_agent_delta
+from ..stages.batch_repl import _stage_agent_batch_repl
+from ..stages.emit import _stage_lower, _stage_validate, _stage_emit, _stage_apply_delta
+from ..stages.summarize import _stage_summarize, _stage_summarize_v2
+from ..stages.audit import _stage_audit, _write_unknown_transition_audits
+# Then delete all local copies (lines 2147-3700) and run full test suite.
+```
+
+But given the divergence already found (`execution_mode`), I recommend **deletion over completion** — it's safer and immediately removes confusion.

@@ -1,4 +1,4 @@
-"""Tests for vibecomfy.porting.edit_lint — lint_delta() behaviour.
+"""Tests for vibecomfy.porting.edit.lint — lint_delta() behaviour.
 
 Coverage:
 - canonical uid pass-through

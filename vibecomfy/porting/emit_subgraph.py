@@ -1,9 +1,9 @@
 """emit_subgraph.py — subgraph definition, naming, and emission helpers.
 
-This module is carved from :mod:`vibecomfy.porting.emitter` as part of the
+This module is carved from :mod:`vibecomfy.porting.emit.emitter` as part of the
 M2 structural-decomposition epic (Step 5).
 
-All names exported here remain importable from ``vibecomfy.porting.emitter``
+All names exported here remain importable from ``vibecomfy.porting.emit.emitter``
 via explicit re-exports so that existing callers are unaffected.
 """
 

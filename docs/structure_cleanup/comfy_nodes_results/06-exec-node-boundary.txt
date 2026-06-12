@@ -1,0 +1,81 @@
+Here is the full audit:
+
+---
+
+## Audit: Exec Node Boundary
+
+### Exact Role of Each File
+
+**`vibecomfy/comfy_nodes/exec_node.py`** (239 lines) — **Live runtime ComfyUI node.**
+
+- Defines `VibeComfyExec`, a real custom node registered in `NODE_CLASS_MAPPINGS` (`vibecomfy.exec`).
+- Contains all core execution logic: `parse_io`, `compile_source_body`, `run_source_body`, `validate_exec_result`, `clone_exec_input`, `semantic_inputs_from_slots`.
+- Exports `EXEC_CLASS_TYPE`, `EXEC_SLOT_COUNT`, `ExecNodeContractError` — consumed by `vibecomfy/comfy_nodes/__init__.py`, `vibecomfy/ingest/normalize.py`, `vibecomfy/schema/provider.py`, and four test files.
+- Imports `EXEC_EXAMPLES` and `EXEC_HELP_TEXT` from the sibling module.
+
+**`vibecomfy/comfy_nodes/exec_examples.py`** (78 lines) — **Live runtime data module, NOT tests-only or documentation-only.**
+
+- Exports two module-level constants:
+  - `EXEC_HELP_TEXT` — A docstring-like warning about unsandboxed execution.
+  - `EXEC_EXAMPLES` — A dict of four example payloads (`brightness_contrast`, `pil_resize`, `mask_from_luminance`, `debug_shape_passthrough`) each with `title`, `summary`, `io`, `source`.
+- **Both are assigned to class attributes at import time** in `exec_node.py`:
+  ```python
+  DESCRIPTION: str = EXEC_HELP_TEXT      # line 208
+  HELP: str = EXEC_HELP_TEXT             # line 209
+  EXAMPLES: dict[str, dict[str, object]] = EXEC_EXAMPLES  # line 210
+  ```
+- ComfyUI's node discovery (`vendor/ComfyUI/comfy/cmd/node_info.py:22`) reads `obj_class.DESCRIPTION` at registration time — so `EXEC_HELP_TEXT` is **runtime metadata** presented in the node browser.
+- The only consumer of this module is `exec_node.py` (its sole import). No test file imports `exec_examples` directly.
+
+---
+
+### Is `exec_examples.py` Live Runtime, Tests-Only, or Documentation?
+
+**Live runtime** — but its content is *documentation-as-class-attributes*.
+
+| Attribute | Scope | How it's used at runtime |
+|---|---|---|
+| `EXEC_HELP_TEXT` | Assigned to `DESCRIPTION` and `HELP` | Read by ComfyUI's node info API every time the node library is inspected |
+| `EXEC_EXAMPLES` | Assigned to `EXAMPLES` | Available to frontend via the node definition; asserted in `test_comfy_exec_node.py` |
+
+It is **not** tests-only: removing `exec_examples.py` would change the class attributes that ComfyUI exposes at registration. It is **not** documentation-only (in the sense of being an external `.md` file) — it is Python code that ships as part of the installable package.
+
+---
+
+### Delete / Move Recommendations
+
+**Recommendation: Keep in place.** Do not delete or move.
+
+Rationale:
+
+1. **Tight coupling.** The data is consumed exclusively by `exec_node.py` at class-definition time. Moving it to `docs/` or a separate `examples/` directory would require either:
+   - A new import path in `exec_node.py` that reaches outside `comfy_nodes/`, breaking the sibling-package convention.
+   - Or a runtime loader that reads files at module import — unnecessary complexity for 78 lines.
+
+2. **Small, stable footprint.** Four examples totalling ~2.7 KB. No dependencies, no runtime branching. Inlining into `exec_node.py` itself would be clean but is not a priority.
+
+3. **The data IS runtime.** `DESCRIPTION` and `HELP` are first-class ComfyUI node metadata fields consumed by the node registry. Moving them outside the package would misrepresent their role.
+
+4. **Test surface.** The test `test_exec_node_help_and_examples_warn_about_unsandboxed_execution` in `test_comfy_exec_node.py` directly asserts the content of `EXAMPLES` and `HELP`. Moving the source would require updating the import chain but would not change the test itself (since tests import through `VibeComfyExec`, not `exec_examples`).
+
+**If a move were forced**, the least disruptive target would be a rename to `vibecomfy/comfy_nodes/exec_examples_data.py` (purely cosmetic), requiring a one-line change in `exec_node.py` line 9. No test changes needed.
+
+---
+
+### Import and Test Impact Summary
+
+| File | Current import | If moved to `docs/` |
+|---|---|---|
+| `exec_node.py` | `from .exec_examples import EXEC_EXAMPLES, EXEC_HELP_TEXT` | Must change to something outside the package, e.g. `from vibecomfy.docs.exec_examples import ...` — breaks the sibling pattern. |
+| `tests/test_comfy_exec_node.py` | Imports `VibeComfyExec` from `exec_node` (indirect) | **No change needed** — tests access `EXAMPLES`/`HELP` through the class attribute, not the source module. |
+| `tests/test_intent_nodes.py` | Imports `exec_node` symbols | **No change** — not importing examples. |
+| `tests/test_exec_normalize.py` | Imports `exec_node` symbols | **No change** — not importing examples. |
+| `tests/test_comfy_roundtrip_route.py` | Imports `exec_node` symbols | **No change** — not importing examples. |
+
+The **only** file that would change is `exec_node.py` line 9. Zero test files import `exec_examples` directly.
+
+---
+
+### Verdict
+
+**`exec_examples.py` is correctly placed** in the package source. It is live runtime metadata masquerading as documentation, consumed exclusively by its sibling `exec_node.py`. Moving it outside `comfy_nodes/` would add import indirection with no benefit. If concern is about source-vs-data separation, the data could be inlined into `exec_node.py` itself (78 lines), but that is cosmetic, not structural.

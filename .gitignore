@@ -1,6 +1,8 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+.import_linter_cache/
 .DS_Store
 *.pyc
 
@@ -12,6 +14,7 @@ node_index.json
 out/
 output/
 temp/
+input/
 input/.DS_Store
 
 # Large local runtime/vendor checkouts
@@ -30,8 +33,12 @@ custom_nodes/
 docs/megaplan_briefs/
 docs/subagent_prompts/
 docs/local_agent_text_to_graph_e2e.md
+.env
 this.env
 _debug_*.py
+_fix_t6.py
+_regen_templates.py
+finalize.json
 install.log
 .hypothesis/
 

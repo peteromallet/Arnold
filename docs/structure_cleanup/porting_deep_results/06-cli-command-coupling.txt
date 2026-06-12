@@ -1,0 +1,96 @@
+Now I have the full picture. Here's the complete audit.
+
+---
+
+## Deep Audit 06 — CLI Coupling to Porting Internals
+
+### 1. Which CLI commands import porting internals directly?
+
+**6 command modules** (outside `port/` package) reach into `vibecomfy.porting`:
+
+| File | Import | Used At |
+|---|---|---|
+| **`commands/analyze.py:20`** | `from vibecomfy.porting.workbench import load_port_source` | `_cmd_tracefield()` line 98 |
+| **`commands/analyze_names.py:9`** | `from vibecomfy.porting.emitter import _compute_variable_names` | `analyze_names()` line 97 |
+| **`commands/inspect.py:14`** | `from vibecomfy.porting.workbench import load_port_source` | `_cmd_inspect()` line 29 (`--field` mode) |
+| **`commands/nodes.py:18,24,25`** | `from vibecomfy.porting.workbench import load_port_source`; `from vibecomfy.porting.wrappers import codegen as _wrapper_codegen`; `from vibecomfy.porting.wrappers import discovery as _wrapper_discovery` | Coverage, refresh-template, drift commands |
+| **`commands/schemas.py:13,14,181`** | `from vibecomfy.porting.object_info.consume import get_class, list_classes`; `from vibecomfy.porting.object_info.serialize import CACHE_DIR, CacheIdentity, build_cache, refresh_from_source`; lazy: `from vibecomfy.porting.object_info.core_regen import capture_core_object_info` | All 4 `schemas` subcommands |
+| **`commands/validate.py:15`** | `from vibecomfy.porting.emitter import _build_subgraph_def, _disambiguated_subgraph_slugs` | `_subgraph_freshness_diagnostics()` lines 167, 174 |
+
+**Inside `commands/port/` (expected — these ARE the porting CLI)**: `_shared.py`, `_export.py`, `_convert.py`, `_widgets.py`, `_inventory.py`, `_repair.py`, `_simulate.py`, `__init__.py` all import from `vibecomfy.porting.*`. This is by-design since the `port` command IS the porting surface.
+
+### 2. Are there wrappers/barrels that should exist?
+
+**Strong candidate: `commands/_workflow_loader.py`**
+
+Four command files use the identical pattern:
+```python
+loaded = load_port_source(args.workflow, schema_provider=get_schema_provider("auto"))
+```
+— `analyze.py:98`, `inspect.py:29`, `nodes.py:426`, `port/_widgets.py:18`
+
+The existing `commands/_workflow_path.py` (30 lines) only does path/index resolution. A barrel that exports a `load_cli_workflow(workflow_id)` which bundles `load_port_source` + `get_schema_provider("auto")` + try/except → `print(f"Failed to load workflow: ...")` would:
+- Eliminate the direct `from vibecomfy.porting.workbench import load_port_source` in 4 files
+- Reduce copy-paste error handling (each file has nearly identical error print)
+- Hide porting internals from non-port command modules
+
+**`port/__init__.py` barrel re-exports are correct but have one dead entry:**
+
+```python
+from vibecomfy.porting.emit.ui import default_output_path, emit_ui_json
+from vibecomfy.porting.layout import evaluate_felt_delta
+from vibecomfy.registry import load_workflow_reference
+```
+
+These let submodules do `from vibecomfy.commands import port as _port; _port.evaluate_felt_delta(...)` and let tests do `monkeypatch.setattr("vibecomfy.commands.port.evaluate_felt_delta", ...)`. Three are actively used:
+
+- `evaluate_felt_delta` — used in `_export.py:510` and patched in `test_cli_port.py:1763`
+- `emit_ui_json` — used in `_export.py:480,488`
+- `load_workflow_reference` — used in `_export.py:404,430` and `_doctor_all.py:126`
+
+**However, `default_output_path`** is re-exported at `port/__init__.py:35` but is **never accessed via the barrel** — `_export.py` imports it directly (`from vibecomfy.porting.emit.ui import default_output_path`, line 12) and no code or test references `vibecomfy.commands.port.default_output_path`. This re-export is dead and can be removed.
+
+### 3. Are any command modules stale after deletions?
+
+**Both deletions are already done:**
+- `commands/port.py` — **deleted.** All imports resolve to `commands/port/` package.
+- `commands/_analyze_names.py` — **deleted.** The public `commands/analyze_names.py` is the live file.
+
+No stale command files remain.
+
+### 4. What additional file deletion or move is safe?
+
+| Action | File | Rationale |
+|---|---|---|
+| 🗑️ **Remove** | `port/__init__.py` line 35: `default_output_path` from re-export | `_export.py` imports directly; zero callers via the barrel. Dead code making the barrel surface larger than needed. |
+| 🏗️ **Create** | `commands/_workflow_loader.py` with `load_cli_workflow() -> PortWorkbenchResult` | Consolidates the `load_port_source(...)` + `get_schema_provider("auto")` + error handling pattern repeated in 4 files. Would let `analyze.py`, `inspect.py`, `nodes.py`, and `port/_widgets.py` stop importing from `vibecomfy.porting.workbench` directly. |
+| 🔗 **Refactor** | `commands/nodes.py` lines 24–25: `from vibecomfy.porting.wrappers import ...` | These are deeper; `_wrapper_codegen` and `_wrapper_discovery` are used extensively (render, discover, slug resolution). A CLI-level barrel in `commands/_wrapper_helpers.py` could re-export the 5–6 symbols nodes.py needs from those modules, but this is lower priority since `wrappers` is already a stable public API. |
+| 🔗 **Refactor** | `commands/schemas.py` lines 13–14 imports from `vibecomfy.porting.object_info.*` | These are somewhat expected since `schemas` IS the object-info cache management CLI. Still, a thin `commands/_schema_cache_helpers.py` could re-export `CACHE_DIR`, `list_classes`, `get_class`, `build_cache`, `refresh_from_source` — hiding the porting package from a non-port command. |
+| 🗑️ **Safe to delete docs** | `docs/structure_cleanup/dead_module_results/01-commands-port-py.txt` and `docs/structure_cleanup/dead_module_briefs/01-commands-port-py.md`, `02-commands-analyze-names-private.md` | These document the now-completed deletions. If you want to keep archaeology traces, leave them; they don't affect runtime. |
+
+**Exact import references for cleanup:**
+
+```
+# Remove from vibecomfy/commands/port/__init__.py line 35:
+-    "default_output_path,"
+
+# The barrel line becomes:
+from vibecomfy.porting.emit.ui import emit_ui_json
+```
+
+**Exact import paths that would be replaced by a `_workflow_loader.py` barrel:**
+
+| File | Current Import | Proposed |
+|---|---|---|
+| `commands/analyze.py:20` | `from vibecomfy.porting.workbench import load_port_source` | `from vibecomfy.commands._workflow_loader import load_cli_workflow` |
+| `commands/inspect.py:14` | `from vibecomfy.porting.workbench import load_port_source` | `from vibecomfy.commands._workflow_loader import load_cli_workflow` |
+| `commands/nodes.py:18` | `from vibecomfy.porting.workbench import load_port_source` | `from vibecomfy.commands._workflow_loader import load_cli_workflow` |
+| `commands/port/_widgets.py:9` | `from vibecomfy.porting.workbench import load_port_source` | `from vibecomfy.commands._workflow_loader import load_cli_workflow` |
+| `commands/port/_convert.py:15` | `from vibecomfy.porting.workbench import load_port_source, analyze_source` | Keep direct — this is inside the `port/` package where porting coupling is expected |
+
+### Summary
+
+- **Already cleaned up**: `port.py` and `_analyze_names.py` deletions complete. ✅
+- **Highest-impact next step**: Create `commands/_workflow_loader.py` as a barrier around `load_port_source` + `get_schema_provider("auto")` + error handling, eliminating direct porting imports from 4 non-port command modules.
+- **Quick win**: Remove the dead `default_output_path` re-export from `port/__init__.py`.
+- **Lower priority**: Barrel for `wrappers` symbols in `nodes.py`; barrel for `object_info` symbols in `schemas.py`.

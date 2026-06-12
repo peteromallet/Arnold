@@ -12,7 +12,7 @@ The lockfile is `custom_nodes.lock`.
 
 ComfyUI-QwenTTS is required by `ready_templates/video/ltx2_3_runexx_talking_avatar_qwen_tts.py`. The lockfile entry pins upstream HEAD at lock time. Run `vibecomfy nodes install ComfyUI-QwenTTS` to install locally; the verb will UPSERT the lockfile to your installed SHA.
 
-The opt-in P1 GPU smoke test is documented in [RunPod P1 Smoke Test](runpod_smoke.md). It provisions a real RunPod pod, so run it only with `pytest --runpod -m runpod tests/smoke/test_p1_runpod.py`.
+The opt-in P1 GPU smoke test is documented in [RunPod P1 Smoke Test](runpod/smoke.md). It provisions a real RunPod pod, so run it only with `pytest --runpod -m runpod tests/smoke/test_p1_runpod.py`.
 
 ## Resolution Policy
 

@@ -5,7 +5,7 @@ Identity is extrinsic only — NOT a content/WL hash and NOT uuid4.
 
 Separators (SD3): the scope<->local separator is ``#`` and the scope-chain join
 is ``/`` — both deliberately distinct from the ``:`` that may appear inside an
-``sg_key`` (see ``vibecomfy.porting.scope``).  Flat uids (scope_path == "")
+``sg_key`` (see ``vibecomfy.porting.identity.scope``).  Flat uids (scope_path == "")
 remain byte-identical to M1.5 with NO migration.
 """
 

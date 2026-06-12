@@ -1,0 +1,19 @@
+---
+
+## Summary
+
+**Action: DELETE `vibecomfy/router.py`** — it is confirmed shadowed and safe to remove.
+
+### Why it's dead
+| Check | Result |
+|---|---|
+| Python import resolution | ✅ **Shadowed** — `from vibecomfy.router import pick` resolves to `vibecomfy/router/__init__.py` (the package), not `router.py` |
+| Direct file path references in code | ✅ **Zero** — no code reads or imports `vibecomfy/router.py` by path |
+| Content duplication | ✅ **Full duplicate** — `router.py` and `router/_core.py` are identical except `router.py` imports rules from `router_rules` (top-level) vs `_core.py` importing from `._rules` (package-internal) |
+| Package exports (`vibecomfy/__init__.py`) | ✅ **Still works** — `from . import ... router` gets the package after deletion |
+| Tests (`tests/test_router.py`) | ✅ **Unaffected** — `from vibecomfy import router` → package |
+| CI / config / `.importlinter` | ✅ **No references** |
+| External doc cross-references (`CLAUDE.md`, `docs/authoring.md`) | ✅ **Unaffected** — they reference the API (`from vibecomfy import router`, `router.pick(...)`) which works identically after deletion |
+
+### Docs/repairs needed
+**None.** All documentation references are to the package-level API, not the file path. The dead module brief has been updated with the full audit evidence.

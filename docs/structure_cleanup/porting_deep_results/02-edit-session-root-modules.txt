@@ -1,0 +1,117 @@
+Now I have the complete picture. Here is the analysis and plan.
+
+---
+
+## Deep Audit 02 — Edit Session Root Modules: Analysis
+
+### 1. Current Layout
+
+**Root level** (`vibecomfy/porting/`) — 9 files, all implementation modules:
+
+| File | Contains |
+|---|---|
+| `edit_session_types.py` | Data types + `_diag()`, `_extract_uid_name_pairs()` |
+| `edit_session_parse.py` | AST validation, `_parse_and_validate_batch()`, `_fold_constant()` |
+| `edit_session_ir_utils.py` | IR helpers (`_uids_for_op`, `_api_edges`, etc.) |
+| `edit_session_diff.py` | `_DiffMixin` class, `_render_op_diff()` |
+| `edit_session_resolve.py` | `_ResolveMixin` class (850 lines) |
+| `edit_session_describe.py` | `_DescribeMixin` class |
+| `edit_session_gates.py` | `_GatesMixin` class |
+| `edit_session_render.py` | `_RenderMixin` class |
+| `edit_session_parse_execute.py` | `_ParseExecuteMixin` class |
+
+**Package** (`vibecomfy/porting/edit/`) — 9 files, the canonical home:
+
+| File | Contains |
+|---|---|
+| `__init__.py` | Public re-exports |
+| `session.py` | `EditSession(Mixin1, Mixin2, ...)` — imports all 9 root files |
+| `ops.py`, `types.py`, `ledger.py`, `projection.py`, `apply.py`, `lint.py`, `normalize.py` | Canonical sub-modules |
+
+### 2. Import Graph — Who imports the root modules?
+
+**Only one file imports from `vibecomfy.porting.edit_session_*`**: `vibecomfy/porting/edit/session.py`.
+
+The cross-module imports *within* the root set are all between those 9 files themselves (e.g., `edit_session_resolve.py` imports from `edit_session_types`, `edit_session_parse`, `edit_session_ir_utils`).
+
+**No external consumers import root modules directly:**
+- `comfy_nodes/agent/edit.py` line 2507: `from vibecomfy.porting.edit import session as edit_session_module` ✅
+- `comfy_nodes/agent/routes.py`: no root-module imports ✅
+- `tests/test_porting_edit_session.py` line 1766: `from vibecomfy.porting import EditSession` (via `porting/__init__` which re-exports from `edit/session.py`) ✅
+- `tests/test_comfy_nodes_agent_edit.py` line 1629: `from vibecomfy.porting.edit import session as edit_session_module` ✅
+- `emit/emitter.py`: no root-module imports ✅
+
+### 3. Are any dead?
+
+**No.** All 9 root files are actively imported by `edit/session.py`. The mixin classes (`_RenderMixin`, `_ParseExecuteMixin`, `_ResolveMixin`, `_DescribeMixin`, `_GatesMixin`, `_DiffMixin`) are used in the `EditSession` class definition line 111:
+```python
+class EditSession(_RenderMixin, _ParseExecuteMixin, _ResolveMixin, _DescribeMixin, _GatesMixin, _DiffMixin):
+```
+
+### 4. Concrete Move Plan
+
+**Strategy:** Move all 9 root modules **into** `edit/` as underscored private modules, then update intra-package imports to relative paths.
+
+#### Step A — Move files (git mv)
+
+| From (`vibecomfy/porting/`) | To (`vibecomfy/porting/edit/`) |
+|---|---|
+| `edit_session_types.py` | `_session_types.py` |
+| `edit_session_parse.py` | `_parse.py` |
+| `edit_session_ir_utils.py` | `_ir_utils.py` |
+| `edit_session_diff.py` | `_diff.py` |
+| `edit_session_resolve.py` | `_resolve.py` |
+| `edit_session_describe.py` | `_describe.py` |
+| `edit_session_gates.py` | `_gates.py` |
+| `edit_session_render.py` | `_render.py` |
+| `edit_session_parse_execute.py` | `_parse_execute.py` |
+
+(Underscore prefix signals private implementation — none of these export public API names.)
+
+#### Step B — Update imports in `edit/session.py`
+
+Change all 9 root-level absolute imports to relative imports:
+
+```
+from vibecomfy.porting.edit_session_types       → from ._session_types
+from vibecomfy.porting.edit_session_parse        → from ._parse
+from vibecomfy.porting.edit_session_ir_utils     → from ._ir_utils
+from vibecomfy.porting.edit_session_diff         → from ._diff
+from vibecomfy.porting.edit_session_resolve      → from ._resolve
+from vibecomfy.porting.edit_session_describe     → from ._describe
+from vibecomfy.porting.edit_session_gates        → from ._gates
+from vibecomfy.porting.edit_session_render       → from ._render
+from vibecomfy.porting.edit_session_parse_execute → from ._parse_execute
+```
+
+#### Step C — Update imports within the moved modules themselves
+
+These modules currently import from each other using `vibecomfy.porting.edit_session_*` absolute paths. After the move, change each to either:
+- Relative imports from `.` (since they're all in the same package now), or
+- Absolute imports from `vibecomfy.porting.edit._*`
+
+Specific changes needed:
+
+| File | Old import | New import |
+|---|---|---|
+| `_types.py` (line 69, lazy in `render_diff`) | `from vibecomfy.porting.edit_session_diff import _render_op_diff` | `from ._diff import _render_op_diff` |
+| `_parse.py` (line 7) | `from vibecomfy.porting.edit_session_types import ...` | `from ._session_types import ...` |
+| `_resolve.py` (lines 19, 29, 39) | `from vibecomfy.porting.edit_session_types`, `edit_session_parse`, `edit_session_ir_utils` | `from ._session_types`, `from ._parse`, `from ._ir_utils` |
+| `_describe.py` (lines 5, 10, 14) | `from vibecomfy.porting.edit_session_types`, `edit_session_ir_utils`, `edit_session_diff` | `from ._session_types`, `from ._ir_utils`, `from ._diff` |
+| `_gates.py` (lines 8, 16) | `from vibecomfy.porting.edit_session_ir_utils`, `edit_session_types` | `from ._ir_utils`, `from ._session_types` |
+| `_render.py` (line 8) | `from vibecomfy.porting.edit_session_types` | `from ._session_types` |
+| `_parse_execute.py` (lines 28, 39, 43) | `from vibecomfy.porting.edit_session_types`, `edit_session_parse`, `edit_session_ir_utils` | `from ._session_types`, `from ._parse`, `from ._ir_utils` |
+| `_diff.py` (line 18) | `from vibecomfy.porting.edit_session_types` | `from ._session_types` |
+
+Also, these modules already import from `vibecomfy.porting.edit.*` sub-modules (e.g., `from vibecomfy.porting.edit.ops import ...`). After the move they can use relative imports (`.ops`, `.types`, `.ledger`, `.projection`).
+
+#### Step D — No changes needed to
+
+- `edit/__init__.py` — doesn't import from root modules
+- `porting/__init__.py` — re-exports from `edit.session`, which is where it already comes from
+- `comfy_nodes/agent/*.py` — already uses `vibecomfy.porting.edit.session`
+- `tests/` — already uses `vibecomfy.porting.edit.session` or `vibecomfy.porting`
+
+#### No deletions possible
+
+None of the 9 root modules can be deleted — they're all actively used as mixin bases and utility libraries for `EditSession`. The move just relocates them to the correct package namespace.

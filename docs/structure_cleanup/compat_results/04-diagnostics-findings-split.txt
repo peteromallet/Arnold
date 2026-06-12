@@ -1,0 +1,13 @@
+`__init__.py` is now a clean 24-line barrel. No importer changes needed. Here's the full audit:
+
+---
+
+### Result
+
+`__init__.py` → pure barrel (24 lines, down from 66). `findings.py` remains the single source of truth.
+
+**No API changes** — every name in `vibecomfy.diagnostics.*` is preserved via re-export. `doctor.py` and `test_diagnostics.py` import from the barrel and are unaffected. No test modification required; the test file at `tests/test_diagnostics.py` continues to pull `DiagnosticFinding`, `PatchSuggestion`, `finding_messages`, `findings_payload`, `patch_suggestions_payload` from `vibecomfy.diagnostics` with zero change in behavior.
+
+**Patch applied**: replaced lines 3–51 of `__init__.py` (inline class/function definitions plus `from dataclasses import dataclass` / `from typing import Any, Literal`) with two import lines from the submodules. `__all__` and the health import kept as-is. Lint passed.
+
+**One minor note**: the plan doc at `docs/plans/revised_plan.md` references `from vibecomfy.diagnostics.findings import ...` — that's a non-executed markdown file so it's harmless, but you may want to update it for consistency.

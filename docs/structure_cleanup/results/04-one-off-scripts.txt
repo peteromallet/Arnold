@@ -1,0 +1,61 @@
+Here is the file-by-file assessment for the 10 root candidates.
+
+---
+
+## 1. `_debug_json.py` — **Disposable scratch file**
+One-shot inspection of link IDs in a single workflow. No external references. Already gitignored (`_debug_*.py` in `.gitignore`).
+- **Action:** Delete immediately. If history matters, archive to `out/scratch/_debug_json.py`.
+
+## 2. `_debug_normalize.py` — **Disposable scratch file**
+Same workflow, testing `normalize_to_api`. Already gitignored.
+- **Action:** Delete immediately. Or `out/scratch/`.
+
+## 3. `_debug_resolver.py` — **Disposable scratch file**
+Inspecting GetNode/Reroute nodes. Already gitignored. `revised_plan.md` notes it as "already gone" (gitignore effect, not physical deletion).
+- **Action:** Delete immediately. Or `out/scratch/`.
+
+## 4. `_fix_t6.py` — **One-shot migration utility** (development utility)
+Hardcoded edits to `agent_edit.py` for a T6 refactor. Executed once; no importers.
+- **Action:** Move to `scripts/maintenance/_fix_t6.py` (convention: `scripts/` for one-off maintenance tools). Keeps it available if the same edit pattern needs re-application. Not gitignored.
+
+## 5. `_regen_templates.py` — **One-shot regeneration utility** (development utility)
+Regenerated v2.3.2 templates from v2.3.1. Targets a different worktree path. No importers.
+- **Action:** Move to `scripts/maintenance/_regen_templates.py`. Not gitignored.
+
+## 6. `plan_v2.md` — **Historical planning document**
+M3 implementation plan (Corpus proof + polish). Superseded by `revised_plan.md`.
+- **Action:** Archive to `docs/archive/plan_v2.md` or keep as-is — lightweight, zero maintenance burden.
+
+## 7. `revised_plan.md` — **Active project surface**
+Current M0 reorg plan. References `finalize.json`. Being actively worked.
+- **Action:** Keep at root (working task plan). Consider `docs/plans/` post-execution.
+
+## 8. `finalize.json` — **Active project surface**
+Task execution manifest for the reorg. Referenced by `revised_plan.md`.
+- **Action:** Keep at root during execution. Move to `artifacts/reorg/finalize.json` when reorg completes.
+
+## 9. `CUSTOM_NODES_AUDIT.md` — **Active project surface**
+Generated audit report — consumable documentation.
+- **Action:** Keep at root or move to `docs/audit/CUSTOM_NODES_AUDIT.md` as a convention.
+
+## 10. `SECURITY_AUDIT_NOTES.md` — **Historical documentation**
+Completed audit findings (wave 9). No longer actively referenced.
+- **Action:** Move to `docs/audit/SECURITY_AUDIT_NOTES.md`.
+
+---
+
+## References/imports to update
+
+**None.** The `_debug_*.py` scripts are auto-importing from the project but nothing imports *them*. `_fix_t6.py` has a hardcoded path `PATH = "vibecomfy/comfy_nodes/agent_edit.py"` — if the path ever changes, this script breaks, but it's a one-off so irrelevant.
+
+If `CUSTOM_NODES_AUDIT.md` or `SECURITY_AUDIT_NOTES.md` move, check if any agent notes or `.megaplan/briefs/` reference them by root path. Likely none do — they're stand-alone docs.
+
+---
+
+## Immediately deletable (untracked/ignored)
+
+- `_debug_json.py` — gitignored, zero refs, delete now
+- `_debug_normalize.py` — gitignored, zero refs, delete now
+- `_debug_resolver.py` — gitignored, zero refs, delete now
+
+All three are covered by the `_debug_*.py` gitignore rule. No project code depends on them. **Safe to `rm` without archiving**, though `out/scratch/` is a zero-cost insurance option if someone wants postmortem access.

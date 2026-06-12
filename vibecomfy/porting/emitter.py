@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from vibecomfy.errors import ConversionParityError
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+from vibecomfy.node_packs import LockEntry, read_lockfile
 from vibecomfy._compile._helpers import RESOLVABLE_HELPER_CLASS_TYPES
-from vibecomfy.porting.widget_aliases import resolve_widget_key_with_provenance
+from vibecomfy.porting.widgets.aliases import resolve_widget_key_with_provenance
 from vibecomfy.porting.object_info import (
     class_defaults,
     class_has_list_output,
@@ -25,7 +25,7 @@ from vibecomfy.porting.object_info import (
     require_class_output_count,
 )
 from vibecomfy.porting.object_info import output_names as class_output_names
-from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
+from vibecomfy.porting.widgets.schema import WIDGET_SCHEMA
 from vibecomfy.utils import repo_relative_path
 
 # -- readability warning codes ------------------------------------------------
@@ -1850,7 +1850,7 @@ def _prepare_workflow_for_emit(
 
 
 def _emit_agent_edit_lines(prepared: dict[str, Any]) -> list[str]:
-    from vibecomfy.porting.slot_codec import encode_slot_names, to_python_identifier
+    from vibecomfy.porting.identity.codec import encode_slot_names, to_python_identifier
 
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
@@ -1936,7 +1936,7 @@ def _emit_agent_edit_lines(prepared: dict[str, Any]) -> list[str]:
 
 
 def _agent_edit_output_aliases(node: Any) -> dict[int, str]:
-    from vibecomfy.porting.slot_codec import encode_slot_names, to_python_identifier
+    from vibecomfy.porting.identity.codec import encode_slot_names, to_python_identifier
 
     output_names = _agent_edit_raw_output_names(node)
     if not output_names:
@@ -2267,7 +2267,7 @@ def _disambiguated_subgraph_slugs(raw_by_id: Mapping[str, Mapping[str, Any]]) ->
 
 def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str | None) -> _SubgraphDef:
     from vibecomfy.ingest.normalize import normalize_to_api
-    from vibecomfy.porting.uid import make_uid, mint_local_uid
+    from vibecomfy.porting.identity.uid import make_uid, mint_local_uid
     from vibecomfy.workflow import VibeEdge as _Edge, VibeNode as _Node
 
     subgraph_id = str(raw["id"])
@@ -3891,7 +3891,7 @@ def _locked_variable_uid_map(
     scope_path: str = "",
     diagnostics: list[EmissionDiagnostic] | None = None,
 ) -> dict[str, str]:
-    from vibecomfy.porting.uid import make_uid
+    from vibecomfy.porting.identity.uid import make_uid
 
     uid_to_nid: dict[str, str] = {}
     for nid, node in workflow_nodes.items():
@@ -5008,7 +5008,7 @@ def format_signature_rows(
     each signature.  If *show_confidence* is ``True``, a ``# confidence:
     0.XX`` suffix is appended.
     """
-    from vibecomfy.porting.slot_codec import to_python_identifier
+    from vibecomfy.porting.identity.codec import to_python_identifier
 
     lines: list[str] = []
     for row in sorted(rows, key=lambda r: r.class_type):

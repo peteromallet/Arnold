@@ -1,0 +1,34 @@
+## Summary
+
+### What was done
+
+`vibecomfy/router_rules.py` was reduced from **73 lines** (full duplicate of `vibecomfy/router/_rules.py`) to a **9-line thin shim**:
+
+```python
+"""Thin shim re-exporting from vibecomfy.router._rules.
+
+Kept for backward compatibility: extras.py and router.py import
+from this path. New code should import from vibecomfy.router directly.
+"""
+
+from vibecomfy.router._rules import *  # noqa: F401, F403
+
+__all__ = ["Rule", "register_route", "rules"]
+```
+
+### All 4 import paths preserved
+
+| Importer | Statement | Still works? |
+|---|---|---|
+| `vibecomfy/router.py` | `from vibecomfy.router_rules import rules` | ✅ — `rules` re-exported via `*` |
+| `vibecomfy/extras.py` | `from vibecomfy.router_rules import register_route` | ✅ — `register_route` re-exported |
+| `vibecomfy/router/__init__.py` | `from ._rules import Rule, register_route, rules` | ✅ — direct import, unchanged |
+| `vibecomfy/router/_core.py` | `from ._rules import rules` | ✅ — direct import, unchanged |
+
+### Why this specific action
+
+- **Follows the established plan** (`docs/plans/revised_plan.md` Step 6 item 5)
+- **Conservative** — no import chains change; no files deleted; no `__init__.py` rewiring
+- **Canonical source is `router/_rules.py`** inside the package, which is the intended long-term home
+- **Zero risk** — the shim merely delegates to the same code that was already there
+- **Future cleanup path**: once all consumers (notably `router.py` and `extras.py`) are migrated to `vibecomfy.router`, the shim can be deleted entirely

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tools import check_pack_provenance as provenance
-from vibecomfy.node_packs_lockfile import LockEntry
+from vibecomfy.node_packs import LockEntry
 
 
 def _template(tmp_path: Path, body: str) -> Path:

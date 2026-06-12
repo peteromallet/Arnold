@@ -7,16 +7,15 @@ from typing import Sequence
 
 import pytest
 
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
-from vibecomfy.node_packs_install import (
-    _known_schema_classes,
-    _resolve_node_index_path,
+from vibecomfy.node_packs import LockEntry, read_lockfile
+from vibecomfy.node_packs import (
     install_pack,
     install_required_packs,
     missing_packs_for_workflow,
     preflight_pip_requirements,
     restore_pack,
 )
+from vibecomfy.node_packs._install import _known_schema_classes, _resolve_node_index_path
 from vibecomfy.node_packs import CustomNodePack
 from vibecomfy.registry.pack_resolver import PackRef
 
@@ -726,7 +725,7 @@ def test_install_with_repo_url_infers_name_and_skips_pip_when_uncatalogued(tmp_p
 
 
 def test_install_registry_pack_fails_when_class_set_cannot_be_derived(tmp_path: Path, monkeypatch) -> None:
-    import vibecomfy.node_packs_install as node_packs_install
+    import vibecomfy.node_packs as node_packs_install
     from vibecomfy.registry.pack_resolver import PackRef, PackResolution
 
     monkeypatch.setattr(

@@ -24,8 +24,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vibecomfy.porting import wrapper_codegen as wc
-from vibecomfy.porting import wrapper_discovery as wd
+from vibecomfy.porting.wrappers import codegen as wc
+from vibecomfy.porting.wrappers import discovery as wd
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 

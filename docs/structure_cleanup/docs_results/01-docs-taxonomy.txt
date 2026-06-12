@@ -1,0 +1,78 @@
+Here's the audit based on complete file inventory and cross-reference mapping.
+
+---
+
+## 1. Proposed `docs/` Taxonomy
+
+| Category | Description |
+|---|---|
+| `agent-edit/` | Agent Edit protocol, specs, contracts, lifecycle, phase plans, failure evidence |
+| `agent-text-to-graph/` | Text-to-graph MVP, blockers, premortem, loading spike, E2E runbook |
+| `runtime/` | Lifecycle, code modes, surface, contextvars, exec design |
+| `testing/` | Testing contract + user-code walkthrough + `testing-user-code-examples/` merged in |
+| `runpod/` | Runpod deploy docs, smoke tests, layer2 test plan |
+| `migration/` | Version migration guides (v23→v24, v25→v26, v25→v27) |
+| `templates/` | Porting workbench, cleanup plans, readiness exceptions, decoration, model-add docs |
+| `workflow-coverage/` | Corpus, parity tooling, per-model coverage (flux, ltx, wan) |
+| `architecture/` | Design: DSL plan+review, python-on-graph, executable design, structural issues |
+| `operations/` | Structural audits, hardening runbooks, loose-work consolidation |
+
+Existing subfolders kept as-is: `assets/`, `audits/`, `cookbook/`, `historical/`, `megaplan-briefs/`, `release_notes/`, `security/`, `plans/`.
+
+Rename: `megaplan_chains/` → `megaplans/` (shorter, clearer). Merge `structure_cleanup/` → `historical/structure-cleanup/` (it's a one-time artifact).
+
+---
+
+## 2. Highest-Confidence File Moves (no external cross-ref risk)
+
+These files only reference each other within the same cluster, or are referenced only by other files moving into the same subfolder:
+
+**→ `agent-edit/`:** `agent-edit-contracts.md`, `agent-edit-response-contract.md`, `agent-edit-client-lifecycle.md`, `agent_edit_concrete_tree.md`, `agent_edit_phase1_plan.md`, `agent_edit_session_contract.md`, `agent_edit_solution_spec.md`, `agent_edit_wire_protocol.md`, `python_authoring_edit_surface.md`. Also move `agent_edit_failure_evidence/` as `agent-edit/failure-evidence/`.
+
+**→ `agent-text-to-graph/`:** `agent_text_to_graph_mvp.md`, `agent_text_to_graph_premortem.md`, `agent_text_to_graph_python_loading_spike.md`, `local_agent_text_to_graph_blockers.md`, `local_agent_text_to_graph_e2e.md`.
+
+**→ `runpod/`:** `runpod.md`, `runpod_smoke.md`, `runpod_layer2_test_plan.md`.
+
+**→ `operations/`:** `structural_audit_2026-05.md`, `loose-work-consolidation-plan.md`, `frontier-hardening-runbook.md`.
+
+**→ `workflow-coverage/`:** `z_flux_workflow_coverage.md`, `ltx_workflow_coverage.md`, `wanvideo_wrapper_coverage.md`, `workflow_corpus.md`, `workflow_onboarding_parity_tooling.md`.
+
+---
+
+## 3. Moves Requiring Link/Reference Checks
+
+These files are cross-referenced by other docs via relative paths (`../file.md`, `./file.md`, or bare `file.md`):
+
+| File | Risks |
+|---|---|
+| `authoring.md` | Referenced as `../authoring.md` from `historical/*.md` and from `readable_ready_template_cleanup_plan.md`. **Keep top-level.** |
+| `testing.md` / `testing-user-code.md` | Cross-reference each other. Move both into `testing/` together — relative ref `testing-user-code.md` → `testing/testing-user-code.md` stays correct if both move as a pair. But `testing.md:77` refs `testing-user-code.md` (bare), fine. |
+| `runtime_surface.md` | Ref'd as `docs/runtime_surface.md` from `python_composition_dsl_plan.md` — will need full-path update. |
+| `runtime_lifecycle.md` | Same pattern as runtime_surface. |
+| `custom_nodes.md` | Ref'd from `custom_node_wrapper_codegen.md`, `python_composition_dsl_plan.md`. |
+| `custom_node_wrapper_codegen.md` | Ref'd from `decorator_template_emitter_completion.md` as `docs/custom_node_wrapper_codegen.md`. |
+| `decorator_template_emitter_completion.md` | Ref'd from `custom_node_wrapper_codegen.md` as `docs/decorator_template_emitter_completion.md`. |
+| `node_pack_reconciliation.md` | Ref'd from `megaplan_chains/node_resolution_epic/README.md`. |
+| `comfy_version_support.md` | Same pattern — ref'd from README above. |
+| `hiddenswitch_incompatibilities.md` | Same pattern. |
+| `roadmap_agentic_comfyui.md` | Ref'd from `megaplan-briefs/`. |
+| `python_composition_dsl_plan.md` | Referenced inline in `authoring.md` (top-level). If moved to `architecture/`, the ref in `authoring.md:3` (`python_composition_dsl_plan.md`) must update to `architecture/python_composition_dsl_plan.md`. |
+| `python_composition_dsl_review.md` | Ref'd from the plan itself. |
+| `python_on_the_graph.md` | Ref'd from multiple files including `agent_text_to_graph_mvp.md`. |
+| `structural_issues.md` | Ref'd from `workflow_corpus.md`, `adding_templates_models.md`, `loose-work-consolidation-plan.md`. |
+| `gold_template_wan_i2v.py` | Ref'd from `release_notes/v2.7.0.md` as `docs/gold_template_wan_i2v.py`. |
+| `errors_and_doctor.md` | Minimal refs, safe to move to `operations/`. |
+
+---
+
+## 4. What Should Remain Top-Level in `docs/`
+
+**Keep these at the root** (heavily cross-referenced or serve as index/entry points):
+
+1. `authoring.md` — central authoring guide, referenced by historical/, plans/, and megaplan chains via `../authoring.md`
+2. `release_notes.md` — index aggregator pointing into `release_notes/`
+3. `vibeworkflow.md` — core domain concept ("the VibeWorkflow")
+4. `api_stability.md` — user-facing API contract
+5. `README.md` — if created, a docs index/glossary would be ideal
+
+**Everything else** belongs in one of the 10 proposed subfolders above.

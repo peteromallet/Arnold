@@ -12,6 +12,10 @@ __all__ = [
     "get_known_node_packs",
     "resolve_node_packs",
     "unresolved_class_types",
+    # registry.pack_resolver
+    "PackNotFoundError",
+    "PackRef",
+    "resolve_pack",
     # _git
     "InstalledPackGitRef",
     "find_installed_pack_ref",
@@ -86,6 +90,8 @@ def _init_module_map() -> dict[str, str]:
     }
     for n in _defs_names:
         _MODULE_BY_ATTR[n] = "._defs"
+    for n in {"PackNotFoundError", "PackRef", "resolve_pack"}:
+        _MODULE_BY_ATTR[n] = "..registry.pack_resolver"
     for n in _git_names:
         _MODULE_BY_ATTR[n] = "._git"
     for n in _install_names:

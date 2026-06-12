@@ -2,12 +2,12 @@
 
 Wired to the existing harness (tests/conftest.py + the
 ``pytest_plugins=("vibecomfy.testing._pytest_plugin",)`` registration). This is the
-corpus-wide gate over :mod:`vibecomfy.porting.ui_emitter` and the T2 ingest change.
+corpus-wide gate over :mod:`vibecomfy.porting.emit.ui` and the T2 ingest change.
 It covers, in one file:
 
 - (a) offline parity green on a starter set (>=5 spanning image/video/edit) AND across
   the full ``workflow_corpus`` minus the T12 documented allowlist
-  (``docs/corpus_parity_allowlist.md``);
+  (``docs/templates/corpus_parity_allowlist.md``);
 - (b) structural-validation green corpus-wide (schema-less assertions skipped + reported);
 - (c) uid or display-id present on every node (ir_node_id demoted in M5);
 - (d) same-IR -> byte-identical JSON on re-emit;
@@ -41,7 +41,7 @@ from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 # ---------------------------------------------------------------------------
 
 # Starter set: >=5 entries spanning image / video / edit, all in the "gate passes"
-# section of docs/corpus_parity_allowlist.md.
+# section of docs/templates/corpus_parity_allowlist.md.
 _STARTER_SET = [
     "workflow_corpus/official/image/z_image.json",
     "workflow_corpus/official/image/flux2_klein_4b_t2i.json",
@@ -51,7 +51,7 @@ _STARTER_SET = [
     "workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json",
 ]
 
-# The T12 documented allowlist (docs/corpus_parity_allowlist.md, "Complete allowlist
+# The T12 documented allowlist (docs/templates/corpus_parity_allowlist.md, "Complete allowlist
 # index"). The parity gate is permitted to skip these. For workflow_corpus/**/*.json
 # the relevant entries are the two manifests (NOT_A_WORKFLOW) and the one corpus JSON
 # with a confirmed parity failure (PARITY_FAIL_TOPOLOGY). The remaining 45 allowlist
@@ -121,7 +121,7 @@ def test_parity_starter_set_spans_media() -> None:
 
 def test_allowlist_documents_widget_shape_taxonomy() -> None:
     """The parity allowlist must describe dynamic overflow as typed pin/refusal."""
-    text = Path("docs/corpus_parity_allowlist.md").read_text(encoding="utf-8")
+    text = Path("docs/templates/corpus_parity_allowlist.md").read_text(encoding="utf-8")
 
     assert "PIN_OPAQUE_WIDGET_SHAPE" in text
     assert "REFUSED_WIDGET_SHAPE" in text

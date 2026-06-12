@@ -21,7 +21,7 @@ from vibecomfy.porting.strict_ready import (
     validate_strict_ready_workflow,
 )
 from vibecomfy.porting.widgets.aliases import widget_alias_analysis
-from vibecomfy.porting.emit.emitter import _wrapper_module_for_class
+from vibecomfy.porting.emitter import _wrapper_module_for_class
 from vibecomfy.porting.object_info import class_has_list_output, class_output_count
 from vibecomfy.porting.parity import _is_schema_default_input
 from vibecomfy.registry.ready import repo_ready_template_id_for_path
@@ -599,7 +599,7 @@ def _v26_node_kwarg_diagnostics(ready_id: str, path: str, node: ast.Call, class_
 
 def _v26_pack_provenance_diagnostics(ready_id: str, path: str, tree: ast.AST, packs_kw: ast.keyword | None, enforced: bool) -> list[dict[str, Any]]:
     try:
-        from vibecomfy.node_packs_lockfile import read_lockfile
+        from vibecomfy.node_packs import read_lockfile
     except ImportError:
         return []
     by_class: dict[str, str] = {}

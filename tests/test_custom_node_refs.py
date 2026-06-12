@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from vibecomfy.custom_node_refs import check_pack_pin_compatibility, normalize_custom_node_requirements
-from vibecomfy.node_packs_lockfile import LockEntry
+from vibecomfy.node_packs import LockEntry
 from vibecomfy.workflow import VibeWorkflow, WorkflowRequirements, WorkflowSource
 
 

@@ -1,0 +1,52 @@
+Here's the audit:
+
+---
+
+## 1. References (19 hits across 10 files)
+
+| File | Role |
+|---|---|
+| `README.md` | **User-facing** — linked directly |
+| `CLAUDE.md` | **Agent-facing** — cited as API source of truth |
+| `docs/historical/graphbuilder_spike.md` | Historical spike |
+| `docs/historical/old_vibecomfy_port_rationale.md` | Historical spike |
+| `docs/historical/comfyscript_spike.md` | Historical spike |
+| `docs/megaplan_chains/.../m6-conventions.md` | Internal planning |
+| `docs/megaplan_chains/.../m7-docs-reconciliation.md` | Internal planning |
+| `docs/megaplan_chains/.../review-adjustments-2026-05-27.md` | Internal planning |
+| `docs/megaplan_chains/.../RESULTS.md` | Internal planning |
+| `docs/structure_cleanup/results/07-agent-surfaces.txt` | Internal analysis |
+| `docs/structure_cleanup/artifacts_briefs/02-public-api-artifact.md` | This audit brief |
+
+---
+
+## 2. Active / user-facing?
+
+**Yes.** Referenced in `README.md` (user docs) and `CLAUDE.md` (agent instructions). Its content — the public import surface — is a stable reference doc, not a transient build artifact.
+
+---
+
+## 3. Best destination
+
+**Move → `docs/api/m6-public-api.md`**
+
+The `artifacts/` directory is described internally as "run artifacts — milestone audit docs, emitter baselines, pytest logs." This file is none of those; it's an API reference. `docs/api/` is its natural home. Keep the `m6-` prefix for provenance since it explicitly describes the M6 milestone surface.
+
+---
+
+## 4. Required link updates
+
+```diff
+- README.md:          artifacts/m6-public-api.md
++ README.md:          docs/api/m6-public-api.md
+
+- CLAUDE.md:          artifacts/m6-public-api.md
++ CLAUDE.md:          docs/api/m6-public-api.md
+
+- docs/historical/*.md:  ../../artifacts/m6-public-api.md
++ docs/historical/*.md:  ../../docs/api/m6-public-api.md
+```
+
+Internal planning files (`docs/megaplan_chains/…`, `docs/structure_cleanup/…`) refer to the old path but are archival notes — update them for correctness but not critical.
+
+**Tests to run:** `grep -r 'm6-public-api' .` post-move to catch any remaining stale paths, then verify the `README.md` link renders correctly in your docs viewer. No code imports or unit tests reference this file, so no test suite changes needed.

@@ -1,0 +1,103 @@
+Now I have a thorough understanding of all the evidence-related paths. Here is my complete audit.
+
+---
+
+## Artifacts & Evidence Deletion Audit
+
+### 1. `agentic/evidence/` — **Does not exist on disk**
+
+This is a **virtual/logical prefix** used internally in scenario YAML manifests (e.g., `required_frozen_evidence: [evidence/compiled_api.json]`) and resolved at runtime by `agentic/adapter.py`'s prefix-stripping logic. The actual generated files live in `out/agentic/reports/<tag>/` at runtime.
+
+**Action: None.** Nothing to delete or move. The directory doesn't exist.
+
+---
+
+### 2. `artifacts/` — Historical milestone evidence (17 files, tracked)
+
+| Path | Verdict | Rationale |
+|---|---|---|
+| `artifacts/README.md` | **KEEP** | Self-documenting inventory of the directory. |
+| `artifacts/m1-safety-gate.md` | **KEEP** | **Actively referenced** by 16+ docs: `docs/megaplan_chains/pristine_cleanup/ideas/m5a-emitter-split.md`, `docs/audits/m2-diff-hygiene.md`, `docs/megaplan_chains/pristine_cleanup/RESULTS.md`, `docs/structure_cleanup/*/` results, etc. |
+| `artifacts/m2-symbol-map.md` | **KEEP** | **Actively referenced** by 16+ docs: `docs/megaplan_chains/pristine_cleanup/ideas/m2-shared-foundation.md`, `docs/audits/m2-diff-hygiene.md`, `docs/megaplan_chains/pristine_cleanup/RESULTS.md`, etc. |
+| `artifacts/m4/m4_baseline_pre_apply.txt` | **KEEP** | Referenced by `docs/architecture/m4-resolution-context.md` line 106 (golden-diff gate for M4 resolution process). |
+| `artifacts/m4/m4_baseline_goldens.txt` | **KEEP** (companion) | Companion to the referenced baseline file; keep for consistency. |
+| `artifacts/m4/m4_after.txt` | **KEEP** (companion) | Companion to the referenced baseline file; keep for consistency. |
+| `artifacts/m5_baseline_red.txt` | **DELETE** | 1.7 MB stale pytest log from a completed milestone (M5). **Zero external references.** Reproducible by re-running the test suite. No code, test, or doc depends on it. |
+| `artifacts/m5_agent_edit_imports.txt` | **DELETE** | Stale `grep` output from a worktree (`structural-decomp`) whose paths reference `/Users/peteromalley/Documents/.megaplan-worktrees/structural-decomp/` — **no longer exists.** **Zero external references.** |
+| `artifacts/m5a-emitter-baseline/manifest.json` | **KEEP** | Manifest hardcodes its own children paths (`"path": "artifacts/m5a-emitter-baseline/..."`) — packaged unit. Moving would break internal consistency. |
+| `artifacts/m5a-emitter-baseline/focused_pytest.log` | **KEEP** | Part of packaged baseline unit. |
+| `artifacts/m5a-emitter-baseline/full_pytest.log` | **KEEP** | Part of packaged baseline unit. |
+| `artifacts/m5a-emitter-baseline/image__z_image.py` | **KEEP** | Part of packaged baseline unit. |
+| `artifacts/m5a-emitter-baseline/video__ltx2_3_t2v.py` | **KEEP** | Part of packaged baseline unit. |
+| `artifacts/m5a-emitter-after/manifest.json` | **KEEP** | Packaged after-evidence unit. |
+| `artifacts/m5a-emitter-after/.gitkeep` | **KEEP** | Intentional empty-structure placeholder. |
+| `artifacts/m5a-emitter-after/image_z_image.py` | **KEEP** | Part of packaged after-evidence unit. |
+| `artifacts/m5a-emitter-after/video_ltx2_3_t2v.py` | **KEEP** | Part of packaged after-evidence unit. |
+
+**DELETE these two stale files:**
+- `/Users/peteromalley/Documents/reigh-workspace/vibecomfy/artifacts/m5_baseline_red.txt`
+- `/Users/peteromalley/Documents/reigh-workspace/vibecomfy/artifacts/m5_agent_edit_imports.txt`
+
+**Rationale:** Both are large, generated, machine-produced outputs (pytest log, grep output). Zero code, test, or documentation references them externally. They are reproducible by rerunning `pytest` or the relevant grep command. Keeping them inflates the repo with 1.7 MB of stale log noise.
+
+---
+
+### 3. `docs/megaplan_chains/excellence_epic/evidence/` — Active milestone evidence (3 files)
+
+| Path | Verdict | Rationale |
+|---|---|---|
+| `evidence/t10_reemit_evidence_20260528.json` | **KEEP** | Referenced by `handoff-m1.md` (lines 135, 298, 308) and `prep-m1.md`. Contains SHA256 hashes for check/convert artifacts of 6 templates. |
+| `evidence/widget_n_classification_20260528.json` | **KEEP** | Referenced by `handoff-m1.md` (lines 165, 297). 5K-line classification report of pre/post-fix widget fields. |
+| `evidence/pre_fix_inventory_20260528.json` | **KEEP** | Referenced by `handoff-m1.md` (lines 74, 142, 294) and `prep-m1.md` (lines 5, 72, 175, 211). Baseline inventory before emitter fix. |
+
+**Action: Keep all three.** They are actively cross-referenced from milestone handoff documents in the same chain. They are referenced evidence, not stale run output.
+
+---
+
+### 4. `docs/structure_cleanup/` — One-time agent audit outputs (entire tree)
+
+This directory contains ~10 *brief* directories and ~14 *results* directories with the following pattern:
+- `*_briefs/` — Authored audit task descriptions (`.md` files)
+- `*_results/` — Agent-generated output (`.txt` + `.meta.json` + `_report.json`)
+- `deletion_first_briefs/` — Deletion-plan briefs
+
+Per `docs/structure_cleanup/README.md` (lines 91–94):
+
+> _"The entire `structure_cleanup/` directory is a one-time audit artifact. After all layers are complete and the applied cleanup is verified, move the entire directory to `docs/historical/structure-cleanup/` per the docs-layer recommendation."_
+
+This directory is **self-contained** — all cross-references are internal to `structure_cleanup/`. No code, tests, or external docs reference anything inside it.
+
+**Action: Move the entire directory to `docs/historical/structure-cleanup/` after the cleanup pass is complete.** This is the planned destination per the README. Do not delete — the audit evidence has ongoing value for verifying the cleanup was done. But it doesn't belong at `docs/structure_cleanup/` permanently.
+
+**Do not delete individual files** here — the briefs and results are paired (each `.txt` result has a corresponding authored `.md` brief and a `.meta.json` metadata file). The whole tree moves as a unit.
+
+---
+
+### 5. `out/` — Runtime generated output
+
+Entirely git-ignored (`.gitignore` line 14: `out/`). Not tracked. No action needed.
+
+---
+
+## Summary of Recommended Actions
+
+### DELETE (stale, reproducible, unreferenced):
+1. `artifacts/m5_baseline_red.txt` — 1.7MB stale pytest log, zero references
+2. `artifacts/m5_agent_edit_imports.txt` — stale grep output referencing nonexistent worktrees, zero references
+
+### MOVE (after completion):
+3. `docs/structure_cleanup/` → `docs/historical/structure-cleanup/` — entire tree, as a single atomic move after cleanup verification finishes
+
+### KEEP (actively referenced evidence):
+4. `artifacts/README.md`
+5. `artifacts/m1-safety-gate.md`
+6. `artifacts/m2-symbol-map.md`
+7. `artifacts/m4/` (all 3 files)
+8. `artifacts/m5a-emitter-baseline/` (all 5 files — packaged unit)
+9. `artifacts/m5a-emitter-after/` (all 4 files — packaged unit)
+10. `docs/megaplan_chains/excellence_epic/evidence/` (all 3 files)
+11. All authored briefs under `docs/structure_cleanup/*_briefs/` and `deletion_first_briefs/`
+
+### NO ACTION NEEDED:
+12. `agentic/evidence/` — does not exist (virtual prefix only)
+13. `out/` — git-ignored

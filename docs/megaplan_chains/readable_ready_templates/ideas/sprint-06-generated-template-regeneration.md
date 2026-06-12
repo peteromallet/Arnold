@@ -1,6 +1,6 @@
 # Sprint 6: Generated Template Regeneration
 
-Implement Sprint 6 from `docs/readable_ready_template_cleanup_plan.md`.
+Implement Sprint 6 from `docs/templates/readable_ready_template_cleanup_plan.md`.
 
 ## Branch And Chain Constraints
 

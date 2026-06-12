@@ -1,6 +1,6 @@
 # Sprint 3: Public Helper And Template Shape
 
-Implement Sprint 3 from `docs/readable_ready_template_cleanup_plan.md`.
+Implement Sprint 3 from `docs/templates/readable_ready_template_cleanup_plan.md`.
 
 ## Branch And Chain Constraints
 

@@ -1,6 +1,6 @@
 ---
 id: 01KRKQGP81Z5XR0FAK19T5CAC8
-title: First-class workflow runtime contracts for VibeComfy/Reigh/Astrid
+title: First-class workflow runtime contracts for VibeComfy/Reigh/vibe comfy
 status: open
 source: human
 tags:
@@ -16,7 +16,7 @@ last_edited_at: '2026-05-14T17:10:59.073213+00:00'
 epics: []
 ---
 
-We need a first-class workflow runtime contract abstraction for VibeComfy that is generated from, or attached to, each Python ready workflow and then consumed consistently by VibeComfy doctor/reconcile, the Reigh live-test harness, the worker runtime, and Astrid result validation.
+We need a first-class workflow runtime contract abstraction for VibeComfy that is generated from, or attached to, each Python ready workflow and then consumed consistently by VibeComfy doctor/reconcile, the Reigh live-test harness, the worker runtime, and vibe comfy result validation.
 
 Context from the current Wan2GP parity push:
 - LTX Runexx first/last workflows were valid Python workflows and produced outputs, but were far slower than Wan2GP on the same 4090.
@@ -30,7 +30,7 @@ The proper abstraction should be a single machine-readable runtime contract per 
 - Python package contract: runtime Python packages and install sources, e.g. SageAttention-ada, onnxruntime, opencv variants, audio deps, with install/verify probes.
 - Runtime flag contract: memory profile, cache policy, reserve VRAM, `--use-sage-attention`, attention profile, Comfy/HiddenSwitch flags, and route-specific environment knobs.
 - Schema/input contract: required node inputs, accepted widget names/values, missing connection detection, and family-specific override eligibility.
-- Output contract: where generated media must land, what filenames/prefixes are valid, what the app/Astrid should fetch, and how to fail when a run succeeds but no artifact appears.
+- Output contract: where generated media must land, what filenames/prefixes are valid, what the app/vibe comfy should fetch, and how to fail when a run succeeds but no artifact appears.
 - Evidence contract: last validated GPU, RunPod pod/profile, wall clock, generation-only time, VRAM/RAM peaks, backend version/commit SHAs, output artifact paths, and media-understanding validation status.
 - Policy contract: pure-Python workflow source only for app-active routes; raw JSON may remain source/reference material but must not be the runtime path.
 
@@ -39,7 +39,7 @@ Every relevant tool should consume the same contract:
 - `vibecomfy reconcile` should stage/download assets, install/restore node packs, install declared Python packages, verify imports/kernels, and report what remains manual.
 - Reigh live-test should refuse to queue app tasks until the runtime contract is satisfied; it should install/verify declared runtime packages on prebuilt consumers or fail early with actionable errors.
 - Reigh worker should select templates/routes independently from runtime installation profiles. Runtime package needs must not mutate product route keys like `profile-default`.
-- Astrid should consume the output/evidence section to fetch generated files and run image/video understanding checks against route-specific expectations.
+- vibe comfy should consume the output/evidence section to fetch generated files and run image/video understanding checks against route-specific expectations.
 - The contract should remain lightweight enough that adding/forking workflows is not bureaucratic: defaults should be inferred from the Python graph where possible, and authors should only declare what cannot be inferred.
 
 Acceptance criteria for an implementation epic:
@@ -52,4 +52,4 @@ Acceptance criteria for an implementation epic:
 7. Add tests showing this would have prevented: uncontracted SageAttention, missing required node inputs/connections, missing model folders, wrong output path/prefix, JSON runtime source for app-active workflows, and route-key pollution from diagnostic runtime params.
 8. Document the workflow authoring/onboarding checklist around this contract for new workflows, forked workflows, and workflows converted from upstream JSON.
 
-This is cross-repo: VibeComfy should own the contract schema and doctor/reconcile behavior; Reigh worker/live-test should consume it; Astrid should consume output/evidence contracts for result validation.
+This is cross-repo: VibeComfy should own the contract schema and doctor/reconcile behavior; Reigh worker/live-test should consume it; vibe comfy should consume output/evidence contracts for result validation.

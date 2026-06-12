@@ -1,0 +1,135 @@
+Now I have a comprehensive picture. Here's the full audit:
+
+---
+
+## Package Layer Audit: `vibecomfy/__init__.py` & Root Modules
+
+### 1. Public API (exported via `__init__.py` `__all__`)
+
+These are the documented, user-facing import paths. **Must not move without deprecation cycle.**
+
+| `__all__` symbol | Source module | Used by |
+|---|---|---|
+| `VibeWorkflow`, `VibeNode`, `VibeEdge`, `VibeInput`, `VibeOutput`, `WorkflowRequirements`, `WorkflowSource`, `RawWidgetPayload`, `ValidationIssue`, `ValidationReport` | `vibecomfy.workflow` | ~90% of tests, all cookbooks, migration docs, recipes |
+| `Handle` | `vibecomfy.handles` | Tests, schema tests |
+| `Artifact`, `Image`, `Video`, `Audio`, `Latent`, `Mask` | `vibecomfy.artifacts` | runtime tests |
+| `image`, `video` | `vibecomfy.ops` (sub-modules) | test_plugin_discovery |
+| `blocks`, `patches`, `router` | subpackages | test_blocks, controlnet tests |
+| `load_workflow_any` | `vibecomfy.cli_loader` | recipes |
+| `load_workflow_json`, `load_template` | `vibecomfy.ingest.loader` | scripts, tools |
+| `workflow_from_file`, `workflow_from_id` | `vibecomfy.registry.library` | tools |
+| `workflow_from_ready`, `ready_template_ids` | `vibecomfy.registry.ready` | tools, scripts |
+| `find_repo_root` | `vibecomfy.utils` | tests, tools |
+| `ensure_plugins_loaded` | `vibecomfy.extras` | (plugin infra) |
+| `run`, `run_sync`, `run_embedded`, `run_embedded_sync` | `vibecomfy.runtime.run` (lazy PEP 562) | recipes, docs/runpod |
+
+**Also publicly documented** (not in `__all__` but in docs):
+- `vibecomfy.testing` → `assert_compiles_cleanly`, `dry_run`, etc. (docs/testing/)
+- `vibecomfy.templates` → `new_workflow`, `node`, `InputSpec`, `ReadyMetadata`, `finalize_ready` (docs/cookbook/)
+- `vibecomfy.schema` → `get_schema_provider` (scripts, tools)
+- `vibecomfy.errors` → `SchemaValidationError` (docs/migration/)
+- `vibecomfy.blocks.save`, `vibecomfy.patches.resolution`, `vibecomfy.patches.controlnet` (recipes, agentic)
+- `vibecomfy.runtime.session` → `EmbeddedSession`, `SessionConfig` (scripts)
+
+---
+
+### 2. Private / Internal Modules
+
+These are implementation details, **not** public API. They fall into categories:
+
+#### a) `_`-prefixed helpers (conventionally private)
+| File | Role |
+|---|---|
+| `_compile/` (5 files) | Core compilation engine: `_helpers.py`, `_graph.py`, `_resolve.py`, `_widgets.py` |
+| `_agent_edit_debug.py` | Debug/usage-data CLI tool for agent-edit sessions |
+| `_git_utils.py` | Git command wrapper protocol |
+| `_graph_utils.py` | **Shim** — `from vibecomfy._compile._graph import *` re-export |
+| `_helper_resolve.py` | **Shim** — `from vibecomfy._compile._resolve import *` re-export |
+| `_widget_aliases.py` | **Module swap shim** — `sys.modules[__name__] = _compile._widgets` |
+| `_workflow_helpers.py` | **Shim** — `from vibecomfy._compile._helpers import *` re-export |
+
+**Issue**: The four shim files (`_graph_utils.py`, `_helper_resolve.py`, `_widget_aliases.py`, `_workflow_helpers.py`) exist solely because `vibecomfy.workflow` and `vibecomfy.ir.workflow` used to import from different locations. They're fragile compatibility bridges — but they're imported by `workflow.py` (line 8-10) and `ir/workflow.py` (line 9-11), so removing them would break core types.
+
+#### b) Internal modules with public-adjacent names (no underscore)
+These are imported from other vibecomfy modules but **not** exposed to users:
+
+| File | Role |
+|---|---|
+| `comfy_backend.py` | Optional ComfyUI catalog adoption hook |
+| `comfy_command.py` | Resolves `comfyui` executable path |
+| `errors.py` | VibeComfyError hierarchy (re-exported via workflow.py) |
+| `checks.py` | Node pack consistency checks |
+| `custom_node_refs.py` | Normalizes custom-node requirements |
+| `environment_diagnostics.py` | Environment warning generation |
+| `fixtures.py` | Smoke fixture management for corpus matrix |
+| `index_types.py` | TypedDict definitions for workflow index |
+| `local_library.py` | Local library path resolution |
+| `memory_profile.py` | Memory profile enums & constants |
+| `metadata.py` | Workflow metadata heuristics |
+| `model_assets.py` | Model asset URL resolution |
+| `node_packs.py` | CustomNodePack dataclass & known packs |
+| `node_packs_git.py` | **Shim** → `node_packs._git` |
+| `node_packs_install.py` | **Shim** → `node_packs._install` |
+| `node_packs_lockfile.py` | Lockfile I/O |
+| `origin.py` | Workflow origin stamping |
+| `router.py` | Router entry point |
+| `router_rules.py` | Router rule definitions |
+| `scratchpad_loader.py` | Loads scratchpad workflows |
+| `workflow_context.py` | ContextVar for active workflow |
+| `_widget_aliases.py` | Module swap shim |
+
+Most of these are fine as internal modules — they're not exported and not documented as public API. However, a few have **stray usage** outside the package:
+- `vibecomfy.origin` → imported by `agentic/actors.py` (internal script)
+- `vibecomfy.memory_profile` → imported by `tests/test_session_cli.py`
+- `vibecomfy.comfy_backend` → imported by several tests
+- `vibecomfy.node_packs_git` → imported by `tests/test_node_packs_git.py`
+
+---
+
+### 3. Generated / Cache Files
+
+| Path | Status |
+|---|---|
+| `vibecomfy/nodes/_generated/` | **Generated node wrappers** — ~15 files (sam2, kjnodes, rgthree, ltxvideo, etc.) |
+| `vibecomfy/router/__pycache__/` | Standard Python bytecode cache (`.pyc`) |
+| `vibecomfy/porting/widgets/__pycache__/` | Standard Python bytecode cache (`.pyc`) |
+| `vibecomfy/porting/__pycache__/` | Standard Python bytecode cache (.pyc) |
+
+No root-level `__pycache__` under `vibecomfy/`. The `_generated/` directory is checked in and actively maintained (not a build artifact). **Should be documented in a `.gitignore` if not already** — and its purpose noted for newcomers.
+
+---
+
+### 4. What Absolutely Must Not Move
+
+1. **`vibecomfy.workflow`** — The single most imported module. Hundreds of test files, all docs/cookbook examples, recipes, tools, and internal modules import from it. Moving anything in `__all__` would break everything.
+
+2. **`vibecomfy.templates`** — Documented in migration guides and every cookbook example. Used from `docs/cookbook/*.py`, `docs/migration/*.md`. Any rename would invalidate published docs.
+
+3. **`vibecomfy.cli`** (`build_parser`, `main`) — The CLI entry point, tested by `test_cli_misc.py` and `test_doctor_models.py`.
+
+4. **`vibecomfy.testing`** — Documented in `docs/testing/user_code.md`, used in `docs/testing/user_code_examples/`.
+
+5. **`vibecomfy.errors`** (`VibeComfyError` et al.) — Imported by `workflow.py` transitively, used in migration docs.
+
+6. **`vibecomfy.handles`** (`Handle`) — Core type, imported by `workflow.py` and used throughout tests.
+
+7. **`vibecomfy.utils`** (`find_repo_root`) — Imported from many internal modules and tests.
+
+8. **`vibecomfy.runtime`** (subpackage) — The `run_*` lazy exports in `__init__.py` and direct imports from recipes (`run_embedded_sync`).
+
+9. **`vibecomfy.cli_loader`** — Used in recipes, docs examples, scripts.
+
+10. **`vibecomfy.ops`**, **`vibecomfy.blocks`**, **`vibecomfy.patches`** — Documented public subpackages imported by tests, recipes, agentic scripts.
+
+---
+
+### 5. Safe First Actions
+
+| # | Action | Rationale |
+|---|---|---|
+| 1 | **Document `vibecomfy/nodes/_generated/` as generated** | Add a comment or README in that directory explaining it's auto-generated node wrappers, not hand-written code |
+| 2 | **Add `__pycache__` to `.gitignore` if missing** | Several subdirectory `.pyc` files exist; ensure they're gitignored |
+| 3 | **Prune unused shim files after verifying no external imports** | Check if `_graph_utils.py`, `_widget_aliases.py`, `_helper_resolve.py`, `_workflow_helpers.py` are still needed by `workflow.py`/`ir/workflow.py`. If they are, **leave them** — they're internal compat bridges. If not, remove them. |
+| 4 | **Move `_agent_edit_debug.py` to a `scripts/` or `tools/` location** | It's a standalone CLI debugging tool, not a library module. Its `main()` is called from `scripts/vibecomfy_debug.py` — it could live there instead. |
+| 5 | **Audit `__all__` for missing entries** | `errors.VibeComfyError` hierarchy is widely used but not in `__all__`. Consider whether it should be. |
+| 6 | **Add module-level docstrings to undocumented root modules** | `node_packs.py`, `checks.py`, `custom_node_refs.py`, `index_types.py`, `metadata.py`, `router_rules.py` have no package-level docstring explaining their role. |

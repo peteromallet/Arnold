@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from vibecomfy.errors import DriftError
-from vibecomfy.node_packs_lockfile import compute_schema_hash
+from vibecomfy.node_packs import compute_schema_hash
 from vibecomfy.workflow import VibeWorkflow
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ def _collect_nodepack_drift(
     mismatches: list[str],
 ) -> None:
     """Compare template-pinned packs against installed state."""
-    from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+    from vibecomfy.node_packs import LockEntry, read_lockfile
 
     lock_entries: list[LockEntry] = read_lockfile()
     pinned["custom_node_packs"] = list(workflow.requirements.custom_nodes)

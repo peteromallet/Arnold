@@ -21,7 +21,7 @@ def resolve_helpers(
 ) -> ResolveDiagnostics:
     """Eliminate conversion-resolvable helper nodes from *workflow*.
 
-    The graph traversal and rewrite semantics live in ``vibecomfy._helper_resolve``.
+    The graph traversal and rewrite semantics live in ``vibecomfy._compile._resolve``.
     This wrapper keeps conversion-specific primitive coercion and
     ``ConversionParityError`` behavior in the porting layer.
     """

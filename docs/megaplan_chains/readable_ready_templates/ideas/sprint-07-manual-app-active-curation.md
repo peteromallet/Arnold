@@ -1,6 +1,6 @@
 # Sprint 7: Manual And App-Active Curation
 
-Implement Sprint 7 from `docs/readable_ready_template_cleanup_plan.md`.
+Implement Sprint 7 from `docs/templates/readable_ready_template_cleanup_plan.md`.
 
 ## Branch And Chain Constraints
 
@@ -27,12 +27,12 @@ Bring important manual/app-active routes to the higher elegance bar.
   make the caller easier to read and have testable inputs, outputs,
   requirements, and parity.
 - Validate runtime contracts and app-specific semantic contracts.
-- Update Reigh/Astrid consuming expectations where needed.
+- Update Reigh/vibe comfy consuming expectations where needed.
 
 ## Success Criteria
 
 - App-active templates are readable, inspectable, and elegant Python.
-- Public input/output contracts match Reigh/Astrid needs.
+- Public input/output contracts match Reigh/vibe comfy needs.
 - No opaque subgraph remains in app-active strict-ready workflows.
 - Manual-template repair changes are reviewable and split between mechanical and
   semantic edits.

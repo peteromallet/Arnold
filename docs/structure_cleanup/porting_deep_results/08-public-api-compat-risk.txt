@@ -1,0 +1,109 @@
+Now I have a thorough picture. Let me compile the final analysis.
+
+---
+
+## Porting Deep Audit 08 — Public API Compatibility Risk
+
+### Summary
+
+The `vibecomfy/porting/__init__.py` (**the canonical public API**) already imports from the new canonical paths (`emit/emitter.py`, `edit/session.py`, etc.), NOT from the old root-level modules. However, old root-level files remain as **real implementations** (not shims) that internal code depends on. The only true shim is `agent_edit_normalize.py`.
+
+---
+
+### Keep / Delete / Migration Table
+
+| Path | Status | Public API? | Verdict |
+|---|---|---|---|
+| **`__init__.py`** | Canonical barrel | ✅ Yes — documented surface | **KEEP** as-is |
+| **`emitter.py`** (old, 5088 lines) | Old monolithic emitter | ❌ Not in `__init__.py`; referenced in 4 docs | **KEEP FOR NOW** — still imported by `convert.py`, `workbench.py`, `loader.py`, `commands/analyze_names.py`, `commands/validate.py`, and tests. Delete requires migrating those 5 internal consumers to `emit/emitter.py` first. |
+| **`emit_agent_edit.py`** | Real implementation | ❌ Not in `__init__.py` | **KEEP** — foundation module imported by `emit/emitter.py` (new) and `emitter.py` (old) |
+| **`emit_ready.py`** | Real implementation | ❌ Not in `__init__.py` | **KEEP** — imported by `emit/emitter.py`, `emit_prepare.py`, `emit_scratchpad.py` |
+| **`emit_scratchpad.py`** | Real implementation | ❌ Not in `__init__.py` | **KEEP** — imported by `emit/emitter.py` (re-exports) |
+| **`emit_subgraph.py`** | Real implementation | ❌ Not in `__init__.py` | **KEEP** — imported by `emit/emitter.py`, `emit_agent_edit.py` |
+| **`emit_kwargs.py`** | Foundation module | ❌ Not in `__init__.py` | **KEEP** — leaf-level, imported by `emit_constants.py`, `emit_prepare.py`, and `emit/emitter.py` |
+| **`emit_constants.py`** | Constants module | ❌ Not in `__init__.py` | **KEEP** — imported by `emit_prepare.py`, `emit_subgraph.py`, `emit_ready.py` |
+| **`emit_prepare.py`** | Workflow prep | ❌ Not in `__init__.py` | **KEEP** — imported by `emit_agent_edit.py`, `emit_scratchpad.py` |
+| **`ui_emitter.py`** | **DUPLICATE** of `emit/ui.py` | ❌ Not in `__init__.py` | **DELETE** after migrating 5 internal importers → `emit.ui`: `widget_shape_fence.py`, `latency.py`, `layout/sizing.py`, `layout/placement.py`, `layout/engine.py`, `layout/groups.py`, `comfy_nodes/agent/routes.py`, `comfy_nodes/agent/edit.py` (all obvious `s/ui_emitter/emit.ui/` renames). Docs refs may exist; update after deletion. |
+| **`agent_edit_normalize.py`** | **SHIM** (`from edit.normalize import *`) | ❌ Not in `__init__.py` | **DELETE NOW** — no known external importers. Zero risk. |
+| **`edit_session_types.py`** | Real implementation (mixins base) | ❌ Not in `__init__.py` | **KEEP** — imported by `edit/session.py`, all `edit_session_*.py` mixins, and tests |
+| **`edit_session_parse.py`** | Real implementation (mixins) | ❌ Not in `__init__.py` | **KEEP** — imported by `edit/session.py`, `edit_session_resolve.py`, `edit_session_parse_execute.py` |
+| **`edit_session_ir_utils.py`** | Real implementation (mixins) | ❌ Not in `__init__.py` | **KEEP** — imported by `edit/session.py`, `edit_session_resolve.py`, `edit_session_describe.py`, `edit_session_gates.py`, `edit_session_parse_execute.py` |
+| **`edit_session_diff.py`** | Real implementation (mixins) | ❌ Not in `__init__.py` | **KEEP** — imported by `edit/session.py`, `edit_session_describe.py` |
+| **`edit_session_resolve.py`** | Real implementation (mixins) | ❌ Not in `__init__.py` | **KEEP** — imported by `edit/session.py` |
+| **`edit_session_describe.py`** | Real implementation (mixins) | ❌ Not in `__init__.py` | **KEEP** — imported by `edit/session.py` |
+| **`edit_session_gates.py`** | Real implementation (mixins) | ❌ Not in `__init__.py` | **KEEP** — imported by `edit/session.py` |
+| **`edit_session_render.py`** | Real implementation (mixins) | ❌ Not in `__init__.py` | **KEEP** — imported by `edit/session.py` |
+| **`edit_session_parse_execute.py`** | Real implementation (mixins) | ❌ Not in `__init__.py` | **KEEP** — imported by `edit/session.py` |
+| **`object_info/` snapshots** (3 JSON files) | Stale duplicates (see Audit 07) | ❌ Not in public API | **DELETE** (after `demo_wrapper_codegen.py` update) |
+| **`agent_edit_normalize.py`** | **SHIM** | ❌ | **DELETE NOW** |
+| **`canonical_coords.py`** | Real implementation | ❌ Not in `__init__.py` | **KEEP** — imported by `lowering.py`, `layout/`
+| **`layout_store.py`** | Real implementation | ❌ Not in `__init__.py` | **KEEP** — imported by tests |
+| **`refuse.py`** | Real implementation | ❌ Not in `__init__.py` | **KEEP** — imported by test |
+| **`resolution.py`** | Real implementation | ❌ Not in `__init__.py` | **KEEP** — imported by `edit_session_ir_utils.py`, `edit_session_resolve.py` |
+
+---
+
+### Answers to Your Questions
+
+#### 1. Which deleted or candidate paths are documented public APIs?
+
+**None of the deleted or candidate paths appear in the `__init__.py` barrel** (the canonical public API). The `__init__.py` already imports from the new canonical paths (`emit/emitter.py`, `edit/session.py`, etc.).
+
+However, 4 docs reference `vibecomfy.porting.emitter` (the old module):
+- `docs/migration/v23_to_v24.md:47` — "use `vibecomfy.porting.emitter`"
+- `docs/authoring.md:89` — mentions formatter APIs
+- `docs/templates/adding_templates_models.md:84` — "`vibecomfy.porting.emitter` reads that cache"
+- `docs/workflow-coverage/onboarding_parity_tooling.md:27` — "`vibecomfy.porting.emitter`"
+
+These refs still resolve because the old `emitter.py` still exists. Updating them to `vibecomfy.porting.emit` is a docs-only task that could follow deletion.
+
+#### 2. Which are internal-only and safe to remove?
+
+| Safe to remove now | Prerequisite |
+|---|---|
+| **`agent_edit_normalize.py`** | None — it's a no-op shim |
+| **`ui_emitter.py`** | Migrate 8 importers to `emit.ui` (find-and-replace) |
+| **`object_info/*.json` snapshots (3 files)** | Update `scripts/demo_wrapper_codegen.py` to use `sources=("cache",)` |
+
+#### 3. Which docs need migration notes?
+
+- **`docs/migration/v23_to_v24.md:47`** — Replace "`vibecomfy.porting.emitter`" with "`vibecomfy.porting.emit`"
+- **`docs/templates/adding_templates_models.md:84`** — Same replacement
+- **`docs/workflow-coverage/onboarding_parity_tooling.md:27`** — Same replacement
+- **`docs/authoring.md:89`** — Already references CLI paths as primary; minimal change needed
+
+No migration note is *required* for users who only import from `vibecomfy.porting` (the barrel), since the barrel already points to the new paths.
+
+#### 4. What is the minimum public surface that should remain?
+
+The current `__init__.py` barrel **is** the minimum public surface. It already imports only from canonical paths:
+
+```
+vibecomfy.porting
+├── AssetAnalysis
+├── AssetCandidate / AssetCheckResult / NodePackSuggestion / PortArtifact / PortIssue / PortReport
+├── BatchResult / CompactDiagnostic / DoneResult / EditSession / InputSlotInfo / NodeDescriptor / OutputSlotInfo / StatementResult
+├── FieldChange
+├── EmissionDiagnostic / InputSignatureField / NodeSignatureRow / OutputSignatureField
+├── READABILITY_WARNING_* (5 constants)
+├── emit_agent_edit_python / emit_available_node_signatures / format_signature_rows
+├── encode_slot_names / build_reverse_map / to_python_identifier / to_raw_name
+├── slot_codec (submodule alias)
+├── class_type_counter / compile_equivalent / topology_counter / widget_value_counter
+├── ProvenanceConflict / ProvenanceRecord / ProvenanceReport / ProvenanceRequirement / ProvenanceVersionPin / ProvenanceWarning / extract_provenance
+├── StrictReadyContext / StrictReadyException / HIDDEN_MODEL_FILENAME / OPAQUE_COMPONENT_NODE_CLASS / STRICT_READY_* (6 constants) / apply/load/validate_strict_ready_*
+```
+
+**Keep this barrel exactly as-is.** Nothing in the barrel needs deletion.
+
+---
+
+### Recommended Action Order
+
+1. **DELETE NOW** — `agent_edit_normalize.py` (zero-risk shim)
+2. **DELETE** — `ui_emitter.py` after migrating 8 importers to `from vibecomfy.porting.emit.ui import ...`
+3. **DELETE** — `object_info/*.json` snapshots after updating `scripts/demo_wrapper_codegen.py`
+4. **DEFER** — old `emitter.py` (too many internal consumers; needs deeper refactor)
+5. **KEEP** — all `emit_*.py` root modules (real implementations)
+6. **KEEP** — all `edit_session_*.py` root modules (real mixin implementations)
+7. **DOCS UPDATE** — migrate 4 doc references from `vibecomfy.porting.emitter` → `vibecomfy.porting.emit`

@@ -1,0 +1,88 @@
+Here is the full audit report.
+
+---
+
+## Audit: Generated Output Boundaries Around Templates and Corpus
+
+### 1. Separation of Generated Artifacts from Source ✅
+
+The project maintains a **clean boundary**:
+
+| Area | Purpose | Status |
+|---|---|---|
+| **`out/`** | All runtime output (runs, cache, scratchpads, subagent reviews, pre-mortems, runpod artifacts, migration reports) | ✅ Fully gitignored (`out/` in `.gitignore`). All files found inside are generated/debug artifacts. |
+| **`artifacts/`** | Committed historical baseline/review evidence (M1–M5 milestone evidence) | ✅ Intentionally tracked. `artifacts/README.md` explicitly documents this as non-runtime-output. |
+| **`ready_templates/`** | Source Python scratchpads (authoring surface) | ✅ Tracked source. Each file is a `# vibecomfy: generated` template — these are the *source texts* that agents edit, not runtime output. |
+| **`recipes/`** | User-facing compositions built from ready templates + patches | ✅ Tracked source. Small set (7 files). |
+| **`workflow_corpus/`** | Source ComfyUI JSON workflows and test fixtures (images, video, audio) | ✅ Tracked source. Clean separation from generated Python. |
+
+The `.gitignore` correctly excludes:
+- `out/` (line 14)
+- `__pycache__/` (line 2), `*.pyc` (line 7)
+- `.DS_Store` (line 6)
+- `*.patch` (line 30)
+- Runtime indexes like `workflow_index.json`, `template_index.json`, `node_index.json` (lines 10–13)
+
+Docs references (`README.md`, `docs/`, `tests/`) consistently use `out/scratchpads/` and `out/runs/` as the canonical locations for generated artifacts — no leakage into source dirs from code.
+
+### 2. Ignored Generated Files Inside Source Dirs — Cleanup Candidates
+
+The following are **gitignored runtime debris** sitting inside source-controlled directories:
+
+#### 🔸 `__pycache__/` bytecode cache (135 .pyc files)
+| Directory | .pyc count | Python versions |
+|---|---|---|
+| `ready_templates/video/__pycache__/` | ~98 | 3.11, 3.14 |
+| `ready_templates/image/__pycache__/` | 14 | 3.11, 3.12, 3.14 |
+| `ready_templates/edit/__pycache__/` | 16 | 3.11, 3.14 |
+| `ready_templates/audio/__pycache__/` | 8 | 3.11, 3.14 |
+| `ready_templates/smoke/__pycache__/` | 2 | 3.11, 3.14 |
+| `recipes/__pycache__/` | 1 | 3.11 |
+
+**Action:** Safe to `find . -type d -name __pycache__ -exec rm -rf {} +`. Rebuilds on next import.
+
+#### 🔸 `.DS_Store` files (6 found, 2 in source dirs)
+| Location | Status |
+|---|---|
+| `ready_templates/.DS_Store` | Gitignored, safe to remove |
+| `workflow_corpus/.DS_Store` | Gitignored, safe to remove |
+| `out/.DS_Store` | Already in `out/` (ignored), low priority |
+| `vibecomfy/.DS_Store` | Gitignored (`*.pyc` line doesn't cover this, but `.DS_Store` does) |
+| `tests/.DS_Store` | Same |
+| `vendor/.DS_Store`, `vendor/ComfyUI/.DS_Store` | Same |
+
+**Action:** `find . -name .DS_Store -delete`.
+
+### 3. What Must Remain Untouched Without User Approval
+
+| Path | Reason |
+|---|---|
+| `ready_templates/*.py` | Source template files — user-facing authoring surface |
+| `recipes/*.py` | User recipes — hand-edit targets |
+| `workflow_corpus/official/` | Reference JSON workflows (source of truth) |
+| `workflow_corpus/custom_nodes/` | Third-party workflow JSONs (vendor corpus) |
+| `workflow_corpus/input/` | Test fixture media assets |
+| `workflow_corpus/manifests/` | Index and regeneration manifests |
+| `artifacts/README.md` | Documents the existing convention |
+| `artifacts/m*` | Committed historical evidence (milestone gate evidence) |
+
+### 4. Ambiguous Item — Needs Human Review
+
+| File | Concern |
+|---|---|
+| `recipes/example_tested_recipe.py.snapshot.json` | **Tracked** snapshot artifact sitting in `recipes/`. This is a golden snapshot (a raw JSON rendering of the compiled workflow), used by tests. Its location is ambiguous: `recipes/` is documented as "user recipes," not test fixtures. It may belong in `tests/snapshots/` or be generated via `scripts/regenerate_snapshots.py` rather than committed directly. However, since it IS tracked, removing it without approval would break CI. |
+
+### Summary
+
+**Safe cleanup candidates (gitignored, no CI impact):**
+1. `ready_templates/` — all `__pycache__/` directories (rebuildable bytecode)
+2. `recipes/__pycache__/` — same
+3. `ready_templates/.DS_Store` — macOS metadata
+4. `workflow_corpus/.DS_Store` — macOS metadata
+
+**Keep (source, tracked, needs user approval to touch):**
+- All `.py` files in `ready_templates/` and `recipes/`
+- All `.json` and media files in `workflow_corpus/` and `artifacts/`
+- `recipes/example_tested_recipe.py.snapshot.json` (tracked, likely intentional)
+
+**Verdict:** The output boundary is **well-maintained**. Source templates in `ready_templates/` are clearly separated from generated runtime output in `out/`. No generated artifacts leak into untracked blindness. The `.gitignore` is comprehensive. The only friction is accumulated `__pycache__` debris in the source directories — cosmetic, not structural.

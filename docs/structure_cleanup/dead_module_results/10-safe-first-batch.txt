@@ -1,0 +1,100 @@
+Here is the complete conservative dead-module audit.
+
+---
+
+## Dead Module Audit: Safe First Batch
+
+### ✅ DELETE — No code/test/tool import remains
+
+| Module | LOC | Why safe |
+|--------|-----|----------|
+| `vibecomfy/source_map.py` | 149 | Zero Python imports anywhere. Documented as dead in `docs/megaplan_chains/pristine_cleanup/audit/10-repo-hygiene.md`. Only doc/artifact references remain. |
+| `vibecomfy/runtime/server_process.py` | 57 | Zero imports. Planned `session.py` extraction that was never adopted. |
+| `vibecomfy/runtime/watchdog_runtime.py` | 70 | Zero imports. Same orphan extraction plan. |
+| `vibecomfy/runtime/_local_library_yaml.py` | 67 | Zero imports. `_`-prefixed private module. |
+| `vibecomfy/testing/_fixtures.py` | 288 | **Exact duplicate** of `vibecomfy/fixtures.py` (same 288 lines, same docstring). Zero imports from project code. |
+| `vibecomfy/_graph_utils.py` | 3 | Backward-compat shim → `_compile._graph`. Zero imports use this path. |
+| `vibecomfy/_helper_resolve.py` | 3 | Backward-compat shim → `_compile._resolve`. Zero imports. |
+| `vibecomfy/_widget_aliases.py` | 3 | Backward-compat shim → `_compile._widgets`. Zero imports. |
+| `vibecomfy/porting/templates.py` | 76 | Zero imports. No doc references. Template constants for a porting path that was never connected. |
+| `vibecomfy/schema/factory.py` | 50 | Zero imports. Orphan alternative to `provider.py::get_schema_provider`. |
+| `vibecomfy/schema/runtime.py` | 75 | Zero imports. `RuntimeSchemaProvider` duplicated in `provider.py` (the real export source). |
+| `vibecomfy/schema/local.py` | 44 | Zero imports. `LocalSchemaProvider` duplicated in `provider.py`. |
+| `vibecomfy/schema/object_info.py` | 48 | Zero imports. Only referenced by dead `factory.py`. |
+| `vibecomfy/schema/registry.py` | 25 | Zero imports. Tiny orphan utility. |
+| `vibecomfy/schema/parsing.py` | 107 | Zero imports. Only referenced by dead `object_info.py` and `local.py`. |
+
+**Total: 15 files, ~1,089 LOC removed**
+
+---
+
+### ✏️ EDIT — Docs/artifacts referencing deleted modules
+
+**Files to update** (exact regex repair):
+```
+docs/megaplan_chains/pristine_cleanup/audit/10-repo-hygiene.md
+docs/megaplan_chains/pristine_cleanup/RESULTS.md
+docs/megaplan_chains/pristine_cleanup/ideas/m1-triage-safety-net.md
+docs/megaplan_chains/pristine_cleanup/ideas/m2-shared-foundation.md
+docs/architecture/python_on_the_graph.md
+docs/megaplan_chains/excellence_epic/m5-decompose.md
+docs/structure_cleanup/dead_module_briefs/09-runtime-duplicate-private-helpers.md
+artifacts/m1-safety-gate.md
+artifacts/m2-symbol-map.md
+```
+
+**Repair pattern**: Replace mentions of `vibecomfy/source_map.py` → `(deleted — dead module)` and `runtime/server_process.py`, `runtime/watchdog_runtime.py` → `(extraction deferred, file removed)`.
+
+---
+
+### ❌ DEFERRED — Not yet safe
+
+| Module | Reason |
+|--------|--------|
+| `scripts/warm_session_smoke.py` | Active smoke-test harness; referenced in CI docs |
+| `scripts/populate_model_hashes.py` | Active utility; move-to-`tools/` candidate, not deletion |
+| `scripts/demo_wrapper_codegen.py` | Referenced in docs/plans; needs explicit deprecation |
+| `scripts/_catalog_size_probe.py` | `_`-prefixed private probe; minimal risk but truly zero inbound refs — defer for batch 2 |
+| `scripts/roundtrip_fidelity_spike.py` | Self-described "spike" but referenced in `roadmap_agentic_comfyui.md` |
+| `scripts/maintenance/_regen_templates.py` | One-off with hardcoded absolute paths; no imports, defer |
+| `scripts/maintenance/_fix_t6.py` | One-off fix script; same defer |
+
+---
+
+### 🧪 Verification Commands
+
+Run after deletions:
+
+```bash
+# 1. Confirm zero remaining imports for each deleted module
+for mod in \
+  source_map \
+  runtime/server_process \
+  runtime/watchdog_runtime \
+  runtime/_local_library_yaml \
+  testing/_fixtures \
+  _graph_utils \
+  _helper_resolve \
+  _widget_aliases \
+  porting/templates \
+  schema/factory \
+  schema/runtime \
+  schema/local \
+  schema/object_info \
+  schema/registry \
+  schema/parsing; do
+  echo "=== $mod ==="
+  rg -n "from vibecomfy\\.${mod//\//\\.}|import vibecomfy\\.${mod//\//\\.}" \
+    --include='*.py' . --glob '!**/__pycache__/**' | grep -v '^File:'
+done
+
+# 2. Confirm import graph still works
+python -c "import vibecomfy; print('top-level OK')"
+python -c "from vibecomfy.schema import get_schema_provider; print('schema OK')"
+python -c "from vibecomfy.runtime import SessionConfig; print('runtime OK')"
+
+# 3. Run a quick test subset to catch anything missed
+python -m pytest tests/test_schema.py tests/test_foundation_utils.py -x --no-header -q
+```
+
+The deleted modules form a clean, zero-regret batch — no code imports them, no tests reference them, and they have no public API surface to break.

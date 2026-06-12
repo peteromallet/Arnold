@@ -1,0 +1,78 @@
+Now I have a comprehensive picture. Here's the analysis:
+
+---
+
+## VibeComfy Root Module Analysis
+
+### KEEP-AT-ROOT (intentional public API)
+
+| Module | Justification |
+|--------|---------------|
+| `__init__.py` | Package entry, re-exports all public names via `__all__` + PEP 562. Core. |
+| `workflow.py` | Exported in `__init__`/`__all__`. Imported by every cookbook, recipe, test, and ready_template. **Must stay.** |
+| `artifacts.py` | Exported in `__init__`. `Artifact`, `Image`, `Audio`, `Video`, `Latent`, `Mask` used across the system. |
+| `handles.py` | Exported in `__init__`. `Handle` is a core type. |
+| `utils.py` | Exported in `__init__`. `find_repo_root` used in ready_templates. |
+| `cli_loader.py` | Exported in `__init__`. `load_workflow_any` used in every recipe. |
+| `extras.py` | Exported in `__init__`. Plugin loading. |
+| `templates.py` | **NOT** in `__init__` but is the **#1 public import surface**: ~60 import sites across ready_templates, cookbooks, tests, docs. Users write `from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow`. This is the authoring DSL. **Should be added to `__init__` re-exports or kept as-is — but must stay at root.** |
+| `errors.py` | ~40 import sites. `VibeComfyError` is the public exception base. Users catch it. Part of the public contract. |
+| `cli.py` | Entry point for `python -m vibecomfy.cli`. Must stay. |
+| `blocks/`, `patches/`, `router/` | Exported subpackages in `__init__`. Documented. |
+| `ops/` | Exported subpackage (`image`, `video` namespaces). |
+| `ingest/`, `registry/` | Functions re-exported in `__init__`. |
+| `runtime/` | Lazily re-exported via `__getattr__`. `run`, `run_embedded`, etc. |
+| `testing/` | Lazy-import subpackage for test infra. Documented in `__init__` comment. |
+
+### DEMOTE/MOVE (should be private/internal)
+
+| Module | Evidence |
+|--------|----------|
+| `local_library.py` | 1 test file imports it directly. Otherwise only internal consumers. Configuration resolution — move to `_internal/`. |
+| `scratchpad_loader.py` | 2 test files + internal modules. `load_scratchpad` is used internally by the emitter, not user-facing. |
+| `memory_profile.py` | 2 test files. Debug profiling tool. Not part of public surface. |
+| `checks.py` | Zero direct external imports — only internal CLI/porting use. |
+| `fetch.py` | Zero direct external test/docs imports. Internal model download utility. |
+| `metadata.py` | Zero external imports. Internal workflow metadata helpers. |
+| `model_assets.py` | Zero external imports. Internal model asset URL/hash parsing. |
+| `index_types.py` | Zero external imports. Internal `TypedDict` definitions. |
+| `custom_node_refs.py` | Zero external imports. Internal pack-pin validation. |
+| `origin.py` | Zero external imports. Internal provenance stamping. |
+| `fixtures.py` | Zero external imports. Runpod matrix fixture management. |
+| `environment_diagnostics.py` | Zero external imports. Internal env warning generation. |
+| `comfy_command.py` | Zero external imports. Internal ComfyUI command resolution. |
+| `node_packs_lockfile.py` | 4 test files. Internal lockfile format. |
+| `node_packs_git.py` | Zero external imports. Internal git operations. |
+| `node_packs_install.py` | 2 test files (security tests). Internal pack installer. |
+| `_workflow_helpers.py` | Already underscore-prefixed. Shim re-exporting from `_compile._helpers`. Move deeper into `_compile/`. |
+| `_agent_edit_debug.py` | Already underscore-prefixed. Debug tool. |
+| `_git_utils.py` | Already underscore-prefixed. Internal. |
+| `_helper_resolve.py` | Already underscore-prefixed. Internal. |
+| `_graph_utils.py` | Already underscore-prefixed. Internal. |
+| `_compile/` | Already underscore-prefixed package. Internal. |
+| `schema/`, `contracts/`, `ir/`, `porting/`, `security/`, `analysis/`, `search/`, `diagnostics/`, `intent/`, `lens/`, `loader/`, `nodes/`, `node_packs/`, `commands/` | All internal subsystems. No user-facing imports from docs/cookbooks/recipes. Zero external exposure. Should be prefixed with `_` or kept internal by convention. **`schema/` is the highest-risk** — tests import `from vibecomfy.schema import InputSpec, NodeSchema` — but this is test-internal, not user code. |
+
+### AMBIGUOUS / PUBLIC-RISK LIST
+
+| Module | Risk | Recommendation |
+|--------|------|---------------|
+| `templates.py` | **HIGH** — Not in `__init__`/`__all__` but is the #1 user-facing import from ready_templates, cookbooks, and docs. If `__init__.py` is ever reconstructed from `__all__` alone, this module would disappear from the public surface. | Add `templates` to `__init__` re-exports, or at minimum add it to `__all__`. Either way, **document it in README**. |
+| `errors.py` | **MEDIUM** — Not in `__init__`. Users who write `except VibeComfyError` must know to import from `vibecomfy.errors`. Safe but undocumented. | Add `VibeComfyError` (and key subclasses) to `__init__` re-exports. |
+| `node_packs_lockfile.py` | **LOW** — Imported by 4 test files. If someone writes user code using `LockEntry` or `compute_schema_hash`, it breaks on move. But the module name is internal-sounding. | Safe to move; add a compat shim if tests still need it. |
+| `memory_profile.py` | **LOW** — Only 2 test imports. | Safe to move under `_internal/`. |
+| `scratchpad_loader.py` | **LOW** — Only 2 test + internal imports. | Safe to move. |
+| `cli.py` | **LOW** — Entry point only. Internal by nature. | Keep at root for `-m` invocation. No change needed. |
+
+### README DOCUMENTATION NEEDED
+
+- **`templates.py`** — This is the authoring DSL users interact with most. Recipe authors and agents copy patterns like `from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow`. Its absence from `__init__` is a discoverability gap.
+- **`errors.py`** — Exception hierarchy should be briefly documented or re-exported from `vibecomfy`.
+- **`workflow.py`** — Already indirectly documented, but its core types (`VibeWorkflow`, `VibeNode`, etc.) should have a README section showing the most common imports.
+
+### SUMMARY
+
+**Keep at root:** `__init__`, `workflow`, `artifacts`, `handles`, `utils`, `cli_loader`, `extras`, `templates`, `errors`, `cli`, and subpackages `blocks/`, `patches/`, `router/`, `ops/`, `ingest/`, `registry/`, `runtime/`, `testing/`.
+
+**Move to `_internal/` (or underscore-prefix):** `local_library`, `scratchpad_loader`, `memory_profile`, `checks`, `fetch`, `metadata`, `model_assets`, `index_types`, `custom_node_refs`, `origin`, `fixtures`, `environment_diagnostics`, `comfy_command`, `node_packs_lockfile`, `node_packs_git`, `node_packs_install`, and all underscore-prefixed modules.
+
+**Biggest public-risk gap:** `templates.py` is the most-imported user-facing module yet absent from `__init__`/`__all__`. Recommend adding it to `__all__` and the README.

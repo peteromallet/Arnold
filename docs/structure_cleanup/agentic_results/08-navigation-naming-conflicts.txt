@@ -1,0 +1,46 @@
+Here's the analysis.
+
+---
+
+## 1. Simplest mental model per directory
+
+| Directory | Mental model |
+|---|---|
+| `agentic/` | **Agentic test harness.** Python package that runs scenario YAMLs with a fake actor to validate agent behavior. Evidence lands in `out/`. Not agent config. |
+| `agents/` | **Agent interface declarations.** One YAML (`openai.yaml`) per LLM, describing display name and invocation policy. Skinny, visible, non-Python. |
+| `.agents/` | **Hidden skill bundles for non-Claude agents.** Currently only `desloppify` (code-health scanner). |
+| `.claude/` | **Hidden skill bundle for Claude itself.** Contains the canonical `vibecomfy` skill, examples, advanced usage, plus Claude scheduling/settings JSON. |
+| `.megaplan/` | **Architectural briefs.** Long-form markdown planning docs per epic/milestone. Think ADRs + sprint specs. |
+
+---
+
+## 2. Where a newcomer gets confused
+
+- **`agentic/` vs `AGENTS.md`**: `agentic/` is a *test runner*, not agent config. A newcomer looking for "how do I set up an agent?" finds `agentic/` first (visible, rich subdirectory) and ignores `AGENTS.md` (a single file). The README says "agentic-test harness" but that's buried.
+
+- **`agents/` vs `.agents/`**: Same plural, one visible, one hidden. Why is `openai.yaml` visible but `desloppify/SKILL.md` hidden? Feels like an accident of when each was created, not a meaningful boundary.
+
+- **`.agents/` vs `.claude/`**: Both hidden. Both contain `skills/<name>/SKILL.md`. The split implies `.claude/` is "for Claude" and `.agents/` is "for everyone else" — but a newcomer won't know which agent gets which skill, or why desloppify doesn't live in `.claude/` too.
+
+- **`AGENTS.md` says "read CLAUDE.md" but `CLAUDE.md` doesn't exist at root** — the actual Claude instructions live in `.claude/skills/vibecomfy/SKILL.md`. So the bootstrap doc points to a file that doesn't resolve.
+
+---
+
+## 3. Minimal docs/index changes to self-explain
+
+Three targeted changes to the root `README.md`:
+
+**a) Collapse the 5 directories into a single table:**
+Add a "Repository layout" section near the top (after Quickstart) that lists each of these directories with a one-line purpose — especially distinguishing `agentic/` ("agentic test harness — for developers adding scenarios") from `agents/` ("agent interface configs") and `.agents/` / `.claude/` ("agent skill definitions — see AGENTS.md").
+
+**b) Fix the broken bootstrap chain in `AGENTS.md`:**
+Add a root `CLAUDE.md` that simply reads: *"See `.claude/skills/vibecomfy/SKILL.md` for the canonical agent guide."* Or inline that pointer directly into `AGENTS.md` so it says "point your agent to `.claude/skills/vibecomfy/SKILL.md`" instead of "CLAUDE.md".
+
+**c) Clarify visible/hidden split in `agents/`:**
+Add a one-liner to `agents/openai.yaml` or a README inside `agents/`: *"Agent interface declarations. For skill definitions, see `.agents/` (non-Claude agents) and `.claude/` (Claude-specific)."*
+
+---
+
+## 4. Valuable rename too risky now
+
+**`agentic/` → `test-harness/` or `eval-scenarios/`**. The word "agentic" invites newcomers to think it's about agent configuration, not evaluation. Renaming to something task-descriptive would eliminate the most common confusion. But `agentic/` is a Python package imported as `agentic.runner`, referenced in tests (`test_agentic_structural.py`), and likely in CI pipeline scripts. The rename risk (broken imports, stale references) outweighs the clarity gain at this point. Defer to a future breaking-change release.

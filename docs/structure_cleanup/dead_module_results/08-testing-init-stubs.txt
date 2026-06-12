@@ -1,0 +1,98 @@
+Now I have the complete picture. Here's the audit.
+
+---
+
+## Dead Module Audit 08: `vibecomfy/testing/__init__.py` Stubs
+
+### 1. What the stubs are
+
+Lines 76–80 of `vibecomfy/testing/__init__.py` forward-declare 5 names as `_not_yet_implemented()` placeholders that raise `NotImplementedError`:
+
+| Name | Nature | Currently returns |
+|---|---|---|
+| `vibecomfy_workflow_factory` | pytest fixture (function) | stub → `NotImplementedError` |
+| `vibecomfy_handle_factory` | pytest fixture (function) | stub → `NotImplementedError` |
+| `dry_runtime` | session-scoped pytest fixture | stub → `NotImplementedError` |
+| `make_workflow_factory` | plain factory function | stub → `NotImplementedError` |
+| `make_handle_factory` | plain factory function | stub → `NotImplementedError` |
+
+### 2. Real implementations exist in `fixtures.py`
+
+All 5 are fully implemented in `vibecomfy/testing/fixtures.py` (lines 16, 32, 44, 50, 59) and exported via its `__all__` (line 78–84):
+
+- **`make_workflow_factory()`** (plain fn) — returns `Callable[..., VibeWorkflow]`
+- **`make_handle_factory()`** (plain fn) — returns `Callable[..., Handle]`
+- **`vibecomfy_workflow_factory`** (pytest fixture) — wraps `make_workflow_factory()`
+- **`vibecomfy_handle_factory`** (pytest fixture) — wraps `make_handle_factory()`
+- **`dry_runtime`** (session-scoped pytest fixture) — caches `_StubSchemaProvider`, wraps `dry_run()`
+
+Furthermore, **`_pytest_plugin.py` (line 76–80) already imports the real 3 fixtures** from `fixtures.py` directly (but skips the two plain functions `make_workflow_factory` / `make_handle_factory`).
+
+### 3. Behavior classification
+
+| Aspect | Verdict |
+|---|---|
+| **Structure cleanup?** | Partly — it replaces stub assignments with `from X import` re-exports |
+| **Behavior change?** | **Yes** — currently calling any of these 5 raises `NotImplementedError`; after fix they return real objects |
+| **Is that change intended?** | **Yes** — the file's own docstring (line 7–9) says "implementation modules are filled in by later tasks; this scaffold forward-declares the public names". The `_not_yet_implemented` comment (line 63) says "implementation lands in a later batch." The tests in `known_failures.txt` were written expecting this fix. |
+| **Can it break users?** | Only if someone is *catching* `NotImplementedError` from these names, which would be pathological. The fix makes them work as documented. |
+
+### 4. Test impact (4 tests transition FAIL→PASS)
+
+All 4 test entries currently in `tests/known_failures.txt` that are caused by the stubs will resolve:
+
+| known_failures.txt line | Test | Currently fails because | After fix |
+|---|---|---|---|
+| 94 | `test_exported_factories_do_not_raise_not_implemented` | Calls `make_workflow_factory()` / `make_handle_factory()` → stub raises | Calls real factories → passes |
+| 95 | `test_factory_helpers_create_workflow_and_handle` | `testing.make_workflow_factory()("demo")` → stub raises | Returns real `VibeWorkflow` → passes |
+| 96 | `test_pytest_fixtures_are_available` | *(multiple reasons — see note below)* | Partially improved |
+| 97 | `test_testing_plugin_exports_required_fixture_names` | `_pytest_plugin.X is testing.X` identity check fails (plugin has real, testing has stub) | Both point to same `fixtures.py` object → passes |
+
+**⚠️ Note on `test_pytest_fixtures_are_available` (line 96):** This test also calls `dry_runtime.run_sync(workflow)`, but the `_DryRuntime` class in `fixtures.py` (line 67–75) only defines `__call__`, not `run_sync`. So even after the stub fix, this test will still fail due to `AttributeError: '_DryRuntime' object has no attribute 'run_sync'`. The stub→real swap fixes the export identity issue but this test will remain in known failures until `_DryRuntime` grows a `run_sync` method.
+
+### 5. Exact action to fix
+
+Replace lines 72–80 (the comment header + 5 stub assignments) and the `_not_yet_implemented` helper function with proper re-exports, matching the pattern already used for assertions (line 21–29) and dry_run (line 30–31).
+
+```python
+# Replace stubs (lines 72–80 + function at lines 60–69) with:
+from vibecomfy.testing.fixtures import (
+    dry_runtime,
+    make_handle_factory,
+    make_workflow_factory,
+    vibecomfy_handle_factory,
+    vibecomfy_workflow_factory,
+)
+```
+
+And remove:
+- The `_not_yet_implemented` function (lines 60–69) — only used by these 5 stubs
+- The 5 stub assignments (lines 76–80)
+- The placeholder comment block (lines 72–75)
+
+Update the module docstring to remove the "forward-declares" language for fixtures (they're now filled in).
+
+### 6. Tests to run
+
+```bash
+# Tests that directly exercise the fixed exports (expect all PASS):
+python -m pytest tests/test_testing_api.py::test_testing_api_exports_required_names -v
+python -m pytest tests/test_testing_api.py::test_testing_api_star_import_exposes_required_names -v
+python -m pytest tests/test_testing_api.py::test_testing_plugin_exports_required_fixture_names -v
+python -m pytest tests/test_testing_api.py::test_exported_factories_do_not_raise_not_implemented -v
+python -m pytest tests/test_testing_api.py::test_factory_helpers_create_workflow_and_handle -v
+
+# Tests that depend on these names indirectly:
+python -m pytest tests/test_testing_assertions.py -v --tb=short
+python -m pytest tests/test_testing_dry_run.py -v --tb=short
+python -m pytest tests/test_testing_snapshot.py -v --tb=short
+
+# Import-cost contract (must not pull runtime):
+python -m pytest tests/test_testing_import_cost.py -v
+
+# Full testing suite (will show test_pytest_fixtures_are_available still failing):
+python -m pytest tests/test_testing_api.py -v --tb=short
+
+# After confirming which known failures resolved, update known_failures.txt:
+# Remove lines 94, 95, 97 (keep line 96 — still failing due to missing run_sync)
+```

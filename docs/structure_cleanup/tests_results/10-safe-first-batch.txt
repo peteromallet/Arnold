@@ -1,0 +1,156 @@
+Good — it's only mentioned in the cleanup doc that recommends deleting it. Now let me produce the full synthesis.
+
+---
+
+## Tests Layer Audit 10: Safe First Batch — Synthesis
+
+### Current State Summary
+
+| Area | Count | Notes |
+|------|-------|-------|
+| Root `test_*.py` files | ~100+ | Flat at `tests/` |
+| Sub-packages w/ tests | 10 (`browser`, `characterization`, `e2e`, `edgecases`, `intent`, `parity`, `property`, `security`, `smoke`, `support`) | Plus `fixtures/`, `snapshots/`, `smoke_fixtures/` data dirs |
+| `__init__.py` files | 11 | 6 are empty/trivial (0-1 byte) |
+| `README.md` files | 2 (both in fixture subdirs) | **No `tests/README.md`** |
+| Stale/unreferenced fixtures | 1 | `tests/fixtures/porting/opaque_component.json` |
+| Gitignored junk on disk | 3 dirs | `e2e/test-results/`, `e2e/playwright-report/`, `e2e/node_modules/` |
+| Stale path references | 0 | All test IDs in `known_failures.txt` map to existing files |
+
+---
+
+### Exact Delete List
+
+| # | Path | Reason | Risk |
+|---|------|--------|------|
+| 1 | `tests/fixtures/porting/opaque_component.json` | Zero references in any test, doc, or tool. Previous audit (docs/structure_cleanup/tests_results/02-fixtures-and-snapshots.txt) flagged it as stale. The concept `opaque_component_node_class` exists as diagnostic code in `vibecomfy/porting/strict_ready.py` but this specific fixture file is never loaded. | **None** — confirmed via repo-wide grep; no code path loads `opaque_component.json` |
+| 2 | `tests/e2e/test-results/` (recursive dir) | Stale Playwright trace artifacts (25 files, .zip + .md). Already in `.gitignore` line 48. | **None** — gitignored; zero code reads from this path |
+| 3 | `tests/e2e/playwright-report/` (recursive dir) | Stale Playwright HTML report artifacts (30+ files). Already in `.gitignore` line 47. | **None** — gitignored |
+| 4 | `tests/e2e/node_modules/` (recursive dir) | Vendored Playwright dependency (~5000+ files). Already in `.gitignore` line 46. Recreatable via `cd tests/e2e && npm install`. | **None** — gitignored; the `.gitignore` entry exists specifically so this can be nuked |
+
+---
+
+### Exact File Edit List
+
+| # | Path | Action | Content / Diff |
+|---|------|--------|----------------|
+| 1 | `tests/README.md` | **Create** (new file) | Index document covering test layout, naming conventions, how to run different tiers. Essential orientation for new contributors. |
+
+> **Proposed `tests/README.md` content:**
+
+```markdown
+# Tests Directory
+
+## Layout
+
+| Path | Purpose |
+|------|---------|
+| `tests/conftest.py` | Shared fixtures, known-failures baseline, runpod helpers |
+| `tests/test_*.py` | Flat test modules for general unit/integration tests |
+| `tests/browser/` | MJS browser-harness tests (Playwright, deterministic) |
+| `tests/characterization/` | Deterministic golden-snapshot suite (PYTHONHASHSEED=0) |
+| `tests/e2e/` | Real-browser Playwright spec tier (local only, not CI) |
+| `tests/edgecases/` | Edge-case / boundary-value tests |
+| `tests/fixtures/` | Authored test fixtures (JSON, sessions, loader samples) |
+| `tests/intent/` | Intent-level edit correctness, falsification, judge evaluation |
+| `tests/parity/` | Typed-handle parity and independent read-back tests |
+| `tests/property/` | Property-based / fuzz tests |
+| `tests/security/` | Security gates: loader, provenance, capabilities |
+| `tests/smoke/` | RunPod GPU smoke tests (opt-in via --runpod) |
+| `tests/smoke_fixtures/` | Lightweight smoke JSON inputs |
+| `tests/snapshots/` | Generated API/class_type/widget snapshots (regenerate with `scripts/regenerate_snapshots.py`) |
+| `tests/support/` | Support utilities (e.g. corpus_schema.py) |
+
+## Naming Convention
+
+- `test_<area>.py` — flat module for a feature area
+- Sub-packages for scoped test tiers (characterization, security, smoke, etc.)
+- `_prefixed` modules are helpers not collected by pytest
+
+## Running Tests
+
+```bash
+# Full suite (excluding characterization, runpod, e2e)
+pytest tests/ -x
+
+# Characterization (requires PYTHONHASHSEED=0)
+PYTHONHASHSEED=0 pytest -m characterization
+
+# RunPod smoke (opt-in)
+pytest --runpod tests/smoke/
+
+# E2E browser tests
+cd tests/e2e && npx playwright test
+
+# Known-failures audit
+pytest --known-failures-audit
+```
+
+## Baseline Failures
+
+`tests/known_failures.txt` lists by-design-red tests. These do not block CI.
+New test IDs not in this file are real regressions.
+```
+
+---
+
+### Exact Move List
+
+**None.** Zero safe moves identified. Every fixture/snapshot/golden file is actively referenced by tests, docs, or tools. Moving any would be a behavioral change.
+
+---
+
+### Deferrals
+
+| Item | Reason | Defer To |
+|------|--------|----------|
+| `tests/snapshots/` (33 JSON files) | Generated but committed golden baselines. Referenced by `test_snapshot_api_workflows.py` and `characterization/test_compile_api_snapshots.py`. Regenerated in-place. | Batch 2+ (generated-output policy decision) |
+| `tests/characterization/goldens/` (22 `.py.golden` files) | Committed golden baselines regenerated by `VIBECOMFY_CHARACTERIZATION_WRITE=1 pytest`. Actively used by `test_emitter_snapshots.py`. | Batch 2+ |
+| `tests/fixtures/canonical_parity_baseline.json` (825KB) | Committed baseline regenerated by `tools/check_canonical_parity.py --update`. Referenced by `test_v26_canonical_parity.py`. | Separate audit (large file policy) |
+| Empty `__init__.py` files (6 files) | Low-impact cosmetic change. Adding docstrings is trivial but zero-behavior. | Batch 2 (purely cosmetic) |
+| `tests/e2e/package-lock.json` + `package.json` | Authored e2e infrastructure files — keep. The `node_modules/` is the only junk. | N/A — not a target |
+
+---
+
+### Verification Commands
+
+Run these after applying all deletes and the README create:
+
+```bash
+# 1. Confirm the stale fixture is gone
+ls tests/fixtures/porting/opaque_component.json && echo "STILL EXISTS" || echo "DELETED OK"
+
+# 2. Confirm gitignored dirs are gone (not tracked)
+ls tests/e2e/test-results/ 2>&1 | head -3
+ls tests/e2e/playwright-report/ 2>&1 | head -3
+ls tests/e2e/node_modules/ 2>&1 | head -3
+
+# 3. Verify README was created
+head -5 tests/README.md
+
+# 4. Ensure no git-untracked mess was created
+git status --short tests/
+
+# 5. Quick collection smoke test (no failures should be introduced)
+python -m pytest tests/ --collect-only -q 2>&1 | tail -5
+
+# 6. Known-failures audit (all baselines should still match)
+python -m pytest tests/ --known-failures-audit -q 2>&1 | tail -5
+
+# 7. Spot-check a few tests still pass
+python -m pytest tests/test_workflow_core.py -x -q 2>&1 | tail -5
+python -m pytest tests/test_contracts_reexport.py -x -q 2>&1 | tail -5
+```
+
+---
+
+### Summary
+
+| Category | Count | Net Change |
+|----------|-------|------------|
+| **Delete** | 4 items: 1 stale fixture file + 3 gitignored dirs | Removes ~5,000+ ignored files from disk, 1 stale committed fixture |
+| **Create** | 1 file: `tests/README.md` | Adds ~50 lines of documentation |
+| **Edit** | 0 (README is new file, not edit) | — |
+| **Move** | 0 | — |
+| **Defer** | 5+ items | Pending separate audit |
+
+The batch is **fully reversible**: the README adds no behavioral change, the deleted fixture was already unreferenced, and the gitignored dirs were already excluded from version control. Verification commands confirm zero regression.

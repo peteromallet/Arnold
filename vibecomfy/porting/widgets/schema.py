@@ -1,6 +1,6 @@
 """Compatibility exports for positional widget schema.
 
-Static compile-time aliases live in :mod:`vibecomfy._widget_aliases`. Porting
+Static compile-time aliases live in :mod:`vibecomfy._compile._widgets`. Porting
 keeps object-info fallback here for conversion/codemod callers.
 """
 

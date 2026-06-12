@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from vibecomfy.node_packs_git import find_installed_pack_ref
+from vibecomfy.node_packs import find_installed_pack_ref
 
 
 def _git(args: list[str], *, cwd: Path) -> None:

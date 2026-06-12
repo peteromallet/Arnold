@@ -1,0 +1,150 @@
+Now I have a thorough understanding of the entire codebase. Here is my complete audit.
+
+---
+
+## VibeComfy Doc Deletion Audit
+
+### Category 1: Duplicate Backups (STRONG DELETE)
+
+These are byte-for-byte or near-identical `.bak` copies of live config files. The live files are the source of truth; the `.bak` files are stale residuals from `desloppify` tool runs on 2026-05-15.
+
+| File | Size | Why delete |
+|------|------|------------|
+| **`.desloppify/config.json.bak`** | 1,224 bytes | Identical to `config.json` except `needs_rescan: true` vs `false`. The live config supersedes. |
+| **`.desloppify/plan.json.bak`** | ~7,025 lines | Same structure/content as `plan.json` (only `updated` timestamp differs: 22:19 vs 22:23). Stale backup of the same scan state. |
+| **`.desloppify/state-python.json.bak`** | ~169,795 lines | Gigantic same-state backup. `state-python.json` is the active state; the `.bak` is a write-once snapshot that is never read back. |
+
+**Alternative**: If you want a safety net, keep the most recent `.bak` (state-python.json.bak) and delete the other two. But the live `state-python.json` is 169K lines of identical data — the `.bak` is pure bloat.
+
+---
+
+### Category 2: Empty / Dead Stubs (STRONG DELETE)
+
+| File | Size | Why delete |
+|------|------|------------|
+| **`node_index.json`** | 2 bytes (`[]`) | Empty array. Zero references in code (confirmed by M0 plan). This is a dead artifact from an abandoned index scheme. |
+
+---
+
+### Category 3: Generated Run Artifacts (DELETE — transient scratch)
+
+The `out/runs/` directory contains ~22 `.log` files, 3 `metadata.json` files, and 1 generated `.png` from old megaplan/agent sessions. These are runtime outputs from specific past CLI invocations, not authored docs.
+
+**Recommended action**: Delete **all** of `out/runs/`:
+
+- `out/runs/megaplan_turn_progress.log`
+- `out/runs/agent_edit_chat_chain.log`
+- `out/runs/megaplan_exec_node_auto.log`
+- `out/runs/node_resolution_chain.log`
+- `out/runs/agent_edit_e2e_harness.out`
+- `out/runs/m1_rereview.log`
+- `out/runs/local_agent_comfy.log`
+- `out/runs/comfy_edit_validate.log`
+- `out/runs/comfy_8190_postfix.log`
+- `out/runs/megaplan_python_edit_surface_chain.log`
+- `out/runs/comfyui_8190.log`
+- `out/runs/agent_comfy_8199.log`
+- `out/runs/comfy_8199_restart.log`
+- `out/runs/phase3_comfy_8199.log`
+- `out/runs/megaplan_agent_edit_native.log`
+- `out/runs/agent_edit_structural_chain.log`
+- `out/runs/agent_edit_hardening_chain.log`
+- `out/runs/megaplan_preview_fidelity.log`
+- `out/runs/megaplan_agent_edit_v2.log`
+- `out/runs/m4_e2e_tier.log`
+- `out/runs/megaplan_agent_edit_v2_auto.log`
+- `out/runs/megaplan_delta_lint_auto.log`
+- `out/runs/run-1777147587/metadata.json`
+- `out/runs/run-1777147588/metadata.json`
+- `out/runs/run-1777147831/metadata.json`
+- `out/runs/20260602-152425-clean-modern-technical-diagram-sleek-dar.png`
+
+**Safer alternative**: Keep the directory structure but purge files older than some threshold. But these are all from ~May–June 2026 megaplan runs whose chains are long merged.
+
+---
+
+### Category 4: Superseded Migration Docs (MOVE to archive or DELETE)
+
+| File | Why |
+|------|-----|
+| **`docs/migration/v25_to_v26.md`** | **Superseded** by `v25_to_v27.md`. The v27 doc covers the same v2.5→v2.6 transition *plus* v2.6→v2.7 changes. v25_to_v26 is a strict subset. |
+
+**Alternative**: Keep as historical record of what each version bump contained, or consolidate into the v27 doc header: "v2.6 changes are included in this guide."
+
+---
+
+### Category 5: Completed Execution Plans (MOVE to `docs/archive/` or DELETE)
+
+These are one-shot planning docs for work that is already complete.
+
+| File | Why |
+|------|-----|
+| **`docs/plans/loose-work-consolidation-plan.md`** | Dated 2026-06-09. Its stated goal was "land every piece of useful loose work onto **one** branch, then retire everything that is merged/dead." If the consolidation branch was merged and branches cleaned up (which the plan details), this doc is a stale execution manifest. |
+| **`docs/plans/plan_v2.md`** | M3 corpus-proof plan. If M3 shipped, this is a historical artifact. |
+| **`docs/plans/agent_readable_templates_v2.md`** | v2 template format plan (dated 2026-05-17). If v2 shipped, this is historical. |
+| **`docs/plans/finalize.json`** | M0 reorg execution manifest referenced by `plans/README.md`. Likely stale after the reorg landed. |
+
+**Recommended**: Move all four to `docs/archive/` or delete. They are valuable as historical record of *decisions made* but have no ongoing utility as active plans.
+
+---
+
+### Category 6: Old Evidence Files (KEEP or CONDITIONAL DELETE)
+
+| File | Verdict |
+|------|---------|
+| **`docs/local_agent_text_to_graph_e2e.md`** | Says "intentionally local-only and ignored by git" but is checked in. Contains runbook for a merged PR (#43). **Delete** — it even warns it should be local-only. |
+| **`vibecomfy/porting/object_info/*@runpod-snapshot.json`** (3 files) | Live test fixtures used by object_info tests. **KEEP** — these are active test data, not old evidence. |
+| **`artifacts/m5a-emitter-baseline/focused_pytest.log`** and **`full_pytest.log`** | Old pytest output logs from baseline runs. **Delete** — these are generated run artifacts, not documentation. |
+| **`.claude/scheduled_tasks.json`** and **`.claude/settings.local.json`** | Claude IDE local config. **KEEP** — local settings are user-authored config, not junk. |
+
+---
+
+### Category 7: Things that LOOK like junk but are NOT
+
+| File | Why KEEP |
+|------|----------|
+| **`docs/structural_issues.md`** | 385-line *active running log* of cross-cutting issues. Explicitly framed as a living document. |
+| **`docs/structural_audit_2026-05.md`** | 215-line distilled audit report. One-time output but valuable architectural reference. |
+| **`docs/roadmap_agentic_comfyui.md`** | 535-line active roadmap v2 with explicit "active" status. Product planning doc. |
+| **`docs/security/` (both files)** | Active security design docs. |
+| **`docs/templates/` (all files)** | Active template-development reference material. |
+| **`docs/audits/`** | Long-lived audit reports explicitly described as "useful for maintainers." |
+| **`docs/workflow-coverage/`** | Active coverage tracking docs. |
+| **`docs/release_notes/`** | Versioned release notes are permanent historical records. |
+| **`docs/megaplan_chains/`** | Epic handoff and milestone docs — active project management artifacts. |
+| **`agentic/briefs/`** (~30 files) | Agent-run briefs representing actual agent decision records. These are historical evidence of agent behavior, not stale junk. |
+| **`.megaplan/briefs/`** | Active planning briefs for ongoing megaplan epics. |
+| **`.claude/skills/vibecomfy/`** | Active Claude skill definitions. |
+| **`docs/text-to-graph/`** | Active product+security design docs for the text-to-graph feature. |
+| **`cloud.yaml`** | Railway deployment config — active infrastructure definition. |
+
+---
+
+## Summary — Exact Delete Candidates
+
+```yaml
+DELETE (unambiguous junk/duplicate):
+  - .desloppify/config.json.bak
+  - .desloppify/plan.json.bak
+  - .desloppify/state-python.json.bak
+  - node_index.json
+  - docs/local_agent_text_to_graph_e2e.md
+  - artifacts/m5a-emitter-baseline/focused_pytest.log
+  - artifacts/m5a-emitter-baseline/full_pytest.log
+
+DELETE (generated run artifacts):
+  - out/runs/ (entire directory — 26 files)
+
+SUPERSEDED (move to docs/archive/ or delete):
+  - docs/migration/v25_to_v26.md    # subsumed by v25_to_v27.md
+  - docs/plans/loose-work-consolidation-plan.md
+  - docs/plans/plan_v2.md
+  - docs/plans/agent_readable_templates_v2.md
+  - docs/plans/finalize.json
+
+UNCERTAIN (check if still referenced):
+  - .desloppify/query.json           # 9869-line prompt file — is this an input template or stale?
+  - .desloppify/review_packet_blind.json  # 9475-line intermediate artifact
+```
+
+**Total space reclaimed**: ~2.1 MB from .bak files + ~2.5 MB from `out/runs/` + ~250 KB from stale planning docs + ~100 KB from superseded migration docs ≈ **~5 MB of tracked bloat**.

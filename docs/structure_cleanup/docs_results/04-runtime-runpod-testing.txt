@@ -1,0 +1,68 @@
+Here is the full analysis and recommendation.
+
+---
+
+## 1. Proposed grouping
+
+Three natural subfolders, mirroring the existing `security/`, `audits/`, `plans/` pattern:
+
+**`docs/runtime/`** — runtime execution docs (all user-facing)
+- `runtime_code_modes.md`, `runtime_lifecycle.md`, `runtime_surface.md`, `hiddenswitch_incompatibilities.md` (companion to `surface.md`)
+
+**`docs/runpod/`** — RunPod docs (split: setup/smoke are user-facing; test plan is internal)
+- `runpod.md`, `runpod_smoke.md` (user-facing)
+- `runpod_layer2_test_plan.md` → `docs/runpod/plans/` (internal)
+
+**`docs/testing/`** — testing docs (split: user-facing + internal)
+- `testing.md`, `testing-user-code.md`, `testing-user-code-examples/` (user-facing)
+- `characterization_gate.md` (internal gate contract)
+
+---
+
+## 2. Exact moves
+
+| Source | Destination | Reason |
+|---|---|---|
+| `runtime_code_modes.md` | `docs/runtime/code_modes.md` | Co-locate runtime |
+| `runtime_lifecycle.md` | `docs/runtime/lifecycle.md` | ↑ |
+| `runtime_surface.md` | `docs/runtime/surface.md` | ↑ |
+| `hiddenswitch_incompatibilities.md` | `docs/runtime/incompatibilities.md` | Referenced from `surface.md` line 5 |
+| `runpod.md` | `docs/runpod/setup.md` | Co-locate RunPod |
+| `runpod_smoke.md` | `docs/runpod/smoke.md` | ↑ |
+| `runpod_layer2_test_plan.md` | `docs/runpod/plans/layer2_test_plan.md` | Internal plan → subfolder |
+| `testing.md` | `docs/testing/overview.md` | Co-locate testing |
+| `testing-user-code.md` | `docs/testing/user_code.md` | ↑ |
+| `testing-user-code-examples/` | `docs/testing/user_code_examples/` | ↑ |
+| `characterization_gate.md` | `docs/testing/characterization_gate.md` | Gate contract belongs with testing infra |
+
+---
+
+## 3. Top-level docs that should remain
+
+**`README.md`** (root, not docs/) — entry point. Links to `docs/testing-user-code.md` (line 274). Update path on move.
+
+**`CLAUDE.md`** and **`AGENTS.md`** — project conventions. Both hardcode paths to `docs/runpod.md`, `docs/runpod_smoke.md`, `docs/runtime_lifecycle.md`, `docs/runtime_surface.md`, `docs/hiddenswitch_incompatibilities.md`, `docs/testing-user-code.md`. All will need updates.
+
+**`vibecomfy/contracts/RUNTIME_CONTRACT.md`** — references `docs/runtime_code_modes.md` (lines 5, 18). Update path on move.
+
+---
+
+## 4. Link/test risks (must-fix list)
+
+| Source file | Old ref | Fix |
+|---|---|---|
+| `README.md:274` | `docs/testing-user-code.md` | → `docs/testing/user_code.md` |
+| `CLAUDE.md:356,366,367` | 7 hardcoded paths | Update all |
+| `AGENTS.md:596,607,608,619` | 8 hardcoded paths | Update all |
+| `RUNTIME_CONTRACT.md:5,18` | `docs/runtime_code_modes.md` | → `docs/runtime/code_modes.md` |
+| `runtime_surface.md:5` | `docs/hiddenswitch_incompatibilities.md` | → `docs/runtime/incompatibilities.md` |
+| `testing.md:77` | `testing-user-code.md` (relative) | → `user_code.md` (same dir, safe) |
+| `testing-user-code.md:118` | `testing.md` (relative) | → `overview.md` (same dir, safe) |
+| `runpod_layer2_test_plan.md:32,150,169` | `docs/runpod_smoke.md` | → `docs/runpod/smoke.md` |
+| `python_composition_dsl_plan.md:266,297,306` | `docs/runtime_surface.md`, `docs/runtime_lifecycle.md` | Update paths |
+| `python_composition_dsl_review.md:58` | `docs/runtime_surface.md` | Update |
+| `adding_templates_models.md:359` | `docs/hiddenswitch_incompatibilities.md` | Update |
+
+**Total:** ~20 cross-refs to update. All are mechanical find-and-replace. No circular or self-referencing link issues.
+
+**Test risk:** None — these are `.md` files, not imported by Python. No tests reference these paths.

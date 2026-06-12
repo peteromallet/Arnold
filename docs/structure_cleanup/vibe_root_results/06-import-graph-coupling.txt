@@ -1,0 +1,60 @@
+Now I have a comprehensive picture. Here's the analysis:
+
+---
+
+## Import Graph Coupling Audit — Root Modules
+
+Working hypothesis: each `vibecomfy/*.py` should be either a **pure data/type definition** leaf, a **utility** leaf, a **thin re-export** shim, or the **public API** init. Below are the hotspots.
+
+### Coupling Hotspots Table
+
+| Root Module | Distinct Importers | Problem | Recommended Action | Risk |
+|---|---|---|---|---|
+| **`workflow.py`** | ~60+ (all subsystems) | God module. Defines `VibeWorkflow`, `VibeNode`, `VibeEdge`, etc. Every layer — blocks, patches, runtime, porting, testing, ingest, contracts — pulls it in. Three lazy-import workarounds already document cycles (`testing↔workflow`, `porting.emitter↔templates`). | Split into `workflow/types.py` (pure dataclasses, zero vibecomfy imports) and `workflow/validation.py`. Root-import only the types shim. | **High** — changes ripple across every file, but the data types are stable, so a mechanical rename + `from vibecomfy.workflow import VibeWorkflow` compat shim in `workflow/__init__.py` makes it safe. |
+| **`templates.py`** | ~20+ (all generated nodes, 3 emitter modules with lazy imports) | Cross-layer grab-bag. Imports from `workflow`, `registry.ready_template`, `custom_node_refs`, `workflow_context`, `utils`, `handles`. The lazy imports in `porting/emitter.py`, `porting/emit/emitter.py`, `porting/emit_ready.py` exist *specifically* to avoid circular imports at module load. | Move `_derive_output_kind` and the `node()` / `finalize()` wrapper surface into `registry/ready_template.py` (where the policy lives). Keep only the public `node()`, `ref()`, `finalize()` re-exports in `templates.py` for generated code. | **Medium** — `nodes/_generated/*.py` only need `node` + `VibeWorkflow`. The cycle breakers become unnecessary if `_derive_output_kind` moves to registry. |
+| **`__init__.py`** | N/A (root) | Eagerly imports `blocks`, `patches`, `router`, `artifacts`, `cli_loader`, `extras`, `ingest.loader`, `ops`, `registry`, `workflow`. Lazy-escapes `runtime.run`. | Already well-structured with lazy runtime. No change needed — this is the intended public API surface. Delete the eager `extras.ensure_plugins_loaded` call if it's only needed on demand. | **Low** |
+| **`metadata.py`** | 5 (patches/seed.py, ingest/normalize.py, porting/lowering.py, etc.) | Imports `from vibecomfy.workflow import VibeInput, VibeNode, ...` just to use types in signatures. These are pure dict-key constants (`SEED_KEYS`, `OUTPUT_NODE_NAMES`). | Delete the `workflow` import and accept plain `str` params. The caller already has the types. | **Very low** — mechanical change, 4 callers. |
+| **`handles.py`** | ~15 | Perfect: pure frozen dataclass, no vibecomfy imports. ✅ Keep. | — | None |
+| **`errors.py`** | ~15 | Perfect: pure exception hierarchy, no vibecomfy imports. ✅ Keep. | — | None |
+| **`utils.py`** | ~12 | Perfect: no vibecomfy imports. ✅ Keep. | — | None |
+| **`node_packs_lockfile.py`** | ~7 | Perfect: no vibecomfy imports. ✅ Keep. | — | None |
+| **`node_packs_install.py`** | 3 | Thin re-export shim to `node_packs/_install.py`. Already correct. ✅ | — | None |
+| **`node_packs.py`** | 3 | Re-exports from `node_packs` package. Already a shim. ✅ | — | None |
+| **`local_library.py`** | ~4 | Self-contained namespace. No reported issues. ✅ | — | None |
+| **`workflow_context.py`** | 5 | Imports only `errors`. Clean context-var wrapper. ✅ | — | None |
+
+### Active Cycles / Near-Cycles (already worked around)
+
+| Cycle | Workaround | Recommendation |
+|---|---|---|
+| `testing.*` → `workflow` → ? → `testing` | Lazy `from vibecomfy.workflow import VibeWorkflow` in `_helpers.py` and `assertions.py` | After splitting `workflow/types.py`, move to eager import — the cycle disappears because `workflow/types.py` imports nothing. |
+| `porting/emitter.py` → `templates` → `workflow` → `_compile` → ... → `porting` | Lazy `from vibecomfy.templates import _derive_output_kind` in 3 emitter files | Move `_derive_output_kind` into `registry/ready_template.py` which is already a dependency. |
+| `node_packs` package startup | Entire package uses `__getattr__` lazy loading | Correct — the `node_packs_lockfile` → `node_packs` import order is fragile. No change. |
+
+### Recommended Structure Changes (minimum viable)
+
+**1. Extract `vibecomfy/workflow/types.py`** (highest ROI)
+- Move: `VibeWorkflow`, `VibeNode`, `VibeEdge`, `VibeInput`, `VibeOutput`, `WorkflowSource`, `WorkflowRequirements`, `RawWidgetPayload`, `ValidationIssue`, `ValidationReport`, `Handle` (or keep `Handle` in `handles.py`)
+- New file has zero `from vibecomfy` imports (only stdlib / dataclasses)
+- `workflow/__init__.py` re-exports `from .types import *` — zero code changes needed in callers
+- All lazy-import workarounds for the `testing↔workflow` cycle can become eager imports
+
+**2. Relocate `_derive_output_kind` out of `templates.py`**
+- Move it to `registry/ready_template.py` (already loaded by templates.py)
+- Deletes 3 lazy imports in emitter files
+
+**3. Strip `workflow` import from `metadata.py`**
+- Replace `VibeInput`/`VibeNode`/etc. type annotations with `Any` or plain dict — these are constant sets, not factories
+
+### Summary
+
+| Module | Problem Severity | Fix Cost | Coupling Reduction |
+|---|---|---|---|
+| `workflow.py` | 🔴 Critical | Medium (split into `workflow/`) | Eliminates ~60 import edges' risk of circularity |
+| `templates.py` | 🟡 Medium | Low (move one function) | Deletes 3 lazy-import workarounds |
+| `metadata.py` | 🟢 Low | Trivial (remove type import) | Removes 1 cross-layer edge |
+| `handles.py` | ✅ Clean | None | — |
+| `errors.py` | ✅ Clean | None | — |
+| `utils.py` | ✅ Clean | None | — |
+
+The **deletion-preferred** recommendation: `_derive_output_kind` can be deleted from `templates.py` entirely (moved to registry). No shims needed — the emitter modules already import `registry.ready_template` transitively.

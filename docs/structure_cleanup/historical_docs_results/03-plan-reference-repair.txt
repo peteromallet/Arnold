@@ -1,0 +1,56 @@
+Now I have all the data needed. Let me compile the full analysis.
+
+---
+
+## Reference Audit: `docs/plans/` Files
+
+### Current State
+All 5 files exist at `docs/plans/`:
+- `docs/plans/README.md`
+- `docs/plans/plan_v2.md`
+- `docs/plans/revised_plan.md`
+- `docs/plans/finalize.json`
+- `docs/plans/loose-work-consolidation-plan.md`
+
+---
+
+### Reference Inventory (excluding `docs/structure_cleanup/*` and `docs/megaplan_chains/*`)
+
+| # | File | Line | Reference | Classification |
+|---|------|------|-----------|----------------|
+| 1 | `vibecomfy/porting/lowering.py` | 7 | `Design decisions (see docs/plans/plan_v2.md):` | **Active code guidance** — docstring directing readers to plan_v2 for architecture rationale |
+| 2 | `vibecomfy/contracts/RUNTIME_CONTRACT.md` | 4 | `([docs/plans/plan_v2.md](../../docs/plans/plan_v2.md))` | **Active doc guidance** — settled gate contract points to plan_v2 as the source plan |
+| 3 | `docs/plans/README.md` | 6 | `[M3 corpus proof and polish](plan_v2.md)` | **Active doc guidance** — directory index |
+| 4 | `docs/plans/README.md` | 7 | `[M0 low-risk reorg plan](revised_plan.md)` | **Active doc guidance** — directory index |
+| 5 | `docs/plans/README.md` | 8 | `[M0 reorg execution manifest](finalize.json)` | **Active doc guidance** — directory index |
+| 6 | `docs/plans/README.md` | 9 | `[Loose-work consolidation plan](loose-work-consolidation-plan.md)` | **Active doc guidance** — directory index |
+| 7 | `docs/audits/m1-step1-audit.md` | 203 | `matching the baseline recorded in finalize.json` | **Generated/audit evidence** — bare name, no path; conceptual reference only |
+| 8 | `docs/plans/loose-work-consolidation-plan.md` | 17 | `../structural_issues.md` (internal ref to root-level doc, not a target) | **Unrelated to this audit** — references `structural_issues.md`, not a target file |
+
+**Excluded but checked:**
+| — | `docs/megaplan_chains/excellence_epic/prep-m3.md` | 471 | `baseline_test_failures in finalize.json is empty` | **Historical evidence** — bare name, no path; does not provide active guidance |
+
+---
+
+### Reference Repair Map
+*(If all 4 plan files move to `docs/historical/` using the naming convention from `03-plans-and-historical-status.txt`)*
+
+**Proposed new paths (from existing audit guidance):**
+- `docs/plans/plan_v2.md` → `docs/historical/m3-corpus-plan.md`
+- `docs/plans/revised_plan.md` → `docs/historical/m0-reorg-plan.md`
+- `docs/plans/finalize.json` → `docs/historical/finalize-execution-manifest.json`
+- `docs/plans/loose-work-consolidation-plan.md` → `docs/historical/loose-work-consolidation-plan.md`
+
+| # | File | Old Reference | New Reference Required? | Exact Change |
+|---|------|---------------|------------------------|--------------|
+| 1 | `vibecomfy/porting/lowering.py:7` | `docs/plans/plan_v2.md` | **YES** | `docs/plans/plan_v2.md` → `docs/historical/m3-corpus-plan.md` |
+| 2 | `vibecomfy/contracts/RUNTIME_CONTRACT.md:4` | `../../docs/plans/plan_v2.md` | **YES** | `../../docs/plans/plan_v2.md` → `../../docs/historical/m3-corpus-plan.md` |
+| 3 | `docs/plans/README.md:6` | `plan_v2.md` | **YES** | `plan_v2.md` → `../historical/m3-corpus-plan.md` |
+| 4 | `docs/plans/README.md:7` | `revised_plan.md` | **YES** | `revised_plan.md` → `../historical/m0-reorg-plan.md` |
+| 5 | `docs/plans/README.md:8` | `finalize.json` | **YES** | `finalize.json` → `../historical/finalize-execution-manifest.json` |
+| 6 | `docs/plans/README.md:9` | `loose-work-consolidation-plan.md` | **YES** | `loose-work-consolidation-plan.md` → `../historical/loose-work-consolidation-plan.md` |
+| 7 | `docs/audits/m1-step1-audit.md:203` | `finalize.json` (bare) | **NO** | No path was specified — conceptual reference to the manifest artifact. No repair needed. |
+
+**Summary: 6 references require repair, 1 does not.**
+
+**Critical path note:** References #1 (`lowering.py`) and #2 (`RUNTIME_CONTRACT.md`) are in production code and a runtime contract — these are the highest-impact fixes. The `README.md` (#3-6) is self-referential within the plans directory and trivially updated alongside the move.

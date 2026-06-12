@@ -1,0 +1,29 @@
+## Audit Report: `docs/structure_cleanup/`
+
+### 1. README/index update needed? **Yes — done.**
+
+The old README only documented the original `briefs/` and `results/` from the first root pass. There are now **13 layer pairs** (briefs + results). I've updated the README with a full directory layout table covering all of them plus a Cleanup Plan section noting the entire folder is a one-time audit artifact slated for `docs/historical/structure-cleanup/`.
+
+New layers documented that were missing:
+- `docs_briefs/` / `docs_results/`
+- `docsroot_briefs/` / `docsroot_results/`
+- `docs_reference_briefs/` / `docs_reference_results/`
+- `agentic_briefs/` / `agentic_results/`
+- `artifacts_briefs/` / `artifacts_results/`
+- `scripts_briefs/` / `scripts_results/`
+- `megaplan_briefs/` / `megaplan_results/`
+- `config_ops_briefs/` / `config_ops_results/`
+- `tests_briefs/` / `tests_results/`
+- `package_briefs/` / `package_results/`
+- `template_surface_briefs/` / `template_surface_results/`
+- `dead_module_briefs/` / `dead_module_results/`
+
+### 2. Misplaced subagent/scratch files? **Yes — one removed.**
+
+- **`docs_reference_results/_fan.pid`** — Transient PID file (`40798`) from the subagent fan runner. Not audit evidence. **Cleared** (emptied the file).
+
+- **`artifacts_impl_brief.md`** — A subagent working brief at the root level. It's a run-instruction brief similar to those in `artifacts_briefs/`. Minor, left in place since it's content, not a transient scratch file.
+
+### 3. Large result folders checked in? **Acceptable as-is.**
+
+The `*_results/` folders contain agent outputs (`.txt`), metadata (`.meta.json`), and aggregated reports (`_report.json`). These are intentionally committed audit evidence for a one-time cleanup pass. The whole `structure_cleanup/` directory is destined for `docs/historical/structure-cleanup/` after completion, so checking them in is the intended pattern — not a concern.

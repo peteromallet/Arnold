@@ -1,0 +1,343 @@
+Now I have a complete picture of every relevant file, reference, path dependency, and gitignored surface. Here is the implementation plan.
+
+---
+
+## `.megaplan` Layer — Mechanical Implementation Plan
+
+### Current State Summary
+
+| Aspect | Status |
+|--------|--------|
+| `.megaplan/` git tracking | **None** — fully gitignored (`.gitignore` line 29) |
+| `docs/megaplan_chains/` git tracking | **Tracked** — no gitignore exclusion |
+| `docs/megaplan_briefs/` git tracking | **Gitignored** (`.gitignore` line 33) — prior aborted cleanup |
+| Chain YAMLs reference `.megaplan/` paths | Yes — `frontier-hardening.yaml` and `scratchpad-emitter.yaml` use `idea: .megaplan/ideas/...` |
+| Scripts reference `.megaplan/` for runtime logs | Yes — cloud operator/recovery loops write to `.megaplan/*.log` |
+| Authored content under `.megaplan/` | ~130 files (briefs, chains, ideas, tickets, schemas, audit doc, debt.json) |
+| Runtime state under `.megaplan/` | ~500+ files (plans, epics, telemetry, wakeup, logs, nested `.megaplan/plans/.chains/`) |
+| `docs/megaplan_chains/` already exists | Yes — `excellence_epic/`, `readable_ready_templates/`, `pristine_cleanup/`, `node_resolution_epic/` |
+| `docs/README.md` already links | Yes — line 30: `[Megaplan chains](megaplan_chains/)` |
+
+---
+
+### Ordered Checklist of Exact Edits
+
+#### ☐ Step 1 — Add `docs/megaplan_chains/README.md`
+
+**Action:** Create new file `docs/megaplan_chains/README.md`.
+
+**Purpose:** Documents the layer so a future implementer knows what belongs where.
+
+**Content outline:**
+
+```markdown
+# Megaplan Chains — Authored Design & Planning Material
+
+This subtree holds the human-authored design briefs, orchestration chain
+configs, idea specs, protocol schemas, and tech-debt tickets that drive the
+megaplan/arnold agent pipeline.
+
+The original copies live here (`docs/megaplan_chains/`) and are git-tracked.
+Symlinks under `.megaplan/` (gitignored) point here so the megaplan engine's
+runtime path references continue to resolve. Runtime-generated state (plan
+execution artifacts, telemetry, logs, PID files) stays in `.megaplan/` and
+remains gitignored.
+
+## Layout
+
+| Directory | Contents |
+|-----------|----------|
+| `briefs/` | Milestone briefs (.md) and chain orchestration configs (.yaml) per epic |
+| `chains/` | Top-level epic chain orchestration YAML files |
+| `ideas/` | Sprint-scope idea briefs |
+| `schemas/` | JSON Schema definitions for megaplan pipeline phases |
+| `tickets/` | Curated tech-debt tickets (one .md per ticket) |
+
+## What stays in .megaplan/ (gitignored)
+
+| Path | Contents |
+|------|----------|
+| `.megaplan/plans/` | Per-run execution artifacts (state.json, execution batches, critiques, gates, faults) |
+| `.megaplan/epics/` | Timeline event logs per milestone |
+| `.megaplan/telemetry/` | LLM token-by-token call traces |
+| `.megaplan/wakeup/` | Daemon PID files and wakeup logs |
+| `.megaplan/logs/` | Driver session logs |
+| `.megaplan/verification/` | Raw verification logs |
+| `.megaplan/*.log` | Command output logs (init, test runs) |
+| `.megaplan/**/.megaplan/` | Nested chain state accidentally spawned inside worktrees |
+| `.megaplan/recovery-prompts/` | Auto-generated recovery agent prompts |
+| `.megaplan/manual-backups/` | Auto-generated diffs from recovery loop |
+| `.megaplan/debt.json` | Mixed authored/auto-generated tech-debt registry (3.6K lines) |
+
+## Active chains (with cloud deployment)
+
+- `readable_ready_templates/` — cloud-deployed, branch `megaplan/production-parity-templates`
+- `pristine_cleanup/` — planned, branch `megaplan/pristine-cleanup`
+- `node_resolution_epic/` — designed, not yet launched
+- `excellence_epic/` — historical (all milestones landed)
+
+## NOT in this subtree
+
+- `.megaplan/debt.json` — stays in `.megaplan/` due to auto-update concerns
+- All runtime state listed above
+```
+
+---
+
+#### ☐ Step 2 — Move authored `briefs/` from `.megaplan/` to `docs/megaplan_chains/`
+
+**Action:** `cp -a .megaplan/briefs docs/megaplan_chains/briefs/ && mv .megaplan/briefs .megaplan/briefs.bak && ln -s ../docs/megaplan_chains/briefs .megaplan/briefs && rm -rf .megaplan/briefs.bak`
+
+Or stepwise: move, then symlink.
+
+**Files affected:** ~50+ files across:
+- `.megaplan/briefs/structural-decomposition/` (8 files including `chain.yaml`, `STRATEGY.md`)
+- `.megaplan/briefs/reorg/` (4 files including `chain.yaml`, `STRATEGY.md`)
+- `.megaplan/briefs/text-to-graph-agent-epic/` (7 milestone .md + `chain.yaml`)
+- `.megaplan/briefs/agent-edit-chat-platform/` (5 files + `chain.yaml`)
+- `.megaplan/briefs/agent-edit-live-streaming/` (3 milestones + `chain.yaml`)
+- `.megaplan/briefs/agent-edit-structural/` (2 milestones + `chain.yaml`)
+- `.megaplan/briefs/agent-edit-hardening/` (4 milestones + `chain.yaml`)
+- `.megaplan/briefs/phase2-reorg-plan.md`
+- `.megaplan/briefs/phase2-repo-organization-audit.md`
+- ~15 standalone brief `.md` files at root of `briefs/`
+
+**Risk:** Low — these are plain Markdown and YAML. The symlink ensures any runtime engine reading `briefs/chain.yaml` still works.
+
+**Important sub-note:** `text-to-graph-agent-epic/.megaplan/plans/.chains/chain-5da176d49554.json` is a **nested runtime artifact** inside the brief subtree. It moves with the briefs as a stowaway. It's gitignored (`.megaplan/` pattern matches at any depth) so it will not be tracked. No action needed.
+
+---
+
+#### ☐ Step 3 — Move top-level chain YAMLs
+
+**Action:**
+```bash
+mkdir -p docs/megaplan_chains/chains/
+cp .megaplan/chains/frontier-hardening.yaml docs/megaplan_chains/chains/frontier-hardening.yaml
+cp .megaplan/chains/scratchpad-emitter.yaml docs/megaplan_chains/chains/scratchpad-emitter.yaml
+# Then replace originals with symlinks
+mv .megaplan/chains .megaplan/chains.bak
+ln -s ../docs/megaplan_chains/chains .megaplan/chains
+rm -rf .megaplan/chains.bak
+```
+
+**Files affected:**
+- `.megaplan/chains/frontier-hardening.yaml` (98 lines, STATUS: COMPLETE — all LANDED)
+- `.megaplan/chains/scratchpad-emitter.yaml` (159 lines, all milestones LANDED/merged)
+
+**Risk:** Low. Both chains are marked COMPLETE. Their `idea:` fields reference `.megaplan/ideas/...` paths. Since the ideas/ directory will also be symlinked (Step 4), those paths still resolve correctly through the symlink chain: `chain.yaml` → `idea: .megaplan/ideas/...` → `.megaplan/ideas/` (symlink) → `docs/megaplan_chains/ideas/`.
+
+**Note:** The nested `.megaplan/chains/.megaplan/plans/.chains/scratchpad-emitter-abdb4f11c3ba.json` is a nested runtime artifact. It stays ignored.
+
+---
+
+#### ☐ Step 4 — Move `ideas/`
+
+**Action:**
+```bash
+cp -a .megaplan/ideas docs/megaplan_chains/ideas/
+mv .megaplan/ideas .megaplan/ideas.bak
+ln -s ../docs/megaplan_chains/ideas .megaplan/ideas
+rm -rf .megaplan/ideas.bak
+```
+
+**Files affected:** 18 files across:
+- `.megaplan/ideas/frontier-hardening/` (5 sprint idea .md files)
+- `.megaplan/ideas/scratchpad-emitter/` (13 files: milestones + robustness/executability reviews)
+
+**Risk:** Lowest in this batch — pure Markdown, no code dependencies. Existing chain YAML `idea:` paths resolve through the symlink.
+
+---
+
+#### ☐ Step 5 — Move `tickets/`
+
+**Action:**
+```bash
+cp -a .megaplan/tickets docs/megaplan_chains/tickets/
+mv .megaplan/tickets .megaplan/tickets.bak
+ln -s ../docs/megaplan_chains/tickets .megaplan/tickets
+rm -rf .megaplan/tickets.bak
+```
+
+**Files affected:** 29 human-curated tech-debt ticket `.md` files (one per ticket, ID-based filenames like `01KT6PFVEQZEVYDBAHVQQH11B2-*.md`).
+
+**Risk:** Lowest. Pure Markdown. No runtime engine path dependency on tickets.
+
+---
+
+#### ☐ Step 6 — Move `schemas/`
+
+**Action:**
+```bash
+cp -a .megaplan/schemas docs/megaplan_chains/schemas/
+mv .megaplan/schemas .megaplan/schemas.bak
+ln -s ../docs/megaplan_chains/schemas .megaplan/schemas
+rm -rf .megaplan/schemas.bak
+```
+
+**Files affected:** 19 JSON Schema files:
+- `plan.json`, `execution.json`, `critique.json`, `review.json`, `gate.json`, `finalize.json`, `prep.json`, `loop_plan.json`, `loop_execute.json`, `revise.json`, `research.json`, `feedback.json`, `critique_evaluator.json`, `directors_notes.json`, `execution_doc.json`, `prep_triage.json`, `prep_metrics.json`, `tiebreaker_researcher.json`, `tiebreaker_challenger.json`
+
+**Risk:** Low-Medium. The prior audit flagged schemas as higher risk because "the engine reads schemas from `.megaplan/schemas/` at runtime with no configurable base path." The **symlink** mitigates this completely — the engine still sees `.megaplan/schemas/...` and it resolves to `docs/megaplan_chains/schemas/...` transparently. No engine patch needed.
+
+---
+
+#### ☐ Step 7 — Move `audit-adaptive-critique.md`
+
+**Action:**
+```bash
+cp .megaplan/audit-adaptive-critique.md docs/megaplan_chains/audit-adaptive-critique.md
+mv .megaplan/audit-adaptive-critique.md .megaplan/audit-adaptive-critique.md.bak
+ln -s ../docs/megaplan_chains/audit-adaptive-critique.md .megaplan/audit-adaptive-critique.md
+rm -f .megaplan/audit-adaptive-critique.md.bak
+```
+
+**Files affected:** 1 file — `.megaplan/audit-adaptive-critique.md` (forensic audit, referenced by engine fix PRs).
+
+**Risk:** Low. Symlink ensures any engine reference still resolves.
+
+---
+
+#### ☐ Step 8 — Do NOT touch `.megaplan/debt.json`
+
+**Decision:** Leave `debt.json` (3663 lines, 235 KB) in place under `.megaplan/`. It is a mixed authored/auto-updated registry with active flag/plan ID references. Moving it risks breaking runtime debt queries. Document in README as intentionally staying in `.megaplan/`.
+
+---
+
+#### ☐ Step 9 — Verify the `.gitignore` correctly handles everything
+
+**Check:** `.gitignore` line 29: `.megaplan/` — this pattern (no leading slash) matches `.megaplan/` at any depth. Verify it also catches:
+- `docs/megaplan_chains/excellence_epic/.megaplan/` (nested chain state) — **yes**, pattern matches all depths
+- Any future nested `.megaplan/` that might be generated
+
+**Check:** `.gitignore` line 33: `docs/megaplan_briefs/` — this stale exclusion can remain. It's a historical artifact from a prior cleanup attempt that gitignored the wrong location. Do not touch it in this pass.
+
+**No changes needed to `.gitignore`** — it already correctly ignores `.megaplan/` at all depths.
+
+---
+
+#### ☐ Step 10 — Verify `docs/README.md` reference
+
+**Check:** `docs/README.md` line 30 already has:
+```markdown
+- [Megaplan chains](megaplan_chains/)
+```
+
+This reference is correct. **No change needed.**
+
+---
+
+### Files That Must NOT Be Deleted
+
+| Path | Why |
+|------|-----|
+| `.megaplan/briefs/**/chain.yaml` (all 8) | Runtime engine reads these for milestone orchestration |
+| `.megaplan/chains/frontier-hardening.yaml` | Historical chain spec; the symlink preserves readability |
+| `.megaplan/chains/scratchpad-emitter.yaml` | Historical chain spec; the symlink preserves readability |
+| `.megaplan/briefs/reorg/STRATEGY.md` | Strategy doc for current reorg Phase 2 |
+| `.megaplan/briefs/phase2-reorg-plan.md` | Concrete 16-unit reorg plan being executed |
+| `.megaplan/audit-adaptive-critique.md` | Forensic audit of adaptive-critique bug |
+| `.megaplan/schemas/*.json` (all 19) | Engine pipeline protocol schemas |
+| `.megaplan/debt.json` | 3.6K-line debt registry with active references |
+| All existing `docs/megaplan_chains/` content | Already tracked, active chains |
+
+None of these are deleted — they are either moved+symlinked or left in place.
+
+---
+
+### Files That Can Be Left as Runtime State (No Action)
+
+These should remain in `.megaplan/`, gitignored. Do not delete or move them.
+
+| Path | Why |
+|------|-----|
+| `.megaplan/plans/` | Per-run execution artifacts |
+| `.megaplan/epics/` | Timeline event logs |
+| `.megaplan/telemetry/` | LLM traces |
+| `.megaplan/wakeup/` | PID files and logs |
+| `.megaplan/logs/` | Driver session logs |
+| `.megaplan/verification/` | Raw verification logs |
+| `.megaplan/*.log` (root-level) | Command output logs |
+| `.megaplan/**/.megaplan/plans/` | Nested chain state in worktrees |
+| `.megaplan/recovery-prompts/` | Auto-generated recovery prompts |
+| `.megaplan/manual-backups/` | Auto-generated diff backups |
+| `.megaplan/init-local-library.log` | Command output |
+| `.megaplan/plan-sandbox-test.log` | Command output |
+| `.megaplan/plan-retest.log` | Command output |
+| `.megaplan/plan-native-test.log` | Command output |
+| `.megaplan/auto-local-library.log` | Command output |
+
+---
+
+### Verification Commands
+
+Run these after each step to confirm correctness:
+
+```bash
+# 1. Confirm .megaplan/ dirs still resolve through symlinks
+#    After Steps 2-7, these should all succeed:
+ls -la .megaplan/briefs/structural-decomposition/chain.yaml
+ls -la .megaplan/ideas/scratchpad-emitter/ROBUSTNESS-REVIEW-2026-05-28.md
+ls -la .megaplan/chains/frontier-hardening.yaml
+ls -la .megaplan/schemas/plan.json
+ls -la .megaplan/tickets/01KT6PFVEQZEVYDBAHVQQH11B2-*.md
+ls -la .megaplan/audit-adaptive-critique.md
+
+# 2. Confirm new tracked copies exist
+ls -la docs/megaplan_chains/briefs/structural-decomposition/chain.yaml
+ls -la docs/megaplan_chains/ideas/scratchpad-emitter/
+ls -la docs/megaplan_chains/chains/frontier-hardening.yaml
+ls -la docs/megaplan_chains/schemas/plan.json
+ls -la docs/megaplan_chains/tickets/
+ls -la docs/megaplan_chains/audit-adaptive-critique.md
+
+# 3. Confirm runtime state still un-tracked
+git ls-files .megaplan/ | head -20
+# Expected: (empty — no output)
+
+# 4. Confirm runtime state still accessible to scripts
+#    Check the cloud operator script still finds its log path:
+grep -n '\.megaplan/' scripts/megaplan_cloud_operator_loop.sh
+# Expected: line 8: LOG="${OPERATOR_LOG:-/workspace/app/.megaplan/cloud-operator-loop.log}"
+#           line 59: "... >> /workspace/app/.megaplan/cloud-chain.log 2>&1"
+
+# 5. Confirm debt.json untouched
+ls -la .megaplan/debt.json
+
+# 6. Confirm nested chain state in docs/ is still gitignored
+git check-ignore docs/megaplan_chains/excellence_epic/.megaplan/plans/.chains/chain-db6e5f76a62a.json
+# Expected: the file path (meaning it's ignored)
+
+# 7. Confirm no tracked files accidentally deleted
+git diff --stat
+# Expected: only additions to docs/megaplan_chains/ and the symlink changes in .megaplan/
+# (symlinks in .megaplan/ won't appear since .megaplan/ is gitignored)
+```
+
+---
+
+### Changes Rejected as Too Risky for This Pass
+
+| Proposed Change | Risk | Reason |
+|----------------|------|--------|
+| **Delete runtime state** (`plans/`, `epics/`, etc.) | Medium | No benefit — they're already gitignored. Deleting active plan sessions could abort in-progress chain execution. The task explicitly says "Avoid deleting ignored `.megaplan` runtime state without explicit user approval." |
+| **Move `debt.json` to `docs/megaplan_chains/`** | Medium | Mixed authored/auto-updated content (3.6K lines, 235 KB). If the megaplan engine auto-updates it, the tracked copy would diverge. Requires verification with the chain engine owner. |
+| **Move schemas WITHOUT a symlink** (engine patch approach) | High | The prior audit noted "the engine reads schemas from `.megaplan/schemas/` at runtime with no configurable base path." Moving without a symlink + engine patch would crash the pipeline. The symlink mitigates this; a pure move (no symlink) is rejected. |
+| **Remove `docs/megaplan_briefs/` gitignore line** | Low-Medium | Unnecessary — it's a dead exclusion from a prior cleanup. Removing it could accidentally track stale content if any files exist there. Leave it. |
+| **Update chain YAML idea paths** (e.g., `.megaplan/ideas/...` → `docs/megaplan_chains/ideas/...`) | Low-Medium | Unnecessary with symlinks. Both chains are already COMPLETE (all milestones LANDED). Path changes only matter if the chain is re-run. If re-run later, the symlinks resolve correctly. If someone wants to update the paths for clarity, that's a separate future pass. |
+| **Move runtime chain state** from `docs/megaplan_chains/excellence_epic/.megaplan/` to `.megaplan/` | Low | The file is already gitignored (`.megaplan/` pattern matches at any depth). Moving it provides no benefit and risks breaking the chain state reference. Leave it. |
+
+---
+
+### Summary of File Operations
+
+| Action | Count | Description |
+|--------|-------|-------------|
+| **New files created (tracked)** | ~130 | Copy authored content to `docs/megaplan_chains/` |
+| **New README created (tracked)** | 1 | `docs/megaplan_chains/README.md` |
+| **Symlinks created (local, ignored)** | 6 | `briefs`, `chains`, `ideas`, `tickets`, `schemas`, `audit-adaptive-critique.md` |
+| **Originals removed from `.megaplan/`** | ~130 | After copy+verify, originals deleted, replaced by symlinks |
+| **Files left in place (ignored)** | ~500+ | All runtime state, `debt.json` |
+| **Files edited** | 0 | No existing tracked files are modified |
+| **`.gitignore` changes** | 0 | No changes needed |
+| **`docs/README.md` changes** | 0 | Already has `[Megaplan chains](megaplan_chains/)` link |

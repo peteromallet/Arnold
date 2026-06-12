@@ -11,7 +11,7 @@ from typing import Any, Mapping, Sequence
 
 from vibecomfy.custom_node_refs import lock_entry_to_ref, normalize_custom_node_requirements
 from vibecomfy.node_packs import get_known_node_packs
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+from vibecomfy.node_packs import LockEntry, read_lockfile
 from vibecomfy.porting.readability_inventory import build_readability_inventory
 from vibecomfy.registry.static_contract import extract_ready_template_contract
 

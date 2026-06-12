@@ -1,0 +1,80 @@
+Here is the audit table and recommendations.
+
+---
+
+## Runtime Boundary Audit
+
+### File-by-file classification
+
+| File | Lines | Role | Public API? | Verdict |
+|---|---|---|---|---|
+| **`session.py`** | 1,461 | **Primary public boundary.** `EmbeddedSession`, `ServerSession`, `SessionConfig`, `RunResult`, the `VibeSession` protocol, plus ~20 private helpers | Yes — 4 exports in `__init__` | **Monolith.** Contains duplicate definitions also living in other files. |
+| **`run.py`** | 218 | **Top-level public entry points** (`run`, `run_sync`, `run_embedded`, `run_embedded_sync`, `smoke_runtime`, `smoke_runtime_sync`) | Yes — 6 exports in `__init__` | Clean. Imports private helpers from `session.py`. |
+| **`server.py`** | 39 | One-shot context manager `comfy_server()` that delegates to `_spawn_comfy_server` | No — zero exports, one import site (`run.py`) | **Internal.** 39-line wrapper used only by `run.py`. |
+| **`server_process.py`** | 57 | `_spawn_comfy_server` + `_comfyui_executable` | No — underscored functions | **Duplicate.** `session.py` has its own `_spawn_comfy_server` (lines 1317-1351) that is more featured (log-header, `PYTHONUNBUFFERED`, configurable timeout). |
+| **`client.py`** | 69 | `ComfyClient` — thin HTTP client wrapping `/system_stats`, `/prompt`, `/api/free`, `/object_info`, `/history` | No¹ | Clean, focused. Keep. |
+| **`execution.py`** | 95 | `normalize_prompt_id`, `QueuedExecution`, `queue_embedded_prompt`, `queue_server_prompt`, `collect_output_paths` / `embedded_outputs` | No | **Largely superseded** — `session.py` calls `ComfyClient` and `_wait_for_server_history` directly; `collect_output_paths` has its own version with output-directory resolution. |
+| **`attempt.py`** | 249 | `build_attempt_bundle`, `write_attempt_json`, `build_shared_fields` | No² | Clean, self-contained. Keep. |
+| **`discovery.py`** | 41 | `find_active_session`, `_cleanup_session_files` | No | **DELETABLE.** `session.py` has richer `active_session_metadata()` + `find_active_session()` + `current_source_revision()`. Zero external imports of this module. |
+| **`fingerprint.py`** | 29 | `model_fingerprint`, `OVERRIDES_INCLUDE`, `OVERRIDES_EXCLUDE` | No | **DELETABLE.** Identical code (lines 1442-1461) lives in `session.py`. Zero imports of this module anywhere. |
+| **`config.py`** | 157 | `SessionConfig`, `apply_memory_profile_override`, `_partition_comfy_config`, `_embedded_configuration_for_session`, `_embedded_configuration`, `_comfy_server_argv` | No³ | **DELETABLE.** *Everything* here is duplicated in `session.py`. Worse — the `session.py` copy has extra logic (sage-attention env var, `extra_model_paths.yaml`, `_env_requests_sage_attention`). Two callers (`server.py`, `server_process.py`) import from `config.py`, meaning they silently use the stale copy. |
+
+¹ Used internally; no re-export needed. ² Imported by `session.py` and `run.py`. ³ `SessionConfig` is re-exported; the other functions are private.
+
+### Duplicate/Stale matrix
+
+| What | Where (v1) | Where (v2) | Drift? |
+|---|---|---|---|
+| `SessionConfig` | `config.py` L17-39 | `session.py` L150-173 | **Yes** — slot-based in both; identical fields BUT `session.py` is the authoritative canonical copy |
+| `apply_memory_profile_override` | `config.py` L42-48 | `session.py` L176-182 | Identical |
+| `_partition_comfy_config` | `config.py` L51-99 | `session.py` L811-859 | Identical |
+| `_embedded_configuration_for_session` | `config.py` L102-133 | `session.py` L1222-1258 | **Yes** — `session.py` adds `_env_requests_sage_attention()` and `extra_model_paths.yaml` |
+| `_embedded_configuration` | `config.py` L136-137 | `session.py` L1270-1271 | Identical |
+| `_comfy_server_argv` | `config.py` L140-157 | `session.py` L1274-1299 | **Yes** — `session.py` adds `--input-directory`/`--output-directory`/`--temp-directory` flags and sage-attention |
+| `_spawn_comfy_server` | `server_process.py` L16-47 | `session.py` L1317-1351 | **Yes** — `session.py` logs launch to log_handle, sets `PYTHONUNBUFFERED`, uses configurable `ready_timeout_sec` |
+| `_comfyui_executable` | `server_process.py` L50-57 | `session._comfyui_command` → `comfyui_command()` | **Different resolution** — `server_process.py` uses `shutil.which("comfyui")`; `session.py` delegates to `vibecomfy.comfy_command` |
+| `model_fingerprint` | `fingerprint.py` L10-29 | `session.py` L1442-1461 | Identical |
+| `find_active_session` + `_cleanup_session_files` | `discovery.py` L7-41 | `session.py` L679-792 | `session.py` has richer logic (stale-revision detection, `active_session_metadata()`, `current_source_revision()`) |
+| `collect_output_paths` / `embedded_outputs` | `execution.py` L34-52 | `session._collect_output_paths` L1178-1193 | **Different** — `execution.py` version naive; `session.py` version resolves Comfy's filename/subfolder dicts via `_resolve_comfy_output_filename` |
+
+### Who imports the stale files?
+
+| File | Importers | Importing what |
+|---|---|---|
+| `config.py` | `server.py` (L9), `server_process.py` (L13) | `SessionConfig` (both), `_comfy_server_argv` (server_process) |
+| `server_process.py` | `server.py` (L10), `config.py` (L141, for `_comfyui_executable`) | `_spawn_comfy_server` (server.py), `_comfyui_executable` (config.py) |
+| `fingerprint.py` | **None** | — |
+| `discovery.py` | **None** | — |
+
+### Actionable recommendations
+
+1. **DELETE `fingerprint.py`** — Dead code, zero imports, fully duplicated in `session.py`.
+2. **DELETE `discovery.py`** — Dead code, zero imports, superseded by `session.py`'s richer version.
+3. **DELETE `config.py`** after re-pointing its two callers:
+   - `server.py`: change `from .config import SessionConfig` → `from .session import SessionConfig`
+   - `server_process.py`: change `from .config import SessionConfig, _comfy_server_argv` → `from .session import SessionConfig, _comfy_server_argv`; remove the `_comfyui_executable` import (not used after this switch).
+4. **MERGE `server_process.py` into `session.py`** or vice versa. The `session.py` version of `_spawn_comfy_server` is the canonical one. Either inline the 3-line `_comfyui_executable` call or export it from `session.py`.
+5. **MERGE `server.py` into `run.py`** — it's a 39-line context manager used by exactly one caller.
+6. **KEEP** `client.py`, `attempt.py`, `execution.py` as-is.
+
+After these changes the runtime package would shrink from 10 files to 5–6:
+```
+runtime/
+  __init__.py        — exports (unchanged)
+  session.py         — embedded + server sessions, config, fingerprint, spawn (was 1,461 lines → ~1,550)
+  run.py             — top-level run functions (was 218 lines → ~260 after merging server.py)
+  client.py          — ComfyClient (unchanged)
+  attempt.py         — attempt bundle builder (unchanged)
+  execution.py       — queue helpers (unchanged; optionally keep or inline into session.py)
+```
+
+### Focused tests to prove these recommendations
+
+| Test | What it proves |
+|---|---|
+| `test_runtime_fingerprint_import_is_dead` | Import `vibecomfy.runtime.fingerprint` → assert it's importable but that no other module references its symbols (grepping `fingerprint.model_fingerprint` across the codebase yields 0 non-definition hits) |
+| `test_runtime_discovery_import_is_dead` | Same for `discovery.find_active_session` |
+| `test_session_config_identity` | Import `SessionConfig` from both `session` and `config` → assert the `dataclass` field sets are identical; this **fails today** proving drift. |
+| `test_comfy_server_argv_drift` | Call `_comfy_server_argv` from `session` and `config` with same config → assert outputs differ (proves `session.py` version is canonical). |
+| `test_spawn_comfy_server_behavioral_eq` | Mock the subprocess layer and assert both `server_process._spawn_comfy_server` and `session._spawn_comfy_server` produce the same argv and process env (proves one can be deleted). |
+| `test_import_migration` | After the config.py deletion and import re-pointing, run `pytest tests/test_runtime_session_server.py tests/test_runtime_run.py` — 100% pass rate. |

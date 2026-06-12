@@ -1,0 +1,24 @@
+## Classification
+
+| Artifact | Type | Rationale |
+|---|---|---|
+| **`artifacts/m4/`** (3 files) | **Historical evidence** | Captures git status + pre/post pytest logs from the `epic/structural-decomposition/m4-resolution` worktree. `m4_baseline_goldens.txt` = git branch/status; `m4_baseline_pre_apply.txt` = "292 passed, 3 skipped" (green state before M4 changes); `m4_after.txt` = "13 failed, 700 passed, 12 skipped" (post-refactor, all failures annotated as "by-design-red"). Not referenced by any test. |
+| **`artifacts/m5_agent_edit_imports.txt`** | **Historical evidence** | `grep` output from a `structural-decomp` worktree listing 89 import lines that reference `vibecomfy.comfy_nodes.agent.*`. A one-time discovery artifact for agent-edit module boundaries. Not referenced by any code. |
+| **`artifacts/m5_baseline_red.txt`** | **Historical evidence** | 1.7 MB pytest log showing `F` (failure) markers across the full suite. Captured the "red" state of M5 before decomposition began. Not referenced by any test — purely archival. |
+| **`artifacts/m5a-emitter-baseline/`** | **Generated snapshot** | Pre-split emitter output for 2 templates (`image/z_image`, `video/ltx2_3_t2v`) with SHA256 hashes + pytest logs. Proves the "before" state for behavioral-preservation verification during the M5a emitter split. |
+| **`artifacts/m5a-emitter-after/`** | **Generated snapshot** | Post-split emitter output for the same 2 templates. SHA256s are **identical** to baseline (`e39714c6...`, `454bf99a...`), confirming byte-identical emitter output after the refactor. Not referenced by any test — exists purely as verification evidence. |
+
+**None are active test fixtures** (zero test files reference these paths).  
+**None are golden baselines** (the actual golden test in `tests/test_agentic_golden_m5.py` reads from `agentic/` dir, not `artifacts/`).
+
+## Safe Action List
+
+1. **Archive `artifacts/m4/` → `docs/archive/m4-test-evidence/`** — Historical logs from a completed sprint. No test or doc references them. Safe to move or delete.
+
+2. **Archive `artifacts/m5_agent_edit_imports.txt` → `docs/archive/m5-agent-edit-imports.txt`** — Stale grep output from a worktree (paths reference `/Users/peteromalley/Documents/.megaplan-worktrees/structural-decomp/`, which no longer exists). No references anywhere.
+
+3. **Archive `artifacts/m5_baseline_red.txt` → `docs/archive/m5-baseline-red.txt`** — 1.7 MB raw pytest output. If the "by-design-red" list is still needed, extract the failure names to a small doc; otherwise delete outright. Unreferenced.
+
+4. **Keep or slim `artifacts/m5a-emitter-baseline/` and `artifacts/m5a-emitter-after/`** — These are the strongest evidence of behavioral preservation (identical SHA256s). Consider condensing into a single summary doc (`docs/archive/m5a-emitter-split-evidence.md`) noting the byte-identity proof, then removing the template `.py` files and raw pytest logs. The manifest `.json` and `.gitkeep` can be cleaned up.
+
+5. **If all are archived**, the `artifacts/` dir root can be cleaned to only active artifacts (e.g., `m1-step1-audit.md`, `m1-safety-gate.md`, `m6-public-api.md`).

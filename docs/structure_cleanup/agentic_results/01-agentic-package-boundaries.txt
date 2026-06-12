@@ -1,0 +1,32 @@
+Here's the audit.
+
+---
+
+## 1. Intended boundary (per `agentic/__init__.py`, lines 3–11)
+
+The package claims to contain only five things: **`adapter.py`**, **`runner.py`**, **`scenarios/`**, **`briefs/`**, and **`README.md`**. Its purpose is "Sisypy-compatible adapter, runner, scenarios, and briefs."
+
+## 2. Misplaced files / directories
+
+| Path | Problem |
+|------|---------|
+| `agentic/evidence/` | Three frozen-evidence data files (`actions.jsonl`, `compiled_api.json`, `metadata.json`) sitting *in* the source tree with no `__init__.py`. Nothing imports them; they're not output from a run (`out/agentic/reports/`). Looks like stale artifacts. |
+| `agentic/actors.py` | Exists but is **not listed** in the `__init__.py` docstring. It's a flat module alongside `actors_m4/` and `actors_m5/` subpackages — an inconsistency in naming convention. |
+| `agentic/actors_m4/` | Not listed in `__init__.py` docstring. Imported by `adapter.py` (line 34) and `tests/test_agentic_golden_m4.py` (line 25). |
+| `agentic/actors_m5/` | Same — not listed in `__init__.py` docstring. Imported by `adapter.py` (line 35) and `tests/test_agentic_golden_m5.py` (line 27). |
+
+## 3. Safe structural changes (no runtime effect)
+
+- **Update `agentic/__init__.py` docstring** to mention `actors.py`, `actors_m4/`, `actors_m5/` as evidence-builder subpackages.
+- **Delete `agentic/evidence/`** — these 3 files are stale. No code imports them; no test depends on them. If needed later, they describe an `add-depth-controlnet-image` scenario that already exists in `scenarios/`.
+- **Add `__pycache__/` to `.gitignore`** (or git-ignore the cache dirs). Not a code issue, but several `.pyc` dirs are tracked.
+- **Add `agentic/evidence/.gitkeep`** if you want an empty evidence output dir as a placeholder — but the existing data has no consumer.
+
+## 4. Risky changes to avoid
+
+- **Renaming `actors_m4/` or `actors_m5/`** (`agentic/adapter.py` lines 34–35, `tests/test_agentic_golden_m4.py:25`, `tests/test_agentic_golden_m5.py:27`). Three separate consumers import by exact path.
+- **Merging `actors.py` → `actors_m2/`** (breaking `agentic/adapter.py` lines 19–33 and `tests/test_agentic_adapter.py` lines 508, 680).
+- **Moving `agentic/scenarios/` or `agentic/briefs/`** — referenced by path from `runner.py` and both golden tests (`test_agentic_golden_m4.py:28-29`, `test_agentic_golden_m5.py:29-30`).
+- **Deleting any `__init__.py`** from `actors_m4/` or `actors_m5/` — they export `_M4_BUILDERS` / `_M5_BUILDERS` dicts that `adapter.py` and golden tests depend on.
+- **Changing the `__all__` exports** in `actors_m4/__init__.py` or `actors_m5/__init__.py` — `adapter.py` imports `_M4_BUILDERS` and `_M5_BUILDERS` by name.
+- **Renaming the `_M4_BUILDERS` / `_M5_BUILDERS` dict keys** — they are the public scenario-name→builder mapping used by `adapter.py` to dispatch.

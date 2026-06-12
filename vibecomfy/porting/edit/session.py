@@ -25,7 +25,7 @@ from .ops import (
     UpsertLinkOp,
 )
 from .types import FieldChange
-from vibecomfy.porting.emit.emitter import EmissionDiagnostic, emit_agent_edit_python
+from vibecomfy.porting.emitter import EmissionDiagnostic, emit_agent_edit_python
 from .projection import HELPER_NODE_TYPES, MODE_LABELS
 from vibecomfy.porting.layout.placement import (
     BatchPlacementFacts,
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
 
 
-from vibecomfy.porting.edit_session_types import (
+from vibecomfy.porting.edit._session_types import (
     BatchResult,
     CompactDiagnostic,
     DoneResult,
@@ -63,7 +63,7 @@ from vibecomfy.porting.edit_session_types import (
     _extract_uid_name_pairs,
 )
 
-from vibecomfy.porting.edit_session_parse import (
+from vibecomfy.porting.edit._parse import (
     _ALLOWED_VIBECOMFY_CONSTRUCTION_CLASS_TYPES,
     _RAW_COORDINATE_HINT_NAMES,
     _assignment_op_kind,
@@ -75,7 +75,7 @@ from vibecomfy.porting.edit_session_parse import (
     _unsafe,
 )
 
-from vibecomfy.porting.edit_session_ir_utils import (
+from vibecomfy.porting.edit._ir_utils import (
     _MISSING_WIDGET_VALUE,
     _api_edges,
     _api_one_hop_neighbors,
@@ -94,18 +94,18 @@ from vibecomfy.porting.edit_session_ir_utils import (
 )
 from vibecomfy.porting.resolution import _find_named_slot
 
-from vibecomfy.porting.edit_session_diff import (
+from vibecomfy.porting.edit._diff import (
     _DiffMixin,
     _UNRESOLVED_OLD_VALUE,
     _render_op_diff,
     _repr_short,
 )
 
-from vibecomfy.porting.edit_session_resolve import _ResolveMixin
-from vibecomfy.porting.edit_session_describe import _DescribeMixin
-from vibecomfy.porting.edit_session_gates import _GatesMixin
-from vibecomfy.porting.edit_session_render import _RenderMixin
-from vibecomfy.porting.edit_session_parse_execute import _ParseExecuteMixin
+from vibecomfy.porting.edit._resolve import _ResolveMixin
+from vibecomfy.porting.edit._describe import _DescribeMixin
+from vibecomfy.porting.edit._gates import _GatesMixin
+from vibecomfy.porting.edit._render import _RenderMixin
+from vibecomfy.porting.edit._parse_execute import _ParseExecuteMixin
 
 
 class EditSession(_RenderMixin, _ParseExecuteMixin, _ResolveMixin, _DescribeMixin, _GatesMixin, _DiffMixin):
