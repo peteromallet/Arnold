@@ -3,6 +3,7 @@
  * Not part of the supported public SDK surface.
  */
 import { getSupabaseClient } from '@/integrations/supabase/client.ts';
+import { readAccessTokenFromStorage } from '@/shared/lib/supabaseSession';
 import { generateUUID } from '@/shared/lib/taskCreation/ids.ts';
 import { createDefaultTimelineConfig } from '@/tools/video-editor/lib/defaults.ts';
 import { extractAssetRegistryEntry } from '@/tools/video-editor/lib/mediaMetadata.ts';
@@ -22,6 +23,17 @@ import type { Checkpoint } from '@/tools/video-editor/types/history.ts';
 const TIMELINE_ASSETS_BUCKET = 'timeline-assets';
 const TIMELINE_CHECKPOINT_LIMIT = 30;
 const TIMELINE_CHECKPOINT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const APPEND_SERVICE_URL_ENV = 'VITE_REIGH_APPEND_SERVICE_URL';
+
+type AppendServiceSuccess = {
+  config_version?: unknown;
+};
+
+type AppendServiceFailure = {
+  error?: unknown;
+  detail?: unknown;
+  details?: unknown;
+};
 
 
 type TimelineCheckpointRow = {
@@ -44,6 +56,64 @@ function mapCheckpointRow(row: TimelineCheckpointRow): Checkpoint {
     label: row.label,
     editsSinceLastCheckpoint: row.edits_since_last_checkpoint,
   };
+}
+
+function getAppendServiceBaseUrl(): string {
+  const value = (import.meta.env[APPEND_SERVICE_URL_ENV] as string | undefined)?.trim();
+  if (!value) {
+    throw new Error(`Missing required append service environment variable: ${APPEND_SERVICE_URL_ENV}`);
+  }
+  return value.replace(/\/+$/, '');
+}
+
+async function parseJsonIfPresent(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+async function getUserJwt(): Promise<string> {
+  const cachedToken = readAccessTokenFromStorage()?.trim();
+  if (cachedToken) {
+    return cachedToken;
+  }
+
+  const { data, error } = await getSupabaseClient().auth.getSession();
+  if (error) {
+    throw error;
+  }
+
+  const accessToken = data.session?.access_token?.trim();
+  if (!accessToken) {
+    throw new Error('User not authenticated');
+  }
+  return accessToken;
+}
+
+function getAppendServiceErrorDetail(payload: unknown): string | null {
+  if (typeof payload === 'string' && payload.trim()) {
+    return payload;
+  }
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const errorPayload = payload as AppendServiceFailure;
+  if (typeof errorPayload.detail === 'string' && errorPayload.detail.trim()) {
+    return errorPayload.detail;
+  }
+  if (typeof errorPayload.details === 'string' && errorPayload.details.trim()) {
+    return errorPayload.details;
+  }
+  if (typeof errorPayload.error === 'string' && errorPayload.error.trim()) {
+    return errorPayload.error;
+  }
+  return null;
 }
 
 export class SupabaseDataProvider implements DataProvider {
@@ -83,36 +153,42 @@ export class SupabaseDataProvider implements DataProvider {
     expectedVersion: number,
     registry?: AssetRegistry,
   ): Promise<number> {
-    const supabase = getSupabaseClient();
     const pairSerialized = registry !== undefined ? serializeTimelinePair(config, registry) : null;
     const configSerialized = pairSerialized ?? serializeTimelineConfigSnapshot(config);
-    const rpcName = pairSerialized
-      ? 'update_timeline_versioned'
-      : 'update_timeline_config_versioned';
-    const rpcParams = pairSerialized
-      ? {
-          p_timeline_id: timelineId,
-          p_expected_version: expectedVersion,
-          p_config: pairSerialized.config,
-          p_asset_registry: pairSerialized.registry,
-        }
-      : {
-          p_timeline_id: timelineId,
-          p_expected_version: expectedVersion,
-          p_config: configSerialized.config,
-        };
-    const { data, error } = await supabase.rpc(rpcName as never, rpcParams as never);
+    const response = await fetch(
+      `${getAppendServiceBaseUrl()}/v1/timelines/${encodeURIComponent(timelineId)}/config-replaced`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await getUserJwt()}`,
+        },
+        body: JSON.stringify({
+          config: configSerialized.config,
+          asset_registry: pairSerialized?.registry,
+          expected_version: expectedVersion,
+          actor: {
+            type: 'human',
+            id: this.options.userId,
+          },
+          source: 'editor_save',
+        }),
+      },
+    );
 
-    if (error) {
-      throw error;
-    }
-
-    const rows = data as Array<{ config_version: number }> | null;
-    if (!rows || rows.length === 0) {
+    const payload = await parseJsonIfPresent(response);
+    if (response.status === 409) {
       throw new TimelineVersionConflictError();
     }
+    if (!response.ok) {
+      const detail = getAppendServiceErrorDetail(payload);
+      throw new Error(detail ? `Append service save failed: ${detail}` : `Append service save failed with status ${response.status}`);
+    }
+    if (!payload || typeof payload !== 'object' || typeof (payload as AppendServiceSuccess).config_version !== 'number') {
+      throw new Error('Append service save returned an invalid config_version');
+    }
 
-    return rows[0].config_version;
+    return (payload as AppendServiceSuccess).config_version as number;
   }
 
   async saveCheckpoint(timelineId: string, checkpoint: Omit<Checkpoint, 'id'>): Promise<string> {
