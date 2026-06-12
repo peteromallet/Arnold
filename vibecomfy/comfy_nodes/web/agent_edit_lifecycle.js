@@ -911,6 +911,8 @@ function _handleChatRehydrateNoSession(panel, payload) {
   panel.state.chatError = null;
   panel.state.chatSessionPath = null;
   panel.state.chatDetailJsonPath = null;
+  panel.state.chatSessionPathResolved = null;
+  panel.state.chatDetailJsonPathResolved = null;
   return _obligations({
     render: false,
     dirtySections: THREAD_DIRTY_SECTIONS,
@@ -930,6 +932,8 @@ function _handleChatRehydrateMissingSession(panel, payload) {
   panel.state.chatError = null;
   panel.state.chatSessionPath = null;
   panel.state.chatDetailJsonPath = null;
+  panel.state.chatSessionPathResolved = null;
+  panel.state.chatDetailJsonPathResolved = null;
   return _obligations({
     render: false,
     dirtySections: confirmedSessionId ? META_AND_THREAD_DIRTY_SECTIONS : THREAD_DIRTY_SECTIONS,
@@ -951,6 +955,8 @@ function _handleChatRehydrateSuccess(panel, payload) {
   panel.state.chatError = null;
   panel.state.chatSessionPath = typeof payload?.chatSessionPath === "string" ? payload.chatSessionPath : null;
   panel.state.chatDetailJsonPath = typeof payload?.chatDetailJsonPath === "string" ? payload.chatDetailJsonPath : null;
+  panel.state.chatSessionPathResolved = typeof payload?.chatSessionPathResolved === "string" ? payload.chatSessionPathResolved : null;
+  panel.state.chatDetailJsonPathResolved = typeof payload?.chatDetailJsonPathResolved === "string" ? payload.chatDetailJsonPathResolved : null;
   const sessionId = typeof payload?.sessionId === "string" && payload.sessionId ? payload.sessionId : null;
   if (sessionId) {
     panel.state.sessionId = sessionId;

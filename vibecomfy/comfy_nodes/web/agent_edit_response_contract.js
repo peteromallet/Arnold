@@ -515,7 +515,11 @@ export function normalizeAgentEditResponse(raw, { endpoint = null, allowLegacy =
       ? raw.messages.map((message) => normalizeMessage(message, { endpoint, allowLegacy }))
       : null,
     sessionPath: asString(raw.sessionPath) || asString(raw.session_path),
+    sessionPathResolved:
+      asString(raw.sessionPathResolved) || asString(raw.session_path_resolved),
     detailJsonPath: asString(raw.detailJsonPath) || asString(raw.detail_json_path),
+    detailJsonPathResolved:
+      asString(raw.detailJsonPathResolved) || asString(raw.detail_json_path_resolved),
   };
 
   return normalized;

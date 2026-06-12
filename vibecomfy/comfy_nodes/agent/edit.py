@@ -1699,8 +1699,10 @@ def read_session_chat(
             "exists": session_exists,
             "session_id": safe_id,
             "session_path": str(session_dir),
+            "session_path_resolved": str(session_dir.resolve()),
             "latest_turn_id": None,
             "detail_json_path": None,
+            "detail_json_path_resolved": None,
             "messages": [],
             "latest_candidate": None,
         }
@@ -1817,9 +1819,15 @@ def read_session_chat(
         "exists": True,
         "session_id": safe_id,
         "session_path": str(session_dir),
+        "session_path_resolved": str(session_dir.resolve()),
         "latest_turn_id": latest_turn_id,
         "detail_json_path": (
             str(turns_dir / latest_turn_id / "response.json")
+            if latest_turn_id
+            else None
+        ),
+        "detail_json_path_resolved": (
+            str((turns_dir / latest_turn_id / "response.json").resolve())
             if latest_turn_id
             else None
         ),
@@ -1865,6 +1873,7 @@ def read_session_bundle(
             "exists": False,
             "session_id": safe_id,
             "session_path": str(session_dir),
+            "session_path_resolved": str(session_dir.resolve()),
             "files": [],
             "skipped": [],
             "file_count": 0,
@@ -1882,6 +1891,7 @@ def read_session_bundle(
             "exists": True,
             "session_id": safe_id,
             "session_path": str(session_dir),
+            "session_path_resolved": str(session_dir.resolve()),
             "files": [],
             "skipped": [{"name": "(walk)", "reason": f"walk_failed: {exc}"}],
             "file_count": 0,
@@ -2547,6 +2557,7 @@ def _stage_agent_batch_repl(
     total_landed = 0
     done_noop_nudges = 0
     done_error_nudges = 0
+    failed_edit_turns = 0
     request_log: list[dict[str, Any]] = []
     response_log: list[dict[str, Any]] = []
 
@@ -2931,6 +2942,13 @@ def _stage_agent_batch_repl(
             item.ok and str(item.op_kind or "") == "done"
             for item in batch_result.statements
         )
+        turn_failed_edit = any(
+            (not item.ok)
+            and str(item.op_kind or "") not in {"query", "done", "clarify"}
+            for item in batch_result.statements
+        )
+        if turn_failed_edit:
+            failed_edit_turns += 1
         # Don't honor a premature done(): feed guidance back and let the model
         # self-correct. Two distinct cases, each separately bounded so a genuine
         # no-change request still commits and we can't loop forever:
@@ -2944,10 +2962,9 @@ def _stage_agent_batch_repl(
         hint = ""
         if (
             done_requested
-            and (turn_number + 1) < max_batches
             and consecutive_errors < max_consecutive_errors
         ):
-            if total_landed == 0 and done_noop_nudges < 2:
+            if total_landed == 0 and (turn_has_errors or failed_edit_turns > 0):
                 done_noop_nudges += 1
                 refuse_done = True
                 if turn_has_errors:
@@ -2958,6 +2975,13 @@ def _stage_agent_batch_repl(
                         " call search(focus_types=[\"ClassName\"]) for the exact signature —"
                         " then call done()."
                     )
+                elif failed_edit_turns > 0:
+                    hint = (
+                        "earlier edit statement(s) failed and no edit has landed. A search()"
+                        " is read-only and does NOT fix the failed edit. Use the diagnostics"
+                        " above and construct a valid node/wire, or clarify the limitation;"
+                        " do not report this as already done."
+                    )
                 else:
                     hint = (
                         "you called done() without making any edit, so nothing was applied."
@@ -2966,6 +2990,20 @@ def _stage_agent_batch_repl(
                         " `consumer.input = up.OUTPUT`), then call done(). If the graph"
                         " genuinely needs no change, call done() again to confirm."
                     )
+            elif (
+                (turn_number + 1) < max_batches
+                and total_landed == 0
+                and done_noop_nudges < 2
+            ):
+                done_noop_nudges += 1
+                refuse_done = True
+                hint = (
+                    "you called done() without making any edit, so nothing was applied."
+                    " A search() is read-only and does NOT change the graph. Now CONSTRUCT"
+                    " and wire the node(s) the request needs (e.g. `up = NodeType(...)` then"
+                    " `consumer.input = up.OUTPUT`), then call done(). If the graph"
+                    " genuinely needs no change, call done() again to confirm."
+                )
             elif turn_has_errors and done_error_nudges < 2:
                 done_error_nudges += 1
                 refuse_done = True
@@ -3758,6 +3796,7 @@ def _build_batch_repl_failure_response(
     legacy_audit_ref = response.get("audit_ref")
     compatibility_fields = _build_compatibility_response_fields(state)
     response.update(compatibility_fields)
+    response.update(_session_artifact_response_fields(state))
     response.update(product_failure_envelope_fields(failure))
     if legacy_audit_ref is not None:
         response["audit_ref"] = legacy_audit_ref
@@ -3779,7 +3818,18 @@ def _build_dev_failure_response(
 ) -> dict[str, Any]:
     response = _legacy_failure_response(state, context, failure=failure)
     response.update(_build_compatibility_response_fields(state))
+    response.update(_session_artifact_response_fields(state))
     return response
+
+
+def _session_artifact_response_fields(state: AgentEditState) -> dict[str, Any]:
+    response_path = state.turn_dir / "response.json"
+    return {
+        "session_path": str(state.session_dir),
+        "session_path_resolved": str(state.session_dir.resolve()),
+        "detail_json_path": str(response_path),
+        "detail_json_path_resolved": str(response_path.resolve()),
+    }
 
 
 def _build_batch_repl_response(
@@ -3856,6 +3906,7 @@ def _build_batch_repl_response(
     response["internal_outcome"] = internal_outcome.to_dict()
     response["change_details"] = change_details
     response.update(compatibility_fields)
+    response.update(_session_artifact_response_fields(state))
     if state.batch_exit_mode in {_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY}:
         response["clarification_required"] = True
         response["graph_unchanged"] = state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY
@@ -3892,6 +3943,7 @@ def _build_dev_success_response(
         queue_allowed=context.queue_allowed,
     )
     response.update(compatibility_fields)
+    response.update(_session_artifact_response_fields(state))
     internal_outcome = TurnOutcome.edit()
     response.update(
         turn_envelope(
@@ -4149,7 +4201,7 @@ def _default_runtime_schema_provider() -> Any:
     file-backed ``ObjectInfoSchemaProvider``. Falls back to ``local`` only if the registry
     is unavailable (i.e. not running inside ComfyUI).
     """
-    from vibecomfy.schema import get_schema_provider
+    from vibecomfy.schema import get_authoring_schema_provider, get_schema_provider
 
     try:
         if not (_RUNTIME_OBJECT_INFO_PATH and Path(_RUNTIME_OBJECT_INFO_PATH[0]).is_file()):
@@ -4165,6 +4217,13 @@ def _default_runtime_schema_provider() -> Any:
             from vibecomfy.schema.provider import ObjectInfoSchemaProvider
 
             return ObjectInfoSchemaProvider(_RUNTIME_OBJECT_INFO_PATH[0])
+    except Exception:
+        pass
+    fallback = get_authoring_schema_provider()
+    try:
+        schemas = getattr(fallback, "schemas", None)
+        if callable(schemas) and schemas():
+            return fallback
     except Exception:
         pass
     return get_schema_provider("local")

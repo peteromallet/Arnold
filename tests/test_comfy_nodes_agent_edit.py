@@ -1727,6 +1727,74 @@ def test_handle_agent_edit_batch_repl_runs_bounded_loop_with_turn0_render_then_d
     assert response_turns[1]["batch_result"]["batch_ok"] is False
 
 
+def test_default_runtime_schema_provider_falls_back_to_authoring_object_info(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit_module
+
+    monkeypatch.setattr(agent_edit_module, "_build_object_info_in_process", lambda: None)
+    agent_edit_module._RUNTIME_OBJECT_INFO_PATH.clear()
+
+    provider = agent_edit_module._default_runtime_schema_provider()
+
+    assert len(provider.schemas()) > 100
+    assert provider.get_schema("KSampler") is not None
+    assert provider.get_schema("VAEDecode") is not None
+    assert provider.get_schema("SaveImage") is not None
+
+
+def test_agent_edit_batch_failed_edits_cannot_be_reported_as_successful_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    responses = iter(
+        [
+            {
+                "batch": "decoded = MissingDecodeNode(images=loadimage.image)\ndone()",
+                "message": "I will add the decode node.",
+            },
+            {
+                "batch": "search(focus_types=[\"MissingDecodeNode\"])",
+                "message": "I will inspect the missing type.",
+            },
+            {
+                "batch": "done()",
+                "message": "Nothing else to do.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Add a decode and save chain",
+            "session_id": "failed-edits-not-noop",
+            "max_batches": 3,
+            "max_consecutive_errors": 3,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    _assert_failure_defaults(
+        result,
+        kind=FailureKind.MODEL_MISTAKE.value,
+        stage="agent_batch",
+        audit_ref_expected=True,
+    )
+    assert result["outcome"]["kind"] != "noop"
+    assert "already matches" not in result["message"]
+    response_path = tmp_path / "failed-edits-not-noop" / "turns" / "0001" / "response.json"
+    assert response_path.is_file()
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    assert response["ok"] is False
+    assert response["kind"] == FailureKind.MODEL_MISTAKE.value
+    assert response["outcome"]["failure_kind"] == FailureKind.MODEL_MISTAKE.value
+
+
 def test_handle_agent_edit_batch_repl_turn0_catalog_is_scoped_and_search_first(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -7038,10 +7106,14 @@ def test_read_session_chat_metadata_fields(tmp_path: Path) -> None:
     assert result["ok"] is True
     assert "session_path" in result
     assert result["session_path"].endswith(session_id)
+    assert result["session_path_resolved"] == str(session_dir_for(tmp_path, session_id).resolve())
     assert result["latest_turn_id"] == "0001"
     assert "detail_json_path" in result
     assert result["detail_json_path"] is not None
     assert "response.json" in result["detail_json_path"]
+    assert result["detail_json_path_resolved"] == str(
+        (turns_dir / "0001" / "response.json").resolve()
+    )
 
 
 def test_read_session_chat_missing_session_reports_exists_false(tmp_path: Path) -> None:

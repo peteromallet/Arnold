@@ -13126,6 +13126,7 @@ test("diagnostic report rebuilds turn history from rehydrated chat and surfaces 
         sessionId: "sess123",
         phase: "IDLE",
         turnId: null,
+        chatSessionPathResolved: "/real/ComfyUI/out/editor_sessions/sess123",
         // Reloaded panel: turns array never refilled, but chat was rehydrated.
         turns: [],
         chatMessages: [
@@ -13179,6 +13180,18 @@ test("diagnostic report rebuilds turn history from rehydrated chat and surfaces 
     // The coding-agent prompt should point at the raw artifacts where reasoning lives.
     assert.ok(prompt.includes("messages.jsonl"), "solve prompt must point to messages.jsonl");
     assert.ok(report.includes("messages.jsonl"), "issue report must point to messages.jsonl");
+    assert.ok(
+      prompt.includes("/real/ComfyUI/out/editor_sessions/sess123/turns/"),
+      "solve prompt must use the resolved backend session artifact path when available",
+    );
+    assert.ok(
+      !prompt.includes("/Users/peteromalley/Documents/reigh-workspace/ComfyUI/out/editor_sessions"),
+      "solve prompt must not hard-code a local ComfyUI checkout path",
+    );
+    assert.ok(
+      prompt.includes("vibecomfy/comfy_nodes/agent/"),
+      "solve prompt must point at the current server package path",
+    );
 
     // A noop turn must NOT be mislabeled as a failure (regression: every turn
     // with a message was rendered "Error/failure: Failure: …").

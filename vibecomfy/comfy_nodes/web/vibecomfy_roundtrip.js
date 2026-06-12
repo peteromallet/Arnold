@@ -2536,11 +2536,51 @@ function formatTurnSummaries(summaries) {
   ].filter(Boolean).join("\n")).join("\n");
 }
 
+function sessionArtifactPathForReport(panel, sessionId) {
+  const state = panel?.state || {};
+  const resolved = typeof state.chatSessionPathResolved === "string" && state.chatSessionPathResolved
+    ? state.chatSessionPathResolved
+    : null;
+  const sessionPath = typeof state.chatSessionPath === "string" && state.chatSessionPath
+    ? state.chatSessionPath
+    : null;
+  const base = resolved || sessionPath || `out/editor_sessions/${sessionId}`;
+  return `${base.replace(/\/$/, "")}/turns/`;
+}
+
+function sessionArtifactPathNoteForReport(panel) {
+  const state = panel?.state || {};
+  if (typeof state.chatSessionPathResolved === "string" && state.chatSessionPathResolved) {
+    return null;
+  }
+  return "If that path is relative, resolve it from the running ComfyUI checkout, not necessarily from the VibeComfy repo.";
+}
+
+function commitSessionArtifactPathsFromResponse(panel, result) {
+  if (!panel?.state || !result || typeof result !== "object") {
+    return;
+  }
+  if (typeof result.sessionPath === "string" && result.sessionPath) {
+    panel.state.chatSessionPath = result.sessionPath;
+  }
+  if (typeof result.detailJsonPath === "string" && result.detailJsonPath) {
+    panel.state.chatDetailJsonPath = result.detailJsonPath;
+  }
+  if (typeof result.sessionPathResolved === "string" && result.sessionPathResolved) {
+    panel.state.chatSessionPathResolved = result.sessionPathResolved;
+  }
+  if (typeof result.detailJsonPathResolved === "string" && result.detailJsonPathResolved) {
+    panel.state.chatDetailJsonPathResolved = result.detailJsonPathResolved;
+  }
+}
+
 export function buildIssueReport(panel) {
   const debug = debugSnapshotForReport(panel);
   const sessionId = panel?.state?.sessionId || debug.sessionId || "(none)";
   const phase = panel?.state?.phase || debug.phase || "(unknown)";
   const summaries = collectRecentTurnSummaries(panel, ISSUE_REPORT_TURN_LIMIT);
+  const artifactPath = sessionArtifactPathForReport(panel, sessionId);
+  const artifactPathNote = sessionArtifactPathNoteForReport(panel);
   return [
     "VibeComfy agent-edit issue report",
     "",
@@ -2557,8 +2597,9 @@ export function buildIssueReport(panel) {
     "Last turns:",
     formatTurnSummaries(summaries),
     "",
-    `Full per-turn artifacts (the agent's actual step-by-step reasoning, the code it tried, and the engine diagnostics) are under: out/editor_sessions/${sessionId}/turns/<NNNN>/ — see messages.jsonl, model_response.json, and response.json in each turn dir.`,
-  ].join("\n");
+    `Full per-turn artifacts (the agent's actual step-by-step reasoning, the code it tried, and the engine diagnostics) are under: ${artifactPath}<NNNN>/ — see messages.jsonl, model_response.json, and response.json in each turn dir.`,
+    artifactPathNote,
+  ].filter(Boolean).join("\n");
 }
 
 export function buildAgentSolvePrompt(panel) {
@@ -2566,6 +2607,8 @@ export function buildAgentSolvePrompt(panel) {
   const sessionId = panel?.state?.sessionId || debug.sessionId || "(unknown-session)";
   const phase = panel?.state?.phase || debug.phase || "(unknown)";
   const summaries = collectRecentTurnSummaries(panel, AGENT_SOLVE_TURN_LIMIT);
+  const artifactPath = sessionArtifactPathForReport(panel, sessionId);
+  const artifactPathNote = sessionArtifactPathNoteForReport(panel);
   return [
     "Can you spot what's going wrong here?",
     "",
@@ -2580,8 +2623,9 @@ export function buildAgentSolvePrompt(panel) {
     "",
     "The tool's code lives at /Users/peteromalley/Documents/reigh-workspace/vibecomfy.",
     "Browser panel code is under vibecomfy/comfy_nodes/web/.",
-    "Server code is under vibecomfy/comfy_nodes/agent_edit.py.",
-    `Turn artifacts are under /Users/peteromalley/Documents/reigh-workspace/ComfyUI/out/editor_sessions/${sessionId}/turns/.`,
+    "Server code is under vibecomfy/comfy_nodes/agent/.",
+    `Turn artifacts are under ${artifactPath}`,
+    artifactPathNote,
     "Each numbered turn dir holds the agent's ACTUAL reasoning — read these, not",
     "just the summary above:",
     "  - messages.jsonl: the per-step transcript — each line has the agent's",
@@ -4564,6 +4608,8 @@ function createAgentPanelShell() {
       chatError: null,
       chatSessionPath: null,
       chatDetailJsonPath: null,
+      chatSessionPathResolved: null,
+      chatDetailJsonPathResolved: null,
       mountMode: AGENT_PANEL_MOUNT_MODE.LAUNCHER,
       mountContainer: null,
     },
@@ -4759,6 +4805,8 @@ async function _rehydrateChat(panel) {
         messages,
         chatSessionPath: payload.sessionPath,
         chatDetailJsonPath: payload.detailJsonPath,
+        chatSessionPathResolved: payload.sessionPathResolved,
+        chatDetailJsonPathResolved: payload.detailJsonPathResolved,
         sessionId: payload.sessionId,
       });
       if (successObligations.stale) {
@@ -5149,6 +5197,12 @@ function normalizeChatRehydratePayload(rawPayload) {
     detailJsonPath: typeof rawPayload.detailJsonPath === "string"
       ? rawPayload.detailJsonPath
       : (typeof rawPayload.detail_json_path === "string" ? rawPayload.detail_json_path : null),
+    sessionPathResolved: typeof rawPayload.sessionPathResolved === "string"
+      ? rawPayload.sessionPathResolved
+      : (typeof rawPayload.session_path_resolved === "string" ? rawPayload.session_path_resolved : null),
+    detailJsonPathResolved: typeof rawPayload.detailJsonPathResolved === "string"
+      ? rawPayload.detailJsonPathResolved
+      : (typeof rawPayload.detail_json_path_resolved === "string" ? rawPayload.detail_json_path_resolved : null),
     latestCandidate:
       rawPayload.latestCandidate && typeof rawPayload.latestCandidate === "object"
         ? normalizeAgentEditResponse(rawPayload.latestCandidate, { endpoint: "chat:latest_candidate", allowLegacy: true })
@@ -8706,6 +8760,8 @@ async function newAgentConversation(panel) {
   panel.state.chatError = null;
   panel.state.chatSessionPath = null;
   panel.state.chatDetailJsonPath = null;
+  panel.state.chatSessionPathResolved = null;
+  panel.state.chatDetailJsonPathResolved = null;
   panel.state.expandedBubbleTurnKeys = {};
   panel.state.turnDetailSnapshots = {};
   panel.state.syntheticAgentMessage = null;
@@ -8999,6 +9055,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         // committed through the terminal submit transition below.
         _persistActiveSession(result.sessionId);
       }
+      commitSessionArtifactPathsFromResponse(panel, result);
       if (!res.ok || result?.ok === false || result.raw?.error) {
         throw result.raw || { kind: "RequestError", message: res.statusText };
       }
