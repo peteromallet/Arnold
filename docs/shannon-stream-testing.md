@@ -56,8 +56,8 @@ you opt in — see Level 2).
 ## Level 2 — Live conformance (the real headless channel) — **the simple end-to-end**
 
 This is the cleanest "does headless stream-json actually work against real Claude" test. It launches
-`claude --print --input-format=stream-json --output-format=stream-json --verbose` in an isolated
-config dir and asserts Claude emits real `init` / `assistant` / `result` events.
+`claude --print --input-format=stream-json --output-format=stream-json --verbose` with the host's
+normal Claude config and asserts Claude emits real `init` / `assistant` / `result` events.
 
 **Requires:** a **logged-in** Claude Code CLI on PATH (subscription OAuth — `claude` works
 interactively for you). It is gated off unless you opt in:
@@ -68,9 +68,9 @@ MEGAPLAN_SHANNON_STREAM_CONFORMANCE=1 python -m pytest tests/test_shannon_stream
 
 - Pass → the headless channel bills your subscription and emits a valid structured turn.
 - Skipped → you didn't set the env var.
-- Fails with `Not logged in · Please run /login` → the CLI isn't authenticated in this shell. Run
-  `claude` once interactively to log in, then retry. (This is exactly the auth condition that blocks
-  the same proof inside a sandboxed executor.)
+- Fails with `Not logged in · Please run /login` → the CLI isn't authenticated in this shell or
+  `CLAUDE_CONFIG_DIR` is pointed at a fresh config. Run `claude` once interactively to log in, make
+  sure the conformance run is using the normal Claude config, then retry.
 
 This is also wired as a CI smoke test in `.github/workflows/shannon-stream-conformance.yml` — it's
 the drift tripwire that catches a future `claude` version breaking the `--print` schema or permission
@@ -144,11 +144,125 @@ build env — no live API key was present; run Level 3 with `MEGAPLAN_SHANNON_ST
 
 ---
 
+## Level 4 — real-life / soak (the part that actually matters)
+
+**Levels 1–3 prove the channel *functions*. They do NOT prove it *survives real life*.** This whole
+channel exists because the tmux path broke under messy, concurrent, hours-long, failure-prone load —
+and none of that shows up in a single happy-path turn. If you only care that "it works once," stop at
+Level 2. If you care whether it's safe to *rely on*, do these. Each item names the real-world failure
+it's actually testing for.
+
+### 4a. Shadow mode on a real, ongoing workload — **highest signal, do this first**
+
+The honest end-to-end test isn't a docstring — it's "does the new channel produce equivalent results
+to tmux on *real* phases?" That's what shadow mode is for. Turn it on against an actual running
+megaplan chain (not a toy):
+
+```bash
+export MEGAPLAN_SHANNON_STREAM_WORKER=1
+export MEGAPLAN_CHANNEL_SHADOW_SAMPLE_RATE=0.1   # run BOTH channels on ~10% of real phases, compare
+# ...then run a normal, real chain/plan on --vendor claude as you usually would...
+```
+
+It runs the stream channel alongside tmux on a sampled fraction of real phases and records
+**deterministic-artifact parity** (exit-kind class, payload schema validity, landed-diff status,
+worker-did-work) via the bakeoff harness (`megaplan/bakeoff/channel_shadow.py`). After a handful of
+real phases, inspect the recorded parity:
+
+```bash
+find . -path "*channel_shadow*" \( -name "*.json" -o -name "*.ndjson" \) | xargs ls -lt | head
+# look for: same exit-kind class on both channels, no stream-only error/timeout, schema-valid on both
+```
+
+**Passes when** N≥5 real phases show parity and the stream arm never produces an error/timeout the
+tmux arm didn't. **Tests for:** behavioral fidelity on real work (not a one-liner) — the thing a
+happy-path turn can't tell you.
+
+### 4b. Unattended auth — **the single biggest unknown**
+
+Level 2 assumes *your* logged-in interactive shell. The real question is whether headless `claude`
+is authenticated **when megaplan drives it unattended** (cron/CI/sandboxed executor). We have direct
+evidence it sometimes isn't — the build itself hit `auth_error: Not logged in · Please run /login`
+when an executor tried a live stream-json turn in a sandbox.
+
+```bash
+# Simulate the unattended context: a clean shell with no interactive login state inherited.
+env -i PATH="$PATH" HOME="$HOME" \
+  claude --print --output-format=stream-json --verbose "say READY" </dev/null
+# A `result` event with no auth_error => unattended auth works.
+# `Not logged in` => the headless channel is NOT safe to rely on in automation until auth is solved
+#   (persisted OAuth creds / a correct CLAUDE_CONFIG_DIR / a key via MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL=api_key).
+```
+
+**Tests for:** whether "it works" generalizes from your terminal to how megaplan actually runs it.
+**Until this passes in your real run context, treat the channel as proven only for interactive use.**
+
+### 4c. Concurrency + the cap under contention
+
+```bash
+export MEGAPLAN_SHANNON_STREAM_WORKER=1 MEGAPLAN_WORKER_TURN_CAP=2
+# launch 3–4 real chains at once (the original pain was "many concurrent on one box")
+```
+Watch: only 2 `claude --print` turns run concurrently (rest queue on slot files under
+`MEGAPLAN_WORKER_TURN_CAP_DIR`); the `rate_limit` signal logs and backpressure engages as the
+subscription window fills; `finalize` doesn't starve behind a held slot. **Tests for:** failure #6
+(subscription starvation) and the cap's whole reason to exist — invisible in a single-chain run.
+
+### 4d. Failure injection — does it fail *fast*, not hang?
+
+The headline failure the old path had was a **2-hour silent hang** on a dead turn. Prove the new one
+fails fast and attributed:
+
+```bash
+# during a live stream-worker phase, kill the turn out from under it:
+pkill -f "claude --print"        # or revoke auth / SIGKILL the worker mid-turn
+```
+Watch the driver surface a clear, *retryable* error within seconds (not minutes), and recover or
+re-dispatch. Also force a permission denial on a tool-using turn and confirm the **permission
+fail-fast watchdog** converts it to an immediate retryable fail rather than a headless hang.
+**Tests for:** failures #4 and #8 (dead-turn hang; fail-slow → fail-fast).
+
+### 4e. Real tool-using work under `bypassPermissions`
+
+Level 3's docstring may use no tools. Run a task that genuinely needs **Bash + Edit + Write** so the
+worker actually executes tools headlessly:
+
+```bash
+MEGAPLAN_SHANNON_STREAM_WORKER=1 megaplan init \
+  "Create scripts/hello.sh that echoes hi, chmod +x it, run it, and capture output to out.txt" \
+  --profile solo --robustness bare --vendor claude --in-worktree sstools
+# then drive it and confirm the files were actually created + the commands ran
+```
+**Tests for:** that `bypassPermissions` really executes tools in an automated context (not just a
+no-tool turn), and that the OS-user safety boundary behaves as documented.
+
+### 4f. Long-session / multi-hour soak
+
+Run a multi-hour, multi-turn chain on the stream worker and watch for: OAuth surviving (no
+mid-session expiry), context recycling (`/clear`/`/compact`) firing cleanly across many turns, and no
+slow degradation. **Tests for:** the long-lived-session decay risk a 4-second conformance turn can't
+surface.
+
+### 4g. Version drift (across an actual upgrade)
+
+The CI conformance smoke test (`.github/workflows/shannon-stream-conformance.yml`) is the tripwire,
+but the *real* drift test is to let `claude` auto-update to a new version and re-run Level 2 — a
+parse/schema mismatch should fail **loudly** (not silently produce a garbage WorkerResult). **Tests
+for:** that the structured channel degrades gracefully when the vendor changes `--print` behavior
+(it has, twice).
+
+---
+
 ## What "passing" means
 
 - **Level 1** green → the implementation is correct.
-- **Level 2** green → the headless stream-json channel works against real Claude on the subscription.
+- **Level 2** green → the headless stream-json channel works against real Claude on the subscription
+  **(in your interactive shell)**.
 - **Level 3** showing a `claude --print` process and **no** tmux/bun → a real megaplan phase ran on
   the new channel, with tmux retained as the fallback.
+- **Level 4** is the only level that tells you it's safe to *rely on* in production: parity on real
+  work (4a), unattended auth (4b), the cap under load (4c), fail-fast on death (4d), real tool
+  execution (4e), long-session survival (4f), graceful drift (4g). **4a + 4b are the two to do before
+  trusting it for anything automated.**
 
 Design reference: `docs/shannon-stream-channel-plan.md`. Originating ticket: `01KTVV4ANX9MVKBFPRZX6F1AEH`.
