@@ -341,7 +341,7 @@ describe('AstridBridgeDataProvider', () => {
       '/api/astrid/projects/ados-talks/timelines/11111111-1111-1111-1111-111111111111/save',
     ]);
     await expect(provider.resolveAssetUrl('clips/saved.mp4')).resolves.toBe(
-      'http://127.0.0.1:17333/projects/ados-talks/timelines/11111111-1111-1111-1111-111111111111/assets/asset-save',
+      '/api/astrid/projects/ados-talks/timelines/11111111-1111-1111-1111-111111111111/assets/asset-save',
     );
     expect(getSupabaseClient).not.toHaveBeenCalled();
   });
@@ -470,7 +470,7 @@ describe('AstridBridgeDataProvider', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     await expect(provider.resolveAssetUrl('audio/voice.wav')).resolves.toBe(
-      'http://127.0.0.1:17333/projects/ados-talks/timelines/11111111-1111-1111-1111-111111111111/assets/asset-audio',
+      '/api/astrid/projects/ados-talks/timelines/11111111-1111-1111-1111-111111111111/assets/asset-audio',
     );
   });
 

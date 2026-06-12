@@ -212,7 +212,12 @@ export class AstridBridgeDataProvider implements DataProvider {
 
   constructor(options: AstridBridgeDataProviderOptions) {
     this.apiBaseUrl = trimTrailingSlash(options.apiBaseUrl ?? DEFAULT_API_BASE_URL);
-    this.assetBaseUrl = trimTrailingSlash(options.assetBaseUrl ?? defaultAstridBridgeAssetBaseUrl());
+    // Media asset URLs must travel the same (proxied) base as config/registry
+    // requests so <video>/<img>/<audio> fetches are same-origin and reach the
+    // bridge the dev proxy targets. A direct cross-origin default port (17333)
+    // 404s in the browser. Fall back to the resolved apiBaseUrl unless an
+    // explicit assetBaseUrl is supplied.
+    this.assetBaseUrl = trimTrailingSlash(options.assetBaseUrl ?? this.apiBaseUrl);
     this.selectedTimelineRef = options.timelineRef;
     this.canonicalTimelineId = options.timelineId ?? null;
     this.projectSlug = options.projectSlug;
