@@ -19,7 +19,7 @@ import { SETTINGS_IDS } from '@/shared/lib/settingsIds';
 import { useReferenceSelection } from './useReferenceSelection';
 import { useLegacyMigrations } from './useLegacyMigrations';
 import { useHydratedReferences } from './useHydratedReferences';
-import { enforceLegacyProjectImageSettingsSunset } from './legacyMigrations/legacyProjectImageSettings';
+import { stripLegacyProjectImageSettings } from './legacyMigrations/legacyProjectImageSettings';
 
 import type { ProjectImageSettings } from '../types';
 import type { ProjectImageSettingsInput } from './legacyMigrations/legacyProjectImageSettings';
@@ -65,11 +65,11 @@ export function useProjectImageSettings(associatedShotId: string | null) {
       )
     : undefined;
 
-  const effectiveProjectImageSettings = useMemo(() => {
-    const effective = projectImageSettings ?? cachedProjectSettings;
-    enforceLegacyProjectImageSettingsSunset(effective);
-    return effective;
-  }, [cachedProjectSettings, projectImageSettings]);
+  const rawProjectImageSettings = projectImageSettings ?? cachedProjectSettings;
+  const effectiveProjectImageSettings = useMemo(
+    () => stripLegacyProjectImageSettings(rawProjectImageSettings),
+    [rawProjectImageSettings]
+  );
   const referencePointers = effectiveProjectImageSettings?.references ?? [];
   const referenceCount = referencePointers.length;
   const selectedReferenceIdByShot = effectiveProjectImageSettings?.selectedReferenceIdByShot ?? {};
@@ -93,7 +93,7 @@ export function useProjectImageSettings(associatedShotId: string | null) {
   });
 
   // For backward compatibility with single reference - used in legacy migration
-  const rawStyleReferenceImage = selectedReference?.styleReferenceImage || effectiveProjectImageSettings?.styleReferenceImage || null;
+  const rawStyleReferenceImage = selectedReference?.styleReferenceImage || rawProjectImageSettings?.styleReferenceImage || null;
 
   // Legacy migrations (runs effects to migrate old reference formats)
   useLegacyMigrations({
