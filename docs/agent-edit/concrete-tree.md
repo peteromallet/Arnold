@@ -2,7 +2,7 @@
 
 Status: design + Phase-1 prototype. Companion to
 `../local_agent_text_to_graph_blockers.md` (the evidence) and
-`../local_agent_text_to_graph_e2e.md` (the runbook).
+`e2e-real-browser-tier.md` (the runbook).
 
 ## 1. The root cause (one sentence)
 

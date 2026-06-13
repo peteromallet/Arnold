@@ -77,11 +77,11 @@ ROOT_BANNED := \
 	version_matrix.json \
 	workflow_corpus
 
-.PHONY: all check ci install-dev install-ci prune-empty-runtime-root root-clean post-root-clean template-index templates strict-ready fast snapshots oracle browser-smoke parity e2e-browser clean
+.PHONY: all check ci install-dev install-ci prune-empty-runtime-root root-clean post-root-clean docs template-index templates strict-ready fast snapshots oracle browser-smoke parity e2e-browser clean
 
 all: check
 
-check: root-clean template-index templates strict-ready fast snapshots oracle browser-smoke parity post-root-clean
+check: root-clean docs template-index templates strict-ready fast snapshots oracle browser-smoke parity post-root-clean
 
 ci: check
 
@@ -117,6 +117,9 @@ root-clean: prune-empty-runtime-root
 
 post-root-clean:
 	$(MAKE) --no-print-directory root-clean
+
+docs:
+	$(PYTHON) -m tools.check_markdown_links
 
 template-index:
 	$(PYTHON) -m tools.refresh_template_index --check

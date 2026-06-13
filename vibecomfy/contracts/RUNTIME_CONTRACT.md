@@ -15,7 +15,7 @@ Do not runtime-back additional node kinds without a new approval.
 
 ### Execution modes
 
-Three active modes plus one legacy back-compat mode. See [`docs/runtime/code_modes.md`](../docs/runtime/code_modes.md) for the full per-mode capability table.
+Three active modes plus one legacy back-compat mode. See [`docs/runtime/code_modes.md`](../../docs/runtime/code_modes.md) for the full per-mode capability table.
 
 | Mode | Surface | Imports | Timeout | Source cap |
 |---|---|---|---|---|

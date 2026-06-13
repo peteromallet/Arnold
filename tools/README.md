@@ -26,6 +26,7 @@ smoke harnesses.
 
 | Tool | Purpose |
 |---|---|
+| `check_markdown_links.py` | Validate tracked Markdown local links. |
 | `check_canonical_parity.py` | Canonical-vs-generated template parity check. |
 | `check_pack_provenance.py` | Validate custom-node pack provenance. |
 | `check_strict_ready_templates.py` | Strict-ready-template gate. |

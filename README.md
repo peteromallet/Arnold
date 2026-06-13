@@ -121,7 +121,7 @@ After restart, look for nodes under `vibecomfy/exec`, `vibecomfy/intent`, and
 The experimental agent panel lets an agent edit a workflow from inside ComfyUI.
 It needs an agent runtime module in the ComfyUI process; the current development
 setup is documented in
-[docs/local_agent_text_to_graph_e2e.md](docs/local_agent_text_to_graph_e2e.md).
+[docs/agent-edit/e2e-real-browser-tier.md](docs/agent-edit/e2e-real-browser-tier.md).
 
 ### Use VibeComfy Through Astrid
 

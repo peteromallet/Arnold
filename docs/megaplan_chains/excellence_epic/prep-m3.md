@@ -213,7 +213,7 @@ All 54 flag verifications in `evaluator_verdict.json` are verified/closed. Key i
 
 ### 8.2 Config File
 
-Root [`.importlinter`](.importlinter) — INI-style config with one explicit forbidden-import contract.
+Root [`.importlinter`](../../../.importlinter) — INI-style config with one explicit forbidden-import contract.
 
 ### 8.3 Contract Shape (whitelist-style, exact modules)
 
@@ -255,7 +255,7 @@ forbidden_modules =
 lint-imports
 ```
 
-Run with no extra flags; it picks up the committed [`.importlinter`](.importlinter) config from the repo root. Document in `handoff-m3.md`.
+Run with no extra flags; it picks up the committed [`.importlinter`](../../../.importlinter) config from the repo root. Document in `handoff-m3.md`.
 
 ---
 

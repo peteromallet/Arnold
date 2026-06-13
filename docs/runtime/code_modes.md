@@ -5,7 +5,7 @@ execution modes.  The mode is set via the `execution_mode` widget on the node
 (seeded by the frontend default) and is re-authoritative at execution time —
 any agent-emitted snapshot of the per-mode caps is ignored.
 
-See also: [`vibecomfy/contracts/RUNTIME_CONTRACT.md`](../vibecomfy/contracts/RUNTIME_CONTRACT.md)
+See also: [`vibecomfy/contracts/RUNTIME_CONTRACT.md`](../../vibecomfy/contracts/RUNTIME_CONTRACT.md)
 
 ## Per-mode capability table
 

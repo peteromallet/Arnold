@@ -197,7 +197,7 @@ In CI, the cheapest check is `nodes wrapper-status --json` followed by a `jq` as
 ## Reference
 
 - Strategy doc: [`decorator_template_emitter_completion.md`](decorator_template_emitter_completion.md) — Sweep 3
-- Existing related docs: [`docs/custom_nodes.md`](custom_nodes.md) for pack lifecycle (install/lock/restore)
+- Existing related docs: [`docs/custom_nodes.md`](../custom_nodes.md) for pack lifecycle (install/lock/restore)
 - Discovery + codegen modules: `vibecomfy/porting/wrapper_discovery.py`, `vibecomfy/porting/wrapper_codegen.py`
 - CLI: `vibecomfy/commands/nodes.py` — handlers `_cmd_nodes_generate_wrappers`, `_cmd_nodes_wrapper_status`, `_cmd_nodes_generate_widget_schema`
 - Tests: `tests/test_wrapper_discovery.py`, `tests/test_wrapper_codegen.py`

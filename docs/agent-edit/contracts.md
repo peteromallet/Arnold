@@ -22,7 +22,7 @@ gates avoids risk to legacy workflows.
 
 ### 1.1 Baseline authority
 
-Authority lives in [agent_session.py](comfy_nodes/agent_session.py:162) through `_set_baseline_authoritatively()` and in [agent_session.py](comfy_nodes/agent_session.py:238) through `_normalize_baseline_state()`. No other module should write baseline fields directly.
+Authority lives in [agent_session.py](../../vibecomfy/comfy_nodes/agent/session.py) through `_set_baseline_authoritatively()` and in [agent_session.py](../../vibecomfy/comfy_nodes/agent/session.py) through `_normalize_baseline_state()`. No other module should write baseline fields directly.
 
 Authoritative baseline fields:
 
@@ -34,7 +34,7 @@ Authoritative baseline fields:
 - `baseline_rebaseline_id`: current rebaseline id when `baseline_source == "rebaseline"`, else `null`.
 - `baseline_graph_source_path`: source artifact used to heal projection drift. For accepts this is `turns/<turn_id>/candidate.ui.json`; for rebaseline this is `_rebaseline/<rebaseline_id>/graph.ui.json`.
 
-Submit-time snapshots are captured in [agent_session.py](comfy_nodes/agent_session.py:867) and read back through `_expected_baseline_for_turn()` in [agent_session.py](comfy_nodes/agent_session.py:671). The persisted snapshot fields are:
+Submit-time snapshots are captured in [agent_session.py](../../vibecomfy/comfy_nodes/agent/session.py) and read back through `_expected_baseline_for_turn()` in [agent_session.py](../../vibecomfy/comfy_nodes/agent/session.py). The persisted snapshot fields are:
 
 - `submitted_baseline_graph_hash`
 - `submitted_baseline_graph_hash_kind`
@@ -49,7 +49,7 @@ CAS rules:
 - Accept uses structural CAS only. The authoritative expected baseline comes from the submit snapshot or the fail-closed legacy derivation in `_expected_baseline_for_turn()`.
 - Accept requests send `live_graph` as the current serialized canvas snapshot. Submit and rebaseline continue using `graph`; accept does not reuse that field name.
 - `submit_graph_hash` and `candidate_graph_hash` on accept identify the persisted submit snapshot and candidate snapshot for the turn. They are request-integrity echoes, not replacements for the live snapshot payload.
-- Rebaseline uses structural CAS only. `rebaseline_session()` in [agent_session.py](comfy_nodes/agent_session.py:1374) requires `last_known_baseline_graph_hash`, accepts explicit `null` for the no-baseline case, and rejects mismatches with `FailureKind.STALE_STATE_MISMATCH`.
+- Rebaseline uses structural CAS only. `rebaseline_session()` in [agent_session.py](../../vibecomfy/comfy_nodes/agent/session.py) requires `last_known_baseline_graph_hash`, accepts explicit `null` for the no-baseline case, and rejects mismatches with `FailureKind.STALE_STATE_MISMATCH`.
 - `client_live_canvas_token` is not backend CAS authority. It remains browser-local race evidence only.
 
 ### V2 scoped accept (replaces whole-graph CAS for v2_delta turns)
@@ -134,7 +134,7 @@ When scoped validation finds conflicts, the backend returns a
 - V1 candidates (lacking `delta_ops`) cannot reach the V2 scoped path.
 - `client_live_canvas_token` remains browser-local race diagnostic only.
 
-Rebaseline reasons are declared in [agent_session.py](comfy_nodes/agent_session.py:29):
+Rebaseline reasons are declared in [agent_session.py](../../vibecomfy/comfy_nodes/agent/session.py):
 
 - `undo`
 - `stale_state_recovery`
@@ -154,7 +154,7 @@ Implemented rebaseline request shape for `POST /vibecomfy/agent-edit/rebaseline`
 }
 ```
 
-Implemented success response shape from `rebaseline_session()` plus route wiring in [routes.py](comfy_nodes/routes.py:186):
+Implemented success response shape from `rebaseline_session()` plus route wiring in [routes.py](../../vibecomfy/comfy_nodes/agent/routes.py):
 
 ```json
 {
@@ -199,7 +199,7 @@ Rebaseline persistence and audit:
 - Response artifact: `session/_rebaseline/<rebaseline_id>/response.json`
 - Route-level audit artifact: `session/_rebaseline/<rebaseline_id>/audit/audit.json`
 
-Recovery metadata for stale ingest is created in `_stale_rebaseline_recovery_issue()` in [agent_edit.py](comfy_nodes/agent_edit.py:627) and promoted to the top-level failure response in `_failure_response()` in [agent_edit.py](comfy_nodes/agent_edit.py:1768). Implemented wire shape:
+Recovery metadata for stale ingest is created in `_stale_rebaseline_recovery_issue()` in [agent_edit.py](../../vibecomfy/comfy_nodes/agent/edit.py) and promoted to the top-level failure response in `_failure_response()` in [agent_edit.py](../../vibecomfy/comfy_nodes/agent/edit.py). Implemented wire shape:
 
 ```json
 {
@@ -218,7 +218,7 @@ Recovery metadata for stale ingest is created in `_stale_rebaseline_recovery_iss
 
 ## 2. Apply eligibility
 
-The backend contract lives in `ApplyEligibility`, `derive_apply_eligibility()`, and `apply_eligibility_payload()` in [agent_contracts.py](comfy_nodes/agent_contracts.py:63). `agent_gates.py` re-exports the derivation and includes it in `GateDerivation`.
+The backend contract lives in `ApplyEligibility`, `derive_apply_eligibility()`, and `apply_eligibility_payload()` in [agent_contracts.py](../../vibecomfy/comfy_nodes/agent/contracts.py). `agent_gates.py` re-exports the derivation and includes it in `GateDerivation`.
 
 Implemented `apply_eligibility.reason` enum:
 
@@ -248,16 +248,16 @@ Compatibility fields remain on responses:
 
 Response assembly points with `apply_eligibility`:
 
-- Submit failures and submit successes in [agent_edit.py](comfy_nodes/agent_edit.py:1768)
-- Accept, reject, and rebaseline route responses in [routes.py](comfy_nodes/routes.py:136)
+- Submit failures and submit successes in [agent_edit.py](../../vibecomfy/comfy_nodes/agent/edit.py)
+- Accept, reject, and rebaseline route responses in [routes.py](../../vibecomfy/comfy_nodes/agent/routes.py)
 
 Browser authority rule:
 
-- The browser uses `applyEligibility(panel, liveCanvasSnapshot)` in [vibecomfy_roundtrip.js](comfy_nodes/web/vibecomfy_roundtrip.js:1422).
+- The browser uses `applyEligibility(panel, liveCanvasSnapshot)` in [vibecomfy_roundtrip.js](../../vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js).
 - Client-side structural hash comparison is a diagnostic parity check only (`liveCanvasSnapshot.structuralHash` versus `panel.state.lastSubmit.client_structural_graph_hash`). It is **not** Apply authority — backend CAS is the single Apply authority. `client_structural_graph_hash` is submitted as a backend-parity snapshot in submit/rebaseline payloads and is never used by the backend to decide Apply eligibility.
 - `client_live_canvas_token` is only a local guard around async apply and rebaseline races. It is captured by `captureLiveCanvasToken()`, checked before local configure in the apply path, and never sent back as backend CAS authority.
 
-Implemented browser-side rebaseline state fields in [vibecomfy_roundtrip.js](comfy_nodes/web/vibecomfy_roundtrip.js:1736):
+Implemented browser-side rebaseline state fields in [vibecomfy_roundtrip.js](../../vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js):
 
 - `baselineTurnId`
 - `baselineGraphHash`
@@ -269,11 +269,11 @@ Implemented browser-side rebaseline state fields in [vibecomfy_roundtrip.js](com
 - `rebaselinePending`
 - `rebaselineRecovery`
 
-The browser syncs those fields with `syncBaselineFromResponse()` in [vibecomfy_roundtrip.js](comfy_nodes/web/vibecomfy_roundtrip.js:1300) and sends rebaseline requests with `postAgentRebaseline()` in [vibecomfy_roundtrip.js](comfy_nodes/web/vibecomfy_roundtrip.js:4788).
+The browser syncs those fields with `syncBaselineFromResponse()` in [vibecomfy_roundtrip.js](../../vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js) and sends rebaseline requests with `postAgentRebaseline()` in [vibecomfy_roundtrip.js](../../vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js).
 
 ## 3. Typed TurnOutcome contract
 
-The typed outcome model lives in `TurnOutcome` within [agent_contracts.py](comfy_nodes/agent_contracts.py:643). Every turn produces exactly one `TurnOutcome` whose `kind` is one of the discriminants declared in `TURN_OUTCOME_KINDS`. The contract version is `agent_edit_turn_v2` (see `AGENT_EDIT_TURN_CONTRACT_VERSION`).
+The typed outcome model lives in `TurnOutcome` within [agent_contracts.py](../../vibecomfy/comfy_nodes/agent/contracts.py). Every turn produces exactly one `TurnOutcome` whose `kind` is one of the discriminants declared in `TURN_OUTCOME_KINDS`. The contract version is `agent_edit_turn_v2` (see `AGENT_EDIT_TURN_CONTRACT_VERSION`).
 
 `TurnOutcome` constructors — `TurnOutcome.edit()`, `TurnOutcome.clarify()`, `TurnOutcome.edit_and_clarify()`, `TurnOutcome.noop()`, `TurnOutcome.budget()`, and `TurnOutcome.from_failure()` — enforce internal invariants: only `failure` may carry failure metadata, and only `edit` / `edit+clarify` may carry field changes. Serialization is via `TurnOutcome.to_dict()`.
 
@@ -412,7 +412,7 @@ These are documented for completeness but are separate from the edit/clarify sur
 
 ## 4. Typed turn envelope
 
-The product `batch_repl` response envelope is assembled by `turn_envelope()` in [agent_contracts.py](comfy_nodes/agent_contracts.py:776) and by the batch response builders in [agent_edit.py](comfy_nodes/agent_edit.py:2143). The canonical typed shape is:
+The product `batch_repl` response envelope is assembled by `turn_envelope()` in [agent_contracts.py](../../vibecomfy/comfy_nodes/agent/contracts.py) and by the batch response builders in [agent_edit.py](../../vibecomfy/comfy_nodes/agent/edit.py). The canonical typed shape is:
 
 ```json
 {
@@ -505,7 +505,7 @@ Deprecation note:
 
 ## 5. Provider readiness
 
-The canonical readiness contract is `agent_provider.readiness(route, model)` in [agent_provider.py](comfy_nodes/agent_provider.py:905). All status routes and UI consumers must derive their availability signal from this single entry point. No caller should compute readiness independently.
+The canonical readiness contract is `agent_provider.readiness(route, model)` in [agent_provider.py](../../vibecomfy/comfy_nodes/agent/provider.py). All status routes and UI consumers must derive their availability signal from this single entry point. No caller should compute readiness independently.
 
 ### 5.1 Readiness payload shape
 
@@ -550,7 +550,7 @@ Key fields:
 
 2. **Runtime load**: `_load_arnold_runtime()` is called exactly once. If it raises `ProviderError`, readiness returns `ready: false` immediately with the error as `reason`. The runtime is never re-imported inside a single readiness call.
 
-3. **Delegate to runtime**: When the runtime loads, `agent_provider.readiness()` prefers `runtime.readiness(route, model)` if the runtime exposes that callable. This is the backend-local readiness path implemented in [runtime.py](comfy_nodes/agent/runtime.py:323). If `readiness` is absent, it falls back to `runtime.get_agent_status(route, model)`.
+3. **Delegate to runtime**: When the runtime loads, `agent_provider.readiness()` prefers `runtime.readiness(route, model)` if the runtime exposes that callable. This is the backend-local readiness path implemented in [runtime.py](../../vibecomfy/comfy_nodes/agent/runtime.py). If `readiness` is absent, it falls back to `runtime.get_agent_status(route, model)`.
 
 4. **Normalize**: `_normalize_readiness_payload()` extracts `ready` (falling back to `ok` for legacy runtimes), picks a non-empty `reason` (falling back through `detail`, `error`, `message`, then a default), and strips all secret fields from the runtime payload via `_non_secret_mapping()` → `redact_closed_set()`.
 
@@ -562,15 +562,15 @@ Key fields:
 
 ### 5.4 get_agent_status() — compatibility wrapper
 
-`get_agent_status()` in [agent_provider.py](comfy_nodes/agent_provider.py:946) is a thin compatibility wrapper around `readiness()`. It calls `readiness()`, derives `ok` strictly from `ready`, and adds legacy fields (`readiness: "ready" | "unavailable"`, `error` for unavailable-credential cases). Callers migrating to the typed contract should call `readiness()` directly.
+`get_agent_status()` in [agent_provider.py](../../vibecomfy/comfy_nodes/agent/provider.py) is a thin compatibility wrapper around `readiness()`. It calls `readiness()`, derives `ok` strictly from `ready`, and adds legacy fields (`readiness: "ready" | "unavailable"`, `error` for unavailable-credential cases). Callers migrating to the typed contract should call `readiness()` directly.
 
 ### 5.5 Route integration
 
-`_handle_agent_status()` in [routes.py](comfy_nodes/routes.py:308) calls `readiness()` directly, derives `ok` from `ready`, and reports one clear unavailable-credential reason via the `error` field. No independent readiness computation exists in the routes layer — the provider is the single source of truth.
+`_handle_agent_status()` in [routes.py](../../vibecomfy/comfy_nodes/agent/routes.py) calls `readiness()` directly, derives `ok` from `ready`, and reports one clear unavailable-credential reason via the `error` field. No independent readiness computation exists in the routes layer — the provider is the single source of truth.
 
 ### 5.6 Backend-local readiness
 
-`runtime.readiness(route, model)` in [runtime.py](comfy_nodes/agent/runtime.py:323) provides backend-specific readiness without importing `agent_provider`. It normalizes the route, resolves credentials directly (e.g. `DEEPSEEK_API_KEY` from environment or `~/.hermes/.env` for deepseek; Arnold OAuth/API key for anthropic), and returns `ready` with a descriptive `reason`. This keeps the dependency direction clean: the provider depends on the runtime, not vice versa.
+`runtime.readiness(route, model)` in [runtime.py](../../vibecomfy/comfy_nodes/agent/runtime.py) provides backend-specific readiness without importing `agent_provider`. It normalizes the route, resolves credentials directly (e.g. `DEEPSEEK_API_KEY` from environment or `~/.hermes/.env` for deepseek; Arnold OAuth/API key for anthropic), and returns `ready` with a descriptive `reason`. This keeps the dependency direction clean: the provider depends on the runtime, not vice versa.
 
 ## 6. Cancellation (deferred)
 
@@ -604,7 +604,7 @@ A future milestone (targeted after M4 UI migration) must add:
 
 ## 8. Iteration context contract
 
-The batch-REPL provider iterates through multiple turns within a single submit, managed by `_stage_agent_batch_repl()` in [agent_edit.py](comfy_nodes/agent_edit.py:1773). Each turn is a full model round-trip through `run_agent_turn_batch()` in [agent_provider.py](comfy_nodes/agent_provider.py:899).
+The batch-REPL provider iterates through multiple turns within a single submit, managed by `_stage_agent_batch_repl()` in [agent_edit.py](../../vibecomfy/comfy_nodes/agent/edit.py). Each turn is a full model round-trip through `run_agent_turn_batch()` in [agent_provider.py](../../vibecomfy/comfy_nodes/agent/provider.py).
 
 ### 8.1 Budget and loop guard
 
@@ -621,11 +621,11 @@ If `consecutive_errors >= max_consecutive_errors`, the loop breaks immediately a
 
 The loop runs `for turn_number in range(max_batches)` with the following per-turn invariants:
 
-1. **Message construction**: `build_batch_messages()` in [agent_provider.py](comfy_nodes/agent_provider.py:182) builds a `[system, user]` message pair. Turn 0 always includes the full Python render, typed signatures, available node names, the node-variable index, budget, and (when provided) a compact "Recent conversation" block. Later turns include the node-variable index on every iteration; the full render is re-included only when the previous turn landed zero ops (a no-edit search/report turn). All turns include `previous_model_message` (the model's own prose from the prior turn), a diff block, and a teaching report when available.
+1. **Message construction**: `build_batch_messages()` in [agent_provider.py](../../vibecomfy/comfy_nodes/agent/provider.py) builds a `[system, user]` message pair. Turn 0 always includes the full Python render, typed signatures, available node names, the node-variable index, budget, and (when provided) a compact "Recent conversation" block. Later turns include the node-variable index on every iteration; the full render is re-included only when the previous turn landed zero ops (a no-edit search/report turn). All turns include `previous_model_message` (the model's own prose from the prior turn), a diff block, and a teaching report when available.
 
 2. **Model call**: `run_agent_turn_batch()` calls the Arnold/Hermes runtime with the prepared messages. Internally it retries up to 3 times on `MalformedModelJSON` (empty or no-fence responses), appending `_BATCH_RETRY_NUDGE` as an additional system message on retries 1 and 2. `AuthError` and `TimeoutError` are re-raised immediately; `ProviderError` and `MissingRequiredField` are raised without retry.
 
-3. **Batch fencing**: `extract_batch_fence()` in [agent_provider.py](comfy_nodes/agent_provider.py:152) enforces exactly one ` ```batch ` fenced block per response. Zero or multiple fences raise `MalformedModelJSON`. The prose outside the fence becomes the user-visible agent message.
+3. **Batch fencing**: `extract_batch_fence()` in [agent_provider.py](../../vibecomfy/comfy_nodes/agent/provider.py) enforces exactly one ` ```batch ` fenced block per response. Zero or multiple fences raise `MalformedModelJSON`. The prose outside the fence becomes the user-visible agent message.
 
 4. **Clarify split**: `split_terminal_clarify()` detects a `clarify("...")` call within the batch code. When present, the clarify message is extracted and the remaining batch code (if any) is executed. If only a `clarify()` call exists with no editable batch, the loop exits immediately (see §8.3).
 
@@ -661,7 +661,7 @@ On turn 0 only, `build_batch_messages()` injects a "Recent conversation" block d
 
 ### 8.6 Provider retry contract
 
-`run_agent_turn_batch()` in [agent_provider.py](comfy_nodes/agent_provider.py:899) implements exactly 3 attempts (1 initial + 2 retries). On retries 1 and 2:
+`run_agent_turn_batch()` in [agent_provider.py](../../vibecomfy/comfy_nodes/agent/provider.py) implements exactly 3 attempts (1 initial + 2 retries). On retries 1 and 2:
 
 - `_BATCH_RETRY_NUDGE` is appended as an additional system message.
 - `audit_metadata` records `batch_repl_retry` with `count` and `reason`.

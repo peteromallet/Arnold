@@ -47,7 +47,7 @@ in step 1 (UI-vs-cache directionality is enough first); no speculative
 
 - [`../../node_pack_reconciliation.md`](../../node_pack_reconciliation.md) — node-pack ↔ lockfile reconciliation
 - [`../../comfy_version_support.md`](../../comfy_version_support.md) — ComfyUI version support
-- [`../../custom_node_wrapper_codegen.md`](../../custom_node_wrapper_codegen.md) — typed wrapper codegen from object_info
+- [`../../templates/custom_node_wrapper_codegen.md`](../../templates/custom_node_wrapper_codegen.md) — typed wrapper codegen from object_info
 - [`../../runtime/incompatibilities.md`](../../runtime/incompatibilities.md) — vendored ComfyUI fork notes
 - [`../../custom_nodes.md`](../../custom_nodes.md) — custom-node install/lockfile model
 

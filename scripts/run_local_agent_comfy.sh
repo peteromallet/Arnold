@@ -2,7 +2,7 @@
 #
 # Launch a local ComfyUI with the VibeComfy custom node AND the agent-edit
 # runtime wired to the megaplan/arnold backend, ready for the text-to-graph
-# agent E2E (see docs/local_agent_text_to_graph_e2e.md).
+# agent E2E (see docs/agent-edit/e2e-real-browser-tier.md).
 #
 # Prereqs (one-time):
 #   * ComfyUI checkout at $COMFYUI_DIR (default below).

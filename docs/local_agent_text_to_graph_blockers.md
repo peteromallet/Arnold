@@ -1,7 +1,7 @@
 # Local Text-to-Graph Agent — Blockers Log
 
 Status of every blocker hit while making the in-ComfyUI agent-edit panel work
-end-to-end (see `docs/local_agent_text_to_graph_e2e.md` for the runbook). Ordered
+end-to-end (see `docs/agent-edit/e2e-real-browser-tier.md` for the runbook). Ordered
 **all blockers first as an index**, then full detail. Dates are 2026-06-01.
 
 Legend: ✅ fixed · 🟡 partially fixed · 🔴 open · ⚪ pre-existing / out of scope.
