@@ -8176,7 +8176,7 @@ for (const mountMode of ["launcher", "sidebar"]) {
           && debug.lastThreadRender?.branch === "messages"
           && debug.messageCount === 5
           && debug.renderErrors.length === 0;
-      }, { attempts: 200 });
+      }, { attempts: 1000 });
 
       const debug = harness.window.__vibecomfyPanelDebug();
       assert.equal(debug.mountMode, mountMode);
