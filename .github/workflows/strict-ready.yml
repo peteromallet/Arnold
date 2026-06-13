@@ -29,23 +29,7 @@ jobs:
       - name: Install package with dev dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          make PYTHON=python install-dev
 
-      - name: Check ready-template static index
-        run: python -m tools.refresh_template_index --check
-
-      - name: Run strict-ready template gate
-        run: python -m tools.check_strict_ready_templates --json
-
-      - name: Run focused strict-ready tests
-        run: >
-          python -m pytest -q
-          tests/test_strict_ready.py
-          tests/test_strict_ready_gate.py
-          tests/test_porting_workbench.py
-          tests/test_porting_inventory.py
-          tests/test_cli_misc.py
-          tests/test_cli_sources_workflows_nodes.py
-          tests/test_porting_convert.py
-          tests/test_plugin_discovery.py
-          tests/test_agent_acceptance.py
+      - name: Run strict-ready Makefile gate
+        run: make PYTHON=python root-clean templates strict-ready

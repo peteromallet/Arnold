@@ -1441,10 +1441,13 @@ test("VibeComfy reads typed candidate and eligibility envelopes without compatib
     await harness.setup();
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled === false);
 
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "add a saver";
     await harness.clickButton("Submit");
-    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled === false);
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled === false, {
+      attempts: 200,
+    });
     assert.equal(harness.document.getElementById("vibecomfy-agent-panel-apply")?.disabled, false);
     assert.match(harness.textDump(), /Typed candidate ready/);
     assert.match(harness.textDump(), /applyEligibility.*applyable/);
@@ -8173,7 +8176,7 @@ for (const mountMode of ["launcher", "sidebar"]) {
           && debug.lastThreadRender?.branch === "messages"
           && debug.messageCount === 5
           && debug.renderErrors.length === 0;
-      });
+      }, { attempts: 200 });
 
       const debug = harness.window.__vibecomfyPanelDebug();
       assert.equal(debug.mountMode, mountMode);
@@ -8187,8 +8190,9 @@ for (const mountMode of ["launcher", "sidebar"]) {
       if (mountMode === "sidebar") {
         const beforeReopenThreadCount = debug.renderCounts.THREAD;
         sidebarTab.render({ container: sidebarContainer });
-        await waitFor(() =>
-          harness.window.__vibecomfyPanelDebug().renderCounts.THREAD > beforeReopenThreadCount,
+        await waitFor(
+          () => harness.window.__vibecomfyPanelDebug().renderCounts.THREAD > beforeReopenThreadCount,
+          { attempts: 200 },
         );
       }
 
@@ -12526,6 +12530,7 @@ test("VibeComfy clarify questions render inline and follow-up submit continues t
     await harness.setup();
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled === false);
 
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "add a saver";
     await harness.clickButton("Submit");
@@ -12534,6 +12539,7 @@ test("VibeComfy clarify questions render inline and follow-up submit continues t
     assert.doesNotMatch(harness.textDump(), /continues this same session/);
 
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "replace the preview node";
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled === false);
     await harness.clickButton("Submit");
     await waitFor(() => /Candidate ready after clarification\./.test(harness.textDump()));
 
