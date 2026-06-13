@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.regenerate_snapshots import (
+from tools.regenerate_snapshots import (
     STEM_TO_READY_ID,
     _canonical_class_types_text,
     _canonical_widget_values_text,
@@ -36,7 +36,7 @@ def test_snapshot_sidecars_match_compiled_workflow(stem: str) -> None:
     regenerated_class_types = json.loads(_canonical_class_types_text(api))
     assert regenerated_class_types == committed_class_types, (
         f"class_types drift for {ready_id}: regenerate with "
-        f"`python scripts/regenerate_snapshots.py --write`."
+        f"`python -m tools.regenerate_snapshots --write`."
     )
 
     committed_widget_values = json.loads(
@@ -45,5 +45,5 @@ def test_snapshot_sidecars_match_compiled_workflow(stem: str) -> None:
     regenerated_widget_values = json.loads(_canonical_widget_values_text(api))
     assert regenerated_widget_values == committed_widget_values, (
         f"widget_values drift for {ready_id}: regenerate with "
-        f"`python scripts/regenerate_snapshots.py --write`."
+        f"`python -m tools.regenerate_snapshots --write`."
     )

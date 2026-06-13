@@ -21,7 +21,7 @@ The VibeComfy test suite has three layers: fast unit tests that run on every pus
 
 ## Snapshot regeneration
 
-- Script: `python scripts/regenerate_snapshots.py`. Default mode is `--write`.
+- Script: `python -m tools.regenerate_snapshots`. Default mode is `--write`.
 - Modes:
   - `--check` — diff committed snapshots against current ready-template output; exit non-zero with a unified diff on drift.
   - `--write` (default) — atomically rewrite the snapshot JSON via `tmp file → os.fsync → Path.replace`.
@@ -71,7 +71,7 @@ Real output-spec extraction — i.e. teaching the local schema provider to know 
 
 ## Where snapshots live
 
-- `tests/snapshots/<stem>.{api,class_types,widget_values}.json` — the curated 9-template registry, driven by `STEM_TO_READY_ID` in `scripts/regenerate_snapshots.py`.
+- `tests/snapshots/<stem>.{api,class_types,widget_values}.json` — the curated 9-template registry, driven by `STEM_TO_READY_ID` in `tools.regenerate_snapshots`.
 - Sibling `<recipe>.snapshot.json` — frozen compile output for user recipes (one file per recipe, next to the recipe).
 - Both routes use the same canonicalizer (`vibecomfy.testing.snapshot.canonicalize_api`). One source of truth; users and the in-repo regenerator share the contract.
 - For the user-facing walkthrough, see [`user_code.md`](user_code.md).

@@ -17,7 +17,10 @@ smoke harnesses.
 |---|---|
 | `convert_ready_templates.py` | Bulk-convert or dry-run ready-template updates. |
 | `format_as_python.py` | Legacy/delegation wrapper for Python template emission. |
+| `generate_agent_contract_js.py` | Regenerates the agent-edit JavaScript response contract. |
+| `populate_model_hashes.py` | Populate registry model hash pins from Hugging Face metadata. |
 | `regenerate_affected_templates.py` | Regenerate templates affected by schema changes. |
+| `regenerate_snapshots.py` | Rebuilds or checks compile-API snapshots. |
 | `refresh_template_index.py` | Rebuild or check `template_index.json`. |
 | `refresh_comfy_metadata.py` | Refresh checked-in ComfyUI metadata. |
 | `fetch_hf_metadata.py` | Fetch model metadata for authored assets. |

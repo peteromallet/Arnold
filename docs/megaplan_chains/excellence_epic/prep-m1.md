@@ -148,7 +148,7 @@ seed='randomize',               # string where int expected
 | Referenced path | Status | Citation |
 |-----------------|--------|----------|
 | `scripts/materialize_ready_templates.py` | ❌ Does not exist | Cited in `CLAUDE.md` line 340, `docs/authoring.md` line 171 |
-| `scripts/regenerate_snapshots.py` | ❌ Does not exist | Referenced in sprint brief done criterion 7 |
+| `scripts/regenerate_snapshots.py` | ❌ Did not exist at this prep checkpoint | Referenced in sprint brief done criterion 7 |
 | `tools/check_canonical_parity.py` | ❌ Does not exist on this branch | Referenced in `docs/templates/decorator_template_emitter_completion.md` line 266 (noted as feature-branch-only) |
 
 ### Convert parity gate status

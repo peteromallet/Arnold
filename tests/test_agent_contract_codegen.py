@@ -1,7 +1,7 @@
 """Drift guard for agent_edit_response_contract_generated.js.
 
 Ensures the generated JS module is always byte-for-byte identical to what
-`scripts/generate_agent_contract_js.py` produces from the Python source of
+`python -m tools.generate_agent_contract_js` produces from the Python source of
 truth.  Run via subprocess+difflib so there is zero chance of in-process
 import caching hiding a stale artifact.
 """
@@ -17,7 +17,6 @@ import tempfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-GENERATOR_SCRIPT = os.path.join(REPO_ROOT, "scripts", "generate_agent_contract_js.py")
 COMMITTED_FILE = os.path.join(
     REPO_ROOT,
     "vibecomfy",
@@ -39,7 +38,7 @@ def _run_generator() -> str:
         env["PYTHONPATH"] = REPO_ROOT + os.pathsep + env.get("PYTHONPATH", "")
 
         proc = subprocess.run(
-            [sys.executable, GENERATOR_SCRIPT, "--output", tmp_path],
+            [sys.executable, "-m", "tools.generate_agent_contract_js", "--output", tmp_path],
             capture_output=True,
             text=True,
             timeout=30,
@@ -68,7 +67,7 @@ def test_generated_js_matches_codegen():
     # 1. Assert the committed file exists
     assert os.path.isfile(COMMITTED_FILE), (
         f"Generated JS file not found at {COMMITTED_FILE}. "
-        "Run scripts/generate_agent_contract_js.py to create it."
+        "Run python -m tools.generate_agent_contract_js to create it."
     )
 
     # 2. Read the committed file
@@ -85,13 +84,13 @@ def test_generated_js_matches_codegen():
                 committed.splitlines(keepends=True),
                 generated.splitlines(keepends=True),
                 fromfile="committed: " + COMMITTED_FILE,
-                tofile="generated (from scripts/generate_agent_contract_js.py)",
+                tofile="generated (from python -m tools.generate_agent_contract_js)",
             )
         )
         raise AssertionError(
             f"Generated JS drift detected!\n\n"
             f"The committed file at {COMMITTED_FILE} does not match what the\n"
             f"codegen script produces.  Run this to regenerate:\n\n"
-            f"    python scripts/generate_agent_contract_js.py\n\n"
+            f"    python -m tools.generate_agent_contract_js\n\n"
             f"Diff:\n{diff}"
         )

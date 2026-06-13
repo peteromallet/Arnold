@@ -1,6 +1,6 @@
 """`vibecomfy test` CLI — snapshot / diff / verify subcommands (T7).
 
-Drives the same canonicalizer that `scripts/regenerate_snapshots.py` uses, so
+Drives the same canonicalizer that `python -m tools.regenerate_snapshots` uses, so
 user recipes and curated ready-templates share one snapshot contract.
 """
 from __future__ import annotations
@@ -22,17 +22,11 @@ def _emit(payload: dict, as_json: bool) -> None:
 
 def _stem_map() -> dict[str, str]:
     """Return the registered STEM_TO_READY_ID map from the regen script."""
-    from importlib.util import module_from_spec, spec_from_file_location
-
-    regen = find_repo_root() / "scripts" / "regenerate_snapshots.py"
-    if not regen.exists():
+    try:
+        from tools.regenerate_snapshots import STEM_TO_READY_ID
+    except ImportError:
         return {}
-    spec = spec_from_file_location("_regen_for_cli", regen)
-    if spec is None or spec.loader is None:
-        return {}
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return getattr(module, "STEM_TO_READY_ID", {})
+    return STEM_TO_READY_ID
 
 
 def _build_compiled_api(workflow_path: Path) -> dict[str, Any]:

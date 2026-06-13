@@ -122,7 +122,7 @@ Final local verification:
 
 - `uv run --frozen python -m tools.check_canonical_parity --all`: `canonical parity passed: 64 templates`.
 - `uv run --frozen pytest tests/test_v26_canonical_parity.py tests/test_comfy_nodes.py tests/test_runtime_code_modes.py tests/test_contracts_reexport.py`: `47 passed`.
-- `uv run --frozen python scripts/regenerate_snapshots.py --check`: all snapshot stems unchanged.
+- `uv run --frozen python -m tools.regenerate_snapshots --check`: all snapshot stems unchanged.
 - CI fast-suite file list without local coverage plugin: one known `known_failures.txt` baseline failure, no new regressions.
 
 Final GitHub checks on `7960738`:

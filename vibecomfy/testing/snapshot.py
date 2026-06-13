@@ -4,7 +4,7 @@
 The functions in this module are the single source of truth for how a
 compiled API dict is serialised into the three-sidecar form
 (`<stem>.api.json`, `<stem>.class_types.json`, `<stem>.widget_values.json`).
-`scripts/regenerate_snapshots.py` imports them so byte parity with the
+`tools.regenerate_snapshots` imports them so byte parity with the
 committed snapshots is preserved.
 
 Also exposes:
@@ -54,7 +54,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Canonicalisers (moved from scripts/regenerate_snapshots.py — names pinned)
+# Canonicalisers (moved from tools.regenerate_snapshots — names pinned)
 # ---------------------------------------------------------------------------
 
 

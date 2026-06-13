@@ -44,7 +44,7 @@ python -m pytest tests/test_porting_convert.py -q
 
 ### Snapshot/Canonical Checks (CI-wired in T14)
 ```bash
-python scripts/regenerate_snapshots.py --check
+python -m tools.regenerate_snapshots --check
 python -m tools.check_canonical_parity --all
 ```
 
@@ -197,7 +197,7 @@ Neither snapshots nor canonical baselines were regenerated during this sprint. T
 - **Canonical hash deltas:** 56 ready templates with hash changes — far too broad to be intentional from this sprint's limited template set
 - **Rationale:** The drift is not attributable to intentional ready-template rewrites from this sprint. Regenerating 56 baselines would mask unrelated changes and create a non-reviewable churn boundary.
 
-### Snapshot Freshness (`python scripts/regenerate_snapshots.py --check`)
+### Snapshot Freshness (`python -m tools.regenerate_snapshots --check`)
 - **Exit code:** 1 (failed)
 - **Drifting snapshot stems:**
   | Stem | Status |
@@ -239,12 +239,12 @@ Widgets from opaque/unknown custom node types where no resolution path (proxyWid
 
 ## 9. Disputed False Critique Facts Verified Locally
 
-### Fact #1: `scripts/regenerate_snapshots.py` EXISTS
+### Fact #1: `tools/regenerate_snapshots.py` EXISTS
 - **Critique claim:** The script "does not exist" and "was never committed" (flagged as `issue_hints-9` in earlier critique cycles).
-- **Local verification:** `scripts/regenerate_snapshots.py` exists at 161 lines with `--check` and `--write` flags.
-- **Verification command:** `wc -l scripts/regenerate_snapshots.py` → `161 scripts/regenerate_snapshots.py`
+- **Local verification:** `tools/regenerate_snapshots.py` exists at 161 lines with `--check` and `--write` flags.
+- **Verification command:** `wc -l tools/regenerate_snapshots.py` → `161 tools/regenerate_snapshots.py`
 - **Status:** **Critique claim was factually wrong.** The plan correctly rejected this critique.
-- **Related action (T14):** The stale CI comment at `.github/workflows/ci.yml` claiming the script "has never landed on main" was removed. The CI workflow now runs `.venv/bin/python scripts/regenerate_snapshots.py --check` as a snapshot freshness step.
+- **Related action (T14):** The stale CI comment at `.github/workflows/ci.yml` claiming the script "has never landed on main" was removed. The CI workflow now runs `.venv/bin/python -m tools.regenerate_snapshots --check` as a snapshot freshness step.
 
 ### Fact #2: `ready_templates/sources/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json` EXISTS
 - **Critique claim:** The talking-avatar source workflow JSON does not exist (flagged as `issue_hints-8` in earlier critique cycles).

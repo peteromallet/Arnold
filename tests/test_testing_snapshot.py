@@ -35,7 +35,7 @@ def build():
 def test_regenerate_snapshots_check_exits_zero():
     """The committed snapshot baselines stay in sync with the regenerator."""
     result = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "regenerate_snapshots.py"), "--check"],
+        [sys.executable, "-m", "tools.regenerate_snapshots", "--check"],
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),

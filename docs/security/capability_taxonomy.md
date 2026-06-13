@@ -156,7 +156,7 @@ Several call sites in the codebase use `spec.loader.exec_module()` to load and e
 | `vibecomfy/porting/convert.py` | 530 | Emitted strict-ready validation module | Same codemod-owned output; not user-supplied |
 | `vibecomfy/porting/convert.py` | 553 | Emitted convert validation module | Same codemod-owned output; not user-supplied |
 | `vibecomfy/testing/snapshot.py` | 282 | Recipe build function for snapshot testing | Loads known recipe files from the repo's `recipes/` directory for test infrastructure |
-| `vibecomfy/commands/test.py` | 34 | `scripts/regenerate_snapshots.py` stem-to-ready-id mapping | Loads the repo-owned snapshot helper, not user input |
+| `vibecomfy/commands/test.py` | 34 | `tools/regenerate_snapshots.py` stem-to-ready-id mapping | Loads the repo-owned snapshot helper, not user input |
 | `vibecomfy/commands/test.py` | 46 | Recipe module under test | Loads known recipe files from `recipes/` for CLI test infrastructure |
 | `vibecomfy/extras.py` | 89 | Plugin modules from `vibecomfy_extras/` and installed entry points | Plugin discovery loads local, project-authorized extensions, not user-supplied input |
 | `tools/*` (various scripts) | — | Repo-internal tooling scripts | These are developer tools in a sibling `tools/` directory; they are invoked manually by repo maintainers, not by ingested graph text |

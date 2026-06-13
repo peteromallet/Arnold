@@ -29,7 +29,6 @@ developer tools that are meant to run as `python -m tools.<name>`.
 | Script | Purpose |
 |---|---|
 | `agentic_success_rate.py` | Agentic-evaluation success-rate harness. |
-| `generate_agent_contract_js.py` | Regenerates the agent-edit JavaScript response contract. |
 | `run_local_agent_comfy.sh` | Starts a local agent-edit ComfyUI session. |
 | `sync_agent_skill.py` | Checks the canonical skill in `docs/agent-skill/` and installs it into local agent harnesses. |
 | `vibecomfy_debug.py` | Debug helper for agent-edit sessions. |
@@ -39,9 +38,7 @@ developer tools that are meant to run as `python -m tools.<name>`.
 
 | Script | Purpose |
 |---|---|
-| `regenerate_snapshots.py` | Rebuilds or checks compile-API snapshots. |
 | `warm_session_smoke.py` | Runtime warm-session smoke helper. |
-| `populate_model_hashes.py` | Model hash population helper. |
 | `demo_wrapper_codegen.py` | Wrapper codegen demonstration script. |
 | `roundtrip_fidelity_spike.py` | Round-trip fidelity spike. |
 | `_catalog_size_probe.py` | Private catalog-sizing probe. |

@@ -57,7 +57,7 @@ Parametrised over all 11 stems in `STEM_TO_READY_ID`. For each stem:
 4. Regenerate those same two JSON documents from the compiled API and compare
    them structurally (JSON equality).
 
-Regeneration: `python scripts/regenerate_snapshots.py --write`
+Regeneration: `python -m tools.regenerate_snapshots --write`
 
 ### Layer 3 — Emitter golden snapshots
 
@@ -152,7 +152,7 @@ intentional contract change.
 Use the **`--write`** flag on the dedicated script:
 
 ```bash
-python scripts/regenerate_snapshots.py --write
+python -m tools.regenerate_snapshots --write
 ```
 
 This updates the `.api.json`, `.class_types.json`, and `.widget_values.json`
@@ -363,6 +363,6 @@ not a periodic audit — run the flag directly in CI for the latter.
 |---|---|
 | Run full characterization suite | `PYTHONHASHSEED=0 python -m pytest -m characterization tests/characterization/ -v` |
 | Regenerate emitter & agent-edit goldens | `PYTHONHASHSEED=0 VIBECOMFY_CHARACTERIZATION_WRITE=1 python -m pytest -m characterization tests/characterization/test_emitter_snapshots.py tests/characterization/test_agent_edit_roundtrips.py -v` |
-| Regenerate compile-API snapshots | `python scripts/regenerate_snapshots.py --write` |
+| Regenerate compile-API snapshots | `python -m tools.regenerate_snapshots --write` |
 | Audit known-failures baseline | `PYTHONHASHSEED=0 python -m pytest --known-failures-audit tests/characterization/test_compile_api_snapshots.py --tb=no -q` |
 | Check API surface snapshot | `python -c "import vibecomfy; print('\n'.join(sorted(vibecomfy.__all__)))"` |

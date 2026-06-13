@@ -140,7 +140,7 @@ fast:
 		--cov-fail-under=0
 
 snapshots:
-	$(PYTHON) scripts/regenerate_snapshots.py --check
+	$(PYTHON) -m tools.regenerate_snapshots --check
 
 oracle:
 	VIBECOMFY_COMFY_SMOKE=1 $(PYTEST) -q --tb=short \

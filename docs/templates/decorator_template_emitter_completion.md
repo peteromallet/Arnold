@@ -262,7 +262,7 @@ all pre-existing:
 6. **Pre-existing app-code orphans tripped CI:** `tests/test_models_registry.py`
    and `tests/test_runpod_runner.py` import `runpod_lifecycle.PodGuard` which
    doesn't exist in the pinned v0.1.1; their `importorskip` lines guard the
-   wrong symbol. `scripts/regenerate_snapshots.py` and
+   wrong symbol. `tools/regenerate_snapshots.py` and
    `tools/check_canonical_parity.py` exist only on feature branches and have
    never landed on main. Mitigations: `--ignore` the two test files, drop
    `parity.yml` from the fix PR, drop the snapshot-check step from `ci.yml`,
@@ -313,5 +313,5 @@ all pre-existing:
    should be fixed in a small app PR (bump runpod-lifecycle pin OR correct
    the `importorskip` to guard `runpod_lifecycle.PodGuard` not `dotenv`).
 5. **Re-add parity.yml + tools/check_canonical_parity.py** as one combined PR
-   when ready. Same for `scripts/regenerate_snapshots.py` + ci.yml's snapshot
+   when ready. Same for `tools/regenerate_snapshots.py` + ci.yml's snapshot
    step.

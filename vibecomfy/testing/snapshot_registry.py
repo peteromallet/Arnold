@@ -2,7 +2,7 @@
 
 This is the single source of truth for which ready templates have a
 checked-in canonical snapshot under `tests/snapshots/`. Both
-`scripts/regenerate_snapshots.py` and the `vibecomfy test verify` CLI
+`tools.regenerate_snapshots` and the `vibecomfy test verify` CLI
 import this mapping.
 
 Stems live flat under `tests/snapshots/`, but ready ids carry the
