@@ -1,4 +1,4 @@
-base_branch: megaplan/production-parity-templates
+base_branch: main
 merge_policy: review
 
 driver:

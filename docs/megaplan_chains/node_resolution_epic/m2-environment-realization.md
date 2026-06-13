@@ -11,7 +11,7 @@ Grounded in STRATEGY §5 (items 6 + the provenance-*parsing* half of 5) and §8 
 1. **Harden install execution** (`node_packs_install.py:115,142,163`, §4.6). Fix the state-machine bug: a clone-succeeds/pip-fails pack leaves a dir that on retry hits `_refresh_existing` and **skips pip** while reporting "refreshed" — add a **state sentinel** so an incompletely-installed pack is never reported installed. Add a **cross-pack `pip install --dry-run --report` preflight** that catches conflicts **before** mutating the env (per-pack bare unpinned installs are last-wins and guarantee conflicts at scale, §7). The batch loop must **collect per-pack failures**, not abort on first failure with a polluted env (§5.6).
 2. **Provenance parsing → which packs.** `cnr_id` / `aux_id` / `ver` are carried through but **never parsed** (`pack_resolver.py:220`, §4.5). Add an `extract_provenance(workflow)` that parses the per-class provenance into the required pack set fed to `ensure-env`. This sprint parses provenance to determine *which* packs; **version-pinned resolution from `ver` is Sprint C** (here, the registry's class→pack resolution is sufficient to name the set).
 3. **`ensure-env(workflow)` orchestrator** (`vibecomfy/runtime/ensure_env.py`, §5.6, §8.5). Compose the hardened pieces: parse provenance → resolve the `(pack, …)` set → idempotent install/verify → executed-introspect → write the identity-keyed cache from Sprint A → ready to port/run. **Idempotent** (re-running is a no-op / `noop`), provenance-scoped (only the packs *this* workflow needs, §6), per-pack failure collection in the result.
-4. **End-to-end compile** of the headline workflow: after `ensure-env(ideogram4_t2i.json)`, the port compiles to a strict-ready template structurally equivalent to `fixtures/ideogram4_t2i.expected_emit.py` (scenario 12-compile).
+4. **End-to-end compile** of the headline workflow: after `ensure-env(ideogram4_t2i.json)`, the port compiles to a strict-ready template structurally equivalent to `tests/fixtures/node_resolution/ideogram4_t2i.expected_emit.py` (scenario 12-compile).
 
 ## Locked decisions (do not relitigate)
 - **Preflight + fail-closed, not a solver.** Cross-pack conflicts are handled by a joint `pip --dry-run --report` preflight (caught before mutation) — **not** a SAT-style cross-pack dependency resolver (§7, README non-goals). Still-not-fully-solvable is acceptable; loud is the bar.
@@ -34,7 +34,7 @@ Grounded in STRATEGY §5 (items 6 + the provenance-*parsing* half of 5) and §8 
 
 ## Done criteria
 Maps to testing.md scenarios **6, 7, 8** + **12 (compile)** (Definition of done → Sprint B). The runnable gate:
-- `pytest -m sprint_b docs/megaplan_chains/node_resolution_epic/testing` goes **green** (un-skip scenarios 6, 7, 8, 12-compile; wire shipped form into `tests/`).
+- `pytest -m sprint_b tests/acceptance/node_resolution` goes **green** (un-skip scenarios 6, 7, 8, 12-compile; wire shipped form into `tests/`).
   - **6** `ensure_env(str(IDEOGRAM))` resolves → installs → verifies → introspects; result `.ok` with `.installed`; re-running returns `.noop` (idempotent); per-pack failures collected, not fail-fast.
   - **7** Install robustness: a clone-ok/pip-fail pack is **not** reported installed (sentinel); a cross-pack `pip --dry-run` preflight catches conflicts before mutating the env.
   - **8** Provenance → packs: `extract_provenance(json.loads(IDEOGRAM))` parses `cnr_id`/`aux_id`/`ver` into a per-class pack set.

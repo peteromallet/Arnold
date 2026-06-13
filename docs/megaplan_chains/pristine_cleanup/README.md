@@ -81,7 +81,7 @@ megaplan chain start --spec docs/megaplan_chains/pristine_cleanup/chain.yaml --o
 megaplan chain start --spec docs/megaplan_chains/pristine_cleanup/chain.yaml
 
 # For a 6–8 week unattended run that outlives the terminal, use cloud chain mode
-# (mode: chain in cloud.yaml) + the operator loop. See docs/cloud.md.
+# with the relevant chain-local cloud config + the operator loop. See docs/cloud.md.
 ```
 
 ## The off-ramp

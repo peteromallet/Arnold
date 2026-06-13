@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SPEC="${1:-/workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml}"
-BRANCH="${2:-megaplan/production-parity-templates}"
+BRANCH="${2:-main}"
 INTERVAL_SECONDS="${OPERATOR_INTERVAL_SECONDS:-3600}"
 EARLY_SECONDS="${OPERATOR_EARLY_SECONDS:-900}"
 LOG="${OPERATOR_LOG:-/workspace/app/.megaplan/cloud-operator-loop.log}"

@@ -1307,7 +1307,7 @@ def test_missing_output_names_does_not_emit_outputs() -> None:
 
 def test_ideogram_fixture_never_leaks_bare_tuple_unpack_value_error() -> None:
     fixture = (
-        Path("docs/megaplan_chains/node_resolution_epic/testing/fixtures")
+        Path("tests/fixtures/node_resolution")
         / "ideogram4_t2i.json"
     )
     src = load_port_source(str(fixture), use_comfy_converter=False)

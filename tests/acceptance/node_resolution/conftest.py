@@ -1,7 +1,8 @@
 """Pytest config for the Node Resolution Epic acceptance suite.
 
 Registers the per-sprint markers so `pytest -m sprint_a` works without warnings.
-This is the *spec* suite (skipped gates); shipped tests land in `tests/`.
+The human-readable contract lives in
+``docs/megaplan_chains/node_resolution_epic/testing/testing.md``.
 """
 
 

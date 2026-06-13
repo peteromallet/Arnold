@@ -10,7 +10,7 @@ we hit porting an Ideogram-4 workflow.
 **DESIGNED + REVIEWED — not yet launched.**
 
 - Full design, the verified root cause, and a decision log: **[STRATEGY.md](./STRATEGY.md)**.
-- Acceptance contract — the failing workflow, what must happen at each gate, and the runnable gate suite: **[testing/testing.md](./testing/testing.md)** (`pytest docs/megaplan_chains/node_resolution_epic/testing`).
+- Acceptance contract — the failing workflow, what must happen at each gate, and the runnable gate suite: **[testing/testing.md](./testing/testing.md)** (`pytest tests/acceptance/node_resolution`).
 - The design was pressure-tested by a 12-reviewer panel (Codex + Opus on the
   architecture; 10 DeepSeek agents on the details) and every load-bearing claim
   was verified against the code. STRATEGY.md §9 records what changed and why.

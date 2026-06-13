@@ -57,7 +57,7 @@ These paths are the M2 shared-foundation change set:
 - `tests/test_foundation_utils.py`
 - `tests/test_nodes_install.py`
 - `tests/test_ready_templates.py`
-- `tools/_compile_equivalence.py`
+- `vibecomfy/porting/parity.py`
 - `tools/format_as_python.py`
 - `vibecomfy/_git_utils.py`
 - `vibecomfy/_graph_utils.py`

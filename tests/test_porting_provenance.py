@@ -14,7 +14,7 @@ _SPEC.loader.exec_module(_MODULE)
 extract_provenance = _MODULE.extract_provenance
 
 
-IDEOGRAM = (Path(__file__).resolve().parents[1] / "docs" / "megaplan_chains" / "node_resolution_epic" / "testing" / "fixtures" / "ideogram4_t2i.json")
+IDEOGRAM = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "node_resolution" / "ideogram4_t2i.json"
 
 
 def test_extract_provenance_scans_ideogram_top_level_and_subgraphs() -> None:

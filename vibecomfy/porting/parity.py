@@ -1,7 +1,7 @@
 """Compile-equivalence checker for ready-template conversion.
 
-Lifted from `tools/_compile_equivalence.py` so the converter and the test
-can share the same counters. `compile_equivalent(api_a, api_b)` returns
+The converter and tests share these counters through this module.
+`compile_equivalent(api_a, api_b)` returns
 `(True, [])` if both API dicts represent the same workflow modulo node-id
 renumbering and ordering, otherwise `(False, [diff_strings])`.
 """

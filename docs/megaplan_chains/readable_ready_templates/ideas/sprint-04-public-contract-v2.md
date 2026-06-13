@@ -4,7 +4,7 @@ Implement Sprint 4 from `docs/templates/readable_ready_template_cleanup_plan.md`
 
 ## Branch And Chain Constraints
 
-- Work only on the current shared branch: `megaplan/production-parity-templates`.
+- Work only on the current shared branch: `main`.
 - Do not create, switch to, or push milestone-specific branches.
 - Do not add compatibility wrappers, shims, or adapter command paths.
 - Preserve unrelated worktree changes. Do not revert files outside this sprint's scope.

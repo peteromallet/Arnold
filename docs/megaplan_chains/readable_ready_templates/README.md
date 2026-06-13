@@ -8,12 +8,13 @@ as a cloud-capable sequence of sprint-sized megaplan runs.
 All work runs on one branch:
 
 ```text
-megaplan/production-parity-templates
+main
 ```
 
 Do not add `branch:` fields to the milestones. The current megaplan chain PR
 mode is milestone-branch oriented; omitting milestone branches keeps the cloud
-workspace on the single branch configured in `cloud.yaml` and in `chain.yaml`.
+workspace on the single branch configured in this directory's `cloud.yaml` and
+in `chain.yaml`.
 The final `publish-shared-branch` milestone is responsible for committing and
 pushing the accumulated changes to that one branch.
 
@@ -31,11 +32,12 @@ failing tests.
 
 ## Cloud Setup
 
-`cloud.yaml` at the repository root is configured for the shared branch and a
+`cloud.yaml` in this directory is configured for the shared branch and a
 Railway runner.
 
 Before cloud deploy/status works, link this checkout to the intended Railway
-project or fill in `railway.project` / `railway.environment` in `cloud.yaml`:
+project or fill in `railway.project` / `railway.environment` in this
+directory's `cloud.yaml`:
 
 ```bash
 railway link
@@ -79,8 +81,8 @@ key. Do not print token contents in logs.
 Build and deploy from the repository root:
 
 ```bash
-PYENV_VERSION=3.11.11 python -m megaplan cloud build --cloud-yaml cloud.yaml
-PYENV_VERSION=3.11.11 python -m megaplan cloud deploy --cloud-yaml cloud.yaml
+PYENV_VERSION=3.11.11 python -m megaplan cloud build --cloud-yaml docs/megaplan_chains/readable_ready_templates/cloud.yaml
+PYENV_VERSION=3.11.11 python -m megaplan cloud deploy --cloud-yaml docs/megaplan_chains/readable_ready_templates/cloud.yaml
 ```
 
 Launch the chain on the cloud runner from an SSH session. Use `--no-push`
@@ -100,7 +102,7 @@ milestone spec requested `deepseek_provider: direct`.
 ```bash
 PYENV_VERSION=3.11.11 python -m megaplan cloud chain docs/megaplan_chains/readable_ready_templates/chain.yaml \
   --idea-dir docs/megaplan_chains/readable_ready_templates \
-  --cloud-yaml cloud.yaml
+  --cloud-yaml docs/megaplan_chains/readable_ready_templates/cloud.yaml
 ```
 
 Start the lightweight operator loop in a second tmux session after the chain
@@ -108,7 +110,7 @@ launches. This loop handles process restarts and push-after-completed-sprint:
 
 ```bash
 railway ssh --environment production --service agent -- \
-  "cd /workspace/app && tmux new-session -d -s megaplan-operator './scripts/megaplan_cloud_operator_loop.sh /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml megaplan/production-parity-templates'"
+  "cd /workspace/app && tmux new-session -d -s megaplan-operator './scripts/megaplan_cloud_operator_loop.sh /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml main'"
 ```
 
 For unattended end-to-end execution, also start the recovery loop. It wakes
@@ -119,7 +121,7 @@ when the branch moves, and restarts the chain:
 
 ```bash
 railway ssh --environment production --service agent -- \
-  "cd /workspace/app && tmux new-session -d -s megaplan-recovery './scripts/megaplan_cloud_recovery_loop.sh /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml megaplan/production-parity-templates'"
+  "cd /workspace/app && tmux new-session -d -s megaplan-recovery './scripts/megaplan_cloud_recovery_loop.sh /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml main'"
 ```
 
 Optional tuning:

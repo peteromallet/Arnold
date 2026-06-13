@@ -3,7 +3,7 @@ mode: idle
 
 repo:
   url: https://github.com/peteromallet/VibeComfy.git
-  branch: megaplan/production-parity-templates
+  branch: main
   workspace: /workspace/app
 
 secrets:

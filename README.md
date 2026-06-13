@@ -219,7 +219,6 @@ evidence; do not make compiled API JSON the reusable source of truth.
 | `tests/` | Unit, integration, browser, parity, and agentic harness tests. |
 | `.github/` | GitHub Actions workflows. |
 | `pyproject.toml`, `uv.lock` | Python package metadata and locked dependencies. |
-| `cloud.yaml` | Megaplan cloud workspace config. |
 | `custom_nodes.lock` | Custom-node pack lockfile used by node install/restore flows. |
 | `template_index.json` | Tracked ready-template index consumed by fast discovery and strict-ready validation. |
 | `out/`, `input/`, `output/`, `temp/` | Generated local runtime data; gitignored. |

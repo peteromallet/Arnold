@@ -22,7 +22,7 @@ the live inventory from batch 1 and the post-migration grep from batch 6.
 | `_is_link` @ `vibecomfy/ingest/normalize.py` | Legacy ingest mode: list links, digit-shaped source IDs after coercion, slot type unchanged. |
 | `_is_api_link` @ `vibecomfy/schema/validate.py` | `is_api_link(value, allow_tuple=True, require_string_node_id=True, require_numeric_node_id=False, require_int_slot=True)` |
 | `_is_link` @ `tools/format_as_python.py` | `is_api_link(value, allow_tuple=False, require_string_node_id=True, require_numeric_node_id=True, allow_compound_node_id=True, require_int_slot=True)` |
-| `_is_link` @ `tools/_compile_equivalence.py` | `is_api_link(value, allow_tuple=False, require_string_node_id=True, require_numeric_node_id=True, allow_compound_node_id=True, require_int_slot=True)` |
+| `_is_link` @ `vibecomfy/porting/parity.py` | `is_api_link(value, allow_tuple=False, require_string_node_id=True, require_numeric_node_id=True, allow_compound_node_id=True, require_int_slot=True)` |
 | `_is_link` @ `tests/test_ready_templates.py` | Legacy parity-test mode: list links, digit-shaped source IDs after coercion, slot type unchanged. |
 
 ### Node-Id Sort Helpers
@@ -37,7 +37,7 @@ the live inventory from batch 1 and the post-migration grep from batch 6.
 | Old symbol @ old location | New home |
 | --- | --- |
 | `UI_ONLY_CLASS_TYPES` @ `tools/format_as_python.py` | `UI_ONLY_CLASS_TYPES` imported from `vibecomfy._graph_utils` |
-| `UI_ONLY` @ `tools/_compile_equivalence.py` | `UI_ONLY_CLASS_TYPES` imported from `vibecomfy._graph_utils` |
+| `UI_ONLY` @ `vibecomfy/porting/parity.py` | `UI_ONLY_CLASS_TYPES` imported from `vibecomfy._graph_utils` |
 
 ### Git Helpers
 
@@ -63,7 +63,7 @@ canonical helper defaults:
   list-only, integer-slot behavior: they reject numeric source objects like
   `[1, 0]` while accepting numeric string and compound ids such as `"1"` and
   `"76:67"`. The current-tree call sites are `tools/format_as_python.py` and
-  `tools/_compile_equivalence.py`, and both pass `require_string_node_id=True`.
+  `vibecomfy/porting/parity.py`, and both pass `require_string_node_id=True`.
 
 ## Reviewed But Not Centralized
 

@@ -49,9 +49,9 @@ tools/format_as_python.py:151:            if _is_link(value):
 tools/format_as_python.py:265:        if _is_link(value):
 tools/format_as_python.py:272:        if _is_link(value):
 tools/format_as_python.py:417:            if _is_link(value):
-tools/_compile_equivalence.py:25:def _is_link(value: Any) -> bool:
-tools/_compile_equivalence.py:78:            if _is_link(value):
-tools/_compile_equivalence.py:94:            if not _is_link(value):
+vibecomfy/porting/parity.py:25:def _is_link(value: Any) -> bool:
+vibecomfy/porting/parity.py:78:            if _is_link(value):
+vibecomfy/porting/parity.py:94:            if not _is_link(value):
 tests/test_ready_templates.py:195:            if _is_link(value):
 tests/test_ready_templates.py:208:            if not _is_link(value):
 tests/test_ready_templates.py:218:def _is_link(value: object) -> bool:
@@ -62,7 +62,7 @@ vibecomfy/analysis/graph.py:185:    return {key: deepcopy(value) for key, value 
 vibecomfy/analysis/graph.py:299:def _is_link(value: Any) -> bool:
 ```
 
-Divergence note: `tools/format_as_python.py` and `tools/_compile_equivalence.py` accept compound node IDs such as `"238:231"` and require integer slots; `vibecomfy/ingest/normalize.py`, `vibecomfy/analysis/graph.py`, and `tests/test_ready_templates.py` only accept digit-only node IDs and do not enforce integer slot type.
+Divergence note: `tools/format_as_python.py` and `vibecomfy/porting/parity.py` accept compound node IDs such as `"238:231"` and require integer slots; `vibecomfy/ingest/normalize.py`, `vibecomfy/analysis/graph.py`, and `tests/test_ready_templates.py` only accept digit-only node IDs and do not enforce integer slot type.
 
 ### `_sort_key` / `_node_sort_key`
 

@@ -2,32 +2,33 @@
 
 This is the **acceptance contract** for the epic. A sprint is not "done" until
 its gates here are green. The headline regression is the real workflow that
-started all this — `fixtures/ideogram4_t2i.json` — and every behavioral claim in
+started all this — `tests/fixtures/node_resolution/ideogram4_t2i.json` — and every behavioral claim in
 [`../STRATEGY.md`](../STRATEGY.md) maps to a scenario below.
 
-`test_node_resolution_acceptance.py` is the executable form of this document:
+`tests/acceptance/node_resolution/test_acceptance.py` is the executable form of this document:
 one test per scenario, marked by the sprint that makes it pass. Until then each
 gate test `skip`s with a pointer back to the relevant section here. As each
-sprint lands, its tests are un-skipped and **also wired into `tests/`** (the
-canonical home for the shipped suite); this folder remains the spec + fixtures.
+sprint lands, its tests are un-skipped in the canonical suite under `tests/`.
+This folder remains the human-readable acceptance contract; heavyweight fixtures
+live in `tests/fixtures/node_resolution/`.
 
 ## How to run
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 # the living gate checklist (skips = not-yet-implemented):
-pytest docs/megaplan_chains/node_resolution_epic/testing -v
+pytest tests/acceptance/node_resolution -v
 # per sprint:
-pytest -m sprint_a docs/megaplan_chains/node_resolution_epic/testing -v
+pytest -m sprint_a tests/acceptance/node_resolution -v
 ```
 
 ---
 
 ## Headline regression — the Ideogram-4 workflow
 
-**Fixture:** `fixtures/ideogram4_t2i.json` (real, 119 KB; uses `io.Schema` nodes,
+**Fixture:** `tests/fixtures/node_resolution/ideogram4_t2i.json` (real, 119 KB; uses `io.Schema` nodes,
 two subgraphs, multiple node packs).
-**Reference:** `fixtures/ideogram4_t2i.expected_emit.py` — the compiling Python
+**Reference:** `tests/fixtures/node_resolution/ideogram4_t2i.expected_emit.py` — the compiling Python
 the porter produced once the schema was correct (0.24.0.1). A successful port
 should be structurally equivalent to this.
 
@@ -65,10 +66,10 @@ Each row is one acceptance test. "Gate" = the sprint that must make it pass.
 
 | Path | Role |
 |---|---|
-| `fixtures/ideogram4_t2i.json` | **Headline.** Real Ideogram-4 workflow — `io.Schema` arity skew + subgraphs + multi-pack. Drives scenarios 1, 8, 12. |
-| `fixtures/ideogram4_t2i.expected_emit.py` | Golden reference: the compiling emit from the 0.24.0.1 run. |
+| `tests/fixtures/node_resolution/ideogram4_t2i.json` | **Headline.** Real Ideogram-4 workflow — `io.Schema` arity skew + subgraphs + multi-pack. Drives scenarios 1, 8, 12. |
+| `tests/fixtures/node_resolution/ideogram4_t2i.expected_emit.py` | Golden reference: the compiling emit from the 0.24.0.1 run. |
 | `ready_templates/sources/official/video/wan_t2v.json` *(referenced, in-repo)* | Provenance-less + multi-pack. Drives scenarios 3, 10. |
-| `evidence/object_info_comfyui_0.24.0.1.json` *(referenced)* | The correct 0.24 schema dump — input for the "current cache" / merge tests (scenarios 2, 3). |
+| `vibecomfy/porting/cache/object_info/comfy_core@object_info_comfyui_0.24.0.1.json` *(referenced)* | The correct 0.24 schema cache entry — input for the "current cache" / merge tests (scenarios 2, 3). |
 
 Sprints add: a minimal `io.Schema` single-node fixture (scenario 4), a
 `cnr_id`+`ver` pinned-version fixture (scenario 9), and a synthetic

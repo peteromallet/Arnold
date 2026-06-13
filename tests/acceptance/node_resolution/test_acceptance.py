@@ -7,7 +7,8 @@ intended assertions in its body so it activates by deleting the skip. The
 
 Future symbols (``ArityDisagreementError``, ``ensure_env`` …) are imported
 *inside* the test bodies, so this module always collects cleanly even before the
-epic lands. Shipped versions of these gates also land in ``tests/``.
+epic lands. The human-readable acceptance contract remains in
+``docs/megaplan_chains/node_resolution_epic/testing/testing.md``.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from typing import Sequence
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 for _module_name, _module in tuple(sys.modules.items()):
@@ -40,8 +41,7 @@ for _module_name, _module in tuple(sys.modules.items()):
 
 from vibecomfy.porting.object_info.serialize import build_cache
 
-HERE = Path(__file__).parent
-FIXTURES = HERE / "fixtures"
+FIXTURES = _REPO_ROOT / "tests" / "fixtures" / "node_resolution"
 IDEOGRAM = FIXTURES / "ideogram4_t2i.json"
 EXPECTED_EMIT = FIXTURES / "ideogram4_t2i.expected_emit.py"
 
@@ -251,7 +251,7 @@ def test_a2_fail_closed_on_known_node_arity_disagreement(
 def test_a3_core_refresh_does_not_clobber_custom_packs():
     """After refreshing core schema, custom-pack classes still resolve (merge)."""
     from vibecomfy.porting.object_info import class_is_known
-    # refresh core from evidence/object_info_comfyui_0.24.0.1.json (merge mode) ...
+    # refresh core from the normalized 0.24 object-info cache entry (merge mode) ...
     assert class_is_known("ComfyMathExpression")          # core updated
     assert class_is_known("WanVideoModelLoader")          # custom pack preserved
 

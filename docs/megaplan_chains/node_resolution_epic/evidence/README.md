@@ -30,4 +30,4 @@ The decisive detail findings, all **verified true**:
 
 ## Generated artifact
 
-- [`object_info_comfyui_0.24.0.1.json`](./object_info_comfyui_0.24.0.1.json) (1.4 MB) — the node-schema dump from **ComfyUI 0.24.0.1** (the hiddenswitch pip-installable fork), captured CPU-only. This is the dump that, when merged into the cache, made the Ideogram port compile (`ComfyMathExpression` → 3 outputs). It seeds Sprint A/C. *Regenerable; safe to `.gitignore` if its size is unwanted in-tree.*
+- [`vibecomfy/porting/cache/object_info/comfy_core@object_info_comfyui_0.24.0.1.json`](../../../../vibecomfy/porting/cache/object_info/comfy_core@object_info_comfyui_0.24.0.1.json) — the normalized package-cache form of the **ComfyUI 0.24.0.1** schema dump (the hiddenswitch pip-installable fork), captured CPU-only. This is the cache entry that made the Ideogram port compile (`ComfyMathExpression` → 3 outputs). The raw docs-side dump was duplicate, regenerable evidence and is no longer tracked here.

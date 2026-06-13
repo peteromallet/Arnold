@@ -41,7 +41,6 @@ developer tools that are meant to run as `python -m tools.<name>`.
 | `warm_session_smoke.py` | Runtime warm-session smoke helper. |
 | `demo_wrapper_codegen.py` | Wrapper codegen demonstration script. |
 | `roundtrip_fidelity_spike.py` | Round-trip fidelity spike. |
-| `_catalog_size_probe.py` | Private catalog-sizing probe. |
 | `maintenance/` | Historical one-off maintenance scripts kept out of the root. |
 
 ## Megaplan / Local Ops

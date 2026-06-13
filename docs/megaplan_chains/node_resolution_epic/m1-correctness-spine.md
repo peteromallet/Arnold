@@ -1,6 +1,6 @@
 # Sprint A — Correctness spine (`premium/thorough/high +prep`)
 
-Shared context: read `docs/megaplan_chains/node_resolution_epic/STRATEGY.md` (v2, post-review — esp. §2 spine, §3 what exists, §4 what's broken, §5 target, §8 sequencing, §9 decision log) and `docs/megaplan_chains/node_resolution_epic/testing/testing.md` (the acceptance contract). This is sprint 1 of 3 in the Node Resolution Epic. vibecomfy ports raw ComfyUI workflows (`vibecomfy/porting/`) into curated Python "ready templates"; the porter reads node schemas from an offline snapshot keyed nowhere to the node's real identity. The headline regression is `fixtures/ideogram4_t2i.json`: a `ComfyMathExpression` node whose modern `io.Schema` API declares **3** outputs (`FLOAT/INT/BOOL`), while the stale 0.18.2 snapshot has **2** — which silent-miscompiles into an opaque `ValueError: not enough values to unpack (expected 3, got 2)` four layers down.
+Shared context: read `docs/megaplan_chains/node_resolution_epic/STRATEGY.md` (v2, post-review — esp. §2 spine, §3 what exists, §4 what's broken, §5 target, §8 sequencing, §9 decision log) and `docs/megaplan_chains/node_resolution_epic/testing/testing.md` (the acceptance contract). This is sprint 1 of 3 in the Node Resolution Epic. vibecomfy ports raw ComfyUI workflows (`vibecomfy/porting/`) into curated Python "ready templates"; the porter reads node schemas from an offline snapshot keyed nowhere to the node's real identity. The headline regression is `tests/fixtures/node_resolution/ideogram4_t2i.json`: a `ComfyMathExpression` node whose modern `io.Schema` API declares **3** outputs (`FLOAT/INT/BOOL`), while the stale 0.18.2 snapshot has **2** — which silent-miscompiles into an opaque `ValueError: not enough values to unpack (expected 3, got 2)` four layers down.
 
 ## Outcome
 Wrong or skewed schema can no longer be consumed silently. The emitter fails **closed** at its real arity site with a typed error, executed `/object_info` introspection becomes the authoritative cache generator (covering `io.Schema` nodes that AST cannot see), `build_cache` merges instead of clobbering, and the `(pack_slug, git_commit)` identity / schema-hash plumbing is built and self-validating. This **closes the Ideogram silent-miscompile crash class**.
@@ -23,7 +23,7 @@ Grounded in STRATEGY §5 (items 1–4) and §8 (steps 1–2), using only the ver
 ## Open questions (resolve in build)
 - Where exactly the UI-declared output count is most reliably read for a node that lives inside a subgraph definition (the fixture has two subgraphs) — pick the consume-time source already available at `emitter.py:1947,4102`.
 - The minimal `io.Schema` single-node fixture for scenario 4 (testing.md "Fixtures": sprints add it) — author one that `define_schema`s known outputs.
-- Whether `evidence/object_info_comfyui_0.24.0.1.json` is the merge-source for the scenario 3 core-refresh test or whether a smaller slice suffices (§7 introspection-trust note applies to *running* code, not to consuming this static dump).
+- Whether `vibecomfy/porting/cache/object_info/comfy_core@object_info_comfyui_0.24.0.1.json` is the merge-source for the scenario 3 core-refresh test or whether a smaller slice suffices (§7 introspection-trust note applies to *running* code, not to consuming this static dump).
 
 ## Constraints
 - **Cheap porting must NOT boot ComfyUI or run `import_all_nodes_in_workspace`** (§6) — that is ~a full boot (5–30 s). Correctness comes from identity + fail-closed, not from going live per-port. Live boot is reserved for cache generation and actual execution.
@@ -33,10 +33,10 @@ Grounded in STRATEGY §5 (items 1–4) and §8 (steps 1–2), using only the ver
 
 ## Done criteria
 Maps to testing.md scenarios **1–5** (Definition of done → Sprint A). The runnable gate:
-- `pytest -m sprint_a docs/megaplan_chains/node_resolution_epic/testing` goes **green** (un-skip scenarios 1–5; also wire the shipped form into `tests/`).
+- `pytest -m sprint_a tests/acceptance/node_resolution` goes **green** (un-skip scenarios 1–5; also wire the shipped form into `tests/`).
   - **1** Arity skew → porting `ideogram4_t2i.json` either compiles with correct arity or raises typed `ArityDisagreementError`; **assert no bare unpack `ValueError`** reaches the caller.
   - **2** Fail-closed unit: `require_class_output_count` / emitter arity site raises `ArityDisagreementError` naming the node + snapshot version + remedy when cache `<` UI; **warns** (not errors) when cache `>` UI.
-  - **3** Core refresh does not clobber custom packs: after refreshing core from `evidence/object_info_comfyui_0.24.0.1.json` (merge), `WanVideoModelLoader` still resolves; `build_cache` merges.
+  - **3** Core refresh does not clobber custom packs: after refreshing core from `vibecomfy/porting/cache/object_info/comfy_core@object_info_comfyui_0.24.0.1.json` (merge), `WanVideoModelLoader` still resolves; `build_cache` merges.
   - **4** `io.Schema` coverage: executed introspection yields `["FLOAT", "INT", "BOOL"]` for `ComfyMathExpression`; AST's `None` is no longer authoritative.
   - **5** Identity + drift: lookup key is `(pack_slug, git_commit)`; `compute_schema_hash` wired at the schema path; drift uses one consistent algorithm — no false-positive mismatches.
 - **Headline behavior (AFTER A** in testing.md's NOW/AFTER table): porting `ideogram4_t2i.json` is **never** an opaque `ValueError` — either it ports to a compiling template with correct arity (cache current) **or** it fails closed with `ArityDisagreementError` naming `ComfyMathExpression`, the snapshot version, and the remedy. Silent miscompile is impossible.

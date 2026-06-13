@@ -46,4 +46,3 @@ smoke harnesses.
 | `backfill_custom_node_refs.py` | Backfill missing custom-node references. |
 | `clone_and_extract_packs.py` | Clone upstream packs and extract class metadata. |
 | `_widget_schema.py` | Internal widget-schema helper. |
-| `_compile_equivalence.py` | Historical compile-equivalence compatibility shim. |

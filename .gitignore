@@ -36,6 +36,7 @@ input/.DS_Store
 # Agent task briefs and prompts — historical scratchpads, not project docs
 docs/megaplan_briefs/
 docs/subagent_prompts/
+docs/megaplan_chains/node_resolution_epic/evidence/object_info_*.json
 docs/local_agent_text_to_graph_e2e.md
 .env
 this.env
