@@ -150,7 +150,7 @@ Then validate the Python template:
 ```bash
 python -m vibecomfy.cli validate ready_templates/<kind>/<id>.py
 python -m vibecomfy.cli port check ready_templates/<kind>/<id>.py --strict-ready-template --json
-python -m pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_cli.py
+python -m pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_cli_misc.py tests/test_cli_sources_workflows_nodes.py
 ```
 
 For `coverage_tier: required` or app-active templates, strict-ready gates prohibit missing `with new_workflow(...) as wf:` blocks, explicit `Wrapper(wf, ...)` calls in ready-template builds, wrapper-eligible `node(wf, ...)` calls, schema-default kwargs, single-output `_outputs=` or named `.out("NAME")`, legacy ready-template helper imports, missing custom-node pack provenance commits, hidden schema-backed widgets, missing or broken public input targets, missing or unnamed public outputs, hidden model filenames, and opaque UUID component classes. If a violation cannot be fixed in the same change, document an exact exception with owner, ticket, final category, expiration, and removal condition before relying on it.

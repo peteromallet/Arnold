@@ -13,10 +13,10 @@ workflow_index.json
 external_workflow_index.json
 node_index.json
 out/
-output/
+/output/
 temp/
-input/
-input/.DS_Store
+/input/
+/input/.DS_Store
 
 # Large local runtime/vendor checkouts
 /recipes/

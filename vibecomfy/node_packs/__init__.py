@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-# Lazy-load all submodules via __getattr__ to avoid circular imports during
-# startup.  The thin shims at node_packs_lockfile.py etc. trigger loading of
-# this package, and eagerly importing _install / _git here would pull in
+# Lazy-load submodules via __getattr__ to avoid circular imports during
+# startup. Eagerly importing _install / _git here would pull in
 # vibecomfy.registry (and transitively vibecomfy.ingest) before they are ready.
 
 __all__ = [

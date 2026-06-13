@@ -243,7 +243,7 @@ Required and app-active templates cannot regress behind hidden widgets or opaque
 Then run targeted tests:
 
 ```bash
-uv run pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli.py
+uv run pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli_misc.py tests/test_cli_sources_workflows_nodes.py
 ```
 
 For a new scope, add a unit test in `tests/test_runpod_matrix.py` so the selected rows cannot silently disappear.

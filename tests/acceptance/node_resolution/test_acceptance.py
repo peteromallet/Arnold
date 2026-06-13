@@ -271,7 +271,7 @@ def test_a5_identity_keyed_cache_and_drift(
     is wired and is a *real content hash*, and the cache builder and the drift
     checker share ONE schema-hash projection (the pre-m1 bug was two hashes that
     never matched, yielding false-positive drift)."""
-    from vibecomfy.node_packs_lockfile import LockEntry, compute_schema_hash
+    from vibecomfy.node_packs import LockEntry, compute_schema_hash
     from vibecomfy.porting.object_info import get_class_by_identity
     from vibecomfy.runtime import drift as drift_mod
 
@@ -384,7 +384,7 @@ def test_a5_identity_keyed_cache_and_drift(
 @pytest.mark.sprint_b
 def test_b6_ensure_env_installs_and_is_idempotent(monkeypatch: pytest.MonkeyPatch):
     import vibecomfy.runtime.ensure_env as ensure_env_module
-    from vibecomfy.node_packs_install import InstallBatchResult, InstallResult, PipPreflightResult
+    from vibecomfy.node_packs import InstallBatchResult, InstallResult, PipPreflightResult
     from vibecomfy.runtime.ensure_env import ensure_env
 
     monkeypatch.setattr(ensure_env_module, "_REALIZED_SIGNATURES", set())
@@ -449,7 +449,7 @@ def test_b6_ensure_env_installs_and_is_idempotent(monkeypatch: pytest.MonkeyPatc
 @pytest.mark.sprint_b
 def test_b7_install_robustness(tmp_path: Path):
     """clone-ok/pip-fail is NOT reported installed; cross-pack pip preflight runs."""
-    from vibecomfy.node_packs_install import install_pack, install_required_packs
+    from vibecomfy.node_packs import install_pack, install_required_packs
 
     class Runner:
         def __init__(self, *, fail_pip: bool = False, fail_dry_run: bool = False, dirty: bool = False):
@@ -580,7 +580,7 @@ def test_b12_ideogram_ports_to_compiling_strict_ready_template(tmp_path: Path, m
     from vibecomfy.porting.parity import class_type_counter, topology_counter
     from vibecomfy.porting.convert import port_convert_workflow
     from vibecomfy.porting.workbench import load_port_source
-    import vibecomfy.node_packs_install as node_packs_install
+    import vibecomfy.node_packs as node_packs_install
     import vibecomfy.runtime.ensure_env as ensure_env_module
     from vibecomfy.runtime.ensure_env import ensure_env
 
@@ -676,9 +676,9 @@ def test_b12_ideogram_ports_to_compiling_strict_ready_template(tmp_path: Path, m
 @pytest.mark.sprint_c
 def test_c9_faithful_version_pinning(monkeypatch: pytest.MonkeyPatch) -> None:
     """Installs the authored commit (from `ver`), not latest; aux_id path works."""
-    import vibecomfy.node_packs_install as node_packs_install
+    import vibecomfy.node_packs as node_packs_install
     from vibecomfy.runtime.ensure_env import ensure_env
-    from vibecomfy.node_packs_install import InstallBatchResult, InstallResult, PipPreflightResult
+    from vibecomfy.node_packs import InstallBatchResult, InstallResult, PipPreflightResult
 
     authored_commit = "abc123def456789012345678901234567890abcd"
 
@@ -753,7 +753,7 @@ def test_c9_faithful_version_pinning(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_c10_provenance_less_warns_never_silent_latest() -> None:
     """A provenance-less workflow resolves with an explicit warning, low-confidence."""
     from vibecomfy.runtime.ensure_env import ensure_env
-    from vibecomfy.node_packs_install import InstallBatchResult, PipPreflightResult
+    from vibecomfy.node_packs import InstallBatchResult, PipPreflightResult
 
     corpus = _REPO_ROOT / "ready_templates/sources/official/video/wan_t2v.json"
     assert corpus.exists(), "wan_t2v.json fixture is missing"
@@ -879,11 +879,11 @@ def test_c12_ideogram_ports_at_authored_versions(
     produces a compiling strict-ready template anchored to the authored identity
     rather than registry latest.
     """
-    import vibecomfy.node_packs_install as node_packs_install
+    import vibecomfy.node_packs as node_packs_install
     import vibecomfy.runtime.ensure_env as ensure_env_module
     from vibecomfy.runtime.ensure_env import ensure_env
     from vibecomfy.porting.convert import port_convert_workflow, _node_object_info_identities
-    from vibecomfy.node_packs_install import InstallBatchResult, InstallResult, PipPreflightResult
+    from vibecomfy.node_packs import InstallBatchResult, InstallResult, PipPreflightResult
     from vibecomfy.registry.pack_resolver import PackRef, PackResolution
 
     authored_commit = "abc123def456789012345678901234567890abcd"

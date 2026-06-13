@@ -17,7 +17,7 @@ This skill teaches an agent how to use it. The user wants to: **grab a template,
 - Prefer explicit, local registries and small modules over implicit discovery unless a task specifically asks for discovery.
 - Do not change runtime behavior, templates, workflow corpus files, or generated snapshots unless the task explicitly covers those areas.
 - If a change needs coordination with another interface or parallel task, document the integration note instead of guessing across ownership boundaries.
-- Run the full test suite with `pytest`; run focused tests with `pytest tests/test_cli.py` or the relevant test file.
+- Run the full test suite with `pytest`; run focused CLI tests with `pytest tests/test_cli_misc.py tests/test_cli_sources_workflows_nodes.py` or the relevant test file.
 - Exercise the CLI locally with `python -m vibecomfy.cli ...`.
 - Sync indexes only when a task or test requires it: `python -m vibecomfy.cli sources sync`.
 
@@ -351,7 +351,7 @@ The full operating path lives in **`docs/templates/adding_templates_models.md`**
 5. **Add a manifest row** in `ready_templates/sources/manifests/coverage.json` with `id`, `path`, `media`, `task`, `coverage_tier`, `ready_template: true`.
 6. **Run port preflight**: `python -m vibecomfy.cli port check ready_templates/sources/.../<id>.json --json`. Resolve hard errors (helper nodes, missing packs, model asset issues, widget alias drift) before hand-editing or RunPod.
 7. **Convert to a ready template** with `python -m vibecomfy.cli port convert ready_templates/sources/.../<id>.json --ready-id <media>/<id> --out ready_templates/<media>/<id>.py --json`, or hand-author it under `ready_templates/<media>/<id>.py` for full control (see `ready_templates/image/z_image.py` for the canonical hand-authored shape). To fork a generated template into local `recipes/` for hand-editing, use `python -m vibecomfy.cli copy-to-recipe <id> --out recipes/<name>.py`.
-8. **Validate locally**: `vibecomfy validate ready_templates/<media>/<id>.py`, then targeted tests `pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli.py`.
+8. **Validate locally**: `vibecomfy validate ready_templates/<media>/<id>.py`, then targeted tests `pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli_misc.py tests/test_cli_sources_workflows_nodes.py`.
 9. **Validate on RunPod** with a focused scope: `VIBECOMFY_MATRIX_SCOPE=<family> uv run python scripts/runpod_corpus_matrix.py`. Don't run the full matrix while iterating.
 10. **Document failures** in `docs/runtime/incompatibilities.md`, `docs/structural_issues.md`, or a family coverage doc — never leave fixes only in chat history or pod logs.
 

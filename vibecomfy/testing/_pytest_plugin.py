@@ -75,12 +75,16 @@ def pytest_pycollect_makeitem(
 # Re-export the public fixtures so users get them from the plugin.
 from vibecomfy.testing.fixtures import (  # noqa: E402
     dry_runtime,
+    make_handle_factory,
+    make_workflow_factory,
     vibecomfy_handle_factory,
     vibecomfy_workflow_factory,
 )
 
 __all__ = [
     "dry_runtime",
+    "make_handle_factory",
+    "make_workflow_factory",
     "vibecomfy_handle_factory",
     "vibecomfy_workflow_factory",
 ]

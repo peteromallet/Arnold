@@ -12058,6 +12058,7 @@ test("VibeComfy hides final batch row from the live log when ok response has a c
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
     harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "terminalize row";
     await harness.clickButton("Submit");
+    await waitFor(() => /Updated the workflow\./.test(harness.textDump()), { attempts: 1000 });
     assert.doesNotMatch(harness.textDump(), /final turn/);
     const progressDots = harness.document.body.querySelectorAll(
       (node) => typeof node.className === "string" && node.className.includes("vibecomfy-batch-progress-dot"),
@@ -12069,7 +12070,7 @@ test("VibeComfy hides final batch row from the live log when ok response has a c
     assert.equal(batchRows.length, 0, "terminal candidate batch row should leave the live log");
 
     expandAgentBubbleDetails(harness.document.body);
-    assert.match(harness.textDump(), /final turn/);
+    await waitFor(() => /final turn/.test(harness.textDump()), { attempts: 1000 });
   } finally {
     await harness.dispose();
   }
