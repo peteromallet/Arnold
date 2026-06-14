@@ -302,7 +302,7 @@ def test_neutral_kernel_steps_all_unchanged() -> None:
 
 
 def test_deliberation_example_has_no_megaplan_imports() -> None:
-    """The _deliberation_example package must not import from megaplan.
+    """The _deliberation_example package must not import from arnold.pipelines.megaplan.
 
     Run a subprocess with a meta_path hook that blocks all megaplan
     imports, then import the package.  If any module triggers a megaplan
@@ -315,7 +315,7 @@ class BlockMegaplan:
     def find_spec(self, fullname, path=None, target=None):
         blocked = (
             fullname == "megaplan"
-            or fullname.startswith("megaplan.")
+            or fullname.startswith("arnold.pipelines.megaplan.")
             or fullname == "arnold.pipelines.megaplan"
             or fullname.startswith("arnold.pipelines.megaplan.")
             or fullname == "arnold_pipelines.megaplan"

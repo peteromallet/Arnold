@@ -1,6 +1,6 @@
 """Core infrastructure for megaplan — re-exports from submodules.
 
-All public names are available via ``from megaplan._core import <name>``
+All public names are available via ``from arnold.pipelines.megaplan._core import <name>``
 so existing callers don't need to change.
 """
 

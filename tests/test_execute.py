@@ -4122,7 +4122,7 @@ def test_execute_mixed_routable_unroutable_rework_escalates_recoverably_after_ca
     assert "REVIEW" in fourth["unrunnable_rework_task_ids"]
     assert "unroutable item" in fourth["summary"]
 
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
 
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None
@@ -4372,7 +4372,7 @@ def test_retry_blocked_does_not_rerun_final_no_baseline_checkpoint(
             retry_blocked_tasks=True,
         ),
     )
-    from megaplan.orchestration.phase_result import read_phase_result
+    from arnold.pipelines.megaplan.orchestration.phase_result import read_phase_result
 
     pr = read_phase_result(plan_fixture.plan_dir)
 
@@ -4399,8 +4399,8 @@ def test_status_reclassifies_stale_no_baseline_checkpoint_prereq_block(
     (plan_fixture.plan_dir / "finalize.json").write_text(
         json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
     )
-    from megaplan.cli.status_view import _build_status_payload
-    from megaplan.orchestration.phase_result import BlockedTask
+    from arnold.pipelines.megaplan.cli.status_view import _build_status_payload
+    from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask
     from tests.conftest import make_fake_phase_result
 
     make_fake_phase_result(

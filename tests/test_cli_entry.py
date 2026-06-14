@@ -211,7 +211,7 @@ def test_status_project_dir_resolves_plan_from_target_not_cwd(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from megaplan import cli as cli_mod
+    from arnold.pipelines.megaplan import cli as cli_mod
 
     engine_root = tmp_path / "engine"
     target_root = tmp_path / "target"

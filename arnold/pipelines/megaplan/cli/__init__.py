@@ -1990,7 +1990,7 @@ def _chain_worktree_base_ref(args: argparse.Namespace) -> str:
     spec_path = getattr(args, "spec", None)
     if spec_path:
         try:
-            from megaplan.chain import load_spec
+            from arnold.pipelines.megaplan.chain import load_spec
 
             return load_spec(Path(spec_path)).base_branch
         except CliError:

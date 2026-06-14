@@ -567,7 +567,7 @@ def _handle_routed_override(
 
 def _resolved_default_phase_spec(phase: str, state: PlanState, root: Path) -> str:
     """Return the concrete default routing spec for *phase*."""
-    from megaplan.profiles import effective_premium_vendor
+    from arnold.pipelines.megaplan.profiles import effective_premium_vendor
 
     raw_spec = DEFAULT_AGENT_ROUTING.get(phase, "")
     if not raw_spec:
@@ -590,7 +590,7 @@ def _resolved_default_phase_agent(phase: str, state: PlanState, root: Path) -> s
 
 def _resolved_profile_phase_spec(phase: str, state: PlanState, root: Path) -> str:
     """Return the concrete expanded profile spec for *phase*, if any."""
-    from megaplan.profiles import apply_profile_expansion
+    from arnold.pipelines.megaplan.profiles import apply_profile_expansion
 
     profile_name = state.get("config", {}).get("profile")
     if not profile_name:

@@ -1640,7 +1640,7 @@ def test_chain_verify_reports_divergence_without_writes(
     )
 
     with patch(
-        "megaplan.orchestration.completion_contract.GreenSuiteProvider.collect",
+        "arnold.pipelines.megaplan.orchestration.completion_contract.GreenSuiteProvider.collect",
         side_effect=AssertionError("chain verify must not execute green-suite providers"),
     ):
         assert run_chain_cli(project_dir, args) == 0

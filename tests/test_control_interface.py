@@ -650,12 +650,12 @@ def test_neutral_id_constants_are_importable_and_hashable() -> None:
 def test_control_interface_has_no_planning_imports_or_literals() -> None:
     source = inspect.getsource(control_interface)
     forbidden = (
-        "from megaplan.planning",
-        "import megaplan.planning",
-        "from megaplan.handlers",
-        "import megaplan.handlers",
-        "from megaplan._core.workflow",
-        "import megaplan._core.workflow",
+        "from arnold.pipelines.megaplan.planning",
+        "import arnold.pipelines.megaplan.planning",
+        "from arnold.pipelines.megaplan.handlers",
+        "import arnold.pipelines.megaplan.handlers",
+        "from arnold.pipelines.megaplan._core.workflow",
+        "import arnold.pipelines.megaplan._core.workflow",
         "_OVERRIDE_ACTIONS",
         "build_gate_artifact",
         "gate.json",

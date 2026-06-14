@@ -61,7 +61,7 @@ class _BlockMegaplanFinder:
         if (fullname == "arnold.pipelines.megaplan"
                 or fullname.startswith("arnold.pipelines.megaplan.")
                 or fullname == "megaplan"
-                or fullname.startswith("megaplan.")):
+                or fullname.startswith("arnold.pipelines.megaplan.")):
             raise ModuleNotFoundError(
                 f"megaplan import blocked by deliberation leak gate: {fullname}"
             )

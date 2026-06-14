@@ -23,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns the process exit code (0 on success, 1 if any scenario FAILED).
     """
-    parser = argparse.ArgumentParser(prog="megaplan.tests.agentic.run")
+    parser = argparse.ArgumentParser(prog="arnold.pipelines.megaplan.tests.agentic.run")
     parser.add_argument(
         "--actor",
         default="deepseek-subagent",

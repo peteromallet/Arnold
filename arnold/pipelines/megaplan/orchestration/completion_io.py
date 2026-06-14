@@ -13,7 +13,7 @@ from pathlib import Path
 
 from arnold.pipelines.megaplan.orchestration.completion_contract import CompletionVerdict
 
-log = logging.getLogger("megaplan.orchestration.completion_io")
+log = logging.getLogger("arnold.pipelines.megaplan.orchestration.completion_io")
 
 COMPLETION_VERDICT_FILENAME = "completion_verdict.json"
 

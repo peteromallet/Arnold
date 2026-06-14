@@ -165,28 +165,28 @@ def test_claude_and_codex_co_ranked_top() -> None:
 
 def test_resolve_canonical_resolves_bare_premium_to_default_vendor() -> None:
     """Bare ``premium`` resolves to claude-opus-4-7 (the default vendor)."""
-    from megaplan.audits.critique_evaluator import _resolve_canonical
+    from arnold.pipelines.megaplan.audits.critique_evaluator import _resolve_canonical
 
     assert _resolve_canonical("premium") == "claude-opus-4-7"
 
 
 def test_resolve_canonical_resolves_premium_effort_to_default_vendor() -> None:
     """``premium:low`` strips the effort token and resolves to claude-opus-4-7."""
-    from megaplan.audits.critique_evaluator import _resolve_canonical
+    from arnold.pipelines.megaplan.audits.critique_evaluator import _resolve_canonical
 
     assert _resolve_canonical("premium:low") == "claude-opus-4-7"
 
 
 def test_resolve_canonical_resolves_claude_effort_to_default_model() -> None:
     """``claude:low`` strips effort and resolves to claude-opus-4-7."""
-    from megaplan.audits.critique_evaluator import _resolve_canonical
+    from arnold.pipelines.megaplan.audits.critique_evaluator import _resolve_canonical
 
     assert _resolve_canonical("claude:low") == "claude-opus-4-7"
 
 
 def test_resolve_canonical_resolves_codex_effort_to_default_model() -> None:
     """``codex:low`` strips effort and resolves to gpt-5.5."""
-    from megaplan.audits.critique_evaluator import _resolve_canonical
+    from arnold.pipelines.megaplan.audits.critique_evaluator import _resolve_canonical
 
     assert _resolve_canonical("codex:low") == "gpt-5.5"
 

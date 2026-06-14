@@ -382,7 +382,7 @@ class TestArnoldOnlyBoundary:
     """Verify zero megaplan imports in the Arnold-only fixture."""
 
     def test_no_megaplan_imports(self) -> None:
-        """This test file must not import anything from megaplan."""
+        """This test file must not import anything from arnold.pipelines.megaplan."""
         import ast
         from pathlib import Path as P
 

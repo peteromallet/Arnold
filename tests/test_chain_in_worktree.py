@@ -151,7 +151,7 @@ def test_chain_start_fresh_in_worktree_recreates_existing_target(
         seen["fresh"] = fresh
         return {"status": "done", "chain_state": {}}
 
-    monkeypatch.setattr("megaplan.chain.run_chain", fake_run_chain)
+    monkeypatch.setattr("arnold.pipelines.megaplan.chain.run_chain", fake_run_chain)
     monkeypatch.chdir(repo)
 
     code = megaplan.main(

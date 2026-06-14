@@ -145,14 +145,14 @@ def spawn(*args: Any, **kw: Any) -> subprocess.Popen:
 
 
 def megaplan_engine_root() -> Path:
-    """Return the source root for the currently running megaplan package."""
-    import megaplan
+    """Return the source root for the currently running Arnold package."""
+    import arnold
 
-    return Path(megaplan.__file__).resolve().parent.parent
+    return Path(arnold.__file__).resolve().parent.parent
 
 
 def megaplan_engine_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
-    """Return an env that resolves ``python -m megaplan`` from this engine."""
+    """Return an env that resolves this engine's Python packages."""
     root = str(megaplan_engine_root())
     env = dict(os.environ if base_env is None else base_env)
     current = env.get("PYTHONPATH")

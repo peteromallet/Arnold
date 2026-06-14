@@ -45,7 +45,7 @@ from arnold.pipelines.megaplan.orchestration.evidence_contract import (
     normalize_evidence_status,
 )
 
-log = logging.getLogger("megaplan.orchestration.completion_contract")
+log = logging.getLogger("arnold.pipelines.megaplan.orchestration.completion_contract")
 
 
 def _resolve_test_idle_timeout(config: dict[str, Any]) -> int:

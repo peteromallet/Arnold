@@ -821,7 +821,7 @@ class TestExportSurfaceParity:
     """Verify that symbols exported from chain.__init__ match chain.spec."""
 
     def test_chain_init_re_exports_store_via_chain_spec(self) -> None:
-        """load_spec, load_chain_state, etc. imported from megaplan.chain delegate
+        """load_spec, load_chain_state, etc. imported from arnold.pipelines.megaplan.chain delegate
         to chain_spec."""
         from arnold.pipelines.megaplan.chain import load_spec as top_load_spec
         from arnold.pipelines.megaplan.chain import load_chain_state as top_load_chain_state

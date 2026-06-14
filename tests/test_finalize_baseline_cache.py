@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-import megaplan.handlers.finalize as fin
+import arnold.pipelines.megaplan.handlers.finalize as fin
 
 
 def _config(project_dir: Path) -> dict:
@@ -119,7 +119,7 @@ def test_mock_mode_bypasses_cache(
 ) -> None:
     """Mock mode (MEGAPLAN_MOCK_WORKERS=1) takes the real _capture_test_baseline
     mock branch every time and never consults/writes the cache."""
-    from megaplan.types import MOCK_ENV_VAR
+    from arnold.pipelines.megaplan.types import MOCK_ENV_VAR
 
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()

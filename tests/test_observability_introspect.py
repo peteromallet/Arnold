@@ -882,11 +882,11 @@ class TestBuildIntrospectPayload:
 class TestEvidenceBlock:
     """Tests for the evidence block in build_introspect_payload."""
 
-    @patch("megaplan.observability.introspect._git_info")
-    @patch("megaplan.observability.introspect._editable_install_location")
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
-    @patch("megaplan.observability.introspect._process_tree")
+    @patch("arnold.pipelines.megaplan.observability.introspect._git_info")
+    @patch("arnold.pipelines.megaplan.observability.introspect._editable_install_location")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._process_tree")
     def test_evidence_block_present_with_all_keys(
         self,
         mock_proc: MagicMock,
@@ -938,11 +938,11 @@ class TestEvidenceBlock:
         assert ev["repeated_divergence_fingerprint"] == "fp123"
         assert ev["carry_forward_declared"] is False
 
-    @patch("megaplan.observability.introspect._git_info")
-    @patch("megaplan.observability.introspect._editable_install_location")
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
-    @patch("megaplan.observability.introspect._process_tree")
+    @patch("arnold.pipelines.megaplan.observability.introspect._git_info")
+    @patch("arnold.pipelines.megaplan.observability.introspect._editable_install_location")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._process_tree")
     def test_evidence_window_heuristic_when_base_absent(
         self,
         mock_proc: MagicMock,
@@ -981,11 +981,11 @@ class TestEvidenceBlock:
         assert ev["repeated_divergence_fingerprint"] is None
         assert ev["carry_forward_declared"] is False
 
-    @patch("megaplan.observability.introspect._git_info")
-    @patch("megaplan.observability.introspect._editable_install_location")
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
-    @patch("megaplan.observability.introspect._process_tree")
+    @patch("arnold.pipelines.megaplan.observability.introspect._git_info")
+    @patch("arnold.pipelines.megaplan.observability.introspect._editable_install_location")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._process_tree")
     def test_evidence_carry_forward_declared_when_manifest_present(
         self,
         mock_proc: MagicMock,

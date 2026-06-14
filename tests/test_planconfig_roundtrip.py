@@ -335,7 +335,7 @@ def test_project_toml_critic_model_blocks_profile_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A project TOML critic_model is explicit — profile metadata is NOT consulted."""
-    import megaplan.handlers.init as init_mod
+    import arnold.pipelines.megaplan.handlers.init as init_mod
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -385,7 +385,7 @@ def test_project_toml_adaptive_critique_blocks_profile_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A project TOML adaptive_critique is explicit — profile metadata is NOT consulted."""
-    import megaplan.handlers.init as init_mod
+    import arnold.pipelines.megaplan.handlers.init as init_mod
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()

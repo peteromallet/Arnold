@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from megaplan.execute.quality import (
+from arnold.pipelines.megaplan.execute.quality import (
     _auto_attribute_unclaimed_paths,
     _observe_git_changes,
 )

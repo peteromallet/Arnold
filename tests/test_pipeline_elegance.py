@@ -82,8 +82,8 @@ def test_three_extension_axes_are_orthogonal() -> None:
         _REPO_ROOT / "arnold/pipelines/megaplan/_pipeline/prompts.py"
     ).read_text()
 
-    assert "from megaplan._pipeline.prompts" not in profile_src
-    assert "from megaplan._pipeline.profile" not in prompts_src
+    assert "from arnold.pipelines.megaplan._pipeline.prompts" not in profile_src
+    assert "from arnold.pipelines.megaplan._pipeline.profile" not in prompts_src
 
 
 def test_one_step_type_serves_all_pipelines() -> None:

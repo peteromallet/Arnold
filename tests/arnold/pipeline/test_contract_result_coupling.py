@@ -44,7 +44,7 @@ from arnold.pipeline import (
 )
 
 # Assert no megaplan.* module appears in sys.modules
-megaplan_modules = [k for k in sys.modules if k.startswith("megaplan.")]
+megaplan_modules = [k for k in sys.modules if k.startswith("arnold.pipelines.megaplan.")]
 if megaplan_modules:
     print("FAIL: megaplan modules leaked:", megaplan_modules)
     sys.exit(1)

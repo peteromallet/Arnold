@@ -27,7 +27,7 @@ from tests.conftest import make_args_factory
 def _isolate_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config_path = tmp_path / "user-config"
     monkeypatch.setattr(
-        "megaplan._core.user_config.config_dir",
+        "arnold.pipelines.megaplan._core.user_config.config_dir",
         lambda home=None: config_path,
     )
 

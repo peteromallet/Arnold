@@ -197,7 +197,7 @@ class TestConstructorConfig:
         assert reg.scan_roots == roots
 
     def test_package_prefixes_stored(self) -> None:
-        prefixes = ("megaplan.pipelines",)
+        prefixes = ("arnold.pipelines.megaplan.pipelines",)
         reg = PipelineRegistry(package_prefixes=prefixes)
         assert reg.package_prefixes == prefixes
 

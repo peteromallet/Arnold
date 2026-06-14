@@ -48,7 +48,7 @@ def test_run_doc_critique_demo_module_drives_to_done(tmp_path: Path) -> None:
     """The doc-critique demo is runnable directly from its Python module.
 
     Since demo pipelines are no longer registered as built-ins, invoke
-    via ``from megaplan._pipeline.demos.doc_critique import run_demo``
+    via ``from arnold.pipelines.megaplan._pipeline.demos.doc_critique import run_demo``
     instead of the CLI registry.
     """
     from arnold.pipelines.megaplan._pipeline.demos.doc_critique import run_demo
@@ -897,7 +897,7 @@ def test_preflight_feedback_slot_is_soft(monkeypatch) -> None:
 
 
 def test_preflight_resolves_symbolic_premium_with_selected_vendor(monkeypatch) -> None:
-    from megaplan._pipeline.preflight import preflight_check_profile
+    from arnold.pipelines.megaplan._pipeline.preflight import preflight_check_profile
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -919,8 +919,8 @@ def test_preflight_resolves_symbolic_premium_with_selected_vendor(monkeypatch) -
 
 
 def test_preflight_resolves_symbolic_premium_with_default_vendor(monkeypatch) -> None:
-    from megaplan import profiles as profiles_module
-    from megaplan._pipeline import preflight as preflight_module
+    from arnold.pipelines.megaplan import profiles as profiles_module
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -946,8 +946,8 @@ def test_preflight_resolves_symbolic_premium_with_default_vendor(monkeypatch) ->
 
 
 def test_preflight_finalize_premium_falls_back_with_deepseek_only(monkeypatch) -> None:
-    from megaplan._pipeline import preflight as preflight_module
-    import megaplan.profiles as profiles_module
+    from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
+    import arnold.pipelines.megaplan.profiles as profiles_module
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -1016,7 +1016,7 @@ def test_preflight_codex_vendor_requires_only_openai_for_premium_slots(
     monkeypatch,
 ) -> None:
     """With ``--vendor codex``, premium placeholder slots need OpenAI, not Anthropic."""
-    from megaplan._pipeline.preflight import preflight_check_profile
+    from arnold.pipelines.megaplan._pipeline.preflight import preflight_check_profile
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-present")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -1041,7 +1041,7 @@ def test_preflight_claude_vendor_requires_only_anthropic_for_premium_slots(
     monkeypatch,
 ) -> None:
     """With ``--vendor claude``, premium placeholder slots need Anthropic, not OpenAI."""
-    from megaplan._pipeline.preflight import preflight_check_profile
+    from arnold.pipelines.megaplan._pipeline.preflight import preflight_check_profile
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-present")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -1065,7 +1065,7 @@ def test_preflight_mixed_explicit_pins_report_both_providers(
     monkeypatch,
 ) -> None:
     """Explicit mixed pins (plan=claude, execute=codex) report both providers."""
-    from megaplan._pipeline.preflight import preflight_check_profile
+    from arnold.pipelines.megaplan._pipeline.preflight import preflight_check_profile
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -1084,7 +1084,7 @@ def test_preflight_explicit_phase_model_pins_override_selected_vendor(
     monkeypatch,
 ) -> None:
     """Explicit concrete ``phase_model`` pins take precedence over vendor."""
-    from megaplan._pipeline.preflight import preflight_check_profile
+    from arnold.pipelines.megaplan._pipeline.preflight import preflight_check_profile
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-ok")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

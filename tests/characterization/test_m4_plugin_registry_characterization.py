@@ -44,7 +44,7 @@ def test_package_prefix_for_arnold_path() -> None:
 def test_package_prefix_for_megaplan_path() -> None:
     """_package_prefix_for_module_file returns 'megaplan.pipelines' for megaplan paths."""
     fake = Path("/repo/megaplan/pipelines/planning/__init__.py")
-    assert _package_prefix_for_module_file(fake) == "megaplan.pipelines"
+    assert _package_prefix_for_module_file(fake) == "arnold.pipelines.megaplan.pipelines"
 
 
 def test_package_prefix_for_out_of_tree_path() -> None:
@@ -129,22 +129,22 @@ def _patch_load_for_temp_paths(
         # For out-of-tree (or known temp paths), use spec-from-file.
         if package_prefix is None:
             mod_name = (
-                f"megaplan._user_pipelines.{module_file.stem}"
+                f"arnold.pipelines.megaplan._user_pipelines.{module_file.stem}"
                 if module_file.name != "__init__.py"
-                else f"megaplan._user_pipelines.{module_file.parent.name}"
+                else f"arnold.pipelines.megaplan._user_pipelines.{module_file.parent.name}"
             )
         elif package_prefix == "arnold.pipelines":
             if module_file.name == "__init__.py":
                 mod_name = f"arnold.pipelines._test_{module_file.parent.name}_{abs(hash(str(module_file)))}"
             else:
                 mod_name = f"arnold.pipelines._test_{module_file.stem}_{abs(hash(str(module_file)))}"
-        elif package_prefix == "megaplan.pipelines":
+        elif package_prefix == "arnold.pipelines.megaplan.pipelines":
             if module_file.name == "__init__.py":
-                mod_name = f"megaplan.pipelines._test_{module_file.parent.name}_{abs(hash(str(module_file)))}"
+                mod_name = f"arnold.pipelines.megaplan.pipelines._test_{module_file.parent.name}_{abs(hash(str(module_file)))}"
             else:
-                mod_name = f"megaplan.pipelines._test_{module_file.stem}_{abs(hash(str(module_file)))}"
+                mod_name = f"arnold.pipelines.megaplan.pipelines._test_{module_file.stem}_{abs(hash(str(module_file)))}"
         else:
-            mod_name = f"megaplan._user_pipelines.{module_file.stem}"
+            mod_name = f"arnold.pipelines.megaplan._user_pipelines.{module_file.stem}"
 
         spec = importlib.util.spec_from_file_location(mod_name, module_file)
         if spec is None or spec.loader is None:
@@ -185,11 +185,11 @@ def test_arnold_pipeline_wins_over_megaplan_duplicate(
     # Override scan roots.
     monkeypatch.setattr(
         "arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS",
-        [(arnold_pp, "arnold.pipelines"), (megaplan_pp, "megaplan.pipelines")],
+        [(arnold_pp, "arnold.pipelines"), (megaplan_pp, "arnold.pipelines.megaplan.pipelines")],
     )
     monkeypatch.setattr(
         "arnold.pipelines.megaplan._pipeline.registry._get_scan_roots",
-        lambda: [(arnold_pp, "arnold.pipelines"), (megaplan_pp, "megaplan.pipelines")],
+        lambda: [(arnold_pp, "arnold.pipelines"), (megaplan_pp, "arnold.pipelines.megaplan.pipelines")],
     )
 
     # Drop any cached imports.

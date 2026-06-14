@@ -38,7 +38,7 @@ def test_run_outcome_type_identity_across_import_paths() -> None:
 
     # Megaplan shim ⇄ Megaplan top-level lazy access
     assert megaplan.RunOutcome is NeutralRunOutcome, (
-        "megaplan.RunOutcome should resolve to the same object as "
+        "arnold.pipelines.megaplan.RunOutcome should resolve to the same object as "
         "arnold.runtime.outcome.RunOutcome"
     )
 
@@ -60,7 +60,7 @@ def test_run_result_metadata_type_identity_across_import_paths() -> None:
     )
 
     assert megaplan.RunResultMetadata is NeutralMetadata, (
-        "megaplan.RunResultMetadata should resolve to the same type as "
+        "arnold.pipelines.megaplan.RunResultMetadata should resolve to the same type as "
         "arnold.runtime.outcome.RunResultMetadata"
     )
 

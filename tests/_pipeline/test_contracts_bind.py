@@ -134,7 +134,7 @@ def test_bind_reads_stage_produces_first_then_step():
 def _m5_judge_manifest():
     return make_judge_manifest(
         name="m5-wrapper-eval",
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         model_identity="model:gpt-5.4",
         rubric_body={"rubric": "score the candidate"},
@@ -156,7 +156,7 @@ def test_manifest_ports_convert_to_existing_binder_types():
 def test_manifest_ports_preserve_taint_in_binder_representation():
     manifest = make_judge_manifest(
         name="m5-wrapper-eval",
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         model_identity="model:gpt-5.4",
         rubric_body={"rubric": "score the candidate"},

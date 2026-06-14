@@ -3,7 +3,7 @@
 This __init__ re-exports every name historically imported from the
 pre-refactor top-level modules (``megaplan.parallel_review``,
 ``megaplan.review_checks``, ``megaplan.review_mechanical``) so that any
-callers using ``from megaplan.review import X`` keep working.
+callers using ``from arnold.pipelines.megaplan.review import X`` keep working.
 The canonical import paths are now plugin-local:
 ``arnold.pipelines.megaplan.review.parallel``,
 ``arnold.pipelines.megaplan.review.checks``, and

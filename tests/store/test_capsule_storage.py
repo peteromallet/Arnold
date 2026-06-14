@@ -59,7 +59,7 @@ def _capsule(capsule_hash: str | None = None) -> Capsule:
             replay_ready=True,
         ),
         contract=CapsuleContract(
-            manifest_abi="megaplan.pipeline.behavioral.v1",
+            manifest_abi="arnold.pipelines.megaplan.pipeline.behavioral.v1",
             static_behavioral_hash="sha256:" + "c" * 64,
         ),
         lineage=CapsuleLineage(capsule_hash=value, created_at=NOW),
@@ -111,7 +111,7 @@ def test_check_capsule_contract_accepts_declared_manifest_topology_ports_and_evi
     check = check_capsule_contract(
         capsule,
         {
-            "manifest_abi": "megaplan.pipeline.behavioral.v1",
+            "manifest_abi": "arnold.pipelines.megaplan.pipeline.behavioral.v1",
             "static_behavioral_hash": "sha256:" + "c" * 64,
             "runtime_topology_hash": "sha256:" + "d" * 64,
             "ports": [{"name": "summary", "kind": "produce", "content_type": "text/markdown"}],
@@ -139,7 +139,7 @@ def test_check_capsule_contract_reports_machine_readable_manifest_and_topology_m
 
     details = exc_info.value.details
     assert details["error_kind"] == "manifest_abi_mismatch"
-    assert details["wanted"] == "megaplan.pipeline.behavioral.v1"
+    assert details["wanted"] == "arnold.pipelines.megaplan.pipeline.behavioral.v1"
     assert details["have"] == "wrong-abi"
     assert details["legal_moves"] == ()
     assert [failure["error_kind"] for failure in details["failures"]] == [

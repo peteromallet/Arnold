@@ -27,14 +27,14 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.types import CliError
-from megaplan.workers._impl import (
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers._impl import (
     DEFAULT_TURN_HARD_CAP_SECONDS,
     build_three_channel_liveness_probe,
     run_command,
     _turn_hard_cap_seconds,
 )
-from megaplan.workers.shannon import _claude_transcript_paths
+from arnold.pipelines.megaplan.workers.shannon import _claude_transcript_paths
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ def test_hard_cap_message_when_below_wall_clock(monkeypatch):
 
     # Patch the helper to a tiny value so the cap is testable without waiting an
     # hour, while keeping timeout generous so it is the HARD CAP that fires.
-    import megaplan.workers._impl as impl
+    import arnold.pipelines.megaplan.workers._impl as impl
 
     monkeypatch.setattr(impl, "_turn_hard_cap_seconds", lambda: 2.0)
 
@@ -263,7 +263,7 @@ def test_no_hard_cap_without_liveness_probe(monkeypatch):
     supplied). A codex/native caller (no probe) keeps its exact prior behaviour:
     a short silent turn completes, never killed by a hard cap.
     """
-    import megaplan.workers._impl as impl
+    import arnold.pipelines.megaplan.workers._impl as impl
 
     monkeypatch.setattr(impl, "_turn_hard_cap_seconds", lambda: 0.5)
 

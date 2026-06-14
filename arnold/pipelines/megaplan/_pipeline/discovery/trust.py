@@ -24,7 +24,7 @@ from arnold.pipeline.discovery.trust import classify as _arnold_classify
 _IN_TREE_PATH_FRAGMENTS: tuple[str, ...] = ("arnold/pipelines", "megaplan/pipelines")
 
 # Re-export capability constants from the parent __init__ so that
-# legacy imports (``from megaplan._pipeline.discovery.trust import
+# legacy imports (``from arnold.pipelines.megaplan._pipeline.discovery.trust import
 # KNOWN_CAPABILITIES``) continue to work.
 from arnold.pipelines.megaplan._pipeline.discovery import (  # noqa: E402, F401
     KNOWN_CAPABILITIES,

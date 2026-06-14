@@ -6,7 +6,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
-import megaplan.prompts as prompt_module
+import arnold.pipelines.megaplan.prompts as prompt_module
 
 from arnold.pipelines.megaplan.types import PlanState
 from arnold.pipelines.megaplan._core import (
@@ -1855,11 +1855,11 @@ def test_parallel_criteria_review_prompt_large_diff_uses_summary_not_full_patch(
         + ("+" + "x" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 50)
     )
     monkeypatch.setattr(
-        "megaplan.prompts.review.collect_git_diff_patch",
+        "arnold.pipelines.megaplan.prompts.review.collect_git_diff_patch",
         lambda project_dir, base_ref=None: full_patch,
     )
     monkeypatch.setattr(
-        "megaplan.prompts.review.collect_git_diff_summary",
+        "arnold.pipelines.megaplan.prompts.review.collect_git_diff_summary",
         lambda project_dir, base_ref=None: "M app.py",
     )
 
@@ -1888,11 +1888,11 @@ def test_single_check_review_prompt_large_diff_requires_tool_backed_checks(
         + ("+" + "y" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 50)
     )
     monkeypatch.setattr(
-        "megaplan.prompts.review.collect_git_diff_patch",
+        "arnold.pipelines.megaplan.prompts.review.collect_git_diff_patch",
         lambda project_dir, base_ref=None: full_patch,
     )
     monkeypatch.setattr(
-        "megaplan.prompts.review.collect_git_diff_summary",
+        "arnold.pipelines.megaplan.prompts.review.collect_git_diff_summary",
         lambda project_dir, base_ref=None: "M large.py",
     )
 
@@ -1925,7 +1925,7 @@ def test_review_prompt_uses_milestone_base_sha_for_diff_collection(
         seen["patch_base"] = base_ref
         return "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n+print('patched')\n"
 
-    monkeypatch.setattr("megaplan.prompts.review.collect_git_diff_patch", fake_patch)
+    monkeypatch.setattr("arnold.pipelines.megaplan.prompts.review.collect_git_diff_patch", fake_patch)
 
     prompt = parallel_criteria_review_prompt(
         state, plan_dir, tmp_path, plan_dir / "review_criteria_verdict.json"
@@ -1948,11 +1948,11 @@ def test_compact_review_prompt_degrades_oversized_review_to_usable_verdict_promp
         + ("+" + "z" * 100 + "\n") * (LARGE_REVIEW_DIFF_MAX_BYTES // 20)
     )
     monkeypatch.setattr(
-        "megaplan.prompts.review.collect_git_diff_patch",
+        "arnold.pipelines.megaplan.prompts.review.collect_git_diff_patch",
         lambda project_dir, base_ref=None: full_patch,
     )
     monkeypatch.setattr(
-        "megaplan.prompts.review.collect_git_diff_summary",
+        "arnold.pipelines.megaplan.prompts.review.collect_git_diff_summary",
         lambda project_dir, base_ref=None: "M huge.py",
     )
 

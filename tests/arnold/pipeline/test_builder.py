@@ -319,7 +319,7 @@ class TestNeutralBuilder:
             b.build()
 
     def test_no_megaplan_import(self):
-        """The neutral builder module must not import megaplan."""
+        """The neutral builder module must not import arnold.pipelines.megaplan."""
         import ast
         import sys
 

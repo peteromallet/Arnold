@@ -2767,7 +2767,7 @@ def test_drive_auto_retries_stream_stall_once_for_non_execute_phase(tmp_path: Pa
 
 
 def test_drive_auto_retries_host_turn_cap_rate_limit(tmp_path: Path) -> None:
-    from megaplan.orchestration.phase_result import (
+    from arnold.pipelines.megaplan.orchestration.phase_result import (
         ExitKind,
         PhaseResult,
         atomic_write_phase_result,

@@ -266,7 +266,7 @@ def test_calibration_gate_catches_bare_numeric_outcome_constructor(
     _write(
         tmp_path,
         "megaplan/calibration/bad.py",
-        "from megaplan.calibration import CapabilityClaim\n"
+        "from arnold.pipelines.megaplan.calibration import CapabilityClaim\n"
         "claim = CapabilityClaim(outcome=0.72, task_signature='x', model_identity='y')\n",
     )
     findings = check_calibration_source_purity(tmp_path)
@@ -277,11 +277,11 @@ def test_calibration_gate_catches_bare_numeric_outcome_constructor(
 def test_calibration_gate_catches_state_star_import_from(
     tmp_path,
 ) -> None:
-    """Detect ``from megaplan.types import STATE_DONE`` in calibration sources."""
+    """Detect ``from arnold.pipelines.megaplan.types import STATE_DONE`` in calibration sources."""
     _write(
         tmp_path,
         "megaplan/calibration/bad.py",
-        "from megaplan.types import STATE_DONE, STATE_FAILED\n",
+        "from arnold.pipelines.megaplan.types import STATE_DONE, STATE_FAILED\n",
     )
     findings = check_calibration_source_purity(tmp_path)
     codes = {f.code for f in findings}
@@ -310,7 +310,7 @@ def test_calibration_gate_catches_state_star_attribute(
     _write(
         tmp_path,
         "megaplan/calibration/bad.py",
-        "import megaplan.types as t\n"
+        "import arnold.pipelines.megaplan.types as t\n"
         "def check(state):\n"
         "    return state == t.STATE_PAUSED\n",
     )
@@ -327,7 +327,7 @@ def test_calibration_gate_catches_gaterecommendation_import(
     _write(
         tmp_path,
         "megaplan/calibration/bad.py",
-        "from megaplan._pipeline.types import GateRecommendation\n",
+        "from arnold.pipelines.megaplan._pipeline.types import GateRecommendation\n",
     )
     findings = check_calibration_source_purity(tmp_path)
     codes = {f.code for f in findings}
@@ -357,7 +357,7 @@ def test_calibration_gate_allows_valid_evaluandref_usage(
     _write(
         tmp_path,
         "megaplan/calibration/clean.py",
-        "from megaplan.calibration import CapabilityClaim, EvaluandRef\n"
+        "from arnold.pipelines.megaplan.calibration import CapabilityClaim, EvaluandRef\n"
         "ref = EvaluandRef('pv', 'jv', 'rv', 'ish')\n"
         "claim = CapabilityClaim(\n"
         "    outcome=ref,\n"
@@ -379,7 +379,7 @@ def test_calibration_gate_allows_normal_calibration_code(
     _write(
         tmp_path,
         "megaplan/calibration/clean.py",
-        "from megaplan.calibration import (\n"
+        "from arnold.pipelines.megaplan.calibration import (\n"
         "    CapabilityClaim, EvaluandRef, ModelIdentity,\n"
         "    QueryPolicy, RouteSuggestion,\n"
         "    write_capability_claim, read_capability_claims,\n"
@@ -416,7 +416,7 @@ def test_sdk_state_mechanism_gate_rejects_state_imports_in_sdk_module(
     _write(
         tmp_path,
         "megaplan/control_interface.py",
-        "from megaplan.types import STATE_BLOCKED\n",
+        "from arnold.pipelines.megaplan.types import STATE_BLOCKED\n",
     )
 
     findings = check_sdk_state_mechanism_purity(
@@ -451,7 +451,7 @@ def test_sdk_state_mechanism_gate_allows_planning_compatibility_surface(
     _write(
         tmp_path,
         "megaplan/planning/control_binding.py",
-        "from megaplan.types import STATE_BLOCKED\n"
+        "from arnold.pipelines.megaplan.types import STATE_BLOCKED\n"
         "RECOVERY = {'current_state': 'blocked', 'resume_cursor': {'phase': 'execute'}}\n",
     )
 
@@ -492,7 +492,7 @@ def test_sdk_state_mechanism_gate_rejects_mechanism_state_delta_in_sdk_module(
     _write(
         tmp_path,
         "megaplan/control_interface.py",
-        "from megaplan._pipeline.types import StateDelta\n"
+        "from arnold.pipelines.megaplan._pipeline.types import StateDelta\n"
         "delta = StateDelta(op='replace', key='resume_cursor', value={'phase': 'execute'})\n",
     )
 
@@ -547,11 +547,11 @@ def test_supervisor_purity_empty_directory_is_clean(tmp_path) -> None:
 
 
 def test_supervisor_purity_catches_state_star_import_from(tmp_path) -> None:
-    """Detect ``from megaplan.types import STATE_DONE`` in supervisor sources."""
+    """Detect ``from arnold.pipelines.megaplan.types import STATE_DONE`` in supervisor sources."""
     _write(
         tmp_path,
         "megaplan/supervisor/bad.py",
-        "from megaplan.types import STATE_DONE, STATE_FAILED\n",
+        "from arnold.pipelines.megaplan.types import STATE_DONE, STATE_FAILED\n",
     )
     findings = check_supervisor_source_purity(tmp_path)
     codes = {f.code for f in findings}
@@ -580,7 +580,7 @@ def test_supervisor_purity_catches_state_star_attribute(tmp_path) -> None:
     _write(
         tmp_path,
         "megaplan/supervisor/bad.py",
-        "import megaplan.types as t\n"
+        "import arnold.pipelines.megaplan.types as t\n"
         "def check(state):\n"
         "    return state == t.STATE_PAUSED\n",
     )
@@ -678,7 +678,7 @@ def test_supervisor_purity_catches_chain_routing_violation(tmp_path) -> None:
     _write(
         tmp_path,
         "megaplan/chain/runner_supervisor.py",
-        "from megaplan.types import STATE_DONE\n"
+        "from arnold.pipelines.megaplan.types import STATE_DONE\n"
         "def route(state):\n"
         "    return state == STATE_DONE\n",
     )
@@ -717,7 +717,7 @@ def test_supervisor_purity_neutral_planning_binding_allowed(
     _write(
         tmp_path,
         "megaplan/supervisor/planning_adapter.py",
-        "from megaplan.planning.control_binding import PlanningControlBinding\n"
+        "from arnold.pipelines.megaplan.planning.control_binding import PlanningControlBinding\n"
         "\n"
         "def bind_controls(state, plan_dir):\n"
         "    binding = PlanningControlBinding(state, plan_dir=plan_dir)\n"
@@ -740,7 +740,7 @@ def test_supervisor_purity_simultaneous_violations(tmp_path) -> None:
     _write(
         tmp_path,
         "megaplan/supervisor/bad.py",
-        "from megaplan.types import STATE_BLOCKED\n"
+        "from arnold.pipelines.megaplan.types import STATE_BLOCKED\n"
         "\n"
         "def check(state):\n"
         '    return state == STATE_BLOCKED or "force-proceed"\n',
@@ -763,7 +763,7 @@ def test_supervisor_purity_included_in_run_m5_eval_gates(tmp_path) -> None:
     _write(
         tmp_path,
         "megaplan/supervisor/bad.py",
-        "from megaplan.types import STATE_INITIALIZED\n",
+        "from arnold.pipelines.megaplan.types import STATE_INITIALIZED\n",
     )
     # We also need the other scanned modules to exist cleanly or be absent.
     # Create minimal clean versions of other required files.

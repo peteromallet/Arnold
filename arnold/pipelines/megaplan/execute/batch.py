@@ -1999,7 +1999,7 @@ def _escalate_persistent_unroutable_rework(
     """
     unmatched = ", ".join(sorted(set(unrunnable_task_ids)))
     runnable = ", ".join(sorted(set(runnable_task_ids)))
-    from megaplan.observability.events import EventKind, emit
+    from arnold.pipelines.megaplan.observability.events import EventKind, emit
 
     emit(
         EventKind.STATE_TRANSITION,

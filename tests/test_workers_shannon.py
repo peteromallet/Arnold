@@ -130,7 +130,7 @@ def test_shannon_missing_deps_lists_missing() -> None:
 
 def test_detect_available_agents_includes_shannon_when_deps_present() -> None:
     from arnold.pipelines.megaplan._core.io import detect_available_agents
-    # detect_available_agents uses `import megaplan._core as _core_pkg; _core_pkg.shutil`
+    # detect_available_agents uses `import arnold.pipelines.megaplan._core as _core_pkg; _core_pkg.shutil`
     # which resolves to the stdlib shutil re-exported in megaplan/_core/__init__.py.
     with patch("arnold.pipelines.megaplan._core.shutil", FakeShutil("bun", "tmux", "claude", "codex")):
         agents = detect_available_agents()
@@ -3472,7 +3472,7 @@ def test_inner_env_scrubbed_via_vendored_patch() -> None:
 
 
 def test_ensure_workspace_trusted_accepts_isolated_bypass_permissions_prompt(tmp_path: Path) -> None:
-    from megaplan.workers.shannon import _ensure_workspace_trusted
+    from arnold.pipelines.megaplan.workers.shannon import _ensure_workspace_trusted
 
     work_dir = tmp_path / "workspace"
     work_dir.mkdir()

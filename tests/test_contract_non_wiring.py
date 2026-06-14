@@ -688,7 +688,7 @@ def test_shannon_worker_uses_render_prompt_for_dispatch() -> None:
 
 
 def test_provider_workers_import_create_prompt_through_approved_module() -> None:
-    """Provider workers may import create_*_prompt from megaplan.prompts,
+    """Provider workers may import create_*_prompt from arnold.pipelines.megaplan.prompts,
     but only for use as prompt_override strings passed into model_seam.
 
     This guard fails if a worker imports prompt builders from the legacy

@@ -16,7 +16,7 @@ import sys
 from typing import Any
 
 # ── Agent → provider → required env var mappings ──────────────────────
-# Reuses and extends the mappings from megaplan.cloud.preflight.
+# Reuses and extends the mappings from arnold.pipelines.megaplan.cloud.preflight.
 
 _AGENT_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "claude": ("ANTHROPIC_API_KEY",),

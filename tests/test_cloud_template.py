@@ -139,7 +139,7 @@ def test_render_entrypoint_apikey_codex_auth_opt_out_omits_chatgpt_forcing() -> 
 def test_render_entrypoint_resolves_symbolic_default_routing_to_codex_vendor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "codex")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "codex")
     spec = replace(_spec("idle"), agents={})
 
     rendered = render_entrypoint(spec)
@@ -159,7 +159,7 @@ def test_render_entrypoint_resolves_symbolic_default_routing_to_codex_vendor(
 def test_render_entrypoint_resolves_symbolic_default_routing_to_claude_vendor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
     spec = replace(_spec("idle"), agents={})
 
     rendered = render_entrypoint(spec)

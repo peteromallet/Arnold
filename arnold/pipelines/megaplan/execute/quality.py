@@ -358,7 +358,7 @@ def _auto_attribute_unclaimed_paths(
 
     git_paths = {path for path in snapshot if not path.endswith("/")}
     if base_ref is not None:
-        from megaplan.loop.git import _collect_committed_range_paths
+        from arnold.pipelines.megaplan.loop.git import _collect_committed_range_paths
         try:
             window_paths = _collect_committed_range_paths(project_dir, base_ref=base_ref)
         except Exception:
@@ -487,7 +487,7 @@ def _run_git_status_snapshot(
             )
         paths = _parse_git_status_paths(process.stdout)
     if base_ref is not None:
-        from megaplan.loop.git import _collect_committed_range_paths
+        from arnold.pipelines.megaplan.loop.git import _collect_committed_range_paths
         try:
             window_paths = _collect_committed_range_paths(project_dir, base_ref=base_ref)
         except Exception:
@@ -596,7 +596,7 @@ def _observe_git_changes(
             after_snapshot=after_snapshot,
         )
         if _base_ref is not None:
-            from megaplan.loop.git import _collect_committed_range_paths
+            from arnold.pipelines.megaplan.loop.git import _collect_committed_range_paths
             try:
                 window_paths = _collect_committed_range_paths(project_dir, base_ref=_base_ref)
             except Exception:
@@ -668,7 +668,7 @@ def _collect_quality_deviations(
         after_snapshot=after_snapshot,
     )
     if base_ref is not None:
-        from megaplan.loop.git import _collect_committed_range_paths
+        from arnold.pipelines.megaplan.loop.git import _collect_committed_range_paths
         try:
             window_paths = _collect_committed_range_paths(project_dir, base_ref=base_ref)
         except Exception:

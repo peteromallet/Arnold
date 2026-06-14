@@ -21,7 +21,7 @@ import time
 
 import pytest
 
-from megaplan.workers.subscription_gate import (
+from arnold.pipelines.megaplan.workers.subscription_gate import (
     SubscriptionSlotTimeout,
     max_concurrent,
     subscription_slot,

@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.runtime.process import TmuxSession
-from megaplan.types import CliError
-from megaplan.workers.shannon import (
+from arnold.pipelines.megaplan.runtime.process import TmuxSession
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers.shannon import (
     _matched_tmux_died_marker,
     _raw_contains_success_result,
     _raw_indicates_tmux_died,
@@ -102,7 +102,7 @@ def test_empty_and_unrelated_not_flagged() -> None:
 def test_recover_returns_true_when_session_comes_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
 
     session = TmuxSession("recover-test")
     monkeypatch.setattr(session, "exists", lambda: True)
@@ -115,7 +115,7 @@ def test_recover_returns_true_when_session_comes_back(
 def test_recover_returns_false_when_session_stays_gone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
 
     session = TmuxSession("dead-test")
     monkeypatch.setattr(session, "exists", lambda: False)
@@ -129,7 +129,7 @@ def test_recover_false_when_session_alive_but_pane_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Alive but blank pane is NOT recovered — claude never painted output."""
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
 
     session = TmuxSession("blank-test")
     monkeypatch.setattr(session, "exists", lambda: True)
@@ -147,9 +147,9 @@ def test_recover_false_when_session_alive_but_pane_empty(
 
 
 def test_dead_turn_worker_stall_is_retryable_external_error() -> None:
-    from megaplan.auto import _is_retryable_external_error
-    from megaplan.orchestration.phase_result import ExternalError
-    from megaplan.orchestration.phase_result_classify import (
+    from arnold.pipelines.megaplan.auto import _is_retryable_external_error
+    from arnold.pipelines.megaplan.orchestration.phase_result import ExternalError
+    from arnold.pipelines.megaplan.orchestration.phase_result_classify import (
         classify_external_error_payload,
     )
 
@@ -169,7 +169,7 @@ def test_dead_turn_worker_stall_is_retryable_external_error() -> None:
 def test_old_worker_error_for_no_current_target_was_not_retryable() -> None:
     """Regression witness: the OLD code raised worker_error here and it
     classified to None (=> internal_error, looped)."""
-    from megaplan.orchestration.phase_result_classify import (
+    from arnold.pipelines.megaplan.orchestration.phase_result_classify import (
         classify_external_error_payload,
     )
 

@@ -30,7 +30,7 @@ import sys
 # ── meta_path blocker: refuse any megaplan import ──────────────────────
 class _BlockMegaplanFinder:
     def find_spec(self, fullname, path, target=None):
-        if fullname == "megaplan" or fullname.startswith("megaplan."):
+        if fullname == "megaplan" or fullname.startswith("arnold.pipelines.megaplan."):
             raise ModuleNotFoundError(
                 f"megaplan import blocked by leak gate: {fullname}"
             )

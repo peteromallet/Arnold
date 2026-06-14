@@ -18,7 +18,7 @@ Why this exists
 Normalization rules
   * ``argparse.SUPPRESS`` → ``"<SUPPRESS>"``
   * Callables (``type`` functions, ``choices`` callable) → qualified name
-    (e.g. ``"int"``, ``"builtins.float"``, ``"megaplan.cli._non_negative_float"``)
+    (e.g. ``"int"``, ``"builtins.float"``, ``"arnold.pipelines.megaplan.cli._non_negative_float"``)
   * Classes → qualified name (e.g. ``"builtins.int"``)
   * ``argparse.REMAINDER`` → ``"REMAINDER"``
   * Keys in every JSON object are sorted for deterministic output.

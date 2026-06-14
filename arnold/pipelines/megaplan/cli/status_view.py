@@ -343,7 +343,7 @@ def _build_blocker_recovery_context(
     phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir)
     baseline_deviation_by_task: dict[str, Deviation] = {}
     if phase_blocked_tasks:
-        from megaplan.execute.batch import baseline_unavailable_checkpoint_deviations
+        from arnold.pipelines.megaplan.execute.batch import baseline_unavailable_checkpoint_deviations
 
         baseline_deviations = baseline_unavailable_checkpoint_deviations(
             finalize_data,

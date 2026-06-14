@@ -157,7 +157,7 @@ def test_evaluation_facade_preserves_subprocess_module_attribute() -> None:
 # ── monkeypatch compatibility ───────────────────────────────────────────
 # Note: Most orchestration facades use ``from canonical import *`` (thin
 # facade pattern).  Monkeypatching through the legacy facade works for
-# consumers that ``import megaplan.orchestration.X`` or ``from
+# consumers that ``import arnold.pipelines.megaplan.orchestration.X`` or ``from
 # megaplan.orchestration.X import symbol`` — the patched attribute is
 # visible on the legacy module.  It does NOT propagate to the canonical
 # module object (unlike the sys.modules aliasing used by review.parallel

@@ -2106,7 +2106,7 @@ def test_evaluator_complexity_drives_per_lens_tier_resolution(
     )
 
     # Mock _resolve_tier_spec in its source module so the handler's local
-    # ``from megaplan.execute.batch import _resolve_tier_spec`` picks it up.
+    # ``from arnold.pipelines.megaplan.execute.batch import _resolve_tier_spec`` picks it up.
     def fake_resolve_tier_spec(args, spec, *, phase="execute"):
         if "deepseek" in spec:
             return ("hermes", "persistent", "deepseek-v4-pro")

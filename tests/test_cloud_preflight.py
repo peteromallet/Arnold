@@ -78,7 +78,7 @@ def test_cloud_chain_dependency_resolution_uses_cloud_default_when_chain_has_no_
 def test_cloud_chain_no_profile_codex_vendor_requires_only_openai(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
     chain_spec = ChainSpec(
         milestones=[MilestoneSpec(label="m1", idea="idea.txt", vendor="codex")],
     )
@@ -98,7 +98,7 @@ def test_cloud_chain_no_profile_codex_vendor_requires_only_openai(
 def test_cloud_chain_no_profile_claude_vendor_requires_only_anthropic(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "codex")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "codex")
     chain_spec = ChainSpec(
         milestones=[MilestoneSpec(label="m1", idea="idea.txt", vendor="claude")],
     )
@@ -118,7 +118,7 @@ def test_cloud_chain_no_profile_claude_vendor_requires_only_anthropic(
 def test_cloud_chain_default_fallback_resolves_symbolic_defaults_to_config_vendor(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "codex")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "codex")
     chain_spec = ChainSpec(
         milestones=[MilestoneSpec(label="m1", idea="idea.txt")],
     )
@@ -189,7 +189,7 @@ def test_cloud_chain_codex_vendor_premium_profile_requires_only_openai(
     monkeypatch,
 ) -> None:
     """Vendor-neutral premium profile with codex vendor → only OpenAI env."""
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
     chain_spec = ChainSpec(
         milestones=[
             MilestoneSpec(
@@ -216,7 +216,7 @@ def test_cloud_chain_claude_vendor_premium_profile_requires_only_anthropic(
     monkeypatch,
 ) -> None:
     """Vendor-neutral premium profile with claude vendor → only Anthropic env."""
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "codex")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "codex")
     chain_spec = ChainSpec(
         milestones=[
             MilestoneSpec(
@@ -243,7 +243,7 @@ def test_cloud_chain_apex_profile_reports_both_providers(
     monkeypatch,
 ) -> None:
     """Mixed apex profile requires both Anthropic and OpenAI."""
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
     chain_spec = ChainSpec(
         milestones=[
             MilestoneSpec(
@@ -270,7 +270,7 @@ def test_cloud_chain_explicit_codex_pins_override_claude_vendor(
     monkeypatch,
 ) -> None:
     """Concrete codex phase_model pins → OPENAI_API_KEY even under claude vendor."""
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
     chain_spec = ChainSpec(
         milestones=[
             MilestoneSpec(
@@ -295,7 +295,7 @@ def test_cloud_chain_explicit_claude_pins_override_codex_vendor(
     monkeypatch,
 ) -> None:
     """Concrete claude phase_model pins → ANTHROPIC_API_KEY even under codex vendor."""
-    monkeypatch.setattr("megaplan.profiles._resolve_default_vendor", lambda: "codex")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "codex")
     chain_spec = ChainSpec(
         milestones=[
             MilestoneSpec(

@@ -154,8 +154,8 @@ def test_run_claude_step_ignores_stream_worker_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_claude_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_claude_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -178,8 +178,8 @@ def test_run_claude_step_ignores_stream_worker_flag(
         duration_ms=10,
     )
     with (
-        patch("megaplan.workers.shannon_stream.run_shannon_stream_step") as run_stream,
-        patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+        patch("arnold.pipelines.megaplan.workers.shannon_stream.run_shannon_stream_step") as run_stream,
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
     ):
         result = run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
 
