@@ -15,6 +15,7 @@ import re
 
 from arnold.pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from arnold.pipelines.megaplan.prompts import create_hermes_prompt
+from arnold.pipelines.megaplan.prompts._projection import check_prompt_size
 from arnold.pipelines.megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
