@@ -580,6 +580,7 @@ class LandedDiffProvider:
                 plan_dir=ctx.plan_dir,
                 artifact_prefix="execution_audit_completion_contract",
                 state=ctx.state,
+                base_ref=ctx.git_base_ref,
             )
         except Exception as exc:
             return _provider_evidence_ref(
@@ -596,13 +597,27 @@ class LandedDiffProvider:
 
         findings = result.get("findings") or []
         files_in_diff = result.get("files_in_diff") or []
+        evidence_window = result.get("evidence_window") or {}
+        declared_authoritative = (
+            evidence_window.get("source") == "declared"
+            and bool(evidence_window.get("base_sha"))
+        )
+        if declared_authoritative:
+            diff_source = "declared_authoritative"
+        elif ctx.git_base_ref:
+            diff_source = "declared_unresolved"
+        else:
+            diff_source = "heuristic"
+
         details = {
             "findings": findings,
             "files_in_diff": files_in_diff,
+            "files_in_committed_range": result.get("files_in_committed_range") or [],
             "files_claimed": result.get("files_claimed") or [],
             "skipped": bool(result.get("skipped")),
             "skip_reason": result.get("reason") or "",
-            "diff_source": "working_tree_git_status",
+            "diff_source": diff_source,
+            "evidence_window": evidence_window,
         }
 
         if result.get("skipped"):
@@ -630,10 +645,16 @@ class LandedDiffProvider:
         # claims, hollow-done, pending/blocked-without-reason, perfunctory notes —
         # still drive unsatisfied.
         _advisory_prefix = "Git status shows changed files not claimed"
-        real_findings = [f for f in findings if not str(f).startswith(_advisory_prefix)]
-        details["advisory_findings"] = [
-            f for f in findings if str(f).startswith(_advisory_prefix)
-        ]
+        if declared_authoritative:
+            real_findings = list(findings)
+            details["advisory_findings"] = []
+        else:
+            real_findings = [
+                f for f in findings if not str(f).startswith(_advisory_prefix)
+            ]
+            details["advisory_findings"] = [
+                f for f in findings if str(f).startswith(_advisory_prefix)
+            ]
 
         # Empty diff in code mode == abandonment signal (unless a waiver exists,
         # which the driver folds in separately). Prose mode tracks sections.

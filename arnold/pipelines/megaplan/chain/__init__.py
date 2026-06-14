@@ -471,6 +471,126 @@ def _latest_execute_result(plan_dir: Path) -> str | None:
     return None
 
 
+def _completed_records_by_label(chain_state: ChainState) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    for record in chain_state.completed:
+        if not isinstance(record, dict):
+            continue
+        label = record.get("label")
+        if isinstance(label, str):
+            records[label] = record
+    return records
+
+
+def _plan_dir_for_completed_record(root: Path, record: dict[str, Any]) -> Path | None:
+    plan_name = record.get("plan")
+    if not isinstance(plan_name, str) or not plan_name.strip():
+        return None
+    try:
+        return resolve_plan_dir(root, plan_name)
+    except CliError:
+        fallback = root / ".megaplan" / "plans" / plan_name
+        return fallback if fallback.exists() else None
+
+
+def _read_plan_state_payload_from_dir(plan_dir: Path | None) -> dict[str, Any]:
+    if plan_dir is None:
+        return {}
+    try:
+        raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _project_dir_from_plan_state(root: Path, state: dict[str, Any]) -> Path:
+    config = state.get("config") if isinstance(state.get("config"), dict) else {}
+    project_dir_str = config.get("project_dir") if isinstance(config, dict) else None
+    if isinstance(project_dir_str, str) and project_dir_str.strip():
+        return Path(project_dir_str)
+    return root
+
+
+def _verify_completed_chain(
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    chain_state: ChainState,
+) -> dict[str, Any]:
+    from arnold.pipelines.megaplan.orchestration.completion_contract import (
+        CompletionSubject,
+        LandedDiffProvider,
+        compute_verdict,
+        normalize_contract_mode,
+    )
+
+    verify_mode = normalize_contract_mode(chain_state.completion_contract_mode)
+    completed_records = _completed_records_by_label(chain_state)
+    milestones_payload: list[dict[str, Any]] = []
+    divergence_count = 0
+
+    for milestone in spec.milestones:
+        record = completed_records.get(milestone.label)
+        if not isinstance(record, dict):
+            continue
+        status = record.get("status")
+        if status not in {"done", "finalized"}:
+            continue
+        plan_name = record.get("plan")
+        if not isinstance(plan_name, str) or not plan_name.strip():
+            continue
+        plan_dir = _plan_dir_for_completed_record(root, record)
+        state = _read_plan_state_payload_from_dir(plan_dir)
+        project_dir = _project_dir_from_plan_state(root, state)
+        meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
+        policy = meta.get("chain_policy") if isinstance(meta.get("chain_policy"), dict) else {}
+        milestone_base_sha = policy.get("milestone_base_sha")
+        verdict = compute_verdict(
+            plan_dir=plan_dir or (root / ".megaplan" / "plans" / plan_name),
+            project_dir=project_dir,
+            state=state,
+            subject=CompletionSubject(
+                kind="milestone",
+                name=milestone.label,
+                to_state="done",
+                plan_name=plan_name,
+                milestone_label=milestone.label,
+            ),
+            mode=verify_mode,
+            providers=(LandedDiffProvider(),),
+            git_base_ref=milestone_base_sha if isinstance(milestone_base_sha, str) else None,
+        )
+        landed_diff = next((ref for ref in verdict.evidence if ref.kind == "landed_diff"), None)
+        details = landed_diff.details if landed_diff is not None else {}
+        if not verdict.accepted:
+            divergence_count += 1
+        milestones_payload.append(
+            {
+                "label": milestone.label,
+                "plan": plan_name,
+                "status": status,
+                "accepted": verdict.accepted,
+                "would_block": verdict.would_block,
+                "failures": list(verdict.failures),
+                "files_claimed": list(details.get("files_claimed") or []),
+                "files_in_diff": list(details.get("files_in_diff") or []),
+                "files_in_committed_range": list(details.get("files_in_committed_range") or []),
+                "evidence_window": dict(details.get("evidence_window") or {}),
+                "diff_source": details.get("diff_source"),
+            }
+        )
+
+    return {
+        "success": True,
+        "spec": str(spec_path),
+        "mode": verify_mode,
+        "milestone_count": len(spec.milestones),
+        "verified_count": len(milestones_payload),
+        "divergence_count": divergence_count,
+        "milestones": milestones_payload,
+    }
+
+
 def _shadow_milestone_completion_verdict(
     root: Path,
     plan_name: str,
@@ -584,14 +704,23 @@ def _shadow_milestone_completion_verdict(
                 return False
             newly_failing = delta_dict.get("newly_failing") or []
             deleted_tests = delta_dict.get("deleted_tests") or []
-            if not newly_failing and not deleted_tests:
+            if not newly_failing and not deleted_tests and not verdict.would_block:
                 return False
+            failing_refs: list[dict[str, str]] = []
+            for ref in verdict.evidence:
+                ev_status = getattr(ref.status, "value", str(ref.status))
+                if ev_status in ("unsatisfied", "blocked"):
+                    failing_refs.append({"kind": ref.kind, "summary": ref.summary})
             log.warning(
                 "completion_contract_mode=enforce: blocking milestone %r; "
-                "newly_failing=%r deleted_tests=%r",
+                "newly_failing=%r deleted_tests=%r would_block=%r "
+                "failures=%r failing_evidence=%r",
                 milestone_label,
                 list(newly_failing),
                 list(deleted_tests),
+                verdict.would_block,
+                list(verdict.failures),
+                failing_refs,
             )
             return True
         return False
@@ -2206,6 +2335,16 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Read chain state from this project directory instead of discovering from CWD.",
     )
 
+    verify_parser = chain_sub.add_parser(
+        "verify", help="Replay landed-diff completion evidence for completed milestones"
+    )
+    verify_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    verify_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Read chain plans from this project directory instead of discovering from CWD.",
+    )
+
     override_parser = chain_sub.add_parser(
         "override", help="Set runtime policy overrides without editing chain.yaml"
     )
@@ -2342,6 +2481,25 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
             "policy": effective_policy,
         }
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 0
+
+    if action == "verify":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        try:
+            spec = chain_spec.load_spec(spec_path)
+            chain_state = chain_spec.load_chain_state(spec_path)
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(
+            json.dumps(
+                _verify_completed_chain(project_root, spec_path, spec, chain_state),
+                indent=2,
+            )
+            + "\n"
+        )
         return 0
 
     if action not in (None, "start"):

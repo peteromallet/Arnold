@@ -1559,6 +1559,108 @@ def test_chain_start_supervisor_flag_on_smoke_uses_fakes_and_persists_serial_dep
     ] == [("a", ()), ("b", ("a",))]
 
 
+def test_chain_verify_reports_divergence_without_writes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _git(project_dir, "init", "-q")
+    _git(project_dir, "config", "user.email", "t@t.test")
+    _git(project_dir, "config", "user.name", "t")
+    (project_dir / ".gitignore").write_text(".megaplan/\nideas/\nchain.yaml\n", encoding="utf-8")
+    (project_dir / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _git(project_dir, "add", "-A")
+    _git(project_dir, "commit", "-q", "-m", "seed")
+    base_sha = _git(project_dir, "rev-parse", "HEAD").stdout.strip()
+
+    spec_path = _write_spec(
+        project_dir,
+        {"milestones": [{"label": "m1", "idea": str(_touch_idea(project_dir, "m1.txt"))}]},
+    )
+    plan_name = "plan-m1"
+    plan_dir = project_dir / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan_name,
+                "current_state": "done",
+                "config": {"project_dir": str(project_dir)},
+                "meta": {"chain_policy": {"milestone_base_sha": base_sha}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": "T1",
+                            "status": "done",
+                            "files_changed": ["src/claimed.py"],
+                            "commands_run": ["edit src/claimed.py"],
+                            "executor_notes": "verified landed diff claim against the declared milestone window",
+                        }
+                    ],
+                "sense_checks": [
+                    {
+                        "id": "SC1",
+                        "executor_note": "confirmed the verifier remains read-only and does not execute providers",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sentinel_verdict = '{"sentinel": true}\n'
+    verdict_path = plan_dir / "completion_verdict.json"
+    verdict_path.write_text(sentinel_verdict, encoding="utf-8")
+
+    lib_dir = project_dir / "lib"
+    lib_dir.mkdir()
+    (lib_dir / "other.py").write_text("print('dirty')\n", encoding="utf-8")
+
+    save_chain_state(
+        spec_path,
+        ChainState(
+            completion_contract_mode="enforce",
+            completed=[{"label": "m1", "plan": plan_name, "status": "done"}],
+        ),
+    )
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    build_chain_parser(subparsers)
+    args = parser.parse_args(
+        ["chain", "verify", "--spec", str(spec_path), "--project-dir", str(project_dir)]
+    )
+
+    with patch(
+        "megaplan.orchestration.completion_contract.GreenSuiteProvider.collect",
+        side_effect=AssertionError("chain verify must not execute green-suite providers"),
+    ):
+        assert run_chain_cli(project_dir, args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is True
+    assert payload["verified_count"] == 1
+    assert payload["divergence_count"] == 1
+    milestone = payload["milestones"][0]
+    assert milestone["label"] == "m1"
+    assert milestone["accepted"] is False
+    assert milestone["would_block"] is True
+    assert milestone["files_claimed"] == ["src/claimed.py"]
+    assert milestone["files_in_diff"] == ["lib/"]
+    assert milestone["diff_source"] == "declared_authoritative"
+    assert milestone["evidence_window"]["source"] == "declared"
+    assert milestone["evidence_window"]["base_sha"] == base_sha
+    assert verdict_path.read_text(encoding="utf-8") == sentinel_verdict
+
+
 def test_run_chain_stops_on_failure(tmp_path: Path) -> None:
     spec_path = _setup_two_milestones(tmp_path)
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True)

@@ -23,6 +23,7 @@ from arnold.pipelines.megaplan.orchestration.completion_contract import (
     COMPLETION_VERDICT_CONTRACT_VERSION,
     COMPLETION_VERDICT_SCHEMA,
     COMPLETION_VERDICT_SCHEMA_VERSION,
+    CompletionContext,
     CompletionSubject,
     CompletionVerdict,
     DeclaredNoopProvider,
@@ -52,6 +53,20 @@ def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "config", "user.name", "t"], cwd=path, check=True)
 
 
+def _init_git_repo_with_commit(path: Path) -> str:
+    _init_git_repo(path)
+    (path / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "seed.txt"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=path, check=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=path,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+
+
 def _write(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -68,6 +83,45 @@ def test_completion_contract_uses_canonical_evidence_ref_deserialization() -> No
     assert ref.status == EvidenceStatus.unsatisfied
     assert ref.details["diagnostics"]["legacy_status"] == "fail-not-success"
     assert _BLOCKING_STATUSES == frozenset({EvidenceStatus.unsatisfied})
+
+
+def test_landed_diff_declared_base_requires_claims_in_committed_range(tmp_path: Path) -> None:
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    base_sha = _init_git_repo_with_commit(project_dir)
+    (project_dir / "wip.py").write_text("wip\n", encoding="utf-8")
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "t1",
+                    "status": "done",
+                    "files_changed": ["wip.py"],
+                    "commands_run": ["pytest"],
+                }
+            ],
+            "sense_checks": [],
+        },
+    )
+
+    ref = LandedDiffProvider().collect(
+        CompletionContext(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state={"config": {"mode": "code", "project_dir": str(project_dir)}},
+            subject=_subject(),
+            git_base_ref=base_sha,
+        )
+    )
+
+    assert ref.status == EvidenceStatus.unsatisfied
+    assert ref.details["diff_source"] == "declared_authoritative"
+    assert "wip.py" in ref.details["files_in_diff"]
+    assert "wip.py" not in ref.details["files_in_committed_range"]
 
 
 def test_completion_verdict_to_dict_stamps_current_schema_fields() -> None:
