@@ -186,6 +186,14 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         api_key_env_vars=("DEEPSEEK_API_KEY",),
         base_url_env_var="DEEPSEEK_BASE_URL",
     ),
+    "mimo": ProviderConfig(
+        id="mimo",
+        name="Xiaomi MiMo",
+        auth_type="api_key",
+        inference_base_url="https://api.xiaomimimo.com/v1",
+        api_key_env_vars=("MIMO_API_KEY",),
+        base_url_env_var="MIMO_BASE_URL",
+    ),
     "fireworks": ProviderConfig(
         id="fireworks",
         name="Fireworks AI",

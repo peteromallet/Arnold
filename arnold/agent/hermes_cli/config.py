@@ -529,6 +529,21 @@ OPTIONAL_ENV_VARS = {
         "password": False,
         "category": "provider",
     },
+    "MIMO_API_KEY": {
+        "description": "Xiaomi MiMo API key",
+        "prompt": "MiMo API Key",
+        "url": "https://platform.xiaomimimo.com/",
+        "password": True,
+        "category": "provider",
+    },
+    "MIMO_BASE_URL": {
+        "description": "Custom Xiaomi MiMo API base URL (advanced)",
+        "prompt": "MiMo Base URL",
+        "url": "",
+        "password": False,
+        "category": "provider",
+        "advanced": True,
+    },
     "DASHSCOPE_API_KEY": {
         "description": "Alibaba Cloud DashScope API key for Qwen models",
         "prompt": "DashScope API Key",

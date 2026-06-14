@@ -203,11 +203,12 @@ def _raise_generic_openrouter_blocked(reason: str) -> None:
             "To use OpenRouter, prefix the model with ``openrouter:``. "
             "To use a native provider, use the appropriate prefix "
             "(``deepseek:``, ``fireworks:``, ``google:``, ``zhipu:``, "
-            "``minimax:``) or the ``hermes:`` agent."
+            "``minimax:``, ``mimo:``) or the ``hermes:`` agent."
         ),
         valid_next=[
             "rerun with --hermes openrouter:<model>",
             "rerun with --hermes deepseek:<model>",
+            "rerun with --hermes mimo:<model>",
             "rerun with --agent claude / --agent codex / --agent shannon",
         ],
     )
@@ -245,6 +246,10 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
         resolved_model = resolved_model[len("fireworks:"):]
         agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS["fireworks"]) or _DEFAULT_BASE_URLS["fireworks"]
         agent_kwargs["api_key"] = acquire_key("fireworks")
+    elif resolved_model.startswith("mimo:"):
+        resolved_model = resolved_model[len("mimo:"):]
+        agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS["mimo"]) or _DEFAULT_BASE_URLS["mimo"]
+        agent_kwargs["api_key"] = acquire_key("mimo")
     elif resolved_model.startswith("minimax:"):
         resolved_model = resolved_model[len("minimax:"):]
         minimax_key = acquire_key("minimax")

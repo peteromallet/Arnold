@@ -40,6 +40,66 @@ from arnold.agent.contracts import AgentRequest, AgentResult, ResultProvenance
 from arnold.pipeline.cost_types import CanonicalUsage
 from arnold.pipeline.token_cost import PricingEntry, estimate_usage_cost
 
+
+_PROVIDER_DEFAULT_BASE_URLS: dict[str, str] = {
+    "deepseek": "https://api.deepseek.com",
+    "mimo": "https://api.xiaomimimo.com/v1",
+}
+
+_PROVIDER_KEY_VARS: dict[str, tuple[str, ...]] = {
+    "deepseek": ("DEEPSEEK_API_KEY", "HERMES_API_KEY"),
+    "mimo": ("MIMO_API_KEY",),
+}
+
+_PROVIDER_BASE_URL_VARS: dict[str, str] = {
+    "deepseek": "DEEPSEEK_BASE_URL",
+    "mimo": "MIMO_BASE_URL",
+}
+
+
+def _provider_model(model: str | None) -> tuple[str, str | None]:
+    """Return ``(provider, model_name)`` for Hermes provider-prefixed models."""
+    if not model:
+        return "deepseek", model
+    provider, sep, rest = model.partition(":")
+    if sep and provider in _PROVIDER_DEFAULT_BASE_URLS and rest:
+        return provider, rest
+    return "deepseek", model
+
+
+def _first_env(names: tuple[str, ...]) -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _provider_base_url(provider: str, fallback: str | None = None) -> str:
+    env_name = _PROVIDER_BASE_URL_VARS.get(provider, "")
+    return (
+        (os.getenv(env_name, "").strip() if env_name else "")
+        or fallback
+        or _PROVIDER_DEFAULT_BASE_URLS[provider]
+    )
+
+
+def _provider_headers(provider: str, key: str) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    if provider == "mimo":
+        # Xiaomi's curl examples use `api-key`; the OpenAI SDK path uses the
+        # bearer token. Send both for compatibility with either gateway mode.
+        headers["api-key"] = key
+    return headers
+
+
+def _provider_display_name(provider: str) -> str:
+    if provider == "deepseek":
+        return "DeepSeek"
+    if provider == "mimo":
+        return "MiMo"
+    return provider
+
 # ---------------------------------------------------------------------------
 # Injectable AIAgent factory
 # ---------------------------------------------------------------------------
@@ -106,15 +166,17 @@ class DeepSeekAdapter:
 
     def _dispatch_openai_compatible(self, request: AgentRequest) -> AgentResult:
         started_at = time.monotonic()
+        raw_model = request.resolved_model or request.model or "deepseek-chat"
+        provider, model = _provider_model(raw_model)
         key = ""
         if self._key_pool is not None:
-            key = self._key_pool.acquire("deepseek")
+            key = self._key_pool.acquire(provider)
         if not key:
-            key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("HERMES_API_KEY") or ""
+            key = _first_env(_PROVIDER_KEY_VARS[provider])
         if not key:
-            raise LookupError("no DeepSeek API key available")
+            raise LookupError(f"no {_provider_display_name(provider)} API key available")
 
-        model = request.resolved_model or request.model or "deepseek-chat"
+        model = model or ("mimo-v2.5-pro" if provider == "mimo" else "deepseek-chat")
         messages: list[dict[str, str]] = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
@@ -127,18 +189,24 @@ class DeepSeekAdapter:
             payload["reasoning_effort"] = request.effort
         payload.update(request.metadata or {})
 
-        url = self._base_url.rstrip("/") + "/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        base_url = _provider_base_url(
+            provider,
+            self._base_url if provider == "deepseek" else None,
+        )
+        url = base_url.rstrip("/") + "/chat/completions"
+        if not base_url.rstrip("/").endswith("/v1"):
+            url = base_url.rstrip("/") + "/v1/chat/completions"
+        headers = _provider_headers(provider, key)
         transport = self._transport
         if transport is None:
-            raise LookupError("no DeepSeek transport configured")
+            raise LookupError(f"no {provider} transport configured")
         try:
             response = transport(url, payload, headers, request.timeout_seconds)
         except urllib.error.HTTPError as exc:
             if self._key_pool is not None and exc.code == 429:
-                self._key_pool.report_429("deepseek", key)
+                self._key_pool.report_429(provider, key)
             elif self._key_pool is not None and exc.code in {401, 403}:
-                self._key_pool.report_failure("deepseek", key)
+                self._key_pool.report_failure(provider, key)
             raise
 
         choice = (response.get("choices") or [{}])[0]
@@ -174,7 +242,7 @@ class DeepSeekAdapter:
                 model=response.get("model") or model,
                 resolved_model=request.resolved_model or request.model,
                 effort=request.effort,
-                metadata={"provider": "deepseek"},
+                metadata={"provider": provider},
             ),
             metadata={
                 "cost_status": cost.status,
@@ -190,15 +258,20 @@ class DeepSeekAdapter:
         started_at = time.monotonic()
 
         # --- resolve API key -----------------------------------------------
+        raw_model = request.resolved_model or request.model or "deepseek/deepseek-chat"
+        provider, model = _provider_model(raw_model)
+
         api_key: str | None = None
         if self._key_source is not None:
             api_key = self._key_source.key_for(request.agent)
         # Fall back to environment — AIAgent does its own env loading too,
         # but an explicit key from KeySource takes priority.
-        api_key = api_key or os.getenv("HERMES_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if provider == "deepseek":
+            api_key = api_key or os.getenv("HERMES_API_KEY") or os.getenv("OPENAI_API_KEY")
+        api_key = api_key or _first_env(_PROVIDER_KEY_VARS[provider])
 
         # --- gather model / metadata hints ---------------------------------
-        model = request.resolved_model or request.model or "deepseek/deepseek-chat"
+        model = model or ("mimo-v2.5-pro" if provider == "mimo" else "deepseek/deepseek-chat")
         metadata: dict[str, Any] = request.metadata or {}
         toolsets: list[str] | None = metadata.get("toolsets")
         session_db_path: str | None = metadata.get("session_db_path")
@@ -212,6 +285,9 @@ class DeepSeekAdapter:
             "quiet_mode": True,
             "save_trajectories": False,
         }
+        if provider in _PROVIDER_DEFAULT_BASE_URLS:
+            agent_kwargs["provider"] = provider
+            agent_kwargs["base_url"] = _provider_base_url(provider)
         if api_key:
             agent_kwargs["api_key"] = api_key
         if toolsets:

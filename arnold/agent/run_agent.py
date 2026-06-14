@@ -1222,6 +1222,10 @@ class AIAgent:
                     from arnold.agent.hermes_cli.models import copilot_default_headers
 
                     client_kwargs["default_headers"] = copilot_default_headers()
+                elif "api.xiaomimimo.com" in effective_base.lower():
+                    client_kwargs["default_headers"] = {
+                        "api-key": api_key,
+                    }
                 elif "api.kimi.com" in effective_base.lower():
                     client_kwargs["default_headers"] = {
                         "User-Agent": "KimiCLI/1.3",

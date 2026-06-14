@@ -27,6 +27,7 @@ _AGENT_ENV_HINTS: dict[str, tuple[str, ...]] = {
 _PROVIDER_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "deepseek": ("DEEPSEEK_API_KEY",),
     "fireworks": ("FIREWORKS_API_KEY",),
+    "mimo": ("MIMO_API_KEY",),
     "openai": ("OPENAI_API_KEY",),
     "anthropic": ("ANTHROPIC_API_KEY",),
 }

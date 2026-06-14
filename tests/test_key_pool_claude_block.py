@@ -67,3 +67,16 @@ def test_resolve_model_zhipu_prefix_unaffected() -> None:
     assert resolved == "glm-5.1"
     # base_url should be zhipu-shaped, never openrouter
     assert "openrouter" not in kwargs.get("base_url", "")
+
+
+def test_resolve_model_mimo_prefix_routes_to_mimo(monkeypatch) -> None:
+    monkeypatch.setenv("MIMO_API_KEY", "mimo-key")
+    from arnold.pipelines.megaplan.runtime import key_pool
+
+    monkeypatch.setattr(key_pool._pool, "_next_reload", 0.0)
+
+    resolved, kwargs = resolve_model("mimo:mimo-v2.5-pro")
+
+    assert resolved == "mimo-v2.5-pro"
+    assert kwargs["base_url"] == "https://api.xiaomimimo.com/v1"
+    assert kwargs["api_key"] == "mimo-key"
