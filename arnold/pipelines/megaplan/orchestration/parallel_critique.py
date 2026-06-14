@@ -322,7 +322,7 @@ def run_parallel_critique(
     # own session db (the legacy _run_check path did this); the override is
     # plumbed through WorkerUnit.extra["worker_options"]["session_db_path"]
     # (worker_fanout.py) → run_hermes_step db_override (hermes.py).
-    from megaplan.workers.hermes import _worker_db_path
+    from arnold.pipelines.megaplan.workers.hermes import _worker_db_path
 
     units: list[WorkerUnit] = []
     for _idx, _check in enumerate(checks):
