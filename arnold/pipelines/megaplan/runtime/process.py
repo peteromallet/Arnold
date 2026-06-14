@@ -25,6 +25,7 @@ from arnold.runtime.process import (  # noqa: F401
     pane_pids,
     spawn,
     spawn_async,
+    tmux_socket_for,
 )
 
 

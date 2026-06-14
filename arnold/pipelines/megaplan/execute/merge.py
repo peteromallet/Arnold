@@ -59,8 +59,9 @@ _DEVIATION_BLOCKING_PHRASES: tuple[str, ...] = (
     "iteration budget",
     "context budget",
     "out of context",
-    "syntax error",
-    "syntaxerror",
+    # Deliberately do not keyword-match "syntax error"/"syntaxerror" in prose:
+    # a task may describe a syntax error it already fixed. Real current Python
+    # syntax failures are caught by _validate_python_file_for_task below.
 )
 
 

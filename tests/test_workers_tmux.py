@@ -19,7 +19,7 @@ from tests._workers_helpers import _mock_state
 def test_tmux_session_create_exists_teardown_idempotent() -> None:
     """TmuxSession exists() → teardown() → exists() → second teardown() safe."""
     import uuid
-    from arnold.pipelines.megaplan.runtime.process import TmuxSession
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession, tmux_socket_for
 
     name = f"megaplan-test-tmuxsession-{uuid.uuid4().hex[:8]}"
     session = TmuxSession(name)
@@ -27,9 +27,14 @@ def test_tmux_session_create_exists_teardown_idempotent() -> None:
     # Ensure clean starting state.
     session.teardown()
 
-    # Create a detached tmux session that sleeps for 300s.
+    # Create a detached tmux session that sleeps for 300s. It MUST be created on
+    # this session's PRIVATE -L socket (the same one exists()/pane_pids()/
+    # teardown() address since the socket-isolation change) — a bare
+    # `tmux new-session` lands on the shared default server where exists()
+    # would never find it.
+    socket = tmux_socket_for(name)
     result = subprocess.run(
-        ["tmux", "new-session", "-d", "-s", name, "sleep", "300"],
+        ["tmux", "-L", socket, "new-session", "-d", "-s", name, "sleep", "300"],
         check=True,
         capture_output=True,
         text=True,
@@ -67,21 +72,23 @@ def test_wedge_regression_teardown_reaps_orphaned_session_pids_dead() -> None:
     session, SIGKILL the subprocess that launched it, then assert TmuxSession
     teardown reaps the now-orphaned session by name and captured PIDs are dead."""
     import uuid
-    from arnold.pipelines.megaplan.runtime.process import TmuxSession, pane_pids
+    from arnold.pipelines.megaplan.runtime.process import TmuxSession, pane_pids, tmux_socket_for
 
     name = f"megaplan-wedge-{uuid.uuid4().hex[:8]}"
     session = TmuxSession(name)
+    socket = tmux_socket_for(name)
 
     # Clean start.
     session.teardown()
 
-    # Start a subprocess that creates a detached tmux session and then stays
+    # Start a subprocess that creates a detached tmux session on this session's
+    # PRIVATE -L socket (matching exists()/pane_pids()/teardown()) and then stays
     # alive briefly (the "wrapper").
     wrapper = subprocess.Popen(
         [
             "sh",
             "-c",
-            f"tmux new-session -d -s {name} sleep 300; sleep 60",
+            f"tmux -L {socket} new-session -d -s {name} sleep 300; sleep 60",
         ],
     )
     try:
@@ -188,7 +195,7 @@ def test_reconcile_reaps_residual_same_name_session_and_proceeds(
     plan_payload = {
         "plan": "Execute the plan.",
         "questions": [],
-        "success_criteria": [{"criterion": "It works", "priority": "must", "requires": []}],
+        "success_criteria": [{"criterion": "It works", "priority": "must"}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -290,7 +297,7 @@ def test_different_plan_name_session_not_touched_no_backstop(
     plan_payload = {
         "plan": "Execute the plan.",
         "questions": [],
-        "success_criteria": [{"criterion": "It works", "priority": "must", "requires": []}],
+        "success_criteria": [{"criterion": "It works", "priority": "must"}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -330,7 +337,7 @@ def test_detect_orphans_degrade_on_file_not_found(monkeypatch: pytest.MonkeyPatc
     def fake_run(*args: object, **kwargs: object) -> None:
         raise FileNotFoundError("tmux not found")
 
-    with patch("arnold.pipelines.megaplan.runtime.process.subprocess.run", fake_run):
+    with patch("arnold.runtime.process.subprocess.run", fake_run):
         result = detect_orphans("megaplan-*")
     assert result == []
 
@@ -341,7 +348,7 @@ def test_pane_pids_degrade_on_file_not_found(monkeypatch: pytest.MonkeyPatch) ->
     def fake_run(*args: object, **kwargs: object) -> None:
         raise FileNotFoundError("tmux not found")
 
-    with patch("arnold.pipelines.megaplan.runtime.process.subprocess.run", fake_run):
+    with patch("arnold.runtime.process.subprocess.run", fake_run):
         result = pane_pids("any-session")
     assert result == []
 
@@ -352,7 +359,7 @@ def test_tmux_session_exists_degrade_on_file_not_found() -> None:
     def fake_run(*args: object, **kwargs: object) -> None:
         raise FileNotFoundError("tmux not found")
 
-    with patch("arnold.pipelines.megaplan.runtime.process.subprocess.run", fake_run):
+    with patch("arnold.runtime.process.subprocess.run", fake_run):
         session = TmuxSession("any-session")
         assert session.exists() is False
 
@@ -363,7 +370,7 @@ def test_tmux_session_teardown_degrade_on_file_not_found() -> None:
     def fake_run(*args: object, **kwargs: object) -> None:
         raise FileNotFoundError("tmux not found")
 
-    with patch("arnold.pipelines.megaplan.runtime.process.subprocess.run", fake_run):
+    with patch("arnold.runtime.process.subprocess.run", fake_run):
         session = TmuxSession("any-session")
         # Must not raise.
         session.teardown()
@@ -389,7 +396,7 @@ def test_both_run_command_sites_receive_tmux_session(
     plan_payload = {
         "plan": "Execute the plan.",
         "questions": [],
-        "success_criteria": [{"criterion": "It works", "priority": "must", "requires": []}],
+        "success_criteria": [{"criterion": "It works", "priority": "must"}],
         "assumptions": [],
     }
     fake_result = CommandResult(
