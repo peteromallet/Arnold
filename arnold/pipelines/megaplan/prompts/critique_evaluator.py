@@ -338,8 +338,8 @@ def _critique_evaluator_prompt(
             "`outcome` (verified / open / accepted_tradeoff), and `rationale`",
             "(cite specific lines from the diff or plan text).",
             "",
-            "The `flag_verifications` field is OPTIONAL — only include it when",
-            "this verify block is present.  Omit it on iteration 1.",
+            "Always include the `flag_verifications` field. Use an empty list",
+            "`[]` when there are no flag resolutions to verify.",
             "",
         ]
         verify_section = "\n".join(verify_lines) + "\n\n"
@@ -445,10 +445,10 @@ def _critique_evaluator_prompt(
           {{check_id: "other", area, why, complexity (int 1–5), complexity_justification}}
         - `skipped`: list of {{check_id, why}} objects
         - `evaluator_model`: your own model identifier string
-        - `flag_verifications` (OPTIONAL — only when the Flag Resolution
-          Verification section above is present): list of
+        - `flag_verifications`: list of
           {{flag_id, lens, outcome, rationale}} objects where outcome is
-          one of "verified" / "open" / "accepted_tradeoff"
+          one of "verified" / "open" / "accepted_tradeoff"; use [] when the
+          Flag Resolution Verification section is absent
 
         Remember: prefer the smallest selected set that still covers the real
         risk.  Skipping requires a justification.  When you skip, explain *why

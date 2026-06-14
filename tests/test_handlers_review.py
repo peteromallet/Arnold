@@ -7,6 +7,7 @@ from pathlib import Path
 from arnold.pipelines.megaplan._core import atomic_write_json, read_json, save_state
 import arnold.pipelines.megaplan.handlers.review as review_handler
 from arnold.pipelines.megaplan.handlers.review import (
+    _backfill_empty_approved_review_from_execution,
     _finalize_review_outcome,
     _format_review_success_summary,
     _prepare_review_payload,
@@ -185,6 +186,59 @@ def test_blank_review_completion_status_uses_legacy_empty_verdict_fallback() -> 
         issues=[],
         total_tasks=1,
         total_checks=0,
+    )
+
+
+def test_empty_approved_review_backfills_from_execution_evidence() -> None:
+    payload = {
+        "review_verdict": "approved",
+        "criteria": [],
+        "issues": ["Repository inspection could not be performed."],
+        "rework_items": [],
+        "summary": "approved",
+        "task_verdicts": [],
+        "sense_check_verdicts": [],
+    }
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": ["pkg/module.py"],
+                "commands_run": ["pytest tests/test_module.py"],
+            }
+        ],
+        "sense_checks": [{"id": "SC1", "task_id": "T1", "question": "Covered?"}],
+    }
+
+    assert _backfill_empty_approved_review_from_execution(payload, finalize_data)
+
+    assert payload["review_completion_status"] == "complete"
+    assert payload["review_evidence_backfilled"] is True
+    assert payload["review_evidence_backfill_notes"] == [
+        "Repository inspection could not be performed.",
+    ]
+    assert payload["task_verdicts"] == [
+        {
+            "task_id": "T1",
+            "reviewer_verdict": (
+                "Backfilled from execution evidence: task was completed by the executor "
+                "and covered by recorded files/commands in finalize.json."
+            ),
+            "evidence_files": ["pkg/module.py"],
+        }
+    ]
+    assert payload["sense_check_verdicts"] == [
+        {
+            "sense_check_id": "SC1",
+            "verdict": "Backfilled from executor sense-check evidence recorded in finalize.json.",
+        }
+    ]
+    assert not _review_infrastructure_failure(
+        payload,
+        issues=payload["issues"],
+        total_tasks=1,
+        total_checks=1,
     )
 
 

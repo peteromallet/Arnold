@@ -68,6 +68,7 @@ from arnold.pipelines.megaplan.execute.timeout import (
 from arnold.pipelines.megaplan.model_seam import (
     ModelTier,
     capture_step_output,
+    render_step_message,
 )
 from arnold.pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
@@ -86,13 +87,12 @@ from arnold.pipelines.megaplan.types import (
     PlanState,
     StepResponse,
 )
-from arnold.pipeline import StepInvocation, get_default_adapter_registry
+from arnold.pipeline import StepInvocation
 from arnold.pipelines.megaplan.planning.state import (
     STATE_BLOCKED,
     STATE_EXECUTED,
     STATE_FINALIZED,
 )
-from arnold.pipelines.megaplan.blocker_recovery import evaluate_quality_blockers
 from arnold.pipelines.megaplan.bakeoff.channel_shadow import maybe_run_channel_shadow
 from arnold.pipelines.megaplan.workers import WorkerResult
 from arnold.pipelines.megaplan.workers.result_metadata import aggregate_rate_limits
@@ -497,8 +497,7 @@ def _render_execute_prompt_for_dispatch(
         model=model,
         resolved_model=resolved_model,
     )
-    registry = get_default_adapter_registry()
-    rendered = registry.invoke(
+    rendered = render_step_message(
         StepInvocation(
             kind="model",
             metadata={
@@ -537,6 +536,8 @@ def _capture_execute_payload(
 def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize receipt-shaped execute output before structural capture."""
 
+    from arnold.pipelines.megaplan.execute.status_constants import normalize_execute_task_status
+
     normalized = dict(payload)
     task_updates: list[Any] = []
     for item in normalized.get("task_updates") or []:
@@ -557,6 +558,17 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
         }
         if "task_id" not in update and isinstance(item.get("id"), str):
             update["task_id"] = item["id"]
+        if "status" in update and isinstance(update["status"], str):
+            raw_status = update["status"]
+            canonical = normalize_execute_task_status(raw_status)
+            if canonical != raw_status:
+                update["status"] = str(canonical)
+                existing = update.get("executor_notes", "")
+                note_line = f"[harness] status normalized: {raw_status} -> {canonical}"
+                if isinstance(existing, str) and existing:
+                    update["executor_notes"] = f"{existing}\n{note_line}"
+                else:
+                    update["executor_notes"] = note_line
         update.setdefault("files_changed", [])
         update.setdefault("commands_run", [])
         update.setdefault("auto_attributed_files", False)

@@ -1223,3 +1223,52 @@ def test_prep_schema_validates_open_questions_without_assumption() -> None:
     )
     errors = list(Draft7Validator(schema).iter_errors(payload))
     assert errors == [], f"Expected no errors, got: {errors}"
+
+
+# ── Execution-schema task-status enum guard (T4) ─────────────────────────
+
+
+def test_execution_schema_status_enum_rejects_non_canonical() -> None:
+    """Prove the execution schema's task_updates status enum is exactly
+    {done, skipped, completed, blocked} and rejects non-canonical values
+    like ``verified`` and ``finished`` at the schema level.
+
+    The alias normalizer in ``status_constants``/``merge.py`` remaps
+    *verified → done* at runtime, but the schema itself must not accept
+    ``verified`` or ``finished`` directly — that would bypass the
+    normalizer for new execution-batch artifacts.
+    """
+    from jsonschema import Draft7Validator
+
+    schema = SCHEMAS["execution.json"]
+    item_schema = schema["properties"]["task_updates"]["items"]
+    status_enum = item_schema["properties"]["status"]["enum"]
+
+    # 1) Exact set equality — no drift, no additions, no deletions.
+    assert set(status_enum) == {"done", "skipped", "completed", "blocked"}
+    assert len(status_enum) == 4
+
+    # 2) Schema-level rejection of non-canonical values.
+    for bad_status in ("verified", "finished"):
+        payload: dict[str, object] = {
+            "output": "",
+            "files_changed": [],
+            "commands_run": [],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": bad_status,
+                    "executor_notes": "",
+                    "files_changed": [],
+                    "commands_run": [],
+                    "auto_attributed_files": None,
+                }
+            ],
+            "sense_check_acknowledgments": [],
+        }
+        errors = list(Draft7Validator(schema).iter_errors(payload))
+        assert errors, (
+            f"Schema must reject status {bad_status!r}; "
+            f"alias normalizer handles it at runtime."
+        )

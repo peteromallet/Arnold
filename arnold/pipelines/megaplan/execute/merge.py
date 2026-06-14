@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from arnold.pipelines.megaplan._core import (
-    atomic_write_json,
     atomic_write_text,
     is_creative_mode,
     is_prose_mode,
@@ -16,19 +15,9 @@ from arnold.pipelines.megaplan._core import (
 from arnold.pipelines.megaplan.store import write_plan_artifact_json
 from arnold.pipelines.megaplan.forms.stance import validate_stance
 from arnold.pipelines.megaplan.types import PlanState
-
-
-# All terminal statuses an executor may report for a task. "Tracked" means
-# the executor reported back on the task — including reporting it blocked
-# on a user prerequisite. This is distinct from "executed successfully",
-# which is the subset {"done", "skipped"} used to gate STATE_EXECUTED.
-#
-# The enum on the task_updates schema validator and the coverage filters
-# that ask "did the executor report on this task?" MUST use this constant
-# so they don't drift (drift was the root cause of the false
-# "tracking is incomplete" message when a task came back status=blocked).
-TERMINAL_TASK_STATUSES: frozenset[str] = frozenset(
-    {"done", "skipped", "completed", "blocked"}
+from arnold.pipelines.megaplan.execute.status_constants import (
+    EXECUTE_TASK_STATUS_ALIASES,
+    TERMINAL_TASK_STATUSES,
 )
 
 
@@ -45,9 +34,11 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-# Normalize enum values to canonical forms.
+# Normalize enum values to canonical forms — sourced from the shared
+# status_constants module so merge-time aliasing and capture pre-processing
+# (model_seam / batch) use the same single source of truth.
 _VALUE_ALIASES: dict[str, dict[str, str]] = {
-    "status": {"completed": "done", "complete": "done", "skip": "skipped"},
+    "status": dict(EXECUTE_TASK_STATUS_ALIASES),
 }
 
 
