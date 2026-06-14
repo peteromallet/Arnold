@@ -1,0 +1,287 @@
+"""Tests for import-graph-aware test blast-radius selection."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from arnold.pipelines.megaplan.orchestration.import_graph import ImportGraph
+from arnold.pipelines.megaplan.orchestration.test_selection import (
+    compute_default_blast_radius,
+    resolve_baseline_test_selection,
+)
+
+
+def _write(repo: Path, rel_path: str, content: str = "") -> None:
+    path = repo / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content or f"# {rel_path}\n", encoding="utf-8")
+
+
+def _selector_values(radius: dict) -> list[str]:
+    return [selector["value"] for selector in radius["selectors"]]
+
+
+def _make_state(plan_dir: Path, version: int = 1) -> dict:
+    return {
+        "plan_versions": [
+            {
+                "version": version,
+                "file": f"plan_v{version}.md",
+                "hash": "abc",
+                "timestamp": "2026-01-01T00:00:00Z",
+            }
+        ],
+        "config": {"test_selection": "scoped"},
+        "meta": {},
+    }
+
+
+def _write_plan_meta(plan_dir: Path, version: int, blast_radius: dict) -> None:
+    meta = {
+        "version": version,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "hash": "sha256:abc",
+        "questions": [],
+        "success_criteria": [],
+        "assumptions": [],
+        "structure_warnings": [],
+        "test_blast_radius": blast_radius,
+    }
+    (plan_dir / f"plan_v{version}.md").write_text("plan\n", encoding="utf-8")
+    (plan_dir / f"plan_v{version}.meta.json").write_text(
+        json.dumps(meta),
+        encoding="utf-8",
+    )
+
+
+def test_import_graph_adds_non_mirror_dependent_test(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/util.py", "x = 1\n")
+    _write(repo, "tests/test_feature.py", "from pkg.util import x\n")
+    _write(repo, "tests/test_util.py", "def test_util():\n    assert True\n")
+    _write(repo, "tests/test_other.py", "def test_other():\n    assert True\n")
+
+    radius = compute_default_blast_radius(["pkg/util.py"], repo)
+
+    assert radius["strategy"] == "scoped"
+    assert _selector_values(radius) == [
+        "tests/test_util.py",
+        "tests/test_feature.py",
+    ]
+    assert "tests/test_other.py" not in _selector_values(radius)
+    assert radius["import_graph"] == {
+        "degraded": False,
+        "dependent_tests": 1,
+        "unresolved": [],
+    }
+
+
+def test_import_graph_follows_transitive_imports(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/a.py", "import pkg.b\n")
+    _write(repo, "pkg/b.py", "VALUE = 1\n")
+    _write(repo, "tests/test_a.py", "import pkg.a\n")
+
+    radius = compute_default_blast_radius(["pkg/b.py"], repo)
+
+    assert radius["strategy"] == "scoped"
+    assert _selector_values(radius) == ["tests/test_a.py"]
+
+
+def test_import_graph_resolves_relative_imports(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/__init__.py")
+    _write(repo, "pkg/a.py", "from . import b\n")
+    _write(repo, "pkg/b.py", "VALUE = 1\n")
+    _write(repo, "tests/test_a.py", "import pkg.a\n")
+
+    radius = compute_default_blast_radius(["pkg/b.py"], repo)
+
+    assert radius["strategy"] == "scoped"
+    assert _selector_values(radius) == ["tests/test_a.py"]
+
+
+def test_import_graph_auto_detects_src_layout_package_root(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "src/pkg/mod.py", "VALUE = 1\n")
+    _write(repo, "tests/test_feature.py", "import pkg.mod\n")
+
+    radius = compute_default_blast_radius(["src/pkg/mod.py"], repo)
+
+    assert radius["strategy"] == "scoped"
+    assert _selector_values(radius) == ["tests/test_feature.py"]
+    assert radius["import_graph"]["unresolved"] == []
+
+
+def test_import_graph_keeps_flat_package_layout_unchanged(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "megaplan/orchestration/import_graph.py", "VALUE = 1\n")
+    _write(
+        repo,
+        "tests/orchestration/test_import_graph.py",
+        "import arnold.pipelines.megaplan.orchestration.import_graph\n",
+    )
+
+    radius = compute_default_blast_radius(
+        ["megaplan/orchestration/import_graph.py"],
+        repo,
+    )
+
+    assert radius["strategy"] == "scoped"
+    assert _selector_values(radius) == ["tests/orchestration/test_import_graph.py"]
+    assert radius["import_graph"]["unresolved"] == []
+
+
+def test_import_graph_syntax_error_degrades_without_losing_other_edges(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/good.py", "VALUE = 1\n")
+    _write(repo, "pkg/bad.py", "def broken(:\n")
+    _write(repo, "tests/test_good.py", "import pkg.good\n")
+
+    graph = ImportGraph.build(repo)
+    resolution = graph.tests_importing(
+        ["pkg/good.py"],
+        is_test_file=lambda rel_path: rel_path.startswith("tests/test_"),
+    )
+
+    assert resolution.degraded is True
+    assert resolution.test_files == ["tests/test_good.py"]
+    assert resolution.unresolved == []
+
+
+def test_degraded_import_graph_caps_scoped_confidence_at_medium(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/good.py", "VALUE = 1\n")
+    _write(repo, "pkg/bad.py", "def broken(:\n")
+    _write(repo, "tests/test_feature.py", "import pkg.good\n")
+
+    radius = compute_default_blast_radius(["pkg/good.py"], repo)
+
+    assert radius["strategy"] == "scoped"
+    assert radius["confidence"] == "medium"
+    assert radius["import_graph"]["degraded"] is True
+    assert _selector_values(radius) == ["tests/test_feature.py"]
+
+
+def test_unresolved_surface_without_selector_falls_back_to_full(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/known.py", "VALUE = 1\n")
+
+    radius = compute_default_blast_radius(["pkg/missing.py"], repo)
+
+    assert radius["strategy"] == "full"
+    assert radius["confidence"] == "low"
+    assert radius["selectors"] == []
+    assert radius["import_graph"]["unresolved"] == ["pkg/missing.py"]
+    assert radius["uncovered_changes_justification"] == "pkg/missing.py"
+
+
+def test_non_python_change_forces_full_suite(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/util.py", "VALUE = 1\n")
+    _write(repo, "tests/test_feature.py", "import pkg.util\n")
+    _write(repo, "tests/fixtures/golden.json", "{}\n")
+
+    radius = compute_default_blast_radius(
+        ["pkg/util.py", "tests/fixtures/golden.json"],
+        repo,
+    )
+
+    assert radius["strategy"] == "full"
+    assert radius["confidence"] == "low"
+    assert "force the full suite" in radius["rationale"]
+    assert _selector_values(radius) == ["tests/test_feature.py"]
+
+
+def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "high",
+            "selectors": [
+                {
+                    "kind": "path",
+                    "value": "tests/test_feature.py",
+                    "reason": "import-graph dependent of changed surface",
+                }
+            ],
+            "changed_surfaces": ["pkg/util.py"],
+            "always_run": ["tests/test_core.py"],
+            "full_suite_fallback": True,
+            "rationale": "Scoped.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "scoped"
+    assert result["command_override"] == (
+        "pytest tests/test_feature.py tests/test_core.py"
+    )
+    assert "always_run" in result["reason"]
+
+
+def test_resolve_baseline_test_selection_falls_back_on_non_path_selector(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "high",
+            "selectors": [
+                {"kind": "path", "value": "tests/test_feature.py"},
+                {"kind": "marker", "value": "slow"},
+            ],
+            "changed_surfaces": ["pkg/util.py"],
+            "always_run": [],
+            "full_suite_fallback": True,
+            "rationale": "Model widened with marker.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "full"
+    assert result["command_override"] is None
+    assert "non-path selector kind(s) marker" in result["reason"]
+
+
+def test_graph_build_failure_keeps_name_convention_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/foo.py")
+    _write(repo, "tests/pkg/test_foo.py")
+
+    def raise_build(cls: type[ImportGraph], repo_root: Path) -> ImportGraph:
+        raise RuntimeError("graph unavailable")
+
+    monkeypatch.setattr(ImportGraph, "build", classmethod(raise_build))
+
+    radius = compute_default_blast_radius(["pkg/foo.py"], repo)
+
+    assert radius["strategy"] == "scoped"
+    assert radius["confidence"] == "high"
+    assert _selector_values(radius) == ["tests/pkg/test_foo.py"]

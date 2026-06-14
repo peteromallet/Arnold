@@ -806,18 +806,45 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
         version = state["iteration"] + 1
         plan_text = payload["plan"].rstrip() + "\n"
         delta = compute_plan_delta_percent(previous_plan, plan_text)
+        revise_blast_radius = payload.get("test_blast_radius")
+        if not isinstance(revise_blast_radius, dict):
+            revise_blast_radius = None
+        prior_blast_radius = None
+        try:
+            prior_meta = read_json(latest_plan_meta_path(plan_dir, state)) or {}
+            carried = prior_meta.get("test_blast_radius")
+            prior_blast_radius = carried if isinstance(carried, dict) else None
+        except Exception:
+            prior_blast_radius = None
+        if prior_blast_radius is not None and revise_blast_radius is not None:
+            try:
+                from arnold.pipelines.megaplan.orchestration.test_selection import (
+                    merge_blast_radius_floor,
+                )
+
+                revise_blast_radius = merge_blast_radius_floor(
+                    prior_blast_radius,
+                    revise_blast_radius,
+                )
+            except Exception:
+                revise_blast_radius = prior_blast_radius
+        elif revise_blast_radius is None:
+            revise_blast_radius = prior_blast_radius
+        revise_meta_fields = {
+            "changes_summary": payload["changes_summary"],
+            "flags_addressed": payload["flags_addressed"],
+            "questions": payload.get("questions", []),
+            "success_criteria": payload.get("success_criteria", []),
+            "assumptions": payload.get("assumptions", []),
+            "delta_from_previous_percent": delta,
+        }
+        if revise_blast_radius is not None:
+            revise_meta_fields["test_blast_radius"] = revise_blast_radius
         try:
             plan_filename, meta_filename, meta = _write_plan_version(
                 plan_dir=plan_dir, state=state, step="revise", version=version,
                 worker=worker, plan_filename=f"plan_v{version}.md", plan_text=plan_text,
-                meta_fields={
-                    "changes_summary": payload["changes_summary"],
-                    "flags_addressed": payload["flags_addressed"],
-                    "questions": payload.get("questions", []),
-                    "success_criteria": payload.get("success_criteria", []),
-                    "assumptions": payload.get("assumptions", []),
-                    "delta_from_previous_percent": delta,
-                },
+                meta_fields=revise_meta_fields,
             )
         except CliError as error:
             if error.code == "cache_hit_suspected":

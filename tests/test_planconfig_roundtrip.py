@@ -17,7 +17,7 @@ import arnold.pipelines.megaplan as megaplan
 from arnold.pipelines.megaplan._core.io import get_effective
 from arnold.pipelines.megaplan.chain import run_chain
 from arnold.pipelines.megaplan.handlers.init import _build_state_config
-from arnold.pipelines.megaplan.types import DEFAULTS, _SETTABLE_NUMERIC, _SETTABLE_STRING
+from arnold.pipelines.megaplan.types import DEFAULTS, _SETTABLE_ENUM, _SETTABLE_NUMERIC, _SETTABLE_STRING
 
 from tests.conftest import load_state, make_args_factory
 
@@ -40,12 +40,25 @@ def test_defaults_contain_completion_contract_mode() -> None:
     assert DEFAULTS["execution.completion_contract_mode"] == "shadow"
 
 
+def test_defaults_contain_full_suite_backstop_mode() -> None:
+    assert "execution.full_suite_backstop_mode" in DEFAULTS
+    assert DEFAULTS["execution.full_suite_backstop_mode"] == "shadow"
+
+
 def test_settable_string_contains_test_command() -> None:
     assert "execution.test_command" in _SETTABLE_STRING
 
 
 def test_settable_numeric_contains_test_baseline_timeout() -> None:
     assert "execution.test_baseline_timeout" in _SETTABLE_NUMERIC
+
+
+def test_settable_enum_contains_full_suite_backstop_mode() -> None:
+    assert _SETTABLE_ENUM["execution.full_suite_backstop_mode"] == (
+        "off",
+        "shadow",
+        "enforce",
+    )
 
 
 # ── init → state.json round-trip ────────────────────────────────────────
@@ -77,6 +90,11 @@ def test_completion_contract_mode_roundtrip(
         "off",
         "shadow",
         "warn",
+        "enforce",
+    )
+    assert state["config"]["full_suite_backstop_mode"] in (
+        "off",
+        "shadow",
         "enforce",
     )
 
@@ -143,10 +161,12 @@ def test_completion_contract_mode_cli_flag_overrides_get_effective(
     make_args = make_args_factory(project_dir)
     args = make_args(name="cli-override")
     args.completion_contract_mode = "off"
+    args.full_suite_backstop_mode = "enforce"
     response = megaplan.handle_init(root, args)
     plan_dir = megaplan.plans_root(root) / response["plan"]
     state = load_state(plan_dir)
     assert state["config"]["completion_contract_mode"] == "off"
+    assert state["config"]["full_suite_backstop_mode"] == "enforce"
 
 
 # ── _build_state_config unit tests ──────────────────────────────────────
@@ -178,9 +198,11 @@ def test_build_state_config_includes_all_three_fields() -> None:
         from_doc_rel=None,
     )
     assert "completion_contract_mode" in config
+    assert "full_suite_backstop_mode" in config
     assert "test_command" in config
     assert "test_baseline_timeout" in config
     assert config["completion_contract_mode"] in ("off", "shadow", "warn", "enforce")
+    assert config["full_suite_backstop_mode"] in ("off", "shadow", "enforce")
 
 
 def test_build_state_config_cli_wins_over_get_effective() -> None:
@@ -200,6 +222,7 @@ def test_build_state_config_cli_wins_over_get_effective() -> None:
     )
     # Simulate CLI flags
     args.completion_contract_mode = "off"  # type: ignore[attr-defined]
+    args.full_suite_backstop_mode = "enforce"  # type: ignore[attr-defined]
     args.test_command = "pytest -x"  # type: ignore[attr-defined]
     args.test_baseline_timeout = 600  # type: ignore[attr-defined]
 
@@ -214,5 +237,6 @@ def test_build_state_config_cli_wins_over_get_effective() -> None:
         from_doc_rel=None,
     )
     assert config["completion_contract_mode"] == "off"
+    assert config["full_suite_backstop_mode"] == "enforce"
     assert config["test_command"] == "pytest -x"
     assert config["test_baseline_timeout"] == 600

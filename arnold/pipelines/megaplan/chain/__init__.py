@@ -69,7 +69,7 @@ from arnold.pipelines.megaplan.runtime.execution_environment import (
     merge_isolation_evidence,
     resolve_execution_environment,
 )
-from arnold.pipelines.megaplan._core import resolve_plan_dir
+from arnold.pipelines.megaplan._core import atomic_write_json, resolve_plan_dir
 from arnold.pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold.pipelines.megaplan.orchestration.authority_readers import (
     AuthorityDecision,
@@ -597,6 +597,219 @@ def _shadow_milestone_completion_verdict(
             exc,
         )
         return False
+
+
+def _full_suite_backstop_completed_summary(
+    result: dict[str, Any],
+    evaluation: dict[str, Any],
+) -> dict[str, Any]:
+    failing_tests = result.get("failing_tests")
+    if not isinstance(failing_tests, list):
+        failing_tests = []
+    newly_failing = result.get("newly_failing")
+    if not isinstance(newly_failing, list):
+        newly_failing = []
+    deleted_tests = result.get("deleted_tests")
+    if not isinstance(deleted_tests, list):
+        deleted_tests = []
+    return {
+        "mode": evaluation.get("mode"),
+        "status": result.get("status"),
+        "blocks": bool(evaluation.get("blocks")),
+        "reason": evaluation.get("reason"),
+        "passed": result.get("passed"),
+        "failed": result.get("failed"),
+        "failing_tests": list(failing_tests),
+        "newly_failing": list(newly_failing),
+        "deleted_tests": list(deleted_tests),
+        "baseline_failing_count": result.get("baseline_failing_count", 0),
+        "current_failing_count": result.get("current_failing_count", 0),
+        "delta_computed": bool(result.get("delta_computed")),
+        "command": result.get("command", ""),
+        "duration_s": result.get("duration_s"),
+        "ran": bool(result.get("ran")),
+        "artifact": "full_suite_backstop.json",
+    }
+
+
+def _full_suite_backstop_baseline_path_for(spec_path: Path) -> Path:
+    return _state_path_for(spec_path).parent / "full_suite_baseline.json"
+
+
+def _current_head_sha(root: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
+
+
+def _persist_full_suite_backstop_baseline(
+    spec_path: Path,
+    result: dict[str, Any],
+    *,
+    captured_at_sha: str | None,
+    milestone_label: str,
+    captured_at: str | None = None,
+) -> bool:
+    from arnold.pipelines.megaplan.orchestration.full_suite_backstop import (
+        build_full_suite_baseline,
+    )
+
+    baseline = build_full_suite_baseline(
+        result,
+        captured_at_sha=captured_at_sha,
+        milestone=milestone_label,
+        captured_at=captured_at,
+    )
+    if baseline is None:
+        return False
+    path = _full_suite_backstop_baseline_path_for(spec_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(path, baseline)
+    return True
+
+
+def _full_suite_backstop_uncertain(result: dict[str, Any] | None) -> bool:
+    return not isinstance(result, dict) or result.get("delta_computed") is not True
+
+
+def _run_full_suite_backstop_gate(
+    root: Path,
+    spec_path: Path,
+    plan_name: str,
+    milestone_label: str,
+    mode: str,
+    *,
+    log_fn: Callable[[str], None],
+) -> dict[str, Any]:
+    """Run the full-suite backstop gate for a completed milestone."""
+    from arnold.pipelines.megaplan.orchestration.full_suite_backstop import (
+        FULL_SUITE_BACKSTOP_MODE_ENFORCE,
+        FULL_SUITE_BACKSTOP_MODE_OFF,
+        evaluate_full_suite_backstop,
+        normalize_full_suite_backstop_mode,
+        run_full_suite_backstop,
+    )
+
+    normalized_mode = normalize_full_suite_backstop_mode(mode)
+    if normalized_mode == FULL_SUITE_BACKSTOP_MODE_OFF:
+        return {
+            "blocks": False,
+            "reason": "full_suite_backstop_mode=off: backstop disabled",
+            "summary": None,
+            "result": None,
+        }
+
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+        if plan_dir is None:
+            raise FileNotFoundError(f"plan directory not found for {plan_name!r}")
+
+        try:
+            raw_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        except Exception:
+            raw_state = {}
+        config = raw_state.get("config", {}) if isinstance(raw_state, dict) else {}
+        if not isinstance(config, dict):
+            config = {}
+        project_dir_value = config.get("project_dir")
+        project_dir = (
+            Path(project_dir_value)
+            if isinstance(project_dir_value, str) and project_dir_value
+            else root
+        )
+        baseline_path = _full_suite_backstop_baseline_path_for(spec_path)
+
+        result = run_full_suite_backstop(
+            plan_dir,
+            project_dir,
+            config,
+            baseline=baseline_path,
+            writer=log_fn,
+        )
+        atomic_write_json(plan_dir / "full_suite_backstop.json", result)
+        evaluation = evaluate_full_suite_backstop(result, normalized_mode)
+        if (
+            normalized_mode == FULL_SUITE_BACKSTOP_MODE_ENFORCE
+            and evaluation.get("blocks")
+            and _full_suite_backstop_uncertain(result)
+        ):
+            log_fn("full_suite_backstop enforce uncertainty; retrying full suite once")
+            result = run_full_suite_backstop(
+                plan_dir,
+                project_dir,
+                config,
+                baseline=baseline_path,
+                writer=log_fn,
+            )
+            atomic_write_json(plan_dir / "full_suite_backstop.json", result)
+            evaluation = evaluate_full_suite_backstop(result, normalized_mode)
+        summary = _full_suite_backstop_completed_summary(result, evaluation)
+
+        newly_failing = summary["newly_failing"]
+        deleted_tests = summary["deleted_tests"]
+        failure_suffix = (
+            f"; newly_failing={newly_failing[:5]}"
+            if newly_failing
+            else f"; deleted_tests={deleted_tests[:5]}"
+            if deleted_tests
+            else ""
+        )
+        log_fn(
+            "full_suite_backstop "
+            f"mode={normalized_mode} status={summary['status']} "
+            f"blocks={summary['blocks']} artifact=full_suite_backstop.json"
+            f"{failure_suffix}"
+        )
+        return {
+            "blocks": bool(evaluation.get("blocks")),
+            "reason": str(evaluation.get("reason") or ""),
+            "summary": summary,
+            "result": result,
+        }
+    except Exception as exc:
+        log.warning(
+            "full_suite_backstop failed open for milestone %r: %s",
+            milestone_label,
+            exc,
+        )
+        result = {
+            "status": "error",
+            "passed": None,
+            "failed": None,
+            "failing_tests": None,
+            "command": "",
+            "duration_s": None,
+            "ran": False,
+            "note": f"fail-open: {type(exc).__name__}: {exc}",
+        }
+        try:
+            log_fn(
+                "full_suite_backstop "
+                f"mode={normalized_mode} status=error blocks=False "
+                f"note={result['note']}"
+            )
+        except Exception:
+            pass
+        return {
+            "blocks": False,
+            "reason": (
+                "full_suite_backstop failed open after unexpected error; not blocking"
+            ),
+            "summary": None,
+            "result": result,
+        }
 
 
 def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
@@ -1164,6 +1377,8 @@ def run_chain(
     no_git_refresh: bool = False,
     no_push: bool = False,
     one: bool = False,
+    mode: str = "start",
+    full_suite_backstop_mode: str | None = None,
 ) -> dict[str, Any]:
     """Drive the full chain. Returns a structured JSON-serializable result."""
     root = root.resolve(strict=False)
@@ -1177,6 +1392,17 @@ def run_chain(
         state={"config": {"project_dir": str(root), "base_branch": spec.base_branch}},
     )
     state.metadata = merge_isolation_evidence(state.metadata, env, phase="chain_start")
+    if state.current_milestone_index < 0 and not state.completed:
+        from arnold.pipelines.megaplan._core.io import get_effective
+        from arnold.pipelines.megaplan.orchestration.full_suite_backstop import (
+            normalize_full_suite_backstop_mode,
+        )
+
+        state.full_suite_backstop_mode = normalize_full_suite_backstop_mode(
+            full_suite_backstop_mode
+            if full_suite_backstop_mode is not None
+            else get_effective("execution", "full_suite_backstop_mode")
+        )
     chain_spec.save_chain_state(spec_path, state)
     preexisting_dirty_paths = _dirty_worktree_paths(root)
     push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
@@ -1523,6 +1749,46 @@ def run_chain(
             state.pr_state = None
             chain_spec.save_chain_state(spec_path, state)
             continue
+        full_suite_backstop_gate: dict[str, Any] | None = None
+        full_suite_backstop_summary: dict[str, Any] | None = None
+        if decision == "advance" and outcome.status == "done":
+            full_suite_backstop_gate = _run_full_suite_backstop_gate(
+                root,
+                spec_path,
+                plan_name,
+                milestone.label,
+                state.full_suite_backstop_mode,
+                log_fn=log,
+            )
+            full_suite_backstop_summary = full_suite_backstop_gate.get("summary")
+            if full_suite_backstop_gate.get("blocks"):
+                result = full_suite_backstop_gate.get("result")
+                newly_failing = []
+                deleted_tests = []
+                if isinstance(result, dict):
+                    if isinstance(result.get("newly_failing"), list):
+                        newly_failing = result["newly_failing"]
+                    if isinstance(result.get("deleted_tests"), list):
+                        deleted_tests = result["deleted_tests"]
+                failing_suffix = (
+                    f"; newly_failing={newly_failing[:10]}"
+                    if newly_failing
+                    else f"; deleted_tests={deleted_tests[:10]}"
+                    if deleted_tests
+                    else ""
+                )
+                chain_spec.save_chain_state(spec_path, state)
+                return _result(
+                    "blocked",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=(
+                        f"full_suite_backstop_mode=enforce: milestone "
+                        f"{milestone.label!r} blocked before advance; see "
+                        f"{plan_name}/full_suite_backstop.json{failing_suffix}"
+                    ),
+                )
         if decision == "advance" and use_pr and state.pr_number is not None:
             _commit_and_push_phase(
                 root,
@@ -1612,16 +1878,34 @@ def run_chain(
             state.pr_state = None
             chain_spec.save_chain_state(spec_path, state)
             continue
+        if (
+            decision == "advance"
+            and full_suite_backstop_gate is not None
+            and not full_suite_backstop_gate.get("blocks")
+        ):
+            result = full_suite_backstop_gate.get("result")
+            if isinstance(result, dict):
+                if _persist_full_suite_backstop_baseline(
+                    spec_path,
+                    result,
+                    captured_at_sha=_current_head_sha(root),
+                    milestone_label=milestone.label,
+                ):
+                    log(
+                        "full_suite_backstop baseline updated "
+                        f"milestone={milestone.label}"
+                    )
         # advance or skip
-        state.completed.append(
-            {
-                "label": milestone.label,
-                "plan": plan_name,
-                "status": outcome.status,
-                "pr_number": state.pr_number,
-                "pr_state": state.pr_state,
-            }
-        )
+        completed_record = {
+            "label": milestone.label,
+            "plan": plan_name,
+            "status": outcome.status,
+            "pr_number": state.pr_number,
+            "pr_state": state.pr_state,
+        }
+        if full_suite_backstop_summary is not None:
+            completed_record["full_suite_backstop"] = full_suite_backstop_summary
+        state.completed.append(completed_record)
         idx += 1
         state.current_milestone_index = idx
         state.current_plan_name = None

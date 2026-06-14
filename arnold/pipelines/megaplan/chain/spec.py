@@ -499,6 +499,7 @@ class ChainState:
     resolved_workspace: str | None = None
     extra_repo_sync: list[dict[str, Any]] = field(default_factory=list)
     completion_contract_mode: str = "shadow"
+    full_suite_backstop_mode: str = "shadow"
     retry_counts: dict[str, int] = field(default_factory=dict)
     ladder_stage: dict[str, str] = field(default_factory=dict)
     profile_bumps: dict[str, str] = field(default_factory=dict)
@@ -527,6 +528,7 @@ class ChainState:
             "resolved_workspace": self.resolved_workspace,
             "extra_repo_sync": list(self.extra_repo_sync),
             "completion_contract_mode": self.completion_contract_mode,
+            "full_suite_backstop_mode": self.full_suite_backstop_mode,
             "retry_counts": dict(self.retry_counts),
             "ladder_stage": dict(self.ladder_stage),
             "profile_bumps": dict(self.profile_bumps),
@@ -561,9 +563,15 @@ class ChainState:
             extra_repo_sync = []
 
         from arnold.pipelines.megaplan.orchestration.completion_contract import normalize_contract_mode
+        from arnold.pipelines.megaplan.orchestration.full_suite_backstop import (
+            normalize_full_suite_backstop_mode,
+        )
 
         completion_contract_mode = normalize_contract_mode(
             raw.get("completion_contract_mode")
+        )
+        full_suite_backstop_mode = normalize_full_suite_backstop_mode(
+            raw.get("full_suite_backstop_mode")
         )
 
         def _str_int_map(value: Any) -> dict[str, int]:
@@ -607,6 +615,7 @@ class ChainState:
             resolved_workspace=resolved_workspace,
             extra_repo_sync=extra_repo_sync,
             completion_contract_mode=completion_contract_mode,
+            full_suite_backstop_mode=full_suite_backstop_mode,
             retry_counts=_str_int_map(raw.get("retry_counts")),
             ladder_stage=_str_str_map(raw.get("ladder_stage")),
             profile_bumps=_str_str_map(raw.get("profile_bumps")),

@@ -62,6 +62,10 @@ class PlanConfig(TypedDict, total=False):
     # run the suite. warn/enforce are not yet implemented (behave like shadow +
     # a logged WARNING). See megaplan/orchestration/completion_contract.py.
     completion_contract_mode: NotRequired[str]
+    # Full-suite backstop mode: off | shadow | enforce.
+    # Default "shadow" = run and record one unscoped suite before milestone
+    # advance, never block. enforce blocks only on computed suite failures.
+    full_suite_backstop_mode: NotRequired[str]
     # Shell command the harness uses to run the test suite (e.g. "pytest").
     test_command: NotRequired[str]
     # Timeout in seconds for the baseline-capture / verification test run.
@@ -499,6 +503,10 @@ DEFAULTS = {
     # fail-closed behaviour is a documented TODO). See
     # megaplan/orchestration/completion_contract.py.
     "execution.completion_contract_mode": "shadow",
+    # One full unscoped suite before milestone advance. Shadow records the
+    # result without blocking; enforce blocks only on computed full-suite
+    # failures, not runner errors.
+    "execution.full_suite_backstop_mode": "shadow",
     # Test command the harness invokes for baseline capture / verification.
     "execution.test_command": None,
     # Timeout in seconds for the baseline-capture / verification test run.
@@ -538,6 +546,7 @@ _SETTABLE_ENUM = {
     "execution.robustness": _ROBUSTNESS_ACCEPTED,
     "execution.critic_model": CRITIC_MODEL_CHOICES,
     "execution.completion_contract_mode": ("off", "shadow", "warn", "enforce"),
+    "execution.full_suite_backstop_mode": ("off", "shadow", "enforce"),
 }
 
 _SETTABLE_NUMERIC = {
