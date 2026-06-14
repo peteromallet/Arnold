@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-import megaplan
+import arnold.pipelines.megaplan as megaplan
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -82,7 +82,7 @@ def test_chain_start_in_worktree_reroots_whole_chain(
         seen["one"] = one
         return {"status": "done", "chain_state": {}}
 
-    monkeypatch.setattr("megaplan.chain.run_chain", fake_run_chain)
+    monkeypatch.setattr("arnold.pipelines.megaplan.chain.run_chain", fake_run_chain)
     monkeypatch.chdir(repo)
 
     code = megaplan.main(

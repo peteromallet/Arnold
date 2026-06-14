@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.cli import build_parser
-from megaplan.loop.engine import (
+from arnold.pipelines.megaplan.cli import build_parser
+from arnold.pipelines.megaplan.loop.engine import (
     _MONITORED_OUTPUT_BUFFER_LIMIT,
     _run_monitored_command,
     _take_observation,
@@ -24,10 +24,10 @@ from megaplan.loop.engine import (
     save_loop_state,
     should_continue,
 )
-from megaplan.loop.git import git_commit, git_current_sha, git_revert, parse_metric
-from megaplan.loop.handlers import handle_loop_init, handle_loop_pause, handle_loop_run, handle_loop_status
-from megaplan.loop.prompts import build_execute_prompt, build_loop_prompt, build_plan_prompt
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.loop.git import git_commit, git_current_sha, git_revert, parse_metric
+from arnold.pipelines.megaplan.loop.handlers import handle_loop_init, handle_loop_pause, handle_loop_run, handle_loop_status
+from arnold.pipelines.megaplan.loop.prompts import build_execute_prompt, build_loop_prompt, build_plan_prompt
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 def _git_init(repo: Path) -> None:
@@ -101,7 +101,7 @@ def test_loop_init_accepts_monitoring_flags_and_status_reports_them(
     subprocess.run(["git", "commit", "-m", "initial"], cwd=project_dir, check=True, capture_output=True, text=True)
 
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
-    monkeypatch.setattr("megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
 
     parser = build_parser()
     args = parser.parse_args(
@@ -450,7 +450,7 @@ def test_run_monitored_command_joins_reader_threads(monkeypatch: pytest.MonkeyPa
         created_threads.append(thread)
         return thread
 
-    monkeypatch.setattr("megaplan.loop.engine.threading.Thread", tracking_thread)
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.threading.Thread", tracking_thread)
 
     result = _run_monitored_command(command, cwd=tmp_path, timeout=5, observe_interval=1, spec={})
 
@@ -485,8 +485,8 @@ def test_run_loop_worker_uses_config_sessions_shim_and_prompt(monkeypatch: pytes
             True,
         )
 
-    monkeypatch.setattr("megaplan.loop.engine.resolve_agent_mode", fake_resolve_agent_mode)
-    monkeypatch.setattr("megaplan.loop.engine.run_step_with_worker", fake_run_step_with_worker)
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.resolve_agent_mode", fake_resolve_agent_mode)
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.run_step_with_worker", fake_run_step_with_worker)
 
     worker = run_loop_worker("loop_plan", state, project_dir / ".megaplan" / "loops" / "demo", _loop_args(), project_dir)
 
@@ -512,7 +512,7 @@ def test_loop_handlers_return_step_responses_and_init_runs_first_plan_phase(
     subprocess.run(["git", "commit", "-m", "initial"], cwd=project_dir, check=True, capture_output=True, text=True)
 
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
-    monkeypatch.setattr("megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
     args = _loop_args(project_dir=str(project_dir))
 
     init_response = handle_loop_init(root, args)
@@ -540,7 +540,7 @@ def test_run_loop_applies_iteration_override(monkeypatch: pytest.MonkeyPatch, tm
     subprocess.run(["git", "commit", "-m", "initial"], cwd=project_dir, check=True, capture_output=True, text=True)
 
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
-    monkeypatch.setattr("megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
     state = init_loop("demo", "observe failures", "python app.py", str(project_dir), _loop_args(iterations=1))
 
     final_state = run_loop(state, _loop_args(project_dir=str(project_dir), iterations=2), project_dir)
@@ -558,7 +558,7 @@ def test_pause_request_stops_after_current_iteration(monkeypatch: pytest.MonkeyP
     subprocess.run(["git", "commit", "-m", "initial"], cwd=project_dir, check=True, capture_output=True, text=True)
 
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
-    monkeypatch.setattr("megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
     state = init_loop("demo", "observe failures", "python app.py", str(project_dir), _loop_args(iterations=3))
     original_git_commit = git_commit
     pause_sent = {"value": False}
@@ -569,7 +569,7 @@ def test_pause_request_stops_after_current_iteration(monkeypatch: pytest.MonkeyP
             handle_loop_pause(project_dir, argparse.Namespace(project_dir=str(project_dir), name="demo", reason="manual"))
         return original_git_commit(repo, message, allowed_changes)
 
-    monkeypatch.setattr("megaplan.loop.engine.git_commit", pause_during_execute)
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.git_commit", pause_during_execute)
 
     final_state = run_loop(state, _loop_args(project_dir=str(project_dir), iterations=3), project_dir)
 
@@ -587,7 +587,7 @@ def test_loop_status_reports_recent_history_and_current_best(monkeypatch: pytest
     subprocess.run(["git", "commit", "-m", "initial"], cwd=project_dir, check=True, capture_output=True, text=True)
 
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
-    monkeypatch.setattr("megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
     state = init_loop("demo", "observe failures", "python app.py", str(project_dir), _loop_args(iterations=2))
 
     final_state = run_loop(state, _loop_args(project_dir=str(project_dir), iterations=2), project_dir)
@@ -607,7 +607,7 @@ def test_mock_worker_loop_runs_two_iterations_and_stops(monkeypatch: pytest.Monk
     subprocess.run(["git", "commit", "-m", "initial"], cwd=project_dir, check=True, capture_output=True, text=True)
 
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
-    monkeypatch.setattr("megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
     args = _loop_args(project_dir=str(project_dir), iterations=2)
     state = init_loop("demo", "observe failures", "python app.py", str(project_dir), args)
 
@@ -694,10 +694,10 @@ def test_monitored_execute_phase_records_observations_artifacts_and_prompt(
             True,
         )
 
-    monkeypatch.setattr("megaplan.loop.engine._run_monitored_command", fake_monitored)
-    monkeypatch.setattr("megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
-    monkeypatch.setattr("megaplan.loop.engine.run_step_with_worker", fake_run_step_with_worker)
-    monkeypatch.setattr("megaplan.loop.engine.git_commit", lambda *args, **kwargs: None)
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine._run_monitored_command", fake_monitored)
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.run_step_with_worker", fake_run_step_with_worker)
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.git_commit", lambda *args, **kwargs: None)
 
     final_state = run_execute_phase(state, plan_dir, args, project_dir)
     latest_result = final_state["results"][-1]
@@ -790,10 +790,10 @@ def test_candidate_success_clears_baseline_kill_metadata_in_results_and_status(
             True,
         )
 
-    monkeypatch.setattr("megaplan.loop.engine._run_monitored_command", fake_monitored)
-    monkeypatch.setattr("megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
-    monkeypatch.setattr("megaplan.loop.engine.run_step_with_worker", fake_run_step_with_worker)
-    monkeypatch.setattr("megaplan.loop.engine.git_commit", lambda *args, **kwargs: "commit-sha")
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine._run_monitored_command", fake_monitored)
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.resolve_agent_mode", lambda step, args: ("codex", "ephemeral", True, None))
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.run_step_with_worker", fake_run_step_with_worker)
+    monkeypatch.setattr("arnold.pipelines.megaplan.loop.engine.git_commit", lambda *args, **kwargs: "commit-sha")
 
     final_state = run_execute_phase(state, plan_dir, args, project_dir)
     save_loop_state(plan_dir, final_state)

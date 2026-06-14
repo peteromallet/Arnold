@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.runtime.doc_assembly import assemble_doc, extract_sections, extract_settled_decisions
+from arnold.pipelines.megaplan.runtime.doc_assembly import assemble_doc, extract_sections, extract_settled_decisions
 
 
 def _write_batch(plan_dir: Path, index: int, payload: dict) -> None:

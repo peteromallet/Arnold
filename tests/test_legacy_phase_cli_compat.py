@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-import megaplan
+import arnold.pipelines.megaplan as megaplan
 
 from tests.conftest import make_args_factory
 

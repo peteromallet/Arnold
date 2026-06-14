@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-import megaplan.bakeoff.orchestrator as orchestrator
-from megaplan.bakeoff.handlers import handle_compare, handle_merge, handle_pick, handle_status
-from megaplan.bakeoff.lifecycle import resume_bakeoff
-from megaplan.bakeoff.state import load_bakeoff_state
+import arnold.pipelines.megaplan.bakeoff.orchestrator as orchestrator
+from arnold.pipelines.megaplan.bakeoff.handlers import handle_compare, handle_merge, handle_pick, handle_status
+from arnold.pipelines.megaplan.bakeoff.lifecycle import resume_bakeoff
+from arnold.pipelines.megaplan.bakeoff.state import load_bakeoff_state
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -367,7 +367,7 @@ def test_bakeoff_run_robustness_propagation(
         return FakeProcess(0)
 
     monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
+        "arnold.pipelines.megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
         fake_create_subprocess_exec,
     )
     _install_fake_spawn(monkeypatch, calls=[])

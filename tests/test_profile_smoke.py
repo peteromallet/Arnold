@@ -22,11 +22,12 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan.profiles as profiles_module
-from megaplan._core.workflow import _workflow_for_robustness
-from megaplan.profiles import apply_profile_expansion
-from megaplan.types import STATE_INITIALIZED
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan._core.user_config as user_config_module
+import arnold.pipelines.megaplan.profiles as profiles_module
+from arnold.pipelines.megaplan._core.workflow import _workflow_for_robustness
+from arnold.pipelines.megaplan.profiles import apply_profile_expansion
+from arnold.pipelines.megaplan.planning.state import STATE_INITIALIZED
 
 
 DEEPSEEK = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
@@ -38,8 +39,13 @@ def _pin_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin profile-loader config dir + default vendor so dev-machine
     state doesn't leak into the matrix."""
     fake_home_config = tmp_path / ".config" / "megaplan"
+    fake_home_config.mkdir(parents=True, exist_ok=True)
+    (fake_home_config / "config.toml").write_text(
+        "[defaults]\nvendor = \"claude\"\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(profiles_module, "config_dir", lambda home=None: fake_home_config)
-    monkeypatch.setattr(profiles_module, "_resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr(user_config_module, "config_dir", lambda home=None: fake_home_config)
 
 
 def _worker_args(**overrides: object) -> Namespace:

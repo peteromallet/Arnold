@@ -7,8 +7,8 @@ from pathlib import Path
 
 from jsonschema import Draft7Validator
 
-from megaplan._core.io import _enforce_openai_strict_mode
-from megaplan.schemas import SCHEMAS, strict_schema
+from arnold.pipelines.megaplan._core.io import _enforce_openai_strict_mode
+from arnold.pipelines.megaplan.schemas import GateArtifact, GatePayload, GateSignals, SCHEMAS, TiebreakerDecision, strict_schema
 
 
 def _review_disk_schema() -> dict[str, object]:
@@ -31,9 +31,47 @@ def _minimal_review_payload() -> dict[str, object]:
     }
 
 
+def _deterministic_check() -> dict[str, object]:
+    return {
+        "command": "python -m pytest tests/test_example.py -q",
+        "baseline_status": "passed",
+        "post_status": "failed",
+        "evidence_file": None,
+    }
+
+
 def test_schema_registry_matches_5_step_workflow() -> None:
     required = {"plan.json", "prep.json", "revise.json", "gate.json", "critique.json", "finalize.json", "execution.json", "review.json"}
     assert required.issubset(set(SCHEMAS))
+
+
+def test_planning_schema_contracts_export_from_schema_package() -> None:
+    gate_payload: GatePayload = {
+        "recommendation": "PROCEED",
+        "rationale": "Ready.",
+        "signals_assessment": "clear",
+        "warnings": [],
+        "settled_decisions": [],
+    }
+    gate_artifact: GateArtifact = {
+        "passed": True,
+        "criteria_check": {},
+        "preflight_results": {},
+        "unresolved_flags": [],
+        "recommendation": "PROCEED",
+        "rationale": "Ready.",
+        "signals_assessment": "clear",
+        "warnings": [],
+        "settled_decisions": [],
+        "signals": {},
+    }
+    gate_signals: GateSignals = {"signals": {}, "warnings": []}
+    tiebreaker_decision: TiebreakerDecision = {"action": "pick"}
+
+    assert gate_payload["recommendation"] == "PROCEED"
+    assert gate_artifact["passed"] is True
+    assert gate_signals["warnings"] == []
+    assert tiebreaker_decision["action"] == "pick"
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +425,7 @@ def test_stored_artifact_schema_has_single_source_no_duplicate_definitions() -> 
     exactly — legacy, catalog, and `other` — and that they carry the
     ``x-preserve-explicit-required`` marker used by the builder.
     """
-    from megaplan.schemas.runtime import _build_critique_evaluator_schema
+    from arnold.pipelines.megaplan.schemas.runtime import _build_critique_evaluator_schema
 
     schema = SCHEMAS["critique_evaluator.json"]
 
@@ -417,7 +455,7 @@ def test_stored_artifact_compatibility_separate_from_live_validate_evaluator_ver
     `megaplan/audits/critique_evaluator.py` is for *live* evaluator output and
     explicitly rejects per-lens ``critic_model`` selections.
     """
-    from megaplan.audits.critique_evaluator import validate_evaluator_verdict
+    from arnold.pipelines.megaplan.audits.critique_evaluator import validate_evaluator_verdict
 
     schema = SCHEMAS["critique_evaluator.json"]
     legacy_payload = {
@@ -519,10 +557,14 @@ def test_execution_schema_requires_task_updates() -> None:
     assert "sense_check_acknowledgments" in execution["properties"]
     assert "sense_check_acknowledgments" in execution["required"]
     item_schema = execution["properties"]["task_updates"]["items"]
-    assert item_schema["properties"]["status"]["enum"] == ["done", "skipped", "blocked"]
+    assert item_schema["properties"]["status"]["enum"] == ["done", "skipped", "completed", "blocked"]
     assert "files_changed" in item_schema["properties"]
     assert "commands_run" in item_schema["properties"]
     assert "auto_attributed_files" in item_schema["properties"]
+    assert item_schema["properties"]["auto_attributed_files"]["type"] == [
+        "boolean",
+        "null",
+    ]
     assert "auto_attributed_files" not in item_schema["required"]
 
 
@@ -559,9 +601,19 @@ def test_review_schema_requires_task_and_sense_check_verdicts() -> None:
     assert "evidence_file" in rework_item["properties"]
     assert "flag_id" in rework_item["properties"]
     assert "source" in rework_item["properties"]
-    assert set(rework_item["required"]) == {"task_id", "issue", "expected", "actual", "evidence_file", "flag_id", "source"}
+    assert set(rework_item["required"]) == {
+        "task_id",
+        "issue",
+        "expected",
+        "actual",
+        "evidence_file",
+        "flag_id",
+        "source",
+        "deterministic_check",
+    }
     assert rework_item["properties"]["flag_id"]["type"] == ["string", "null"]
     assert rework_item["properties"]["source"]["type"] == ["string", "null"]
+    assert rework_item["properties"]["deterministic_check"]["type"] == ["object", "null"]
 
 
 def test_review_schema_accepts_new_review_shape_without_checks() -> None:
@@ -616,6 +668,7 @@ def test_review_schema_accepts_parallel_mode_extensions_in_both_copies() -> None
                 "evidence_file": "pkg/module.py",
                 "flag_id": None,
                 "source": "review_coverage",
+                "deterministic_check": _deterministic_check(),
             }
         ],
         "summary": "Heavy review found a blocking issue.",
@@ -647,6 +700,7 @@ def test_review_schema_accepts_optional_rework_item_flag_id() -> None:
             "evidence_file": "megaplan/prompts/review.py",
             "flag_id": "FLAG-001",
             "source": "review_flag_reverify",
+            "deterministic_check": None,
         }
     ]
     disk_schema = _review_disk_schema()
@@ -668,6 +722,7 @@ def test_review_schema_still_accepts_rework_items_without_flag_id() -> None:
             "evidence_file": "megaplan/handlers.py",
             "flag_id": None,
             "source": None,
+            "deterministic_check": None,
         }
     ]
     disk_schema = _review_disk_schema()
@@ -800,7 +855,11 @@ def test_gate_schema_flag_resolutions_stay_codex_compatible() -> None:
 
     assert set(item_schema["required"]) == {"flag_id", "action", "evidence", "rationale"}
     assert "oneOf" not in item_schema
-    assert set(item_schema["properties"]["action"]["enum"]) == {"dispute", "accept_tradeoff"}
+    assert set(item_schema["properties"]["action"]["enum"]) == {
+        "dispute",
+        "accept_tradeoff",
+        "verify_fixed",
+    }
     assert "evidence" in item_schema["properties"]
     assert "rationale" in item_schema["properties"]
 
@@ -1164,3 +1223,52 @@ def test_prep_schema_validates_open_questions_without_assumption() -> None:
     )
     errors = list(Draft7Validator(schema).iter_errors(payload))
     assert errors == [], f"Expected no errors, got: {errors}"
+
+
+# ── Execution-schema task-status enum guard (T4) ─────────────────────────
+
+
+def test_execution_schema_status_enum_rejects_non_canonical() -> None:
+    """Prove the execution schema's task_updates status enum is exactly
+    {done, skipped, completed, blocked} and rejects non-canonical values
+    like ``verified`` and ``finished`` at the schema level.
+
+    The alias normalizer in ``status_constants``/``merge.py`` remaps
+    *verified → done* at runtime, but the schema itself must not accept
+    ``verified`` or ``finished`` directly — that would bypass the
+    normalizer for new execution-batch artifacts.
+    """
+    from jsonschema import Draft7Validator
+
+    schema = SCHEMAS["execution.json"]
+    item_schema = schema["properties"]["task_updates"]["items"]
+    status_enum = item_schema["properties"]["status"]["enum"]
+
+    # 1) Exact set equality — no drift, no additions, no deletions.
+    assert set(status_enum) == {"done", "skipped", "completed", "blocked"}
+    assert len(status_enum) == 4
+
+    # 2) Schema-level rejection of non-canonical values.
+    for bad_status in ("verified", "finished"):
+        payload: dict[str, object] = {
+            "output": "",
+            "files_changed": [],
+            "commands_run": [],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": bad_status,
+                    "executor_notes": "",
+                    "files_changed": [],
+                    "commands_run": [],
+                    "auto_attributed_files": None,
+                }
+            ],
+            "sense_check_acknowledgments": [],
+        }
+        errors = list(Draft7Validator(schema).iter_errors(payload))
+        assert errors, (
+            f"Schema must reject status {bad_status!r}; "
+            f"alias normalizer handles it at runtime."
+        )

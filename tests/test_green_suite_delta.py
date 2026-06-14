@@ -17,15 +17,18 @@ from unittest import mock
 
 import pytest
 
-from megaplan.orchestration.completion_contract import (
+from arnold.pipelines.megaplan.orchestration.completion_contract import (
+    ArtifactRef,
     CompletionContext,
     CompletionSubject,
+    EvidenceRef,
     EvidenceStatus,
     GreenSuiteProvider,
     SuiteDelta,
+    TrustClass,
     compute_delta,
 )
-from megaplan.orchestration.suite_runner import SuiteRunResult
+from arnold.pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +98,7 @@ def _seed_baseline(
     baseline: SuiteRunResult,
 ) -> None:
     """Write a baseline record into suite_runs.ndjson."""
-    from megaplan.orchestration.suite_runner import append_suite_run as real_append
+    from arnold.pipelines.megaplan.orchestration.suite_runner import append_suite_run as real_append
 
     real_append(plan_dir, baseline)
 
@@ -117,27 +120,27 @@ def _mock_collect_deps(
     # Always mock run_suite to return the verification result.
     patches.append(
         mock.patch(
-            "megaplan.orchestration.suite_runner.run_suite",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
             return_value=verification,
         )
     )
     # Suppress real ndjson writes.
     patches.append(
         mock.patch(
-            "megaplan.orchestration.suite_runner.append_suite_run",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.append_suite_run",
         )
     )
     # Stable code_hash.
     patches.append(
         mock.patch(
-            "megaplan.orchestration.suite_runner._compute_code_hash",
+            "arnold.pipelines.megaplan.orchestration.suite_runner._compute_code_hash",
             return_value=code_hash,
         )
     )
     # Never short-circuit freshness.
     patches.append(
         mock.patch(
-            "megaplan.orchestration.suite_runner.freshness_skip",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.freshness_skip",
             return_value=None,
         )
     )
@@ -146,7 +149,7 @@ def _mock_collect_deps(
     if baseline is not None:
         patches.append(
             mock.patch(
-                "megaplan.orchestration.completion_contract.GreenSuiteProvider._baseline_from_log",
+                "arnold.pipelines.megaplan.orchestration.completion_contract.GreenSuiteProvider._baseline_from_log",
                 return_value=baseline,
             )
         )
@@ -324,7 +327,7 @@ def test_flake_retry_stabilizes_one_off_flip(tmp_path: Path) -> None:
         # Override run_suite for the flake retry call.
         stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.suite_runner.run_suite",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
                 side_effect=[verification, retry],
             )
         )
@@ -373,7 +376,7 @@ def test_flake_retry_confirms_stable_newly_failing(tmp_path: Path) -> None:
             stack.enter_context(p)
         stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.suite_runner.run_suite",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
                 side_effect=[verification, retry],
             )
         )
@@ -419,7 +422,7 @@ def test_flake_retry_confirms_stable_newly_passing(tmp_path: Path) -> None:
             stack.enter_context(p)
         stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.suite_runner.run_suite",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
                 side_effect=[verification, retry],
             )
         )
@@ -457,7 +460,7 @@ def test_flake_retry_skipped_when_no_flips(tmp_path: Path) -> None:
             stack.enter_context(p)
         m_run = stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.suite_runner.run_suite",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
                 return_value=verification,
             )
         )
@@ -503,7 +506,7 @@ def test_flake_retry_skipped_over_1000_flips(tmp_path: Path) -> None:
             stack.enter_context(p)
         m_run = stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.suite_runner.run_suite",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
                 return_value=verification,
             )
         )
@@ -556,7 +559,7 @@ def test_flake_retry_runs_for_100_or_fewer_flips(tmp_path: Path) -> None:
             stack.enter_context(p)
         m_run = stack.enter_context(
             mock.patch(
-                "megaplan.orchestration.suite_runner.run_suite",
+                "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite",
                 side_effect=[verification, retry],
             )
         )
@@ -848,3 +851,20 @@ def test_suite_delta_to_dict_roundtrip(tmp_path: Path) -> None:
     assert d["duration"] == 1.23
     # Should be JSON-serializable.
     json.dumps(d)
+
+
+def test_completion_contract_reexports_evidence_symbols_for_green_suite_compat() -> None:
+    """Compatibility imports used by green-suite tests remain available."""
+    ref = EvidenceRef(
+        kind="green_suite",
+        status=EvidenceStatus.satisfied,
+        summary="suite passed",
+        details={"delta": {}},
+        trust_class=TrustClass.evidence,
+        artifact=ArtifactRef(path="suite_runs.ndjson", artifact_type="suite_run_log"),
+    )
+
+    assert ref.status is EvidenceStatus.satisfied
+    assert ref.trust_class is TrustClass.evidence
+    assert ref.artifact is not None
+    assert ref.artifact.path == "suite_runs.ndjson"

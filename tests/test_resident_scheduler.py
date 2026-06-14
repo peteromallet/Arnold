@@ -6,22 +6,23 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from megaplan.resident import (
+from arnold.pipelines.megaplan.resident import (
     AuthorizationSubject,
     ConfirmationManager,
+    EmitProtocol,
     OutboundMessage,
     ResidentConfig,
     StoreBackedConfirmationManager,
 )
-from megaplan.resident.cloud import CloudToolRequest, CloudToolResult, classify_cloud_payload
-from megaplan.resident.cli import run_resident_cli
-from megaplan.resident.scheduler import (
+from arnold.pipelines.megaplan.resident.cloud import CloudToolRequest, CloudToolResult, classify_cloud_payload
+from arnold.pipelines.megaplan.resident.cli import run_resident_cli
+from arnold.pipelines.megaplan.resident.scheduler import (
     ResidentJobHandlers,
     ScheduledJobWorker,
     StoreScheduledJobBackend,
     make_store_scheduler,
 )
-from megaplan.store import CloudRunInput, FileStore, ResidentConversationInput, ScheduledJobInput
+from arnold.pipelines.megaplan.store import CloudRunInput, FileStore, ResidentConversationInput, ScheduledJobInput
 
 
 @dataclass
@@ -200,6 +201,21 @@ def test_store_scheduler_retries_then_cancels_unhandled_jobs(tmp_path: Path) -> 
     cancelled = store.load_scheduled_job(job.id)
     assert second.cancelled == 1
     assert cancelled.status == "cancelled"
+
+
+def test_resident_scheduler_emit_sites_are_bound_to_emit_protocol(tmp_path: Path) -> None:
+    store, _epic_id, _conversation_id, _run_id = _resident_store(tmp_path)
+    handlers = ResidentJobHandlers(
+        store=store,
+        config=ResidentConfig(),
+        cloud_backend=FakeCloudBackend([]),
+    )
+
+    emitter: EmitProtocol = handlers._emit_sink()
+
+    assert emitter is store
+    assert callable(getattr(emitter, "log_system_event"))
+    assert callable(getattr(emitter, "append_progress_event"))
 
 
 def test_scheduler_support_handlers_for_housekeeping_jobs(tmp_path: Path) -> None:

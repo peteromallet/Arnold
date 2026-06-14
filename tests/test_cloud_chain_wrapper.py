@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from megaplan.cloud.cli import (
+from arnold.pipelines.megaplan.cloud.cli import (
     _chain_launch_verification_command,
     _chain_start_command,
     _chain_state_reset_command,
@@ -23,8 +23,8 @@ from megaplan.cloud.cli import (
     build_cloud_parser,
     run_cloud_cli,
 )
-from megaplan.cloud.template import render_ensure_repo_command
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.template import render_ensure_repo_command
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     LocalSpec,
@@ -117,7 +117,7 @@ def test_cloud_chain_no_git_refresh_reaches_remote_chain_start() -> None:
 
     assert args.no_git_refresh is True
     assert (
-        "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start "
+        "MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start "
         "--spec /workspace/app/chain.yaml --no-git-refresh"
     ) in command
 
@@ -164,8 +164,8 @@ def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
                     return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="main\nabc123\n", stderr="")
                 return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="started\n", stderr="")
 
-        monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path, name=provider_name: _cloud_spec(name))
-        monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+        monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path, name=provider_name: _cloud_spec(name))
+        monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
         args = parser.parse_args(
             ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -198,7 +198,7 @@ def test_cloud_chain_uploads_files_and_writes_marker_for_railway_and_local(
         assert "git -C \"$SRC\" pull --ff-only" in commands[4]
         assert "pip install -e \"$SRC\"" in commands[4]
         assert "/usr/local/bin/mp-refresh-megaplan" not in commands[4]
-        assert "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/chain-8fb6734d/app/chain.yaml" in commands[4]
+        assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start --spec /workspace/chain-8fb6734d/app/chain.yaml" in commands[4]
         assert "python3 - <<'MEGAPLAN_VERIFY'" in commands[5]
         marker_payload = json.loads((_marker_dir(cloud_yaml_path) / "last_chain.json").read_text(encoding="utf-8"))
         assert marker_payload["remote_spec"] == "/workspace/chain-8fb6734d/app/chain.yaml"
@@ -247,8 +247,10 @@ def test_cloud_chain_three_sprint_smoke_dispatches_trusted_container_command(
                 return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="main\nabc123\n", stderr="")
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="started\n", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor", lambda: "claude")
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -260,7 +262,7 @@ def test_cloud_chain_three_sprint_smoke_dispatches_trusted_container_command(
     assert "/workspace/cloud-chain-smoke-4bb0e3d6/app" in commands[0]
     assert "command -v" in commands[1]
     assert "git -C /workspace/cloud-chain-smoke-4bb0e3d6/app rev-parse --abbrev-ref HEAD" in commands[2]
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/cloud-chain-smoke-4bb0e3d6/app/chain.yaml" in commands[4]
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start --spec /workspace/cloud-chain-smoke-4bb0e3d6/app/chain.yaml" in commands[4]
 
 
 def test_cloud_chain_prints_launch_provenance_after_success(
@@ -309,8 +311,8 @@ def test_cloud_chain_prints_launch_provenance_after_success(
                 stderr="",
             )
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: cloud_spec)
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: cloud_spec)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -379,8 +381,8 @@ def test_cloud_chain_injects_repo_branch_into_uploaded_spec_without_mutating_loc
                 return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="main\nabc123\n", stderr="")
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="started\n", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: cloud_spec)
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: cloud_spec)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -434,8 +436,8 @@ def test_cloud_chain_preserves_explicit_base_branch_in_uploaded_spec(
                 return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="main\nabc123\n", stderr="")
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="started\n", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: cloud_spec)
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: cloud_spec)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -481,8 +483,10 @@ def test_cloud_chain_idea_dir_resolves_repo_relative_paths_without_duplicate_tai
                 return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="main\nabc123\n", stderr="")
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="started\n", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor", lambda: "claude")
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -507,8 +511,8 @@ def test_cloud_chain_missing_local_idea_reports_hint(
     cloud_yaml_path = tmp_path / "cloud.yaml"
     cloud_yaml_path.write_text("provider: railway\n", encoding="utf-8")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: object())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: object())
 
     args = parser.parse_args(["cloud", "chain", str(spec_path), "--cloud-yaml", str(cloud_yaml_path)])
     assert run_cloud_cli(tmp_path, args) == 1
@@ -546,8 +550,10 @@ def test_cloud_chain_missing_repo_relative_idea_reports_tried_paths_before_remot
             commands.append(command)
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor", lambda: "claude")
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -595,8 +601,8 @@ def test_cloud_chain_preflight_blocks_missing_configured_secret_before_remote_ca
             commands.append(command)
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: cloud_spec)
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: cloud_spec)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -652,8 +658,10 @@ def test_cloud_chain_preflight_blocks_missing_remote_commands_before_tmux(
                 )
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles._resolve_default_vendor", lambda: "claude")
+    monkeypatch.setattr("arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor", lambda: "claude")
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -711,8 +719,8 @@ def test_cloud_chain_preflight_blocks_missing_codex_commands_before_tmux(
                 return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="codex tmux\n", stderr="")
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -960,8 +968,8 @@ def test_cloud_bootstrap_omits_name_when_plan_name_is_unset(
             commands.append(command)
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="bootstrapped\n", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(["cloud", "bootstrap", str(idea_file), "--cloud-yaml", str(cloud_yaml_path)])
     assert run_cloud_cli(tmp_path, args) == 0
@@ -969,7 +977,7 @@ def test_cloud_bootstrap_omits_name_when_plan_name_is_unset(
     assert uploads == [(idea_file, "/workspace/app/idea.txt")]
     assert commands == [
         _ensure_repo_command(_cloud_spec("railway")),
-        "cd /workspace/app && megaplan init --project-dir /workspace/app --idea-file /workspace/app/idea.txt --auto-start --robustness standard"
+        "cd /workspace/app && arnold init --project-dir /workspace/app --idea-file /workspace/app/idea.txt --auto-start --robustness standard"
     ]
     assert "--name" not in commands[0]
 
@@ -999,8 +1007,8 @@ def test_cloud_bootstrap_includes_name_when_plan_name_is_set(
             commands.append(command)
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="bootstrapped\n", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(
         ["cloud", "bootstrap", str(idea_file), "--plan-name", "custom", "--cloud-yaml", str(cloud_yaml_path)]
@@ -1009,7 +1017,7 @@ def test_cloud_bootstrap_includes_name_when_plan_name_is_set(
 
     assert commands == [
         _ensure_repo_command(_cloud_spec("railway")),
-        "cd /workspace/app && megaplan init --project-dir /workspace/app --idea-file /workspace/app/idea.txt --auto-start --robustness standard --name custom"
+        "cd /workspace/app && arnold init --project-dir /workspace/app --idea-file /workspace/app/idea.txt --auto-start --robustness standard --name custom"
     ]
 
 
@@ -1054,7 +1062,7 @@ def test_cloud_bootstrap_repo_overrides_are_in_memory_only(
         seen_specs.append(spec)
         return StubProvider()
 
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", provider_factory)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", provider_factory)
 
     args = parser.parse_args(
         [
@@ -1079,7 +1087,7 @@ def test_cloud_bootstrap_repo_overrides_are_in_memory_only(
     assert uploads == [(idea_file, "/workspace/megaplan/idea.txt")]
     assert commands == [
         _ensure_repo_command(seen_specs[0]),
-        "cd /workspace/megaplan && megaplan init --project-dir /workspace/megaplan --idea-file /workspace/megaplan/idea.txt --auto-start --robustness standard"
+        "cd /workspace/megaplan && arnold init --project-dir /workspace/megaplan --idea-file /workspace/megaplan/idea.txt --auto-start --robustness standard"
     ]
     assert yaml.safe_load(cloud_yaml_path.read_text(encoding="utf-8")) == original_yaml
 
@@ -1117,8 +1125,8 @@ def test_cloud_bootstrap_fails_before_upload_when_ensure_repo_fails(
             commands.append(command)
             return subprocess.CompletedProcess(args=["ssh"], returncode=42, stdout="", stderr="clone failed\n")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(["cloud", "bootstrap", str(idea_file), "--cloud-yaml", str(cloud_yaml_path)])
     assert run_cloud_cli(tmp_path, args) == 1
@@ -1133,26 +1141,27 @@ def test_cloud_bootstrap_fails_before_upload_when_ensure_repo_fails(
 def test_mp_chain_wrapper_matches_canonical_command(tmp_path: Path) -> None:
     """The wrapper's effective command matches _chain_start_command() output.
 
-    We replace ``megaplan`` with a stub that records its arguments and env,
-    then verify that the wrapper produces the same command as the canonical
-    ``_chain_start_command()`` helper for both normal and --one modes.
+    We replace ``python`` with a stub that records its arguments and env,
+    then verify that the wrapper produces the same direct module command as
+    the canonical ``_chain_start_command()`` helper for both normal and
+    --one modes.
     """
     wrapper_path = (
-        Path(__file__).parent.parent / "megaplan" / "cloud" / "wrappers" / "mp-chain"
+        Path(__file__).parent.parent / "arnold" / "pipelines" / "megaplan" / "cloud" / "wrappers" / "mp-chain"
     )
     spec_path = "/workspace/app/chain.yaml"
 
-    # Stub megaplan: records its arguments + env var to a known file.
+    # Stub python: records its arguments + env var to a known file.
     stub_output_file = tmp_path / "stub-output.txt"
-    megaplan_stub = tmp_path / "megaplan"
-    megaplan_stub.write_text(
+    python_stub = tmp_path / "python"
+    python_stub.write_text(
         "#!/bin/bash\n"
         f'echo "ARGS=$*" >> {shlex.quote(str(stub_output_file))}'
         "\n"
         f'echo "MEGAPLAN_TRUSTED_CONTAINER=${{MEGAPLAN_TRUSTED_CONTAINER:-unset}}" >> {shlex.quote(str(stub_output_file))}'
         "\n"
     )
-    megaplan_stub.chmod(0o755)
+    python_stub.chmod(0o755)
 
     # Include standard bin directories so bash builtins and env are available.
     env = {
@@ -1181,8 +1190,8 @@ def test_mp_chain_wrapper_matches_canonical_command(tmp_path: Path) -> None:
     env_line = stub_lines[1]   # MEGAPLAN_TRUSTED_CONTAINER=1
 
     assert "MEGAPLAN_TRUSTED_CONTAINER=1" in env_line
-    # The wrapper must emit the same megaplan arguments as the canonical helper.
-    expected_args = "chain start --spec " + spec_path
+    # The wrapper must emit the same direct module arguments as the canonical helper.
+    expected_args = "-m arnold.pipelines.megaplan chain start --spec " + spec_path
     assert expected_args in args_line, (
         f"expected args {expected_args!r} in {args_line!r}"
     )
@@ -1210,7 +1219,7 @@ def test_mp_chain_wrapper_matches_canonical_command(tmp_path: Path) -> None:
     args_line_one = stub_lines_one[0]
 
     assert "MEGAPLAN_TRUSTED_CONTAINER=1" in stub_lines_one[1]
-    expected_args_one = "chain start --spec " + spec_path + " --one"
+    expected_args_one = "-m arnold.pipelines.megaplan chain start --spec " + spec_path + " --one"
     assert expected_args_one in args_line_one, (
         f"expected args {expected_args_one!r} in {args_line_one!r}"
     )
@@ -1225,7 +1234,7 @@ def test_tmux_chain_restart_refreshes_megaplan_before_one_shot_start() -> None:
 
     assert "/usr/local/bin/mp-refresh-megaplan" not in command
     assert "source clone missing at $SRC; skipping editable install" in command
-    assert "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/chain.yaml --one" in command
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start --spec /workspace/app/chain.yaml --one" in command
     assert ">> .megaplan/cloud-chain.log 2>&1" in command
     assert "refusing restart" in command
 

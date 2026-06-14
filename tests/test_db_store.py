@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from megaplan.store import ChecklistItemInput
+from arnold.pipelines.megaplan.store import ChecklistItemInput
 from tests.contract._store_contract import run_dbstore_preflight_contract, run_store_contract
 
 
@@ -20,10 +20,10 @@ def test_db_store_preflight_contract() -> None:
 
 
 def test_db_store_module_layout_guard() -> None:
-    """DBStore must remain defined in megaplan.store.db after decomposition."""
-    from megaplan.store import DBStore
+    """DBStore must remain defined in its relocated db module."""
+    from arnold.pipelines.megaplan.store import DBStore
 
-    assert DBStore.__module__ == "megaplan.store.db", (
+    assert DBStore.__module__ == "arnold.pipelines.megaplan.store.db", (
         f"DBStore.__module__ is {DBStore.__module__!r}; "
         "mixin assembly may have changed the module"
     )
@@ -34,7 +34,7 @@ def test_db_store_non_protocol_methods_preserve_source_inspection() -> None:
     still be inspectable via inspect.getsource(DBStore.method)."""
     import inspect
 
-    from megaplan.store import DBStore
+    from arnold.pipelines.megaplan.store import DBStore
 
     # copy_plan_artifacts_idempotent and copy_rows_idempotent are DB-only
     # non-protocol methods listed in SD3 that may move to _db/ slices.
@@ -48,7 +48,7 @@ def test_db_store_non_protocol_methods_preserve_source_inspection() -> None:
 
 
 def test_db_idempotency_key_required_before_connection() -> None:
-    from megaplan.store import DBStore
+    from arnold.pipelines.megaplan.store import DBStore
 
     store = DBStore(actor_id="actor-without-dsn")
 
@@ -57,7 +57,7 @@ def test_db_idempotency_key_required_before_connection() -> None:
 
 
 def test_db_expected_revision_updates_still_require_idempotency_key() -> None:
-    from megaplan.store import DBStore
+    from arnold.pipelines.megaplan.store import DBStore
 
     store = DBStore(actor_id="actor-without-dsn")
 
@@ -66,7 +66,7 @@ def test_db_expected_revision_updates_still_require_idempotency_key() -> None:
 
 
 def test_db_bootstrap_actor_contract_rejects_missing_key_and_reserved_ids() -> None:
-    from megaplan.store import DBStore, deterministic_idempotency_key
+    from arnold.pipelines.megaplan.store import DBStore, deterministic_idempotency_key
 
     bootstrap = DBStore(actor_id=None)
     with pytest.raises(ValueError, match="idempotency_key is required for DBStore.create_automation_actor"):
@@ -89,7 +89,7 @@ def test_db_bootstrap_actor_contract_rejects_missing_key_and_reserved_ids() -> N
 
 
 def test_db_idempotency_private_sets_include_sprint3_migration_mutators() -> None:
-    import megaplan.store.db as db_module
+    import arnold.pipelines.megaplan.store.db as db_module
 
     required = {
         "create_migration_run",
@@ -102,7 +102,7 @@ def test_db_idempotency_private_sets_include_sprint3_migration_mutators() -> Non
 
 
 def test_db_sprint5_schema_plumbing_constants_are_registered() -> None:
-    import megaplan.store.db as db_module
+    import arnold.pipelines.megaplan.store.db as db_module
 
     assert {"revert", "attach_image"}.issubset(db_module._IDEMPOTENT_MUTATORS)
     assert {
@@ -124,7 +124,7 @@ def test_db_sprint5_schema_plumbing_constants_are_registered() -> None:
 
 
 def test_db_resident_store_methods_use_idempotency_and_skip_locked_claims() -> None:
-    from megaplan.store import DBStore
+    from arnold.pipelines.megaplan.store import DBStore
 
     source_create_message = inspect.getsource(DBStore.create_message)
     source_claim_jobs = inspect.getsource(DBStore.claim_due_scheduled_jobs)
@@ -143,7 +143,7 @@ def test_db_resident_store_methods_use_idempotency_and_skip_locked_claims() -> N
 
 
 def test_db_resident_schema_plumbing_constants_are_registered() -> None:
-    import megaplan.store.db as db_module
+    import arnold.pipelines.megaplan.store.db as db_module
 
     assert {
         "upsert_resident_conversation",
@@ -237,7 +237,7 @@ def test_resident_supabase_migration_declares_runtime_tables_and_indexes() -> No
 
 
 def test_db_plan_columns_include_resume_cursor() -> None:
-    import megaplan.store.db as db_module
+    import arnold.pipelines.megaplan.store.db as db_module
 
     assert "resume_cursor" in db_module._PLAN_COLUMNS
     assert "resume_cursor" in db_module._PLAN_JSONB
@@ -345,7 +345,7 @@ def test_db_store_plan_lifecycle_fields_round_trip(db_store_factory) -> None:
 def test_db_copy_helpers_keep_plan_artifacts_off_generic_path() -> None:
     import inspect
 
-    from megaplan.store import DBStore
+    from arnold.pipelines.megaplan.store import DBStore
 
     store = DBStore(actor_id="actor-without-dsn")
     with pytest.raises(ValueError, match="copy_plan_artifacts_idempotent"):
@@ -357,9 +357,9 @@ def test_db_copy_helpers_keep_plan_artifacts_off_generic_path() -> None:
 
 
 def test_db_plan_artifact_binary_helpers_preserve_bytes_and_legacy_text() -> None:
-    from megaplan.store import DBStore
-    from megaplan.store.base import ArtifactRef
-    from megaplan.store.multi import MultiStore
+    from arnold.pipelines.megaplan.store import DBStore
+    from arnold.pipelines.megaplan.store.base import ArtifactRef
+    from arnold.pipelines.megaplan.store.multi import MultiStore
 
     binary = b"\x00\xffbinary\x80\n"
     text = "{\"ok\": true}\n"
@@ -391,8 +391,8 @@ def test_db_plan_artifact_binary_helpers_preserve_bytes_and_legacy_text() -> Non
 
 
 def test_db_plan_artifact_paths_are_sorted_relative_and_path_safe() -> None:
-    from megaplan.store import DBStore
-    from megaplan.store.base import validate_plan_artifact_name
+    from arnold.pipelines.megaplan.store import DBStore
+    from arnold.pipelines.megaplan.store.base import validate_plan_artifact_name
 
     store = DBStore(actor_id="actor-without-dsn")
     for unsafe in ["/absolute.bin", "../escape.bin", "nested/../escape.bin", "nested//state.bin", "nested\\state.bin", ""]:
@@ -431,7 +431,7 @@ def test_sprint7_supabase_migration_declares_plan_artifact_binary_column() -> No
 
 
 def test_db_write_without_actor_raises() -> None:
-    from megaplan.store import DBStore, deterministic_idempotency_key
+    from arnold.pipelines.megaplan.store import DBStore, deterministic_idempotency_key
 
     store = DBStore.__new__(DBStore)
     store._actor_id = None
@@ -443,7 +443,7 @@ def test_db_write_without_actor_raises() -> None:
 
 
 def test_db_write_with_unregistered_actor_raises(db_store_factory) -> None:
-    from megaplan.store import DBStore, deterministic_idempotency_key
+    from arnold.pipelines.megaplan.store import DBStore, deterministic_idempotency_key
 
     dsn = os.environ["SUPABASE_DB_URL"]
     store = DBStore(actor_id="nonexistent-actor-xyz-" + uuid.uuid4().hex, dsn=dsn)
@@ -460,7 +460,7 @@ def test_db_write_with_unregistered_actor_raises(db_store_factory) -> None:
 
 
 def test_from_arnold_epic_produces_no_db_writes(db_store_factory) -> None:
-    from megaplan.store import DBStore, deterministic_idempotency_key
+    from arnold.pipelines.megaplan.store import DBStore, deterministic_idempotency_key
 
     dsn = os.environ["SUPABASE_DB_URL"]
     actor_id = f"no-write-actor-{uuid.uuid4().hex[:12]}"

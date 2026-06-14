@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from megaplan.observability.doctor import (
+from arnold.pipelines.megaplan.observability.doctor import (
     _check_rubric_drift,
     _check_editable_install,
     _check_skill_sync,
@@ -288,11 +288,11 @@ class TestRubricDrift:
     def test_no_drift(self, monkeypatch):
         """Rubric profiles all available in binary — no drift."""
         monkeypatch.setattr(
-            "megaplan.observability.doctor._parse_decision_skill_profiles",
+            "arnold.pipelines.megaplan.observability.doctor._parse_decision_skill_profiles",
             lambda: ["solo", "directed", "partnered"],
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._get_profiles_list",
+            "arnold.pipelines.megaplan.observability.doctor._get_profiles_list",
             lambda: ["solo", "directed", "partnered", "premium", "apex"],
         )
         results = _check_rubric_drift()
@@ -303,11 +303,11 @@ class TestRubricDrift:
     def test_missing_profile_warn(self, monkeypatch):
         """A profile referenced in the skill doc is missing from binary → WARN."""
         monkeypatch.setattr(
-            "megaplan.observability.doctor._parse_decision_skill_profiles",
+            "arnold.pipelines.megaplan.observability.doctor._parse_decision_skill_profiles",
             lambda: ["basic", "thoughtful"],  # not in the real profiles
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._get_profiles_list",
+            "arnold.pipelines.megaplan.observability.doctor._get_profiles_list",
             lambda: ["solo", "directed", "partnered", "premium", "apex"],
         )
         results = _check_rubric_drift()
@@ -321,7 +321,7 @@ class TestRubricDrift:
 class TestEditableInstall:
     def test_no_editable_install(self, monkeypatch):
         monkeypatch.setattr(
-            "megaplan.observability.doctor._is_editable_install",
+            "arnold.pipelines.megaplan.observability.doctor._is_editable_install",
             lambda: False,
         )
         sev, label, msg = _check_editable_install()
@@ -330,7 +330,7 @@ class TestEditableInstall:
     def test_editable_install_dirty(self, monkeypatch, tmp_path):
         """Editable install + dirty tree → WARN."""
         monkeypatch.setattr(
-            "megaplan.observability.doctor._is_editable_install",
+            "arnold.pipelines.megaplan.observability.doctor._is_editable_install",
             lambda: True,
         )
 
@@ -345,11 +345,11 @@ class TestEditableInstall:
 
         # Mock git dirty
         monkeypatch.setattr(
-            "megaplan.observability.doctor._git_dirty",
+            "arnold.pipelines.megaplan.observability.doctor._git_dirty",
             lambda path: True,
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._git_branch",
+            "arnold.pipelines.megaplan.observability.doctor._git_branch",
             lambda path: "feature/test",
         )
 
@@ -387,23 +387,23 @@ class TestDoctorExitCodes:
     def test_doctor_repo_all_ok(self, tmp_path, monkeypatch):
         """All repo checks pass → exit code 0."""
         monkeypatch.setattr(
-            "megaplan.observability.doctor._parse_decision_skill_profiles",
+            "arnold.pipelines.megaplan.observability.doctor._parse_decision_skill_profiles",
             lambda: ["solo"],
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._get_profiles_list",
+            "arnold.pipelines.megaplan.observability.doctor._get_profiles_list",
             lambda: ["solo", "directed", "partnered", "premium", "apex"],
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._is_editable_install",
+            "arnold.pipelines.megaplan.observability.doctor._is_editable_install",
             lambda: False,
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._find_megaplan_checkouts",
+            "arnold.pipelines.megaplan.observability.doctor._find_megaplan_checkouts",
             lambda: [tmp_path],
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._check_skill_sync",
+            "arnold.pipelines.megaplan.observability.doctor._check_skill_sync",
             lambda: [],
         )
         exit_code = _doctor_repo(tmp_path)
@@ -412,7 +412,7 @@ class TestDoctorExitCodes:
     def test_doctor_repo_with_warn_still_ok_exit(self, tmp_path, monkeypatch):
         """WARN-level issues still exit 0."""
         monkeypatch.setattr(
-            "megaplan.observability.doctor._check_rubric_drift",
+            "arnold.pipelines.megaplan.observability.doctor._check_rubric_drift",
             lambda: [
                 _check_status(
                     "Test", False, severity="WARN", remediation="Test remediation."
@@ -420,15 +420,15 @@ class TestDoctorExitCodes:
             ],
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._check_editable_install",
+            "arnold.pipelines.megaplan.observability.doctor._check_editable_install",
             lambda: _check_status("Editable", True, severity="OK"),
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._check_multiple_checkouts",
+            "arnold.pipelines.megaplan.observability.doctor._check_multiple_checkouts",
             lambda: _check_status("Checkouts", True, severity="OK"),
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._check_skill_sync",
+            "arnold.pipelines.megaplan.observability.doctor._check_skill_sync",
             lambda: [],
         )
         exit_code = _doctor_repo(tmp_path)
@@ -437,7 +437,7 @@ class TestDoctorExitCodes:
     def test_doctor_repo_with_error_exits_1(self, tmp_path, monkeypatch):
         """ERROR-level issue → exit code 1."""
         monkeypatch.setattr(
-            "megaplan.observability.doctor._check_rubric_drift",
+            "arnold.pipelines.megaplan.observability.doctor._check_rubric_drift",
             lambda: [
                 _check_status(
                     "Test", False, severity="ERROR", remediation="Critical."
@@ -445,15 +445,15 @@ class TestDoctorExitCodes:
             ],
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._check_editable_install",
+            "arnold.pipelines.megaplan.observability.doctor._check_editable_install",
             lambda: _check_status("Editable", True, severity="OK"),
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._check_multiple_checkouts",
+            "arnold.pipelines.megaplan.observability.doctor._check_multiple_checkouts",
             lambda: _check_status("Checkouts", True, severity="OK"),
         )
         monkeypatch.setattr(
-            "megaplan.observability.doctor._check_skill_sync",
+            "arnold.pipelines.megaplan.observability.doctor._check_skill_sync",
             lambda: [],
         )
         exit_code = _doctor_repo(tmp_path)

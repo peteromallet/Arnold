@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "pipelines": [
+    {
+      "name": "evidence_pack_verifier",
+      "stable_id": "evidence_pack.verifier",
+      "typed_contract_capable": true,
+      "previous_stable_ids": [],
+      "seam_ids": []
+    }
+  ]
+}

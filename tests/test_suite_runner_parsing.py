@@ -17,7 +17,7 @@ from unittest import mock
 
 import pytest
 
-from megaplan.orchestration.suite_runner import (
+from arnold.pipelines.megaplan.orchestration.suite_runner import (
     SuiteRunResult,
     _compute_code_hash,
     _parse_pytest_output,
@@ -67,13 +67,13 @@ class TestExitCodeMapping:
         fake_proc.wait.return_value = exit_code
 
         monkeypatch.setattr(
-            "megaplan.orchestration.suite_runner.spawn",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.spawn",
             lambda *a, **kw: fake_proc,
         )
         # The collect-only fallback would fail in an empty tmp dir, so
         # provide stub IDs to prevent it from overriding the status.
         monkeypatch.setattr(
-            "megaplan.orchestration.suite_runner._run_collect_only",
+            "arnold.pipelines.megaplan.orchestration.suite_runner._run_collect_only",
             lambda *a, **kw: ["tests/stub.py::test_stub"],
         )
 
@@ -221,7 +221,7 @@ class TestCollectionsParseOkFalse:
         fake_proc.wait.return_value = 0
 
         monkeypatch.setattr(
-            "megaplan.orchestration.suite_runner.spawn",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.spawn",
             lambda *a, **kw: fake_proc,
         )
 
@@ -231,7 +231,7 @@ class TestCollectionsParseOkFalse:
             "tests/test_a.py::test_two",
         ]
         monkeypatch.setattr(
-            "megaplan.orchestration.suite_runner._run_collect_only",
+            "arnold.pipelines.megaplan.orchestration.suite_runner._run_collect_only",
             lambda *a, **kw: collected,
         )
 
@@ -262,12 +262,12 @@ class TestCollectionsParseOkFalse:
         fake_proc.wait.return_value = 0
 
         monkeypatch.setattr(
-            "megaplan.orchestration.suite_runner.spawn",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.spawn",
             lambda *a, **kw: fake_proc,
         )
         # Fallback returns empty
         monkeypatch.setattr(
-            "megaplan.orchestration.suite_runner._run_collect_only",
+            "arnold.pipelines.megaplan.orchestration.suite_runner._run_collect_only",
             lambda *a, **kw: [],
         )
 
@@ -298,7 +298,7 @@ class TestCollectionsParseOkFalse:
         fake_proc.wait.return_value = 5  # pytest exit code 5 = no tests
 
         monkeypatch.setattr(
-            "megaplan.orchestration.suite_runner.spawn",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.spawn",
             lambda *a, **kw: fake_proc,
         )
 
@@ -539,7 +539,7 @@ class TestExitCode2RunnerError:
         fake_proc.wait.return_value = 2  # pytest internal error
 
         monkeypatch.setattr(
-            "megaplan.orchestration.suite_runner.spawn",
+            "arnold.pipelines.megaplan.orchestration.suite_runner.spawn",
             lambda *a, **kw: fake_proc,
         )
 

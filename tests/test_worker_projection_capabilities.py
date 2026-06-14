@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from megaplan.workers._projection_caps import (
+from arnold.pipelines.megaplan.workers._projection_caps import (
     codex_projection_capabilities,
     hermes_projection_capabilities,
     shannon_projection_capabilities,

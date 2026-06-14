@@ -9,7 +9,7 @@ victim chain's live Claude pane died with it ("tmux capture-pane ... failed:
 no server running"), and the worker hung holding the plan lock with no result.
 
 Fix: each session runs on its own ``tmux -L mp-<session>`` server, and the
-Python-side reap/exists/pane_pids/capture helpers target that SAME socket. These
+Python-side reap/exists/pane_pids helpers target that SAME socket. These
 tests assert the ``-L <socket>`` selector is present on every tmux argv and that
 the socket derivation matches the vendored launcher's ``megaplanTmuxSocket``.
 """
@@ -19,8 +19,7 @@ import subprocess
 
 import pytest
 
-from megaplan.runtime.process import TmuxSession, pane_pids, tmux_socket_for
-from megaplan.workers.shannon import _tmux_capture_pane
+from arnold.pipelines.megaplan.runtime.process import TmuxSession, pane_pids, tmux_socket_for
 
 
 def _capture_args(monkeypatch) -> list[list[str]]:
@@ -52,14 +51,15 @@ def test_teardown_and_exists_pin_private_socket(monkeypatch):
     sess = TmuxSession("6745e6b5a884")
     sess.teardown()
     sess.exists()
-    assert len(calls) == 2
+    assert len(calls) == 3
     for argv in calls:
         assert argv[0] == "tmux"
         assert argv[1] == "-L"
         assert argv[2] == "mp-6745e6b5a884"
     # subcommands are preserved after the socket selector
     assert calls[0][3:6] == ["kill-session", "-t", "6745e6b5a884"]
-    assert calls[1][3:6] == ["has-session", "-t", "6745e6b5a884"]
+    assert calls[1][3:4] == ["kill-server"]
+    assert calls[2][3:6] == ["has-session", "-t", "6745e6b5a884"]
 
 
 def test_pane_pids_pins_private_socket(monkeypatch):
@@ -69,17 +69,10 @@ def test_pane_pids_pins_private_socket(monkeypatch):
     assert "list-panes" in calls[0]
 
 
-def test_capture_pane_pins_private_socket(monkeypatch):
-    calls = _capture_args(monkeypatch)
-    _tmux_capture_pane("cafef00d1234")
-    assert calls[0][:3] == ["tmux", "-L", "mp-cafef00d1234"]
-    assert "capture-pane" in calls[0]
-
-
 def test_distinct_sessions_never_share_a_socket(monkeypatch):
     calls = _capture_args(monkeypatch)
     TmuxSession("AAAA").teardown()
     TmuxSession("BBBB").teardown()
     assert calls[0][2] == "mp-AAAA"
-    assert calls[1][2] == "mp-BBBB"
-    assert calls[0][2] != calls[1][2]
+    assert calls[2][2] == "mp-BBBB"
+    assert calls[0][2] != calls[2][2]

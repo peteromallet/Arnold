@@ -1,0 +1,30 @@
+{
+  "events": [
+    {
+      "iteration": 1,
+      "msg": "iter 1 state=done next=None valid_next=[]",
+      "next_step": null,
+      "state": "done",
+      "valid_next": []
+    },
+    {
+      "msg": "terminal state reached: done"
+    },
+    {
+      "msg": "completion verdict (shadow): accepted subject=plan:done-terminal failures=[none]"
+    }
+  ],
+  "exit_code": 0,
+  "outcome": {
+    "blocking_reasons": [],
+    "context_retries_used": 0,
+    "current_state": null,
+    "external_retries_used": 0,
+    "final_state": "done",
+    "iterations": 1,
+    "max_blocked_retries_used": 0,
+    "reason": "plan entered terminal state 'done'",
+    "resume_cursor": null,
+    "status": "done"
+  }
+}

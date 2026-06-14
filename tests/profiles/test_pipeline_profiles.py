@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.profiles import (
+from arnold.pipelines.megaplan.profiles import (
     SYSTEM_DEFAULT_PROFILE,
     _flatten_profile_keys,
     _load_pipeline_local_profiles,
@@ -13,7 +13,7 @@ from megaplan.profiles import (
     load_profiles,
     resolve_pipeline_profile,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 # ── Pipeline-local profile loading ────────────────────────────────────
@@ -40,7 +40,7 @@ class TestPipelineLocalProfiles:
         # All slots should be valid agent specs
         for slot, spec in std.items():
             # Should not raise
-            from megaplan.types import parse_agent_spec
+            from arnold.pipelines.megaplan.types import parse_agent_spec
             agent, model = parse_agent_spec(spec)
             assert agent in ("claude", "codex", "hermes", "shannon")
 
@@ -114,10 +114,10 @@ class TestSystemProfileDefaults:
         )
         assert isinstance(profile, dict)
         # Resolved profile must be the SYSTEM_DEFAULT_PROFILE ("partnered").
-        # partnered uses claude:low for author phases and DeepSeek for
-        # mechanical/critique phases.
-        assert profile.get("plan") == "claude:low", (
-            f"expected partnered plan=claude:low, got {profile.get('plan')!r}"
+        # partnered uses symbolic premium specs for author phases and DeepSeek
+        # for mechanical/critique phases.
+        assert profile.get("plan") == "premium:low", (
+            f"expected partnered plan=premium:low, got {profile.get('plan')!r}"
         )
         assert "deepseek" in profile.get("critique", "").lower(), (
             f"expected partnered critique=DeepSeek, got {profile.get('critique')!r}"

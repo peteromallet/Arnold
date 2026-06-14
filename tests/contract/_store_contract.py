@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from typing import Callable
 
-from megaplan.store import (
+from arnold.pipelines.megaplan.store import (
     ArnoldStoreAdapter,
     ChecklistItemInput,
     ControlMessageInput,
@@ -16,7 +16,7 @@ from megaplan.store import (
     StoreError,
     deterministic_idempotency_key,
 )
-from megaplan.tickets.identity import repo_codebase_identity
+from arnold.pipelines.megaplan.tickets.identity import repo_codebase_identity
 
 
 def _store_protocol_method_names() -> list[str]:
@@ -38,9 +38,9 @@ def _assert_store_protocol_parity(store: Store) -> None:
     )
     # Module-layout guard: mixin assembly must not change __module__.
     _EXPECTED_MODULE: dict[type, str] = {
-        FileStore: "megaplan.store.file",
-        DBStore: "megaplan.store.db",
-        MultiStore: "megaplan.store.multi",
+        FileStore: "arnold.pipelines.megaplan.store.file",
+        DBStore: "arnold.pipelines.megaplan.store.db",
+        MultiStore: "arnold.pipelines.megaplan.store.multi",
     }
     expected = _EXPECTED_MODULE.get(type(store))
     if expected is not None:

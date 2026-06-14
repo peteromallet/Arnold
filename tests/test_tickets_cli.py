@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.tickets.files import read_ticket_file, slugify, ticket_file_path
-from megaplan.workers import _codex_child_env, _external_worker_env
+from arnold.pipelines.megaplan.tickets.files import read_ticket_file, slugify, ticket_file_path
+from arnold.pipelines.megaplan.workers import _codex_child_env, _external_worker_env
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ def _run_megaplan(argv: list[str], *, cwd: Path, env: dict[str, str] | None = No
     # Ensure local-only by unsetting MEGAPLAN_BACKEND
     merged_env.pop("MEGAPLAN_BACKEND", None)
     return subprocess.run(
-        [sys.executable, "-m", "megaplan", *argv],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", *argv],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -250,7 +250,7 @@ class TestCLIHappyPaths:
         _init_git_repo(tmp_path)
 
         proc = subprocess.run(
-            [sys.executable, "-m", "megaplan", "ticket", "new", "Stdin ticket", "-"],
+            [sys.executable, "-m", "arnold.pipelines.megaplan", "ticket", "new", "Stdin ticket", "-"],
             cwd=tmp_path,
             input="Body from stdin\n",
             capture_output=True,
@@ -297,7 +297,7 @@ class TestCLIHappyPaths:
 
         # Verify the target repo's identity is resolvable (codebase_id is cloud-only,
         # but the file landing under target_repo proves correct resolution)
-        from megaplan.tickets.identity import repo_root_sha
+        from arnold.pipelines.megaplan.tickets.identity import repo_root_sha
 
         target_sha = repo_root_sha(cwd=target_repo)
         assert len(target_sha) == 40  # valid git SHA
@@ -361,7 +361,7 @@ class TestAgentEnv:
         monkeypatch.setenv("MEGAPLAN_TURN_ID", "plan_worker_p1")
         monkeypatch.delenv("MEGAPLAN_BACKEND", raising=False)
 
-        from megaplan.tickets import new
+        from arnold.pipelines.megaplan.tickets import new
 
         ticket_id = new("Agent-filed ticket", body="Found a bug", cwd=tmp_path)
         slug = slugify("Agent-filed ticket")
@@ -378,7 +378,7 @@ class TestAgentEnv:
         _init_git_repo(tmp_path)
 
         proc = subprocess.run(
-            [sys.executable, "-m", "megaplan", "ticket", "new", "Agent CLI ticket", "-b", "cli body"],
+            [sys.executable, "-m", "arnold.pipelines.megaplan", "ticket", "new", "Agent CLI ticket", "-b", "cli body"],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -409,7 +409,7 @@ class TestTicketSubparserRegistration:
 
     def test_ticket_subparser_has_all_verbs(self) -> None:
         import argparse
-        from megaplan.cli import build_parser
+        from arnold.pipelines.megaplan.cli import build_parser
 
         parser = build_parser()
         ticket_parser = None

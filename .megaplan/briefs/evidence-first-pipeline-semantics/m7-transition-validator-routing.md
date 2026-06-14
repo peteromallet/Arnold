@@ -32,6 +32,7 @@ IN:
 - Reject frozen routing maps such as stale `tier_models` on resume unless an explicit decision records why they were honored.
 - Add concurrency and TOCTOU controls: lease/lock, compare-and-swap on checked inputs, and stale-decision rejection.
 - Emit canonical denial detail, e.g. `transition_denial.json` or equivalent event.
+- Verify the GitHub-merge transition (ticket `01KTA79BGM`): the merge/integration step is an authority-increasing transition, so after a merge the `TransitionWriter` must VERIFY the merged commit actually contains the branch tip (e.g. `gh pr view --json mergeCommit` + a `git merge-base` check) and surface a LOUD mismatch — never silently accept it. This is m7's stale-decision rejection / compare-and-swap on the merge SHA applied to the GitHub-merge route, closing the "merged-older-head" race that merged a PR at an OLDER head and orphaned a just-pushed fix.
 
 OUT:
 
@@ -49,6 +50,7 @@ OUT:
 - Incompetent or tool-limited worker fallback cannot silently produce complete objective evidence.
 - Routing/capability config is recomputed from pinned inputs; frozen `tier_models` must not survive resume as authority.
 - Transition and routing decisions are valid only for the checked inputs they record.
+- The GitHub merge is a verified transition: after a merge the `TransitionWriter` confirms the merged commit contains the branch tip (via `mergeCommit` + `git merge-base`) and a mismatch is surfaced loudly, never silently accepted — compare-and-swap on the merge SHA (ticket `01KTA79BGM`).
 
 ## Open Questions
 
@@ -81,6 +83,7 @@ OUT:
 10. Stale-decision rejection is structured and visible.
 11. Transition denials are structured and visible.
 12. Tests cover chain committed work, carried dirty paths, overrides, recovery, reset/reconcile routing, config reroute, capability fallback, non-retryable denial, concurrent stale decision, and the frozen-`tier_models`-must-not-survive-resume regression.
+13. A merge whose result does not contain the branch tip is detected (via `mergeCommit` + `git merge-base`) and surfaced loudly, never silently accepted; regression reproduces the merged-older-head race (ticket `01KTA79BGM`).
 
 ## Touchpoints
 
@@ -95,6 +98,7 @@ OUT:
 - `megaplan/profiles`
 - worker routing/capability modules
 - state locks / lease helpers
+- `megaplan/chain/git_ops.py` (post-merge tip-containment verification on the GitHub-merge route) — ticket `01KTA79BGM`
 - transition, chain, cloud, override, config-reroute, concurrency, and worker tests
 
 ## Rubric

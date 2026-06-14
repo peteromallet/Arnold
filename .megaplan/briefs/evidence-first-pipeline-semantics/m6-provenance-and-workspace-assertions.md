@@ -38,6 +38,7 @@ IN:
   - done/advance
   - reset
 - Compare the checked SHA against the current target head before authority increases and surface stale-decision diagnostics.
+- Give the worker sweep an OWNERSHIP MANIFEST so it stops adopting ambient junk (ticket `01KTA78SC0`): the `git add -A` sweep must commit only files CREATED/MODIFIED DURING the phase. Track them via a snapshot diff (pre-phase vs post-phase), or at minimum respect `.gitignore` strictly, ALWAYS exclude `.megaplan/`, and diff against a PRE-PHASE untracked-file snapshot so pre-existing untracked files (scratch-test/ droppings, stray files, local `.megaplan/` state, a user's hand-edits) are never adopted. A post-sweep guard runs the target repo's own hygiene checks when present.
 
 OUT:
 
@@ -54,6 +55,7 @@ OUT:
 - Legacy artifacts remain readable as unknown/legacy.
 - Target workspace assertions run at authority transitions, not every phase boundary.
 - The checked SHA is the TOCTOU anchor for later transition decisions.
+- The worker sweep commits only phase-created/modified files against an ownership manifest (pre-phase untracked snapshot diff); `git add -A`'s "everything in the tree is mine" assertion is replaced. `.megaplan/` is always excluded and `.gitignore` is respected strictly (ticket `01KTA78SC0`).
 
 ## Open Questions
 
@@ -79,6 +81,7 @@ OUT:
 6. Target `HEAD`, dirty-set, and checked SHA are captured at execute-start, review-start, done/advance, and reset.
 7. A stale checked-SHA or unexpected dirty-set change at an authority transition produces structured diagnostics.
 8. Tests cover representative artifacts, stores, workspace assertions, stale checked-SHA, carried dirty paths, and legacy reads.
+9. A pre-existing untracked file in the target tree (scratch-test/ dropping, stray file, local `.megaplan/` state, a user's uncommitted edit) is NOT committed by the worker sweep; only phase-created/modified files land in the milestone branch (ticket `01KTA78SC0`).
 
 ## Touchpoints
 
@@ -91,6 +94,7 @@ OUT:
 - authority transition preflights
 - reset entrypoints
 - artifact/freshness/workspace assertion tests
+- worker sweep / `git add -A` ownership-manifest path and pre-phase untracked snapshot — ticket `01KTA78SC0`
 
 ## Rubric
 

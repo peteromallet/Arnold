@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from megaplan import auto
-from megaplan._core import active_plan_dirs, resolve_plan_dir
-from megaplan._core.io import canonical_megaplan_root, find_plan_dir, orphan_plans_root, repo_storage_id
+from arnold.pipelines.megaplan import auto 
+from arnold.pipelines.megaplan._core import active_plan_dirs, resolve_plan_dir
+from arnold.pipelines.megaplan._core.io import canonical_megaplan_root, find_plan_dir, orphan_plans_root, repo_storage_id
 
 
 def _write_state(plan_dir: Path, name: str) -> None:

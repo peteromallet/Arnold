@@ -9,14 +9,17 @@ from typing import Any
 
 import pytest
 
-from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
-from megaplan._core.hermes_fanout import GenericScatterResult
-from megaplan.audits.robustness import checks_for_robustness
-from megaplan.workers.hermes import parse_agent_output
-from megaplan.orchestration.parallel_critique import _run_check, run_parallel_critique
-from megaplan.prompts.critique import write_single_check_template
-from megaplan.types import AgentMode, CliError, PlanState
-from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
+from arnold.pipelines.megaplan._core import WorkerUnitResult, atomic_write_json, atomic_write_text, read_json
+from arnold.pipelines.megaplan._core.hermes_fanout import GenericScatterResult
+from arnold.pipelines.megaplan.audits.robustness import checks_for_robustness
+from arnold.pipelines.megaplan.model_seam import audit_step_payload
+from arnold.pipelines.megaplan.orchestration.parallel_critique import _run_check, run_parallel_critique
+from arnold.pipelines.megaplan.prompts.critique import write_single_check_template
+from arnold.pipelines.megaplan.schemas import SCHEMAS
+from arnold.pipelines.megaplan.types import AgentMode, CliError, PlanState
+from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
+from arnold.pipelines.megaplan.workers._impl import _normalize_step_payload_for_audit
+from arnold.pipelines.megaplan.workers.hermes import parse_agent_output
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -81,7 +84,7 @@ def _scaffold(tmp_path: Path, *, iteration: int = 1) -> tuple[Path, Path, PlanSt
 
 
 def _critique_schema() -> dict:
-    return read_json(schemas_root(REPO_ROOT) / STEP_SCHEMA_FILENAMES["critique"])
+    return SCHEMAS[STEP_SCHEMA_FILENAMES["critique"]]
 
 
 def _finding(detail: str, *, flagged: bool) -> dict[str, object]:
@@ -159,7 +162,7 @@ def test_run_parallel_critique_merges_in_original_order(monkeypatch: pytest.Monk
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -171,6 +174,58 @@ def test_run_parallel_critique_merges_in_original_order(monkeypatch: pytest.Monk
     assert result.payload["disputed_flag_ids"] == []
     # No session mutation
     assert result.session_id is None
+
+
+def test_run_parallel_critique_preserves_aggregate_rate_limits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    raw_checks = checks_for_robustness("standard")
+    enriched = _enrich_checks(raw_checks[:2])
+
+    def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
+        ordered_results: list[Any] = []
+        for index, unit in enumerate(kwargs["units"]):
+            payload = _raw_critique_payload(
+                _check_payload(enriched[index], f"Checked {enriched[index]['id']} with rate metadata.", flagged=False),
+                verified=[f"FLAG-{index}"],
+            )
+            ordered_results.append(
+                kwargs["parse_result"](
+                    index,
+                    WorkerUnitResult(
+                        payload=payload,
+                        raw_output="{}",
+                        duration_ms=1,
+                        cost_usd=0.1,
+                        rate_limit={"provider": f"check-{index}", "remaining": index},
+                    ),
+                    unit,
+                )
+            )
+        return GenericScatterResult(
+            ordered_results=ordered_results,
+            total_cost=0.2,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert result.rate_limit == {
+        "values": [
+            {"provider": "check-0", "remaining": 0},
+            {"provider": "check-1", "remaining": 1},
+        ]
+    }
 
 
 def test_run_parallel_critique_accepts_multi_check_payload_when_one_matches_unit(
@@ -201,7 +256,7 @@ def test_run_parallel_critique_accepts_multi_check_payload_when_one_matches_unit
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -242,7 +297,7 @@ def test_run_parallel_critique_disputed_flags_override_verified(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -293,7 +348,7 @@ def test_run_parallel_critique_retries_malformed_worker_shape(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -345,7 +400,7 @@ def test_run_parallel_critique_retry_budget_exhaustion_marks_check_unverifiable(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -424,7 +479,7 @@ def test_run_parallel_critique_contains_zero_and_multi_check_shapes(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -473,7 +528,7 @@ def test_run_parallel_critique_well_formed_output_does_not_retry(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -481,6 +536,104 @@ def test_run_parallel_critique_well_formed_output_does_not_retry(
 
     assert calls == 1
     assert [check["id"] for check in result.payload["checks"]] == [chk["id"] for chk in enriched]
+
+
+def test_run_parallel_critique_contains_unit_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A failed child process becomes one unverifiable check, not a failed phase."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    enriched = _enrich_checks(checks_for_robustness("standard")[:2])
+
+    def _fake_scatter(*, units: Any, on_unit_error: Any, **kwargs: Any) -> GenericScatterResult:
+        failed_payload, cost, prompt_tokens, completion_tokens, total_tokens = on_unit_error(
+            0,
+            RuntimeError("child crashed"),
+        )
+        good = next(chk for chk in enriched if chk["id"] == units[1].extra["check_id"])
+        return GenericScatterResult(
+            ordered_results=[
+                failed_payload,
+                _raw_critique_payload(_check_payload(good, "second check still completed", flagged=False)),
+            ],
+            total_cost=cost,
+            total_prompt_tokens=prompt_tokens,
+            total_completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    assert [check["id"] for check in result.payload["checks"]] == [chk["id"] for chk in enriched]
+    assert result.payload["checks"][0]["status"] == "unverifiable"
+    assert "child crashed" in result.payload["checks"][0]["findings"][0]["detail"]
+    assert result.payload["checks"][1]["findings"][0]["detail"] == "second check still completed"
+
+
+def test_run_parallel_critique_strips_extra_finding_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Model-shaped findings with stray keys are normalized before schema audit."""
+    plan_dir, _project_dir, state = _scaffold(tmp_path)
+    enriched = _enrich_checks(checks_for_robustness("standard")[:1])
+
+    def _fake_scatter(**kwargs: Any) -> GenericScatterResult:
+        check = _check_payload(enriched[0], "finding with model drift", flagged=False)
+        check["findings"][0]["status"] = "ok"
+        check["findings"][0]["severity"] = "low"
+        return GenericScatterResult(
+            ordered_results=[_raw_critique_payload(check)],
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
+        _fake_scatter,
+    )
+
+    result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(enriched))
+
+    finding = result.payload["checks"][0]["findings"][0]
+    assert finding == {"detail": "finding with model drift", "flagged": False}
+    audit_step_payload("critique", result.payload)
+
+
+def test_worker_critique_audit_normalizer_strips_extra_finding_keys() -> None:
+    payload = {
+        "checks": [
+            {
+                "id": "correctness",
+                "question": "Does it work?",
+                "findings": [
+                    {
+                        "detail": "Looks consistent.",
+                        "flagged": False,
+                        "status": "passed",
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    normalized = _normalize_step_payload_for_audit("critique", payload)
+
+    assert normalized["checks"][0]["findings"] == [{"detail": "Looks consistent.", "flagged": False}]
+    audit_step_payload("critique", normalized)
 
 
 def test_write_single_check_template_filters_prior_findings_to_target_check(tmp_path: Path) -> None:
@@ -568,7 +721,7 @@ def test_run_parallel_critique_reraises_subagent_failures(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -614,7 +767,7 @@ def test_run_parallel_critique_does_not_mutate_session_state(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -656,7 +809,7 @@ def test_run_parallel_critique_builds_read_only_worker_units(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -703,7 +856,7 @@ def test_run_parallel_critique_uses_per_lens_resolved_agent_mode(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -743,7 +896,7 @@ def test_run_parallel_critique_unique_output_paths_per_check(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -778,7 +931,7 @@ def test_run_parallel_critique_missing_resolved_agent_mode_raises_invariant_erro
     for chk in bare_checks:
         chk.pop("_resolved_agent_mode", None)
 
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     with pytest.raises(CliError, match="No _resolved_agent_mode metadata"):
         run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=tuple(bare_checks))
@@ -837,7 +990,7 @@ def test_run_parallel_critique_accepts_unverifiable_result_without_retry(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 
@@ -880,7 +1033,7 @@ def test_run_parallel_critique_worker_units_have_unique_step_paths(
         )
 
     monkeypatch.setattr(
-        "megaplan.orchestration.parallel_critique.scatter_worker_units",
+        "arnold.pipelines.megaplan.orchestration.parallel_critique.scatter_worker_units",
         _fake_scatter,
     )
 

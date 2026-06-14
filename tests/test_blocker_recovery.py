@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from megaplan.blocker_recovery import (
+from arnold.pipelines.megaplan.blocker_recovery import (
     build_prerequisite_scopes,
     command_blocker_details,
     evaluate_blocker_recovery,
     quality_blocker_id,
 )
-from megaplan.orchestration.phase_result import BlockedTask, Deviation
-from megaplan.quality_resolutions import build_quality_resolution_event
-from megaplan.user_actions import action_resolution_status, build_resolution_event
+from arnold.pipelines.megaplan.orchestration.phase_result import BlockedTask, Deviation
+from arnold.pipelines.megaplan.quality_resolutions import build_quality_resolution_event
+from arnold.pipelines.megaplan.user_actions import action_resolution_status, build_resolution_event
 
 
 def _state() -> dict[str, object]:
@@ -89,7 +89,7 @@ def test_malformed_prerequisite_blocker_suggests_retry_not_unknown_action() -> N
 
 def test_memory_applies_to_task_missing_scope_applies_to_all() -> None:
     """Memory event: missing ``applies_to_tasks`` key → applies to all tasks."""
-    from megaplan.user_actions import resolution_applies_to_task
+    from arnold.pipelines.megaplan.user_actions import resolution_applies_to_task
 
     event = {"resolution": "satisfied", "action_id": "ua1"}  # no applies_to_tasks
     assert resolution_applies_to_task(event, "T1") is True
@@ -99,7 +99,7 @@ def test_memory_applies_to_task_missing_scope_applies_to_all() -> None:
 
 def test_memory_applies_to_task_explicit_empty_applies_to_none() -> None:
     """Memory event: explicit empty ``applies_to_tasks`` → no concrete task."""
-    from megaplan.user_actions import resolution_applies_to_task
+    from arnold.pipelines.megaplan.user_actions import resolution_applies_to_task
 
     event = {"resolution": "satisfied", "action_id": "ua1", "applies_to_tasks": []}
     assert resolution_applies_to_task(event, "T1") is False
@@ -108,7 +108,7 @@ def test_memory_applies_to_task_explicit_empty_applies_to_none() -> None:
 
 def test_memory_applies_to_task_non_empty_scoped() -> None:
     """Memory event: non-empty ``applies_to_tasks`` → only listed tasks."""
-    from megaplan.user_actions import resolution_applies_to_task
+    from arnold.pipelines.megaplan.user_actions import resolution_applies_to_task
 
     event = {"resolution": "satisfied", "action_id": "ua1", "applies_to_tasks": ["T1", "T3"]}
     assert resolution_applies_to_task(event, "T1") is True
@@ -118,7 +118,7 @@ def test_memory_applies_to_task_non_empty_scoped() -> None:
 
 def test_memory_applies_to_task_task_id_none_returns_true() -> None:
     """Memory event: ``task_id=None`` always returns True (aggregate check)."""
-    from megaplan.user_actions import resolution_applies_to_task
+    from arnold.pipelines.megaplan.user_actions import resolution_applies_to_task
 
     # Missing scope
     assert resolution_applies_to_task({"resolution": "satisfied"}, None) is True
@@ -130,7 +130,7 @@ def test_memory_applies_to_task_task_id_none_returns_true() -> None:
 
 def test_memory_applies_to_task_defensively_filters_empty_strings() -> None:
     """Memory event: empty strings in ``applies_to_tasks`` are filtered out."""
-    from megaplan.user_actions import resolution_applies_to_task
+    from arnold.pipelines.megaplan.user_actions import resolution_applies_to_task
 
     event = {"resolution": "satisfied", "action_id": "ua1", "applies_to_tasks": ["T1", "", "T2"]}
     # "" is filtered out by set comprehension, so only "T1" and "T2" count
@@ -140,7 +140,7 @@ def test_memory_applies_to_task_defensively_filters_empty_strings() -> None:
 
 
 def test_memory_applies_to_task_none_event_returns_false() -> None:
-    from megaplan.user_actions import resolution_applies_to_task
+    from arnold.pipelines.megaplan.user_actions import resolution_applies_to_task
 
     assert resolution_applies_to_task(None, "T1") is False
     assert resolution_applies_to_task(None, None) is False
@@ -169,7 +169,7 @@ def test_action_resolution_status_accepts_memory_state_alias() -> None:
 
 
 def test_classify_resolution_behavior_all_supported_states() -> None:
-    from megaplan.user_actions import classify_resolution_behavior
+    from arnold.pipelines.megaplan.user_actions import classify_resolution_behavior
 
     assert classify_resolution_behavior("satisfied") == "omit"
     assert classify_resolution_behavior("accepted_blocked") == "fallback"
@@ -179,7 +179,7 @@ def test_classify_resolution_behavior_all_supported_states() -> None:
 
 
 def test_classify_resolution_behavior_none_and_unknown() -> None:
-    from megaplan.user_actions import classify_resolution_behavior
+    from arnold.pipelines.megaplan.user_actions import classify_resolution_behavior
 
     assert classify_resolution_behavior(None) == "hard_block"
     assert classify_resolution_behavior("bogus") == "hard_block"

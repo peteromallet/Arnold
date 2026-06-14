@@ -10,10 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.io import atomic_write_text
-from megaplan.observability.events import (
+from arnold.pipelines.megaplan._core.io import atomic_write_text
+from arnold.pipelines.megaplan.observability.events import (
     EventKind,
     EventWriter,
+    _ALL_EVENT_KINDS,
     emit,
     read_events,
 )
@@ -262,10 +263,18 @@ def test_atomic_write_text_logs_warning_when_artifact_emit_fails(
     def _raise_emit(*args, **kwargs):
         raise RuntimeError("emit broke")
 
-    monkeypatch.setattr("megaplan.observability.events.emit", _raise_emit)
+    monkeypatch.setattr("arnold.pipelines.megaplan.observability.events.emit", _raise_emit)
     caplog.set_level("WARNING", logger="megaplan")
 
     atomic_write_text(target, "payload", _plan_dir=plan_dir)
 
     assert target.read_text(encoding="utf-8") == "payload"
     assert any("M3A_WARN_EMIT_ARTIFACT_WRITTEN" in record.getMessage() for record in caplog.records)
+
+
+def test_evaluand_recorded_is_registered_event_kind() -> None:
+    assert EventKind.EVALUAND_RECORDED == "evaluand_recorded"
+    assert EventKind.EVALUAND_RECORDED in _ALL_EVENT_KINDS
+    # M5-cal adds CAPABILITY_CLAIM and CALIBRATION_EXPERIMENT; R1 authority also
+    # registers STATE_CACHE_DRIFT.
+    assert len(_ALL_EVENT_KINDS) == 34

@@ -14,8 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from megaplan.observability.events import EventKind
-from megaplan.observability.introspect import (
+from arnold.pipelines.megaplan.observability.events import EventKind
+from arnold.pipelines.megaplan.observability.introspect import (
     _compute_block_details,
     _compute_liveness,
     _compute_rubric_drift,
@@ -441,8 +441,8 @@ class TestBlockDetails:
 
 
 class TestRubricDrift:
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
     def test_drift_when_profile_missing(
         self, mock_parse: MagicMock, mock_profiles: MagicMock
     ) -> None:
@@ -456,8 +456,8 @@ class TestRubricDrift:
         assert result["referenced_profiles"] is not None
         assert result["available_profiles"] is not None
 
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
     def test_no_drift_when_all_match(
         self, mock_parse: MagicMock, mock_profiles: MagicMock
     ) -> None:
@@ -471,8 +471,8 @@ class TestRubricDrift:
         # extra profiles available but not referenced
         assert "all-claude" in result["extra_in_skill_not_referenced"]
 
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
     def test_empty_profiles_no_drift(
         self, mock_parse: MagicMock, mock_profiles: MagicMock
     ) -> None:
@@ -516,19 +516,19 @@ class TestKillerFieldsPopulated:
 
         # Mock external dependencies to avoid real shell calls
         with patch(
-            "megaplan.observability.introspect._git_info",
+            "arnold.pipelines.megaplan.observability.introspect._git_info",
             return_value={"branch": "main", "dirty": False, "head": "abc123def456"},
         ), patch(
-            "megaplan.observability.introspect._editable_install_location",
+            "arnold.pipelines.megaplan.observability.introspect._editable_install_location",
             return_value="/fake/install/path",
         ), patch(
-            "megaplan.observability.introspect._get_profiles_list",
+            "arnold.pipelines.megaplan.observability.introspect._get_profiles_list",
             return_value=["solo", "directed", "partnered", "premium", "apex"],
         ), patch(
-            "megaplan.observability.introspect._parse_decision_skill_profiles",
+            "arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles",
             return_value=["solo", "directed", "partnered", "premium", "apex"],
         ), patch(
-            "megaplan.observability.introspect._process_tree",
+            "arnold.pipelines.megaplan.observability.introspect._process_tree",
             return_value=[],
         ):
             payload = build_introspect_payload(plan_dir)
@@ -581,19 +581,19 @@ class TestKillerFieldsPopulated:
         _write_state(plan_dir, state)
 
         with patch(
-            "megaplan.observability.introspect._git_info",
+            "arnold.pipelines.megaplan.observability.introspect._git_info",
             return_value={"branch": "main", "dirty": False, "head": "abc123def456"},
         ), patch(
-            "megaplan.observability.introspect._editable_install_location",
+            "arnold.pipelines.megaplan.observability.introspect._editable_install_location",
             return_value=None,
         ), patch(
-            "megaplan.observability.introspect._get_profiles_list",
+            "arnold.pipelines.megaplan.observability.introspect._get_profiles_list",
             return_value=["solo", "directed", "partnered", "premium", "apex"],
         ), patch(
-            "megaplan.observability.introspect._parse_decision_skill_profiles",
+            "arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles",
             return_value=["solo", "directed", "partnered", "premium", "apex"],
         ), patch(
-            "megaplan.observability.introspect._process_tree",
+            "arnold.pipelines.megaplan.observability.introspect._process_tree",
             return_value=[],
         ):
             payload = build_introspect_payload(plan_dir)
@@ -614,11 +614,11 @@ class TestKillerFieldsPopulated:
 
 
 class TestBuildIntrospectPayload:
-    @patch("megaplan.observability.introspect._git_info")
-    @patch("megaplan.observability.introspect._editable_install_location")
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
-    @patch("megaplan.observability.introspect._process_tree")
+    @patch("arnold.pipelines.megaplan.observability.introspect._git_info")
+    @patch("arnold.pipelines.megaplan.observability.introspect._editable_install_location")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._process_tree")
     def test_payload_keys_present(
         self,
         mock_proc: MagicMock,
@@ -659,11 +659,11 @@ class TestBuildIntrospectPayload:
         for key in expected_keys:
             assert key in payload, f"Missing key in payload: {key}"
 
-    @patch("megaplan.observability.introspect._git_info")
-    @patch("megaplan.observability.introspect._editable_install_location")
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
-    @patch("megaplan.observability.introspect._process_tree")
+    @patch("arnold.pipelines.megaplan.observability.introspect._git_info")
+    @patch("arnold.pipelines.megaplan.observability.introspect._editable_install_location")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._process_tree")
     def test_in_flight_llm_detected(
         self,
         mock_proc: MagicMock,
@@ -706,11 +706,11 @@ class TestBuildIntrospectPayload:
         assert payload["in_flight_llm"]["kind"] == EventKind.LLM_CALL_START
         assert payload["in_flight_llm"]["payload"]["request_id"] == "req-abc"
 
-    @patch("megaplan.observability.introspect._git_info")
-    @patch("megaplan.observability.introspect._editable_install_location")
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
-    @patch("megaplan.observability.introspect._process_tree")
+    @patch("arnold.pipelines.megaplan.observability.introspect._git_info")
+    @patch("arnold.pipelines.megaplan.observability.introspect._editable_install_location")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._process_tree")
     def test_in_flight_llm_none_when_all_ended(
         self,
         mock_proc: MagicMock,
@@ -751,11 +751,11 @@ class TestBuildIntrospectPayload:
 
         assert payload["in_flight_llm"] is None
 
-    @patch("megaplan.observability.introspect._git_info")
-    @patch("megaplan.observability.introspect._editable_install_location")
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
-    @patch("megaplan.observability.introspect._process_tree")
+    @patch("arnold.pipelines.megaplan.observability.introspect._git_info")
+    @patch("arnold.pipelines.megaplan.observability.introspect._editable_install_location")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._process_tree")
     def test_cost_accumulation(
         self,
         mock_proc: MagicMock,
@@ -795,11 +795,11 @@ class TestBuildIntrospectPayload:
         payload = build_introspect_payload(plan_dir)
         assert payload["cost"]["total_usd"] == pytest.approx(0.17)  # 0.05 + 0.12
 
-    @patch("megaplan.observability.introspect._git_info")
-    @patch("megaplan.observability.introspect._editable_install_location")
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
-    @patch("megaplan.observability.introspect._process_tree")
+    @patch("arnold.pipelines.megaplan.observability.introspect._git_info")
+    @patch("arnold.pipelines.megaplan.observability.introspect._editable_install_location")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._process_tree")
     def test_outstanding_flags_count(
         self,
         mock_proc: MagicMock,
@@ -839,11 +839,11 @@ class TestBuildIntrospectPayload:
         assert payload["outstanding_flags"] is not None
         assert len(payload["outstanding_flags"]) == 3
 
-    @patch("megaplan.observability.introspect._git_info")
-    @patch("megaplan.observability.introspect._editable_install_location")
-    @patch("megaplan.observability.introspect._get_profiles_list")
-    @patch("megaplan.observability.introspect._parse_decision_skill_profiles")
-    @patch("megaplan.observability.introspect._process_tree")
+    @patch("arnold.pipelines.megaplan.observability.introspect._git_info")
+    @patch("arnold.pipelines.megaplan.observability.introspect._editable_install_location")
+    @patch("arnold.pipelines.megaplan.observability.introspect._get_profiles_list")
+    @patch("arnold.pipelines.megaplan.observability.introspect._parse_decision_skill_profiles")
+    @patch("arnold.pipelines.megaplan.observability.introspect._process_tree")
     def test_event_stats(
         self,
         mock_proc: MagicMock,

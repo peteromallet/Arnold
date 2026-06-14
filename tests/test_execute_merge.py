@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from megaplan.execute.merge import TERMINAL_TASK_STATUSES, _validate_and_merge_batch
+from arnold.pipelines.megaplan.execute.merge import TERMINAL_TASK_STATUSES, _validate_and_merge_batch
 
 
 def _merge_task_update(
@@ -137,15 +137,6 @@ def test_missing_file_skips_silently(tmp_path: Path, monkeypatch: Any) -> None:
 def test_fixed_syntax_error_prose_does_not_block_when_file_parses(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """A done task whose deviation prose merely *describes* a syntax error it
-    already fixed must STAY done when the actual changed file parses clean.
-
-    Regression for the awaiting_human false-block: the executor wrote
-    "double-`as` syntax error ... fixed" and the prose keyword "syntax error"
-    auto-downgraded the (correct, parsing) task to blocked, exiting execute to
-    awaiting_human and halting the chain. The authoritative AST check below is
-    the evidence-based replacement; prose must not block.
-    """
     (tmp_path / "some_file.py").write_text("import os as _os\n", encoding="utf-8")
 
     task, _issues = _merge_task_update(
@@ -167,9 +158,6 @@ def test_fixed_syntax_error_prose_does_not_block_when_file_parses(
 def test_real_syntax_error_in_file_still_blocks_via_ast(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """Removing the prose keyword does not weaken real protection: a genuinely
-    unparseable changed .py file is still blocked by the AST validation, even
-    with no telltale prose."""
     (tmp_path / "broken.py").write_text("def f(:\n    pass\n", encoding="utf-8")
 
     task, issues = _merge_task_update(

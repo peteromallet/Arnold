@@ -9,21 +9,21 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan.types import AgentMode, CliError
-from megaplan.workers import WorkerResult, session_key_for
+from arnold.pipelines.megaplan.types import AgentMode, CliError
+from arnold.pipelines.megaplan.workers import WorkerResult, session_key_for
 from tests._workers_helpers import _mock_state
 
 
 def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_claude_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_claude_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     claude_output = json.dumps({
@@ -45,7 +45,7 @@ def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
         stderr="",
         duration_ms=500,
     )
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result):
         result = run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
     assert result.payload == plan_payload
     assert result.cost_usd == 0.05
@@ -55,16 +55,79 @@ def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
     assert result.completion_tokens == 250
     assert result.total_tokens == 5750
 
-def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_claude_step
+
+def test_direct_shannon_claude_session_uses_non_enforced_capture_boundary(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult
+    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
+        "assumptions": [],
+    }
+    claude_output = json.dumps({
+        "structured_output": plan_payload,
+        "total_cost_usd": 0.05,
+        "session_id": "sess-abc",
+    })
+    fake_result = CommandResult(
+        command=["claude"],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=claude_output,
+        stderr="",
+        duration_ms=500,
+    )
+    capture_calls: list[dict] = []
+    real_capture = __import__(
+        "arnold.pipelines.megaplan.workers.shannon",
+        fromlist=["capture_step_output"],
+    ).capture_step_output
+
+    def _capture_spy(invocation, output):
+        capture_calls.append(dict(invocation.metadata))
+        outcome = real_capture(invocation, output)
+        return outcome.__class__(
+            contract_result=outcome.contract_result,
+            legacy_payload={**dict(outcome.legacy_payload), "plan": "# Captured"},
+            telemetry=outcome.telemetry,
+        )
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result),
+        patch("arnold.pipelines.megaplan.workers.shannon.capture_step_output", side_effect=_capture_spy),
+    ):
+        result = run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            session_agent="claude",
+            model="sonnet",
+        )
+
+    assert capture_calls[-1]["worker"] == "claude"
+    assert capture_calls[-1]["tier"] == "non_enforced"
+    assert capture_calls[-1]["normalized_model"] == "sonnet"
+    assert result.payload["plan"] == "# Captured"
+
+def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_claude_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     claude_output = json.dumps({
@@ -80,15 +143,58 @@ def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
         stderr="",
         duration_ms=10,
     )
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, effort="low")
     invoked_cmd = run_command.call_args.args[0]
     assert "--effort" in invoked_cmd
     assert invoked_cmd[invoked_cmd.index("--effort") + 1] == "low"
 
-def test_run_claude_step_rejects_invalid_effort(tmp_path: Path) -> None:
+
+def test_run_claude_step_ignores_stream_worker_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_claude_step
+    from megaplan.workers import CommandResult, run_claude_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_STREAM_WORKER", "1")
+    claude_output = json.dumps({
+        "structured_output": {
+            "plan": "# Plan\nDo it.",
+            "questions": [],
+            "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+            "assumptions": [],
+        },
+        "session_id": "tmux-shannon-session",
+    })
+    fake_result = CommandResult(
+        command=["claude"],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=claude_output,
+        stderr="",
+        duration_ms=10,
+    )
+    with (
+        patch("megaplan.workers.shannon_stream.run_shannon_stream_step") as run_stream,
+        patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+    ):
+        result = run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    run_stream.assert_not_called()
+    assert run_command.call_count >= 1
+    for call in run_command.call_args_list:
+        command = call.args[0]
+        assert command[0] == "bun"
+        assert str(command[1]).endswith("vendor/shannon/index.ts")
+    assert result.session_id == "tmux-shannon-session"
+
+
+def test_run_claude_step_rejects_invalid_effort(tmp_path: Path) -> None:
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_claude_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -96,8 +202,8 @@ def test_run_claude_step_rejects_invalid_effort(tmp_path: Path) -> None:
         run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, effort="bogus")
 
 def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_claude_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_claude_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -105,12 +211,12 @@ def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) ->
         command=["claude"],
         cwd=tmp_path,
         returncode=0,
-        stdout=json.dumps({"structured_output": {"plan": "x", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must"}], "assumptions": []}}),
+        stdout=json.dumps({"structured_output": {"plan": "x", "questions": [], "success_criteria": [{"criterion": "test", "priority": "must", "requires": []}], "assumptions": []}}),
         stderr="",
         duration_ms=10,
     )
-    with patch("megaplan.workers.shannon.create_claude_prompt", side_effect=AssertionError("builder should not run")):
-        with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+    with patch("arnold.pipelines.megaplan.workers.shannon.create_claude_prompt", side_effect=AssertionError("builder should not run")):
+        with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, prompt_override="custom prompt")
     command = run_command.call_args.args[0]
     assert command[0] == "bun"
@@ -125,8 +231,8 @@ def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) ->
     assert "Your final answer must be exactly one valid JSON object" in prompt_text
 
 def test_run_claude_step_raises_on_invalid_payload(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_claude_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_claude_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -148,13 +254,13 @@ def test_run_claude_step_raises_on_invalid_payload(tmp_path: Path) -> None:
         stderr="",
         duration_ms=100,
     )
-    with patch("megaplan.workers.shannon.run_command", return_value=fake_result):
-        with pytest.raises(CliError, match="missing required keys"):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result):
+        with pytest.raises(CliError, match="missing_required at /plan"):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
 
 def test_run_claude_step_attaches_session_id_on_timeout(tmp_path: Path) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_claude_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_claude_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -167,7 +273,7 @@ def test_run_claude_step_attaches_session_id_on_timeout(tmp_path: Path) -> None:
     }
 
     timeout_error = CliError("worker_timeout", "Claude timed out", extra={"raw_output": "partial"})
-    with patch("megaplan.workers.shannon.run_command", side_effect=timeout_error):
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=False)
 
@@ -175,7 +281,7 @@ def test_run_claude_step_attaches_session_id_on_timeout(tmp_path: Path) -> None:
     assert exc_info.value.extra["session_id"]
 
 def test_run_step_with_worker_falls_back_from_claude_auth_error_to_codex(tmp_path: Path) -> None:
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     args = Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[])
@@ -188,7 +294,7 @@ def test_run_step_with_worker_falls_back_from_claude_auth_error_to_codex(tmp_pat
         payload={
             "plan": "# Plan\nDo it.",
             "questions": [],
-            "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+            "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
             "assumptions": [],
         },
         raw_output="",
@@ -197,10 +303,10 @@ def test_run_step_with_worker_falls_back_from_claude_auth_error_to_codex(tmp_pat
         session_id="codex-fallback-session",
     )
 
-    with patch("megaplan.workers._impl.resolve_agent_mode", return_value=("claude", "persistent", False, None)):
-        with patch("megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
-            with patch("megaplan.workers.shannon.run_shannon_step", side_effect=auth_error) as mocked_shannon:
-                with patch("megaplan.workers._impl.run_codex_step", return_value=worker) as mocked_codex:
+    with patch("arnold.pipelines.megaplan.workers._impl.resolve_agent_mode", return_value=("claude", "persistent", False, None)):
+        with patch("arnold.pipelines.megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
+            with patch("arnold.pipelines.megaplan.workers.shannon.run_shannon_step", side_effect=auth_error) as mocked_shannon:
+                with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", return_value=worker) as mocked_codex:
                     result, agent, mode, refreshed = run_step_with_worker(
                         "plan",
                         state,
@@ -223,7 +329,7 @@ def test_run_step_with_worker_falls_back_from_claude_auth_error_to_codex(tmp_pat
 
 
 def test_run_step_with_worker_forwards_output_path_to_claude_shannon(tmp_path: Path) -> None:
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     args = Namespace(agent=None, ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[])
@@ -236,7 +342,7 @@ def test_run_step_with_worker_forwards_output_path_to_claude_shannon(tmp_path: P
         session_id="claude-session",
     )
 
-    with patch("megaplan.workers.shannon.run_shannon_step", return_value=worker) as mocked_shannon:
+    with patch("arnold.pipelines.megaplan.workers.shannon.run_shannon_step", return_value=worker) as mocked_shannon:
         result, agent, _mode, _refreshed = run_step_with_worker(
             "critique",
             state,
@@ -264,8 +370,8 @@ def test_run_claude_step_checks_final_prompt_before_run_command(
     tmp_path: Path,
 ) -> None:
     """Oversized prompt_override triggers guard before run_command is reached."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_claude_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_claude_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -276,9 +382,9 @@ def test_run_claude_step_checks_final_prompt_before_run_command(
         raise CliError("prompt_oversized", "too large")
 
     with (
-        patch("megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
         patch(
-            "megaplan.workers.shannon.run_command",
+            "arnold.pipelines.megaplan.workers.shannon.run_command",
             side_effect=AssertionError("run_command should not be reached"),
         ),
     ):
@@ -298,8 +404,8 @@ def test_run_claude_step_normal_prompt_dispatches_after_guard_passes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Normal-sized prompt reaches run_command after the guard passes."""
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import CommandResult, run_claude_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import CommandResult, run_claude_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -307,7 +413,7 @@ def test_run_claude_step_normal_prompt_dispatches_after_guard_passes(
     plan_payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
-        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}],
         "assumptions": [],
     }
     fake_result = CommandResult(
@@ -331,8 +437,8 @@ def test_run_claude_step_normal_prompt_dispatches_after_guard_passes(
         # Normal — no raise
 
     with (
-        patch("megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
-        patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
+        patch("arnold.pipelines.megaplan.workers.shannon.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("arnold.pipelines.megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
     ):
         result = run_claude_step(
             "plan",
@@ -357,7 +463,7 @@ def test_run_claude_step_normal_prompt_dispatches_after_guard_passes(
 
 
 def test_shannon_file_fallback_prefers_supplied_output_path(tmp_path: Path) -> None:
-    from megaplan.workers.shannon import _apply_file_fallback
+    from arnold.pipelines.megaplan.workers.shannon import _apply_file_fallback
 
     plan_dir = tmp_path
     aggregate = {

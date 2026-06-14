@@ -16,14 +16,14 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan.observability.cost import (
+from arnold.pipelines.megaplan.observability.cost import (
     _aggregate,
     _classify_vendor,
     _render_json,
     _render_table,
     handle_cost,
 )
-from megaplan.observability.events import EventKind
+from arnold.pipelines.megaplan.observability.events import EventKind
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +337,7 @@ class TestHermesEmitter:
 
     def test_emit_llm_end_stamps_model(self, tmp_path: Path) -> None:
         """_emit_llm_end(..., model=\"claude-opus-4\") → events.ndjson has model."""
-        from megaplan.workers.hermes import _emit_llm_end
+        from arnold.pipelines.megaplan.workers.hermes import _emit_llm_end
 
         plan_dir = tmp_path / "hermes-emit-test"
         plan_dir.mkdir(parents=True, exist_ok=True)
@@ -366,7 +366,7 @@ class TestHermesEmitter:
 
     def test_emit_llm_end_model_none_dominant(self, tmp_path: Path) -> None:
         """When model=None is passed (default), None is written to payload."""
-        from megaplan.workers.hermes import _emit_llm_end
+        from arnold.pipelines.megaplan.workers.hermes import _emit_llm_end
 
         plan_dir = tmp_path / "hermes-emit-none"
         plan_dir.mkdir(parents=True, exist_ok=True)
@@ -486,7 +486,7 @@ class TestReadOnly:
 
         # Call handle_cost directly, mocking find_plan_dir to return our dir.
         # find_plan_dir is lazily imported inside handle_cost, so we patch the source module.
-        with patch("megaplan._core.find_plan_dir", return_value=plan_dir):
+        with patch("arnold.pipelines.megaplan._core.find_plan_dir", return_value=plan_dir):
             args = Namespace(plan="readonly-test", format="table", by_phase=False)
             rc = handle_cost(Path.cwd(), args)
 
@@ -510,7 +510,7 @@ class TestReadOnly:
         ndjson_path = plan_dir / "events.ndjson"
         before = ndjson_path.read_bytes()
 
-        with patch("megaplan._core.find_plan_dir", return_value=plan_dir):
+        with patch("arnold.pipelines.megaplan._core.find_plan_dir", return_value=plan_dir):
             args = Namespace(plan="readonly-json", format="json", by_phase=False)
             rc = handle_cost(Path.cwd(), args)
 
@@ -758,7 +758,7 @@ class TestEdgeCases:
         _write_state(plan_dir, {"meta": {"total_cost_usd": 0.0}})
 
         # Mock find_plan_dir to return None (plan not found)
-        with patch("megaplan._core.find_plan_dir", return_value=None):
+        with patch("arnold.pipelines.megaplan._core.find_plan_dir", return_value=None):
             args = Namespace(plan="nonexistent", format="table", by_phase=False)
             rc = handle_cost(Path.cwd(), args)
 
@@ -771,7 +771,7 @@ class TestEdgeCases:
         _write_events(plan_dir, events)
         _write_state(plan_dir, {"meta": {"total_cost_usd": 0.01}})
 
-        with patch("megaplan._core.find_plan_dir", return_value=plan_dir):
+        with patch("arnold.pipelines.megaplan._core.find_plan_dir", return_value=plan_dir):
             args = Namespace(plan="success-plan", format="table", by_phase=False)
             rc = handle_cost(Path.cwd(), args)
 
@@ -819,7 +819,7 @@ class TestEdgeCases:
         events = [_cr("claude-opus-4", 2.0)]
         _write_events(plan_dir, events)
 
-        with patch("megaplan._core.find_plan_dir", return_value=plan_dir):
+        with patch("arnold.pipelines.megaplan._core.find_plan_dir", return_value=plan_dir):
             args = Namespace(plan="bad-state", format="json", by_phase=False)
             rc = handle_cost(Path.cwd(), args)
 

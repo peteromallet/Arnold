@@ -11,17 +11,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from megaplan._core.workflow import _transition_matches
-from megaplan.orchestration.plan_audit import load_tiebreaker_audit, record_tiebreaker_audit
-from megaplan.handlers import _apply_gate_outcome, handle_tiebreaker_decide
-from megaplan.prompts.critique import _settled_decisions_block
-from megaplan.types import (
+from arnold.pipelines.megaplan._core.workflow import _transition_matches
+from arnold.pipelines.megaplan.orchestration.plan_audit import load_tiebreaker_audit, record_tiebreaker_audit
+from arnold.pipelines.megaplan.handlers import _apply_gate_outcome, handle_tiebreaker_decide
+from arnold.pipelines.megaplan.prompts.critique import _settled_decisions_block
+from arnold.pipelines.megaplan.types import PlanState
+from arnold.pipelines.megaplan.planning.state import (
     STATE_AWAITING_HUMAN_VERIFY,
     STATE_CRITIQUED,
     STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
-    PlanState,
 )
 
 
@@ -125,9 +125,9 @@ def _mock_plan_locked(plan_dir: Path, state: PlanState):
         yield plan_dir, state
     with ExitStack() as stack:
         for module_path in (
-            "megaplan.handlers.tiebreaker.load_plan_locked",
-            "megaplan.handlers.gate.load_plan_locked",
-            "megaplan.handlers.critique.load_plan_locked",
+            "arnold.pipelines.megaplan.handlers._tiebreaker_impl.load_plan_locked",
+            "arnold.pipelines.megaplan.handlers.gate.load_plan_locked",
+            "arnold.pipelines.megaplan.handlers.critique.load_plan_locked",
         ):
             stack.enter_context(patch(module_path, _locked))
         yield
@@ -199,7 +199,7 @@ class TestTransitionMatchesTiebreaker:
 
 class TestValidateTiebreakerDisabled:
     def test_allow_tiebreaker_false_demotes_to_iterate(self, tmp_path: Path) -> None:
-        from megaplan.handlers import _validate_tiebreaker
+        from arnold.pipelines.megaplan.handlers import _validate_tiebreaker
 
         plan_dir = _setup_plan_dir(tmp_path)
         state = _make_state(tmp_path, config_overrides={"allow_tiebreaker": False})
@@ -224,7 +224,7 @@ class TestValidateTiebreakerDisabled:
 
 class TestValidateTiebreakerBudget:
     def test_budget_exhausted_demotes_to_escalate(self, tmp_path: Path) -> None:
-        from megaplan.handlers import _validate_tiebreaker
+        from arnold.pipelines.megaplan.handlers import _validate_tiebreaker
 
         plan_dir = _setup_plan_dir(tmp_path)
         state = _make_state(
@@ -245,7 +245,7 @@ class TestValidateTiebreakerBudget:
         assert gate["recommendation"] == "ESCALATE"
 
     def test_third_tiebreaker_demotes_to_escalate(self, tmp_path: Path) -> None:
-        from megaplan.handlers import _validate_tiebreaker
+        from arnold.pipelines.megaplan.handlers import _validate_tiebreaker
 
         plan_dir = _setup_plan_dir(tmp_path)
         state = _make_state(
@@ -271,7 +271,7 @@ class TestValidateTiebreakerBudget:
 
 class TestValidateTiebreakerBlocklist:
     def test_blocklisted_category_demotes_to_iterate(self, tmp_path: Path) -> None:
-        from megaplan.handlers import _validate_tiebreaker
+        from arnold.pipelines.megaplan.handlers import _validate_tiebreaker
 
         plan_dir = _setup_plan_dir(tmp_path)
         _write_flag_registry(plan_dir, [
@@ -301,7 +301,7 @@ class TestValidateTiebreakerBlocklist:
 
 class TestValidateTiebreakerMissingFields:
     def test_missing_question_demotes(self, tmp_path: Path) -> None:
-        from megaplan.handlers import _validate_tiebreaker
+        from arnold.pipelines.megaplan.handlers import _validate_tiebreaker
 
         plan_dir = _setup_plan_dir(tmp_path)
         state = _make_state(tmp_path)
@@ -317,7 +317,7 @@ class TestValidateTiebreakerMissingFields:
         assert "tiebreaker_question" in gate["rationale"]
 
     def test_missing_flag_ids_demotes(self, tmp_path: Path) -> None:
-        from megaplan.handlers import _validate_tiebreaker
+        from arnold.pipelines.megaplan.handlers import _validate_tiebreaker
 
         plan_dir = _setup_plan_dir(tmp_path)
         state = _make_state(tmp_path)
@@ -340,7 +340,7 @@ class TestValidateTiebreakerMissingFields:
 
 class TestValidateTiebreakerNoSignal:
     def test_no_signal_reprompts_then_demotes_to_iterate(self, tmp_path: Path) -> None:
-        from megaplan.handlers import _validate_tiebreaker
+        from arnold.pipelines.megaplan.handlers import _validate_tiebreaker
 
         plan_dir = _setup_plan_dir(tmp_path)
         _seed_plan_file(plan_dir, iteration=3)
@@ -369,10 +369,10 @@ class TestValidateTiebreakerNoSignal:
         initial_worker.completion_tokens = 50
         initial_worker.total_tokens = 150
 
-        with patch("megaplan.orchestration.iteration_pressure.compute_iteration_pressure", return_value=[]), \
-             patch("megaplan.orchestration.iteration_pressure.has_mechanical_recurrence", return_value=False), \
-             patch("megaplan.handlers._build_tiebreaker_reprompt", return_value="reprompt"), \
-             patch("megaplan.handlers._run_worker", return_value=(retry_worker, "claude", "direct", False)):
+        with patch("arnold.pipelines.megaplan.orchestration.iteration_pressure.compute_iteration_pressure", return_value=[]), \
+             patch("arnold.pipelines.megaplan.orchestration.iteration_pressure.has_mechanical_recurrence", return_value=False), \
+             patch("arnold.pipelines.megaplan.handlers._build_tiebreaker_reprompt", return_value="reprompt"), \
+             patch("arnold.pipelines.megaplan.handlers._run_worker", return_value=(retry_worker, "claude", "direct", False)):
             result, next_step, _ = _validate_tiebreaker(
                 state, gate, plan_dir, initial_worker, Namespace(plan="test-plan"),
                 "claude", (), {}, {}, tmp_path,
@@ -393,7 +393,7 @@ class TestValidateTiebreakerNoSignal:
         )
     )
     def test_with_mechanical_signal_approves(self, tmp_path: Path) -> None:
-        from megaplan.handlers import _validate_tiebreaker
+        from arnold.pipelines.megaplan.handlers import _validate_tiebreaker
 
         plan_dir = _setup_plan_dir(tmp_path)
         _seed_plan_file(plan_dir, iteration=3)
@@ -410,8 +410,8 @@ class TestValidateTiebreakerNoSignal:
                 "representative_concern": "bootstrap race",
             }
         ]
-        with patch("megaplan.orchestration.iteration_pressure.compute_iteration_pressure", return_value=entries), \
-             patch("megaplan.orchestration.iteration_pressure.has_mechanical_recurrence", return_value=True):
+        with patch("arnold.pipelines.megaplan.orchestration.iteration_pressure.compute_iteration_pressure", return_value=entries), \
+             patch("arnold.pipelines.megaplan.orchestration.iteration_pressure.has_mechanical_recurrence", return_value=True):
             result, next_step, _ = _validate_tiebreaker(
                 state, gate, plan_dir, worker,
                 Namespace(plan="test-plan", agent=None, hermes=None),
@@ -629,13 +629,13 @@ class TestAuditRecording:
 
 class TestGateSchemaAcceptsTiebreaker:
     def test_tiebreaker_in_enum(self) -> None:
-        from megaplan.schemas import SCHEMAS
+        from arnold.pipelines.megaplan.schemas import SCHEMAS
         gate_schema = SCHEMAS["gate.json"]
         rec_enum = gate_schema["properties"]["recommendation"]["enum"]
         assert "TIEBREAKER" in rec_enum
 
     def test_tiebreaker_fields_in_schema(self) -> None:
-        from megaplan.schemas import SCHEMAS
+        from arnold.pipelines.megaplan.schemas import SCHEMAS
         gate_schema = SCHEMAS["gate.json"]
         props = gate_schema["properties"]
         assert "tiebreaker_question" in props

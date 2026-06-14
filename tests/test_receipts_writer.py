@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan.receipts.writer as writer_module
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.receipts.writer as writer_module
 from tests.conftest import PlanFixture
 
 

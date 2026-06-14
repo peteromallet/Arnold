@@ -19,6 +19,7 @@ IN:
 - Archive replaced artifacts/state; never delete silently.
 - Preflight target head/worktree state and refuse if head or dirty-set changed before mutation since the checked preflight.
 - Validate chain-state pointer / plan selection during recovery so a desynced `current_plan_name` is detected and corrected only through an explicit recovery decision.
+- Give the chain's git/GitHub merge boundary a recoverable state (ticket `01KTA79BGM`): a merge failure must PARK the milestone in a RECOVERABLE blocked state (carrying the error), routed through M7's `TransitionWriter` and fenced under locks — NOT kill the driver (a `gh` rc=1 propagating as `gh_pr_merge_failed` and exiting the whole driver, even though phases have rich recoverable states, is the failure to close). The worktree-unsafe `gh pr merge --delete-branch` (dies "fatal: 'main' is already checked out at ..." in a worktree) gets a fallback that retries without `--delete-branch`.
 
 OUT:
 
@@ -36,6 +37,7 @@ OUT:
 - Recovery state changes go through M7's `TransitionWriter`.
 - Archive, never delete.
 - Refuse recovery mutation if head/worktree changed since preflight.
+- A merge failure parks the milestone in a recoverable blocked state (through M7's `TransitionWriter`, fenced) rather than killing the driver; the merge itself is worktree-safe (falls back without `--delete-branch`) — ticket `01KTA79BGM`.
 
 ## Open Questions
 
@@ -60,6 +62,7 @@ OUT:
 5. Replaced artifacts/state are archived, not deleted.
 6. Chain-state pointer / plan selection is validated during recovery and repaired only through an explicit decision.
 7. Tests cover phantom dependency recovery, config/ledger/worktree divergence, atomic-reset rollback, archive-never-delete, stale head/worktree refusal, concurrent recovery refusal, and legacy-as-unknown.
+8. A merge failure yields a recoverable blocked milestone (with the error, via `TransitionWriter`), not a dead driver; the merge is worktree-safe (retries without `--delete-branch` on the "already checked out" error) — ticket `01KTA79BGM`.
 
 ## Touchpoints
 
@@ -71,6 +74,7 @@ OUT:
 - a `reconcile` / `reset-milestone` CLI command
 - transition writer and recovery route tests
 - reconcile, atomic-reset, archive, and stale-preflight tests
+- `megaplan/chain/git_ops.py` (`_enable_auto_merge`: recoverable-blocked on merge failure + worktree-safe `--delete-branch` fallback) — ticket `01KTA79BGM`
 
 ## Rubric
 

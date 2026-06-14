@@ -25,7 +25,7 @@ from sisypy.schema import (
     SuccessProofLevel,
 )
 
-from megaplan.tests.agentic.adapter import MegaplanAdapter
+from arnold.pipelines.megaplan.tests.agentic.adapter import MegaplanAdapter
 
 
 # ---------------------------------------------------------------------------

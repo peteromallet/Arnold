@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.orchestration.evaluation import (
+from arnold.pipelines.megaplan.orchestration.evaluation import (
     PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
     _strip_fenced_blocks,
     build_gate_artifact,
@@ -24,13 +24,30 @@ from megaplan.orchestration.evaluation import (
     validate_execution_evidence,
     validate_plan_structure,
 )
-from megaplan.audits.robustness import validate_critique_checks
-from megaplan.workers import _build_mock_payload
+from arnold.pipelines.megaplan.audits.robustness import validate_critique_checks
+from arnold.pipelines.megaplan.workers import _build_mock_payload
 
 
 def _write_json(path: Path, data: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _run_git(repo_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo_dir,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+
+def _init_git_repo(repo_dir: Path) -> None:
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    _run_git(repo_dir, "init", "-b", "main")
+    _run_git(repo_dir, "config", "user.name", "Test User")
+    _run_git(repo_dir, "config", "user.email", "test@example.com")
 
 
 def test_validate_critique_checks_allows_custom_checks_when_none_are_required() -> None:
@@ -574,7 +591,7 @@ Summary.
 
 
 def test_render_final_md_none_meta_commentary() -> None:
-    from megaplan._core import render_final_md
+    from arnold.pipelines.megaplan._core import render_final_md
     data = {
         "tasks": [],
         "watch_items": [],
@@ -615,7 +632,7 @@ def test_is_rubber_stamp_allows_short_specific_ack_only_in_loose_mode() -> None:
 
 def _stub_clean_git_status(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "megaplan.orchestration.evaluation.subprocess.run",
+        "arnold.pipelines.megaplan.orchestration.evaluation.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["git", "status", "--short"],
             returncode=0,
@@ -730,10 +747,6 @@ def test_validate_execution_evidence_clean_run_produces_no_completion_findings(
 def test_validate_execution_evidence_counts_committed_milestone_work(
     tmp_path: Path,
 ) -> None:
-    """Regression: a chain milestone commits its work and leaves a clean working
-    tree. A status-only check then sees nothing and falsely flags every committed
-    file as "not present in git status". The committed milestone range must count.
-    """
     project_dir = tmp_path / "project"
     project_dir.mkdir()
 
@@ -749,14 +762,13 @@ def test_validate_execution_evidence_counts_committed_milestone_work(
     git("init", "-q")
     git("config", "user.email", "t@t.test")
     git("config", "user.name", "t")
-    (project_dir / "seed.txt").write_text("seed\n")
+    (project_dir / "seed.txt").write_text("seed\n", encoding="utf-8")
     git("add", "-A")
     git("commit", "-q", "-m", "seed")
     git("branch", "-M", "main")
-    # Feature branch with COMMITTED work; working tree deliberately left clean.
     git("checkout", "-q", "-b", "feature/milestone")
     (project_dir / "src").mkdir()
-    (project_dir / "src" / "a.py").write_text("print('a')\n")
+    (project_dir / "src" / "a.py").write_text("print('a')\n", encoding="utf-8")
     git("add", "-A")
     git("commit", "-q", "-m", "implement A")
 
@@ -775,9 +787,8 @@ def test_validate_execution_evidence_counts_committed_milestone_work(
     result = validate_execution_evidence(finalize_data, project_dir)
     assert result["skipped"] is False
     assert "src/a.py" in result["files_in_diff"]
-    # The committed file must not be flagged as a phantom (not-present) claim.
     assert not any(
-        "not present in git status" in f for f in result["findings"]
+        "not present in git status" in finding for finding in result["findings"]
     ), result["findings"]
 
 
@@ -799,7 +810,7 @@ def test_validate_execution_evidence_reads_nested_git_repo_status(
             raise AssertionError(f"unexpected cwd {cwd}")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr("megaplan.orchestration.evaluation.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.orchestration.evaluation.subprocess.run", fake_run)
     finalize_data = {
         "tasks": [
             {
@@ -855,15 +866,12 @@ def test_validate_execution_evidence_flags_diff_mismatches_and_weak_notes(
                 "R  old_name.py -> docs/new_name.py\nD  deleted.txt\n"
             )
         elif subcommand == "branch":
-            # On `main`, _branch_diff_base() returns None, so the committed
-            # milestone range stays empty and this test exercises the
-            # status-only mismatch path it was written for.
             stdout = "main\n"
         else:
             stdout = ""
         return subprocess.CompletedProcess(args=argv, returncode=0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr("megaplan.orchestration.evaluation.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.orchestration.evaluation.subprocess.run", fake_run)
 
     result = validate_execution_evidence(finalize_data, project_dir)
 
@@ -873,6 +881,167 @@ def test_validate_execution_evidence_flags_diff_mismatches_and_weak_notes(
     assert any("ghost.py" in finding for finding in result["findings"])
     assert any("deleted.txt" in finding and "untracked.md" in finding for finding in result["findings"])
     assert any("SC1" in finding and "perfunctory" in finding for finding in result["findings"])
+
+
+def test_validate_execution_evidence_projects_large_advisories_with_plan_dir(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    plan_dir = tmp_path / "plan"
+    _init_git_repo(project_dir)
+    plan_dir.mkdir()
+
+    claimed_paths = [f"claimed/ghost_{index:02d}.py" for index in range(45)]
+    changed_paths = [f"changed/file_{index:02d}.py" for index in range(45)]
+    for path in changed_paths:
+        file_path = project_dir / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("before = True\n", encoding="utf-8")
+    _run_git(project_dir, "add", ".")
+    _run_git(project_dir, "commit", "-m", "baseline")
+    for path in changed_paths:
+        (project_dir / path).write_text("after = True\n", encoding="utf-8")
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": claimed_paths,
+                "commands_run": [],
+                "executor_notes": "Verified the execution audit against git status and task claims.",
+            }
+        ],
+        "sense_checks": [],
+    }
+
+    result = validate_execution_evidence(
+        finalize_data,
+        project_dir,
+        plan_dir=plan_dir,
+        artifact_prefix="execution_audit_regression",
+    )
+
+    phantom_finding = next(
+        finding for finding in result["findings"] if "not present in git status" in finding
+    )
+    unclaimed_finding = next(
+        finding for finding in result["findings"] if "not claimed by any task" in finding
+    )
+    assert "45 paths (showing 40):" in phantom_finding
+    assert "45 paths (showing 40):" in unclaimed_finding
+    assert "ArtifactRef execution_audit_regression_phantom_claims.json" in phantom_finding
+    assert "ArtifactRef execution_audit_regression_unclaimed_changes.json" in unclaimed_finding
+
+    phantom_sidecar = json.loads(
+        (plan_dir / "execution_audit_regression_phantom_claims.json").read_text(encoding="utf-8")
+    )
+    unclaimed_sidecar = json.loads(
+        (plan_dir / "execution_audit_regression_unclaimed_changes.json").read_text(encoding="utf-8")
+    )
+    assert phantom_sidecar["label"] == "phantom_claims"
+    assert phantom_sidecar["count"] == 45
+    assert phantom_sidecar["items"] == claimed_paths
+    assert phantom_sidecar["semantic_bulk_operation_summary"]["path_count"] == 45
+    assert unclaimed_sidecar["label"] == "unclaimed_changes"
+    assert unclaimed_sidecar["count"] == 45
+    assert unclaimed_sidecar["items"] == changed_paths
+    assert unclaimed_sidecar["semantic_bulk_operation_summary"]["path_count"] == 45
+
+
+def test_validate_execution_evidence_caps_large_advisories_without_plan_dir(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    _init_git_repo(project_dir)
+
+    claimed_paths = [f"claimed/ghost_{index:02d}.py" for index in range(45)]
+    changed_paths = [f"changed/file_{index:02d}.py" for index in range(45)]
+    for path in changed_paths:
+        file_path = project_dir / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("before = True\n", encoding="utf-8")
+    _run_git(project_dir, "add", ".")
+    _run_git(project_dir, "commit", "-m", "baseline")
+    for path in changed_paths:
+        (project_dir / path).write_text("after = True\n", encoding="utf-8")
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": claimed_paths,
+                "commands_run": [],
+                "executor_notes": "Checked git status against the task claim list.",
+            }
+        ],
+        "sense_checks": [],
+    }
+
+    cwd = Path.cwd()
+    result = validate_execution_evidence(finalize_data, project_dir, artifact_prefix="execution_audit_regression")
+
+    phantom_finding = next(
+        finding for finding in result["findings"] if "not present in git status" in finding
+    )
+    unclaimed_finding = next(
+        finding for finding in result["findings"] if "not claimed by any task" in finding
+    )
+    assert "45 paths (showing 40):" in phantom_finding
+    assert "45 paths (showing 40):" in unclaimed_finding
+    assert "ArtifactRef" not in phantom_finding
+    assert "ArtifactRef" not in unclaimed_finding
+    assert not (project_dir / "execution_audit_regression_phantom_claims.json").exists()
+    assert not (project_dir / "execution_audit_regression_unclaimed_changes.json").exists()
+    assert not (cwd / "execution_audit_regression_phantom_claims.json").exists()
+    assert not (cwd / "execution_audit_regression_unclaimed_changes.json").exists()
+
+
+def test_validate_execution_evidence_ignores_plan_artifacts_and_substantive_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    (project_dir / ".git").mkdir(parents=True)
+
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "status": "done",
+                "files_changed": [
+                    "src/feature.py",
+                    ".megaplan/plans/demo/execution_batch_1.json",
+                ],
+                "commands_run": [],
+                "executor_notes": "Updated the feature implementation.",
+            },
+            {
+                "id": "T2",
+                "status": "done",
+                "files_changed": [],
+                "commands_run": [],
+                "executor_notes": (
+                    "Verified the boundary docstring was already added by T1; "
+                    "no additional file edit was required for this inspection task."
+                ),
+            },
+        ],
+        "sense_checks": [],
+    }
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.orchestration.evaluation.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=["git", "status", "--short"],
+            returncode=0,
+            stdout=" M src/feature.py\n",
+            stderr="",
+        ),
+    )
+
+    result = validate_execution_evidence(finalize_data, project_dir)
+
+    assert result["files_claimed"] == ["src/feature.py"]
+    assert not any("execution_batch_1.json" in finding for finding in result["findings"])
+    assert not any("T2" in finding for finding in result["findings"])
 
 
 def test_build_gate_artifact_passes_through_settled_decisions(tmp_path: Path) -> None:
@@ -941,7 +1110,7 @@ def test_validate_execution_evidence_flags_perfunctory_executor_notes(
     }
 
     monkeypatch.setattr(
-        "megaplan.orchestration.evaluation.subprocess.run",
+        "arnold.pipelines.megaplan.orchestration.evaluation.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["git", "status", "--short"],
             returncode=0,
@@ -966,7 +1135,7 @@ def test_validate_execution_evidence_skips_when_git_missing(
     def _raise(*args: object, **kwargs: object) -> object:
         raise FileNotFoundError
 
-    monkeypatch.setattr("megaplan.orchestration.evaluation.subprocess.run", _raise)
+    monkeypatch.setattr("arnold.pipelines.megaplan.orchestration.evaluation.subprocess.run", _raise)
 
     result = validate_execution_evidence({"tasks": [], "sense_checks": []}, project_dir)
 
@@ -984,7 +1153,7 @@ def test_validate_execution_evidence_skips_on_timeout(
     def _raise(*args: object, **kwargs: object) -> object:
         raise subprocess.TimeoutExpired(cmd=["git", "status", "--short"], timeout=30)
 
-    monkeypatch.setattr("megaplan.orchestration.evaluation.subprocess.run", _raise)
+    monkeypatch.setattr("arnold.pipelines.megaplan.orchestration.evaluation.subprocess.run", _raise)
 
     result = validate_execution_evidence({"tasks": [], "sense_checks": []}, project_dir)
 
@@ -1000,7 +1169,7 @@ def test_validate_execution_evidence_skips_on_nonzero_git_status(
     (project_dir / ".git").mkdir(parents=True)
 
     monkeypatch.setattr(
-        "megaplan.orchestration.evaluation.subprocess.run",
+        "arnold.pipelines.megaplan.orchestration.evaluation.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["git", "status", "--short"],
             returncode=128,
@@ -1299,10 +1468,10 @@ def test_build_gate_signals_fixture_shape_is_stable(tmp_path: Path) -> None:
     expected_signal_keys = {
         "iteration",
         "idea",
-        "significant_flags",
-        "unresolved_flags",
-        "resolved_flags",
-        "addressed_flags",
+            "significant_flags",
+            "unresolved_flags",
+            "addressed_flags",
+            "resolved_flags",
         "weighted_score",
         "weighted_history",
         "plan_delta_from_previous",

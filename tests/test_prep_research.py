@@ -7,10 +7,11 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan._core import WorkerUnit, WorkerUnitResult
-from megaplan.orchestration import prep_research
-from megaplan.types import CliError, PlanState
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan._core import WorkerUnit, WorkerUnitResult
+from arnold.pipelines.megaplan.model_seam import ModelTier
+from arnold.pipelines.megaplan.orchestration import prep_research
+from arnold.pipelines.megaplan.types import CliError, PlanState
+from arnold.pipelines.megaplan.workers import WorkerResult
 
 
 def _state(project_dir: Path) -> PlanState:
@@ -81,6 +82,10 @@ def test_prep_research_worker_unit_is_picklable_with_representative_payload(tmp_
                 prompt="research prompt",
                 output_path=output_path,
                 read_only=True,
+                validation_step="prep-research",
+                schema=dict(prep_research.PREP_RESEARCH_FINDING_SCHEMA),
+                model="deepseek:deepseek-v4-pro",
+                tier=ModelTier.ENFORCED,
                 extra={"area": {"id": "a", "area": "Area A", "brief": "inspect A"}},
             )
         )
@@ -89,6 +94,9 @@ def test_prep_research_worker_unit_is_picklable_with_representative_payload(tmp_
     assert isinstance(decoded_unit, WorkerUnit)
     assert decoded_unit.step == "prep-research"
     assert decoded_unit.read_only is True
+    assert decoded_unit.validation_step == "prep-research"
+    assert decoded_unit.model == (decoded_unit.resolved.resolved_model or decoded_unit.resolved.model)
+    assert decoded_unit.tier in {ModelTier.ENFORCED, ModelTier.NON_ENFORCED}
     assert decoded_unit.output_path == output_path
     assert decoded_unit.extra["area"]["id"] == "a"
 
@@ -686,6 +694,127 @@ def test_run_prep_orchestration_tracks_aggregate_cost_and_tokens(
     assert metrics["total_tokens"] == 1310
 
 
+def test_run_prep_orchestration_preserves_triage_rate_limit_for_skip(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    triage_rate_limit = {"provider": "triage", "remaining": 12}
+    triage_worker = WorkerResult(
+        payload={"triage_framing": "Nothing to research.", "areas": []},
+        raw_output="triage",
+        duration_ms=10,
+        cost_usd=0.1,
+        session_id="triage-session",
+        prompt_tokens=50,
+        completion_tokens=60,
+        total_tokens=110,
+        rate_limit=triage_rate_limit,
+    )
+
+    with (
+        patch.object(prep_research, "run_prep_triage", return_value=triage_worker),
+        patch.object(
+            prep_research,
+            "run_research_fanout",
+            side_effect=AssertionError("fanout should be skipped"),
+        ),
+        patch.object(
+            prep_research,
+            "distill_prep",
+            side_effect=AssertionError("distill should be skipped"),
+        ),
+    ):
+        result = prep_research.run_prep_orchestration(state, plan_dir, root=tmp_path)
+
+    assert result.worker.rate_limit == triage_rate_limit
+
+
+def test_run_prep_orchestration_neutrally_aggregates_rate_limits(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    triage_rate_limit = {"provider": "triage", "remaining": 12}
+    fanout_rate_limit = {"provider": "fanout", "remaining": 8}
+    distill_rate_limit = {"provider": "distill", "remaining": 5}
+    triage_worker = WorkerResult(
+        payload={
+            "triage_framing": "Investigate.",
+            "areas": [{"id": "a1", "area": "Area 1", "brief": "first"}],
+        },
+        raw_output="triage",
+        duration_ms=10,
+        cost_usd=0.1,
+        session_id="triage-session",
+        prompt_tokens=50,
+        completion_tokens=60,
+        total_tokens=110,
+        rate_limit=triage_rate_limit,
+    )
+    fanout_result = prep_research.GenericScatterResult(
+        ordered_results=[
+            {
+                "area": "a1",
+                "brief": "first",
+                "status": "complete",
+                "findings": ["found"],
+                "files": [],
+                "code_refs": [],
+                "confidence": "high",
+                "error": "",
+            },
+        ],
+        total_cost=0.2,
+        total_prompt_tokens=3,
+        total_completion_tokens=4,
+        total_tokens=7,
+        side_results=[
+            {
+                "area": "a1",
+                "status": "complete",
+                "elapsed_time_ms": 30,
+                "files": [],
+                "code_refs": [],
+                "rate_limit": fanout_rate_limit,
+            },
+            {"area": "a2", "status": "error", "elapsed_time_ms": 0, "files": [], "code_refs": []},
+        ],
+    )
+    distill_worker = WorkerResult(
+        payload={
+            "skip": False,
+            "task_summary": "summary",
+            "key_evidence": [],
+            "relevant_code": [],
+            "test_expectations": [],
+            "constraints": [],
+            "suggested_approach": "approach",
+        },
+        raw_output="distill",
+        duration_ms=20,
+        cost_usd=0.3,
+        session_id="distill-session",
+        prompt_tokens=5,
+        completion_tokens=6,
+        total_tokens=11,
+        rate_limit=distill_rate_limit,
+    )
+
+    with (
+        patch.object(prep_research, "run_prep_triage", return_value=triage_worker),
+        patch.object(prep_research, "run_research_fanout", return_value=fanout_result),
+        patch.object(prep_research, "distill_prep", return_value=distill_worker),
+    ):
+        result = prep_research.run_prep_orchestration(state, plan_dir, root=tmp_path)
+
+    assert result.worker.rate_limit == {
+        "values": [triage_rate_limit, fanout_rate_limit, distill_rate_limit],
+    }
+
+
 @pytest.mark.parametrize(
     "fanout_model_spec",
     [
@@ -723,6 +852,9 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
             "prep_research_2.json",
         ]
         assert all(unit.read_only is True for unit in units)
+        assert all(unit.validation_step == "prep-research" for unit in units)
+        assert all(unit.schema == dict(prep_research.PREP_RESEARCH_FINDING_SCHEMA) for unit in units)
+        assert all(unit.model == (expected_resolved.resolved_model or expected_resolved.model) for unit in units)
         ordered_results: list[dict[str, Any]] = []
         total_cost = 0.0
         total_prompt_tokens = 0
@@ -759,6 +891,7 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
                         output_path=str(unit.output_path),
                         read_only=True,
                         extra=dict(unit.extra),
+                        rate_limit={"provider": "fanout", "remaining": 10},
                     ),
                     unit,
                 )
@@ -779,7 +912,7 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
 
     with (
         patch.object(prep_research, "scatter_worker_units", side_effect=fake_scatter_worker_units),
-        patch("megaplan._core.hermes_fanout.scatter_gather", side_effect=AssertionError("old thread fanout path should not be used")),
+        patch("arnold.pipelines.megaplan._core.hermes_fanout.scatter_gather", side_effect=AssertionError("old thread fanout path should not be used")),
     ):
         result = prep_research.run_research_fanout(
             state,
@@ -800,6 +933,7 @@ def test_fanout_research_uses_vendor_agnostic_process_path_and_preserves_ordered
     assert result.total_completion_tokens == 4
     assert result.total_tokens == 7
     assert result.side_results[0]["files"] == ["src/a.py"]
+    assert result.side_results[0]["rate_limit"] == {"provider": "fanout", "remaining": 10}
     assert result.side_results[1]["status"] == "error"
     assert result.side_results[2]["status"] == "timed_out"
 

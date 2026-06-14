@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.orchestration.phase_result import (
+from arnold.pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,
@@ -229,7 +229,7 @@ def test_bug4_missing_phase_result_with_timeout_code(tmp_path: Path) -> None:
 
     # No phase_result.json written — simulate timeout exit code
     # The _run_phase synthesis would produce timeout from code==124
-    from megaplan.auto import PHASE_TIMEOUT_EXIT_CODE
+    from arnold.pipelines.megaplan.auto import PHASE_TIMEOUT_EXIT_CODE
 
     assert PHASE_TIMEOUT_EXIT_CODE == 124
     # The synthesis path in _run_phase handles this

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.editorial.body import update_body
-from megaplan.store import (
+from arnold.pipelines.megaplan.editorial.body import update_body
+from arnold.pipelines.megaplan.store import (
     ControlMessageInput,
     CloudRunInput,
     FileStore,
@@ -17,10 +17,10 @@ from megaplan.store import (
     SprintItemInput,
     deterministic_idempotency_key,
 )
-from megaplan.store import ChecklistItemInput, RevisionConflict, StoreError
-from megaplan.store.snapshot import canonical_sha256
-from megaplan.tickets.files import read_ticket_file, slugify, ticket_file_path, write_ticket_file
-from megaplan.tickets.identity import repo_codebase_identity
+from arnold.pipelines.megaplan.store import ChecklistItemInput, RevisionConflict, StoreError
+from arnold.pipelines.megaplan.store.snapshot import canonical_sha256
+from arnold.pipelines.megaplan.tickets.files import read_ticket_file, slugify, ticket_file_path, write_ticket_file
+from arnold.pipelines.megaplan.tickets.identity import repo_codebase_identity
 from tests.contract._store_contract import run_arnold_adapter_contract, run_store_contract
 
 

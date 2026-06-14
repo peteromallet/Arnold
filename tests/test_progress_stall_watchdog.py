@@ -29,7 +29,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import megaplan.agent  # noqa: F401  (side-effect: sys.path setup)
+import arnold.pipelines.megaplan.agent  # noqa: F401  (side-effect: sys.path setup)
 
 import openai
 from run_agent import (

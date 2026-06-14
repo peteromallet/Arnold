@@ -9,10 +9,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
-from megaplan.types import AgentMode, CliError
-from megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.types import AgentMode
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests._workers_helpers import _mock_state
 
 
@@ -25,7 +23,7 @@ def test_is_agent_available_hermes_when_runtime_importable() -> None:
     always returned False on every install and the downstream phase wrongly
     raised agent_deps_missing even when the agent runtime was fully present.
     """
-    from megaplan.workers import _is_agent_available
+    from arnold.pipelines.megaplan.workers import _is_agent_available
 
     assert _is_agent_available("hermes") is True
 
@@ -37,7 +35,7 @@ def test_is_agent_available_hermes_when_runtime_missing() -> None:
     (e.g. a slim wheel that excludes megaplan/agent/). Patches the import via
     sys.modules to force ImportError on run_agent.
     """
-    from megaplan.workers import _is_agent_available
+    from arnold.pipelines.megaplan.workers import _is_agent_available
 
     saved_run_agent = sys.modules.pop("run_agent", None)
     sys.modules["run_agent"] = None  # type: ignore[assignment]  # sentinel: forces ImportError
@@ -51,21 +49,168 @@ def test_is_agent_available_hermes_when_runtime_missing() -> None:
 
 
 def test_hermes_high_token_streaming_matches_fireworks_for_direct_deepseek() -> None:
-    from megaplan.workers.hermes import _streaming_run_kwargs
+    from arnold.pipelines.megaplan.workers.hermes import _streaming_run_kwargs
 
     assert _streaming_run_kwargs("fireworks:accounts/fireworks/models/deepseek-v4-pro", 32768)
     assert _streaming_run_kwargs("deepseek:deepseek-v4-pro", 32768)
     assert not _streaming_run_kwargs("deepseek:deepseek-v4-pro", 4096)
 
+
+def test_hermes_template_and_defaults_prefer_non_null_union_type() -> None:
+    from arnold.pipelines.megaplan.workers.hermes import (
+        _fill_schema_defaults,
+        _schema_template,
+    )
+
+    schema = {
+        "type": "object",
+        "required": ["flag_verifications"],
+        "properties": {
+            "flag_verifications": {
+                "type": ["array", "null"],
+                "items": {"type": "object"},
+            },
+        },
+    }
+
+    template = json.loads(_schema_template(schema))
+    payload: dict[str, object] = {}
+    _fill_schema_defaults(payload, schema)
+
+    assert template["flag_verifications"] == []
+    assert payload["flag_verifications"] == []
+
+
+def test_hermes_defaults_fill_nested_required_array_items() -> None:
+    from arnold.pipelines.megaplan.workers.hermes import _fill_schema_defaults
+
+    schema = {
+        "type": "object",
+        "required": ["tasks", "sense_checks", "validation"],
+        "properties": {
+            "tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "id",
+                        "kind",
+                        "files_changed",
+                        "commands_run",
+                        "auto_attributed_files",
+                        "stance",
+                        "stop_signal",
+                    ],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "kind": {
+                            "type": ["string", "null"],
+                            "enum": ["code", "audit", "test"],
+                        },
+                        "files_changed": {"type": "array", "items": {"type": "string"}},
+                        "commands_run": {"type": "array", "items": {"type": "string"}},
+                        "auto_attributed_files": {"type": ["boolean", "null"]},
+                        "stance": {
+                            "type": ["object", "null"],
+                            "properties": {"what_changed": {"type": "string"}},
+                            "required": ["what_changed"],
+                        },
+                        "stop_signal": {
+                            "type": ["object", "null"],
+                            "properties": {"requested": {"type": "boolean"}},
+                            "required": ["requested"],
+                        },
+                    },
+                },
+            },
+            "sense_checks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["id", "executor_note", "verdict"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "executor_note": {"type": "string"},
+                        "verdict": {"type": "string"},
+                    },
+                },
+            },
+            "validation": {
+                "type": "object",
+                "required": ["plan_steps_covered", "coverage_complete"],
+                "properties": {
+                    "plan_steps_covered": {"type": "array", "items": {"type": "object"}},
+                    "coverage_complete": {"type": "boolean"},
+                },
+            },
+        },
+    }
+    payload = {
+        "tasks": [{"id": "T1"}],
+        "sense_checks": [{"id": "SC1"}],
+        "validation": {},
+    }
+
+    _fill_schema_defaults(payload, schema)
+
+    task = payload["tasks"][0]
+    assert task["kind"] == "code"
+    assert task["files_changed"] == []
+    assert task["commands_run"] == []
+    assert task["auto_attributed_files"] is False
+    assert task["stance"] is None
+    assert task["stop_signal"] is None
+    assert payload["sense_checks"][0]["executor_note"] == ""
+    assert payload["sense_checks"][0]["verdict"] == ""
+    assert payload["validation"] == {
+        "plan_steps_covered": [],
+        "coverage_complete": False,
+    }
+
+
+def test_hermes_schema_template_shows_nested_required_item_shape() -> None:
+    from arnold.pipelines.megaplan.workers.hermes import _schema_template
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["code", "test"]},
+                        "files_changed": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+            "validation": {
+                "type": "object",
+                "properties": {
+                    "coverage_complete": {"type": "boolean"},
+                },
+            },
+        },
+    }
+
+    template = json.loads(_schema_template(schema))
+
+    assert template["tasks"] == [
+        {"id": "...", "kind": "code", "files_changed": ["..."]}
+    ]
+    assert template["validation"] == {"coverage_complete": True}
+
+
 def test_hermes_deepseek_v4_does_not_force_reasoning_disabled() -> None:
-    from megaplan.workers.hermes import _reasoning_config_for_model
+    from arnold.pipelines.megaplan.workers.hermes import _reasoning_config_for_model
 
     assert _reasoning_config_for_model("deepseek-v4-pro") is None
     assert _reasoning_config_for_model("accounts/fireworks/models/deepseek-v4-pro") is None
     assert _reasoning_config_for_model("deepseek/deepseek-r1") == {"enabled": False}
 
 def test_hermes_reasoning_config_maps_profile_depth() -> None:
-    from megaplan.workers.hermes import _reasoning_config_for_model
+    from arnold.pipelines.megaplan.workers.hermes import _reasoning_config_for_model
 
     # Effort maps onto a route-safe reasoning budget.
     assert _reasoning_config_for_model("deepseek-v4-pro", "low") == {
@@ -97,7 +242,7 @@ def test_hermes_reasoning_config_maps_profile_depth() -> None:
 def test_run_step_with_worker_forwards_output_path_and_worker_options_to_hermes(
     tmp_path: Path,
 ) -> None:
-    from megaplan.workers import run_step_with_worker
+    from arnold.pipelines.megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     args = Namespace(
@@ -125,7 +270,7 @@ def test_run_step_with_worker_forwards_output_path_and_worker_options_to_hermes(
         session_id="hermes-session",
     )
 
-    with patch("megaplan.workers.hermes.run_hermes_step", return_value=worker) as mocked_hermes:
+    with patch("arnold.pipelines.megaplan.workers.hermes.run_hermes_step", return_value=worker) as mocked_hermes:
         result, agent, _mode, _refreshed = run_step_with_worker(
             "review",
             state,
@@ -150,7 +295,7 @@ def test_run_step_with_worker_forwards_output_path_and_worker_options_to_hermes(
 
 
 def test_parse_agent_output_repairs_malformed_json_once(tmp_path: Path) -> None:
-    from megaplan.workers.hermes import parse_agent_output
+    from arnold.pipelines.megaplan.workers.hermes import parse_agent_output
 
     plan_dir, state = _mock_state(tmp_path)
     project_dir = Path(state["config"]["project_dir"])
@@ -198,7 +343,7 @@ def test_parse_agent_output_repairs_malformed_json_once(tmp_path: Path) -> None:
 def test_run_hermes_step_uses_worker_options_and_preserves_minimax_fallback(
     tmp_path: Path,
 ) -> None:
-    from megaplan.workers.hermes import run_hermes_step
+    from arnold.pipelines.megaplan.workers.hermes import run_hermes_step
 
     repo_root = Path(__file__).resolve().parents[1]
     plan_dir, state = _mock_state(tmp_path)
@@ -213,6 +358,7 @@ def test_run_hermes_step_uses_worker_options_and_preserves_minimax_fallback(
         "resolved_model": "qwen/qwen3-32b",
     }
     parse_calls: list[Path | None] = []
+    render_prompt_calls: list[str | None] = []
 
     class FakeSessionDB:
         def __init__(self, db_path=None):
@@ -258,16 +404,27 @@ def test_run_hermes_step_uses_worker_options_and_preserves_minimax_fallback(
         parse_calls.append(kwargs.get("output_path"))
         return {"checks": []}, result.get("final_response", "")
 
+    capture_calls: list[dict] = []
+
+    def _capture_spy(invocation, output):
+        capture_calls.append(dict(invocation.metadata))
+        return type("Capture", (), {"legacy_payload": output})()
+
+    def _render_prompt_spy(*args, **kwargs):
+        render_prompt_calls.append(kwargs.get("prompt_override"))
+        return type("RenderedStep", (), {"prompt": kwargs.get("prompt_override") or "rendered prompt"})()
+
     with (
-        patch("megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
-        patch("megaplan.workers.hermes.parse_agent_output", side_effect=_fake_parse_agent_output),
-        patch("megaplan.workers.hermes.clean_parsed_payload", return_value=None),
-        patch("megaplan.workers.hermes.validate_payload", return_value=None),
-        patch("megaplan.runtime.key_pool.resolve_model", return_value=("MiniMax-M2", {"api_key": "mm-key"})),
-        patch("megaplan.runtime.key_pool.acquire_key", return_value="or-key"),
-        patch("megaplan.runtime.key_pool.report_429", return_value=None),
-        patch("megaplan.runtime.key_pool.minimax_openrouter_model", return_value="openrouter/minimax"),
-        patch("megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
+        patch("arnold.pipelines.megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
+        patch("arnold.pipelines.megaplan.workers.hermes.parse_agent_output", side_effect=_fake_parse_agent_output),
+        patch("arnold.pipelines.megaplan.workers.hermes.clean_parsed_payload", return_value=None),
+        patch("arnold.pipelines.megaplan.workers.hermes.capture_step_output", side_effect=_capture_spy),
+        patch("arnold.pipelines.megaplan.workers.hermes.render_prompt_for_dispatch", side_effect=_render_prompt_spy),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.resolve_model", return_value=("MiniMax-M2", {"api_key": "mm-key"})),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.acquire_key", return_value="or-key"),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.report_429", return_value=None),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.minimax_openrouter_model", return_value="openrouter/minimax"),
+        patch("arnold.pipelines.megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
     ):
         result = run_hermes_step(
             "review",
@@ -290,18 +447,21 @@ def test_run_hermes_step_uses_worker_options_and_preserves_minimax_fallback(
     assert primary.kwargs["reasoning_config"] == {"enabled": False}
     assert fallback.kwargs["model"] == "openrouter/minimax"
     assert fallback.kwargs["session_db"].db_path == session_db_path
+    assert render_prompt_calls == ["fill the review template"]
     assert result.payload == {"checks": []}
     assert result.model_actual == "openrouter/minimax"
+    assert capture_calls[-1]["worker"] == "hermes"
+    assert capture_calls[-1]["tier"] == "non_enforced"
 
 
-def test_run_hermes_step_passes_toolless_projection_capabilities_to_prompt(
+def test_run_hermes_step_passes_none_prompt_override_into_model_seam(
     tmp_path: Path,
 ) -> None:
-    from megaplan.workers.hermes import run_hermes_step
+    from arnold.pipelines.megaplan.workers.hermes import run_hermes_step
 
     repo_root = Path(__file__).resolve().parents[1]
     plan_dir, state = _mock_state(tmp_path)
-    captured: list[object] = []
+    render_prompt_calls: list[str | None] = []
 
     class FakeSessionDB:
         def __init__(self, db_path=None):
@@ -314,15 +474,13 @@ def test_run_hermes_step_passes_toolless_projection_capabilities_to_prompt(
             self.reasoning_callback = None
             self._executing_tools = False
 
-        def run_conversation(self, **kwargs):
-            self.last_run_kwargs = kwargs
+        def run_conversation(self, **_kwargs):
             return {
-                "final_response": '{"tasks": []}',
-                "messages": [{"role": "assistant", "content": '{"tasks": []}'}],
-                "estimated_cost_usd": 0.0,
-                "prompt_tokens": 3,
-                "completion_tokens": 2,
-                "total_tokens": 5,
+                "final_response": '{"checks": []}',
+                "messages": [{"role": "assistant", "content": '{"checks": []}'}],
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
                 "model": self.kwargs["model"],
             }
 
@@ -332,240 +490,107 @@ def test_run_hermes_step_passes_toolless_projection_capabilities_to_prompt(
         def interrupt(self, _reason=None):
             return None
 
-        def set_response_format(self, *_args, **_kwargs):
-            return None
+    def _fake_parse_agent_output(_agent, result, **_kwargs):
+        return {"checks": []}, result.get("final_response", "")
 
-    def _fake_prompt(*args, **kwargs):
-        captured.append(kwargs.get("projection_capabilities"))
-        return "finalize"
+    def _render_prompt_spy(*args, **kwargs):
+        render_prompt_calls.append(kwargs.get("prompt_override"))
+        return type("RenderedStep", (), {"prompt": "rendered prompt"})()
 
-    with (
-        patch("megaplan.workers.hermes.create_hermes_prompt", side_effect=_fake_prompt),
-        patch("megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
-        patch("megaplan.workers.hermes.parse_agent_output", return_value=({"tasks": []}, '{"tasks": []}')),
-        patch("megaplan.workers.hermes.clean_parsed_payload", return_value=None),
-        patch("megaplan.workers.hermes.validate_payload", return_value=None),
-        patch("megaplan.runtime.key_pool.resolve_model", return_value=("deepseek-v4-pro", {"api_key": "key"})),
-        patch("megaplan.runtime.key_pool.acquire_key", return_value="or-key"),
-        patch("megaplan.runtime.key_pool.report_429", return_value=None),
-        patch("megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
-    ):
-        run_hermes_step(
-            "finalize",
-            state,
-            plan_dir,
-            root=repo_root,
-            fresh=True,
-        )
-
-    caps = captured[0]
-    assert caps.can_read_plan_dir is False
-    assert caps.can_read_project_dir is False
-    assert caps.has_file_tools is False
-    assert caps.checkpoint_write_access is False
-
-
-def test_run_hermes_step_passes_file_terminal_projection_capabilities_to_prompt(
-    tmp_path: Path,
-) -> None:
-    from megaplan.workers.hermes import run_hermes_step
-
-    repo_root = Path(__file__).resolve().parents[1]
-    plan_dir, state = _mock_state(tmp_path)
-    captured: list[object] = []
-
-    class FakeSessionDB:
-        def __init__(self, db_path=None):
-            self.db_path = db_path
-
-    class FakeAIAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self._print_fn = None
-            self.reasoning_callback = None
-            self._executing_tools = False
-
-        def run_conversation(self, **kwargs):
-            self.last_run_kwargs = kwargs
-            return {
-                "final_response": '{"output": "done"}',
-                "messages": [{"role": "assistant", "content": '{"output": "done"}'}],
-                "estimated_cost_usd": 0.0,
-                "prompt_tokens": 3,
-                "completion_tokens": 2,
-                "total_tokens": 5,
-                "model": self.kwargs["model"],
-            }
-
-        def clear_interrupt(self):
-            return None
-
-        def interrupt(self, _reason=None):
-            return None
-
-    def _fake_prompt(*args, **kwargs):
-        captured.append(kwargs.get("projection_capabilities"))
-        return "execute"
+    def _capture_spy(_invocation, output):
+        return type("Capture", (), {"legacy_payload": output})()
 
     with (
-        patch("megaplan.workers.hermes.create_hermes_prompt", side_effect=_fake_prompt),
-        patch("megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
-        patch("megaplan.workers.hermes.parse_agent_output", return_value=({"output": "done"}, '{"output": "done"}')),
-        patch("megaplan.workers.hermes.clean_parsed_payload", return_value=None),
-        patch("megaplan.workers.hermes.validate_payload", return_value=None),
-        patch("megaplan.runtime.key_pool.resolve_model", return_value=("deepseek-v4-pro", {"api_key": "key"})),
-        patch("megaplan.runtime.key_pool.acquire_key", return_value="or-key"),
-        patch("megaplan.runtime.key_pool.report_429", return_value=None),
-        patch("megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
-    ):
-        run_hermes_step(
-            "execute",
-            state,
-            plan_dir,
-            root=repo_root,
-            fresh=True,
-        )
-
-    caps = captured[0]
-    assert caps.can_read_plan_dir is True
-    assert caps.can_read_project_dir is True
-    assert caps.has_file_tools is True
-    assert caps.checkpoint_write_access is True
-
-
-def test_run_hermes_step_checks_final_prompt_after_suffixes_before_dispatch(
-    tmp_path: Path,
-) -> None:
-    from megaplan.workers.hermes import run_hermes_step
-
-    repo_root = Path(__file__).resolve().parents[1]
-    plan_dir, state = _mock_state(tmp_path)
-
-    class FakeSessionDB:
-        def __init__(self, db_path=None):
-            self.db_path = db_path
-
-    class FakeAIAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self._print_fn = None
-            self.reasoning_callback = None
-            self._executing_tools = False
-
-        def run_conversation(self, **kwargs):
-            raise AssertionError("run_conversation should not be reached")
-
-        def clear_interrupt(self):
-            return None
-
-        def interrupt(self, _reason=None):
-            return None
-
-        def set_response_format(self, *_args, **_kwargs):
-            return None
-
-    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
-        assert phase == "execute"
-        assert prompt_text.startswith("custom execute prompt")
-        assert "WEB SEARCH: You have web_search available." in prompt_text
-        assert "Do NOT rename, modify, or delete EVAL.ts or any test files." in prompt_text
-        raise CliError("prompt_oversized", "too large")
-
-    with (
-        patch("megaplan.workers.hermes.check_prompt_size", side_effect=fake_check_prompt_size),
-        patch("megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
-        patch("megaplan.runtime.key_pool.resolve_model", return_value=("deepseek-v4-pro", {"api_key": "key"})),
-        patch("megaplan.runtime.key_pool.acquire_key", return_value="or-key"),
-        patch("megaplan.runtime.key_pool.report_429", return_value=None),
-        patch("megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
-    ):
-        with pytest.raises(CliError, match="too large"):
-            run_hermes_step(
-                "execute",
-                state,
-                plan_dir,
-                root=repo_root,
-                fresh=True,
-                prompt_override="custom execute prompt",
-            )
-
-
-def test_run_hermes_step_normal_prompt_dispatches_after_guard_passes(
-    tmp_path: Path,
-) -> None:
-    """Normal-sized prompt reaches run_conversation after the guard passes."""
-    from megaplan.workers.hermes import run_hermes_step
-
-    repo_root = Path(__file__).resolve().parents[1]
-    plan_dir, state = _mock_state(tmp_path)
-
-    class FakeSessionDB:
-        def __init__(self, db_path=None):
-            self.db_path = db_path
-
-    conversation_called: list[bool] = []
-
-    class FakeAIAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self._print_fn = None
-            self.reasoning_callback = None
-            self._executing_tools = False
-
-        def run_conversation(self, **kwargs):
-            conversation_called.append(True)
-            return {
-                "final_response": '{"output": "done"}',
-                "messages": [{"role": "assistant", "content": '{"output": "done"}'}],
-                "estimated_cost_usd": 0.0,
-                "prompt_tokens": 3,
-                "completion_tokens": 2,
-                "total_tokens": 5,
-                "model": self.kwargs["model"],
-            }
-
-        def clear_interrupt(self):
-            return None
-
-        def interrupt(self, _reason=None):
-            return None
-
-        def set_response_format(self, *_args, **_kwargs):
-            return None
-
-    guard_checked: list[str] = []
-
-    def fake_check_prompt_size(prompt_text: str, *, phase: str) -> None:
-        guard_checked.append(prompt_text)
-        # Normal — no raise
-
-    with (
-        patch("megaplan.workers.hermes.check_prompt_size", side_effect=fake_check_prompt_size),
-        patch("megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
-        patch("megaplan.workers.hermes.parse_agent_output", return_value=({"output": "done"}, '{"output": "done"}')),
-        patch("megaplan.workers.hermes.clean_parsed_payload", return_value=None),
-        patch("megaplan.workers.hermes.validate_payload", return_value=None),
-        patch("megaplan.runtime.key_pool.resolve_model", return_value=("deepseek-v4-pro", {"api_key": "***"})),
-        patch("megaplan.runtime.key_pool.acquire_key", return_value="or-key"),
-        patch("megaplan.runtime.key_pool.report_429", return_value=None),
-        patch("megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
+        patch("arnold.pipelines.megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
+        patch("arnold.pipelines.megaplan.workers.hermes.parse_agent_output", side_effect=_fake_parse_agent_output),
+        patch("arnold.pipelines.megaplan.workers.hermes.clean_parsed_payload", return_value=None),
+        patch("arnold.pipelines.megaplan.workers.hermes.capture_step_output", side_effect=_capture_spy),
+        patch("arnold.pipelines.megaplan.workers.hermes.render_prompt_for_dispatch", side_effect=_render_prompt_spy),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.resolve_model", return_value=("qwen3-32b", {})),
+        patch("arnold.pipelines.megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
     ):
         result = run_hermes_step(
-            "execute",
+            "review",
             state,
             plan_dir,
             root=repo_root,
             fresh=True,
-            prompt_override="custom execute prompt",
+            model="qwen3-32b",
         )
 
-    assert conversation_called == [True]
-    assert result.payload == {"output": "done"}
-    # Guard was consulted with the full prompt after all suffixes
-    assert len(guard_checked) == 1
-    assert guard_checked[0].startswith("custom execute prompt")
-    assert "WEB SEARCH: You have web_search available." in guard_checked[0]
-    assert "Do NOT rename, modify, or delete EVAL.ts or any test files." in guard_checked[0]
-    # Projection-specific headings are present in the suffixed prompt when the
-    # builder is used (here we use prompt_override, so the headings won't appear;
-    # the guard still verifies the suffix content is present).
+    assert render_prompt_calls == [None]
+    assert result.payload == {"checks": []}
+
+
+def test_run_hermes_step_does_not_set_response_format_when_tools_enabled(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipelines.megaplan.workers.hermes import run_hermes_step
+
+    repo_root = Path(__file__).resolve().parents[1]
+    plan_dir, state = _mock_state(tmp_path)
+
+    class FakeSessionDB:
+        def __init__(self, db_path=None):
+            self.db_path = db_path
+
+    class FakeAIAgent:
+        response_format_calls = 0
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self._print_fn = None
+            self.reasoning_callback = None
+
+        def set_response_format(self, *_args, **_kwargs):
+            self.__class__.response_format_calls += 1
+
+        def run_conversation(self, **_kwargs):
+            return {
+                "final_response": "{}",
+                "messages": [{"role": "assistant", "content": "{}"}],
+                "prompt_tokens": 1,
+                "completion_tokens": 1,
+                "total_tokens": 2,
+                "model": self.kwargs["model"],
+            }
+
+        def clear_interrupt(self):
+            return None
+
+        def interrupt(self, _reason=None):
+            return None
+
+    capture_calls: list[dict] = []
+
+    def _fake_parse_agent_output(_agent, result, **_kwargs):
+        return {
+            "plan": "# P",
+            "questions": [],
+            "success_criteria": [{"criterion": "c", "priority": "must", "requires": []}],
+            "assumptions": [],
+        }, result.get("final_response", "")
+
+    def _capture_spy(invocation, output):
+        capture_calls.append(dict(invocation.metadata))
+        return type("Capture", (), {"legacy_payload": output})()
+
+    with (
+        patch("arnold.pipelines.megaplan.workers.hermes._import_hermes_runtime", return_value=(FakeAIAgent, FakeSessionDB)),
+        patch("arnold.pipelines.megaplan.workers.hermes.parse_agent_output", side_effect=_fake_parse_agent_output),
+        patch("arnold.pipelines.megaplan.workers.hermes.clean_parsed_payload", return_value=None),
+        patch("arnold.pipelines.megaplan.workers.hermes.capture_step_output", side_effect=_capture_spy),
+        patch("arnold.pipelines.megaplan.runtime.key_pool.resolve_model", return_value=("qwen3-32b", {})),
+        patch("arnold.pipelines.megaplan.runtime.sandbox.install_sandbox", return_value=nullcontext()),
+    ):
+        run_hermes_step(
+            "plan",
+            state,
+            plan_dir,
+            root=repo_root,
+            fresh=True,
+            model="qwen3-32b",
+        )
+
+    assert FakeAIAgent.response_format_calls == 0
+    assert capture_calls[-1]["tier"] == "non_enforced"

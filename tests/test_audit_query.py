@@ -17,7 +17,7 @@ def _run_megaplan(args: list[str], *, cwd: Path, env: dict[str, str] | None = No
     if env:
         merged_env.update(env)
     return subprocess.run(
-        [sys.executable, "-m", "megaplan", *args],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", *args],
         cwd=cwd,
         env=merged_env,
         text=True,

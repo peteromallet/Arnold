@@ -1,7 +1,7 @@
 """T10 — Python-module pipeline discovery + metadata + SKILL.md surface.
 
 Covers the six contract points laid out in the brief:
-  (a) registered_pipelines() lists planning, writing-panel-strict.
+  (a) registered_pipelines() lists megaplan, writing-panel-strict.
   (b) A drop-in user pipeline at a temp ~/.megaplan/pipelines/foo.py
       (monkeypatched HOME) is discovered and runnable via the registry.
   (c) metadata['writing-panel-strict'] exposes description, default_profile,
@@ -10,10 +10,10 @@ Covers the six contract points laid out in the brief:
       megaplan/pipelines/writing-panel-strict/SKILL.md.
   (e) read_skill_md for a user pipeline WITHOUT a co-located SKILL.md
       returns None and does not raise.
-  (f) discover_python_pipelines() rejects/skips a planted sibling whose
-      CLI name would collide with a hardcoded built-in (``planning``).
-      The collision check is root-agnostic;
-      planting under the user-scan root proves the semantic.
+  (f) discover_python_pipelines() rejects/skips a planted user sibling whose
+      CLI name duplicates the in-tree discovered ``planning`` module.
+      The duplicate check is root-agnostic; planting under the user-scan root
+      proves the semantic.
       Demo pipelines (doc-critique, judges) are no longer built-ins
       and are importable directly from their demo modules.
 """
@@ -26,10 +26,24 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.registry import (
+from arnold.runtime.operations import (
+    OperationKind,
+    OperationRegistry,
+    OperationRequest,
+    OperationResult,
+)
+from arnold.pipelines.megaplan._pipeline.discovery.trust import TrustGrade
+from arnold.pipelines.megaplan._pipeline.registry import (
     PipelineRegistry,
+    control_status_result_from_operation_result,
     discover_python_pipelines,
+    dispatch_operation_for,
+    operation_registry_for,
+    override_catalog_for,
+    phase_tuple_from_operation_result,
     register_pipeline,
+    resume_result_from_operation_result,
+    supported_operations_for,
 )
 
 
@@ -37,13 +51,14 @@ from megaplan._pipeline.registry import (
 
 
 def test_registered_pipelines_lists_builtins_plus_writing_panel_strict_and_epic_blitz() -> None:
-    from megaplan._pipeline.registry import registered_pipelines
+    from arnold.pipelines.megaplan._pipeline.registry import registered_pipelines
 
     names = registered_pipelines()
-    for required in ("planning", "writing-panel-strict", "epic-blitz"):
+    for required in ("megaplan", "writing-panel-strict", "epic-blitz"):
         assert required in names, (
             f"missing {required!r} in registry; got {names!r}"
         )
+    assert "planning" not in names
     # Demo pipelines (doc-critique, judges) are not built-ins.
     for demo_name in ("doc-critique", "judges"):
         assert demo_name not in names, (
@@ -56,7 +71,7 @@ def test_registered_pipelines_lists_builtins_plus_writing_panel_strict_and_epic_
 
 
 def test_writing_panel_strict_metadata_exposes_module_constants() -> None:
-    from megaplan._pipeline.registry import pipeline_metadata
+    from arnold.pipelines.megaplan._pipeline.registry import pipeline_metadata
 
     meta = pipeline_metadata("writing-panel-strict")
     assert meta.get("description"), (
@@ -69,7 +84,7 @@ def test_writing_panel_strict_metadata_exposes_module_constants() -> None:
 # ── (b) epic-blitz metadata exposes module constants ────────────────────
 
 def test_epic_blitz_metadata_exposes_module_constants() -> None:
-    from megaplan._pipeline.registry import pipeline_metadata
+    from arnold.pipelines.megaplan._pipeline.registry import pipeline_metadata
 
     meta = pipeline_metadata("epic-blitz")
     assert meta.get("description"), (
@@ -82,11 +97,13 @@ def test_epic_blitz_metadata_exposes_module_constants() -> None:
 # ── (c) read_skill_md returns epic-blitz SKILL.md contents ───────────────
 
 def test_read_skill_md_returns_epic_blitz_contents() -> None:
-    from megaplan._pipeline.registry import read_pipeline_skill_md
+    from arnold.pipelines.megaplan._pipeline.registry import read_pipeline_skill_md
 
     contents = read_pipeline_skill_md("epic-blitz")
     on_disk = (
         Path(__file__).resolve().parents[2]
+        / "arnold"
+        / "pipelines"
         / "megaplan"
         / "pipelines"
         / "epic-blitz"
@@ -100,11 +117,13 @@ def test_read_skill_md_returns_epic_blitz_contents() -> None:
 # ── (d) read_skill_md returns the on-disk SKILL.md text ─────────────────
 
 def test_read_skill_md_returns_writing_panel_strict_contents() -> None:
-    from megaplan._pipeline.registry import read_pipeline_skill_md
+    from arnold.pipelines.megaplan._pipeline.registry import read_pipeline_skill_md
 
     contents = read_pipeline_skill_md("writing-panel-strict")
     on_disk = (
         Path(__file__).resolve().parents[2]
+        / "arnold"
+        / "pipelines"
         / "megaplan"
         / "pipelines"
         / "writing-panel-strict"
@@ -142,7 +161,7 @@ def test_user_pipeline_is_discovered_and_runnable(
     user_dir.mkdir(parents=True)
     foo_py = user_dir / "foo.py"
     foo_py.write_text(
-        "from megaplan._pipeline.types import Pipeline, Stage, Edge, "
+        "from arnold.pipelines.megaplan._pipeline.types import Pipeline, Stage, Edge, "
         "StepContext, StepResult, Step\n"
         "from dataclasses import dataclass\n"
         "\n"
@@ -165,7 +184,7 @@ def test_user_pipeline_is_discovered_and_runnable(
 
     monkeypatch.setenv("HOME", str(tmp_path))
     # Drop any prior user-module import so the fresh discovery re-execs.
-    sys.modules.pop("megaplan._user_pipelines.foo", None)
+    sys.modules.pop("arnold.pipelines.megaplan._user_pipelines.foo", None)
 
     registry = PipelineRegistry()
     names = registry.names()
@@ -181,7 +200,7 @@ def test_user_pipeline_is_discovered_and_runnable(
     assert meta.get("source_path") == str(foo_py)
 
     # Pipeline is runnable: build_pipeline() returns a real Pipeline value.
-    from megaplan._pipeline.types import Pipeline as _PipelineCls
+    from arnold.pipelines.megaplan._pipeline.types import Pipeline as _PipelineCls
 
     pipeline = registry.get("foo")
     assert isinstance(pipeline, _PipelineCls)
@@ -192,29 +211,26 @@ def test_user_pipeline_is_discovered_and_runnable(
     assert registry.read_skill_md("foo") is None
 
 
-# ── (f) Collision detection: planted name shadowing a built-in is skipped
+# ── (f) Duplicate detection: planted user planning is skipped
 
 
-def test_discover_python_pipelines_skips_built_in_collision(
+def test_discover_python_pipelines_skips_user_duplicate_of_planning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Plant a sibling file whose CLI name == 'planning' under the user
-    scan root and assert discovery refuses to register it (warning
-    emitted + skipped). The same code path serves both the in-tree
-    megaplan/pipelines/ root and the user ~/.megaplan/pipelines/ root,
-    so this proves the collision semantic without requiring us to write
-    into the real source tree.
+    scan root and assert discovery keeps the canonical megaplan module, not the user
+    duplicate.
     """
 
     user_dir = tmp_path / ".megaplan" / "pipelines"
     user_dir.mkdir(parents=True)
     planted = user_dir / "planning.py"
     planted.write_text(
-        "from megaplan._pipeline.types import Pipeline, Stage, Edge, "
+        "from arnold.pipelines.megaplan._pipeline.types import Pipeline, Stage, Edge, "
         "StepContext, StepResult, Step\n"
         "from dataclasses import dataclass\n"
         "\n"
-        "description = 'BOGUS override of the built-in planning pipeline.'\n"
+        "description = 'BOGUS override of the in-tree planning pipeline.'\n"
         "\n"
         "@dataclass\n"
         "class _BogusStep(Step):\n"
@@ -232,25 +248,17 @@ def test_discover_python_pipelines_skips_built_in_collision(
     )
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    sys.modules.pop("megaplan._user_pipelines.planning", None)
+    sys.modules.pop("arnold.pipelines.megaplan._user_pipelines.planning", None)
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
         discovered = discover_python_pipelines()
 
-    discovered_names = {entry[0] for entry in discovered}
-    # The planted 'planning' module must NOT appear among discovered
-    # entries — collision detection short-circuits before it is loaded.
-    planted_entries = [
-        entry for entry in discovered if entry[0] == "planning"
-    ]
-    assert planted_entries == [], (
-        f"collision skipped; expected no discovered 'planning', "
-        f"got {planted_entries!r}"
-    )
+    planning_entries = [entry for entry in discovered if entry[0] == "megaplan"]
+    assert len(planning_entries) == 1
+    assert Path(planning_entries[0][3]) != planted
 
-    # A UserWarning naming the planted path + the colliding built-in
-    # must have been emitted.
+    # A UserWarning naming the planted duplicate must have been emitted.
     matching = [
         w for w in captured
         if issubclass(w.category, UserWarning)
@@ -262,24 +270,275 @@ def test_discover_python_pipelines_skips_built_in_collision(
         f"{[str(w.message) for w in captured]!r}"
     )
 
-    # And the registry still resolves the built-in planning pipeline
-    # via the module-level API (which is backed by the global registry
-    # where the built-in was registered at import time).
-    from megaplan._pipeline.registry import (
+    # And the registry still resolves the in-tree planning pipeline via
+    # the module-level API.
+    from arnold.pipelines.megaplan._pipeline.registry import (
         get_pipeline,
         pipeline_metadata,
     )
 
     pipeline = get_pipeline("planning")
     assert "bogus" not in pipeline.stages, (
-        "built-in planning pipeline was clobbered by the planted sibling"
+        "in-tree planning pipeline was clobbered by the planted sibling"
     )
 
-    # The built-in metadata never carries the planted bogus description.
-    builtin_meta = pipeline_metadata("planning")
+    # The in-tree metadata never carries the planted bogus description.
+    builtin_meta = pipeline_metadata("megaplan")
     assert builtin_meta.get("description") != (
-        "BOGUS override of the built-in planning pipeline."
+        "BOGUS override of the in-tree planning pipeline."
     )
+
+
+def test_operation_helpers_discover_factories_and_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pkg = tmp_path / "user" / "pipelines" / "ops_demo"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text(
+        "from arnold.runtime.operations import (\n"
+        "    NullOperationRegistry,\n"
+        "    OperationKind,\n"
+        "    OperationRegistry,\n"
+        "    OperationRequest,\n"
+        "    OperationResult,\n"
+        ")\n"
+        "from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
+        "from dataclasses import dataclass\n"
+        "\n"
+        "description = 'ops demo'\n"
+        "default_profile = None\n"
+        "supported_modes = ('plan',)\n"
+        "\n"
+        "@dataclass\n"
+        "class _Step:\n"
+        "    name: str = 'noop'\n"
+        "    def run(self, ctx: StepContext) -> StepResult:\n"
+        "        return StepResult(next='halt')\n"
+        "\n"
+        "class _Registry:\n"
+        "    def supported_operations(self):\n"
+        "        return frozenset({OperationKind.EXECUTE, OperationKind.OVERRIDE_APPLY})\n"
+        "    def dispatch(self, request: OperationRequest) -> OperationResult:\n"
+        "        return OperationResult(ok=True, payload={'kind': request.kind.value})\n"
+        "\n"
+        "def build_pipeline() -> Pipeline:\n"
+        "    return Pipeline(stages={'noop': Stage(name='noop', step=_Step(), edges=(Edge(label='halt', target='halt'),))}, entry='noop')\n"
+        "\n"
+        "def operation_registry() -> OperationRegistry:\n"
+        "    return _Registry()\n"
+        "\n"
+        "def override_catalog():\n"
+        "    return {'force-proceed': {'opaque': True}}\n",
+        encoding="utf-8",
+    )
+    (pkg / "SKILL.md").write_text("# skill\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.registry.classify",
+        lambda *args, **kwargs: TrustGrade.BLESSED,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.registry._get_scan_roots",
+        lambda: [(pkg.parent, None)],
+    )
+    reg = PipelineRegistry()
+
+    assert reg.metadata_for("ops-demo")["supported_operations"] == (
+        "override_apply",
+        "run_phase",
+    )
+    discovered = reg.operation_registry_for("ops-demo")
+    assert isinstance(discovered, OperationRegistry)
+    assert reg.supported_operations_for("ops-demo") == frozenset(
+        {OperationKind.EXECUTE, OperationKind.OVERRIDE_APPLY}
+    )
+    assert reg.override_catalog_for("ops-demo") == {
+        "force-proceed": {"opaque": True}
+    }
+
+
+def test_operation_helpers_fail_closed_for_absent_and_untrusted_factories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user_dir = tmp_path / "user" / "pipelines"
+    user_dir.mkdir(parents=True)
+    user_pkg = user_dir / "user_ops"
+    user_pkg.mkdir()
+    (user_pkg / "__init__.py").write_text(
+        "from arnold.runtime.operations import OperationKind, OperationRequest, OperationResult\n"
+        "from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult\n"
+        "from dataclasses import dataclass\n"
+        "\n"
+        "description = 'user ops'\n"
+        "default_profile = None\n"
+        "supported_modes = ('plan',)\n"
+        "\n"
+        "@dataclass\n"
+        "class _Step:\n"
+        "    name: str = 'noop'\n"
+        "    def run(self, ctx: StepContext) -> StepResult:\n"
+        "        return StepResult(next='halt')\n"
+        "\n"
+        "class _Registry:\n"
+        "    def supported_operations(self):\n"
+        "        return frozenset({OperationKind.RESUME})\n"
+        "    def dispatch(self, request: OperationRequest) -> OperationResult:\n"
+        "        return OperationResult(ok=True)\n"
+        "\n"
+        "def build_pipeline() -> Pipeline:\n"
+        "    return Pipeline(stages={'noop': Stage(name='noop', step=_Step(), edges=(Edge(label='halt', target='halt'),))}, entry='noop')\n"
+        "\n"
+        "def operation_registry():\n"
+        "    return _Registry()\n"
+        "\n"
+        "def override_catalog():\n"
+        "    return {'resume-now': {'opaque': True}}\n",
+        encoding="utf-8",
+    )
+    (user_pkg / "SKILL.md").write_text("# skill\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan._pipeline.registry._get_scan_roots",
+        lambda: [(user_dir, None)],
+    )
+    reg = PipelineRegistry()
+
+    assert reg.metadata_for("user-ops").get("supported_operations") is None
+    assert reg.supported_operations_for("user-ops") == frozenset()
+    assert reg.override_catalog_for("user-ops") == {}
+    assert reg.operation_registry_for("user-ops").supported_operations() == frozenset()
+
+
+def test_operation_helpers_canonicalize_planning_alias_to_megaplan_operations() -> None:
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
+
+    registry_module._GLOBAL_REGISTRY = registry_module.PipelineRegistry()
+    assert supported_operations_for("planning") == supported_operations_for("megaplan")
+    assert override_catalog_for("planning") == override_catalog_for("megaplan")
+    assert (
+        operation_registry_for("planning").supported_operations()
+        == operation_registry_for("megaplan").supported_operations()
+    )
+
+
+def test_dispatch_operation_for_returns_exact_unsupported_result_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._pipeline import registry as registry_module
+
+    calls: list[str] = []
+
+    class _BoomRegistry:
+        def dispatch(self, request):  # noqa: ANN001
+            calls.append(request.kind.value)
+            raise AssertionError("unsupported operation must not dispatch")
+
+    monkeypatch.setattr(
+        registry_module,
+        "supported_operations_for",
+        lambda plugin_id: frozenset({OperationKind.EXECUTE}),
+    )
+    monkeypatch.setattr(
+        registry_module,
+        "operation_registry_for",
+        lambda plugin_id: _BoomRegistry(),
+    )
+
+    result = dispatch_operation_for(
+        "planning",
+        OperationRequest(
+            kind=OperationKind.RESUME,
+            payload={"opaque": "sentinel"},
+        ),
+    )
+
+    assert calls == []
+    assert result == OperationResult(
+        ok=False,
+        payload={},
+        errors=("unsupported", OperationKind.RESUME.value),
+    )
+
+
+def test_operation_bridge_helpers_preserve_defaults_and_unknown_payload_keys() -> None:
+    bridged = control_status_result_from_operation_result(
+        OperationResult(
+            ok=True,
+            payload={
+                "binding": object(),
+                "state_view": object(),
+                "sentinel": {"opaque": True},
+            },
+        )
+    )
+
+    assert bridged["valid_targets"] == ()
+    assert bridged["recover_targets"] == ()
+    assert bridged["diagnostics"] == ()
+    assert bridged["sentinel"] == {"opaque": True}
+
+    resume_result = resume_result_from_operation_result(
+        OperationResult(
+            ok=False,
+            payload={
+                "args": ["execute", "--plan", "demo"],
+                "exit_code": 7,
+                "stdout": "resume stdout",
+                "stderr": "resume stderr",
+                "sentinel": {"opaque": True},
+            },
+            errors=("resume_failed", "execute"),
+        ),
+        plan="demo",
+        phase="execute",
+        resume_cursor={"phase": "execute"},
+    )
+
+    assert resume_result["success"] is False
+    assert resume_result["sentinel"] == {"opaque": True}
+    assert phase_tuple_from_operation_result(
+        OperationResult(
+            ok=True,
+            payload={
+                "exit_code": 0,
+                "stdout": "ok",
+                "stderr": "",
+            },
+        )
+    ) == (0, "ok", "")
+
+
+@pytest.mark.parametrize(
+    ("bridge", "result"),
+    [
+        (
+            phase_tuple_from_operation_result,
+            OperationResult(ok=True, payload={"stdout": "", "stderr": ""}),
+        ),
+        (
+            lambda result: resume_result_from_operation_result(
+                result,
+                plan="demo",
+                phase="execute",
+                resume_cursor={"phase": "execute"},
+            ),
+            OperationResult(ok=False, payload={"exit_code": 1, "stdout": "", "stderr": ""}),
+        ),
+        (
+            lambda result: control_status_result_from_operation_result(
+                result,
+                require_valid_targets=True,
+            ),
+            OperationResult(
+                ok=True,
+                payload={"binding": object(), "state_view": object()},
+            ),
+        ),
+    ],
+)
+def test_operation_bridge_helpers_fail_loudly_on_missing_required_keys(bridge, result) -> None:
+    with pytest.raises(ValueError):
+        bridge(result)
 
 
 # ── (d/e) Epic Blitz topology assertions ──────────────────────────────
@@ -289,7 +548,7 @@ class TestEpicBlitzTopology:
     """Assert the exact 6-stage order, reviewer composition, and artifact chaining."""
 
     def test_stage_graph_has_exact_6_stage_insertion_order(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
 
         pipeline = build_pipeline()
 
@@ -311,9 +570,9 @@ class TestEpicBlitzTopology:
         )
 
     def test_high_panel_is_parallel_with_5_exact_reviewer_ids(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
-        from megaplan._pipeline.types import ParallelStage
-        from megaplan._pipeline.steps.panel import PanelReviewerStep
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan._pipeline.types import ParallelStage
+        from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
 
         pipeline = build_pipeline()
         high_panel = pipeline.stages["high_panel"]
@@ -328,9 +587,9 @@ class TestEpicBlitzTopology:
         ]
 
     def test_mid_panel_is_parallel_with_5_exact_reviewer_ids(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
-        from megaplan._pipeline.types import ParallelStage
-        from megaplan._pipeline.steps.panel import PanelReviewerStep
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan._pipeline.types import ParallelStage
+        from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
 
         pipeline = build_pipeline()
         mid_panel = pipeline.stages["mid_panel"]
@@ -345,9 +604,9 @@ class TestEpicBlitzTopology:
         ]
 
     def test_low_panel_is_parallel_with_5_exact_reviewer_ids(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
-        from megaplan._pipeline.types import ParallelStage
-        from megaplan._pipeline.steps.panel import PanelReviewerStep
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan._pipeline.types import ParallelStage
+        from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
 
         pipeline = build_pipeline()
         low_panel = pipeline.stages["low_panel"]
@@ -362,8 +621,8 @@ class TestEpicBlitzTopology:
         ]
 
     def test_agent_step_input_refs_prove_artifact_chaining(self) -> None:
-        from megaplan.pipelines.epic_blitz import build_pipeline
-        from megaplan._pipeline.steps.agent import AgentStep
+        from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
+        from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
 
         pipeline = build_pipeline()
 

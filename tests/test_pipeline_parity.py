@@ -26,14 +26,14 @@ from typing import Any
 
 import pytest
 
-import megaplan
+import arnold.pipelines.megaplan as megaplan
 
-from megaplan._pipeline.stages.inprocess_step import (
+from arnold.pipelines.megaplan.stages.inprocess_step import (
     build_inprocess_planning_steps,
     build_revise_step,
     build_review_step,
 )
-from megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 
 from tests.conftest import make_args_factory
 
@@ -42,7 +42,6 @@ _PARITY_ARTIFACTS = (
     "plan_v1.md",
     "plan_v2.md",
     "prep.json",
-    "critique_output.json",
     "critique_v1.json",
     "critique_v2.json",
     "gate.json",

@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-import megaplan
-import megaplan.execute.aggregation
-import megaplan.execute.batch
-import megaplan.execute.core
-import megaplan.workers
-from megaplan._core import compute_global_batches
-from megaplan.workers import WorkerResult
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.execute.aggregation as megaplan_execute_aggregation
+import arnold.pipelines.megaplan.execute.batch as megaplan_execute_batch
+import arnold.pipelines.megaplan.execute.core as megaplan_execute_core
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan._core import compute_global_batches
+from arnold.pipelines.megaplan.workers import WorkerResult
 from tests.conftest import _make_plan_fixture_with_robustness, read_json
 
 
@@ -163,8 +163,6 @@ def test_high_scope_drift_blocks_only_hardened_robustness(
     _assert_audit_line(audit_dir, fixture.plan_name)
 
     assert "[scope_drift=high]" in response["summary"]
-    # robust(=thorough) blocks via the hardened high-severity reason; standard
-    # (=full) blocks via the unclaimed-files surfacing reason (DEFECT 3).
     drift_blocker = (
         "scope_drift_severity=high"
         if robustness == "robust"
@@ -178,7 +176,7 @@ def test_high_scope_drift_blocks_only_hardened_robustness(
 
 
 def _drift(severity: str, files_added: list[str], loc: int):
-    from megaplan.receipts.drift import ScopeDriftReport
+    from arnold.pipelines.megaplan.receipts.drift import ScopeDriftReport
 
     return ScopeDriftReport(
         files_added=files_added,
@@ -195,17 +193,15 @@ def _drift(severity: str, files_added: list[str], loc: int):
     [
         ("bare", False),
         ("light", False),
-        ("full", True),       # DEFECT 3: surface unclaimed files on full
-        ("thorough", True),   # unchanged hardened gate
-        ("extreme", True),    # unchanged hardened gate
+        ("full", True),
+        ("thorough", True),
+        ("extreme", True),
     ],
 )
 def test_append_scope_drift_blocker_surfaces_unclaimed_files_on_full(
     robustness: str,
     expect_blocker: bool,
 ) -> None:
-    """DEFECT 3: high-severity unclaimed files surface a recoverable blocker on
-    `full` (and the hardened levels), but stay quiet on `light`/`bare`."""
     state = {"config": {"robustness": robustness}}
     blocking_reasons: list[str] = []
     megaplan.execute.aggregation._append_scope_drift_blocker(
@@ -226,7 +222,6 @@ def test_append_scope_drift_blocker_surfaces_unclaimed_files_on_full(
 
 
 def test_append_scope_drift_blocker_quiet_on_full_for_low_severity() -> None:
-    """Benign low-severity churn (e.g. a directory marker) stays quiet on full."""
     state = {"config": {"robustness": "full"}}
     blocking_reasons: list[str] = []
     megaplan.execute.aggregation._append_scope_drift_blocker(
