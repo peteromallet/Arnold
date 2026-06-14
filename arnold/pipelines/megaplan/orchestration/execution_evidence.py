@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -61,6 +60,42 @@ def _evidence_window(project_dir: Path, base_ref: str | None = None) -> dict[str
         "base_ref": base_ref,
         "base_sha": _rev_parse(base_ref) if base_ref else None,
         "head_sha": _rev_parse("HEAD"),
+    }
+
+
+def _resolve_ref_sha(project_dir: Path, ref: str | None) -> str | None:
+    if not ref:
+        return None
+    completed = subprocess.run(
+        ["git", "rev-parse", "--verify", ref],
+        cwd=project_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
+
+def _git_rev_parse_head(project_dir: Path) -> str | None:
+    return _resolve_ref_sha(project_dir, "HEAD")
+
+
+def _collect_declared_committed_paths(project_dir: Path, base_sha: str) -> set[str]:
+    completed = subprocess.run(
+        ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
+        cwd=project_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return set()
+    return {
+        _normalize_repo_path(line.strip().strip('"'), project_dir)
+        for line in completed.stdout.splitlines()
+        if line.strip()
     }
 
 
@@ -197,6 +232,12 @@ def _validate_execution_evidence_code(
         "source": "declared" if base_ref is not None else "heuristic_merge_base",
     }
 
+    declared_authoritative = base_ref is not None and base_sha is not None
+    committed_paths = (
+        _collect_declared_committed_paths(project_dir, base_sha)
+        if declared_authoritative
+        else set()
+    )
     files_in_diff_set, status_error = _collect_git_status_paths_with_nested_repos(
         project_dir,
         claimed_paths=set(files_claimed),
@@ -205,6 +246,7 @@ def _validate_execution_evidence_code(
         # file as a phantom claim ("implementation not present in the diff").
         # Include the committed milestone range so committed work counts.
         include_committed=True,
+        committed_base_ref=base_sha if declared_authoritative else None,
     )
     if status_error is not None:
         return {
@@ -221,11 +263,12 @@ def _validate_execution_evidence_code(
     )
     claimed_set = set(files_claimed)
     diff_set = set(files_in_diff)
+    authority_set = committed_paths if declared_authoritative else diff_set
 
     dir_prefixes = [path for path in diff_set if path.endswith("/")]
 
     def _covered_by_diff(claimed: str) -> bool:
-        if claimed in diff_set:
+        if claimed in authority_set:
             return True
         return any(claimed.startswith(prefix) or claimed == prefix.rstrip("/") for prefix in dir_prefixes)
 
@@ -246,8 +289,9 @@ def _validate_execution_evidence_code(
             return False
         return any(claimed.startswith(diff_path) for claimed in claimed_set)
 
+    unclaimed_source = authority_set if declared_authoritative else diff_set
     unclaimed_changes = sorted(
-        diff_path for diff_path in diff_set
+        diff_path for diff_path in unclaimed_source
         if diff_path not in claimed_set and not _dir_is_claimed(diff_path)
     )
     if unclaimed_changes:
@@ -327,6 +371,7 @@ def _validate_execution_evidence_code(
     return {
         "findings": findings,
         "files_in_diff": files_in_diff,
+        "files_in_committed_range": sorted(committed_paths),
         "files_claimed": files_claimed,
         "skipped": False,
         "reason": "",

@@ -15,6 +15,10 @@ from typing import Any
 import pytest
 
 from arnold.pipelines.megaplan.orchestration.completion_contract import (
+    CompletionSubject,
+    CompletionVerdict,
+    EvidenceRef,
+    EvidenceStatus,
     extract_green_suite_info,
     normalize_contract_mode,
 )
@@ -562,6 +566,61 @@ def test_chain_enforce_runner_error_not_blocking(tmp_path, monkeypatch, caplog):
     assert blocked is False, "runner_error must not block chain milestone"
     assert any("runner_error" in r.message or "not blocking" in r.message or "not computable" in r.message
                 for r in caplog.records), "expected structured warning for runner_error"
+
+
+def test_chain_enforce_blocks_on_verdict_would_block_without_suite_delta(
+    tmp_path, monkeypatch, caplog
+):
+    from arnold.pipelines.megaplan.chain import _shadow_milestone_completion_verdict
+
+    root = tmp_path
+    plan_name = "declared-landed-diff-plan"
+    _make_chain_plan_dir(root, plan_name, mode="enforce")
+    verdict = CompletionVerdict(
+        mode="enforce",
+        subject=CompletionSubject(
+            kind="milestone",
+            name="milestone-1",
+            to_state="done",
+            plan_name=plan_name,
+            milestone_label="milestone-1",
+        ),
+        evidence=(
+            EvidenceRef(
+                "landed_diff",
+                EvidenceStatus.unsatisfied,
+                "claimed file missing from committed range",
+                {"diff_source": "declared_authoritative"},
+            ),
+            EvidenceRef(
+                "green_suite",
+                EvidenceStatus.satisfied,
+                "verification passed",
+                {
+                    "status": "passed",
+                    "delta": {
+                        "computable": True,
+                        "newly_failing": [],
+                        "deleted_tests": [],
+                    },
+                },
+            ),
+        ),
+        accepted=False,
+        failures=("landed_diff: claimed file missing from committed range",),
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.orchestration.completion_contract.compute_verdict",
+        lambda **_kwargs: verdict,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="megaplan"):
+        blocked = _shadow_milestone_completion_verdict(
+            root, plan_name, "milestone-1", "done", "enforce", log_fn=lambda _m: None
+        )
+
+    assert blocked is True
+    assert any("would_block=True" in record.message for record in caplog.records)
 
 
 @pytest.mark.parametrize(

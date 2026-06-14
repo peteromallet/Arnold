@@ -1593,21 +1593,6 @@
                   "choices": null,
                   "const": true,
                   "default": false,
-                  "dest": "fresh",
-                  "help": "Discard this spec's persisted chain state and milestone branches before starting. With --no-push, remote branch deletion is skipped.",
-                  "metavar": null,
-                  "nargs": "0",
-                  "option_strings": [
-                    "--fresh"
-                  ],
-                  "required": false,
-                  "type": null
-                },
-                {
-                  "action": "_StoreTrueAction",
-                  "choices": null,
-                  "const": true,
-                  "default": false,
                   "dest": "one",
                   "help": "Drive at most one pending milestone, persist progress, then stop cleanly.",
                   "metavar": null,
@@ -1663,6 +1648,59 @@
                   "default": null,
                   "dest": "project_dir",
                   "help": "Read chain state from this project directory instead of discovering from CWD.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "verify": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": "Path to the chain spec YAML",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": "Read chain plans from this project directory instead of discovering from CWD.",
                   "metavar": null,
                   "nargs": null,
                   "option_strings": [
@@ -4918,6 +4956,25 @@
             {
               "action": "_StoreAction",
               "choices": [
+                "off",
+                "shadow",
+                "enforce"
+              ],
+              "const": null,
+              "default": null,
+              "dest": "full_suite_backstop_mode",
+              "help": "Control the full-suite milestone-advance backstop: off disables it, shadow records only, enforce blocks on computed full-suite failures.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--full-suite-backstop-mode"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
                 "claude",
                 "codex"
               ],
@@ -5056,27 +5113,6 @@
               ],
               "required": false,
               "type": null
-            },
-            {
-              "action": "_StoreAction",
-              "choices": [
-                1,
-                2,
-                3,
-                4,
-                5
-              ],
-              "const": null,
-              "default": null,
-              "dest": "max_execute_tier",
-              "help": "Cap tier-routed execute lookup at N (1-5). A complexity above N routes as tier N; unset means no cap.",
-              "metavar": "N",
-              "nargs": null,
-              "option_strings": [
-                "--max-execute-tier"
-              ],
-              "required": false,
-              "type": "int"
             },
             {
               "action": "_StoreAction",
@@ -6251,6 +6287,36 @@
             },
             {
               "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "expires_after_runs",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--expires-after-runs"
+              ],
+              "required": false,
+              "type": "int"
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "target_root",
+              "help": null,
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--target-root"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
               "choices": [
                 "bare",
                 "light",
@@ -6389,6 +6455,8 @@
               "choices": [
                 "abort",
                 "force-proceed",
+                "waive-engine-overlap",
+                "refresh-engine-pin",
                 "add-note",
                 "replan",
                 "recover-blocked",
@@ -7117,21 +7185,6 @@
               "nargs": null,
               "option_strings": [
                 "--plan"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreAction",
-              "choices": null,
-              "const": null,
-              "default": null,
-              "dest": "project_dir",
-              "help": null,
-              "metavar": null,
-              "nargs": null,
-              "option_strings": [
-                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -8338,21 +8391,6 @@
               "nargs": null,
               "option_strings": [
                 "--plan"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreAction",
-              "choices": null,
-              "const": null,
-              "default": null,
-              "dest": "project_dir",
-              "help": null,
-              "metavar": null,
-              "nargs": null,
-              "option_strings": [
-                "--project-dir"
               ],
               "required": false,
               "type": null
@@ -10785,21 +10823,6 @@
               "nargs": null,
               "option_strings": [
                 "--plan"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreAction",
-              "choices": null,
-              "const": null,
-              "default": null,
-              "dest": "project_dir",
-              "help": null,
-              "metavar": null,
-              "nargs": null,
-              "option_strings": [
-                "--project-dir"
               ],
               "required": false,
               "type": null
