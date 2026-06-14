@@ -126,7 +126,7 @@ def test_init_rejects_missing_idea_file_with_resolved_path(
             _args(project_dir, idea_file=str(idea_file)),
         )
 
-    assert info.value.code == "invalid_args"
+    assert info.value.code == "missing_idea_file"
     message = str(info.value)
     assert "idea file not found" in message
     assert str(resolved_path) in message

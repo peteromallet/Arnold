@@ -458,6 +458,8 @@ def run_suite(
     collected_ids, collections_parse_ok, status = _parsed_collection_state(
         project_dir, command, exit_code, timed_out, parsed, status
     )
+    if status == "runner_error" and collections_parse_ok and parsed["failures"]:
+        status = "failed"
     return SuiteRunResult(
         run_id=run_id, phase=phase, command=command, duration=duration,
         collected=parsed["collected"], collected_ids=collected_ids,
