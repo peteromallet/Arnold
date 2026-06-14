@@ -44,6 +44,8 @@ def _stream_user_message(prompt: str) -> str:
 
 
 def _event_type(event: dict[str, Any]) -> str:
+    if event.get("type") == "system" and event.get("subtype") == "init":
+        return "system_init"
     for key in ("type", "event", "event_type", "eventType", "kind", "name"):
         value = event.get(key)
         if value is not None:
@@ -74,16 +76,11 @@ def _run_claude_stream(
 ) -> subprocess.CompletedProcess[str]:
     project_dir = tmp_path / "project"
     project_dir.mkdir()
-    claude_config_dir = tmp_path / "claude_config"
-    claude_config_dir.mkdir()
-    (claude_config_dir / "settings.json").write_text(
-        json.dumps({"autoUpdates": False}) + "\n",
-        encoding="utf-8",
-    )
 
     command = [
         _claude_binary(),
         "--print",
+        "--verbose",
         "--input-format=stream-json",
         "--output-format=stream-json",
     ]
@@ -92,7 +89,7 @@ def _run_claude_stream(
 
     env = os.environ.copy()
     env["ANTHROPIC_API_KEY"] = ""
-    env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
+    env.pop("CLAUDE_CONFIG_DIR", None)
     env["DISABLE_AUTOUPDATER"] = "1"
     env["CLAUDE_CODE_DISABLE_AUTOUPDATER"] = "1"
     env["CLAUDE_DISABLE_AUTOUPDATER"] = "1"

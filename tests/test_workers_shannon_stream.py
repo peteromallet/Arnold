@@ -98,7 +98,7 @@ def test_shannon_stream_config_loads_stream_env_with_shannon_fallbacks() -> None
     assert cfg.api_key_dry_run is False
 
 
-def test_build_shannon_stream_env_isolates_claude_and_locks_updates(
+def test_build_shannon_stream_env_preserves_subscription_auth_and_locks_updates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,17 +124,11 @@ def test_build_shannon_stream_env_isolates_claude_and_locks_updates(
     assert env["MEGAPLAN_WORKER_CHANNEL"] == "shannon_stream"
     assert env["MEGAPLAN_SHANNON_STREAM_AUTH_CHANNEL"] == "subscription"
     assert env["MEGAPLAN_SHANNON_STREAM_API_DRY_RUN_ACTIVE"] == "0"
-    assert env["CLAUDE_CONFIG_DIR"] == str(claude_config_dir)
-    assert claude_config_dir.is_dir()
-    assert claude_config_dir.is_relative_to(plan_dir / ".megaplan" / "runs")
+    assert "CLAUDE_CONFIG_DIR" not in env
+    assert claude_config_dir == Path.home() / ".claude"
     assert env["DISABLE_AUTOUPDATER"] == "1"
     assert env["CLAUDE_CODE_DISABLE_AUTOUPDATER"] == "1"
     assert env["CLAUDE_DISABLE_AUTOUPDATER"] == "1"
-
-    settings = json.loads(
-        (claude_config_dir / "settings.json").read_text(encoding="utf-8")
-    )
-    assert settings["autoUpdates"] is False
 
 
 def test_build_shannon_stream_env_api_key_preserves_or_injects_key(

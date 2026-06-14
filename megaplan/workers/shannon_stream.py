@@ -412,22 +412,23 @@ def build_shannon_stream_env(
 
     The base is the shared external-worker env so progress/session isolation
     stays aligned with the other workers. Stream-specific policy is layered on
-    top: Claude Code parent env is scrubbed, subscription OAuth is preserved by
-    forcing an empty API key only in subscription mode, and Claude's
-    config/state is isolated under run artifacts.
+    top: Claude Code parent env is scrubbed, subscription mode uses the normal
+    Claude config so the logged-in OAuth state remains available, and API-key
+    mode keeps Claude config/state isolated under run artifacts.
     """
     cfg = config or ShannonStreamConfig.load()
     plan_id = str(state.get("name", ""))
     run_dir = _shannon_stream_run_dir(plan_dir, plan_id=plan_id, step=step)
-    claude_config_dir = run_dir / "claude_config"
-    claude_config_dir.mkdir(parents=True, exist_ok=True)
-    _write_claude_stream_settings(claude_config_dir)
 
     env = _external_worker_env(turn_id=turn_id or f"plan_worker_{plan_id}")
     _scrub_claude_code_env(env)
     if cfg.auth_channel == "subscription":
         env["ANTHROPIC_API_KEY"] = ""
+        claude_config_dir = Path.home() / ".claude"
     elif cfg.auth_channel == "api_key":
+        claude_config_dir = run_dir / "claude_config"
+        claude_config_dir.mkdir(parents=True, exist_ok=True)
+        _write_claude_stream_settings(claude_config_dir)
         api_key, _source = _resolve_shannon_stream_api_key()
         if api_key:
             env["ANTHROPIC_API_KEY"] = api_key
@@ -458,7 +459,8 @@ def build_shannon_stream_env(
     env["MEGAPLAN_SHANNON_STREAM_API_DRY_RUN_ACTIVE"] = (
         "1" if auth_metadata["dry_run"] else "0"
     )
-    env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
+    if cfg.auth_channel == "api_key":
+        env["CLAUDE_CONFIG_DIR"] = str(claude_config_dir)
     env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", str(cfg.max_output_tokens))
     env["DISABLE_AUTOUPDATER"] = "1"
     env["CLAUDE_CODE_DISABLE_AUTOUPDATER"] = "1"
