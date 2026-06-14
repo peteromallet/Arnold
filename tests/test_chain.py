@@ -3087,6 +3087,7 @@ def test_initialized_plan_receives_chain_policy_metadata(
     with patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
          patch("arnold.pipelines.megaplan.chain._checkout_milestone_branch"), \
          patch("arnold.pipelines.megaplan.chain._ensure_milestone_pr", return_value=1), \
+         patch("arnold.pipelines.megaplan.chain._current_head_sha", return_value="abc123base"), \
          patch("arnold.pipelines.megaplan.chain._init_plan", return_value="plan-stub-20260520"), \
          patch("arnold.pipelines.megaplan.chain._drive_plan", return_value=_fake_outcome("plan-stub-20260520", "done")), \
          patch("arnold.pipelines.megaplan.chain._commit_and_push_phase"), \
