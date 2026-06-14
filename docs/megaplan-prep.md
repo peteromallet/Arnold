@@ -1,6 +1,6 @@
 ---
 name: megaplan-prep
-description: Set up a megaplan run before invoking it — size the work, write the brief, and pick the profile (intelligence tier), robustness level, and thinking depth. For both Codex and Claude harnesses. Consult before every `python -m arnold.pipelines.megaplan init`.
+description: Set up a megaplan run before invoking it — size the work, write the brief, score overall plan difficulty, and choose robustness/depth. Consult before every `python -m arnold.pipelines.megaplan init`.
 ---
 
 # Megaplan Setup
@@ -9,7 +9,7 @@ Three dials decide how to run a sprint:
 
 | | Question | Dial | What it scales | Flag |
 |---|---|---|---|---|
-| 1 | What level of raw capability does this need? | **Intelligence tier** | `$/call` | `--profile` |
+| 1 | How model-quality-sensitive is the planning loop? | **Overall plan difficulty** | model quality for plan/revise/finalize | `--profile partnered-3|partnered-4|partnered-5` |
 | 2 | What level of process rigor does this need? | **Planning complexity** | `# of calls` | `--robustness` |
 | 3 | How deeply does each model need to think? | **Depth** | `tokens/call` | `--depth` (with `--phase-model` as the surgical escape hatch) |
 
@@ -21,7 +21,7 @@ The dials are independent — work through each one ignoring the others — then
 
 **The dials measure residual complexity, not nominal scope.** Discount for decisions already made; add for unknowns remaining. A spec-shaped brief with everything known lands a tier lower than the same nominal scope arriving as a sketch.
 
-**Defaults to keep in mind:** `--robustness full`, `--depth` unset (which means the profile's existing depths win — usually `:low` on premium phases), vendor from your config (`claude` if unset). Reach past those only when you can name the specific reason. Built-in profiles live in `megaplan/profiles/`; per-user (`~/.config/megaplan/profiles.toml`) and per-project (`<project>/.megaplan/profiles.toml`) TOML overrides win over them.
+**Defaults to keep in mind:** score the run first; use `--profile partnered-3 --vendor codex` for overall plan difficulty 1–3, `partnered-4` for 4, and `partnered-5` for 5. Keep `--robustness full` and `--depth` unset unless you can name the specific reason to change them. Built-in profiles live in `megaplan/profiles/`; per-user (`~/.config/megaplan/profiles.toml`) and per-project (`<project>/.megaplan/profiles.toml`) TOML overrides win over them.
 
 ---
 
@@ -33,7 +33,7 @@ Two decisions come before the three dials: **how many megaplans you need**, and 
 
 A megaplan should fit roughly **two weeks of human work** — the time a skilled engineer would take to plan, build, and review the same scope. Wall-clock for the harness itself is unrelated; this is about scope, not duration.
 
-If the work is bigger, **split it into an epic** — a chain of sprint-sized megaplans driven sequentially by `python -m arnold.pipelines.megaplan chain`. Each sprint in the chain gets its own brief, its own profile, its own retrospective. See the **megaplan-epic** skill for spec format, per-milestone rubric, and end-to-end usage. Cramming a month of work into one plan means the brief drifts, the critique loses focus, and the review can't hold the whole shape in one pass.
+If the work is bigger, **split it into an epic** — a chain of sprint-sized megaplans driven sequentially by `python -m arnold.pipelines.megaplan chain`. Each sprint in the chain gets its own brief, its own overall plan difficulty score, its own profile, and its own retrospective. See the **megaplan-epic** skill for spec format, per-milestone rubric, and end-to-end usage. Cramming a month of work into one plan means the brief drifts, the critique loses focus, and the review can't hold the whole shape in one pass.
 
 Signs you should split:
 
@@ -43,7 +43,7 @@ Signs you should split:
 
 When you split, structure the dependency graph explicitly. Each handoff is a written artifact — schema, API surface, doc — that the next brief can cite. Sprints without that artifact between them are really one sprint pretending to be two.
 
-**But: one profile per sprint.** Within a sprint, pick the profile that matches the **highest-stakes deliverable** — lower-stakes items inherit the tier. Operational simplicity beats the savings from splitting by stakes alone. Only split when the lower-stakes work is *substantial* (multiple days) **and** independent. Structure the plan so cheap work lives in cheap sprints, not interleaved inside expensive ones.
+**But: one profile per sprint.** Within a sprint, score the overall planning difficulty for the sprint as a whole. Operational simplicity beats the savings from splitting by difficulty alone. Only split when lower-difficulty work is *substantial* (multiple days) **and** independent. Structure the plan so easier work lives in easier sprints, not interleaved inside harder ones.
 
 ### What goes in the brief
 
@@ -68,68 +68,42 @@ A brief missing #3 or #4 surfaces those gaps as critique flags — better to wri
 
 ---
 
-## Dial 1 — Intelligence tier (5 rungs)
+## Dial 1 — Overall Plan Difficulty
 
-> **"What level of raw capability does this need?"**
+> **"How model-quality-sensitive is the planning/revision/adjudication loop?"**
 
-Five tiers, named for the **social configuration of minds** working on the problem. Each rung swaps one block of phases from DeepSeek to premium (Claude / Codex). The progression is monotonic — once a phase upgrades, it stays upgraded. Tier 1 (`solo`) is all DeepSeek end-to-end.
+Score the whole plan's residual difficulty from **1 to 5** before choosing the profile. This is not the same as per-task execution complexity: it decides how strong the planning/revision/adjudication loop should be for the run as a whole. Task execution still gets routed later by `finalize` through `tier_models.execute`.
 
-### When to pick each tier
+The score is intentionally more granular than the profile map: scores `1`, `2`, and `3` all use `partnered-3`. The extra resolution is for auditability and repeatability, not fake precision. Only move to `partnered-4` or `partnered-5` when the plan itself is model-quality-sensitive.
 
-| Tier | Profile | Picks for | Rough cost (light) |
-|---|---|---|---|
-| 1 | **`solo`** | One non-premium model working alone across every phase. Discovery, docs, schema migrations, ports of self-contained code, utility scripts, config changes, mechanical refactors, CRUD over existing schemas, test fixtures — anything where patterns are stable and overlapping concerns are few. This is already the floor; if it feels like too much, `bare` robustness is the answer, not a lower tier. | ~$0.50-2 |
-| 2 | **`directed`** | A premium model writes the plan; DeepSeek executes it. Complex schema migrations where step ordering matters, multi-step refactors needing careful sequencing, features whose architecture demands deliberation but whose code follows patterns, greenfield implementations with non-trivial design but well-shaped pieces. Drop down to `solo` when the plan is obvious — DeepSeek can plan mechanical work just fine. | ~$1-3 |
-| 3 | **`partnered`** | Premium and DeepSeek working together — premium handles plan, revise, and review; critique now runs on cheap DeepSeek *directed by the premium critique-evaluator* (adaptive critique on by default), and DeepSeek handles the mechanical phases. New CLI commands with cross-cutting concerns, inbox/routing rewrites, adapters with non-trivial edge cases, export/import surfaces with format edge cases, novel features in known architecture, refactors with real cross-system implications. Drop down to `directed` when patterns are stable and variables are few — `partnered` is for genuinely novel or cross-cutting work. | ~$5-15 |
-| 4 | **`premium`** | Premium mind everywhere — DeepSeek exits; single-vendor premium end-to-end. Schema definitions, wire formats, security-critical code paths, public API contracts, migration logic against production data, kernel-invariant changes. Drop down to `partnered` when the execution is mechanical once mapped out — decision-difficulty alone doesn't justify tier 4. | ~$30-70 |
-| 5 | **`apex`** | Both Claude and Codex contributing — the only tier where the two premium models stop being interchangeable. Concurrency primitives that cascade, schemas all later sprints build on, wire formats / claim semantics, multi-system migration decisions, huge architectural choices. Drop down to `premium` unless (a) high-stakes — regression = production incident — or (b) the sprint is making a huge architectural decision, and the execution has enough detail to warrant premium implementing it. | ~$30-50 |
+| Score | Profile | Use when |
+|---|---|---|
+| `1` | `partnered-3` | Small, local, well-specified work with obvious files and tests. |
+| `2` | `partnered-3` | Moderate implementation where patterns are known and failure is easy to detect. |
+| `3` | `partnered-3` | Default for real engineering work: some judgment calls, but no unusually hard architecture or validation problem. |
+| `4` | `partnered-4` | Hard planning or decomposition: unfamiliar code, cross-system behavior, subtle ordering, import/package topology, or a difficult task-difficulty adjudication problem. |
+| `5` | `partnered-5` | Highest-stakes or hardest plans: architecture pivots, production data, security, public contracts, migrations, or failures that could pass tests while causing non-local damage. |
 
-Tiers 4 and 5 are the only tiers where a premium model executes the code, not just reasons about it — reach for them when the *implementation* itself is nuanced, not just the decision. Tier 5 specifically combines Claude and Codex's different strengths (Opus on author/repo-reading, Codex on critique/structural-analysis); that pairing is its whole rationale.
+Use these guardrails:
 
-### Which model handles each phase
+- Do not upscore for size alone. Large repetitive work should split into an epic, raise `--robustness`, or cap execution spend; it should not become `partnered-5` just because there are many edits.
+- Raise to `4` for package moves, import graph changes, public re-exports, shared initialization paths, dependency inversion, or other topology work, even when the desired behavior is unchanged.
+- Use `5` when a bad plan could still pass local tests while damaging a contract, invariant, migration path, data model, security boundary, or downstream architecture.
+- Score the highest plausible planning failure, not the scariest noun. Production data, auth, or schemas do not automatically mean `5` if the actual change is local and well-proven.
 
-| Phase | solo | directed | partnered | premium | apex |
-|---|---|---|---|---|---|
-| **plan**     | DeepSeek | claude   | claude   | claude | claude |
-| **prep**     | DeepSeek | DeepSeek | DeepSeek | claude | claude |
-| **critique** | DeepSeek | DeepSeek | DeepSeek | claude | codex  |
-| **revise**   | DeepSeek | DeepSeek | claude   | claude | claude |
-| **gate**     | DeepSeek | DeepSeek | DeepSeek | claude | claude |
-| **finalize** | DeepSeek | DeepSeek | DeepSeek | claude | claude |
-| **execute**  | DeepSeek | DeepSeek | DeepSeek | claude | codex  |
-| **review**   | DeepSeek | DeepSeek | claude   | claude | codex  |
+When genuinely torn between two scores, choose the lower score and raise `--depth` or `--robustness` first, unless the specific risk is bad task decomposition, bad task-difficulty adjudication, or a bad architecture choice. Those are profile-selection risks.
 
-Legend:
+Use the dials separately:
 
-- **DeepSeek** = DeepSeek V4 Pro (open-source workhorse; competent, structured, non-premium).
-- **claude** = Claude Opus 4.7. **codex** = Codex GPT-5.5.
+- Unclear requirements or missing context -> `--with-prep` or higher `--robustness`.
+- Need more deliberation from the same planner -> higher `--depth`.
+- Need a better model for decomposition/adjudication/architecture -> higher profile.
 
-Each tier upgrades one block of phases to premium; once upgraded, a phase stays upgraded. Tier 5 doesn't add coverage — it splits premium across two vendors.
+Always record the choice in the prep output:
 
-### Adaptive critique — premium direction, cheap execution
-
-For the premium-bearing profiles (**`partnered`**, **`premium`**, **`apex`**) adaptive critique is **on by default**. Instead of running every critique lens on the profile's critique model, a premium **critique-evaluator** reads the finished plan and *adjudicates* the critique: it decides which of the lenses fire (justifying every skip), routes each surviving lens to the **cheapest critic in the roster that can do it justice**, and escalates to a premium critic only for the lenses that genuinely demand deeper judgment. In `partnered` the critique slot itself is cheap DeepSeek — the cheap slot is precisely what *triggers* the premium evaluator to take the wheel, rather than something it fights.
-
-This is the concrete embodiment of megaplan's model philosophy — *cheapest capable model per task; premium reserved for adjudication and the genuinely hard work* — applied to the critique phase: the expensive premium judgment goes into **deciding and directing**, while the bulk of the lens-by-lens grinding runs cheap.
-
-Adaptive critique is **off for the open-only profiles** (`solo`, `directed`): there is no premium model in those tiers to direct with, and forcing one in would push a premium key into an otherwise key-free setup. Force it on for any profile with `--adaptive-critique`; pin `[execution].adaptive_critique` in config to override the per-profile default in either direction.
-
-### Vendor: Claude and Codex are mostly interchangeable at tiers 2-4
-
-**Claude and Codex are treated as mostly interchangeable at tiers 2-4 — by policy, not just by observation.** The marginal quality difference between them on a given task is small relative to picking the wrong tier or robustness; encoding per-task vendor preferences would add a dial that doesn't earn its keep. Users may prefer one or the other depending on which subscription has more credits available — pick a preferred vendor once (`--vendor`, or `[defaults].vendor` in config) and the preference flows through every tier-2-through-4 profile.
-
-**Tier 5 is the exception** — its whole rationale is using both vendors' different strengths together. `--vendor` is silently ignored there. The phase table above shows the claude variant for tiers 2-4; for the codex variant, swap `claude`↔`codex` throughout.
-
-### Single-vendor: only Claude, or only Codex
-
-The five-tier ladder above silently **assumes DeepSeek is available** — its whole economy is "cheap mechanical work on DeepSeek, premium reasoning on Claude/Codex." If you have **only** Anthropic credentials (no DeepSeek / Fireworks / Codex key), every tiered profile — including `solo`, the most common recommendation — fails preflight, because `solo` routes all reasoning *and* execute to DeepSeek. There is **no silent fallback to Claude**: the run exits with a credential error (exit 7) that now names the profile to use instead. `--vendor` on `solo` is a no-op and won't rescue a DeepSeek-less setup.
-
-For a single-vendor setup, reach for the dedicated end-to-end profiles:
-
-- **`all-claude`** — every reasoning phase on Opus; execute complexity-routed *within the Claude family* (Haiku for trivial tasks → Sonnet → Opus for the hardest). The Claude-only counterpart to the tier ladder: cheap work stays cheap without ever leaving Claude.
-- **`all-codex`** — same shape on GPT-5.5; execute routed by *reasoning effort* (`minimal`→`high`), since Codex has no budget-tier model to drop to. `vendor_locked`.
-
-These ignore the tier dial (there's no DeepSeek to trade against), so for single-vendor work you're really only choosing **robustness** and **depth** on top of the fixed vendor. The cost-tiered profiles remain the better deal once a DeepSeek key is added — the preflight error spells out how to get there.
+```text
+Overall plan difficulty: N/5; selected profile: partnered-3|partnered-4|partnered-5; because: <one sentence naming the planning failure being guarded against>.
+```
 
 ---
 
@@ -149,7 +123,7 @@ The `--robustness` flag. Picks how many phases run and how many critique passes 
 
 Cost scales ~1.5-2× from `light` → `full`, another ~1.3× to `thorough`.
 
-The "critique lenses" counts above are the **static** lens pools used when adaptive critique is **off** (the open-only profiles `solo`/`directed`): `full` runs the 6 core lenses, `thorough`/`extreme` run all 9. When adaptive critique is **on** (`partnered`/`premium`/`apex`), the evaluator selects which lenses fire from the same 9-lens catalog per iteration — the robustness dial no longer fixes a count; the evaluator does (see "Adaptive critique" above and [`docs/critique.md`](critique.md)). Robustness still governs the surrounding workflow shape (whether `gate`/`review` run, whether prep/parallel critique are forced).
+The "critique lenses" counts above are the **static** lens pools used when adaptive critique is **off**. When adaptive critique is **on**, the evaluator selects which lenses fire from the same 9-lens catalog per iteration — the robustness dial no longer fixes a count; the evaluator does (see [`docs/critique.md`](critique.md)). Robustness still governs the surrounding workflow shape (whether `gate`/`review` run, whether prep/parallel critique are forced).
 
 ---
 
@@ -178,12 +152,12 @@ Default to `low`; only spend on depth when you can name the specific reason the 
 
 **If a run is struggling, escalate mid-flight rather than letting it grind.** Common signals: the plan keeps missing concerns critique surfaces; revise doesn't resolve the critique's flags; the executor produces work review can't accept; iteration cycles through the same defects without converging. Don't sit through a degenerate run — one wasted phase costs much less than restarting the sprint.
 
-- `python -m arnold.pipelines.megaplan override set-profile --profile NAME --plan ID` — swap tier mid-run. Started on `partnered`, hit something gnarlier, escalate to `premium` for the remainder.
+- `python -m arnold.pipelines.megaplan override set-profile --profile NAME --plan ID` — swap profile mid-run. Started on `partnered-3`, hit something gnarlier, escalate to `partnered-4` or `partnered-5` for the remainder.
 - `python -m arnold.pipelines.megaplan override set-robustness --robustness LEVEL --plan ID` — same for the planning-complexity dial.
 - `python -m arnold.pipelines.megaplan override replan --plan ID` — back up to planning and redo with whatever models / robustness are now active.
 - `python -m arnold.pipelines.megaplan override add-note --plan ID --note "..."` — inject guidance into an active plan without restarting any phase. Read by every subsequent phase. The brief is snapshotted at `init`; later edits to the idea-file are NOT re-read, so this is the verb for "I missed something." **`python -m arnold.pipelines.megaplan feedback` is end-of-run rating, not in-flight guidance** — common confusion.
 
-Lean on these instead of inventing new profile names. If you find yourself thinking "I want a profile that's *like* `partnered` but with X" — the answer is almost always `partnered` plus an override, not a new profile.
+Lean on these instead of inventing more profile names. If you find yourself thinking "I want a profile that's *like* `partnered-3` but with X" — the answer is usually `partnered-3` plus an override, unless it matches the explicit `partnered-4` or `partnered-5` rubric above.
 
 ---
 
@@ -232,11 +206,10 @@ Write `profile/robustness/depth`, omit defaults, append modifiers. Order is fixe
 
 | Shorthand | Meaning |
 |---|---|
-| `solo` | Tier 1, defaults throughout |
-| `partnered//high` | Tier 3, high depth, default robustness |
-| `partnered//high @codex +prep` | Tier 3, high depth, codex vendor, with prep phase |
-| `premium/thorough/high, critic=cross` | Tier 4, thorough, high depth, cross-vendor critic |
-| `apex/thorough/high` | Tier 5, thorough, high depth (no `+prep` needed — apex includes prep at thorough) |
+| `partnered-3` | Overall plan difficulty 1–3, defaults throughout |
+| `partnered-4//high` | Overall plan difficulty 4, high depth, default robustness |
+| `partnered-3//high @codex +prep` | Overall plan difficulty 1–3, high depth, codex vendor, with prep phase |
+| `partnered-5/thorough/high` | Overall plan difficulty 5, thorough, high depth |
 
 Modifier conventions: `@<vendor>` for vendor override, `, critic=<kind>` for critic override, `+prep` to enable prep, `+feedback` to enable feedback. Append modifiers without disturbing the spine.
 
@@ -250,14 +223,14 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 
 ### The three dial flags
 
-1. **`--profile`** — the tier name (`solo`, `directed`, `partnered`, `premium`, `apex`).
+1. **`--profile`** — `partnered-3`, `partnered-4`, or `partnered-5`, chosen from the overall plan difficulty score.
 2. **`--robustness bare|light|full|thorough|extreme`** — `full` is home base.
 3. **`--depth low|medium|high|xhigh|max`** — rewrites the effort suffix on author-side claude/codex slots (plan, revise, loop_plan, tiebreaker_*) at the resolved vendor. Critic + mechanical phases plateau at their existing depth (the asymmetry principle). Defaults to whatever the profile sets (usually `:low`). Honored on vendor-locked profiles. Codex caps at `high`; Claude adds `xhigh` and `max`.
 
 ### The modifier flags
 
-- **`--vendor claude|codex`** — vendor override at tiers 2-4. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset). Tier 1 ignores it (no premium phases); tier 5 silently ignores it (vendor-locked).
-- **`--critic cross`** — overrides the critique+review pair to the other premium vendor relative to `--vendor`. Silently ignored at tier 5.
+- **`--vendor claude|codex`** — vendor override where the selected profile exposes premium vendor slots. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset).
+- **`--critic cross`** — overrides the critique+review pair to the other premium vendor relative to `--vendor`, when supported by the selected profile.
 - **`--deepseek-provider fireworks|direct`** — swaps canonical DeepSeek v4-pro slots between Fireworks and DeepSeek's direct API. Defaults to `direct`; use `fireworks` as the explicit secondary/fallback route.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `thorough`/`extreme`. See "Optional phases" above.
 - **`--prep-direction "…"`** — steering text shown to the prep worker (when prep runs) as a "User direction for prep" section. Points prep at specific files / subsystems / questions to explore. Can also be set or replaced later with `python -m arnold.pipelines.megaplan prep --direction "…"` before the phase runs. No-op if prep is skipped. See "Optional phases" above.
@@ -288,7 +261,7 @@ The model that critiques the plan also reviews the executed work — same mind p
 
 `--critic` bundles the two phases in one flag and preserves the invariant. Bare `--phase-model` does not — if you override critique with `--phase-model`, override review the same way, or use `--critic` instead.
 
-**Exception — `partnered`:** here critique runs on cheap DeepSeek under the premium *critique-evaluator's* direction (adaptive critique is on by default), while review stays premium. The premium **director** — not a strict same-model invariant — is what keeps the critique phase honest: the evaluator picks the lenses the cheap critic runs and rejects weak findings, so you get premium-grade critique judgment without paying for a premium critic model on every lens.
+**Exception — `partnered-*`:** critique may run on cheap DeepSeek under the premium *critique-evaluator's* direction (adaptive critique is on by default), while review stays premium. The premium **director** — not a strict same-model invariant — is what keeps the critique phase honest: the evaluator picks the lenses the cheap critic runs and rejects weak findings, so you get premium-grade critique judgment without paying for a premium critic model on every lens.
 
 ### Worktree isolation — `--in-worktree`
 
@@ -304,22 +277,22 @@ Skip `--in-worktree` for small one-shot plans, bakeoff runs (orchestrator manage
 ### Worked invocations
 
 > *"Schema migration, step ordering intricate but each step mechanical."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile directed`
+> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-3`
 
 > *"Novel cross-cutting feature, long brief, unfamiliar codebase."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile partnered --depth high`
+> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-4 --depth high`
 
 > *"Novel feature against an external API we haven't used."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile partnered --with-prep`
+> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-3 --with-prep`
 
 > *"Migration logic against production data."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile premium --robustness thorough --depth high`
+> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-5 --robustness thorough --depth high`
 
 > *"Schema everyone downstream will build on — concurrency primitive, cascading consequences."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile apex --robustness thorough --depth high`
+> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-5 --robustness thorough --depth high`
 
 > *"Tier 3, brief is clear, but I want the critic specifically to deliberate more — leave the planner alone."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile partnered --phase-model critique=claude:medium --phase-model review=claude:medium` *(surgical: bumps just the critic+review pair — preserving the critique==review invariant — and leaves plan/revise at the profile's default. `--depth` can't express this because it's by-phase-name, not by-author-vs-critic.)*
+> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-3 --phase-model critique=claude:medium --phase-model review=claude:medium` *(surgical: bumps just the critic+review pair — preserving the critique==review invariant — and leaves plan/revise at the profile's default. `--depth` can't express this because it's by-phase-name, not by-author-vs-critic.)*
 
 Three pieces of intent → three flags (`--profile`, `--robustness`, `--depth`), plus `--vendor` / `--critic` / `--with-prep` / `--with-feedback` / `--in-worktree` when you need them.
 
@@ -332,7 +305,7 @@ The `--vendor` flag honors a per-user config default. Write `~/.config/megaplan/
 vendor = "claude"   # "claude" or "codex"
 ```
 
-Set this once on a new machine and tiers 2-4 default to your preferred premium without per-invocation flags. The CLI flag still wins when passed. A malformed or missing config falls back to `claude` silently.
+Set this once on a new machine and supported premium slots default to your preferred vendor without per-invocation flags. The CLI flag still wins when passed. A malformed or missing config falls back to `claude` silently.
 
 ---
 
