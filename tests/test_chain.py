@@ -3708,6 +3708,7 @@ def test_initialized_plan_receives_chain_policy_metadata(
          patch("megaplan.chain._current_head_sha", return_value="abc123base"), \
          patch("megaplan.chain._init_plan", return_value="plan-stub-20260520"), \
          patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-stub-20260520", "done")), \
+         patch("megaplan.chain._commit_phase", return_value="abc123done"), \
          patch("megaplan.chain._commit_and_push_phase"), \
          patch("megaplan.chain._pr_state", return_value="merged"):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)

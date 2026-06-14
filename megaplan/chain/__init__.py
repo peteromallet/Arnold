@@ -3371,7 +3371,7 @@ def run_chain(
         local_commit_sha: str | None = None
         if (
             decision == "advance"
-            and execution_pass
+            and not planning_pass
             and not effective_use_pr
             # Only integrate where there is real git history to build on. Off a
             # git repo (logic-only tests, degenerate setups) _current_head_sha is
