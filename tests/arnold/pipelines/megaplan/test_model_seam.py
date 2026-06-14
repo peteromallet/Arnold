@@ -745,6 +745,109 @@ def test_capture_step_output_normalizes_critique_severity_hint_aliases() -> None
     ]
 
 
+def test_capture_step_output_normalizes_empty_critique_evaluator_flag_verifications() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "hermes",
+            "validation_step": "critique_evaluator",
+        },
+    )
+    base_payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "Correctness is the highest-risk lens.",
+            },
+        ],
+        "skipped": [],
+        "evaluator_model": "zhipu:glm-5.2",
+    }
+
+    for marker in (None, "N/A", {}, {"not_applicable": True, "reason": "iteration 1"}):
+        payload = dict(base_payload)
+        payload["flag_verifications"] = marker
+
+        outcome = capture_step_output(invocation, payload)
+
+        assert outcome.legacy_payload["flag_verifications"] == []
+
+
+def test_capture_step_output_unwraps_critique_evaluator_flag_verification_list() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "hermes",
+            "validation_step": "critique_evaluator",
+        },
+    )
+
+    outcome = capture_step_output(
+        invocation,
+        {
+            "selections": [
+                {
+                    "check_id": "correctness",
+                    "complexity": 4,
+                    "complexity_justification": "Correctness is the highest-risk lens.",
+                },
+            ],
+            "skipped": [],
+            "evaluator_model": "zhipu:glm-5.2",
+            "flag_verifications": {
+                "entries": [
+                    {
+                        "flag_id": "FLAG-001",
+                        "lens": "correctness",
+                        "outcome": "verified",
+                        "rationale": "Diff shows the requested fix.",
+                    },
+                ],
+            },
+        },
+    )
+
+    assert outcome.legacy_payload["flag_verifications"] == [
+        {
+            "flag_id": "FLAG-001",
+            "lens": "correctness",
+            "outcome": "verified",
+            "rationale": "Diff shows the requested fix.",
+        },
+    ]
+
+
+def test_capture_step_output_rejects_real_critique_evaluator_flag_verification_malformed_value() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "tier": "enforced",
+            "worker": "hermes",
+            "validation_step": "critique_evaluator",
+        },
+    )
+
+    with pytest.raises(model_seam.ModelStructuralAuditError, match="/flag_verifications"):
+        capture_step_output(
+            invocation,
+            {
+                "selections": [
+                    {
+                        "check_id": "correctness",
+                        "complexity": 4,
+                        "complexity_justification": "Correctness is the highest-risk lens.",
+                    },
+                ],
+                "skipped": [],
+                "evaluator_model": "zhipu:glm-5.2",
+                "flag_verifications": {"flag_id": "FLAG-001"},
+            },
+        )
+
+
 def test_capture_step_output_uses_critique_schema_for_wrong_typed_named_payload() -> None:
     invocation = StepInvocation(
         kind="model",
@@ -1454,6 +1557,17 @@ def test_audit_step_payload_reuses_native_schema_authority() -> None:
             "sense_check_acknowledgments": [],
         },
     )
+    verified = model_seam.capture_step_output(
+        model_seam.StepInvocation(
+            kind="model",
+            metadata={"validation_step": "execute"},
+        ),
+        {
+            "task_updates": [{"id": "T8", "status": "verified"}],
+            "sense_check_acknowledgments": [],
+        },
+    )
+    assert verified.legacy_payload["task_updates"][0]["status"] == "done"
 
     with pytest.raises(model_seam.ModelStructuralAuditError, match="/task_updates/0/"):
         model_seam.audit_step_payload(
@@ -1463,6 +1577,137 @@ def test_audit_step_payload_reuses_native_schema_authority() -> None:
                 "sense_check_acknowledgments": [],
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# T2: status normalization — full alias coverage via shared status_constants
+# ---------------------------------------------------------------------------
+
+
+def _execute_invocation(**extra_metadata: object) -> model_seam.StepInvocation:
+    return model_seam.StepInvocation(
+        kind="model",
+        metadata={"validation_step": "execute", **extra_metadata},
+    )
+
+
+def test_execute_capture_normalizes_completed_to_done() -> None:
+    outcome = model_seam.capture_step_output(
+        _execute_invocation(),
+        {
+            "task_updates": [{"id": "T1", "status": "completed"}],
+            "sense_check_acknowledgments": [],
+        },
+    )
+    update = outcome.legacy_payload["task_updates"][0]
+    assert update["status"] == "done"
+    assert "[harness] status normalized: completed -> done" in update["executor_notes"]
+
+
+def test_execute_capture_normalizes_complete_to_done() -> None:
+    outcome = model_seam.capture_step_output(
+        _execute_invocation(),
+        {
+            "task_updates": [{"id": "T2", "status": "complete"}],
+            "sense_check_acknowledgments": [],
+        },
+    )
+    update = outcome.legacy_payload["task_updates"][0]
+    assert update["status"] == "done"
+    assert "[harness] status normalized: complete -> done" in update["executor_notes"]
+
+
+def test_execute_capture_normalizes_verified_to_done() -> None:
+    outcome = model_seam.capture_step_output(
+        _execute_invocation(),
+        {
+            "task_updates": [{"id": "T3", "status": "verified"}],
+            "sense_check_acknowledgments": [],
+        },
+    )
+    update = outcome.legacy_payload["task_updates"][0]
+    assert update["status"] == "done"
+    assert "[harness] status normalized: verified -> done" in update["executor_notes"]
+
+
+def test_execute_capture_normalizes_skip_to_skipped() -> None:
+    outcome = model_seam.capture_step_output(
+        _execute_invocation(),
+        {
+            "task_updates": [{"id": "T4", "status": "skip"}],
+            "sense_check_acknowledgments": [],
+        },
+    )
+    update = outcome.legacy_payload["task_updates"][0]
+    assert update["status"] == "skipped"
+    assert "[harness] status normalized: skip -> skipped" in update["executor_notes"]
+
+
+def test_execute_capture_rejects_finished_status_at_audit() -> None:
+    """finished is not a known alias — normalization passes it through,
+    but structural audit rejects it because it is not in the status enum."""
+    with pytest.raises(model_seam.ModelStructuralAuditError, match="/task_updates/0/"):
+        model_seam.capture_step_output(
+            _execute_invocation(),
+            {
+                "task_updates": [{"id": "T5", "status": "finished"}],
+                "sense_check_acknowledgments": [],
+            },
+        )
+
+
+def test_execute_capture_absent_status_does_not_keyerror() -> None:
+    """A task_update entry without a 'status' key must not KeyError —
+    the guard must handle a missing status field gracefully."""
+    outcome = model_seam.capture_step_output(
+        _execute_invocation(),
+        {
+            "task_updates": [{"id": "T6", "executor_notes": "no status field"}],
+            "sense_check_acknowledgments": [],
+        },
+    )
+    update = outcome.legacy_payload["task_updates"][0]
+    assert "status" not in update
+    assert update["task_id"] == "T6"
+    assert update["executor_notes"] == "no status field"
+
+
+def test_execute_capture_harness_note_appended_when_status_normalized() -> None:
+    """When an existing executor_notes is present, the [harness] note is appended."""
+    outcome = model_seam.capture_step_output(
+        _execute_invocation(),
+        {
+            "task_updates": [
+                {
+                    "id": "T7",
+                    "status": "completed",
+                    "executor_notes": "Task implemented.",
+                }
+            ],
+            "sense_check_acknowledgments": [],
+        },
+    )
+    update = outcome.legacy_payload["task_updates"][0]
+    assert update["status"] == "done"
+    assert update["executor_notes"].startswith("Task implemented.")
+    assert "[harness] status normalized: completed -> done" in update["executor_notes"]
+
+
+def test_execute_capture_canonical_statuses_preserved_unchanged() -> None:
+    """Canonical statuses (done, skipped, blocked) pass through without note."""
+    for canonical in ("done", "skipped", "blocked"):
+        outcome = model_seam.capture_step_output(
+            _execute_invocation(),
+            {
+                "task_updates": [
+                    {"id": f"T-{canonical}", "status": canonical, "executor_notes": "ok"}
+                ],
+                "sense_check_acknowledgments": [],
+            },
+        )
+        update = outcome.legacy_payload["task_updates"][0]
+        assert update["status"] == canonical
+        assert update["executor_notes"] == "ok"
 
 
 def test_audit_step_payload_requires_registered_step_contract() -> None:
