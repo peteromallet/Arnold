@@ -201,6 +201,10 @@ def _write_chain_policy_into_plan_meta(
         "source": effective["source"],
         "milestone_label": milestone_label,
     }
+    try:
+        chain_policy["milestone_base_sha"] = _current_head_sha(root)
+    except CliError:
+        pass
 
     def _patch_chain_policy(current: dict[str, Any]) -> bool:
         meta = current.setdefault("meta", {})
@@ -263,6 +267,7 @@ from .git_ops import (
     _classify_sync_state,
     _command_env,
     _commit_and_push_phase,
+    _commit_phase,
     _dirty_nested_repos_from_claimed_paths,
     _dirty_worktree_paths,
     _enable_auto_merge,
@@ -1836,6 +1841,21 @@ def run_chain(
                         f"{plan_name}/full_suite_backstop.json{failing_suffix}"
                     ),
                 )
+        local_commit_sha: str | None = None
+        if (
+            decision == "advance"
+            and outcome.status == "done"
+            and not use_pr
+            and not push_enabled
+            and mode != "plan"
+        ):
+            local_commit_sha = _commit_phase(
+                root,
+                plan_name,
+                "done",
+                writer=writer,
+                preexisting_dirty_paths=preexisting_dirty_paths,
+            )
         if decision == "advance" and use_pr and state.pr_number is not None:
             _commit_and_push_phase(
                 root,
@@ -1950,6 +1970,9 @@ def run_chain(
             "pr_number": state.pr_number,
             "pr_state": state.pr_state,
         }
+        if local_commit_sha is not None:
+            completed_record["local_commit_sha"] = local_commit_sha
+            completed_record["plan_branch"] = spec.base_branch
         if full_suite_backstop_summary is not None:
             completed_record["full_suite_backstop"] = full_suite_backstop_summary
         state.completed.append(completed_record)
