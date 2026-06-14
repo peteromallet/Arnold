@@ -1,0 +1,31 @@
+# `partnered-4` is partnered-3 with revise and finalize routed to GPT 5.5.
+[profiles.partnered-4]
+adaptive_critique     = true
+plan                  = "hermes:zhipu:glm-5.2"
+prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+critique_evaluator    = "hermes:zhipu:glm-5.2"
+revise                = "codex:gpt-5.5"
+gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+finalize              = "codex:gpt-5.5"
+execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+feedback              = "hermes:zhipu:glm-5.2"
+loop_plan             = "hermes:zhipu:glm-5.2"
+loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+review                = "hermes:zhipu:glm-5.2"
+tiebreaker_researcher = "hermes:zhipu:glm-5.2"
+tiebreaker_challenger = "hermes:zhipu:glm-5.2"
+
+[profiles.partnered-4.tier_models.execute]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+4 = "codex:gpt-5.4"
+5 = "codex:gpt-5.5"
+
+[profiles.partnered-4.tier_models.critique]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+4 = "hermes:zhipu:glm-5.2"
+5 = "hermes:zhipu:glm-5.2"
