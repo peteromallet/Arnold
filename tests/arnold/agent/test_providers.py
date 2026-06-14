@@ -29,6 +29,13 @@ def test_key_pool_cooldown_and_failure(monkeypatch) -> None:
     assert pool.has_keys("fireworks") is True
 
 
+def test_key_pool_acquires_mimo_env_key(monkeypatch) -> None:
+    monkeypatch.setenv("MIMO_API_KEY", "mimo-key")
+    pool = KeyPool(ttl_seconds=0)
+
+    assert pool.acquire("mimo") == "mimo-key"
+
+
 def test_load_hermes_dotenv_uses_user_env_precedence(tmp_path: Path, monkeypatch) -> None:
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir()

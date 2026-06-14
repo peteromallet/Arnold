@@ -113,6 +113,40 @@ def test_deepseek_adapter_posts_openai_compatible_payload_and_projects_result() 
     assert result.provenance.metadata == {"provider": "deepseek"}
 
 
+def test_deepseek_adapter_routes_mimo_provider_prefix() -> None:
+    calls: list[tuple[str, Mapping[str, Any], Mapping[str, str], float | None]] = []
+
+    def transport(
+        url: str,
+        payload: Mapping[str, Any],
+        headers: Mapping[str, str],
+        timeout: float | None,
+    ) -> Mapping[str, Any]:
+        calls.append((url, payload, headers, timeout))
+        return _response(model="mimo-v2.5-pro-ultraspeed")
+
+    key_pool = _FakeKeyPool(key="mimo-key")
+    adapter = DeepSeekAdapter(key_pool=key_pool, transport=transport)
+
+    result = adapter(
+        AgentRequest(
+            agent="hermes",
+            mode="unit",
+            model="mimo:mimo-v2.5-pro-ultraspeed",
+            prompt="Say hi",
+        )
+    )
+
+    url, payload, headers, _ = calls[0]
+    assert key_pool.acquired == ["mimo"]
+    assert url == "https://api.xiaomimimo.com/v1/chat/completions"
+    assert payload["model"] == "mimo-v2.5-pro-ultraspeed"
+    assert headers["Authorization"] == "Bearer mimo-key"
+    assert headers["api-key"] == "mimo-key"
+    assert result.provenance is not None
+    assert result.provenance.metadata == {"provider": "mimo"}
+
+
 def test_deepseek_adapter_reports_rate_limit_to_key_pool() -> None:
     key_pool = _FakeKeyPool()
 
@@ -155,7 +189,9 @@ def test_deepseek_adapter_reports_auth_failure_to_key_pool() -> None:
     assert key_pool.failures == [("deepseek", "key-1")]
 
 
-def test_deepseek_adapter_fails_closed_without_available_key() -> None:
+def test_deepseek_adapter_fails_closed_without_available_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("HERMES_API_KEY", raising=False)
     adapter = DeepSeekAdapter(key_pool=_FakeKeyPool(key=""), transport=lambda *args: _response())
 
     with pytest.raises(LookupError, match="no DeepSeek API key available"):

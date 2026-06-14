@@ -28,6 +28,7 @@ _RELOAD_TTL_SECONDS = 60.0
 _PROVIDER_KEY_VARS = {
     "zhipu": "ZHIPU_API_KEY",
     "minimax": "MINIMAX_API_KEY",
+    "mimo": "MIMO_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "google": "GEMINI_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
@@ -43,12 +44,14 @@ _ENV_ALIASES = {
 _PROVIDER_BASE_URL_VARS = {
     "zhipu": "ZHIPU_BASE_URL",
     "minimax": "MINIMAX_BASE_URL",
+    "mimo": "MIMO_BASE_URL",
     "deepseek": "DEEPSEEK_BASE_URL",
     "fireworks": "FIREWORKS_BASE_URL",
 }
 _DEFAULT_BASE_URLS = {
     "zhipu": "https://open.bigmodel.cn/api/paas/v4",
     "minimax": "https://api.minimax.io/v1",
+    "mimo": "https://api.xiaomimimo.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
     "deepseek": "https://api.deepseek.com",

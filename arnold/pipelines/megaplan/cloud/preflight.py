@@ -47,6 +47,7 @@ _ENV_HINTS_BY_AGENT: dict[str, tuple[str, ...]] = {
 _ENV_HINTS_BY_HERMES_PROVIDER: dict[str, tuple[str, ...]] = {
     "deepseek": ("DEEPSEEK_API_KEY",),
     "fireworks": ("FIREWORKS_API_KEY",),
+    "mimo": ("MIMO_API_KEY",),
 }
 
 
