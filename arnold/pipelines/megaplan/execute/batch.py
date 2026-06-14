@@ -92,7 +92,10 @@ from arnold.pipelines.megaplan.planning.state import (
     STATE_EXECUTED,
     STATE_FINALIZED,
 )
+from arnold.pipelines.megaplan.blocker_recovery import evaluate_quality_blockers
+from arnold.pipelines.megaplan.bakeoff.channel_shadow import maybe_run_channel_shadow
 from arnold.pipelines.megaplan.workers import WorkerResult
+from arnold.pipelines.megaplan.workers.result_metadata import aggregate_rate_limits
 
 log = logging.getLogger(__name__)
 
@@ -772,6 +775,18 @@ def _run_and_merge_batch(
         resolved=am_for_worker,
         prompt_override=rendered_prompt_override,
     )
+    maybe_run_channel_shadow(
+        root=root,
+        plan_dir=plan_dir,
+        state=state,
+        args=args,
+        step="execute",
+        primary_worker=worker,
+        primary_agent=agent,
+        prompt_override=prompt_override,
+        sample_key=f"{state.get('name') or plan_dir.name}:execute:{batch_number}",
+        resolved=am_for_worker,
+    )
     payload = _capture_execute_payload(
         agent=agent,
         model=model,
@@ -1157,6 +1172,9 @@ def handle_execute_one_batch(
         result.worker.session_id,
         mode=result.mode,
         refreshed=result.refreshed,
+        worker_channel=result.worker.worker_channel,
+        auth_channel=result.worker.auth_channel,
+        auth_metadata=result.worker.auth_metadata,
     )
     trace_written = _append_trace_output(plan_dir, result.worker.trace_output)
     blocking_reasons = build_blocking_reasons(
@@ -1280,6 +1298,7 @@ def handle_execute_one_batch(
             prompt_tokens=result.worker.prompt_tokens,
             completion_tokens=result.worker.completion_tokens,
             total_tokens=result.worker.total_tokens,
+            rate_limit=result.worker.rate_limit,
         )
         receipt_metrics = execute_metrics(aggregate_payload, drift)
         receipt_metrics["batches"] = batch_payloads
@@ -1929,6 +1948,7 @@ def handle_execute_auto_loop(
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_total_tokens = 0
+    rate_limits: list[dict[str, Any] | None] = []
     timeout_error: CliError | None = None
     latest_session_id: str | None = None
     blocking_reasons: list[str] = []
@@ -2113,6 +2133,7 @@ def handle_execute_auto_loop(
         total_prompt_tokens += int(result.worker.prompt_tokens or 0)
         total_completion_tokens += int(result.worker.completion_tokens or 0)
         total_total_tokens += int(result.worker.total_tokens or 0)
+        rate_limits.append(result.worker.rate_limit)
         latest_session_id = result.worker.session_id
         apply_session_update(
             state,
@@ -2121,6 +2142,9 @@ def handle_execute_auto_loop(
             result.worker.session_id,
             mode=result.mode,
             refreshed=result.refreshed,
+            worker_channel=result.worker.worker_channel,
+            auth_channel=result.worker.auth_channel,
+            auth_metadata=result.worker.auth_metadata,
         )
         # Track the actual tier-selected model identity for the next batch's
         # freshness comparison (timeout recovery paths read this same tracking).
@@ -2346,6 +2370,7 @@ def handle_execute_auto_loop(
         prompt_tokens=total_prompt_tokens,
         completion_tokens=total_completion_tokens,
         total_tokens=total_total_tokens,
+        rate_limit=aggregate_rate_limits(rate_limits),
     )
     receipt_metrics = execute_metrics(aggregate_payload, drift)
     receipt_metrics["batches"] = batch_payloads

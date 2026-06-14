@@ -952,6 +952,60 @@ _VENDORED_SHANNON_PATH = (
 ).resolve()
 
 
+_TRUTHY_SHANNON_STREAM_VALUES = {"1", "true", "on", "yes"}
+_FALSY_SHANNON_STREAM_VALUES = {"0", "false", "off", "no"}
+
+
+def _channel_shadow_gate_green(root: Path, plan_id: str) -> bool:
+    path = root / ".megaplan" / "bakeoffs" / plan_id / "channel_shadow.json"
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    gate = state.get("gate")
+    if not isinstance(gate, dict):
+        return False
+    channel_pair = gate.get("channel_pair")
+    if not isinstance(channel_pair, dict):
+        return False
+    channels = {
+        channel_pair.get("primary_worker_channel"),
+        channel_pair.get("shadow_worker_channel"),
+    }
+    return (
+        gate.get("greenlight") is True
+        and int(gate.get("real_parity_success_count") or 0) >= int(gate.get("threshold") or 5)
+        and int(gate.get("real_parity_failure_count") or 0) == 0
+        and channels == {"shannon_tmux", "shannon_stream"}
+        and channel_pair.get("primary_auth_channel") == "subscription"
+        and channel_pair.get("shadow_auth_channel") == "subscription"
+    )
+
+
+def _shannon_stream_worker_enabled(
+    *,
+    root: Path | None = None,
+    plan_id: str | None = None,
+) -> bool:
+    """Return True when Shannon stream is explicitly enabled or rollout-gated."""
+    raw = os.getenv("MEGAPLAN_SHANNON_STREAM_WORKER")
+    if raw is not None:
+        normalized = raw.strip().lower()
+        if normalized in _FALSY_SHANNON_STREAM_VALUES:
+            return False
+        return normalized in _TRUTHY_SHANNON_STREAM_VALUES
+    if root is None or not plan_id:
+        return False
+    return _channel_shadow_gate_green(root, plan_id)
+
+
+def is_claude_stream_available(*, shutil_ref: Any = None) -> bool:
+    """Return True iff the Claude CLI is on PATH for the headless stream worker."""
+    if shutil_ref is None:
+        shutil_ref = shutil
+    return bool(shutil_ref.which("claude"))
+
+
 def is_shannon_available(*, shutil_ref: Any = None) -> bool:
     """Return True iff bun + claude + tmux are on PATH and the vendored
     Shannon fork is present at ``megaplan/vendor/shannon/index.ts``.

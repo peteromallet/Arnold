@@ -19,7 +19,7 @@ import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from arnold.pipelines.megaplan.audits.robustness import build_empty_template
 from arnold.pipelines.megaplan.forms.provocations import select_active_checks
@@ -85,6 +85,7 @@ from arnold.pipelines.megaplan.runtime.execution_environment import (
 
 
 from arnold.pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
+from arnold.pipelines.megaplan.workers.turn_cap import acquire_turn_slot
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
@@ -119,6 +120,7 @@ class CommandResult:
     stderr: str
     duration_ms: int
 
+ProgressLivenessState = Literal["progressing", "alive_only", "stalled", "unknown"]
 # Inter-event idle bound for the shannon worker (Claude via the shannon CLI).
 #
 # HISTORY (2026-05-24): shannon was launched with ``--output-format=json``, a
@@ -270,6 +272,10 @@ class WorkerResult:
     # session plan (kind, session_id, voice, pre-turn kinds + pre_sleep_s).
     # ``None`` for non-Shannon workers.
     shannon_plan: dict[str, Any] | None = None
+    rate_limit: dict[str, Any] | None = None
+    worker_channel: str | None = None
+    auth_channel: str | None = None
+    auth_metadata: dict[str, Any] | None = None
 
     @classmethod
     def from_agent_result(cls, agent_result: Any) -> WorkerResult:
@@ -287,6 +293,10 @@ class WorkerResult:
             completion_tokens=agent_result.completion_tokens,
             total_tokens=agent_result.total_tokens,
             shannon_plan=agent_result.shannon_plan,
+            rate_limit=agent_result.rate_limit,
+            worker_channel=(getattr(agent_result, "metadata", {}) or {}).get("worker_channel"),
+            auth_channel=(getattr(agent_result, "metadata", {}) or {}).get("auth_channel"),
+            auth_metadata=(getattr(agent_result, "metadata", {}) or {}).get("auth_metadata"),
         )
 
     def to_agent_result(self) -> Any:
@@ -306,6 +316,16 @@ class WorkerResult:
             completion_tokens=self.completion_tokens,
             total_tokens=self.total_tokens,
             shannon_plan=self.shannon_plan,
+            rate_limit=self.rate_limit,
+            metadata={
+                key: value
+                for key, value in {
+                    "worker_channel": self.worker_channel,
+                    "auth_channel": self.auth_channel,
+                    "auth_metadata": self.auth_metadata,
+                }.items()
+                if value is not None
+            },
         )
 
 
@@ -527,15 +547,18 @@ def run_command(
     env: dict[str, str] | None = None,
     timeout: int | None = None,
     activity_callback: Callable[[str, str], None] | None = None,
+    activity_guard: Callable[[str, str], None] | None = None,
     idle_timeout: float | None = None,
     pre_first_byte_timeout: float | None = None,
     liveness_probe: Callable[[], bool] | None = None,
+    progress_liveness_probe: Callable[[], ProgressLivenessState] | None = None,
+    progress_liveness_grace_timeout: float | None = None,
     tmux_session: TmuxSession | None = None,
 ) -> CommandResult:
     try:
         started = time.monotonic()
         timeout = timeout or get_effective("execution", "worker_timeout_seconds")
-        if activity_callback is None:
+        if activity_callback is None and activity_guard is None:
             try:
                 process = subprocess.run(
                     command,
@@ -611,6 +634,9 @@ def run_command(
             # bug, exception) still dies within a hard multiple of the idle bound
             # instead of running to the 2h wall-clock ``timeout``.
             last_real_output = [time.monotonic()]
+            last_progress_signal = [last_real_output[0]]
+            guard_triggered = threading.Event()
+            guard_error: list[CliError] = []
 
             def _reader(stream: Any, parts: list[bytes], kind: str) -> None:
                 if stream is None:
@@ -630,10 +656,28 @@ def run_command(
                         break
                     last_output[0] = time.monotonic()
                     last_real_output[0] = time.monotonic()
+                    last_progress_signal[0] = time.monotonic()
                     first_byte_seen[0] = True
                     parts.append(chunk)
+                    text = chunk.decode("utf-8", errors="replace")
+                    if activity_guard is not None:
+                        try:
+                            activity_guard(kind, text)
+                        except CliError as exc:
+                            guard_error.append(exc)
+                            guard_triggered.set()
+                            return
+                        except Exception as exc:
+                            guard_error.append(
+                                CliError(
+                                    "activity_guard_error",
+                                    f"Worker activity guard failed: {exc}",
+                                )
+                            )
+                            guard_triggered.set()
+                            return
                     if activity_callback is not None:
-                        activity_callback(kind, chunk.decode("utf-8", errors="replace"))
+                        activity_callback(kind, text)
 
             threads = [
                 threading.Thread(target=_reader, args=(process.stdout, stdout_parts, "stdout"), daemon=True),
@@ -656,6 +700,8 @@ def run_command(
                 while not heartbeat_stop.wait(5.0):
                     if process.poll() is not None:
                         return
+                    if activity_callback is None:
+                        continue
                     try:
                         activity_callback("liveness", "worker subprocess alive")
                     except Exception:
@@ -671,6 +717,20 @@ def run_command(
             def _coerce_timeout_output(parts: list[bytes]) -> str:
                 return b"".join(parts).decode("utf-8", errors="replace")
 
+            def _combined_raw_output() -> str:
+                return _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)
+
+            def _raise_guard_error() -> None:
+                error = guard_error[0] if guard_error else CliError(
+                    "activity_guard_error",
+                    "Worker activity guard stopped the subprocess.",
+                )
+                raw = _combined_raw_output()
+                if raw:
+                    existing = str(error.extra.get("raw_output", ""))
+                    error.extra["raw_output"] = existing + raw if existing else raw
+                raise error
+
             # When the caller opts in to the idle-output watchdog (e.g. the shannon
             # worker) OR the pre-first-byte watchdog (e.g. the codex worker), poll
             # process.wait() in short slices so we can also enforce those bounds
@@ -682,15 +742,27 @@ def run_command(
                 if pre_first_byte_timeout is not None
                 else None
             )
-            if idle_timeout is not None or first_byte_deadline is not None:
+            if (
+                idle_timeout is not None
+                or first_byte_deadline is not None
+                or activity_guard is not None
+                or progress_liveness_probe is not None
+            ):
                 deadline = started + timeout
                 try:
                     while True:
+                        if guard_triggered.is_set():
+                            kill_group(process)
+                            heartbeat_stop.set()
+                            for thread in threads:
+                                thread.join(timeout=1)
+                            _raise_guard_error()
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
                             raise subprocess.TimeoutExpired(command, timeout)
-                        # Poll on at most a 1s slice so both watchdogs fire promptly.
-                        wait_slice = min(1.0, remaining)
+                        # Poll on short slices so watchdogs and guard failures
+                        # fire promptly while reader threads keep collecting output.
+                        wait_slice = min(0.1 if activity_guard is not None else 1.0, remaining)
                         try:
                             returncode = process.wait(timeout=wait_slice)
                             break
@@ -748,7 +820,46 @@ def run_command(
                                 # which still catches a genuinely hung/dead turn. The
                                 # wall-clock ``timeout`` (worker_timeout_seconds)
                                 # remains the hard upper bound.
-                                if liveness_probe is not None:
+                                if progress_liveness_probe is not None:
+                                    try:
+                                        liveness_state = progress_liveness_probe()
+                                    except Exception:
+                                        liveness_state = "unknown"
+                                    if liveness_state == "progressing":
+                                        if activity_callback is not None:
+                                            try:
+                                                activity_callback(
+                                                    "liveness",
+                                                    "worker progressing (probe); idle clock reset",
+                                                )
+                                            except Exception:
+                                                pass
+                                        now = time.monotonic()
+                                        last_output[0] = now
+                                        last_progress_signal[0] = now
+                                        continue
+                                    if liveness_state in {"alive_only", "unknown"}:
+                                        grace = (
+                                            progress_liveness_grace_timeout
+                                            if progress_liveness_grace_timeout is not None
+                                            else _probe_rescue_cap_seconds()
+                                        )
+                                        if time.monotonic() - last_progress_signal[0] <= grace:
+                                            if activity_callback is not None:
+                                                try:
+                                                    activity_callback(
+                                                        "liveness",
+                                                        f"worker {liveness_state} (probe); "
+                                                        "idle clock reset within grace",
+                                                    )
+                                                except Exception:
+                                                    pass
+                                            last_output[0] = time.monotonic()
+                                            continue
+                                    # "stalled" or expired alive_only/unknown
+                                    # grace falls through to the centralized
+                                    # worker_stall kill path below.
+                                elif liveness_probe is not None:
                                     # Hard backstop: cap how long a stdout-SILENT
                                     # turn may be rescued by the probe alone. The
                                     # probe's "progress" signal (transcript mtime)
@@ -838,6 +949,12 @@ def run_command(
                         f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
                         extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
                     ) from exc
+            if guard_triggered.is_set():
+                kill_group(process)
+                heartbeat_stop.set()
+                for thread in threads:
+                    thread.join(timeout=1)
+                _raise_guard_error()
             heartbeat_stop.set()
             for thread in threads:
                 thread.join(timeout=1)
@@ -1970,7 +2087,58 @@ def mock_worker_output(
     return result
 
 
-def session_key_for(step: str, agent: str, model: str | None = None) -> str:
+def _normalize_shannon_session_channel(worker_channel: str | None) -> str | None:
+    if worker_channel in {None, ""}:
+        return None
+    normalized = str(worker_channel).strip().lower().replace("-", "_")
+    if normalized in {"shannon_stream", "stream", "stream_json", "native_stream"}:
+        return "stream_json"
+    if normalized in {"shannon", "tmux", "interactive_tmux"}:
+        return "tmux"
+    return normalized
+
+
+def _shannon_session_identity_suffix(
+    *,
+    worker_channel: str | None,
+    auth_channel: str | None,
+    auth_metadata: dict[str, Any] | None,
+) -> str | None:
+    channel = _normalize_shannon_session_channel(worker_channel)
+    if channel is None:
+        return None
+    metadata = auth_metadata if isinstance(auth_metadata, dict) else {}
+    auth = str(auth_channel or metadata.get("auth_channel") or "subscription")
+    auth = auth.strip().lower().replace("-", "_")
+    if auth in {"", "oauth"}:
+        auth = "subscription"
+
+    # Historical Shannon session keys were tmux/subscription keys. Keep that
+    # exact spelling as the compatibility/migration path; all other Shannon
+    # channel identities get an explicit suffix so stream/tmux cannot cross-resume.
+    if channel == "tmux" and auth == "subscription":
+        return None
+
+    parts = [channel, auth]
+    if auth == "api_key":
+        dry_run = bool(metadata.get("dry_run"))
+        source = metadata.get("api_key_source")
+        parts.append("dry_run" if dry_run else "live")
+        if source:
+            digest = hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:8]
+            parts.append(digest)
+    return "_".join(parts)
+
+
+def session_key_for(
+    step: str,
+    agent: str,
+    model: str | None = None,
+    *,
+    worker_channel: str | None = None,
+    auth_channel: str | None = None,
+    auth_metadata: dict[str, Any] | None = None,
+) -> str:
     if step in {"plan", "revise"}:
         key = f"{agent}_planner"
     elif step == "critique":
@@ -1985,12 +2153,32 @@ def session_key_for(step: str, agent: str, model: str | None = None) -> str:
         key = f"{agent}_reviewer"
     else:
         key = f"{agent}_{step}"
+    if agent in {"shannon", "claude"}:
+        channel_suffix = _shannon_session_identity_suffix(
+            worker_channel=worker_channel,
+            auth_channel=auth_channel,
+            auth_metadata=auth_metadata,
+        )
+        if channel_suffix:
+            key += f"_{channel_suffix}"
     if model:
         key += f"_{hashlib.sha256(model.encode()).hexdigest()[:8]}"
     return key
 
 
-def update_session_state(step: str, agent: str, session_id: str | None, *, mode: str, refreshed: bool, model: str | None = None, existing_sessions: dict[str, Any] | None = None) -> tuple[str, SessionInfo] | None:
+def update_session_state(
+    step: str,
+    agent: str,
+    session_id: str | None,
+    *,
+    mode: str,
+    refreshed: bool,
+    model: str | None = None,
+    existing_sessions: dict[str, Any] | None = None,
+    worker_channel: str | None = None,
+    auth_channel: str | None = None,
+    auth_metadata: dict[str, Any] | None = None,
+) -> tuple[str, SessionInfo] | None:
     """Build a session entry for the given step.
 
     Returns ``(key, entry)`` so the caller can store it on the state dict,
@@ -1998,7 +2186,14 @@ def update_session_state(step: str, agent: str, session_id: str | None, *, mode:
     """
     if not session_id:
         return None
-    key = session_key_for(step, agent, model=model)
+    key = session_key_for(
+        step,
+        agent,
+        model=model,
+        worker_channel=worker_channel,
+        auth_channel=auth_channel,
+        auth_metadata=auth_metadata,
+    )
     if existing_sessions is None:
         existing_sessions = {}
     entry = {
@@ -2008,6 +2203,12 @@ def update_session_state(step: str, agent: str, session_id: str | None, *, mode:
         "last_used_at": now_utc(),
         "refreshed": refreshed,
     }
+    if worker_channel is not None:
+        entry["worker_channel"] = _normalize_shannon_session_channel(worker_channel) or worker_channel
+    if auth_channel is not None:
+        entry["auth_channel"] = str(auth_channel).strip().lower().replace("-", "_")
+    if auth_metadata is not None:
+        entry["auth_metadata"] = dict(auth_metadata)
     existing_entry = existing_sessions.get(key, {})
     if (
         isinstance(existing_entry, dict)
@@ -2021,6 +2222,30 @@ def update_session_state(step: str, agent: str, session_id: str | None, *, mode:
 _VALID_CLAUDE_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 _VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high")
 _CODEX_EFFORT_ALIASES = {"xhigh": "high", "max": "high"}
+
+
+def _turn_cap_channel_for_agent(agent: str) -> str:
+    if agent == "codex":
+        return "cli"
+    if agent == "claude":
+        return "shannon"
+    return agent
+
+
+def _run_with_turn_cap(
+    func: Callable[[], WorkerResult],
+    *,
+    engine: str,
+    step: str,
+    plan_dir: Path,
+) -> WorkerResult:
+    with acquire_turn_slot(
+        engine=engine,
+        channel=_turn_cap_channel_for_agent(engine),
+        step=step,
+        plan=plan_dir,
+    ):
+        return func()
 
 
 def _normalize_codex_effort(effort: str | None) -> str | None:
@@ -2055,7 +2280,7 @@ def _codex_model_flag(model: str | None) -> list[str]:
     return ["-c", f"model='{model}'"]
 
 
-def run_claude_step(
+def _run_claude_step_uncapped(
     step: str,
     state: PlanState,
     plan_dir: Path,
@@ -2088,7 +2313,34 @@ def run_claude_step(
     )
 
 
-def run_codex_step(
+def run_claude_step(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    root: Path,
+    fresh: bool,
+    prompt_override: str | None = None,
+    prompt_kwargs: dict[str, Any] | None = None,
+    effort: str | None = None,
+    model: str | None = None,
+    output_path: Path | None = None,
+) -> WorkerResult:
+    return _run_claude_step_uncapped(
+        step,
+        state,
+        plan_dir,
+        root=root,
+        fresh=fresh,
+        prompt_override=prompt_override,
+        prompt_kwargs=prompt_kwargs,
+        effort=effort,
+        model=model,
+        output_path=output_path,
+    )
+
+
+def _run_codex_step_uncapped(
     step: str,
     state: PlanState,
     plan_dir: Path,
@@ -2721,6 +2973,44 @@ def run_codex_step(
     )
 
 
+def run_codex_step(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    root: Path,
+    persistent: bool,
+    fresh: bool = False,
+    json_trace: bool = False,
+    prompt_override: str | None = None,
+    prompt_kwargs: dict[str, Any] | None = None,
+    effort: str | None = None,
+    model: str | None = None,
+    read_only: bool = False,
+    output_path: Path | None = None,
+) -> WorkerResult:
+    return _run_with_turn_cap(
+        lambda: _run_codex_step_uncapped(
+            step,
+            state,
+            plan_dir,
+            root=root,
+            persistent=persistent,
+            fresh=fresh,
+            json_trace=json_trace,
+            prompt_override=prompt_override,
+            prompt_kwargs=prompt_kwargs,
+            effort=effort,
+            model=model,
+            read_only=read_only,
+            output_path=output_path,
+        ),
+        engine="codex",
+        step=step,
+        plan_dir=plan_dir,
+    )
+
+
 def run_codex_prep_step(
     step: str,
     state: PlanState,
@@ -2883,7 +3173,13 @@ def _is_agent_available(agent: str) -> bool:
             return False
         return True
     if agent in {"claude", "shannon"}:
-        from arnold.pipelines.megaplan._core.io import is_shannon_available
+        from arnold.pipelines.megaplan._core.io import (
+            _shannon_stream_worker_enabled,
+            is_claude_stream_available,
+            is_shannon_available,
+        )
+        if _shannon_stream_worker_enabled():
+            return is_claude_stream_available()
         return is_shannon_available()
     return bool(shutil.which(agent))
 
@@ -3206,7 +3502,16 @@ def _shannon_to_agent_result(
     effective_refreshed: bool,
 ) -> Any:
     """Call run_shannon_step and project WorkerResult → AgentResult."""
-    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+    from arnold.pipelines.megaplan._core.io import _shannon_stream_worker_enabled
+
+    if _shannon_stream_worker_enabled(root=root, plan_id=str(state.get("name") or "")):
+        from arnold.pipelines.megaplan.workers.shannon_stream import (
+            run_shannon_stream_step as run_shannon_worker_step,
+        )
+    else:
+        from arnold.pipelines.megaplan.workers.shannon import (
+            run_shannon_step as run_shannon_worker_step,
+        )
 
     mode = req.mode
     resolved_model = req.resolved_model
@@ -3227,7 +3532,7 @@ def _shannon_to_agent_result(
     eff_fresh = effective_refreshed
     while True:
         try:
-            _w = run_shannon_step(
+            _w = run_shannon_worker_step(
                 step,
                 state,
                 plan_dir,
@@ -3317,7 +3622,17 @@ def run_step_with_worker(
                     # wall-clock ``worker_timeout``. Give it the same bounded one-shot
                     # retry the codex branch grants transient failures so a single
                     # stall retries (fresh session) rather than failing the plan.
-                    from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+                    from arnold.pipelines.megaplan._core.io import _shannon_stream_worker_enabled
+
+                    if _shannon_stream_worker_enabled(root=root, plan_id=str(state.get("name") or "")):
+                        from arnold.pipelines.megaplan.workers.shannon_stream import (
+                            run_shannon_stream_step as run_shannon_worker_step,
+                        )
+                    else:
+                        from arnold.pipelines.megaplan.workers.shannon import (
+                            run_shannon_step as run_shannon_worker_step,
+                        )
+
                     shannon_kwargs: dict[str, Any] = dict(
                         root=root,
                         prompt_override=prompt_override,
@@ -3332,7 +3647,7 @@ def run_step_with_worker(
                     attempted_retry = False
                     while True:
                         try:
-                            worker = run_shannon_step(
+                            worker = run_shannon_worker_step(
                                 step,
                                 state,
                                 plan_dir,

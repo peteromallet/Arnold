@@ -35,6 +35,7 @@ from arnold.pipelines.megaplan.types import (
     parse_agent_spec,
 )
 from arnold.pipelines.megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult, run_step_with_worker, update_session_state
+from arnold.pipelines.megaplan.workers.result_metadata import aggregate_rate_limits
 
 _PREP_RESEARCH_STATUSES = {"complete", "partial", "timed_out", "error", "not_needed"}
 _PREP_RESEARCH_CONFIDENCE = {"high", "medium", "low"}
@@ -203,16 +204,20 @@ def _research_unit_payload(
     finding: dict[str, Any],
     *,
     elapsed_time_ms: int,
+    rate_limit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    metrics = {
+        "area": str(finding.get("area") or "unknown"),
+        "status": str(finding.get("status") or "error"),
+        "elapsed_time_ms": max(0, int(elapsed_time_ms)),
+        "files": list(finding.get("files") or []),
+        "code_refs": list(finding.get("code_refs") or []),
+    }
+    if rate_limit is not None:
+        metrics["rate_limit"] = rate_limit
     return {
         "finding": finding,
-        "metrics": {
-            "area": str(finding.get("area") or "unknown"),
-            "status": str(finding.get("status") or "error"),
-            "elapsed_time_ms": max(0, int(elapsed_time_ms)),
-            "files": list(finding.get("files") or []),
-            "code_refs": list(finding.get("code_refs") or []),
-        },
+        "metrics": metrics,
     }
 
 
@@ -427,14 +432,23 @@ def _run_prep_worker_step(
         prompt_override=prompt,
         read_only=True,
     )
+    session_kwargs: dict[str, Any] = {
+        "mode": mode,
+        "refreshed": refreshed,
+        "model": resolved.resolved_model,
+        "existing_sessions": state.get("sessions"),
+    }
+    if worker.worker_channel is not None:
+        session_kwargs["worker_channel"] = worker.worker_channel
+    if worker.auth_channel is not None:
+        session_kwargs["auth_channel"] = worker.auth_channel
+    if worker.auth_metadata is not None:
+        session_kwargs["auth_metadata"] = worker.auth_metadata
     session_update = update_session_state(
         step,
         agent,
         worker.session_id,
-        mode=mode,
-        refreshed=refreshed,
-        model=resolved.resolved_model,
-        existing_sessions=state.get("sessions"),
+        **session_kwargs,
     )
     if session_update is not None and isinstance(state.get("sessions"), dict):
         key, entry = session_update
@@ -971,7 +985,11 @@ def run_research_fanout(
             finding = _normalize_research_finding(area, item.payload)
         except CliError as exc:
             return _sentinel_payload(area, exc.message, elapsed_time_ms=item.duration_ms)
-        return _research_unit_payload(finding, elapsed_time_ms=item.duration_ms)
+        return _research_unit_payload(
+            finding,
+            elapsed_time_ms=item.duration_ms,
+            rate_limit=item.rate_limit,
+        )
 
     raw = scatter_worker_units(
         units=units,
@@ -1103,6 +1121,7 @@ def run_prep_orchestration(
             prompt_tokens=triage_worker.prompt_tokens,
             completion_tokens=triage_worker.completion_tokens,
             total_tokens=triage_worker.total_tokens,
+            rate_limit=triage_worker.rate_limit,
         )
         return PrepOrchestrationResult(
             worker=worker,
@@ -1155,6 +1174,15 @@ def run_prep_orchestration(
         + distill_worker.completion_tokens
     )
     total_tokens = triage_worker.total_tokens + fanout.total_tokens + distill_worker.total_tokens
+    rate_limits = [
+        triage_worker.rate_limit,
+        *[
+            item.get("rate_limit")
+            for item in fanout.side_results
+            if isinstance(item, dict)
+        ],
+        distill_worker.rate_limit,
+    ]
     worker = WorkerResult(
         payload=compatible_payload,
         raw_output=distill_worker.raw_output,
@@ -1167,6 +1195,7 @@ def run_prep_orchestration(
         prompt_tokens=total_prompt_tokens,
         completion_tokens=total_completion_tokens,
         total_tokens=total_tokens,
+        rate_limit=aggregate_rate_limits(rate_limits),
     )
     code_refs = len(worker.payload.get("relevant_code", []))
     test_refs = len(worker.payload.get("test_expectations", []))

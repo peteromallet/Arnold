@@ -124,6 +124,7 @@ class TestWorkerResultCompatibility:
             completion_tokens=34,
             total_tokens=55,
             shannon_plan={"kind": "resume", "session_id": "shannon-1"},
+            rate_limit={"window": "1h", "remaining": 42},
         )
 
         result = worker.to_agent_result()
@@ -141,6 +142,7 @@ class TestWorkerResultCompatibility:
         assert result.completion_tokens == worker.completion_tokens
         assert result.total_tokens == worker.total_tokens
         assert result.shannon_plan == worker.shannon_plan
+        assert result.rate_limit == worker.rate_limit
 
     def test_from_agent_result_preserves_all_fields(self) -> None:
         result = AgentResult(
@@ -156,6 +158,7 @@ class TestWorkerResultCompatibility:
             completion_tokens=8,
             total_tokens=21,
             shannon_plan={"kind": "resume", "session_id": "shannon-2"},
+            rate_limit={"window": "1h", "remaining": 7},
         )
 
         worker = WorkerResult.from_agent_result(result)
@@ -173,6 +176,46 @@ class TestWorkerResultCompatibility:
         assert worker.completion_tokens == result.completion_tokens
         assert worker.total_tokens == result.total_tokens
         assert worker.shannon_plan == result.shannon_plan
+        assert worker.rate_limit == result.rate_limit
+
+    def test_rate_limit_defaults_to_none_across_result_types(self) -> None:
+        worker = WorkerResult(
+            payload={"ok": True},
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+        )
+        agent_result = worker.to_agent_result()
+        unit = WorkerUnit(
+            step="critique",
+            resolved=_agent_mode(),
+            prompt="check",
+            output_path=Path("out.json"),
+        )
+        unit_result = WorkerUnitResult.from_worker_result(worker, unit)
+
+        assert worker.rate_limit is None
+        assert agent_result.rate_limit is None
+        assert unit_result.rate_limit is None
+
+    def test_worker_unit_result_preserves_rate_limit_metadata(self) -> None:
+        worker = WorkerResult(
+            payload={"ok": True},
+            raw_output="{}",
+            duration_ms=1,
+            cost_usd=0.0,
+            rate_limit={"window": "1h", "remaining": 3},
+        )
+        unit = WorkerUnit(
+            step="critique",
+            resolved=_agent_mode(),
+            prompt="check",
+            output_path=Path("out.json"),
+        )
+
+        unit_result = WorkerUnitResult.from_worker_result(worker, unit)
+
+        assert unit_result.rate_limit == worker.rate_limit
 
 
 # ===================================================================

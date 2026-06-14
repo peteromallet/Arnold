@@ -405,7 +405,17 @@ def _finish_step(
     run_id: str | None = None,
 ) -> StepResponse:
     clear_active_step(state, run_id=run_id)
-    apply_session_update(state, step, agent, worker.session_id, mode=mode, refreshed=refreshed)
+    apply_session_update(
+        state,
+        step,
+        agent,
+        worker.session_id,
+        mode=mode,
+        refreshed=refreshed,
+        worker_channel=worker.worker_channel,
+        auth_channel=worker.auth_channel,
+        auth_metadata=worker.auth_metadata,
+    )
     append_history(
         state,
         make_history_entry(
