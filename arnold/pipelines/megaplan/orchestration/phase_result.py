@@ -34,7 +34,6 @@ class ExitKind(str, Enum):
     context_exhausted = "context_exhausted"
     malformed_model_output = "malformed_model_output"
     internal_error = "internal_error"
-    malformed_model_output = "malformed_model_output"
     external_error = "external_error"
 
 

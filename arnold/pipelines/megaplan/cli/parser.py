@@ -316,7 +316,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_vendor_critic_args(init_parser)
     _add_execute_tier_cap_arg(init_parser)
     _add_workflow_shape_args(init_parser)
-    _add_execute_tier_cap_arg(init_parser)
     init_parser.add_argument(
         "--prep-direction",
         default=None,
@@ -708,7 +707,6 @@ def build_parser() -> argparse.ArgumentParser:
         step_parser = subparsers.add_parser(name)
         step_parser.add_argument("--project-dir", default=None)
         step_parser.add_argument("--plan")
-        step_parser.add_argument("--project-dir")
         if name == "status":
             step_parser.add_argument(
                 "--pending-human",
