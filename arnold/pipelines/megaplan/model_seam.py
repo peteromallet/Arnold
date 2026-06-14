@@ -384,6 +384,8 @@ def _normalize_native_capture_payload(
 
 
 def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    from arnold.pipelines.megaplan.execute.status_constants import normalize_execute_task_status
+
     normalized = dict(payload)
     task_updates: list[Any] = []
     for item in normalized.get("task_updates") or []:
@@ -404,6 +406,17 @@ def _normalize_execute_capture_payload(payload: dict[str, Any]) -> dict[str, Any
         }
         if "task_id" not in update and isinstance(item.get("id"), str):
             update["task_id"] = item["id"]
+        if "status" in update and isinstance(update["status"], str):
+            raw_status = update["status"]
+            canonical = normalize_execute_task_status(raw_status)
+            if canonical != raw_status:
+                update["status"] = str(canonical)
+                existing = update.get("executor_notes", "")
+                note_line = f"[harness] status normalized: {raw_status} -> {canonical}"
+                if isinstance(existing, str) and existing:
+                    update["executor_notes"] = f"{existing}\n{note_line}"
+                else:
+                    update["executor_notes"] = note_line
         update.setdefault("files_changed", [])
         update.setdefault("commands_run", [])
         update.setdefault("auto_attributed_files", False)
@@ -626,8 +639,10 @@ def _normalize_critique_flag(flag: Mapping[str, Any]) -> dict[str, Any]:
 
 def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
-    if normalized.get("flag_verifications") is None:
-        normalized["flag_verifications"] = []
+    if "flag_verifications" in normalized:
+        normalized["flag_verifications"] = _normalize_optional_list_marker(
+            normalized["flag_verifications"],
+        )
     selections = normalized.get("selections")
     if isinstance(selections, list):
         normalized["selections"] = [
@@ -637,6 +652,43 @@ def _normalize_critique_evaluator_capture_payload(payload: dict[str, Any]) -> di
             for selection in selections
         ]
     return normalized
+
+
+def _normalize_optional_list_marker(value: Any) -> Any:
+    """Normalize common empty markers for optional array fields.
+
+    Some providers emit ``null``, ``"N/A"``, or a tiny explanatory object for
+    optional arrays even when the prompt says to omit the field. Treat only
+    unambiguously empty/not-applicable markers as an empty list; preserve real
+    malformed content so structural validation still rejects it.
+    """
+
+    if value is None:
+        return []
+    if isinstance(value, str):
+        marker = value.strip().lower().replace("_", " ").replace("-", " ")
+        if marker in {"", "none", "null", "n/a", "na", "not applicable"}:
+            return []
+    if isinstance(value, Mapping):
+        if not value:
+            return []
+        for key in ("flag_verifications", "verifications", "items", "entries"):
+            wrapped = value.get(key)
+            if isinstance(wrapped, list):
+                return wrapped
+        meaningful_keys = {"flag_id", "lens", "outcome", "rationale"}
+        if meaningful_keys.isdisjoint(value):
+            marker_keys = {
+                "not_applicable",
+                "not applicable",
+                "reason",
+                "why",
+                "rationale_note",
+                "note",
+            }
+            if set(value).issubset(marker_keys):
+                return []
+    return value
 
 
 def _normalize_critique_evaluator_selection(selection: Mapping[str, Any]) -> dict[str, Any]:

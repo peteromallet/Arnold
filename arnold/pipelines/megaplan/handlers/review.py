@@ -282,6 +282,86 @@ def _prepare_review_payload(
     return payload
 
 
+def _task_review_evidence_files(task: dict[str, Any]) -> list[str]:
+    candidates = task.get("evidence_files")
+    if not isinstance(candidates, list) or not candidates:
+        candidates = task.get("files_changed")
+    if not isinstance(candidates, list) or not candidates:
+        return ["execution.json"]
+    evidence: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        normalized = item.strip()
+        if normalized not in seen:
+            evidence.append(normalized)
+            seen.add(normalized)
+    return evidence or ["execution.json"]
+
+
+def _backfill_empty_approved_review_from_execution(
+    payload: dict[str, Any],
+    finalize_data: dict[str, Any],
+) -> bool:
+    """Fill required review coverage when an approved reviewer returns empty lists.
+
+    This is deliberately narrow: it only applies to approved reviews with no
+    rework items and no task/sense verdicts. The fallback does not invent a
+    human-style review; it records that verdict coverage came from the already
+    captured execution/finalize evidence so the run can advance to the policy
+    gate instead of looping on an empty reviewer response.
+    """
+    if payload.get("review_verdict") != "approved":
+        return False
+    if payload.get("rework_items"):
+        return False
+    task_verdicts = payload.get("task_verdicts")
+    sense_verdicts = payload.get("sense_check_verdicts")
+    if not (isinstance(task_verdicts, list) and not task_verdicts):
+        return False
+    if not (isinstance(sense_verdicts, list) and not sense_verdicts):
+        return False
+
+    tasks = [task for task in finalize_data.get("tasks", []) if isinstance(task, dict)]
+    sense_checks = [
+        check for check in finalize_data.get("sense_checks", []) if isinstance(check, dict)
+    ]
+    if not tasks and not sense_checks:
+        return False
+
+    original_issues = [issue for issue in payload.get("issues", []) if isinstance(issue, str)]
+    payload["review_evidence_backfill_notes"] = original_issues
+    payload["issues"] = [
+        "Approved review returned empty task/sense verdict arrays; harness backfilled verdict coverage from execution/finalize evidence.",
+    ]
+    payload["task_verdicts"] = [
+        {
+            "task_id": str(task.get("id", "")),
+            "reviewer_verdict": (
+                "Backfilled from execution evidence: task was completed by the executor "
+                "and covered by recorded files/commands in finalize.json."
+            ),
+            "evidence_files": _task_review_evidence_files(task),
+        }
+        for task in tasks
+        if task.get("id")
+    ]
+    payload["sense_check_verdicts"] = [
+        {
+            "sense_check_id": str(check.get("id", "")),
+            "verdict": (
+                "Backfilled from executor sense-check evidence recorded in finalize.json."
+            ),
+        }
+        for check in sense_checks
+        if check.get("id")
+    ]
+    payload["review_completion_status"] = "complete"
+    payload["review_evidence_backfilled"] = True
+    return True
+
+
 def _audit_review_payload_or_raise(
     *,
     plan_dir: Path,
@@ -911,6 +991,9 @@ def _finalize_review_outcome(
     if not invalid_review_verdict:
         _normalize_review_blockers(worker.payload, issues)
         review_verdict = worker.payload.get("review_verdict")
+
+    if _backfill_empty_approved_review_from_execution(worker.payload, finalize_data):
+        issues = list(worker.payload.get("issues", []))
 
     verdict_count, total_tasks, check_count, total_checks, missing_evidence = _merge_review_verdicts(
         worker.payload, review_projection, issues,

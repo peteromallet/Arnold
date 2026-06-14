@@ -794,6 +794,52 @@ def _template_has_content(payload: dict, step: str) -> bool:
     )
 
 
+def _preferred_schema_type(prop: dict) -> str:
+    ptype = prop.get("type", "string")
+    if isinstance(ptype, list):
+        non_null = [item for item in ptype if item != "null"]
+        if non_null:
+            return str(non_null[0])
+        return "null"
+    return str(ptype)
+
+
+def _schema_allows_null(prop: dict) -> bool:
+    ptype = prop.get("type")
+    return ptype == "null" or (isinstance(ptype, list) and "null" in ptype)
+
+
+def _schema_default(prop: dict) -> object:
+    """Return a schema-shaped default that passes structural audit.
+
+    OpenAI-strict materialized schemas require every property, including nested
+    object item properties that the model reasonably omits when they are empty
+    or nullable. Defaults should satisfy the transport schema while preserving
+    downstream semantics; nullable object fields default to None so finalize can
+    strip optional stance/stop fields before write-time validation.
+    """
+    enum = prop.get("enum")
+    if isinstance(enum, list) and enum:
+        return enum[0]
+
+    ptype = _preferred_schema_type(prop)
+    if ptype == "array":
+        return []
+    if ptype == "object":
+        if _schema_allows_null(prop):
+            return None
+        value: dict[str, object] = {}
+        _fill_schema_defaults(value, prop)
+        return value
+    if ptype == "boolean":
+        return False
+    if ptype in ("number", "integer"):
+        return 0
+    if ptype == "null":
+        return None
+    return ""
+
+
 def _build_output_template(step: str, schema: dict) -> str:
     """Build a JSON template from a schema for non-critique template-file phases."""
     return _schema_template(schema)
@@ -1940,7 +1986,9 @@ def _fill_schema_defaults(payload: dict, schema: dict) -> None:
 
     Models often omit empty arrays, empty strings, or optional-sounding fields
     that the schema marks as required. Rather than rejecting the response,
-    fill them with type-appropriate defaults.
+    fill them with type-appropriate defaults. This recurses into existing
+    nested objects and array items because strict response schemas commonly
+    promote item properties to required fields too.
     """
     required = schema.get("required", [])
     properties = schema.get("properties", {})
@@ -1948,17 +1996,22 @@ def _fill_schema_defaults(payload: dict, schema: dict) -> None:
         if field in payload:
             continue
         prop = properties.get(field, {})
-        ptype = prop.get("type", "string")
-        if ptype == "array":
-            payload[field] = []
-        elif ptype == "object":
-            payload[field] = {}
-        elif ptype == "boolean":
-            payload[field] = False
-        elif ptype in ("number", "integer"):
-            payload[field] = 0
-        else:
-            payload[field] = ""
+        payload[field] = _schema_default(prop)
+
+    for field, value in list(payload.items()):
+        prop = properties.get(field)
+        if not isinstance(prop, dict):
+            continue
+        ptype = _preferred_schema_type(prop)
+        if ptype == "object" and isinstance(value, dict):
+            _fill_schema_defaults(value, prop)
+        elif ptype == "array" and isinstance(value, list):
+            items_schema = prop.get("items", {})
+            if not isinstance(items_schema, dict):
+                continue
+            for item in value:
+                if isinstance(item, dict) and _preferred_schema_type(items_schema) == "object":
+                    _fill_schema_defaults(item, items_schema)
 
 
 def _normalize_nested_aliases(payload: dict, schema: dict) -> None:
@@ -1972,7 +2025,7 @@ def _normalize_nested_aliases(payload: dict, schema: dict) -> None:
 
     properties = schema.get("properties", {})
     for field, prop in properties.items():
-        if prop.get("type") != "array" or field not in payload:
+        if _preferred_schema_type(prop) != "array" or field not in payload:
             continue
         items_schema = prop.get("items", {})
         if items_schema.get("type") != "object":
@@ -1996,32 +2049,47 @@ def _normalize_nested_aliases(payload: dict, schema: dict) -> None:
 
 def _schema_template(schema: dict) -> str:
     """Generate a JSON template from a schema showing required keys with placeholder values."""
+    def _template_value(prop: dict) -> object:
+        ptype = _preferred_schema_type(prop)
+        if ptype == "string":
+            desc = prop.get("description", "")
+            enum = prop.get("enum")
+            if isinstance(enum, list) and enum:
+                return enum[0]
+            return f"<{desc}>" if desc else "..."
+        if ptype == "array":
+            items = prop.get("items", {})
+            if isinstance(items, dict) and _preferred_schema_type(items) == "string":
+                return ["..."]
+            if isinstance(items, dict) and _preferred_schema_type(items) == "object":
+                item_template = _template_object(items)
+                return [item_template] if item_template else []
+            return []
+        if ptype == "boolean":
+            return True
+        if ptype in ("number", "integer"):
+            return 0
+        if ptype == "object":
+            if _schema_allows_null(prop):
+                return None
+            return _template_object(prop)
+        if ptype == "null":
+            return None
+        return "..."
+
+    def _template_object(object_schema: dict) -> dict[str, object]:
+        props = object_schema.get("properties", {})
+        if not isinstance(props, dict):
+            return {}
+        return {
+            key: _template_value(prop) if isinstance(prop, dict) else "..."
+            for key, prop in props.items()
+        }
+
     props = schema.get("properties", {})
     if not isinstance(props, dict):
         return "{}"
-    template = {}
-    for key, prop in props.items():
-        if not isinstance(prop, dict):
-            template[key] = "..."
-            continue
-        ptype = prop.get("type", "string")
-        if ptype == "string":
-            desc = prop.get("description", "")
-            template[key] = f"<{desc}>" if desc else "..."
-        elif ptype == "array":
-            items = prop.get("items", {})
-            if isinstance(items, dict) and items.get("type") == "string":
-                template[key] = ["..."]
-            else:
-                template[key] = []
-        elif ptype == "boolean":
-            template[key] = True
-        elif ptype in ("number", "integer"):
-            template[key] = 0
-        elif ptype == "object":
-            template[key] = {}
-        else:
-            template[key] = "..."
+    template = _template_object(schema)
     return json.dumps(template, indent=2)
 
 

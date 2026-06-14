@@ -531,8 +531,8 @@ def test_forced_parallel_failure_sequential_fallback_honors_verdict(
         )
         payload = {
             "checks": [
-                {"id": "correctness", "summary": "ok", "findings": []},
-                {"id": "scope", "summary": "ok", "findings": []},
+                {"id": "correctness", "question": "correct?", "summary": "ok", "findings": []},
+                {"id": "scope", "question": "scoped?", "summary": "ok", "findings": []},
             ],
             "flags": [],
             "verified_flag_ids": [],
@@ -618,7 +618,7 @@ def test_other_selection_synthesized_into_active_checks(
             )
         captured["prompt_kwargs"] = prompt_kwargs
         payload = {
-            "checks": [{"id": cid, "summary": "ok", "findings": []}
+            "checks": [{"id": cid, "question": f"{cid}?", "summary": "ok", "findings": []}
                        for cid in prompt_kwargs["expected_ids"]],
             "flags": [],
             "verified_flag_ids": [],
@@ -712,7 +712,7 @@ def test_evaluator_artifacts_preserved_per_iteration(
                 False,
             )
         payload = {
-            "checks": [{"id": cid, "summary": "ok", "findings": []}
+            "checks": [{"id": cid, "question": f"{cid}?", "summary": "ok", "findings": []}
                        for cid in prompt_kwargs["expected_ids"]],
             "flags": [],
             "verified_flag_ids": [],

@@ -55,6 +55,153 @@ def test_hermes_high_token_streaming_matches_fireworks_for_direct_deepseek() -> 
     assert _streaming_run_kwargs("deepseek:deepseek-v4-pro", 32768)
     assert not _streaming_run_kwargs("deepseek:deepseek-v4-pro", 4096)
 
+
+def test_hermes_template_and_defaults_prefer_non_null_union_type() -> None:
+    from arnold.pipelines.megaplan.workers.hermes import (
+        _fill_schema_defaults,
+        _schema_template,
+    )
+
+    schema = {
+        "type": "object",
+        "required": ["flag_verifications"],
+        "properties": {
+            "flag_verifications": {
+                "type": ["array", "null"],
+                "items": {"type": "object"},
+            },
+        },
+    }
+
+    template = json.loads(_schema_template(schema))
+    payload: dict[str, object] = {}
+    _fill_schema_defaults(payload, schema)
+
+    assert template["flag_verifications"] == []
+    assert payload["flag_verifications"] == []
+
+
+def test_hermes_defaults_fill_nested_required_array_items() -> None:
+    from arnold.pipelines.megaplan.workers.hermes import _fill_schema_defaults
+
+    schema = {
+        "type": "object",
+        "required": ["tasks", "sense_checks", "validation"],
+        "properties": {
+            "tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "id",
+                        "kind",
+                        "files_changed",
+                        "commands_run",
+                        "auto_attributed_files",
+                        "stance",
+                        "stop_signal",
+                    ],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "kind": {
+                            "type": ["string", "null"],
+                            "enum": ["code", "audit", "test"],
+                        },
+                        "files_changed": {"type": "array", "items": {"type": "string"}},
+                        "commands_run": {"type": "array", "items": {"type": "string"}},
+                        "auto_attributed_files": {"type": ["boolean", "null"]},
+                        "stance": {
+                            "type": ["object", "null"],
+                            "properties": {"what_changed": {"type": "string"}},
+                            "required": ["what_changed"],
+                        },
+                        "stop_signal": {
+                            "type": ["object", "null"],
+                            "properties": {"requested": {"type": "boolean"}},
+                            "required": ["requested"],
+                        },
+                    },
+                },
+            },
+            "sense_checks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["id", "executor_note", "verdict"],
+                    "properties": {
+                        "id": {"type": "string"},
+                        "executor_note": {"type": "string"},
+                        "verdict": {"type": "string"},
+                    },
+                },
+            },
+            "validation": {
+                "type": "object",
+                "required": ["plan_steps_covered", "coverage_complete"],
+                "properties": {
+                    "plan_steps_covered": {"type": "array", "items": {"type": "object"}},
+                    "coverage_complete": {"type": "boolean"},
+                },
+            },
+        },
+    }
+    payload = {
+        "tasks": [{"id": "T1"}],
+        "sense_checks": [{"id": "SC1"}],
+        "validation": {},
+    }
+
+    _fill_schema_defaults(payload, schema)
+
+    task = payload["tasks"][0]
+    assert task["kind"] == "code"
+    assert task["files_changed"] == []
+    assert task["commands_run"] == []
+    assert task["auto_attributed_files"] is False
+    assert task["stance"] is None
+    assert task["stop_signal"] is None
+    assert payload["sense_checks"][0]["executor_note"] == ""
+    assert payload["sense_checks"][0]["verdict"] == ""
+    assert payload["validation"] == {
+        "plan_steps_covered": [],
+        "coverage_complete": False,
+    }
+
+
+def test_hermes_schema_template_shows_nested_required_item_shape() -> None:
+    from arnold.pipelines.megaplan.workers.hermes import _schema_template
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "tasks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["code", "test"]},
+                        "files_changed": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+            },
+            "validation": {
+                "type": "object",
+                "properties": {
+                    "coverage_complete": {"type": "boolean"},
+                },
+            },
+        },
+    }
+
+    template = json.loads(_schema_template(schema))
+
+    assert template["tasks"] == [
+        {"id": "...", "kind": "code", "files_changed": ["..."]}
+    ]
+    assert template["validation"] == {"coverage_complete": True}
+
+
 def test_hermes_deepseek_v4_does_not_force_reasoning_disabled() -> None:
     from arnold.pipelines.megaplan.workers.hermes import _reasoning_config_for_model
 
