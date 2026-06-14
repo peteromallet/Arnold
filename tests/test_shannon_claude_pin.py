@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.types import CliError
-from megaplan.workers.shannon import (
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers.shannon import (
     ShannonConfig,
     _assert_runnable_claude_binary,
     _install_claude_pin,

@@ -6,9 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.schemas import Plan
-from megaplan.store import FileStore, PlanRepository
-from megaplan._core.io import orphan_plans_root
+from arnold.pipeline import TELEMETRY_FILENAME
+from arnold.pipeline.schema_registry import ContractSchemaRegistry
+from arnold.pipeline.step_io_contract import StepIOEnvelope
+from arnold.pipelines.megaplan.schemas import Plan
+from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import megaplan_step_io_policy_path
+from arnold.pipelines.megaplan.store import FileStore, PlanRepository, write_plan_artifact_json
+from arnold.pipelines.megaplan._core.io import orphan_plans_root
 
 
 FIXTURE_ROOT = Path("arnold-source/.megaplan/plans")
@@ -77,6 +81,124 @@ def test_plan_repository_round_trips_fixture_bytes_without_layout_changes(tmp_pa
 
     assert after == before
     assert repo.list_artifact_names() == sorted(before)
+
+
+def test_plan_repository_artifact_paths_reject_absolute_and_traversal_names(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write = PlanRepository.from_artifact_dir(plan_dir)
+
+    with pytest.raises(ValueError, match="inside the plan tree"):
+        _write.artifact_path("/tmp/outside.json")
+
+    with pytest.raises(ValueError, match="inside the plan tree"):
+        _write.write_artifact_json("../escape.json", {"ok": True})
+
+
+def test_write_plan_artifact_json_supports_plan_dir_without_state_json(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+
+    out = write_plan_artifact_json(plan_dir, "artifacts/result.json", {"ok": True})
+
+    assert out == plan_dir / "artifacts" / "result.json"
+    assert json.loads(out.read_text(encoding="utf-8")) == {"ok": True}
+
+
+def test_plan_repository_load_state_bypasses_step_io_validation(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = {
+        "name": "plan",
+        "idea": "idea",
+        "current_state": "initialized",
+        "iteration": 1,
+        "created_at": "2026-05-03T00:00:00Z",
+        "config": {},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {},
+        "last_gate": {},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (plan_dir / "review.json").write_text(
+        json.dumps(
+            {
+                "logical_type": "review",
+                "schema_version": "sha256:" + ("1" * 64),
+                "payload": {"answer": "wrong"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy_path = megaplan_step_io_policy_path(plan_dir)
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        json.dumps({"configured_mode": "enforce", "effective_mode": "enforce"}),
+        encoding="utf-8",
+    )
+
+    loaded = PlanRepository.from_plan_dir(plan_dir).load_state()
+
+    assert loaded == state
+    assert not (plan_dir / TELEMETRY_FILENAME).exists()
+
+
+def test_plan_repository_persists_step_io_envelope_via_megaplan_adapters(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    plan_dir = project / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (project / ".contract_schemas").mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "plan",
+                "idea": "idea",
+                "current_state": "initialized",
+                "iteration": 1,
+                "created_at": "2026-05-03T00:00:00Z",
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "history": [],
+                "meta": {},
+                "last_gate": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    policy_path = megaplan_step_io_policy_path(plan_dir)
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        json.dumps({"configured_mode": "enforce", "effective_mode": "enforce"}),
+        encoding="utf-8",
+    )
+
+    schema_version = ContractSchemaRegistry(project).register(
+        "review",
+        {
+            "type": "object",
+            "required": ["answer"],
+            "properties": {"answer": {"type": "integer"}},
+            "additionalProperties": False,
+        },
+    )
+
+    envelope = StepIOEnvelope(
+        logical_type="review",
+        schema_version=schema_version,
+        payload={"answer": 7},
+    ).to_json()
+
+    repo = PlanRepository.from_plan_dir(plan_dir)
+    out = repo.write_artifact_json("review.json", envelope)
+
+    assert out == plan_dir / "review.json"
+    assert json.loads(out.read_text(encoding="utf-8")) == envelope
+    assert repo.read_artifact_json("review.json") == {"answer": 7}
+    assert not (plan_dir / TELEMETRY_FILENAME).exists()
 
 
 def test_plan_repository_preserves_lexicographic_execution_batch_order(tmp_path: Path) -> None:

@@ -4,8 +4,8 @@ import json
 import logging
 from pathlib import Path
 
-from megaplan.receipts.drift import ScopeDriftReport
-from megaplan.receipts.extractors import (
+from arnold.pipelines.megaplan.receipts.drift import ScopeDriftReport
+from arnold.pipelines.megaplan.receipts.extractors import (
     critique_metrics,
     execute_metrics,
     extract_for_phase,

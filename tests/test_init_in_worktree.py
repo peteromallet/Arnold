@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
+import arnold.pipelines.megaplan as megaplan
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -566,8 +566,8 @@ def test_rollback_on_patch_failure(
     (repo / "README.md").write_text("about-to-fail\n", encoding="utf-8")
 
     # Monkeypatch the patch-apply helper to raise as if git apply failed.
-    from megaplan.bakeoff import worktree as wt_mod
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.bakeoff import worktree as wt_mod
+    from arnold.pipelines.megaplan.types import CliError
 
     def boom(*_a, **_kw):
         raise CliError("carry_dirty_failed", "simulated apply failure")

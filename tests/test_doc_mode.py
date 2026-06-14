@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan.runtime.doc_assembly import assemble_doc, extract_sections
-from megaplan.orchestration.evaluation import validate_execution_evidence
-from megaplan.execute.timeout import _merge_timeout_checkpoint, _reset_timeout_invalid_tasks
-from megaplan.schemas import SCHEMAS, get_execution_schema_key, strict_schema
-from megaplan.types import CliError
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan.runtime.doc_assembly import assemble_doc, extract_sections
+from arnold.pipelines.megaplan.orchestration.evaluation import validate_execution_evidence
+from arnold.pipelines.megaplan.execute.timeout import _merge_timeout_checkpoint, _reset_timeout_invalid_tasks
+from arnold.pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key, strict_schema
+from arnold.pipelines.megaplan.types import CliError
 
 from tests.conftest import make_args_factory
 
@@ -274,7 +274,7 @@ def test_get_execution_schema_key() -> None:
 def test_write_finalize_artifacts_doc_mode_skips_baseline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from megaplan.handlers import _write_finalize_artifacts
+    from arnold.pipelines.megaplan.handlers import _write_finalize_artifacts
 
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()

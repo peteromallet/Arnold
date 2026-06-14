@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.audits.capabilities import (
+from arnold.pipelines.megaplan.audits.capabilities import (
     ALL_CAPABILITIES,
     CONTAINER_CAPABILITIES,
     DEFAULT_CONTAINER_CAPABILITIES,
@@ -17,13 +17,13 @@ from megaplan.audits.capabilities import (
     union_verifies,
     validate_capabilities,
 )
-from megaplan.orchestration.verifiability import (
+from arnold.pipelines.megaplan.orchestration.verifiability import (
     CriterionAudit,
     audit_criteria,
     classify_criteria,
     validate_requires,
 )
-from megaplan.handlers.verifiability import get_human_verification_status
+from arnold.pipelines.megaplan.handlers.verifiability import get_human_verification_status
 
 
 # ---------------------------------------------------------------------------

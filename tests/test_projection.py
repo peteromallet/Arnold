@@ -7,13 +7,14 @@ from typing import Any
 
 import pytest
 
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
-from megaplan.prompts._projection import (
+from arnold.pipelines.megaplan.prompts._projection import (
     MAX_COMPLEXITY_JUSTIFICATION_CHARS,
     MAX_DESCRIPTION_CHARS,
     MAX_EXECUTION_DEVIATIONS,
     MAX_EXECUTION_DEVIATION_CHARS,
+    MAX_EXECUTION_COMMAND_CHARS,
     MAX_EXECUTION_OUTPUT_CHARS,
     MAX_EXECUTOR_NOTES_CHARS,
     MAX_META_COMMENTARY_CHARS,
@@ -271,6 +272,75 @@ def test_project_task_caps_evidence_lists() -> None:
     assert len(projected["evidence_files"]) <= 20
 
 
+def test_project_task_preserves_full_file_set_artifact_ref() -> None:
+    task = {
+        "id": "T1",
+        "files_changed": {
+            "items": [f"src/file_{i}.py" for i in range(40)],
+            "omitted_count": 60,
+            "full_set_artifact_ref": {
+                "plan_id": "plan",
+                "name": "execution_batch_1_files_changed.json",
+                "kind": "json",
+                "role": "full_advisory_path_set",
+            },
+        },
+        "status": "done",
+    }
+
+    projected = _project_task(task)
+
+    assert len(projected["files_changed"]["items"]) == 20
+    assert projected["files_changed"]["omitted_count"] == 80
+    assert projected["files_changed"]["full_set_artifact_ref"]["name"] == (
+        "execution_batch_1_files_changed.json"
+    )
+
+
+def test_project_task_preserves_compact_bulk_operation_summary() -> None:
+    task = {
+        "id": "T1",
+        "files_changed": {
+            "items": [f"src/generated/schema_{i}.py" for i in range(50)],
+            "omitted_count": 70,
+            "full_set_artifact_ref": {
+                "plan_id": "plan",
+                "name": "execution_batch_14_files_changed.json",
+                "kind": "json",
+                "role": "full_advisory_path_set",
+            },
+            "semantic_bulk_operation_summary": {
+                "kind": "semantic_bulk_operation_summary",
+                "operation": "uniform_path_set",
+                "confidence": "conservative_path_shape_only",
+                "path_count": 120,
+                "common_directory": "src/generated",
+                "file_extension": ".py",
+                "sample_paths": [f"src/generated/schema_{i}.py" for i in range(12)],
+                "sampled_deviations": [f"deviation {i}" for i in range(12)],
+                "fallback": "mixed diffs are left explicit",
+                "live_tree_verification": [
+                    f"verify command {i} " + ("x" * 500) for i in range(12)
+                ],
+            },
+        },
+        "status": "done",
+    }
+
+    projected = _project_task(task)
+
+    files_changed = projected["files_changed"]
+    summary = files_changed["semantic_bulk_operation_summary"]
+    assert len(files_changed["items"]) == 20
+    assert files_changed["omitted_count"] == 100
+    assert summary["path_count"] == 120
+    assert summary["common_directory"] == "src/generated"
+    assert len(summary["sample_paths"]) == 5
+    assert len(summary["sampled_deviations"]) == 5
+    assert len(summary["live_tree_verification"]) == 5
+    assert len(summary["live_tree_verification"][0]) <= MAX_EXECUTION_COMMAND_CHARS
+
+
 # ---------------------------------------------------------------------------
 # _project_sense_check
 # ---------------------------------------------------------------------------
@@ -472,6 +542,29 @@ def test_project_review_context_caps_noisy_execution_fields() -> None:
     assert len(projected["files_changed"]) == 20
     assert len(projected["commands_run"]) == 21
     assert projected["commands_run"][-1]["omitted_count"] == 30
+
+
+def test_project_review_context_caps_projected_file_set_but_keeps_ref() -> None:
+    data = _synthetic_oversized_finalize()
+    execution = {
+        "files_changed": {
+            "items": [f"src/file_{i}.py" for i in range(50)],
+            "omitted_count": 150,
+            "full_set_artifact_ref": {
+                "plan_id": "plan",
+                "name": "execution_files_changed.json",
+                "kind": "json",
+            },
+        }
+    }
+
+    projected = project_review_context(data, execution)
+
+    assert len(projected["files_changed"]["items"]) == 20
+    assert projected["files_changed"]["omitted_count"] == 180
+    assert projected["files_changed"]["full_set_artifact_ref"]["name"] == (
+        "execution_files_changed.json"
+    )
 
 
 def test_project_execution_audit_context_keeps_review_fields_compact() -> None:

@@ -64,7 +64,7 @@ and validated. No new stores; every add-back is a predicate / record / assertion
 ## Proposed chain.yaml
 
 ```yaml
-base_branch: working-branch
+base_branch: arnold-epic
 
 milestones:
   - label: m0-engine-target-isolation

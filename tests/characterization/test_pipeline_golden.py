@@ -22,23 +22,24 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import difflib
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-import megaplan
+import arnold.pipelines.megaplan as megaplan
 
-from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan._pipeline.planning import compile_planning_pipeline
-from megaplan._pipeline.runtime import policy_from_cli_args
-from megaplan._pipeline.stages.inprocess_step import (
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+from arnold.pipelines.megaplan._pipeline.runtime import policy_from_cli_args
+from arnold.pipelines.megaplan.stages.inprocess_step import (
     build_inprocess_planning_steps,
     build_revise_step,
     build_review_step,
 )
-from megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 from tests.conftest import PlanFixture, _make_plan_fixture_with_robustness
 
 _UUID_RE = re.compile(
@@ -52,8 +53,10 @@ _INVOCATION_ID_RE = re.compile(r"\b[0-9a-f]{16}\b")
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "golden"
 FIXTURE_FRESH = FIXTURE_DIR / "pipeline_fresh_run.json"
 FIXTURE_RESUME = FIXTURE_DIR / "pipeline_resume_after_finalize.json"
+FIXTURE_ITERATE = FIXTURE_DIR / "pipeline_iterate.json"
 
 _TEXT_ARTIFACTS = ("plan_v1.md", "plan_v2.md", "final.md")
+_TRANSIENT_ARTIFACTS = {"critique_output.json"}
 
 
 def _make_mock_plan(
@@ -204,7 +207,9 @@ def _run_resume_pipeline(fixture: PlanFixture) -> dict[str, Any]:
             "halt_visits": halted["visits"],
             "resume_visits": resumed["visits"],
             "halt_state": _snapshot_state(halted_state),
-            "artifact_filenames_at_halt": sorted(p.name for p in fixture.plan_dir.iterdir()),
+            "artifact_filenames_at_halt": sorted(
+                p.name for p in fixture.plan_dir.iterdir() if p.name not in _TRANSIENT_ARTIFACTS
+            ),
         },
     )
     assert snapshot["state"]["current_state"] == "done"
@@ -233,6 +238,15 @@ def _normalize_scalar(value: Any, replacements: list[str]) -> Any:
             for key, item in value.items()
         }
     return value
+
+
+def _normalize_flags_addressed(items: list[Any]) -> list[Any]:
+    return [
+        item.get("id", item)
+        if isinstance(item, dict)
+        else item
+        for item in items
+    ]
 
 
 def _snapshot_state(raw_state: dict[str, Any]) -> dict[str, Any]:
@@ -267,7 +281,11 @@ def _snapshot_state(raw_state: dict[str, Any]) -> dict[str, Any]:
         ],
         "history": [
             {
-                key: entry[key]
+                key: (
+                    _normalize_flags_addressed(entry[key])
+                    if key == "flags_addressed"
+                    else entry[key]
+                )
                 for key in (
                     "step",
                     "result",
@@ -465,7 +483,7 @@ def _summarize_plan_meta(payload: dict[str, Any]) -> dict[str, Any]:
     if "changes_summary" in payload:
         summary["changes_summary"] = payload.get("changes_summary")
     if "flags_addressed" in payload:
-        summary["flags_addressed"] = payload.get("flags_addressed", [])
+        summary["flags_addressed"] = _normalize_flags_addressed(payload.get("flags_addressed", []))
     return summary
 
 
@@ -532,7 +550,9 @@ def _build_snapshot(
     snapshot = {
         "scenario": scenario,
         "state": _snapshot_state(raw_state),
-        "artifact_filenames": sorted(p.name for p in plan_dir.iterdir()),
+        "artifact_filenames": sorted(
+            p.name for p in plan_dir.iterdir() if p.name not in _TRANSIENT_ARTIFACTS
+        ),
         "json_artifacts": _selected_json_artifacts(plan_dir),
         "text_artifacts": _text_artifact_summaries(plan_dir),
     }
@@ -564,12 +584,22 @@ def _assert_matches_fixture(current: dict[str, Any], fixture_path: Path) -> None
     current_str = json.dumps(current, indent=2, sort_keys=True)
     expected_str = json.dumps(expected, indent=2, sort_keys=True)
     if current_str != expected_str:
+        diff = "\n".join(
+            difflib.unified_diff(
+                expected_str.splitlines(),
+                current_str.splitlines(),
+                fromfile="fixture",
+                tofile="current",
+                n=3,
+            )
+        )
         pytest.fail(
             "Pipeline golden fixture diverged.\n\n"
             f"Fixture: {fixture_path}\n"
             "If the change is intentional, regenerate with:\n"
             f"  python -m pytest {Path(__file__).name} "
-            "-k test_generate_fixtures --write-fixture\n"
+            "-k test_generate_fixtures --write-fixture\n\n"
+            f"{diff}\n"
         )
 
 
@@ -587,6 +617,20 @@ class TestPipelineGolden:
         )
         current = _run_fresh_pipeline(fixture)
         _assert_matches_fixture(current, FIXTURE_FRESH)
+
+    def test_iterate_matches_fixture(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fixture = _make_mock_plan(
+            tmp_path / "iterate",
+            monkeypatch,
+            idea="golden iterate run",
+            name="golden-iterate",
+        )
+        current = _run_fresh_pipeline(fixture)
+        _assert_matches_fixture(current, FIXTURE_ITERATE)
 
     def test_resume_after_finalize_matches_fixture(
         self,

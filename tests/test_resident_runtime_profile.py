@@ -7,7 +7,8 @@ import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from megaplan.resident import (
+from arnold.pipelines.megaplan.resident import (
+    EmitProtocol,
     FakeAgentRunner,
     FakeAgentStep,
     MegaplanResidentProfile,
@@ -17,9 +18,9 @@ from megaplan.resident import (
     ResidentRuntime,
     ToolRegistration,
 )
-from megaplan.resident.discord import DiscordDeliveryTarget, DiscordInboundMessage
-from megaplan.resident.tool_schemas import ToolInput, ToolResult
-from megaplan.store import CloudRunInput, FileStore, ResidentConversationInput
+from arnold.pipelines.megaplan.resident.discord import DiscordDeliveryTarget, DiscordInboundMessage
+from arnold.pipelines.megaplan.resident.tool_schemas import ToolInput, ToolResult
+from arnold.pipelines.megaplan.store import CloudRunInput, FileStore, ResidentConversationInput
 
 
 @dataclass
@@ -132,6 +133,47 @@ def test_resident_runtime_denies_unauthorized_inbound_before_persistence(tmp_pat
     assert store.get_resident_conversation_by_key(transport="discord", conversation_key="discord:guild:g1:channel:c1") is None
     assert store.search_messages(query="", limit=20) == []
     assert store.list_recent_turns() == []
+
+
+def test_resident_runtime_emit_sites_are_bound_to_emit_protocol(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    runtime = ResidentRuntime(
+        config=ResidentConfig(),
+        authorizer=ResidentAuthorizer(ResidentConfig()),
+        store=store,
+        profile=MegaplanResidentProfile(),
+        runner=FakeAgentRunner([FakeAgentStep.final("done")]),
+        outbound=MemoryOutbound(),
+    )
+
+    emitter: EmitProtocol = runtime.emitter
+
+    assert emitter is store
+    assert callable(getattr(emitter, "log_system_event"))
+    assert callable(getattr(emitter, "append_progress_event"))
+
+
+def test_resident_runtime_model_seam_metadata_carries_structured_dispatch_fields(tmp_path: Path) -> None:
+    runtime = ResidentRuntime(
+        config=ResidentConfig(model_name="deepseek:deepseek-v3"),
+        authorizer=ResidentAuthorizer(ResidentConfig()),
+        store=FileStore(tmp_path / "store"),
+        profile=MegaplanResidentProfile(),
+        runner=FakeAgentRunner([FakeAgentStep.final("done")]),
+        outbound=MemoryOutbound(),
+    )
+
+    metadata = runtime._model_seam_metadata(
+        conversation_id="conversation-1",
+        messages=({"role": "user", "content": "hello"},),
+        system_prompt="system",
+        hot_context={"prompt_version": "v1"},
+    )
+
+    assert metadata["validation_step"] == "resident"
+    assert metadata["tier"] == "non_enforced"
+    assert metadata["model"] == "deepseek-v3"
+    assert metadata["normalized_model"] == "deepseek-v3"
 
 
 def test_discord_adapter_normalizes_guild_thread_and_dm_targets() -> None:

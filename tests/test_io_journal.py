@@ -5,7 +5,7 @@ import os
 import time
 from pathlib import Path
 
-from megaplan._core.io import (
+from arnold.pipelines.megaplan._core.io import (
     append_framed_json_transaction,
     commit_journal_transaction,
     framed_json_record_bytes,
@@ -80,6 +80,39 @@ def test_recover_journal_replays_committed_transaction(tmp_path: Path) -> None:
         {"tx_id": "tx-replay", "event_type": "done", "summary": "replayed"},
     ]
     assert not any((root / "_journal").glob("*.prepare.json"))
+
+
+def test_recover_journal_compacts_oversized_state_change_event(tmp_path: Path) -> None:
+    root = tmp_path / "epic"
+    events_path = root / "events.jsonl"
+    huge_state = {"event": {"kind": "state_written", "payload": "x" * (2 * 1024 * 1024)}}
+
+    prepare_journal_transaction(
+        root,
+        "tx-large-event",
+        event_logs=[
+            journal_event_log(
+                events_path,
+                [
+                    {
+                        "event_type": "state_change",
+                        "summary": "state_written emitted",
+                        "post_state": huge_state,
+                    }
+                ],
+            )
+        ],
+    )
+    write_journal_commit_marker(root, "tx-large-event")
+
+    result = recover_journal(root)
+
+    assert result["replayed"] == ["tx-large-event"]
+    [record] = read_committed_framed_json_records(events_path)
+    assert record["event_type"] == "state_change"
+    assert record["post_state"]["_omitted_for_framed_log"] is True
+    assert record["post_state"]["original_size_bytes"] > 2 * 1024 * 1024
+    assert record["post_state"]["sha256"]
 
 
 def test_commit_journal_transaction_promotes_blob_and_metadata(tmp_path: Path) -> None:

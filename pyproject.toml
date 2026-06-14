@@ -3,20 +3,21 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "megaplan-harness"
+name = "arnold"
 version = "0.23.0"
-description = "AI agent harness for coordinating Claude and GPT to make and execute extremely robust plans"
+description = "Arnold — AI agent harness for coordinating Claude and GPT to make and execute extremely robust plans, with Megaplan as the flagship planning pipeline plugin"
 requires-python = ">=3.11"
 license = { text = "OSNL-0.2" }
 authors = [
     { name = "Peter O'Malley" },
 ]
-keywords = ["ai", "planning", "orchestration", "claude", "codex"]
+keywords = ["ai", "planning", "orchestration", "claude", "codex", "arnold", "megaplan"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
     "pyyaml>=6.0",
@@ -58,7 +59,7 @@ db = [
 # commands / docs that say `pip install '.[agent]'` keep working as a no-op.
 agent = []
 [project.scripts]
-megaplan = "megaplan.cli:cli_entry"
+arnold = "arnold.cli:cli_entry"
 
 [tool.uv]
 # The hermes/agent backend's packages are now core [project].dependencies, so a
@@ -68,23 +69,32 @@ megaplan = "megaplan.cli:cli_entry"
 
 [tool.hatch.build]
 exclude = [
-    "megaplan/cloud/_reference/**",
-    "megaplan/agent/pyproject.toml",
-    "megaplan/agent/auto_improve/iterations/**",
+    "arnold/pipelines/megaplan/cloud/_reference/**",
+    "arnold/pipelines/megaplan/agent/pyproject.toml",
+    "arnold/pipelines/megaplan/agent/auto_improve/iterations/**",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["megaplan"]
+packages = ["arnold"]
 exclude = [
-    "megaplan/cloud/_reference/**",
-    "megaplan/agent/pyproject.toml",
+    "arnold/pipelines/megaplan/cloud/_reference/**",
+    "arnold/pipelines/megaplan/agent/pyproject.toml",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--import-mode=importlib"
 python_files = ["test_*.py", "editorial_*.py"]
 markers = [
     "asyncio: async tests, primarily for the vendored agent runtime",
+    "conformance: opt-in live conformance tests that require external authenticated CLIs",
     "integration: integration tests that may exercise external process boundaries",
     "slow: tests that require Docker or other external runtime dependencies",
+    "crash_isolation: tests verifying crash isolation between subprocess drivers",
+    "version_skew: tests verifying compatibility across version skew scenarios",
+    "hinge_gate: gate test for the M3 hinge (R1 authority flip)",
+    "substrate_swap: M4 oracle tests that must remain green under substrate substitution (lease/budget/journal swap)",
+    "replay_oracle: M5c replay tests that capture legacy control outputs and opt into routed parity action by action",
+    "m8_benchmark: M8 acceptance-gate benchmark tests (opt-in, width-32 thresholds)",
 ]

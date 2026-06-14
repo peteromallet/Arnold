@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan._core import atomic_write_json, atomic_write_text, read_json
-from megaplan.execute.core import _build_aggregate_execution_payload
-from megaplan.handlers.review import _resolve_review_outcome
-from megaplan.types import STATE_DONE
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text, read_json
+from arnold.pipelines.megaplan.execute.core import _build_aggregate_execution_payload
+from arnold.pipelines.megaplan.handlers.review import _resolve_review_outcome
+from arnold.pipelines.megaplan.planning.state import STATE_DONE
 
 
 def _init_args(project_dir: Path, *, name: str) -> Namespace:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.handlers.finalize import (
+from arnold.pipelines.megaplan.handlers.finalize import (
     _ensure_verification_task,
     _task_matches_verification_pattern,
 )
@@ -302,9 +302,9 @@ def test_strict_validation_accepts_payload_without_verification_task(
     plan_fixture, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Strict validation accepts a payload that has no verification task."""
-    import megaplan
-    import megaplan.workers
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan as megaplan
+    import arnold.pipelines.megaplan.workers as megaplan_workers
+    from arnold.pipelines.megaplan.workers import WorkerResult
     from tests.conftest import load_state
 
     make_args = plan_fixture.make_args
@@ -367,9 +367,9 @@ def test_strict_validation_rejects_rerun_until_pass_task(
     plan_fixture, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Strict validation rejects a payload where a re-run-until-pass task survives."""
-    import megaplan
-    import megaplan.workers
-    from megaplan.workers import WorkerResult
+    import arnold.pipelines.megaplan as megaplan
+    import arnold.pipelines.megaplan.workers as megaplan_workers
+    from arnold.pipelines.megaplan.workers import WorkerResult
 
     make_args = plan_fixture.make_args
     megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))

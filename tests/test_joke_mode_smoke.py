@@ -22,23 +22,23 @@ from __future__ import annotations
 from functools import partial
 from pathlib import Path
 
-from megaplan._core import atomic_write_json, atomic_write_text
-from megaplan.audits.robustness import joke_checks_for_robustness
-from megaplan.prompts import (
+from arnold.pipelines.megaplan._core import atomic_write_json, atomic_write_text
+from arnold.pipelines.megaplan.audits.robustness import joke_checks_for_robustness
+from arnold.pipelines.megaplan.prompts import (
     _CLAUDE_PROMPT_BUILDERS,
     _plan_prompt,
     _resolve_builder,
 )
-from megaplan.prompts.critique import write_single_check_template
-from megaplan.pipelines.creative.prompts.critique_joke import (
+from arnold.pipelines.megaplan.prompts.critique import write_single_check_template
+from arnold.pipelines.megaplan.pipelines.creative.prompts.critique_joke import (
     _critique_joke_prompt,
     single_check_critique_joke_prompt,
 )
-from megaplan.pipelines.creative.prompts.execute_joke import _execute_joke_prompt
-from megaplan.pipelines.creative.prompts.prep_joke import _prep_joke_prompt
-from megaplan.prompts.review_joke import _review_joke_prompt
-from megaplan.pipelines.creative.prompts.revise_joke import _revise_joke_prompt
-from megaplan.types import PlanState
+from arnold.pipelines.megaplan.pipelines.creative.prompts.execute_joke import _execute_joke_prompt
+from arnold.pipelines.megaplan.pipelines.creative.prompts.prep_joke import _prep_joke_prompt
+from arnold.pipelines.megaplan.prompts.review_joke import _review_joke_prompt
+from arnold.pipelines.megaplan.pipelines.creative.prompts.revise_joke import _revise_joke_prompt
+from arnold.pipelines.megaplan.types import PlanState
 
 
 def _joke_state(project_dir: Path) -> PlanState:

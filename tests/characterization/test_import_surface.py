@@ -115,8 +115,6 @@ WORKERS_ALL = [
     "_is_poisoned_environmental_failure",
     "_is_session_too_large_for_compact",
     "_merge_partial_output",
-    "_recover_codex_payload",
-    "validate_payload",
     "run_step_with_worker",
     "resolve_agent_mode",
     "set_work_dir_override",
@@ -186,6 +184,17 @@ CHAIN_SYMBOLS = [
     "_checkout_milestone_branch",
     # Remote-exec guard (forced inclusion per plan)
     "_capture_sync_state",
+]
+
+# Named contract block: the 4 chain symbols referenced by the remote SSH
+# one-liner in megaplan.cloud.supervise.  Breaking any of these silently
+# kills remote chain runs.  Contract is separate from CHAIN_SYMBOLS so it
+# can be tightened independently (type-checked, not just name-checked).
+CHAIN_SSH_CONTRACT = [
+    "_capture_sync_state",
+    "ChainState",
+    "save_chain_state",
+    "load_chain_state",
 ]
 
 EVALUATION_SYMBOLS = [
@@ -295,14 +304,14 @@ class TestStoreImportSurface:
     """Every ``megaplan.store.__all__`` symbol must resolve."""
 
     def test_all_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.store", STORE_ALL)
+        _assert_resolves("arnold.pipelines.megaplan.store", STORE_ALL)
 
 
 class TestWorkersImportSurface:
     """Every ``megaplan.workers.__all__`` symbol must resolve."""
 
     def test_all_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.workers", WORKERS_ALL)
+        _assert_resolves("arnold.pipelines.megaplan.workers", WORKERS_ALL)
 
 
 class TestCliImportSurface:
@@ -310,7 +319,7 @@ class TestCliImportSurface:
     ``megaplan.cli`` must resolve."""
 
     def test_surveyed_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.cli", CLI_SYMBOLS)
+        _assert_resolves("arnold.pipelines.megaplan.cli", CLI_SYMBOLS)
 
 
 class TestChainImportSurface:
@@ -319,14 +328,14 @@ class TestChainImportSurface:
     the existing tests depend on them."""
 
     def test_surveyed_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.chain", CHAIN_SYMBOLS)
+        _assert_resolves("arnold.pipelines.megaplan.chain", CHAIN_SYMBOLS)
 
     def test_remote_exec_guard_callable_or_class(self) -> None:
         """The remote-exec guard in ``megaplan.cloud.supervise`` constructs a
         Python one-liner that calls these four symbols.  They must exist
         AND have the expected type (function vs class) so the remote exec
         does not silently break."""
-        from megaplan.chain import (
+        from arnold.pipelines.megaplan.chain import (
             ChainState,
             _capture_sync_state,
             load_chain_state,
@@ -356,6 +365,96 @@ class TestChainImportSurface:
             "load_chain_state must accept 'spec_path' parameter"
         )
 
+    def test_chain_ssh_contract_names_resolve(self) -> None:
+        """The 4 SSH contract names (CHAIN_SSH_CONTRACT) must all resolve in
+        megaplan.chain — independent of the broader surveyed surface."""
+        _assert_resolves("arnold.pipelines.megaplan.chain", CHAIN_SSH_CONTRACT)
+
+
+# ---------------------------------------------------------------------------
+# Status payload mandatory-key contract (T9 / W4)
+# ---------------------------------------------------------------------------
+
+# Mandatory keys: always present in _build_status_payload output regardless
+# of plan state (no finalize.json, no external-resume).  Pinned here so a
+# removal/rename fails the test immediately.
+#
+# Conditional keys intentionally NOT pinned in M1 (state-dependent):
+#   blocked_tasks, blocker_recovery, quality_blockers,
+#   suggested_recovery_commands, external_error_recovery, next_step_runtime
+STATUS_PAYLOAD_MANDATORY_KEYS = frozenset({
+    "success",
+    "step",
+    "plan",
+    "state",
+    "iteration",
+    "summary",
+    "next_step",
+    "valid_next",
+    "artifacts",
+    "lock_file_present",
+    "lock_held",
+    "active_step",
+    "last_step",
+    "total_cost_usd",
+    "mode",
+    "output_path",
+    "notes_count",
+    "notes",
+    "session_summaries",
+})
+
+
+class TestStatusPayloadMandatoryKeys:
+    """Pin the mandatory keys of _build_status_payload.
+
+    Tested against a quiescent fixture state (no finalize.json, no
+    external-resume).  If any mandatory key is removed or renamed this test
+    fails immediately.  Conditional keys are documented in
+    STATUS_PAYLOAD_MANDATORY_KEYS's comment block; they are NOT pinned here.
+    """
+
+    def _quiescent_state(self) -> dict:
+        return {
+            "name": "test-plan",
+            "current_state": "done",
+            "iteration": 0,
+            "config": {"mode": "code"},
+            "sessions": {},
+            "meta": {"notes": [], "total_cost_usd": 0.0},
+            "last_gate": {},
+            "history": [],
+            "active_step": None,
+        }
+
+    def test_mandatory_keys_present(self, tmp_path) -> None:
+        """_build_status_payload includes all mandatory keys for a quiescent state."""
+        from arnold.pipelines.megaplan.cli.status_view import _build_status_payload
+
+        state = self._quiescent_state()
+        payload = _build_status_payload(tmp_path, state)
+
+        missing = STATUS_PAYLOAD_MANDATORY_KEYS - set(payload)
+        assert not missing, (
+            f"_build_status_payload is missing mandatory key(s): {sorted(missing)}"
+        )
+
+    def test_mandatory_keys_are_not_conditional(self, tmp_path) -> None:
+        """None of the mandatory keys should be absent in a quiescent state.
+
+        This guards against a key migrating from 'always-present' to
+        'conditional' without a corresponding M1 contract update.
+        """
+        from arnold.pipelines.megaplan.cli.status_view import _build_status_payload
+
+        state = self._quiescent_state()
+        payload = _build_status_payload(tmp_path, state)
+
+        for key in STATUS_PAYLOAD_MANDATORY_KEYS:
+            assert key in payload, (
+                f"Mandatory key '{key}' absent from quiescent _build_status_payload output"
+            )
+
 
 class TestStoreDeepImportPaths:
     """Deep import paths that runtime code and tests depend on must survive
@@ -366,22 +465,22 @@ class TestStoreDeepImportPaths:
     def test_deep_imports_from_store_submodules(self) -> None:
         # These paths are used by runtime code (tickets/core.py, cli.py,
         # resident/profile.py) and by existing tests.
-        from megaplan.store.file import FileStore  # noqa: F401
-        from megaplan.store.db import DBStore  # noqa: F401
-        from megaplan.store.multi import MultiStore  # noqa: F401
-        from megaplan.store.base import HotContext  # noqa: F401
-        from megaplan.store.base import EpicSummary  # noqa: F401
-        from megaplan.store.base import ArtifactRef  # noqa: F401
-        from megaplan.store.base import validate_plan_artifact_name  # noqa: F401
-        from megaplan.store.plan_repository import PlanRepository  # noqa: F401
+        from arnold.pipelines.megaplan.store.file import FileStore  # noqa: F401
+        from arnold.pipelines.megaplan.store.db import DBStore  # noqa: F401
+        from arnold.pipelines.megaplan.store.multi import MultiStore  # noqa: F401
+        from arnold.pipelines.megaplan.store.base import HotContext  # noqa: F401
+        from arnold.pipelines.megaplan.store.base import EpicSummary  # noqa: F401
+        from arnold.pipelines.megaplan.store.base import ArtifactRef  # noqa: F401
+        from arnold.pipelines.megaplan.store.base import validate_plan_artifact_name  # noqa: F401
+        from arnold.pipelines.megaplan.store.plan_repository import PlanRepository  # noqa: F401
 
     def test_snapshot_imports_preserved(self) -> None:
-        from megaplan.store.snapshot import canonical_json_dumps  # noqa: F401
-        from megaplan.store.snapshot import canonical_sha256  # noqa: F401
+        from arnold.pipelines.megaplan.store.snapshot import canonical_json_dumps  # noqa: F401
+        from arnold.pipelines.megaplan.store.snapshot import canonical_sha256  # noqa: F401
 
     def test_epic_summary_alias_identity_is_preserved(self) -> None:
-        from megaplan.schemas import EpicSearchSummary
-        from megaplan.store import EpicSummary
+        from arnold.pipelines.megaplan.schemas import EpicSearchSummary
+        from arnold.pipelines.megaplan.store import EpicSummary
 
         assert EpicSearchSummary is EpicSummary
 
@@ -392,7 +491,7 @@ class TestEvaluationImportSurface:
 
     def test_surveyed_symbols_resolve(self) -> None:
         _assert_resolves(
-            "megaplan.orchestration.evaluation", EVALUATION_SYMBOLS
+            "arnold.pipelines.megaplan.orchestration.evaluation", EVALUATION_SYMBOLS
         )
 
 
@@ -401,7 +500,7 @@ class TestExecuteCoreImportSurface:
     monkeypatch on ``megaplan.execute.core`` must resolve."""
 
     def test_surveyed_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.execute.core", EXECUTE_CORE_SYMBOLS)
+        _assert_resolves("arnold.pipelines.megaplan.execute.core", EXECUTE_CORE_SYMBOLS)
 
 
 class TestExecuteImportSurface:
@@ -409,7 +508,7 @@ class TestExecuteImportSurface:
     resolve."""
 
     def test_all_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.execute", EXECUTE_SYMBOLS)
+        _assert_resolves("arnold.pipelines.megaplan.execute", EXECUTE_SYMBOLS)
 
 
 class TestAgentRuntimeImportSurface:
@@ -417,16 +516,16 @@ class TestAgentRuntimeImportSurface:
     identity-preserving for downstream vendoring."""
 
     def test_all_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.agent_runtime", AGENT_RUNTIME_ALL)
+        _assert_resolves("arnold.pipelines.megaplan.agent_runtime", AGENT_RUNTIME_ALL)
 
     def test_all_is_exact(self) -> None:
-        import megaplan.agent_runtime as runtime
+        import arnold.pipelines.megaplan.agent_runtime as runtime
 
         assert runtime.__all__ == AGENT_RUNTIME_ALL
 
     def test_identity_preserving_aliases(self) -> None:
-        import megaplan.types as types
-        import megaplan.agent_runtime as runtime
+        import arnold.pipelines.megaplan.types as types
+        import arnold.pipelines.megaplan.agent_runtime as runtime
 
         assert runtime.AgentSpec is types.AgentSpec
         assert runtime.AgentMode is types.AgentMode
@@ -434,7 +533,7 @@ class TestAgentRuntimeImportSurface:
         assert runtime.format_agent_spec is types.format_agent_spec
 
     def test_lower_level_helpers_are_not_exported(self) -> None:
-        import megaplan.agent_runtime as runtime
+        import arnold.pipelines.megaplan.agent_runtime as runtime
 
         for name in AGENT_RUNTIME_EXCLUSIONS:
             assert name not in runtime.__all__
@@ -555,7 +654,7 @@ class TestCloudSpecImportSurface:
     ``megaplan.cloud.spec`` must resolve."""
 
     def test_surveyed_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.cloud.spec", CLOUD_SPEC_SYMBOLS)
+        _assert_resolves("arnold.pipelines.megaplan.cloud.spec", CLOUD_SPEC_SYMBOLS)
 
 
 class TestCloudTemplateImportSurface:
@@ -563,7 +662,7 @@ class TestCloudTemplateImportSurface:
     ``megaplan.cloud.template`` must resolve."""
 
     def test_surveyed_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.cloud.template", CLOUD_TEMPLATE_SYMBOLS)
+        _assert_resolves("arnold.pipelines.megaplan.cloud.template", CLOUD_TEMPLATE_SYMBOLS)
 
 
 class TestCloudCliImportSurface:
@@ -571,7 +670,7 @@ class TestCloudCliImportSurface:
     ``megaplan.cloud.cli`` must resolve."""
 
     def test_surveyed_symbols_resolve(self) -> None:
-        _assert_resolves("megaplan.cloud.cli", CLOUD_CLI_SYMBOLS)
+        _assert_resolves("arnold.pipelines.megaplan.cloud.cli", CLOUD_CLI_SYMBOLS)
 
 
 class TestCloudProvidersBaseImportSurface:
@@ -580,14 +679,14 @@ class TestCloudProvidersBaseImportSurface:
 
     def test_surveyed_symbols_resolve(self) -> None:
         _assert_resolves(
-            "megaplan.cloud.providers.base", CLOUD_PROVIDERS_BASE_SYMBOLS
+            "arnold.pipelines.megaplan.cloud.providers.base", CLOUD_PROVIDERS_BASE_SYMBOLS
         )
 
     def test_provider_is_abstract_class(self) -> None:
         """``Provider`` must be an abstract base class so that new provider
         implementations are forced to implement the full contract."""
         import abc
-        from megaplan.cloud.providers.base import Provider
+        from arnold.pipelines.megaplan.cloud.providers.base import Provider
 
         assert inspect.isclass(Provider), "Provider must be a class"
         assert issubclass(Provider, abc.ABC), (
@@ -601,7 +700,7 @@ class TestCloudProvidersBaseImportSurface:
     def test_get_provider_is_callable(self) -> None:
         """``get_provider`` must be callable so the CLI can resolve providers
         by name at runtime."""
-        from megaplan.cloud.providers.base import get_provider
+        from arnold.pipelines.megaplan.cloud.providers.base import get_provider
 
         assert callable(get_provider), "get_provider must be callable"
 
@@ -612,12 +711,12 @@ class TestCloudProvidersLocalImportSurface:
 
     def test_symbol_resolves(self) -> None:
         _assert_resolves(
-            "megaplan.cloud.providers.local", CLOUD_PROVIDERS_LOCAL_SYMBOLS
+            "arnold.pipelines.megaplan.cloud.providers.local", CLOUD_PROVIDERS_LOCAL_SYMBOLS
         )
 
     def test_local_provider_is_provider_subclass(self) -> None:
-        from megaplan.cloud.providers.base import Provider
-        from megaplan.cloud.providers.local import LocalProvider
+        from arnold.pipelines.megaplan.cloud.providers.base import Provider
+        from arnold.pipelines.megaplan.cloud.providers.local import LocalProvider
 
         assert inspect.isclass(LocalProvider), "LocalProvider must be a class"
         assert issubclass(LocalProvider, Provider), (
@@ -631,12 +730,12 @@ class TestCloudProvidersRailwayImportSurface:
 
     def test_symbol_resolves(self) -> None:
         _assert_resolves(
-            "megaplan.cloud.providers.railway", CLOUD_PROVIDERS_RAILWAY_SYMBOLS
+            "arnold.pipelines.megaplan.cloud.providers.railway", CLOUD_PROVIDERS_RAILWAY_SYMBOLS
         )
 
     def test_railway_provider_is_provider_subclass(self) -> None:
-        from megaplan.cloud.providers.base import Provider
-        from megaplan.cloud.providers.railway import RailwayProvider
+        from arnold.pipelines.megaplan.cloud.providers.base import Provider
+        from arnold.pipelines.megaplan.cloud.providers.railway import RailwayProvider
 
         assert inspect.isclass(RailwayProvider), (
             "RailwayProvider must be a class"
@@ -652,12 +751,12 @@ class TestCloudProvidersSshImportSurface:
 
     def test_symbol_resolves(self) -> None:
         _assert_resolves(
-            "megaplan.cloud.providers.ssh", CLOUD_PROVIDERS_SSH_SYMBOLS
+            "arnold.pipelines.megaplan.cloud.providers.ssh", CLOUD_PROVIDERS_SSH_SYMBOLS
         )
 
     def test_ssh_provider_is_provider_subclass(self) -> None:
-        from megaplan.cloud.providers.base import Provider
-        from megaplan.cloud.providers.ssh import SshProvider
+        from arnold.pipelines.megaplan.cloud.providers.base import Provider
+        from arnold.pipelines.megaplan.cloud.providers.ssh import SshProvider
 
         assert inspect.isclass(SshProvider), "SshProvider must be a class"
         assert issubclass(SshProvider, Provider), (

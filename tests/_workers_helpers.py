@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from megaplan.workers import _build_mock_payload
+from arnold.pipelines.megaplan.workers import _build_mock_payload
 
 
 def _mock_state(tmp_path: Path, *, iteration: int = 1) -> tuple[Path, dict]:
@@ -42,7 +42,7 @@ def _mock_state(tmp_path: Path, *, iteration: int = 1) -> tuple[Path, dict]:
     }
     (plan_dir / f"plan_v{iteration}.md").write_text("# Plan\nDo it.\n", encoding="utf-8")
     (plan_dir / f"plan_v{iteration}.meta.json").write_text(
-        json.dumps({"version": iteration, "timestamp": "2026-03-20T00:00:00Z", "hash": "sha256:test", "success_criteria": [{"criterion": "criterion", "priority": "must"}], "questions": [], "assumptions": []}),
+        json.dumps({"version": iteration, "timestamp": "2026-03-20T00:00:00Z", "hash": "sha256:test", "success_criteria": [{"criterion": "criterion", "priority": "must", "requires": []}], "questions": [], "assumptions": []}),
         encoding="utf-8",
     )
     (plan_dir / "faults.json").write_text(json.dumps({"flags": []}), encoding="utf-8")

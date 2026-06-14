@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core.io import collect_git_diff_patch, collect_git_diff_summary
+from arnold.pipelines.megaplan._core.io import collect_git_diff_patch, collect_git_diff_summary
 
 
 def _git_init(repo: Path) -> None:
@@ -55,7 +55,7 @@ def test_collect_git_diff_patch_handles_missing_git_binary(monkeypatch: pytest.M
         del args, kwargs
         raise FileNotFoundError
 
-    monkeypatch.setattr("megaplan._core.io.subprocess.run", _raise)
+    monkeypatch.setattr("arnold.pipelines.megaplan._core.io.subprocess.run", _raise)
 
     assert collect_git_diff_patch(project_dir) == "git not found on PATH."
 
@@ -69,7 +69,7 @@ def test_collect_git_diff_patch_handles_timeout(monkeypatch: pytest.MonkeyPatch,
         del args, kwargs
         raise subprocess.TimeoutExpired(cmd=["git", "diff", "HEAD"], timeout=30)
 
-    monkeypatch.setattr("megaplan._core.io.subprocess.run", _raise)
+    monkeypatch.setattr("arnold.pipelines.megaplan._core.io.subprocess.run", _raise)
 
     assert collect_git_diff_patch(project_dir) == "git diff timed out."
 
@@ -103,7 +103,13 @@ def test_collect_git_diff_patch_prefers_branch_diff_over_untracked_noise(tmp_pat
     (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
     _git_commit_all(repo, "initial")
     subprocess.run(["git", "branch", "-M", "main"], cwd=repo, check=True)
-    subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "checkout", "-b", "feature"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     (repo / "app.py").write_text("value = 2\n", encoding="utf-8")
     _git_commit_all(repo, "feature change")
 
@@ -119,7 +125,9 @@ def test_collect_git_diff_patch_prefers_branch_diff_over_untracked_noise(tmp_pat
     assert ".pyc" not in patch
 
 
-def test_collect_git_diff_patch_includes_branch_diff_and_worktree_spillover(tmp_path: Path) -> None:
+def test_collect_git_diff_patch_includes_branch_diff_and_worktree_spillover(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git_init(repo)
@@ -128,7 +136,13 @@ def test_collect_git_diff_patch_includes_branch_diff_and_worktree_spillover(tmp_
     app.write_text("value = 1\n", encoding="utf-8")
     _git_commit_all(repo, "initial")
     subprocess.run(["git", "branch", "-M", "main"], cwd=repo, check=True)
-    subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "checkout", "-b", "feature"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     app.write_text("value = 2\n", encoding="utf-8")
     _git_commit_all(repo, "feature change")
 

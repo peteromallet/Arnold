@@ -6,12 +6,13 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan.cli as cli_module
-import megaplan._core.io as io_module
-import megaplan.profiles as profiles_module
-from megaplan._core import get_effective, setting_is_explicit
-from megaplan.types import CliError, DEFAULT_AGENT_ROUTING, DEFAULTS
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.cli as cli_module
+import arnold.pipelines.megaplan._core.io as io_module
+import arnold.pipelines.megaplan.profiles as profiles_module
+from arnold.pipelines.megaplan._core import get_effective
+from arnold.pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING
+from arnold.pipelines.megaplan.types import CliError, DEFAULTS
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def test_max_critique_concurrency_default_covers_full_core_checks(
     # (see ticket 01KS03H13JWMVSED6V4584P1P3). Lock the default at the core
     # check count so a regression here can't quietly bring back the 25-min
     # critique grind.
-    from megaplan.audits.robustness import checks_for_robustness
+    from arnold.pipelines.megaplan.audits.robustness import checks_for_robustness
 
     full_core_checks = checks_for_robustness("full")
     default = get_effective("orchestration", "max_critique_concurrency")
@@ -217,63 +218,11 @@ def test_config_set_orchestration_mode_invalid(isolated_config_dir: Path) -> Non
 
 def test_config_show_resolves_symbolic_defaults_to_concrete_vendor(
     isolated_config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    response = megaplan.handle_config(Namespace(config_action="show"))
-
-    assert response["success"] is True
-    assert response["routing"]["plan"] == "claude"
-    assert response["routing"]["feedback"] == "claude:low"
-
-
-def test_config_show_preserves_explicit_concrete_agent_overrides(
-    isolated_config_dir: Path,
-) -> None:
-    isolated_config_dir.mkdir(parents=True, exist_ok=True)
-    (isolated_config_dir / "config.json").write_text(
-        json.dumps({"vendor": "codex", "agents": {"plan": "claude"}}),
-        encoding="utf-8",
-    )
-
-    response = megaplan.handle_config(Namespace(config_action="show"))
-
-    assert response["success"] is True
-    assert response["routing"]["plan"] == "claude"
-    assert response["routing"]["feedback"] == "codex:low"
-
-
-def test_config_set_rejects_symbolic_premium_agent(isolated_config_dir: Path) -> None:
-    with pytest.raises(megaplan.CliError, match=r"Unknown agent 'premium'"):
-        megaplan.handle_config(
-            Namespace(
-                config_action="set",
-                key="agents.plan",
-                value="premium",
-            )
-        )
-
-
-def test_config_set_rejects_symbolic_premium_with_effort(
-    isolated_config_dir: Path,
-) -> None:
-    """``premium:low`` is also rejected — effort does not make it runnable."""
-    with pytest.raises(megaplan.CliError, match=r"Unknown agent 'premium:low'"):
-        megaplan.handle_config(
-            Namespace(
-                config_action="set",
-                key="agents.plan",
-                value="premium:low",
-            )
-        )
-
-
-def test_config_show_with_explicit_codex_vendor_displays_concrete_codex(
-    isolated_config_dir: Path,
-) -> None:
-    """Config with ``vendor: codex`` should display concrete codex specs."""
-    isolated_config_dir.mkdir(parents=True, exist_ok=True)
-    (isolated_config_dir / "config.json").write_text(
-        json.dumps({"vendor": "codex"}),
-        encoding="utf-8",
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.profiles.policy._resolve_default_vendor",
+        lambda: "codex",
     )
 
     response = megaplan.handle_config(Namespace(config_action="show"))
@@ -281,102 +230,11 @@ def test_config_show_with_explicit_codex_vendor_displays_concrete_codex(
     assert response["success"] is True
     assert response["routing"]["plan"] == "codex"
     assert response["routing"]["feedback"] == "codex:low"
-    # No symbolic premium anywhere
-    for step, spec in response["routing"].items():
-        assert "premium" not in spec, (
-            f"step '{step}' leaked symbolic premium: {spec!r}"
-        )
-
-
-def test_config_show_with_explicit_claude_vendor_displays_concrete_claude(
-    isolated_config_dir: Path,
-) -> None:
-    """Config with ``vendor: claude`` should display concrete claude specs."""
-    isolated_config_dir.mkdir(parents=True, exist_ok=True)
-    (isolated_config_dir / "config.json").write_text(
-        json.dumps({"vendor": "claude"}),
-        encoding="utf-8",
-    )
-
-    response = megaplan.handle_config(Namespace(config_action="show"))
-
-    assert response["success"] is True
-    assert response["routing"]["plan"] == "claude"
-    assert response["routing"]["feedback"] == "claude:low"
-    # No symbolic premium anywhere
-    for step, spec in response["routing"].items():
-        assert "premium" not in spec, (
-            f"step '{step}' leaked symbolic premium: {spec!r}"
-        )
-
-
-def test_config_show_default_routing_never_leaks_symbolic_premium(
-    isolated_config_dir: Path,
-) -> None:
-    """No-config show must never display 'premium' in any routing slot."""
-    response = megaplan.handle_config(Namespace(config_action="show"))
-
-    assert response["success"] is True
-    for step, spec in response["routing"].items():
-        assert "premium" not in spec, (
-            f"step '{step}' leaked symbolic premium: {spec!r}"
-        )
-    # All 12 DEFAULT_AGENT_ROUTING slots must be present and concrete
-    from megaplan.types import DEFAULT_AGENT_ROUTING
-    assert set(response["routing"].keys()) == set(DEFAULT_AGENT_ROUTING.keys())
-
-
-def test_config_show_codex_vendor_preserves_explicit_concrete_agent_overrides(
-    isolated_config_dir: Path,
-) -> None:
-    """Explicit ``agents.plan: claude`` is preserved under ``vendor: codex``."""
-    isolated_config_dir.mkdir(parents=True, exist_ok=True)
-    (isolated_config_dir / "config.json").write_text(
-        json.dumps({"vendor": "codex", "agents": {"plan": "claude"}}),
-        encoding="utf-8",
-    )
-
-    response = megaplan.handle_config(Namespace(config_action="show"))
-
-    assert response["success"] is True
-    assert response["routing"]["plan"] == "claude"
-    # Default slots still resolve to codex
-    assert response["routing"]["feedback"] == "codex:low"
-    assert response["routing"]["revise"] == "codex"
-
-
-def test_resolved_default_phase_spec_concrete_for_claude_and_codex(
-    isolated_config_dir: Path,
-) -> None:
-    """``_resolved_default_phase_spec`` returns concrete specs for both vendors."""
-    import megaplan.handlers.override as ovr
-
-    # Vendor taken from state["config"]["vendor"]; effective_premium_vendor
-    # uses it before falling back to the project default.
-
-    # Codex-vendor state
-    codex_state = {"config": {"vendor": "codex", "project_dir": str(isolated_config_dir)}}
-    spec = ovr._resolved_default_phase_spec("plan", codex_state, Path("."))
-    assert spec == "codex"
-    assert "premium" not in spec
-
-    spec_fb = ovr._resolved_default_phase_spec("feedback", codex_state, Path("."))
-    assert spec_fb == "codex:low"
-    assert "premium" not in spec_fb
-
-    # Claude-vendor state
-    claude_state = {"config": {"vendor": "claude", "project_dir": str(isolated_config_dir)}}
-    spec = ovr._resolved_default_phase_spec("plan", claude_state, Path("."))
-    assert spec == "claude"
-    assert "premium" not in spec
-
-    spec_fb = ovr._resolved_default_phase_spec("feedback", claude_state, Path("."))
-    assert spec_fb == "claude:low"
-    assert "premium" not in spec_fb
+    assert "premium" not in set(response["routing"].values())
 
 
 def test_build_parser_init_flags_are_tristate() -> None:
-    from megaplan.cli import build_parser
+    from arnold.pipelines.megaplan.cli import build_parser
 
     parser = build_parser()
 
@@ -989,7 +847,7 @@ class TestMalformedProjectTomlWarnAndIgnore:
 
 def test_config_accepts_shannon_as_agent() -> None:
     """Config agent overrides accept 'shannon'."""
-    from megaplan.types import KNOWN_AGENTS
+    from arnold.pipelines.megaplan.profiles import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
 
 

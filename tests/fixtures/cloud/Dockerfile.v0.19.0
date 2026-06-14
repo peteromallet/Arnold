@@ -77,14 +77,14 @@ RUN . "$NVM_DIR/nvm.sh" \
     && claude --version
 
 # Megaplan from PyPI (override via build-arg MEGAPLAN_INSTALL_SPEC for git/custom sources)
-ARG MEGAPLAN_INSTALL_SPEC="megaplan-harness[agent]"
+ARG MEGAPLAN_INSTALL_SPEC="arnold[agent]"
 RUN pip install --no-cache-dir "$MEGAPLAN_INSTALL_SPEC" \
-    && megaplan --help > /dev/null
+    && arnold --help > /dev/null
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY healthserver.py /usr/local/bin/healthserver.py
 COPY wrappers/ /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/mp-*
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/mp-* /usr/local/bin/arnold-*
 
 WORKDIR /workspace
 

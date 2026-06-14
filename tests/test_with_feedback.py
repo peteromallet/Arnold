@@ -6,7 +6,7 @@ Covers:
     (c) Persistence — ``config.with_feedback`` written during init
     (d) Handler — ``handle_feedback`` workflow-mode no-editor invariant
     (e) Light/tiny + with-feedback — short-circuit suppression
-    (f) ``_RESUME_ACTIVE_STATES`` entry
+    (f) resume predecessors via topology
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from unittest import mock
 
 import pytest
 
-import megaplan
-from megaplan._core import (
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import (
     STATE_EXECUTED,
     STATE_REVIEWED,
     STATE_DONE,
@@ -29,8 +29,18 @@ from megaplan._core import (
     workflow_includes_step,
     workflow_transition,
 )
-from megaplan._core.workflow import _RESUME_ACTIVE_STATES, _with_feedback_from_state, _workflow_for_robustness
-from megaplan.types import STATE_INITIALIZED, STATE_PLANNED, STATE_GATED, STATE_FINALIZED, STATE_PREPPED, STATE_CRITIQUED, CliError, normalize_robustness
+from arnold.pipelines.megaplan._core.workflow import _with_feedback_from_state, _workflow_for_robustness
+from arnold.pipelines.megaplan._core.topology import predecessors as _topology_predecessors
+from arnold.pipelines.megaplan.profiles import normalize_robustness
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.planning.state import (
+    STATE_CRITIQUED,
+    STATE_FINALIZED,
+    STATE_GATED,
+    STATE_INITIALIZED,
+    STATE_PLANNED,
+    STATE_PREPPED,
+)
 
 # ---------------------------------------------------------------------------
 # (a) Workflow shape — ``workflow_includes_step`` at every robustness level
@@ -240,7 +250,7 @@ def test_handle_feedback_workflow_scaffolds_and_transitions(
     )
 
     from tests.conftest import make_args_factory
-    from megaplan.orchestration.feedback import feedback_path
+    from arnold.pipelines.megaplan.orchestration.feedback import feedback_path
 
     make_args = make_args_factory(project_dir)
     response = megaplan.handle_init(
@@ -261,7 +271,7 @@ def test_handle_feedback_workflow_scaffolds_and_transitions(
     # We only guard against interactive editor launch.
     import os as _os_module
     with mock.patch("subprocess.run") as mock_run:
-        from megaplan.cli import handle_feedback
+        from arnold.pipelines.megaplan.cli import handle_feedback
 
         result = handle_feedback(
             root,
@@ -321,7 +331,7 @@ def test_handle_feedback_workflow_already_has_file(
     )
 
     from tests.conftest import make_args_factory
-    from megaplan.orchestration.feedback import feedback_path
+    from arnold.pipelines.megaplan.orchestration.feedback import feedback_path
 
     make_args = make_args_factory(project_dir)
     response = megaplan.handle_init(
@@ -342,7 +352,7 @@ def test_handle_feedback_workflow_already_has_file(
 
     import os as _os_module
     with mock.patch("subprocess.run") as mock_run:
-        from megaplan.cli import handle_feedback
+        from arnold.pipelines.megaplan.cli import handle_feedback
 
         result = handle_feedback(
             root,
@@ -401,7 +411,7 @@ def test_handle_feedback_workflow_rejects_wrong_state(
     )
     # Plan is in STATE_INITIALIZED, not STATE_REVIEWED
 
-    from megaplan.cli import handle_feedback
+    from arnold.pipelines.megaplan.cli import handle_feedback
 
     with pytest.raises(CliError, match="requires plan in 'reviewed'"):
         handle_feedback(
@@ -489,18 +499,17 @@ def test_light_tiny_without_feedback_still_short_circuits(
 
 
 # ---------------------------------------------------------------------------
-# (f) ``_RESUME_ACTIVE_STATES`` entry
+# (f) resume predecessors via topology
 # ---------------------------------------------------------------------------
 
 
 def test_resume_active_states_contains_feedback() -> None:
-    """``_RESUME_ACTIVE_STATES`` must map 'feedback' to 'reviewed'."""
-    assert "feedback" in _RESUME_ACTIVE_STATES
-    assert _RESUME_ACTIVE_STATES["feedback"] == "reviewed"
+    """Topology predecessors(policy='resume') must return 'reviewed' for 'feedback'."""
+    assert _topology_predecessors("feedback", policy="resume") == "reviewed"
 
 
 def test_resume_active_states_all_known_phases() -> None:
-    """Sanity-check all known active states for completeness."""
+    """Sanity-check all known active states via topology predecessors(policy='resume')."""
     expected = {
         "prep": "initialized",
         "plan": "initialized",
@@ -513,8 +522,9 @@ def test_resume_active_states_all_known_phases() -> None:
         "feedback": "reviewed",
     }
     for phase, state in expected.items():
-        assert _RESUME_ACTIVE_STATES.get(phase) == state, (
-            f"Expected _RESUME_ACTIVE_STATES[{phase!r}] == {state!r}"
+        got = _topology_predecessors(phase, policy="resume")
+        assert got == state, (
+            f"Expected predecessors({phase!r}, policy='resume') == {state!r}, got {got!r}"
         )
 
 
@@ -525,7 +535,7 @@ def test_resume_active_states_all_known_phases() -> None:
 
 def test_phase_command_feedback_returns_workflow_operation() -> None:
     """``_phase_command('feedback')`` must return ['feedback', 'workflow']."""
-    from megaplan.auto import _phase_command
+    from arnold.pipelines.megaplan.auto import _phase_command
     result = _phase_command("feedback")
     assert result == ["feedback", "workflow"], (
         f"Expected ['feedback', 'workflow'], got {result}"
@@ -541,7 +551,7 @@ def test_resolve_review_outcome_returns_reviewed_with_feedback(
     tmp_path: Path,
 ) -> None:
     """``_resolve_review_outcome`` returns STATE_REVIEWED when with_feedback=True."""
-    from megaplan.handlers.review import _resolve_review_outcome
+    from arnold.pipelines.megaplan.handlers.review import _resolve_review_outcome
 
     state: dict = {"config": {"with_feedback": True}, "meta": {}, "history": []}
     verdict, next_state, _ = _resolve_review_outcome(
@@ -565,7 +575,7 @@ def test_resolve_review_outcome_returns_done_without_feedback(
     tmp_path: Path,
 ) -> None:
     """``_resolve_review_outcome`` returns STATE_DONE when with_feedback=False."""
-    from megaplan.handlers.review import _resolve_review_outcome
+    from arnold.pipelines.megaplan.handlers.review import _resolve_review_outcome
 
     state: dict = {"config": {}, "meta": {}, "history": []}
     verdict, next_state, _ = _resolve_review_outcome(

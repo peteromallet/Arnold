@@ -15,21 +15,22 @@ from typing import Any
 
 import pytest
 
-import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines import megaplan
+import arnold.pipelines.megaplan._core
+import arnold.pipelines.megaplan._core.io as io_module
+import arnold.pipelines.megaplan.cli as megaplan_cli
 
-from megaplan._pipeline.profile import Profile, load_profile
-from megaplan._pipeline.stages.critique import CritiqueStep
-from megaplan._pipeline.stages.execute import ExecuteStep
-from megaplan._pipeline.stages.finalize import FinalizeStep
-from megaplan._pipeline.stages.gate import GateStep
-from megaplan._pipeline.stages.plan import PlanStep
-from megaplan._pipeline.stages.prep import PrepStep
-from megaplan._pipeline.stages.review import ReviewStep
-from megaplan._pipeline.stages.revise import ReviseStep
-from megaplan._pipeline.types import StepContext
+from arnold.pipelines.megaplan._pipeline.profile import Profile, load_profile
+from arnold.pipelines.megaplan.stages.critique import CritiqueStep
+from arnold.pipelines.megaplan.stages.execute import ExecuteStep
+from arnold.pipelines.megaplan.stages.finalize import FinalizeStep
+from arnold.pipelines.megaplan.stages.gate import GateStep
+from arnold.pipelines.megaplan.stages.plan import PlanStep
+from arnold.pipelines.megaplan.stages.prep import PrepStep
+from arnold.pipelines.megaplan.stages.review import ReviewStep
+from arnold.pipelines.megaplan.stages.revise import ReviseStep
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 
 
 @pytest.fixture
@@ -111,7 +112,7 @@ def test_full_planning_run_through_named_steps(mock_plan) -> None:
 def test_named_steps_are_what_planning_pipeline_uses() -> None:
     """The compiled planning Pipeline uses the named Step classes, not
     legacy HandlerStep subprocess wrappers."""
-    from megaplan._pipeline.planning import compile_planning_pipeline
+    from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
 
     pipeline = compile_planning_pipeline()
     type_map = {
@@ -160,13 +161,13 @@ def test_mid_pipeline_profile_swap_during_real_run(mock_plan) -> None:
     assert state["current_state"] == "critiqued"
 
 
-def test_planning_pipeline_carries_typed_gate_edges() -> None:
-    """The wired-up production Pipeline still has the typed gate edges
+def test_planning_pipeline_carries_typed_decision_edges() -> None:
+    """The wired-up production Pipeline still has the typed decision edges
     Chunk A introduced — no regression in elegance. Sprint 5 Chunk A
     canonicalised the phase-name shape, so the gate-recommendation edges
     now sit on the ``gate`` stage (not the legacy ``critiqued`` state)."""
-    from megaplan._pipeline.planning import compile_planning_pipeline
+    from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
 
     pipeline = compile_planning_pipeline()
-    gate_edges = [e for e in pipeline.stages["gate"].edges if e.kind == "gate"]
-    assert {e.recommendation for e in gate_edges} == {"iterate", "proceed", "tiebreaker", "escalate"}
+    gate_edges = [e for e in pipeline.stages["gate"].edges if e.kind == "decision"]
+    assert {e.label for e in gate_edges} == {"iterate", "proceed", "tiebreaker", "escalate"}

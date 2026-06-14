@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.cloud.providers.local import LocalProvider
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.providers.local import LocalProvider
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     LocalSpec,
@@ -16,8 +16,8 @@ from megaplan.cloud.spec import (
     RepoSpec,
     ResourcesSpec,
 )
-from megaplan.cloud.template import materialize_deploy_dir
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.cloud.template import materialize_deploy_dir
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _spec() -> CloudSpec:
@@ -61,7 +61,7 @@ def test_local_provider_uses_expected_compose_argv(monkeypatch: pytest.MonkeyPat
         calls.append((argv, kwargs))
         if argv[-2:] == ["cat", "/workspace/app/idea.txt"]:
             return subprocess.CompletedProcess(argv, 0, stdout="remote idea\n", stderr="")
-        if argv[-1] == "cd /workspace/app && megaplan status --plan demo-plan":
+        if argv[-1] == "cd /workspace/app && arnold status --plan demo-plan":
             return subprocess.CompletedProcess(
                 argv,
                 0,
@@ -70,10 +70,10 @@ def test_local_provider_uses_expected_compose_argv(monkeypatch: pytest.MonkeyPat
             )
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.providers.local.shutil.which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr("megaplan.cloud.providers.local.subprocess.run", fake_run)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.local.shutil.which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.local.subprocess.run", fake_run)
     monkeypatch.setattr(
-        "megaplan.cloud.providers.local._logs_follow",
+        "arnold.pipelines.megaplan.cloud.providers.local._logs_follow",
         lambda argv, *, cwd=None, secret_names=(), env=None: follow_calls.append(
             (argv, cwd, list(secret_names))
         )
@@ -151,7 +151,7 @@ def test_local_provider_uses_expected_compose_argv(monkeypatch: pytest.MonkeyPat
                 "agent",
                 "bash",
                 "-lc",
-                "cd /workspace/app && megaplan status --plan demo-plan",
+                "cd /workspace/app && arnold status --plan demo-plan",
             ],
             {"cwd": deploy_dir, "capture_output": True, "text": True, "check": False},
         ),
@@ -183,7 +183,7 @@ def test_local_provider_uses_expected_compose_argv(monkeypatch: pytest.MonkeyPat
 
 
 def test_local_provider_missing_docker_raises_provider_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("megaplan.cloud.providers.local.shutil.which", lambda _name: None)
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.providers.local.shutil.which", lambda _name: None)
 
     with pytest.raises(CliError, match="https://docs.docker.com/get-docker/"):
         LocalProvider(_spec())

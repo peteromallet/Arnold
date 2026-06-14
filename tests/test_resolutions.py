@@ -17,13 +17,13 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-import megaplan.cli
-import megaplan.workers
-from megaplan._core import read_json
-from megaplan.handlers.finalize import _ensure_user_actions_pre_gate_task
-from megaplan.prompts.execute import _execute_batch_prompt, _execute_prompt
-from megaplan.resolutions import (
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.cli as megaplan_cli
+import arnold.pipelines.megaplan.workers as megaplan_workers
+from arnold.pipelines.megaplan._core import read_json
+from arnold.pipelines.megaplan.handlers.finalize import _ensure_user_actions_pre_gate_task
+from arnold.pipelines.megaplan.prompts.execute import _execute_batch_prompt, _execute_prompt
+from arnold.pipelines.megaplan.resolutions import (
     FALLBACK_STATES,
     HARD_BLOCK_STATES,
     USER_ACTION_RESOLUTIONS_FILE,
@@ -33,7 +33,7 @@ from megaplan.resolutions import (
     save_user_action_resolutions,
     upsert_user_action_resolution,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 from tests.conftest import load_state, read_json as conftest_read_json
 
 
@@ -303,7 +303,7 @@ class TestCLIValidation:
 
         args = _make_args(plan="plan", user_action_action="resolve", action="U1",
                           state="accepted_blocked", reason="done", fallback_mode="skip")
-        import megaplan.cli as cli_mod
+        import arnold.pipelines.megaplan.cli as cli_mod
         monkeypatch.setattr(cli_mod, "load_plan", lambda root, name: (plan_dir, load_state(plan_dir)))
         monkeypatch.setattr(cli_mod, "ensure_runtime_layout", lambda root: None)
         monkeypatch.setattr(megaplan._core, "config_dir", lambda home=None: tmp_path / "config")
@@ -326,7 +326,7 @@ class TestCLIValidation:
 
         args = _make_args(plan="plan", user_action_action="resolve", action="U1",
                           state="bogus_not_a_state", reason="x")
-        import megaplan.cli as cli_mod
+        import arnold.pipelines.megaplan.cli as cli_mod
         monkeypatch.setattr(cli_mod, "load_plan", lambda root, name: (plan_dir, load_state(plan_dir)))
         monkeypatch.setattr(cli_mod, "ensure_runtime_layout", lambda root: None)
         monkeypatch.setattr(megaplan._core, "config_dir", lambda home=None: tmp_path / "config")
@@ -346,7 +346,7 @@ class TestCLIValidation:
 
         args = _make_args(plan="plan", user_action_action="resolve", action="U99",
                           state="satisfied", reason="x")
-        import megaplan.cli as cli_mod
+        import arnold.pipelines.megaplan.cli as cli_mod
         monkeypatch.setattr(cli_mod, "load_plan", lambda root, name: (plan_dir, load_state(plan_dir)))
         monkeypatch.setattr(cli_mod, "ensure_runtime_layout", lambda root: None)
         monkeypatch.setattr(megaplan._core, "config_dir", lambda home=None: tmp_path / "config")
@@ -366,7 +366,7 @@ class TestCLIValidation:
 
         args = _make_args(plan="plan", user_action_action="resolve", action="U1",
                           state="satisfied", reason="x", applies_to_task_ids="T99")
-        import megaplan.cli as cli_mod
+        import arnold.pipelines.megaplan.cli as cli_mod
         monkeypatch.setattr(cli_mod, "load_plan", lambda root, name: (plan_dir, load_state(plan_dir)))
         monkeypatch.setattr(cli_mod, "ensure_runtime_layout", lambda root: None)
         monkeypatch.setattr(megaplan._core, "config_dir", lambda home=None: tmp_path / "config")
@@ -387,7 +387,7 @@ class TestCLIValidation:
 
         args = _make_args(plan="plan", user_action_action="resolve", action="U1",
                           state="satisfied", reason="x", applies_to_task_ids="T2")
-        import megaplan.cli as cli_mod
+        import arnold.pipelines.megaplan.cli as cli_mod
         monkeypatch.setattr(cli_mod, "load_plan", lambda root, name: (plan_dir, load_state(plan_dir)))
         monkeypatch.setattr(cli_mod, "ensure_runtime_layout", lambda root: None)
         monkeypatch.setattr(megaplan._core, "config_dir", lambda home=None: tmp_path / "config")
@@ -408,7 +408,7 @@ class TestCLIValidation:
 
         args = _make_args(plan="plan", user_action_action="resolve", action="U1",
                           state="accepted_blocked", reason="x", applies_to_task_ids="T1,T2")
-        import megaplan.cli as cli_mod
+        import arnold.pipelines.megaplan.cli as cli_mod
         monkeypatch.setattr(cli_mod, "load_plan", lambda root, name: (plan_dir, load_state(plan_dir)))
         monkeypatch.setattr(cli_mod, "ensure_runtime_layout", lambda root: None)
         monkeypatch.setattr(megaplan._core, "config_dir", lambda home=None: tmp_path / "config")
@@ -429,7 +429,7 @@ class TestCLIValidation:
 
         args = _make_args(plan="plan", user_action_action="resolve", action="U1",
                           state="satisfied", reason="x", applies_to_task_ids="")
-        import megaplan.cli as cli_mod
+        import arnold.pipelines.megaplan.cli as cli_mod
         monkeypatch.setattr(cli_mod, "load_plan", lambda root, name: (plan_dir, load_state(plan_dir)))
         monkeypatch.setattr(cli_mod, "ensure_runtime_layout", lambda root: None)
         monkeypatch.setattr(megaplan._core, "config_dir", lambda home=None: tmp_path / "config")
@@ -453,7 +453,7 @@ class TestCLIValidation:
 
         args = _make_args(plan="plan", user_action_action="resolve", action="U1",
                           state="satisfied", reason="x", applies_to_task_ids=bad_value)
-        import megaplan.cli as cli_mod
+        import arnold.pipelines.megaplan.cli as cli_mod
         monkeypatch.setattr(cli_mod, "load_plan", lambda root, name: (plan_dir, load_state(plan_dir)))
         monkeypatch.setattr(cli_mod, "ensure_runtime_layout", lambda root: None)
         monkeypatch.setattr(megaplan._core, "config_dir", lambda home=None: tmp_path / "config")
@@ -776,7 +776,7 @@ class TestProgressStatusResolution:
     """_compute_user_action_blockers and _build_progress_payload resolution-aware fields."""
 
     def test_pending_blocked_task_appears_in_blocked_tasks_detail(self, tmp_path: Path):
-        from megaplan.cli import _compute_user_action_blockers
+        from arnold.pipelines.megaplan.cli import _compute_user_action_blockers
 
         _write_finalize_json(tmp_path, user_actions=[
             {"id": "U1", "description": "Set up .env", "phase": "before_execute", "blocks_task_ids": ["T1"]},
@@ -797,7 +797,7 @@ class TestProgressStatusResolution:
         assert blockers["recommended_action"] == "awaiting_human"
 
     def test_resolution_summary_included(self, tmp_path: Path):
-        from megaplan.cli import _compute_user_action_blockers
+        from arnold.pipelines.megaplan.cli import _compute_user_action_blockers
 
         _write_finalize_json(tmp_path, user_actions=[
             {"id": "U1", "description": "Set up .env", "phase": "before_execute", "blocks_task_ids": ["T1"]},
@@ -820,7 +820,7 @@ class TestProgressStatusResolution:
         assert blockers["recommended_action"] == "continue_with_fallback"
 
     def test_recommended_action_rejected(self, tmp_path: Path):
-        from megaplan.cli import _compute_user_action_blockers
+        from arnold.pipelines.megaplan.cli import _compute_user_action_blockers
 
         _write_finalize_json(tmp_path, user_actions=[
             {"id": "U1", "description": "Set up .env", "phase": "before_execute", "blocks_task_ids": ["T1"]},
@@ -834,7 +834,7 @@ class TestProgressStatusResolution:
         assert blockers["recommended_action"] == "cannot_continue"
 
     def test_recommended_action_awaiting_human(self, tmp_path: Path):
-        from megaplan.cli import _compute_user_action_blockers
+        from arnold.pipelines.megaplan.cli import _compute_user_action_blockers
 
         _write_finalize_json(tmp_path, user_actions=[
             {"id": "U1", "description": "Set up .env", "phase": "before_execute", "blocks_task_ids": ["T1"]},
@@ -848,7 +848,7 @@ class TestProgressStatusResolution:
         assert blockers["recommended_action"] == "awaiting_human"
 
     def test_recommended_action_retry_execute(self, tmp_path: Path):
-        from megaplan.cli import _compute_user_action_blockers
+        from arnold.pipelines.megaplan.cli import _compute_user_action_blockers
 
         _write_finalize_json(tmp_path, user_actions=[
             {"id": "U1", "description": "Set up .env", "phase": "before_execute", "blocks_task_ids": ["T1"]},
@@ -862,7 +862,7 @@ class TestProgressStatusResolution:
         assert blockers["recommended_action"] == "retry_execute"
 
     def test_recommended_action_none_without_blockers(self, tmp_path: Path):
-        from megaplan.cli import _compute_user_action_blockers
+        from arnold.pipelines.megaplan.cli import _compute_user_action_blockers
 
         _write_finalize_json(tmp_path, user_actions=[])
         _write_minimal_state(tmp_path, project_dir=tmp_path)
@@ -876,7 +876,7 @@ class TestProgressStatusResolution:
     def test_mixed_satisfied_and_fallback_gives_continue_with_fallback(self, tmp_path: Path):
         """When one action is satisfied and one is accepted_blocked, recommended_action
         should be continue_with_fallback (any fallback present takes precedence)."""
-        from megaplan.cli import _compute_user_action_blockers
+        from arnold.pipelines.megaplan.cli import _compute_user_action_blockers
 
         _write_finalize_json(tmp_path, user_actions=[
             {"id": "U1", "description": "Set up .env", "phase": "before_execute", "blocks_task_ids": ["T1"]},
@@ -894,7 +894,7 @@ class TestProgressStatusResolution:
     def test_resolution_details_for_hard_block_task(self, tmp_path: Path):
         """For a rejected resolution, the task appears in blocked_tasks_detail
         with resolution details accessible."""
-        from megaplan.cli import _compute_user_action_blockers
+        from arnold.pipelines.megaplan.cli import _compute_user_action_blockers
 
         _write_finalize_json(tmp_path, user_actions=[
             {"id": "U1", "description": "Set up .env", "phase": "before_execute", "blocks_task_ids": ["T1"]},
@@ -916,8 +916,8 @@ class TestProgressStatusResolution:
         assert res["recommended_action"] == "cannot_continue"
 
     def test_build_progress_payload_includes_resolution_fields(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        from megaplan.cli import _build_progress_payload
-        import megaplan.cli as cli_mod
+        from arnold.pipelines.megaplan.cli import _build_progress_payload
+        import arnold.pipelines.megaplan.cli as cli_mod
 
         _write_finalize_json(tmp_path, user_actions=[
             {"id": "U1", "description": "Set up .env", "phase": "before_execute", "blocks_task_ids": ["T1"]},
@@ -943,7 +943,7 @@ class TestProgressStatusResolution:
         assert progress["user_action_resolution_summary"]["total_resolutions"] == 1
 
     def test_global_before_execute_blockers_attached_to_pending_tasks(self, tmp_path: Path):
-        from megaplan.cli import _compute_user_action_blockers
+        from arnold.pipelines.megaplan.cli import _compute_user_action_blockers
 
         _write_finalize_json(tmp_path, user_actions=[
             {"id": "U1", "description": "Verify infrastructure", "phase": "before_execute"},

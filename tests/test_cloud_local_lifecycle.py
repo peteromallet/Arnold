@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.cloud.cli import _materialized_deploy_dir
-from megaplan.cloud.providers.local import LocalProvider
-from megaplan.cloud.spec import (
+from arnold.pipelines.megaplan.cloud.cli import _materialized_deploy_dir
+from arnold.pipelines.megaplan.cloud.providers.local import LocalProvider
+from arnold.pipelines.megaplan.cloud.spec import (
     CloudSpec,
     CodexSpec,
     LocalSpec,
@@ -23,12 +23,16 @@ from megaplan.cloud.spec import (
 if shutil.which("docker") is None:  # pragma: no cover - environment-dependent
     pytest.skip("docker not available", allow_module_level=True)
 
-_docker_info = subprocess.run(
-    ["docker", "info"],
-    capture_output=True,
-    text=True,
-    check=False,
-)
+try:
+    _docker_info = subprocess.run(
+        ["docker", "info"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+except subprocess.TimeoutExpired:  # pragma: no cover - environment-dependent
+    pytest.skip("docker daemon unavailable: docker info timed out", allow_module_level=True)
 if _docker_info.returncode != 0:  # pragma: no cover - environment-dependent
     pytest.skip(
         f"docker daemon unavailable: {_docker_info.stderr.strip()}",

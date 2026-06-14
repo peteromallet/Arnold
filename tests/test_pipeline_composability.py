@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from typing import ClassVar
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from megaplan._pipeline import (
+from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
+from arnold.pipelines.megaplan._pipeline import (
     Edge,
     ParallelStage,
     Pipeline,
@@ -33,45 +35,54 @@ from megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.prompts import (
-    PromptRegistry,
-    register_demo_prompts,
-    register_prompt,
-    resolve_prompt,
-)
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.prompts import PromptRegistry
 
 
 # -----------------------------------------------------------------------
 # Claim 1: new workflow types reuse the same Step set; prompts register.
 # -----------------------------------------------------------------------
 
+
+_TEST_PROMPT_BUNDLE = PipelineResourceBundle(
+    base_dir=Path("/tmp"),
+    prompt_dir=Path("/tmp/prompts"),
+)
+
 def test_new_mode_registers_a_prompt_without_subclassing_step() -> None:
-    register_prompt(
-        "critique:scientific-paper",
-        lambda ctx, params: "You are a peer reviewer. Be technical.",
+    _TEST_PROMPT_BUNDLE.prompts.clear()
+    _TEST_PROMPT_BUNDLE.prompts.update(
+        {
+            "critique:scientific-paper": (
+                lambda ctx, params: "You are a peer reviewer. Be technical."
+            )
+        }
     )
 
     ctx = StepContext(
         plan_dir=Path("/tmp"), state={}, profile=None,
         mode="scientific-paper", inputs={},
     )
-    prompt = resolve_prompt(ctx, "critique")
+    prompt = resolve_bundle_prompt(_TEST_PROMPT_BUNDLE, "critique", ctx)
     assert "peer reviewer" in prompt
 
 
 def test_unregistered_mode_falls_back_to_default_prompt() -> None:
-    # Demo prompts are no longer registered at import time — call
-    # register_demo_prompts() explicitly so the default 'critique'
-    # entry exists for this test.
-    register_demo_prompts()
+    _TEST_PROMPT_BUNDLE.prompts.clear()
+    _TEST_PROMPT_BUNDLE.prompts.update(
+        {
+            "critique": (
+                "You are a document critic. Rate this draft on clarity and review quality."
+            )
+        }
+    )
 
     ctx = StepContext(
         plan_dir=Path("/tmp"), state={}, profile=None,
         mode="some-unregistered-mode", inputs={},
     )
     # Should fall back to the default 'critique' registration.
-    prompt = resolve_prompt(ctx, "critique")
+    prompt = resolve_bundle_prompt(_TEST_PROMPT_BUNDLE, "critique", ctx)
     assert "critic" in prompt.lower() or "review" in prompt.lower()
 
 
@@ -143,9 +154,9 @@ def test_critic_verdict_flags_reach_reviser_via_state_patch(tmp_path: Path) -> N
 # -----------------------------------------------------------------------
 
 def test_one_step_type_serves_all_pipelines() -> None:
-    from megaplan._pipeline.demos.doc_critique import build_pipeline as build_doc
-    from megaplan._pipeline.demo_judges import build_pipeline as build_judges
-    from megaplan._pipeline.planning import compile_planning_pipeline
+    from arnold.pipelines.megaplan._pipeline.demos.doc_critique import build_pipeline as build_doc
+    from arnold.pipelines.megaplan._pipeline.demo_judges import build_pipeline as build_judges
+    from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
 
     doc_pipeline = build_doc()
     judges_pipeline = build_judges()
@@ -229,13 +240,12 @@ def test_five_iteration_loop_is_a_tiny_diff(tmp_path: Path) -> None:
 # -----------------------------------------------------------------------
 
 def test_prompt_key_resolution_is_runtime_not_construction(tmp_path: Path) -> None:
-    register_prompt(
-        "panel-rubric",
-        lambda ctx, params: f"Panel-default for mode={ctx.mode}",
-    )
-    register_prompt(
-        "panel-rubric:strict",
-        lambda ctx, params: "Panel-strict override",
+    _TEST_PROMPT_BUNDLE.prompts.clear()
+    _TEST_PROMPT_BUNDLE.prompts.update(
+        {
+            "panel-rubric": lambda ctx, params: f"Panel-default for mode={ctx.mode}",
+            "panel-rubric:strict": lambda ctx, params: "Panel-strict override",
+        }
     )
 
     ctx_default = StepContext(
@@ -246,8 +256,12 @@ def test_prompt_key_resolution_is_runtime_not_construction(tmp_path: Path) -> No
     )
 
     # Same key, mode-aware resolution returns the override.
-    assert "default for mode=code" in resolve_prompt(ctx_default, "panel-rubric")
-    assert "Panel-strict override" == resolve_prompt(ctx_strict, "panel-rubric")
+    assert "default for mode=code" in resolve_bundle_prompt(
+        _TEST_PROMPT_BUNDLE, "panel-rubric", ctx_default
+    )
+    assert "Panel-strict override" == resolve_bundle_prompt(
+        _TEST_PROMPT_BUNDLE, "panel-rubric", ctx_strict
+    )
 
 
 # -----------------------------------------------------------------------
@@ -265,8 +279,8 @@ def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline(
     submission time in _run_parallel_stage, before pool.submit).  The error
     message must name the stage and the unsafe step.
     """
-    from megaplan._pipeline.executor import run_pipeline
-    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+    from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
     # A handler that raises if called — proves the guard fires first.
     def _must_not_run(_root: Path, _args: Any) -> dict[str, Any]:
@@ -311,9 +325,9 @@ def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline_wit
     tmp_path: Path,
 ) -> None:
     """run_pipeline_with_policy also rejects unsafe ParallelStage before any handler runs."""
-    from megaplan._pipeline.executor import run_pipeline_with_policy
-    from megaplan._pipeline.runtime import RuntimePolicy
-    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+    from arnold.pipelines.megaplan._pipeline.runtime import RuntimePolicy
+    from arnold.pipelines.megaplan.stages.inprocess_step import InProcessHandlerStep
 
     def _must_not_run(_root: Path, _args: Any) -> dict[str, Any]:
         raise AssertionError("handler must not be called — guard should reject first")
@@ -360,7 +374,7 @@ def test_safe_hermetic_parallel_steps_run_concurrently_and_return_in_declaration
     as_completed order.
     """
     import time as _time
-    from megaplan._pipeline.executor import run_pipeline
+    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
 
     # Shared timeline so we can assert overlap.
     timeline: list[tuple[str, float]] = []
@@ -375,6 +389,8 @@ def test_safe_hermetic_parallel_steps_run_concurrently_and_return_in_declaration
         slot: str | None = None
         sleep_s: float = 0.0
         output_label: str = "out"
+        produces: ClassVar[tuple] = ()
+        consumes: ClassVar[tuple] = ()
 
         def run(self, ctx: StepContext) -> StepResult:
             _time.sleep(self.sleep_s)

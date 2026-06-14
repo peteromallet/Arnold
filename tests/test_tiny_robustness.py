@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan._core import load_plan
-from megaplan.types import CliError
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan._core import load_plan
+from arnold.pipelines.megaplan.types import CliError
 from tests.test_handle_review_robustness import PlanFixture, _advance_to_executed, _make_plan_fixture
 
 

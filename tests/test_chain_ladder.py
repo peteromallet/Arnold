@@ -10,9 +10,9 @@ import pytest
 import yaml
 from unittest.mock import patch
 
-from megaplan.auto import DriverOutcome
-from megaplan import chain as chain_module
-from megaplan.chain import (
+from arnold.pipelines.megaplan.auto import DriverOutcome
+from arnold.pipelines.megaplan import chain as chain_module 
+from arnold.pipelines.megaplan.chain import (
     ChainState,
     FailurePolicy,
     MilestoneSpec,
@@ -22,7 +22,7 @@ from megaplan.chain import (
     load_spec,
     run_chain,
 )
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _write_spec(tmp_path: Path, spec_dict: dict, *, name: str = "chain.yaml") -> Path:
@@ -252,6 +252,40 @@ def test_extreme_robustness_milestone_capped_at_one(tmp_path: Path) -> None:
     assert state.retry_counts["m1"] == 1
 
 
+def test_authority_divergence_blocked_outcome_does_not_advance_milestone(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [{"label": "m1", "idea": "/x.txt"}],
+            "on_failure": {"retry": "retry_milestone", "abort": "stop_chain"},
+        },
+    )
+    spec = load_spec(spec_path)
+    state = ChainState()
+    outcome = DriverOutcome(
+        status="blocked",
+        plan="plan-m1",
+        final_state="done",
+        iterations=1,
+        reason="execute terminal success lacks corroborated task completion",
+        blocking_reasons=["T1:unknown"],
+    )
+    messages: list[str] = []
+
+    decision = _handle_outcome(
+        outcome,
+        spec=spec,
+        writer=messages.append,
+        milestone=_ladder_milestone(),
+        state=state,
+    )
+
+    assert decision == "retry"
+    assert state.completed == []
+    assert state.retry_counts["m1"] == 1
+    assert any("ended blocked" in message for message in messages)
+
+
 def test_ladder_does_not_infinite_loop_on_deterministic_failure(tmp_path: Path) -> None:
     """The whole point: a chain run with retry+bump must terminate."""
     idea = _touch_idea(tmp_path, "m1.txt", "idea")
@@ -279,9 +313,9 @@ def test_ladder_does_not_infinite_loop_on_deterministic_failure(tmp_path: Path) 
         init_profiles.append(profile)
         return f"plan-{Path(idea_path).stem}"
 
-    with patch("megaplan.chain._init_plan", side_effect=fake_init), patch(
-        "megaplan.chain.auto_drive", side_effect=fake_drive
-    ), patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=fake_init), patch(
+        "arnold.pipelines.megaplan.chain.auto_drive", side_effect=fake_drive
+    ), patch("arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
     assert result["status"] == "stopped"
@@ -338,14 +372,30 @@ def test_retry_milestone_resumes_resumable_current_plan(tmp_path: Path) -> None:
         return "plan-m1"
 
     def fake_drive(root, plan, spec, *, on_phase_complete=None, writer):
-        del root, spec, on_phase_complete, writer
+        del spec, on_phase_complete, writer
         drive_calls.append(plan)
+        if len(drive_calls) > 1:
+            plan_dir = root / ".megaplan" / "plans" / plan
+            (plan_dir / "execution_batch_1.json").write_text(
+                json.dumps(
+                    {
+                        "task_updates": [
+                            {
+                                "task_id": "T1",
+                                "status": "done",
+                                "files_changed": ["docs/m1.md"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
         return _fake_outcome(plan, "failed" if len(drive_calls) == 1 else "done")
 
-    with patch("megaplan.chain._init_plan", side_effect=fake_init), patch(
-        "megaplan.chain._drive_plan", side_effect=fake_drive
-    ), patch("megaplan.chain._plan_state", return_value="finalized"), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    with patch("arnold.pipelines.megaplan.chain._init_plan", side_effect=fake_init), patch(
+        "arnold.pipelines.megaplan.chain._drive_plan", side_effect=fake_drive
+    ), patch("arnold.pipelines.megaplan.chain._plan_state", return_value="finalized"), patch(
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         result = run_chain(spec_path, tmp_path, writer=messages.append)
 
@@ -358,15 +408,17 @@ def test_retry_milestone_resumes_resumable_current_plan(tmp_path: Path) -> None:
     )
     saved = load_chain_state(spec_path)
     assert saved.retry_counts["m1"] == 1
-    assert saved.completed == [
-        {
-            "label": "m1",
-            "plan": "plan-m1",
-            "status": "done",
-            "pr_number": None,
-            "pr_state": None,
-        }
-    ]
+    assert len(saved.completed) == 1
+    assert {
+        key: saved.completed[0].get(key)
+        for key in ("label", "plan", "status", "pr_number", "pr_state")
+    } == {
+        "label": "m1",
+        "plan": "plan-m1",
+        "status": "done",
+        "pr_number": None,
+        "pr_state": None,
+    }
 
 
 def test_retry_counter_survives_resume(tmp_path: Path) -> None:
@@ -454,13 +506,13 @@ def test_require_clean_base_auto_cleans_carried_wip_local(tmp_path: Path) -> Non
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True, exist_ok=True)
 
     with patch(
-        "megaplan.chain._init_plan",
+        "arnold.pipelines.megaplan.chain._init_plan",
         side_effect=lambda root, idea_path, **_k: f"plan-{Path(idea_path).stem}",
     ), patch(
-        "megaplan.chain.auto_drive",
+        "arnold.pipelines.megaplan.chain.auto_drive",
         side_effect=lambda plan, **_k: _fake_outcome(plan, "done"),
     ), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         result = run_chain(
             spec_path, tmp_path, writer=lambda _m: None, no_push=True
@@ -499,13 +551,13 @@ def test_require_clean_base_fails_loud_when_pushing(tmp_path: Path) -> None:
     (tmp_path / ".megaplan" / "plans").mkdir(parents=True, exist_ok=True)
 
     with patch(
-        "megaplan.chain._init_plan",
+        "arnold.pipelines.megaplan.chain._init_plan",
         side_effect=lambda root, idea_path, **_k: "plan-m1",
     ), patch(
-        "megaplan.chain.auto_drive",
+        "arnold.pipelines.megaplan.chain.auto_drive",
         side_effect=lambda plan, **_k: _fake_outcome(plan, "done"),
     ), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         with pytest.raises(CliError) as info:
             run_chain(spec_path, tmp_path, writer=lambda _m: None, no_push=False)
@@ -527,18 +579,7 @@ def test_require_clean_base_ignores_megaplan_artifacts(tmp_path: Path) -> None:
     assert chain_module._carried_wip_paths(tmp_path) == []
 
 
-# ---------------------------------------------------------------------------
-# False-stall reconciliation: the chain stall-watchdog can race a slow phase
-# worker and return "stalled" while the plan goes on to reach a terminal-good
-# state. The chain must reconcile against the plan's authoritative state.json
-# before on_failure aborts — otherwise a finished, mergeable milestone is
-# abandoned (PR never merges, idx never advances).
-# ---------------------------------------------------------------------------
-
-
 def _stall_init_writing_state(current_state: str):
-    """Build a fake _init_plan that writes a plan state.json at current_state."""
-
     def fake_init(root, idea_path, **_kw):
         del idea_path
         plan_dir = root / ".megaplan" / "plans" / "plan-m1"
@@ -555,6 +596,20 @@ def _stall_init_writing_state(current_state: str):
             ),
             encoding="utf-8",
         )
+        (plan_dir / "execution_batch_1.json").write_text(
+            json.dumps(
+                {
+                    "task_updates": [
+                        {
+                            "id": "T1",
+                            "status": "done",
+                            "files_changed": ["docs/m1.md"],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
         return "plan-m1"
 
     return fake_init
@@ -563,7 +618,6 @@ def _stall_init_writing_state(current_state: str):
 def test_false_stall_reconciles_to_advance_when_plan_reached_done(
     tmp_path: Path,
 ) -> None:
-    """Driver returns 'stalled' but plan state.json is 'done' → advance, not abort."""
     idea = _touch_idea(tmp_path, "m1.txt", "idea")
     spec_path = _write_spec(
         tmp_path,
@@ -579,24 +633,22 @@ def test_false_stall_reconciles_to_advance_when_plan_reached_done(
         return _fake_outcome(plan, "stalled")
 
     with patch(
-        "megaplan.chain._init_plan",
+        "arnold.pipelines.megaplan.chain._init_plan",
         side_effect=_stall_init_writing_state("done"),
     ), patch(
-        "megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        "arnold.pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
         side_effect=fake_drive,
     ), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
-    # The false "stalled" verdict was reconciled to a completed milestone.
     assert result["status"] == "done"
     saved = load_chain_state(spec_path)
     assert [c["label"] for c in saved.completed] == ["m1"]
 
 
 def test_genuine_stall_still_aborts_when_plan_non_terminal(tmp_path: Path) -> None:
-    """A real stall (plan NOT terminal-good) must still abort under stop_chain."""
     idea = _touch_idea(tmp_path, "m1.txt", "idea")
     spec_path = _write_spec(
         tmp_path,
@@ -612,17 +664,16 @@ def test_genuine_stall_still_aborts_when_plan_non_terminal(tmp_path: Path) -> No
         return _fake_outcome(plan, "stalled")
 
     with patch(
-        "megaplan.chain._init_plan",
+        "arnold.pipelines.megaplan.chain._init_plan",
         side_effect=_stall_init_writing_state("planned"),
     ), patch(
-        "megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        "arnold.pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
         side_effect=fake_drive,
     ), patch(
-        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+        "arnold.pipelines.megaplan.chain._refresh_base_branch", lambda *a, **k: None
     ):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
-    # Genuine stall is not papered over: the chain still stops and nothing advanced.
     assert result["status"] == "stopped"
     saved = load_chain_state(spec_path)
     assert saved.completed == []

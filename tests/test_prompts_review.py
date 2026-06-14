@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 
-from megaplan._core import atomic_write_json
-from megaplan.prompts.review import _review_template_payload, _settled_decisions_block
+from arnold.pipelines.megaplan._core import atomic_write_json
+from arnold.pipelines.megaplan.prompts.review import (
+    _review_evidence_block,
+    _review_template_payload,
+    _settled_decisions_block,
+)
 
 
 def test_settled_decisions_block_handles_string_legacy(caplog) -> None:
@@ -69,3 +74,30 @@ def test_success_criteria_pulled_from_plan_meta(tmp_path: Path) -> None:
             "evidence": "",
         }
     ]
+
+
+def test_review_evidence_block_handles_missing_malformed_and_empty_artifacts(tmp_path: Path) -> None:
+    missing = _review_evidence_block(tmp_path)
+    assert "Fresh review-time evidence (`review_evidence.json`): degraded." in missing
+    assert "`review_evidence.json` is absent." in missing
+
+    (tmp_path / "review_evidence.json").write_text("{", encoding="utf-8")
+    malformed = _review_evidence_block(tmp_path)
+    assert "`review_evidence.json` is malformed or unreadable" in malformed
+
+    atomic_write_json(tmp_path / "review_evidence.json", {"evidence": []})
+    empty = _review_evidence_block(tmp_path)
+    assert "`review_evidence.json` has zero evidence refs." in empty
+
+
+def test_review_evidence_block_renders_fresh_evidence_separately(tmp_path: Path) -> None:
+    atomic_write_json(
+        tmp_path / "review_evidence.json",
+        {"evidence": [{"kind": "green_suite", "status": "satisfied", "summary": "ok"}]},
+    )
+
+    rendered = _review_evidence_block(tmp_path)
+
+    assert "Fresh review-time evidence (`review_evidence.json`):" in rendered
+    parsed = json.loads(rendered.split(":\n", 1)[1])
+    assert parsed["evidence"][0]["kind"] == "green_suite"

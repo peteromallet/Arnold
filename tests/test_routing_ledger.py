@@ -5,10 +5,10 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from megaplan._core.worker_fanout import WorkerUnit, scatter_worker_unit
-from megaplan.observability.routing_ledger import LEDGER_FILE, record_step_routing
-from megaplan.types import AgentMode, PlanState
-from megaplan.workers import WorkerResult, run_step_with_worker
+from arnold.pipelines.megaplan._core.worker_fanout import WorkerUnit, scatter_worker_unit
+from arnold.pipelines.megaplan.observability.routing_ledger import LEDGER_FILE, record_step_routing
+from arnold.pipelines.megaplan.types import AgentMode, PlanState
+from arnold.pipelines.megaplan.workers import WorkerResult, run_step_with_worker
 
 
 def _state(tmp_path: Path) -> PlanState:
@@ -76,7 +76,7 @@ def test_routing_ledger_covers_plan_critique_and_execute(tmp_path: Path) -> None
         resolved_model="gpt-5.5",
     )
 
-    with patch("megaplan.workers._impl.run_codex_step", return_value=_worker({"plan": "ok"})):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", return_value=_worker({"plan": "ok"})):
         run_step_with_worker(
             "plan",
             state,
@@ -134,7 +134,7 @@ def test_critique_records_one_ledger_entry_per_lens(tmp_path: Path) -> None:
         resolved_model="gpt-5.5",
     )
 
-    with patch("megaplan.workers._impl.run_codex_step", return_value=_worker({"checks": []})):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", return_value=_worker({"checks": []})):
         for index, lens in enumerate(("correctness", "scope")):
             scatter_worker_unit(
                 index,
@@ -172,7 +172,7 @@ def test_missing_codex_actual_model_records_resolved_model_without_blocking(tmp_
         resolved_model="gpt-5.5",
     )
 
-    with patch("megaplan.workers._impl.run_codex_step", return_value=_worker(actual=None)):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", return_value=_worker(actual=None)):
         worker, *_ = run_step_with_worker(
             "gate",
             state,
@@ -200,7 +200,7 @@ def test_ledger_write_failure_is_swallowed_and_phase_completes(tmp_path: Path) -
         resolved_model="gpt-5.5",
     )
 
-    with patch("megaplan.workers._impl.run_codex_step", return_value=_worker({"plan": "ok"})):
+    with patch("arnold.pipelines.megaplan.workers._impl.run_codex_step", return_value=_worker({"plan": "ok"})):
         worker, agent, mode, refreshed = run_step_with_worker(
             "plan",
             state,

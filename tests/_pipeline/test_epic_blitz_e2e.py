@@ -18,11 +18,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.steps.agent import AgentStep
-from megaplan._pipeline.steps.panel import PanelReviewerStep
-from megaplan._pipeline.types import ParallelStage, Pipeline, Stage, StepContext
-from megaplan.pipelines.epic_blitz import build_pipeline
+from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold.pipelines.megaplan._pipeline.steps.agent import AgentStep
+from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
+from arnold.pipelines.megaplan._pipeline.types import ParallelStage, Pipeline, Stage, StepContext
+from arnold.pipelines.megaplan.pipelines.epic_blitz import build_pipeline
 
 
 # ── Helpers ────────────────────────────────────────────────────────────

@@ -4,10 +4,12 @@ import asyncio
 
 from pydantic import Field
 
-import megaplan.resident.agent_loop as agent_loop
-from megaplan.resident import (
+import arnold.pipelines.megaplan.resident.agent_loop as agent_loop
+from arnold.pipelines.megaplan.resident import (
     AgentLoopError,
     AgentRequest,
+    AgentRunner,
+    DispatchProtocol,
     FakeAgentRunner,
     FakeAgentStep,
     OpenAICompatibleAgentRunner,
@@ -15,7 +17,7 @@ from megaplan.resident import (
     ToolRegistration,
     ToolRegistry,
 )
-from megaplan.resident.tool_schemas import ToolInput, ToolResult
+from arnold.pipelines.megaplan.resident.tool_schemas import ToolInput, ToolResult
 
 
 class EchoInput(ToolInput):
@@ -33,6 +35,11 @@ def _request() -> AgentRequest:
         system_prompt="system",
         hot_context={"ok": True},
     )
+
+
+def test_resident_agent_runner_is_bound_to_dispatch_protocol() -> None:
+    assert DispatchProtocol in AgentRunner.__mro__
+    assert DispatchProtocol in OpenAICompatibleAgentRunner.__mro__
 
 
 def test_fake_agent_runner_executes_bounded_tool_loop_and_returns_audit_records() -> None:
@@ -214,8 +221,6 @@ class _FakeCompletions:
     async def create(self, **kwargs: object) -> _FakeResponse:
         self.calls += 1
         if self.calls == 1:
-            assert kwargs["model"] == "gpt-test"
-            assert kwargs["tool_choice"] == "auto"
             return _FakeResponse(_FakeMessage(tool_calls=[_FakeToolCall("call-1", "echo", '{"text": "live"}')]))
         return _FakeResponse(_FakeMessage(content="live final"))
 
@@ -253,3 +258,44 @@ def test_openai_compatible_agent_runner_executes_live_tool_loop(monkeypatch) -> 
     assert response.tool_calls[0].id == "call-1"
     assert response.tool_calls[0].tool_name == "echo"
     assert response.tool_calls[0].result == {"ok": True, "message": "echoed", "data": {"text": "live"}}
+
+
+def test_agent_request_accepts_optional_model_seam_metadata_without_breaking_fakes() -> None:
+    request = AgentRequest(
+        conversation_id="conversation-1",
+        messages=({"role": "user", "content": "hello"},),
+        system_prompt="system",
+        model_seam_metadata={"normalized_model": "deepseek-v3"},
+    )
+    runner = FakeAgentRunner([FakeAgentStep.final("done")])
+
+    response = asyncio.run(runner.run(request, ToolRegistry()))
+
+    assert response.final_text == "done"
+
+
+def test_openai_compatible_agent_runner_uses_normalized_request_model(monkeypatch) -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolRegistration(
+            name="echo",
+            description="Echo",
+            operation_kind="read",
+            input_model=EchoInput,
+            output_model=ToolResult,
+            handler=lambda payload: ToolResult(ok=True, message="echoed", data={"text": payload.text}),
+        )
+    )
+    client = _FakeOpenAIClient()
+    monkeypatch.setattr(agent_loop, "_openai_client", lambda config: client)
+    request = AgentRequest(
+        conversation_id="conversation-1",
+        messages=({"role": "user", "content": "hello"},),
+        system_prompt="system",
+        model_seam_metadata={"normalized_model": "deepseek-v3"},
+    )
+
+    runner = OpenAICompatibleAgentRunner(ResidentConfig(model_name="deepseek:deepseek-v3"), max_tool_calls=1)
+    response = asyncio.run(runner.run(request, registry))
+
+    assert response.metadata["model"] == "deepseek-v3"

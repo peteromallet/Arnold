@@ -21,6 +21,9 @@ IN:
 - Record enough isolation evidence for later transition policy and provenance milestones to cite: engine path, target path, engine pin, target head/base, waiver id where applicable.
 - Ensure all target mutation goes through the target workspace, never through the frozen driver engine.
 - Neutralize the worker cwd / package-resolution leak: a worker doing target work must not be able to resolve or write engine paths even when engine and target are distinct directories (set worker cwd to the target, and/or make the engine read-only to worker processes).
+- Establish an execution-environment CONTRACT (ticket `01KTA78BYT`): at chain start, RESOLVE and PERSIST `{project_root, engine_root, engine_commit}`. By definition, ALL relative paths in specs resolve against `project_root`; subprocess invocations pass ABSOLUTE paths only. Preflight WARNS when the engine checkout is dirty or shared. The run records and PINS its engine (path + commit) and refuses-or-warns if the engine mutates under it ("ambient engine" = `python -m megaplan` resolving to whatever the editable-install `.pth` points at, which a concurrent chain can rewrite mid-run).
+- Land the L1 subprocess-cwd stopgap that this contract generalizes/supersedes (ticket `01KTA78BYT`, from a Codex fix-level review): the Codex execute worker spawns `run_command(... cwd=Path.cwd())` at `megaplan/workers/_impl.py:2354`, and in chain/auto `Path.cwd()` is the ENGINE, so relative edits hit the frozen engine. Fix = `cwd = resolve_work_dir(state)` (the target), matching Shannon which already uses `cwd=ctx.work_dir` (`megaplan/workers/shannon.py:1038`). The in-process sandbox (`megaplan/runtime/sandbox.py`) guards only in-process tool handlers, NOT the Codex/Shannon SUBPROCESS — the subprocess cwd is the real hole.
+- Make path/brief resolution failures report with fidelity (ticket `01KTA79SHN`): a path or brief resolution failure must report the RESOLVED ABSOLUTE path and the owning root (e.g. "idea file not found: <abs path>"), never a misleading `BRIEF_MISSING`. `markdown_body` (`megaplan/artifacts.py:61`) must propagate `OSError` instead of swallowing it; the `except OSError` in `megaplan/handlers/init.py:299-320` is dead code because the inner parse catches `OSError` and returns `None`.
 
 OUT:
 
@@ -36,6 +39,9 @@ OUT:
 - Write-isolation is the primary control; overlap refusal is a secondary guard. Contamination has been observed with non-overlapping paths via a worker cwd/resolution leak, so the engine must be physically un-writable by workers — refusing overlap alone is insufficient.
 - Local-dev overlap is a waiver, not a silent normal mode.
 - The frozen driver engine is the authority running the pipeline; target changes are work product, not engine updates.
+- An execution-environment contract `{project_root, engine_root, engine_commit}` is resolved and persisted at chain start; relative spec paths resolve against `project_root` by definition; subprocesses receive absolute paths only (ticket `01KTA78BYT`).
+- The engine is pinned (path + commit) and an ambient/mutating engine is refused-or-warned — a chain never runs against a `.pth`-resolved engine that another chain can rewrite mid-run (ticket `01KTA78BYT`).
+- Resolution-failure errors are high-fidelity: they name the resolved absolute path and owning root, never `BRIEF_MISSING` for a file that does not exist (ticket `01KTA79SHN`).
 
 ## Open Questions
 
@@ -58,6 +64,10 @@ OUT:
 4. A worker doing target work CANNOT write into the frozen driver engine even when engine and target are distinct paths — engine writes by worker processes physically fail or are redirected to the target (not merely diagnosed). Regression: reproduce the observed failure (a relocation worker rewriting the engine's `megaplan/workers/_impl.py` → circular import → `status` crash) and assert it can no longer occur.
 5. Isolation records can be referenced by later provenance and transition decisions.
 6. Tests cover separated worktree, container or equivalent isolation, overlap refusal, local-dev waiver, and the dogfood-shadow contamination scenario.
+7. A relative spec path (e.g. the idea/brief path) resolves against `project_root`, not the engine root (ticket `01KTA78BYT`).
+8. A subprocess execute/Shannon worker CANNOT write the engine: its cwd is the resolved target work dir, not `Path.cwd()`/the engine (ticket `01KTA78BYT`).
+9. A dirty or shared engine checkout is refused-or-warned at preflight, and a mid-run engine mutation is detected against the recorded engine pin (ticket `01KTA78BYT`).
+10. A missing brief/idea file reports its resolved absolute path and owning root, never `BRIEF_MISSING`; `markdown_body` propagates `OSError` rather than returning `""` (ticket `01KTA79SHN`).
 
 ## Touchpoints
 
@@ -69,6 +79,12 @@ OUT:
 - reset/reconcile entrypoints
 - waiver/override recording
 - isolation and dogfood-shadow regression tests
+- `megaplan/chain/__init__.py` (~L1830, execution-environment contract resolve/persist; preflight engine pin/dirty warn) — ticket `01KTA78BYT`
+- `megaplan/workers/_impl.py:2354` (`run_command(... cwd=Path.cwd())` → `cwd = resolve_work_dir(state)`) — ticket `01KTA78BYT`
+- `megaplan/workers/shannon.py:1038` (`cwd=ctx.work_dir`, the correct precedent) — ticket `01KTA78BYT`
+- `megaplan/runtime/sandbox.py` (in-process guard only; does NOT cover the subprocess cwd hole) — ticket `01KTA78BYT`
+- `megaplan/artifacts.py:61` (`markdown_body` must propagate `OSError`) — ticket `01KTA79SHN`
+- `megaplan/handlers/init.py:299-320` (dead `except OSError`; report resolved absolute path) — ticket `01KTA79SHN`
 
 ## Rubric
 

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-import megaplan
-from megaplan.types import CliError
+import arnold.pipelines.megaplan as megaplan
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _args(project_dir: Path, **overrides: object) -> Namespace:

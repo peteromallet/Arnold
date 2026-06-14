@@ -27,8 +27,8 @@ import time
 
 import pytest
 
-from megaplan.types import CliError
-from megaplan.workers.hermes import (
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers.hermes import (
     DEFAULT_WORKER_STALL_TIMEOUT_SECONDS,
     _StreamTracker,
     _WorkerStallWatchdog,

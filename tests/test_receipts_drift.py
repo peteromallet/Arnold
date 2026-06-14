@@ -3,8 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from megaplan.execute.quality import _capture_git_status_snapshot
-from megaplan.receipts.drift import collect_loc_by_file, compute_scope_drift
+from arnold.pipelines.megaplan.execute.quality import _capture_git_status_snapshot
+from arnold.pipelines.megaplan.receipts.drift import collect_loc_by_file, compute_scope_drift
 
 
 def test_scope_drift_none_when_diff_is_claimed() -> None:
@@ -68,6 +68,19 @@ def test_scope_drift_high_for_unclaimed_tracked_modification() -> None:
     assert report.files_added == ["tracked_extra.py"]
     assert report.loc_added_outside_claimed == 25
     assert report.severity == "high"
+
+
+def test_scope_drift_missing_uses_current_call_baseline() -> None:
+    report = compute_scope_drift(
+        files_claimed={"a.py", "old_batch.py", ".megaplan/plans/demo/execution_batch_1.json"},
+        files_claimed_for_missing={"a.py"},
+        files_in_diff={"a.py"},
+        loc_by_file={"a.py": 1},
+    )
+
+    assert report.files_added == []
+    assert report.files_missing == []
+    assert report.severity == "none"
 
 
 def test_collect_loc_by_file_counts_untracked_file_for_high_drift(tmp_path: Path) -> None:

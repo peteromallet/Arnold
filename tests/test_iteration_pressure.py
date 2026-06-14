@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.audits.iteration import (
+from arnold.pipelines.megaplan.audits.iteration import (
     IterationPressureEntry,
     compute_flag_history,
     compute_fuzzy_groups,

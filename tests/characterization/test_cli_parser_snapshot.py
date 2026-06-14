@@ -166,7 +166,7 @@ def build_snapshot() -> dict[str, Any]:
     Returns a dict with a single key ``"commands"`` whose value is the
     recursive walk rooted at ``""`` (the root parser).
     """
-    from megaplan.cli import build_parser
+    from arnold.pipelines.megaplan.cli import build_parser
 
     root_parser = build_parser()
     root_command = _walk_parser(root_parser)

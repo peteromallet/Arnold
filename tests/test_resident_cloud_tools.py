@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.resident import MegaplanResidentProfile, ResidentAuthorizer, ResidentConfig
-from megaplan.resident.cloud import CloudToolRequest, CloudToolResult, _argv_for_request, classify_cloud_payload
-from megaplan.store import CloudRunInput, FileStore, ResidentConversationInput
+from arnold.pipelines.megaplan.resident import MegaplanResidentProfile, ResidentAuthorizer, ResidentConfig
+from arnold.pipelines.megaplan.resident.cloud import CloudToolRequest, CloudToolResult, _argv_for_request, classify_cloud_payload
+from arnold.pipelines.megaplan.store import CloudRunInput, FileStore, ResidentConversationInput
 
 
 @dataclass

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.orchestration.suite_runner import (
+from arnold.pipelines.megaplan.orchestration.suite_runner import (
     SuiteRunResult,
     _compute_code_hash,
     append_suite_run,

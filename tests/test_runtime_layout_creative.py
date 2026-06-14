@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 
-from megaplan._core import ensure_runtime_layout
-from megaplan.schemas import get_execution_schema_key
+from arnold.pipelines.megaplan._core import ensure_runtime_layout
+from arnold.pipelines.megaplan.schemas import get_execution_schema_key
 
 
 def _schema(path):

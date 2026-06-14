@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan import cli
+from arnold.pipelines.megaplan import cli 
 
 
 def _read_canonical(data_name: str) -> str:

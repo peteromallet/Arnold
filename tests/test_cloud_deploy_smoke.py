@@ -16,19 +16,23 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
+from arnold.pipelines.megaplan.cloud.cli import build_cloud_parser, run_cloud_cli
 
 
 def _docker_skip_reason() -> str | None:
     """Return a skip reason when Docker is unavailable, else ``None``."""
     if shutil.which("docker") is None:  # pragma: no cover - environment-dependent
         return "docker not available"
-    docker_info = subprocess.run(
-        ["docker", "info"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        docker_info = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:  # pragma: no cover - environment-dependent
+        return "docker daemon unavailable: docker info timed out"
     if docker_info.returncode != 0:  # pragma: no cover - environment-dependent
         return f"docker daemon unavailable: {docker_info.stderr.strip()}"
     return None
@@ -173,7 +177,7 @@ def test_cloud_deploy_smoke_build_materializes_and_dispatches(
 
     # Replace the provider factory so we never invoke ``docker compose``.
     monkeypatch.setattr(
-        "megaplan.cloud.cli.get_provider",
+        "arnold.pipelines.megaplan.cloud.cli.get_provider",
         lambda _name, _spec: _DummyProvider(),
     )
 
@@ -213,7 +217,7 @@ def test_cloud_yaml_loads_without_docker(
     cloud_yaml_path = tmp_path / "cloud.yaml"
     _write_minimal_cloud_yaml(cloud_yaml_path)
 
-    from megaplan.cloud.spec import load_spec as load_cloud_spec
+    from arnold.pipelines.megaplan.cloud.spec import load_spec as load_cloud_spec
 
     spec = load_cloud_spec(cloud_yaml_path)
     assert spec.provider == "local"

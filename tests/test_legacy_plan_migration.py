@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import megaplan.cli
-from megaplan.store import MultiStore
-from megaplan.store.file import FileStore
+import arnold.pipelines.megaplan.cli as megaplan_cli
+from arnold.pipelines.megaplan.store import MultiStore
+from arnold.pipelines.megaplan.store.file import FileStore
 
 
 def _project(tmp_path: Path) -> Path:
@@ -31,7 +31,7 @@ def test_legacy_plan_migration_orphan_dry_run_idempotency_and_conflict(
     monkeypatch.chdir(project)
     monkeypatch.setenv("HOME", str(target_home))
 
-    dry_exit = megaplan.cli.main([
+    dry_exit = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(source_home),
@@ -49,7 +49,7 @@ def test_legacy_plan_migration_orphan_dry_run_idempotency_and_conflict(
     assert dry_run["created"][0]["file_count"] == 2
     assert not MultiStore.canonical_filestore_root(project).exists()
 
-    import_exit = megaplan.cli.main([
+    import_exit = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(source_home),
@@ -70,7 +70,7 @@ def test_legacy_plan_migration_orphan_dry_run_idempotency_and_conflict(
     assert [ref.name for ref in store.list_plan_artifacts(plan_id)] == ["nested/artifact.bin", "state.json"]
     assert store.read_plan_artifact(plan_id, "nested/artifact.bin") == binary
 
-    rerun_exit = megaplan.cli.main([
+    rerun_exit = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(source_home),
@@ -84,7 +84,7 @@ def test_legacy_plan_migration_orphan_dry_run_idempotency_and_conflict(
     assert rerun["skipped"] == [{"plan_id": plan_id, "reason": "unchanged"}]
 
     (source_plan / "state.json").write_text("{\"legacy\": false}\n", encoding="utf-8")
-    conflict_exit = megaplan.cli.main([
+    conflict_exit = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(source_home),
@@ -117,7 +117,7 @@ def test_legacy_plan_migration_all_projects_legacy_epic_and_db_promotion(
     monkeypatch.chdir(project)
     monkeypatch.setenv("HOME", str(target_home))
 
-    exit_code = megaplan.cli.main([
+    exit_code = megaplan_cli.main([
         "migrate-local-plans",
         "--source-home",
         str(source_home),

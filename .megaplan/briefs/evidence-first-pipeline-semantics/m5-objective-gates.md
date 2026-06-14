@@ -22,6 +22,7 @@ IN:
   - required capabilities
   - manual/human fallback semantics
 - Compile machine-verifiable criteria into check specs where safe.
+- **Support AUTHOR-DECLARED objective checks (first-class, not only engine-inferred).** A milestone brief / chain spec can declare its mechanical invariant directly as a check spec (e.g. `check: grep -rlE "^\s*(from megaplan[. ]|import megaplan[. ])" --include=*.py outside the plugin → expect 0 matches`), so bulk/mechanical milestones are deterministic BY CONSTRUCTION rather than depending on the engine to guess a grep from prose. Motivating failure: a 337-file rename milestone span-spun forever because its mechanical done-criterion ("no residual old-package imports remain") was left to LLM review, which emitted un-routable global findings; as an engine-run declared gate it would have been a deterministic pass/fail against the live tree, routing a failure straight to re-applying the bulk operation (cross-ref Step-IO m3 `bulk_operation` rework-target). Authoring guidance: mechanical/cross-cutting milestones SHOULD declare their invariants as objective checks; reserve LLM review for semantic judgment.
 - Run objective checks through engine-owned execution.
 - Record command evidence with `EvidenceRef`s and provenance.
 - Launch objective gate execution asynchronously at milestone start.

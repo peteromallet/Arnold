@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.chain.git_ops import commit_plan_artifacts_to_base
-from megaplan.types import CliError
+from arnold.pipelines.megaplan.chain.git_ops import commit_plan_artifacts_to_base
+from arnold.pipelines.megaplan.types import CliError
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -150,7 +150,7 @@ def test_commit_does_not_invoke_git_checkout_of_base(tmp_path: Path, monkeypatch
     _git(repo, "checkout", "-b", "feature")
     artifacts = _write_artifacts(repo, "plan-m1")
 
-    import megaplan.chain as chain_module
+    import arnold.pipelines.megaplan.chain as chain_module
 
     real_run = chain_module.subprocess.run
     checkout_base_calls: list[list[str]] = []
