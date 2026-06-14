@@ -939,7 +939,13 @@ def save_config(config: dict[str, Any], home: Path | None = None) -> Path:
     return path
 
 
-def get_effective(section: str, key: str) -> Any:
+def get_effective(
+    section: str,
+    key: str,
+    *,
+    home: Path | None = None,
+    project_dir: Path | None = None,
+) -> Any:
     from arnold.pipelines.megaplan.types import DEFAULTS
 
     default_key = f"{section}.{key}"
@@ -953,13 +959,20 @@ def get_effective(section: str, key: str) -> Any:
         from arnold.pipelines.megaplan._core.config_resolver import ConfigResolver
 
         return ConfigResolver().effective(section, key)
-    config = load_config()
+    config = load_config(home)
     section_config = config.get(section)
     if isinstance(section_config, dict) and key in section_config:
-        return section_config[key]
+        value = section_config[key]
+    else:
+        value = DEFAULTS[default_key]
 
-    # DEFAULTS (lowest precedence).
-    return DEFAULTS[default_key]
+    if project_dir is not None:
+        project_config = load_project_config(project_dir)
+        project_section = project_config.get(section)
+        if isinstance(project_section, dict) and key in project_section:
+            return project_section[key]
+
+    return value
 
 
 def setting_is_explicit(
@@ -989,7 +1002,14 @@ def setting_is_explicit(
         return ConfigResolver().explicit_at(section, key) is not None
     config = load_config(home)
     section_config = config.get(section)
-    return isinstance(section_config, dict) and key in section_config
+    if isinstance(section_config, dict) and key in section_config:
+        return True
+    if project_dir is not None:
+        project_config = load_project_config(project_dir)
+        project_section = project_config.get(section)
+        if isinstance(project_section, dict) and key in project_section:
+            return True
+    return False
 
 
 # Absolute path to the megaplan-vendored Shannon fork. Kept in sync with
