@@ -579,7 +579,7 @@ class TestStepImports:
 
 
 class TestBoundaryNoMegaplan:
-    """Arnold step modules do not import megaplan."""
+    """Arnold step modules do not import arnold.pipelines.megaplan."""
 
     def test_agent_module_no_megaplan_import(self) -> None:
         """arnold.pipeline.steps.agent has no megaplan imports."""

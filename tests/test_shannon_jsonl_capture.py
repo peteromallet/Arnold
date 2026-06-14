@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.workers.shannon import (
+from arnold.pipelines.megaplan.workers.shannon import (
     _parse_shannon_ndjson_events,
     _read_turn_ndjson_from_transcript,
 )
@@ -405,9 +405,9 @@ class TestTranscriptIntegration:
         transcript NDJSON is tried and successfully parsed."""
         from unittest.mock import patch
 
-        from megaplan._core import ensure_runtime_layout
-        from megaplan.workers import CommandResult, WorkerResult
-        from megaplan.workers.shannon import run_shannon_step
+        from arnold.pipelines.megaplan._core import ensure_runtime_layout
+        from arnold.pipelines.megaplan.workers import CommandResult, WorkerResult
+        from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
         from tests._workers_helpers import _mock_state
 
         ensure_runtime_layout(tmp_path)
@@ -453,11 +453,11 @@ class TestTranscriptIntegration:
         )
 
         with patch(
-            "megaplan.workers.shannon._claude_transcript_paths",
+            "arnold.pipelines.megaplan.workers.shannon._claude_transcript_paths",
             return_value=[transcript_path],
         ):
             with patch(
-                "megaplan.workers.shannon.run_command",
+                "arnold.pipelines.megaplan.workers.shannon.run_command",
                 return_value=fake_result,
             ):
                 result = run_shannon_step(
@@ -482,9 +482,9 @@ class TestTranscriptIntegration:
         fall back to stdout raw."""
         from unittest.mock import patch
 
-        from megaplan._core import ensure_runtime_layout
-        from megaplan.workers import CommandResult, WorkerResult
-        from megaplan.workers.shannon import run_shannon_step
+        from arnold.pipelines.megaplan._core import ensure_runtime_layout
+        from arnold.pipelines.megaplan.workers import CommandResult, WorkerResult
+        from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
         from tests._workers_helpers import _mock_state
 
         ensure_runtime_layout(tmp_path)
@@ -531,11 +531,11 @@ class TestTranscriptIntegration:
         )
 
         with patch(
-            "megaplan.workers.shannon._claude_transcript_paths",
+            "arnold.pipelines.megaplan.workers.shannon._claude_transcript_paths",
             return_value=[transcript_path],
         ):
             with patch(
-                "megaplan.workers.shannon.run_command",
+                "arnold.pipelines.megaplan.workers.shannon.run_command",
                 return_value=fake_result,
             ):
                 result = run_shannon_step(
@@ -557,9 +557,9 @@ class TestTranscriptIntegration:
         megaplan payload (schema error), fall back to stdout raw."""
         from unittest.mock import patch
 
-        from megaplan._core import ensure_runtime_layout
-        from megaplan.workers import CommandResult, WorkerResult
-        from megaplan.workers.shannon import run_shannon_step
+        from arnold.pipelines.megaplan._core import ensure_runtime_layout
+        from arnold.pipelines.megaplan.workers import CommandResult, WorkerResult
+        from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
         from tests._workers_helpers import _mock_state
 
         ensure_runtime_layout(tmp_path)
@@ -613,11 +613,11 @@ class TestTranscriptIntegration:
         )
 
         with patch(
-            "megaplan.workers.shannon._claude_transcript_paths",
+            "arnold.pipelines.megaplan.workers.shannon._claude_transcript_paths",
             return_value=[transcript_path],
         ):
             with patch(
-                "megaplan.workers.shannon.run_command",
+                "arnold.pipelines.megaplan.workers.shannon.run_command",
                 return_value=fake_result,
             ):
                 result = run_shannon_step(

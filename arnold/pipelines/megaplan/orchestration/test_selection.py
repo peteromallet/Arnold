@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-log = logging.getLogger("megaplan.test_selection")
+log = logging.getLogger("arnold.pipelines.megaplan.test_selection")
 
 
 def _normalize_relpath(path: str) -> str:

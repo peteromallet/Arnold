@@ -631,7 +631,7 @@ def test_telemetry_line_is_emitted_on_passed_run(
     with contextlib.ExitStack() as stack:
         for p in _mock_collect_deps(verification, baseline=baseline):
             stack.enter_context(p)
-        with caplog.at_level(logging.INFO, logger="megaplan.orchestration.completion_contract"):
+        with caplog.at_level(logging.INFO, logger="arnold.pipelines.megaplan.orchestration.completion_contract"):
             provider.collect(ctx)
 
     # Find the telemetry log line.
@@ -680,7 +680,7 @@ def test_telemetry_line_is_emitted_on_failed_run(
     with contextlib.ExitStack() as stack:
         for p in _mock_collect_deps(verification, baseline=baseline):
             stack.enter_context(p)
-        with caplog.at_level(logging.INFO, logger="megaplan.orchestration.completion_contract"):
+        with caplog.at_level(logging.INFO, logger="arnold.pipelines.megaplan.orchestration.completion_contract"):
             provider.collect(ctx)
 
     telemetry_lines = [
@@ -715,7 +715,7 @@ def test_telemetry_line_is_emitted_on_runner_error(
     with contextlib.ExitStack() as stack:
         for p in _mock_collect_deps(verification, baseline=None):
             stack.enter_context(p)
-        with caplog.at_level(logging.INFO, logger="megaplan.orchestration.completion_contract"):
+        with caplog.at_level(logging.INFO, logger="arnold.pipelines.megaplan.orchestration.completion_contract"):
             provider.collect(ctx)
 
     telemetry_lines = [
@@ -774,7 +774,7 @@ def test_telemetry_includes_freshness_skip_true(
             )
         )
 
-        with caplog.at_level(logging.INFO, logger="megaplan.orchestration.completion_contract"):
+        with caplog.at_level(logging.INFO, logger="arnold.pipelines.megaplan.orchestration.completion_contract"):
             provider.collect(ctx)
 
     telemetry_lines = [
@@ -822,7 +822,7 @@ def test_telemetry_includes_deleted_tests_count(
     with contextlib.ExitStack() as stack:
         for p in _mock_collect_deps(verification, baseline=baseline):
             stack.enter_context(p)
-        with caplog.at_level(logging.INFO, logger="megaplan.orchestration.completion_contract"):
+        with caplog.at_level(logging.INFO, logger="arnold.pipelines.megaplan.orchestration.completion_contract"):
             provider.collect(ctx)
 
     telemetry_lines = [

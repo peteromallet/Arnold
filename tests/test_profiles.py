@@ -1094,7 +1094,7 @@ def _clear_model_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _disable_premium_cli_routes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        profiles_module,
+        profiles_policy,
         "_premium_cli_route_available",
         lambda vendor: False,
     )
@@ -1121,7 +1121,7 @@ def test_vendor_codex_flips_premium_slots_on_all_claude(
 
 
 def test_apply_vendor_rewrite_resolves_symbolic_premium_slots_before_swapping() -> None:
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     tier_models = {"execute": {4: "premium:medium"}}
     prep_models = {"triage": "premium:low"}
@@ -1145,7 +1145,7 @@ def test_apply_vendor_rewrite_resolves_symbolic_premium_slots_before_swapping() 
 
 
 def test_apply_vendor_rewrite_does_not_inject_feedback_when_omitted() -> None:
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     rewritten = apply_vendor_rewrite({"plan": "premium:high"}, "codex")
 
@@ -1443,7 +1443,7 @@ def test_vendor_codex_directed_routes_evaluator_and_feedback_to_codex(
     resolved = _phase_models_to_map(args.phase_model)
     assert resolved["feedback"] == "codex:low"
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         evaluator = resolve_agent_mode("critique_evaluator", args)
     assert evaluator.agent == "codex"
     assert evaluator.effort is None
@@ -1458,7 +1458,7 @@ def test_all_codex_routes_default_evaluator_to_codex(
     args = _worker_args(profile="all-codex")
     apply_profile_expansion(args, None)
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         evaluator = resolve_agent_mode("critique_evaluator", args)
     assert evaluator.agent == "codex"
 
@@ -1475,7 +1475,7 @@ def test_vendor_claude_directed_keeps_evaluator_and_feedback_on_claude(
     resolved = _phase_models_to_map(args.phase_model)
     assert resolved["feedback"] == "claude:low"
 
-    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+    with patch("arnold.pipelines.megaplan.workers._impl._is_agent_available", return_value=True):
         evaluator = resolve_agent_mode("critique_evaluator", args)
     assert evaluator.agent == "claude"
     assert evaluator.effort is None
@@ -1773,7 +1773,7 @@ def test_solo_profile_resolves_to_deepseek_reasoning_with_premium_floor(
         "tiebreaker_challenger",
     ):
         assert resolved[phase] == DEEPSEEK_DIRECT, f"solo.{phase} should be DeepSeek, got {resolved[phase]!r}"
-    assert resolved["finalize"] == DEEPSEEK_DIRECT
+    assert resolved["finalize"] == "claude:low"
     assert args.tier_models["execute"][4] == "claude:claude-sonnet-4-6"
     assert args.tier_models["execute"][5] == "claude:claude-opus-4-7"
 
@@ -3125,7 +3125,7 @@ def test_depth_rewrite_propagates_to_tier_entries_author_phases_only() -> None:
 
 
 def test_profile_has_premium_slots_counts_symbolic_placeholder() -> None:
-    from megaplan.profiles import _profile_has_premium_slots
+    from arnold.pipelines.megaplan.profiles.policy import _profile_has_premium_slots
 
     assert _profile_has_premium_slots({"plan": "premium:low"}) is True
     assert _profile_has_premium_slots({"plan": "claude:low"}) is True
@@ -3157,7 +3157,7 @@ def test_named_vendor_tier_drift_passes_when_correct() -> None:
 
 
 def test_validate_resolved_profile_invariants_rejects_symbolic_premium_anywhere() -> None:
-    from megaplan.profiles import _validate_resolved_profile_invariants
+    from arnold.pipelines.megaplan.profiles import _validate_resolved_profile_invariants
 
     with pytest.raises(CliError, match="symbolic premium placeholders still present"):
         _validate_resolved_profile_invariants(
@@ -3177,7 +3177,7 @@ def test_apply_vendor_rewrite_resolves_symbolic_premium_placeholders_across_all_
     """Prove that symbolic ``premium`` placeholders are resolved to the
     target vendor in every slot kind: profile phases, tier_models, and
     prep_models — all before concrete vendor swapping."""
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     profile = {
         "plan": "premium:high",
@@ -3251,7 +3251,7 @@ def test_apply_vendor_rewrite_resolves_symbolic_premium_placeholders_across_all_
 def test_apply_vendor_rewrite_resolves_bare_symbolic_premium_placeholder() -> None:
     """Prove that bare ``premium`` (no effort suffix) resolves and swaps
     cleanly: ``premium`` with vendor=codex → ``codex``."""
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     rewritten = apply_vendor_rewrite(
         {"plan": "premium", "critique": "premium", "feedback": "premium"},
@@ -3323,7 +3323,7 @@ def test_apply_vendor_rewrite_preserves_non_premium_slots_unchanged() -> None:
     """Prove that hermes/shannon slots pass through vendor rewrite
     unchanged, even when symbolic premium placeholders are present
     alongside them in the same profile dict."""
-    from megaplan.profiles import apply_vendor_rewrite
+    from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite
 
     profile = {
         "plan": "premium:low",

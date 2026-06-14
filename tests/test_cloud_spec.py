@@ -185,7 +185,7 @@ def test_load_spec_rejects_invalid_megaplan_source_fields(
     payload = _base_spec()
     payload["megaplan"][field] = value  # type: ignore[index]
 
-    with pytest.raises(CliError, match=f"megaplan.{field}"):
+    with pytest.raises(CliError, match=fr"megaplan\.{field}"):
         load_spec(_write_spec(tmp_path, payload))
 
 

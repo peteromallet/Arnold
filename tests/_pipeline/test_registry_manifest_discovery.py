@@ -46,7 +46,7 @@ def _patch_scan_roots(tmp_path: Path):
     return patch.object(
         registry,
         "_get_scan_roots",
-        return_value=[(tmp_path, "megaplan.pipelines")],
+        return_value=[(tmp_path, "arnold.pipelines.megaplan.pipelines")],
     )
 
 

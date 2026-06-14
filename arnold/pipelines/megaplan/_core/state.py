@@ -1193,7 +1193,7 @@ def append_history(state: PlanState, entry: HistoryEntry) -> None:
     eff = Effect(
         replay_class=ReplayClass.idempotent_keyed,
         idempotency_key=key,
-        provenance={"module": "megaplan._core.state", "fn": "append_history"},
+        provenance={"module": "arnold.pipelines.megaplan._core.state", "fn": "append_history"},
     )
     journal_then_execute(eff, _accumulate, phase="execute")
 

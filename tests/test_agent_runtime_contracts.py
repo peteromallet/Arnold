@@ -33,15 +33,15 @@ LOWER_LEVEL_ADAPTER_NAMES = {
 }
 
 BANNED_IMPORT_PREFIXES = (
-    "megaplan.handlers",
-    "megaplan.prompts",
-    "megaplan.schemas",
-    "megaplan.store",
-    "megaplan.observability",
-    "megaplan.cli",
-    "megaplan._pipeline",
-    "megaplan.workers",
-    "megaplan._core",
+    "arnold.pipelines.megaplan.handlers",
+    "arnold.pipelines.megaplan.prompts",
+    "arnold.pipelines.megaplan.schemas",
+    "arnold.pipelines.megaplan.store",
+    "arnold.pipelines.megaplan.observability",
+    "arnold.pipelines.megaplan.cli",
+    "arnold.pipelines.megaplan._pipeline",
+    "arnold.pipelines.megaplan.workers",
+    "arnold.pipelines.megaplan._core",
 )
 
 
@@ -59,7 +59,7 @@ def test_runtime_public_surface_is_exact_and_identity_preserving() -> None:
 
 def test_runtime_import_keeps_banned_layers_out(monkeypatch) -> None:
     for name in list(sys.modules):
-        if name == "megaplan.agent_runtime" or name.startswith("megaplan.agent_runtime."):
+        if name == "arnold.pipelines.megaplan.agent_runtime" or name.startswith("arnold.pipelines.megaplan.agent_runtime."):
             monkeypatch.delitem(sys.modules, name, raising=False)
         elif name.startswith(BANNED_IMPORT_PREFIXES):
             monkeypatch.delitem(sys.modules, name, raising=False)

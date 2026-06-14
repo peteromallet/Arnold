@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from megaplan.execute.aggregation import _compute_execute_scope_drift
+from arnold.pipelines.megaplan.execute.aggregation import _compute_execute_scope_drift
 
 
 def _git(args: list[str], cwd: Path) -> None:

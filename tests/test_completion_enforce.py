@@ -181,7 +181,7 @@ def test_warn_is_advisory_not_blocking(tmp_path, monkeypatch, caplog):
         ),
     )
 
-    with caplog.at_level(logging.WARNING, logger="megaplan.auto"):
+    with caplog.at_level(logging.WARNING, logger="arnold.pipelines.megaplan.auto"):
         result = auto._shadow_completion_verdict("plan-x", plan_dir, None, log=lambda m, **k: None)
 
     assert result == "done", f"warn mode must not block; got {result!r}"
@@ -265,7 +265,7 @@ def test_enforce_runner_error_does_not_block(tmp_path, monkeypatch, caplog):
         ),
     )
 
-    with caplog.at_level(logging.WARNING, logger="megaplan.auto"):
+    with caplog.at_level(logging.WARNING, logger="arnold.pipelines.megaplan.auto"):
         result = auto._shadow_completion_verdict("plan-x", plan_dir, None, log=lambda m, **k: None)
 
     assert result == "done", f"runner_error must not block; got {result!r}"

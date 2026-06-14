@@ -183,7 +183,7 @@ class TestBridgeImports:
             assert all(c in "0123456789abcdef" for c in digest)
 
     def test_megaplan_pipeline_bridge_imports(self) -> None:
-        """Core types still importable from megaplan._pipeline."""
+        """Core types still importable from arnold.pipelines.megaplan._pipeline."""
         from arnold.pipelines.megaplan._pipeline import (
             Edge,
             ParallelStage,

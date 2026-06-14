@@ -238,12 +238,12 @@ def _collect_banned_imports(path: Path) -> list[str]:
                 module = node.module
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    if "megaplan.execute" in alias.name or "megaplan.handlers" in alias.name:
+                    if "arnold.pipelines.megaplan.execute" in alias.name or "arnold.pipelines.megaplan.handlers" in alias.name:
                         violations.append(
                             f"{path.name}:{node.lineno}: imports {alias.name!r}"
                         )
                 continue
-            if "megaplan.execute" in module or "megaplan.handlers" in module:
+            if "arnold.pipelines.megaplan.execute" in module or "arnold.pipelines.megaplan.handlers" in module:
                 violations.append(
                     f"{path.name}:{node.lineno}: imports from {module!r}"
                 )

@@ -225,7 +225,7 @@ EVALUATION_SYMBOLS = [
 ]
 
 EXECUTE_CORE_SYMBOLS = [
-    # Direct imports from megaplan.execute.core
+    # Direct imports from arnold.pipelines.megaplan.execute.core
     # test_creative_mode_smoke.py, test_directors_notes_idempotency.py
     "_build_aggregate_execution_payload",
     # test_execute_merge_creative.py

@@ -190,7 +190,7 @@ def _report_batch_transitions(ctx: _PolicyContext, spec: PolicySettingSpec) -> R
     elif "max_tasks_per_batch" in ctx.config:
         source = "state.config.max_tasks_per_batch"
     else:
-        source = "megaplan._core.get_effective(execution.max_tasks_per_batch)"
+        source = "arnold.pipelines.megaplan._core.get_effective(execution.max_tasks_per_batch)"
     value: dict[str, Any] = {"max_tasks_per_batch": max_tasks}
     if isinstance(ctx.finalize_data, Mapping):
         global_batches = compute_global_batches(dict(ctx.finalize_data))

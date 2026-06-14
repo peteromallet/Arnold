@@ -560,8 +560,8 @@ def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> 
 def test_run_codex_step_checks_final_prompt_before_run_command(
     tmp_path: Path,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -572,9 +572,9 @@ def test_run_codex_step_checks_final_prompt_before_run_command(
         raise CliError("prompt_oversized", "too large")
 
     with (
-        patch("megaplan.workers._impl.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("arnold.pipelines.megaplan.workers._impl.check_prompt_size", side_effect=fake_check_prompt_size),
         patch(
-            "megaplan.workers._impl.run_command",
+            "arnold.pipelines.megaplan.workers._impl.run_command",
             side_effect=AssertionError("run_command should not be reached"),
         ),
     ):
@@ -593,8 +593,8 @@ def test_run_codex_step_checks_final_prompt_before_run_command(
 def test_run_codex_review_oversize_uses_compact_prompt_and_produces_verdict(
     tmp_path: Path,
 ) -> None:
-    from megaplan._core import ensure_runtime_layout
-    from megaplan.workers import run_codex_step
+    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold.pipelines.megaplan.workers import run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -634,9 +634,9 @@ def test_run_codex_review_oversize_uses_compact_prompt_and_produces_verdict(
         )
 
     with (
-        patch("megaplan.workers._impl.create_codex_prompt", return_value="X" * 175_460),
-        patch("megaplan.workers._impl.check_prompt_size", side_effect=fake_check_prompt_size),
-        patch("megaplan.workers._impl.run_command", side_effect=fake_run_command),
+        patch("arnold.pipelines.megaplan.workers._impl.create_codex_prompt", return_value="X" * 175_460),
+        patch("arnold.pipelines.megaplan.workers._impl.check_prompt_size", side_effect=fake_check_prompt_size),
+        patch("arnold.pipelines.megaplan.workers._impl.run_command", side_effect=fake_run_command),
     ):
         result = run_codex_step(
             "review",

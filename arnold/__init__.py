@@ -7,7 +7,7 @@ that let Megaplan (and alternative runtimes) describe pipelines, stages,
 steps, and state transitions.
 
 Version is tracked here directly so that importing ``arnold`` never triggers
-a ``megaplan`` import (the old ``from megaplan import __version__`` created
+a ``megaplan`` import (the old ``from arnold.pipelines.megaplan import __version__`` created
 a circular dependency after the rename).
 """
 

@@ -792,8 +792,8 @@ def test_cloud_chain_preflight_codex_vendor_premium_profile_requires_only_openai
                 )
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -856,8 +856,8 @@ def test_cloud_chain_preflight_apex_profile_requires_both_providers(
                 )
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]
@@ -928,8 +928,8 @@ def test_cloud_chain_preflight_explicit_codex_pins_override_claude_vendor(
                 )
             return subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr("megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
-    monkeypatch.setattr("megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.load_spec", lambda _path: _cloud_spec("railway"))
+    monkeypatch.setattr("arnold.pipelines.megaplan.cloud.cli.get_provider", lambda _name, _spec: StubProvider())
 
     args = parser.parse_args(
         ["cloud", "chain", str(spec_path), "--idea-dir", str(idea_dir), "--cloud-yaml", str(cloud_yaml_path)]

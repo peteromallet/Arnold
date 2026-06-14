@@ -23,7 +23,7 @@ from __future__ import annotations
 import threading
 import time
 
-from megaplan.orchestration.baseline_gate import (
+from arnold.pipelines.megaplan.orchestration.baseline_gate import (
     BaselineSlot,
     baseline_max_concurrent,
     baseline_slot,

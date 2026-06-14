@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from megaplan.runtime.process import kill_group, spawn
+from arnold.pipelines.megaplan.runtime.process import kill_group, spawn
 
 pytestmark = pytest.mark.skipif(
     not hasattr(os, "killpg"), reason="POSIX-only (killpg/start_new_session)"

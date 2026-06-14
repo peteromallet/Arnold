@@ -257,7 +257,7 @@ def _classify_external_error(exc: Exception) -> ExternalError | None:
 
 
 def _is_malformed_model_output_error(exc: Exception) -> bool:
-    from megaplan.types import CliError
+    from arnold.pipelines.megaplan.types import CliError
 
     if not isinstance(exc, CliError):
         return False
@@ -620,7 +620,7 @@ def _emit_phase_result(
         # can happen in tests that mock _run_worker at the module level.
         # Log a warning and skip emission rather than crashing.
         import logging
-        log = logging.getLogger("megaplan.orchestration.phase_result")
+        log = logging.getLogger("arnold.pipelines.megaplan.orchestration.phase_result")
         log.warning(
             "set_active_step was bypassed for phase=%r — "
             "skipping phase_result.json emission",

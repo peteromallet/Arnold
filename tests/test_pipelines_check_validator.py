@@ -582,7 +582,7 @@ def test_cli_pipelines_check_non_model_invocation_is_authorable_but_fail_closed(
 def test_m5_judge_manifest_shape_validates() -> None:
     manifest = make_judge_manifest(
         name="m5-wrapper-eval",
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         model_identity="model:gpt-5.4",
         rubric_body={"rubric": "return an EvaluandRecord judgment"},
@@ -602,7 +602,7 @@ def test_cli_pipelines_check_registered_m5_manifest_does_not_import_wrapper(
     from arnold.pipelines.megaplan.cli import _handle_pipelines
 
     def blocked_import(name, package=None):
-        if name == "megaplan._pipeline.eval_judge_wrapper":
+        if name == "arnold.pipelines.megaplan._pipeline.eval_judge_wrapper":
             raise AssertionError("pipelines check imported the eval judge wrapper")
         return real_import_module(name, package=package)
 

@@ -631,14 +631,17 @@ def test_review_demotes_ungrounded_prose_rework_when_declared_checks_pass(
 def test_real_megaplan_import_usage_ignores_comments_and_docstrings() -> None:
     from arnold.pipelines.megaplan.review.mechanical import real_megaplan_import_usages
 
-    source = '''
-"""Policy says no import megaplan vocabulary is allowed."""
-# import megaplan
-TEXT = "from megaplan import handlers"
-from megaplan.types import CliError
-'''
+    source = "\n".join(
+        [
+            '"""Policy says no import megaplan vocabulary is allowed."""',
+            "# import megaplan",
+            'TEXT = "from megaplan import handlers"',
+            "from megaplan.types import CliError",
+            "",
+        ]
+    )
 
-    assert real_megaplan_import_usages(source) == [(5, "from megaplan.types")]
+    assert real_megaplan_import_usages(source) == [(4, "from megaplan.types")]
 
 
 def test_review_disputed_flag_cannot_block_even_with_grounded_check() -> None:

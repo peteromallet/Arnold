@@ -119,7 +119,7 @@ def test_topology_literal_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Public surface exported from megaplan.drivers
+# Public surface exported from arnold.pipelines.megaplan.drivers
 # ---------------------------------------------------------------------------
 
 

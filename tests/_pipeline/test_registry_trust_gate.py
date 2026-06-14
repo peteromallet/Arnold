@@ -82,7 +82,7 @@ def isolated_scan_roots(tmp_path, monkeypatch):
     monkeypatch.setattr(
         registry,
         "_get_scan_roots",
-        lambda: [(in_tree_root, "megaplan.pipelines"), (out_root, None)],
+        lambda: [(in_tree_root, "arnold.pipelines.megaplan.pipelines"), (out_root, None)],
     )
     return in_tree_root, out_root
 

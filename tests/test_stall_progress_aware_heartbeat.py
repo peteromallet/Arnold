@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan.auto import _stall_event_progress_snapshot
-from megaplan.observability.events import EventKind, emit
+from arnold.pipelines.megaplan.auto import _stall_event_progress_snapshot
+from arnold.pipelines.megaplan.observability.events import EventKind, emit
 
 
 def _hb(plan_dir: Path, tokens: int, reasoning: int) -> None:

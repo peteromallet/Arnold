@@ -24,21 +24,21 @@ def test_piece_version_is_canonical_and_changes_with_piece_identity() -> None:
     )
 
     baseline = compute_piece_version(
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         produces=produces,
         source_hash="sha256:aaa",
         extra_identity={"b": 2, "a": 1},
     )
     reordered = compute_piece_version(
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         produces=produces,
         source_hash="sha256:aaa",
         extra_identity={"a": 1, "b": 2},
     )
     changed = compute_piece_version(
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         produces=produces,
         source_hash="sha256:bbb",
@@ -52,7 +52,7 @@ def test_piece_version_is_canonical_and_changes_with_piece_identity() -> None:
 
 def test_judge_version_changes_when_rubric_body_changes() -> None:
     piece_version = compute_piece_version(
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
     )
 
@@ -72,7 +72,7 @@ def test_judge_version_changes_when_rubric_body_changes() -> None:
 
 def test_judge_version_changes_when_model_identity_changes() -> None:
     piece_version = compute_piece_version(
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
     )
     rubric_hash = compute_rubric_hash("score the answer")
@@ -96,7 +96,7 @@ def test_piece_and_judge_versions_do_not_collapse_same_identity_material() -> No
         JudgeManifestPort("evaluand", EVALUAND_RECORD_CONTENT_TYPE),
     )
     piece_version = compute_piece_version(
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         produces=produces,
         source_hash="sha256:abc123",
@@ -112,13 +112,13 @@ def test_piece_and_judge_versions_do_not_collapse_same_identity_material() -> No
 
 def test_piece_version_changes_when_port_identity_changes() -> None:
     baseline = compute_piece_version(
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         produces=(JudgeManifestPort("evaluand", EVALUAND_RECORD_CONTENT_TYPE),),
         source_hash="sha256:abc123",
     )
     renamed_port = compute_piece_version(
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         produces=(JudgeManifestPort("scorecard", EVALUAND_RECORD_CONTENT_TYPE),),
         source_hash="sha256:abc123",
@@ -130,7 +130,7 @@ def test_piece_version_changes_when_port_identity_changes() -> None:
 def test_manifest_json_round_trip(tmp_path) -> None:
     manifest = make_judge_manifest(
         name="wrapper_eval",
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         model_identity="model:gpt-5.4",
         rubric_body={"rubric": "prefer factual answers"},
@@ -151,7 +151,7 @@ def test_manifest_json_round_trip(tmp_path) -> None:
 def test_validate_judge_manifest_rejects_wrong_schema_kind_and_missing_ports() -> None:
     valid = make_judge_manifest(
         name="wrapper_eval",
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         model_identity="model:gpt-5.4",
         rubric_body={"rubric": "prefer factual answers"},
@@ -176,7 +176,7 @@ def test_validate_judge_manifest_rejects_wrong_schema_kind_and_missing_ports() -
 def test_validate_judge_manifest_rejects_unknown_content_types() -> None:
     manifest = make_judge_manifest(
         name="wrapper_eval",
-        implementation="megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         model_identity="model:gpt-5.4",
         rubric_body={"rubric": "prefer factual answers"},

@@ -180,7 +180,7 @@ def _package_prefix_for_module_file(module_file: Path) -> str | None:
         return "arnold.pipelines"
     megaplan_fragment = "/megaplan/pipelines/"
     if megaplan_fragment in normalised or normalised.endswith("/megaplan/pipelines"):
-        return "megaplan.pipelines"
+        return "arnold.pipelines.megaplan.pipelines"
     return None
 
 

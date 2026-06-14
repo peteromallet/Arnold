@@ -69,7 +69,7 @@ class BlockMegaplan:
     def find_spec(self, fullname, path=None, target=None):
         blocked = (
             fullname == "megaplan"
-            or fullname.startswith("megaplan.")
+            or fullname.startswith("arnold.pipelines.megaplan.")
             or fullname == "arnold.pipelines.megaplan"
             or fullname.startswith("arnold.pipelines.megaplan.")
             or fullname == "arnold_pipelines.megaplan"

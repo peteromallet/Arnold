@@ -23,7 +23,8 @@ from pathlib import Path
 
 import pytest
 
-import megaplan.handlers
+import arnold.pipelines.megaplan as megaplan
+import arnold.pipelines.megaplan.handlers
 
 
 def _project(tmp_path: Path) -> Path:

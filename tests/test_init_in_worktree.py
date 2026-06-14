@@ -594,7 +594,7 @@ def test_carry_includes_gitignored_briefs_excludes_run_state(tmp_path: Path) -> 
     """`.megaplan/briefs/` is gitignored INPUT and must be carried into the
     worktree; `.megaplan/plans/` (run state) must NOT be. Regression for the
     `missing_idea_file` launch failure when `.megaplan/` is gitignored."""
-    from megaplan.bakeoff import worktree as wt
+    from arnold.pipelines.megaplan.bakeoff import worktree as wt
 
     repo = tmp_path / "repo"
     head = _init_repo(repo)

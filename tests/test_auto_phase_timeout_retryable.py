@@ -22,8 +22,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from megaplan import auto
-from megaplan.auto import STATE_FAILED
+from arnold.pipelines.megaplan import auto
+from arnold.pipelines.megaplan.auto import STATE_FAILED
 
 
 def _make_plan_dir(tmp_path: Path, plan: str, *, current_state: str) -> Path:

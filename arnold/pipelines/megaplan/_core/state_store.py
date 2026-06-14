@@ -1,6 +1,6 @@
 """State store backends — pluggable persistence strategies for plan state.
 
-This module is **distinct from megaplan.store** and provides the
+This module is **distinct from arnold.pipelines.megaplan.store** and provides the
 storage-axis drivers that the Governor and Conveyance consume. Three
 models are defined via ``StateStoreModel``:
 

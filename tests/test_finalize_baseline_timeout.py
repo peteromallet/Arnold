@@ -63,7 +63,7 @@ def test_capture_test_baseline_idle_stall_note(
     fake_result = _make_result(status="timeout", timeout_reason="idle")
 
     with mock.patch(
-        "megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
+        "arnold.pipelines.megaplan.orchestration.suite_runner.run_suite", return_value=fake_result
     ) as mock_run:
         result = megaplan.handlers._capture_test_baseline(
             tmp_path, {"test_baseline_idle_timeout": 180}

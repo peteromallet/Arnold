@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from megaplan.cli import _chain_worktree_base_ref
+from arnold.pipelines.megaplan.cli import _chain_worktree_base_ref
 
 
 def _args(**kw: object) -> argparse.Namespace:

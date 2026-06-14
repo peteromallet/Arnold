@@ -86,7 +86,7 @@ def parse_metric(output: str, pattern: str) -> float | None:
             return None
 
 
-# ── git-status helpers (canonical home; moved from megaplan.orchestration.evaluation) ──
+# ── git-status helpers (canonical home; moved from arnold.pipelines.megaplan.orchestration.evaluation) ──
 
 
 def _normalize_repo_path(path: str, project_dir: Path | None = None) -> str:

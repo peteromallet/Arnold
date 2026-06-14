@@ -23,7 +23,7 @@ from arnold.pipelines.megaplan.workers import (
     parse_json_file,
     run_codex_step,
 )
-from megaplan.workers._impl import CommandResult, run_codex_step
+from arnold.pipelines.megaplan.workers._impl import CommandResult, run_codex_step
 
 
 def _deleted_validate_payload(step: str, payload: dict[str, object]) -> None:

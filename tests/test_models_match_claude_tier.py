@@ -1,7 +1,7 @@
 """Regression: a pinned Claude shorthand (sonnet) must match the provider-reported
 canonical id (claude-sonnet-4-6) so a deliberate execute pin does not trip the
 routing-audit degradation gate; a wrong-tier substitution must still be flagged."""
-from megaplan.execute.batch import _models_match, _claude_tier
+from arnold.pipelines.megaplan.execute.batch import _models_match, _claude_tier
 
 
 def test_claude_shorthand_matches_canonical_id():

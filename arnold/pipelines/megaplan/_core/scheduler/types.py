@@ -12,7 +12,7 @@ from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
-# TODO: import from megaplan._pipeline.types once a generic Reduce[T] lands there
+# TODO: import from arnold.pipelines.megaplan._pipeline.types once a generic Reduce[T] lands there
 
 
 @dataclass(frozen=True)

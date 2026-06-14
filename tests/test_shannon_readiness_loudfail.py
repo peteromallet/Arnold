@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from megaplan.runtime.process import TmuxSession
-from megaplan.types import CliError
-from megaplan.workers.shannon import (
+from arnold.pipelines.megaplan.runtime.process import TmuxSession
+from arnold.pipelines.megaplan.types import CliError
+from arnold.pipelines.megaplan.workers.shannon import (
     _HEADLESS_BROKEN_MSG,
     _is_headless_crash_signature,
 )
@@ -39,7 +39,7 @@ def test_headless_crash_when_pane_empty(monkeypatch: pytest.MonkeyPatch) -> None
     """Session alive but pane is empty string → headless-crash signature fires."""
     session = _make_session()
     monkeypatch.setattr(session, "exists", lambda: True)
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
     monkeypatch.setattr(_mod, "_tmux_capture_pane", lambda _name: "")
     assert _is_headless_crash_signature(session) is True
 
@@ -48,7 +48,7 @@ def test_headless_crash_when_pane_whitespace_only(monkeypatch: pytest.MonkeyPatc
     """Session alive but pane is only whitespace → headless-crash signature fires."""
     session = _make_session()
     monkeypatch.setattr(session, "exists", lambda: True)
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
     monkeypatch.setattr(_mod, "_tmux_capture_pane", lambda _name: "   \n\t  \n")
     assert _is_headless_crash_signature(session) is True
 
@@ -57,7 +57,7 @@ def test_headless_crash_when_pane_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """Session alive but capture-pane fails (returns None) → headless-crash signature."""
     session = _make_session()
     monkeypatch.setattr(session, "exists", lambda: True)
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
     monkeypatch.setattr(_mod, "_tmux_capture_pane", lambda _name: None)
     assert _is_headless_crash_signature(session) is True
 
@@ -66,7 +66,7 @@ def test_no_headless_crash_when_pane_has_content(monkeypatch: pytest.MonkeyPatch
     """Session alive and pane has visible content → NOT a headless-crash signature."""
     session = _make_session()
     monkeypatch.setattr(session, "exists", lambda: True)
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
     monkeypatch.setattr(_mod, "_tmux_capture_pane", lambda _name: "❯ Welcome to Claude")
     assert _is_headless_crash_signature(session) is False
 
@@ -121,7 +121,7 @@ def test_worker_timeout_with_empty_pane_raises_headless_broken(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """worker_timeout + empty pane → CliError('shannon_claude_headless_broken')."""
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
 
     session = _make_headless_broken_session(monkeypatch)
 
@@ -159,7 +159,7 @@ def test_worker_stall_with_empty_pane_raises_headless_broken(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """worker_stall + empty pane → CliError('shannon_claude_headless_broken')."""
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
 
     session = _make_headless_broken_session(monkeypatch)
 
@@ -196,7 +196,7 @@ def test_worker_timeout_with_live_pane_reraises_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """worker_timeout + live pane → original CliError propagates (not headless-broken)."""
-    import megaplan.workers.shannon as _mod
+    import arnold.pipelines.megaplan.workers.shannon as _mod
 
     session = _make_session()
     # Session is alive with content — NOT the headless crash signature.

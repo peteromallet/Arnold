@@ -15,7 +15,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from megaplan.orchestration.suite_runner import _make_progress_writer, run_suite
+from arnold.pipelines.megaplan.orchestration.suite_runner import _make_progress_writer, run_suite
 
 
 def _project(tmp_path: Path) -> tuple[Path, Path]:

@@ -244,14 +244,14 @@ class TestScheduleBatchesSanity:
         assert result == [["T1"]]
 
     def test_no_import_leak_from_execute_or_handlers(self):
-        """The topo module MUST NOT import from megaplan.execute or
+        """The topo module MUST NOT import from arnold.pipelines.megaplan.execute or
         megaplan.handlers."""
         import arnold.pipelines.megaplan._core.scheduler.topo as mod
 
         source = open(mod.__file__).read()
-        assert "megaplan.execute" not in source, (
-            "topo.py must not import from megaplan.execute"
+        assert "arnold.pipelines.megaplan.execute" not in source, (
+            "topo.py must not import from arnold.pipelines.megaplan.execute"
         )
-        assert "megaplan.handlers" not in source, (
-            "topo.py must not import from megaplan.handlers"
+        assert "arnold.pipelines.megaplan.handlers" not in source, (
+            "topo.py must not import from arnold.pipelines.megaplan.handlers"
         )

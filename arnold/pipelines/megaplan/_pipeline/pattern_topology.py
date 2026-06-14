@@ -85,7 +85,7 @@ def critique_revise_gate_loop(
     # Delegate edge construction to the planning plugin (Megaplan-owned
     # decision literals live ONLY in megaplan.pipelines.planning.routing).
     # Lazy import to avoid circular dependency (planning/__init__.py imports
-    # from megaplan._pipeline.patterns).
+    # from arnold.pipelines.megaplan._pipeline.patterns).
     from arnold.pipelines.megaplan.routing import critique_revise_gate_routing as _routing
 
     routing = _routing(

@@ -698,8 +698,8 @@ class TestRouting:
 
     def test_builtin_profiles_vendor_rewrite_funnels_premium_feedback(self) -> None:
         """Built-in premium feedback follows --vendor like other premium slots."""
-        from megaplan.profiles import apply_vendor_rewrite, load_profile_sources
-        from megaplan.types import parse_agent_spec
+        from arnold.pipelines.megaplan.profiles import apply_vendor_rewrite, load_profile_sources
+        from arnold.pipelines.megaplan.types import parse_agent_spec
 
         builtin_sources = [
             (name, profile)

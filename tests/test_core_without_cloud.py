@@ -85,7 +85,7 @@ def test_core_commands_work_when_cloud_import_fails(tmp_path: Path) -> None:
         spec_path = Path({str(spec_path)!r})
         idea_file = Path({str(idea_file)!r})
 
-        fake_auto = types.ModuleType("megaplan.auto")
+        fake_auto = types.ModuleType("arnold.pipelines.megaplan.auto")
 
         class DriverOutcome:
             def __init__(self, **kwargs):

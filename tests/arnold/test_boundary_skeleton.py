@@ -570,7 +570,7 @@ _ARNOLD_PIPELINES_ROOT = Path(__file__).resolve().parent.parent.parent / "arnold
 
 
 def _arnold_init_allowed_imports_violations() -> list[str]:
-    """Check arnold/__init__.py — only ``from megaplan import __version__``
+    """Check arnold/__init__.py — only ``from arnold.pipelines.megaplan import __version__``
     (or aliased *__version__*) is allowed; any other megaplan import is
     forbidden."""
     violations: list[str] = []
@@ -590,7 +590,7 @@ def _arnold_init_allowed_imports_violations() -> list[str]:
                     violations.append(
                         f"{_ARNOLD_INIT}:{node.lineno}: forbidden import — "
                         f"`from {node.module} import {alias.name}` "
-                        f"(only `from megaplan import __version__` is allowed in arnold/__init__.py)"
+                        f"(only `from arnold.pipelines.megaplan import __version__` is allowed in arnold/__init__.py)"
                     )
         elif isinstance(node, ast.Import):
             for alias in node.names:
@@ -598,7 +598,7 @@ def _arnold_init_allowed_imports_violations() -> list[str]:
                     violations.append(
                         f"{_ARNOLD_INIT}:{node.lineno}: forbidden import — "
                         f"`import {alias.name}` "
-                        f"(only `from megaplan import __version__` is allowed in arnold/__init__.py)"
+                        f"(only `from arnold.pipelines.megaplan import __version__` is allowed in arnold/__init__.py)"
                     )
     return violations
 
@@ -644,20 +644,20 @@ def _arnold_pipelines_import_violations(scan_root: Path) -> list[str]:
 
 class TestM4PluginBoundary:
     """M4: arnold/__init__.py is allowed a version import; arnold/pipelines/
-    neutral modules must NOT import from megaplan."""
+    neutral modules must NOT import from arnold.pipelines.megaplan."""
 
     def test_arnold_init_only_allows_version_import(self) -> None:
-        """arnold/__init__.py may only import __version__ from megaplan."""
+        """arnold/__init__.py may only import __version__ from arnold.pipelines.megaplan."""
         violations = _arnold_init_allowed_imports_violations()
         if violations:
             pytest.fail(
                 f"arnold/__init__.py has {len(violations)} forbidden import(s) "
-                f"(only `from megaplan import __version__` is allowed):\n"
+                f"(only `from arnold.pipelines.megaplan import __version__` is allowed):\n"
                 + "\n".join(f"  • {v}" for v in violations)
             )
 
     def test_arnold_pipelines_no_megaplan_imports(self) -> None:
-        """Non-plugin arnold/pipelines/ files may not import from megaplan.
+        """Non-plugin arnold/pipelines/ files may not import from arnold.pipelines.megaplan.
 
         The M5b plugin subtree under ``arnold/pipelines/megaplan/`` is excluded
         because it is the canonical home for Megaplan policy code.
@@ -670,7 +670,7 @@ class TestM4PluginBoundary:
             )
 
     def test_arnold_init_version_is_local_not_megaplan_import(self) -> None:
-        """Clean-break characterization: arnold imports no symbols from megaplan."""
+        """Clean-break characterization: arnold imports no symbols from arnold.pipelines.megaplan."""
         tree = ast.parse(_ARNOLD_INIT.read_text(), filename=str(_ARNOLD_INIT))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):

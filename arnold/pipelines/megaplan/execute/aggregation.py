@@ -276,7 +276,7 @@ def _compute_execute_scope_drift(
     # committed range since that SHA so pre-milestone committed changes are
     # excluded from scope drift.
     if milestone_base_sha:
-        from megaplan.loop.git import _collect_committed_range_paths
+        from arnold.pipelines.megaplan.loop.git import _collect_committed_range_paths
         window_files = _collect_committed_range_paths(project_dir, base_ref=milestone_base_sha)
         files_in_diff: set[str] = window_files | status_files
     else:

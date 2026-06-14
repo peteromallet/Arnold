@@ -1033,11 +1033,11 @@ def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
     if not isinstance(config, dict) or not config.get("auto_approve"):
         return False
     try:
-        from megaplan._core.state import latest_plan_meta_path, save_state_merge_meta
-        from megaplan._core.io import read_json as _read_json
-        from megaplan.audits.capabilities import get_worker_capabilities
-        from megaplan.handlers.verifiability import get_human_verification_status
-        from megaplan.orchestration.verifiability import classify_criteria
+        from arnold.pipelines.megaplan._core.state import latest_plan_meta_path, save_state_merge_meta
+        from arnold.pipelines.megaplan._core.io import read_json as _read_json
+        from arnold.pipelines.megaplan.audits.capabilities import get_worker_capabilities
+        from arnold.pipelines.megaplan.handlers.verifiability import get_human_verification_status
+        from arnold.pipelines.megaplan.orchestration.verifiability import classify_criteria
 
         plan_meta = _read_json(latest_plan_meta_path(plan_dir, state_data))
         success_criteria = plan_meta.get("success_criteria", []) or []
@@ -1499,7 +1499,7 @@ def _shadow_completion_verdict(
     """
     if plan_dir is None:
         return "done"
-    _log = logging.getLogger("megaplan.auto")
+    _log = logging.getLogger("arnold.pipelines.megaplan.auto")
     try:
         from arnold.pipelines.megaplan.orchestration.completion_contract import (
             CONTRACT_MODE_ENFORCE,

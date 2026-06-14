@@ -1,7 +1,7 @@
 """Tests for ``megaplan._core.state_store`` (M3 Step 16 / T21).
 
 Coverage:
-  - module docstring contains literal ``\"distinct from megaplan.store\"``
+  - module docstring contains literal ``\"distinct from arnold.pipelines.megaplan.store\"``
   - all five public symbols are exported
   - ``StateStoreModel`` Literal has the three expected members
   - ``StateStoreBackend`` is a Protocol (structural subtype check)
@@ -39,8 +39,8 @@ def test_module_docstring_contains_distinct_from_megaplan_store():
     import arnold.pipelines.megaplan._core.state_store as m
 
     doc = m.__doc__ or ""
-    assert "distinct from megaplan.store" in doc, (
-        "module docstring must contain literal 'distinct from megaplan.store'"
+    assert "distinct from arnold.pipelines.megaplan.store" in doc, (
+        "module docstring must contain literal 'distinct from arnold.pipelines.megaplan.store'"
     )
 
 
