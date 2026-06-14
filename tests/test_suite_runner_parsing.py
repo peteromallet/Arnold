@@ -552,3 +552,45 @@ class TestExitCode2RunnerError:
 
         assert result.status == "runner_error"
         assert result.exit_code == 2
+
+    def test_exit_code_2_with_parseable_failures_records_failed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        (project_dir / ".git").mkdir()
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+
+        fake_proc = mock.MagicMock()
+        fake_proc.poll.return_value = None
+        fake_proc.wait.return_value = 2
+        monkeypatch.setattr(
+            "arnold.pipelines.megaplan.orchestration.suite_runner.spawn",
+            lambda *a, **_kw: fake_proc,
+        )
+        monkeypatch.setattr(
+            "arnold.pipelines.megaplan.orchestration.suite_runner._parse_pytest_output",
+            lambda _raw: {
+                "collected": 2,
+                "collected_ids": [
+                    "tests/test_a.py::test_fail",
+                    "tests/test_b.py::test_pass",
+                ],
+                "failures": ["tests/test_a.py::test_fail"],
+                "passes": ["tests/test_b.py::test_pass"],
+                "parse_ok": True,
+            },
+        )
+
+        result = run_suite(
+            project_dir,
+            {"test_command": "pytest", "plan_dir": str(plan_dir)},
+            phase="exit2",
+            deadline_seconds=time.monotonic() + 30.0,
+        )
+
+        assert result.status == "failed"
+        assert result.exit_code == 2
+        assert result.failures == ["tests/test_a.py::test_fail"]
+        assert result.collections_parse_ok is True
